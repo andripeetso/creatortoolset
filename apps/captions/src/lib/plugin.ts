@@ -220,8 +220,8 @@ export interface ReviewActionSlot {
   onRun: (ctx: ReviewSlotContext) => void | Promise<void>;
 }
 
-/** The AI edit a Review version previews (ReviewVersion.edit). */
-export type ReviewEditRef = { project: string; draft: string };
+/** The AI edit a Review version previews (ReviewVersion.edit); `fails`: the shots its maker's check found don't hold up. */
+export type ReviewEditRef = { project: string; draft: string; fails?: { n: number; why: string }[] };
 
 /**
  * What a plug-in adds to Review's timeline editor (components/ReviewEdits.tsx), which every install has on a version
@@ -293,6 +293,8 @@ export interface WebPlugin {
   review?: { panels?: ReviewPanelSlot[]; actions?: ReviewActionSlot[]; timeline?: ReviewTimelineSlot };
   // Settings → Team: the plug-in's own access for the team's members, shown under the Access grid (it saves its own).
   access?: ComponentType<{ people: { username: string; label: string }[] }>;
+  // Settings → Team → Access: one column per gate, for a platform admin (the server lets only an admin switch a default-off gate).
+  gates?: { id: PluginGateId; name: string }[];
 }
 
 export const defineWebPlugin = (plugin: WebPlugin): WebPlugin => plugin;

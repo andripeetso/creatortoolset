@@ -4,6 +4,8 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
+import { LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
+import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { stillToCome } from "./jobs";
@@ -11,8 +13,8 @@ import { LANES, LIMIT_LIKE } from "./worker";
 
 /**
  * How much processing clips will take, before they go in, and how much is left (GET /api/library/:id/estimate and
- * /progress). Per clip: the server's own file steps, a transcript, an AI description (when on), search by meaning (when
- * on: a key, else this computer). Pace is this server's own: the last 200 finished jobs of each kind, by what ran them.
+ * /progress). Per clip: the server's own file steps, a transcript, an AI description (when on), shot descriptions
+ * (when on, for a video longer than LOOK_MIN_S), search by meaning (when on: a key, else this computer). Pace is this server's own: the last 200 finished jobs of each kind, by what ran them.
  * Cost: a description's average in the usage tally (the CLI's API-equivalent on a connected AI, the real bill on a key),
  * and a transcription service's list price per minute. Until a step has run three times here, the starting guesses below.
  */
@@ -26,6 +28,7 @@ const STEP_OF: Record<string, LibraryStep> = {
   fingerprint: "files",
   transcribe: "transcript",
   describe: "describe",
+  look: "look",
   embed: "embed",
 };
 
@@ -33,6 +36,14 @@ const STEP_OF: Record<string, LibraryStep> = {
 // (a duplicate check reads the lighter copy: under 2 s a 4K clip, measured)
 const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 1, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
 const GUESS_USD = { provider: 0.05, api: 0.02 };
+// shot descriptions, measured on 2026-11-15 (tasks/flywheel stage 1.0) until the tally has this server's own: about 9
+// stretches a minute of gameplay (450 to 600 an hour), so 5 to 7 calls an hour of SHEETS_PER_CALL sheets of
+// SHEET_STRETCHES; a full call about 17.5k tokens in and 17k out (thinking included), 160 s (1.65 s a stretch), $0.44 at
+// API prices on a connected AI; the picture read about 1 s a minute of 720p footage on all cores (a 45-minute file: 41 s)
+const STRETCHES_PER_MIN = 9;
+const READ_S_PER_MIN = 1.05;
+const GUESS_CALL_S = 160;
+const GUESS_CALL_USD = 0.44;
 /** On this computer, the speech model takes about a third of the clip's length; on a computer with a downloaded model, a tenth (Whisper large-v3 on a graphics card: a twentieth). */
 const DEVICE_PACE = 0.3;
 const COMPUTER_PACE = 0.1;
@@ -94,6 +105,11 @@ export function routesOf(libraryId: string, username: string): Record<LibrarySte
     const r = onApiKey(username, "analyzer", DESCRIBE_LABEL) ?? aiFor(whoFor(username), "analyzer", DESCRIBE_LABEL);
     describe = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
+  let look: Route = { route: "off" };
+  if (librarySetting(libraryId, "look")) {
+    const r = onApiKey(username, "analyzer", LOOK_LABEL) ?? aiFor(whoFor(username), "analyzer", LOOK_LABEL);
+    look = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
+  }
   let transcript: Route;
   try {
     transcript = { route: transcribeRoute(username).provider };
@@ -108,12 +124,12 @@ export function routesOf(libraryId: string, username: string): Record<LibrarySte
       embed = { route: "none", missing: e instanceof NeedsKey ? e.message : String(e) };
     }
   }
-  return { files: { route: "server" }, transcript, describe, embed };
+  return { files: { route: "server" }, transcript, describe, look, embed };
 }
 
-/** Average dollars a description cost on this route over the tally's 90 days, or null under MIN_RUNS. */
-async function describeCost(api: boolean): Promise<number | null> {
-  const label = api ? `${DESCRIBE_LABEL} (API)` : DESCRIBE_LABEL;
+/** Average dollars a description (or a shot description call, `of` LOOK_LABEL) cost on this route over the tally's 90 days, or null under MIN_RUNS. */
+async function describeCost(api: boolean, of = DESCRIBE_LABEL): Promise<number | null> {
+  const label = api ? `${of} (API)` : of;
   let calls = 0;
   let usd = 0;
   for (const hour of Object.values(await macUsageSince(Date.now() - 90 * 86_400_000))) {
@@ -154,11 +170,36 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
       at: api ? laneSize("ai") : BACKGROUND_SLOTS,
     };
   }
+  if (step === "look") {
+    const api = route !== "provider";
+    // a call carries up to SHEETS_PER_CALL × SHEET_STRETCHES stretches; a part-full one costs its share
+    const calls = Math.max(1 / (SHEETS_PER_CALL * SHEET_STRETCHES), ((clipSeconds / 60) * STRETCHES_PER_MIN) / (SHEETS_PER_CALL * SHEET_STRETCHES));
+    const pace = lookPace(db);
+    const cost = await describeCost(api, LOOK_LABEL);
+    return {
+      seconds: pace !== null ? pace * clipSeconds : (clipSeconds / 60) * READ_S_PER_MIN + calls * GUESS_CALL_S,
+      usd: calls * (cost ?? GUESS_CALL_USD),
+      measured: pace !== null && cost !== null,
+      at: laneSize("looks"),
+    };
+  }
   const pace = paceOf(db, "embed");
   return { seconds: pace ?? GUESS_S.embed!, usd: 0, measured: pace !== null, at: route === "device" ? 1 : laneSize("ai") };
 }
 
-const STEPS: LibraryStep[] = ["files", "transcript", "describe", "embed"];
+/** Seconds a finished look took here per second of its footage (the last 200), or null under MIN_RUNS. */
+function lookPace(db: DatabaseSync): number | null {
+  const r = db
+    .prepare(
+      `SELECT SUM(d) AS s, SUM(len) AS len, COUNT(*) AS n FROM (SELECT j.done_at - j.started_at AS d, json_extract(v.probe, '$.duration') AS len
+       FROM jobs j JOIN asset_versions v ON v.id = j.version_id
+       WHERE j.kind = 'look' AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at AND len > 0 ORDER BY j.done_at DESC LIMIT 200)`,
+    )
+    .get() as { s: number | null; len: number | null; n: number };
+  return r.n >= MIN_RUNS && r.s !== null && r.len ? r.s / 1000 / r.len : null;
+}
+
+const STEPS: LibraryStep[] = ["files", "transcript", "describe", "look", "embed"];
 
 /**
  * The whole run: steps run side by side, so the slowest, except that this computer's transcripts and search entries
@@ -196,13 +237,23 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   const clipSeconds = clips ? footage / clips : 0;
   const routes = routesOf(libraryId, username);
   // how many files each step takes
-  const count: Record<LibraryStep, number> = { files: clips, transcript: music ? 0 : clips, describe: music ? 0 : clips - audio, embed: music ? 0 : clips };
+  // a shot description's time and cost follow the length of the videos, not of the drop's sound files
+  const videoSeconds = clips - audio ? (footage - audioBytes / AUDIO_BYTES_PER_S) / (clips - audio) : 0;
+  // ponytail: shot descriptions counted for every video of the drop when they average over LOOK_MIN_S; a talking take
+  // gets none, and the drop can't tell those apart yet, so this is the most they take
+  const count: Record<LibraryStep, number> = {
+    files: clips,
+    transcript: music ? 0 : clips,
+    describe: music ? 0 : clips - audio,
+    look: music || videoSeconds <= LOOK_MIN_S ? 0 : clips - audio,
+    embed: music ? 0 : clips,
+  };
   const steps: LibraryStepEstimate[] = [];
   for (const step of STEPS) {
     const n = count[step];
     // a step no file here takes says nothing, as a step switched off
     const { route, missing } = n ? routes[step] : { route: "off" as const, missing: undefined };
-    const p = await perClip(db, step, route, clipSeconds, proxyShare);
+    const p = await perClip(db, step, route, step === "look" ? videoSeconds : clipSeconds, proxyShare);
     // ponytail: a sound-only file is priced as a clip that never needs a playable copy; its thumbnail and duplicate check are counted anyway
     const files = step === "files" && audio ? await perClip(db, "files", route, clipSeconds, 0) : null;
     const seconds = files ? ((n - audio) * p.seconds + audio * files.seconds) / p.at : (p.seconds * n) / p.at;
@@ -219,7 +270,7 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
 }
 
 /** The steps a person sees go by, in the order they run (worker.ts LANES); probe and wave take a moment and go unsaid. */
-const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transcribe", "describe", "embed"];
+const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transcribe", "describe", "look", "embed"];
 
 // the clips in each library's current run of the queue, added as they are seen with work left and kept until it is
 // empty: every count below is over these, so no number goes down while the run lasts (a clip that is done stays counted)
@@ -227,7 +278,7 @@ const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transc
 const runs = new Map<string, Set<string>>();
 
 // a description held back by the plan's limit (worker.ts holdForLimit): it waits, and takes no time, until one gets through
-const HELD = "(kind = 'describe' AND state != 'needs_key' AND IFNULL(error, '') LIKE ?)";
+const HELD = "(kind IN ('describe', 'look') AND state != 'needs_key' AND IFNULL(error, '') LIKE ?)";
 
 /**
  * The library's processing still to do, for `username`'s view of the pace. The library page, Home's tile and the Activity
@@ -238,18 +289,23 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const db = libraryDb();
   const rows = db
     .prepare(
-      `SELECT kind, state, ${HELD} AS held, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held`,
+      `SELECT kind, state, ${HELD} AS held, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, mac`,
     )
-    .all(LIMIT_LIKE, libraryId) as { kind: string; state: string; held: number; n: number; error: string | null }[];
+    .all(LIMIT_LIKE, MAC_WAITS, libraryId) as { kind: string; state: string; held: number; mac: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => r.state !== "needs_key" && !r.held);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome;
-  const waiting: LibraryProgress["waiting"] = rows.filter((r) => r.state === "needs_key").map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "" }));
-  const held = rows.filter((r) => r.held);
-  const heldN = held.reduce((n, r) => n + r.n, 0);
-  if (heldN) waiting.unshift({ step: "describe", count: heldN, missing: `${held[0]!.error} They carry on by themselves then.`, limit: true });
+  const waiting: LibraryProgress["waiting"] = rows
+    .filter((r) => r.state === "needs_key")
+    .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
+  // held for the plan's limit, per step: "4 AI descriptions wait", "2 shot descriptions wait"
+  for (const step of ["look", "describe"] as const) {
+    const held = rows.filter((r) => r.held && STEP_OF[r.kind] === step);
+    const heldN = held.reduce((n, r) => n + r.n, 0);
+    if (heldN) waiting.unshift({ step, count: heldN, missing: `${held[0]!.error} They carry on by themselves then.`, limit: true });
+  }
   if (!left) {
     runs.delete(libraryId);
     return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
@@ -307,7 +363,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     const n = mine.reduce((t, r) => t + r.n, 0);
     let { route } = routes[step];
     // switched off, yet asked for (Describe with AI on one clip): at the pace it would have on
-    if (route === "off") route = step === "describe" ? "provider" : "openai";
+    if (route === "off") route = step === "describe" || step === "look" ? "provider" : "openai";
     // nothing to run it on: those jobs stop as waiting for a key, they take no time
     if (!n || route === "none") continue;
     // the server's own steps each at their own pace: a lighter copy takes many pictures' time

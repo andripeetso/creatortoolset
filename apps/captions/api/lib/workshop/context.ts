@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { KnowledgeSource } from "../../../contracts/knowledge";
+import { SOUNDS } from "../../../contracts/library";
+import { inProjectOf } from "../project-of";
+import type { SessionUser } from "../../users";
 import { env } from "../env";
 import { renderInstructions } from "./prompt";
 import { asKnowledge } from "./sources";
@@ -91,4 +95,89 @@ export function renderContext(p: Project, files: KnowledgeFile[], max: number): 
 export async function workspaceContext(projectId: string | undefined, max: number): Promise<string> {
   const p = await readWorkspace(projectId);
   return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
+}
+
+/**
+ * Which context a stored text was written under: a short hash of exactly what `workspaceContext(projectId, max)` gives
+ * now, plus `salt` (the version of the prompt that wrote it). A library description or shot description keeps the stamp
+ * it was written with; when the workspace's instructions or files change what that call reads, the stamp differs and
+ * the text is written again the next time an edit or a search uses it (tasks/flywheel/PLAN.md, 6.1). A change past
+ * what the call reads (beyond `max`) leaves the stamp alone.
+ */
+export async function contextStamp(projectId: string | undefined, max: number, salt = ""): Promise<string> {
+  const text = await workspaceContext(projectId, max);
+  return createHash("sha256").update(`${salt}\n${text}`).digest("hex").slice(0, 16);
+}
+
+/** "1 h 41 min", "12 min", "40 s". */
+const span = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
+const many = (n: number, one: string, more: string) => `${n} ${n === 1 ? one : more}`;
+
+/** A video kind as a count: "12 gameplay recordings", "3 screen recordings", "4 product close-ups". */
+function kindCount(n: number, kind: string): string {
+  if (/recording$/.test(kind)) return `${n} ${n === 1 ? kind : `${kind}s`}`;
+  if (/s$/.test(kind)) return `${n} ${kind}`;
+  return `${n} ${kind} ${n === 1 ? "recording" : "recordings"}`;
+}
+
+/** Video kinds named one by one in the footage profile; the rest are counted together. */
+const PROFILE_KINDS = 8;
+
+/**
+ * What footage a workspace holds, in one line for an AI that plans work there (the chat, the AI Editor): its
+ * libraries' videos by what they are (the description's kind, A-roll as talking takes) with their length, then songs,
+ * sound effects and photos. "Footage here: 12 gameplay recordings (1 h 41 min), 2 songs, no talking takes." Finished
+ * work and the trash are left out. "" when the workspace has no footage.
+ */
+export async function footageProfile(projectId: string | undefined): Promise<string> {
+  const p = await readWorkspace(projectId);
+  if (!p) return "";
+  const inP = await inProjectOf({ username: p.owner } as SessionUser, p.id);
+  if (!inP) return "";
+  // read when asked: the library is a big module, and this file is read by every workspace prompt
+  const [{ libraryDb }, { homeOf }, { FINISHED }] = await Promise.all([import("../../library/db"), import("../../library/access"), import("../../library/query")]);
+  const rows = libraryDb()
+    .prepare(
+      `SELECT a.kind, a.roll, json_extract(v.probe, '$.duration') AS dur, json_extract(l.settings, '$.projectId') AS ws,
+         (SELECT d.kind FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS what,
+         EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?) AS song,
+         EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?) AS effect
+       FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
+       WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}`,
+    )
+    .all(SOUNDS.music.tag, SOUNDS.effect.tag, homeOf(p.owner)) as { kind: string; roll: string | null; dur: number | null; ws: string | null; what: string | null; song: number; effect: number }[];
+  const kinds = new Map<string, { n: number; s: number }>();
+  let talking = { n: 0, s: 0 };
+  let songs = 0;
+  let effects = 0;
+  let photos = 0;
+  let sounds = 0;
+  for (const r of rows) {
+    if (!inP(r.ws ?? undefined)) continue;
+    if (r.song) songs++;
+    else if (r.effect) effects++;
+    else if (r.kind === "image") photos++;
+    else if (r.kind === "audio") sounds++;
+    else if (r.kind === "video") {
+      const s = Number(r.dur) || 0;
+      if (r.roll === "a") talking = { n: talking.n + 1, s: talking.s + s };
+      else {
+        const k = kinds.get(r.what ?? "") ?? { n: 0, s: 0 };
+        kinds.set(r.what ?? "", { n: k.n + 1, s: k.s + s });
+      }
+    }
+  }
+  if (!talking.n && !kinds.size && !songs && !effects && !photos && !sounds) return "";
+  const named = [...kinds].filter(([k]) => k).sort((x, y) => y[1].s - x[1].s);
+  const rest = [...named.slice(PROFILE_KINDS).map(([, v]) => v), ...(kinds.has("") ? [kinds.get("")!] : [])].reduce((t, v) => ({ n: t.n + v.n, s: t.s + v.s }), { n: 0, s: 0 });
+  const parts = [
+    ...named.slice(0, PROFILE_KINDS).map(([k, v]) => `${kindCount(v.n, k)} (${span(v.s)})`),
+    ...(rest.n ? [`${many(rest.n, named.length ? "other video" : "video", named.length ? "other videos" : "videos")} (${span(rest.s)})`] : []),
+    ...(songs ? [many(songs, "song", "songs")] : []),
+    ...(effects ? [many(effects, "sound effect", "sound effects")] : []),
+    ...(sounds ? [many(sounds, "sound recording", "sound recordings")] : []),
+    ...(photos ? [many(photos, "photo", "photos")] : []),
+    talking.n ? `${many(talking.n, "talking take", "talking takes")} (${span(talking.s)})` : "no talking takes",
+  ];
+  return `Footage here: ${parts.join(", ")}.`;
 }

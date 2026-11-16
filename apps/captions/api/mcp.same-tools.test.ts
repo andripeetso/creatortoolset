@@ -34,7 +34,7 @@ const toolsOf = async (authorization: string) =>
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
-const ADDED = ["upload_file", "workspace_files", "workshop_project_update", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
+const ADDED = ["upload_file", "workspace_files", "workshop_project_update", "channel_posts", "editor_feedback", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
 /** The tools only the app's own assistant gets since: an outside AI key is never given them, so its list does not move. */
 const DOCK_ADDED = ["folder_list", "chats_list", "chat_read"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
@@ -76,7 +76,7 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // what every turn of every person now carries: say so in the commit when a number moves
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
-    expect(Buffer.byteLength(def.description)).toBe(131);
+    expect(Buffer.byteLength(def.description)).toBe(186);
     // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the
     // list: 534; upload_file adds 345 (its 182-byte description, path and size); channel_posts 426 (the connected
     // social accounts' numbers and posts, read again first when over an hour old; its 279-byte description, platform and refresh)
@@ -102,8 +102,12 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // saying a file is not there; its 635-byte description, path, depth and match)
     // workspace_files adds 418 (the current workspace's context files listed, or one's text read by lines: its
     // description, file, from and to), so a chat reads what was added beyond the summary its turn carries
-    expect(bytes(dock) - bytes(main(dock))).toBe(8015);
+    // editor_feedback adds 510 (the person's notes on a cut kept word for word, the next version made from the last: its
+    // description, edit and text); editor_style_save's playbook adds 242 (what the AI researched about a kind of edit, kept
+    // apart from the notes: 55 bytes of description, text and sources). In main's own list review_set_approval grew by 101
+    // (words: the person's own message approving a video, which a style learns from), in the golden
+    expect(bytes(dock) - bytes(main(dock))).toBe(8767);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7951);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(8703);
   });
 });

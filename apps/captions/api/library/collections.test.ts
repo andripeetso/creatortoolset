@@ -149,6 +149,34 @@ describe("folders and collections", () => {
     d.prepare("DELETE FROM collections WHERE id = 'col_fin'").run();
   });
 
+  it("the B-roll folder, renamed, holds its roll: the top level leaves those clips out, its card counts and shows them; a song folder names its songs", async () => {
+    const d = libraryDb();
+    seed("rb1", "Roll one", "owner-a");
+    seed("rb2", "Roll two", "owner-a");
+    d.prepare("UPDATE assets SET roll = 'b' WHERE id IN ('rb1', 'rb2')").run();
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key) VALUES ('rb2-v1', 'thumb', 'k')").run();
+    const top = async () => ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets?unfiled=1&limit=200")));
+    expect(await top()).toContain("rb1"); // no B-roll folder: at the top level
+    const b = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "B-roll", kind: "smart", query: { roll: "b" } }));
+    await call("owner-a", "PATCH", `/api/library/lib_a/collections/${b.id}`, { name: "Footage" });
+    const shown = await top();
+    expect(shown).not.toContain("rb1");
+    expect(shown).not.toContain("rb2");
+    seed("song1", "Theme song", "owner-a");
+    d.prepare("UPDATE assets SET kind = 'audio' WHERE id = 'song1'").run();
+    const music = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Music" }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${music.id}/items`, { assetIds: ["song1"] });
+    const listed = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections;
+    const footage = listed.find((c: any) => c.id === b.id);
+    expect(footage.name).toBe("Footage");
+    expect(footage.count).toBeGreaterThanOrEqual(2);
+    expect(footage.covers).toContain("/api/library/media/rb2-v1/thumb");
+    expect(listed.find((c: any) => c.id === music.id).sounds).toEqual(["Theme song"]);
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${b.id}`);
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${music.id}`);
+    expect(await top()).toContain("rb1"); // the folder deleted: back at the top level
+  });
+
   it("a folder's card gets up to four of its clips' pictures; deleting a folder keeps its clips in the library, out of the folder above", async () => {
     const d = libraryDb();
     for (const n of [1, 2, 3, 4, 5]) {

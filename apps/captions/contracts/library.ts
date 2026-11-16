@@ -15,8 +15,11 @@ export interface AssetCard {
   versionId: string;
   versionN: number;
   durationS?: number;
+  /** as shown: with `turn` 90 or 270 they are the file's, swapped */
   width?: number;
   height?: number;
+  /** clockwise degrees the player turns the video to show it upright (the AI's or the person's; the file is never changed). Thumb and strip are upright already */
+  turn?: 90 | 180 | 270;
   thumbUrl?: string; // /api/library/media/<versionId>/thumb
   tags: string[]; // user and ai, with `aiTags` marking the AI ones
   aiTags: string[];
@@ -55,6 +58,8 @@ export interface AssetDetail extends AssetCard {
   sourcePath?: string;
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
+  /** its shot descriptions, in order (a person's own line wins): a video's moments, each with its start and end second */
+  shots?: { seg: number; a: number; b: number; text: string; source: "ai" | "user" }[];
 }
 
 export interface SearchQuery {
@@ -112,6 +117,7 @@ export interface ShareInput {
 export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
+  look: boolean; // the AI writes a line for each shot of a longer video that isn't a talking take (Shot descriptions)
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
   /**
    * What a file added from a computer the server is not on sends to the server: "none" (the default) indexes it where it
@@ -176,6 +182,7 @@ export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
   files: { needs: "a look", href: "/library" },
   transcript: { needs: "a transcription key", href: "/settings/keys" },
   describe: { needs: "an AI", href: "/settings/providers" },
+  look: { needs: "an AI", href: "/settings/providers" },
   embed: { needs: "an OpenAI key", href: "/settings/keys" },
 };
 
@@ -186,6 +193,7 @@ export function waitingLine(w: { step: LibraryStep; count: number }): { text: st
     files: ["file", "files"],
     transcript: ["transcript", "transcripts"],
     describe: ["AI description", "AI descriptions"],
+    look: ["shot description", "shot descriptions"],
     embed: ["search entry", "search entries"],
   }[w.step];
   return { text: `${w.count.toLocaleString()} ${one ? thing : things} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
@@ -193,7 +201,7 @@ export function waitingLine(w: { step: LibraryStep; count: number }): { text: st
 
 /** One of the caller's libraries. */
 /** One step of a library's processing: the server's own work on the files, the transcript, the AI's description, search by meaning. */
-export type LibraryStep = "files" | "transcript" | "describe" | "embed";
+export type LibraryStep = "files" | "transcript" | "describe" | "look" | "embed";
 
 /**
  * What a step runs on for the asking account: their connected AI (`provider`, on its subscription), their own Anthropic
@@ -230,8 +238,8 @@ export interface LibraryEstimate {
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
 export interface LibraryStage {
-  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, embed = search by meaning */
-  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "embed";
+  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, embed = search by meaning */
+  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "look" | "embed";
   done: number;
   /** done, failed and still to do since this run of the queue began: neither number goes down while it runs */
   of: number;
@@ -252,7 +260,15 @@ export interface LibraryProgress {
   /** time left at this server's pace */
   seconds: number;
   /** jobs waiting for a key or an AI, with what to add */
-  waiting: { step: LibraryStep; count: number; missing: string; /** held back by the AI plan's usage limit */ limit?: boolean }[];
+  waiting: {
+    step: LibraryStep;
+    count: number;
+    missing: string;
+    /** held back by the AI plan's usage limit */
+    limit?: boolean;
+    /** waits for the computer the files are on (shot descriptions of files kept on a Mac): `missing` says which */
+    computer?: boolean;
+  }[];
   /** each step's count, in the order they run; only the steps this run has */
   stages?: LibraryStage[];
 }
@@ -264,6 +280,8 @@ export interface LibrarySummary {
   settings: LibrarySettings;
   /** the team owner's, in a workspace given to this person (Settings → Team): to look at and download, never change */
   readOnly?: true;
+  /** read-only all the same, but it takes this person's uploads: the owner set their Media Library to Read & write */
+  canAdd?: true;
 }
 
 /**
@@ -321,9 +339,11 @@ export interface Collection {
   parentId: string | null;
   kind: "manual" | "smart";
   query?: SearchQuery; // smart only
-  count?: number; // manual only: items in it
-  /** manual only: up to four of its clips' pictures (thumb addresses), for its card */
+  count?: number; // a folder's items; an A-roll or B-roll folder's clips of that roll
+  /** up to four of its clips' pictures (thumb addresses), for its card: a folder's, or an A-roll or B-roll folder's */
   covers?: string[];
+  /** a folder with no pictures: up to three of the songs or sounds in it, for its card */
+  sounds?: string[];
   createdBy: string;
 }
 
@@ -459,3 +479,56 @@ export function applyS3Preset<T extends { endpoint: string; region: string; path
  *  (transcript, description, search by meaning) off it, and the top-level folder it is filed in, made on first use. */
 export const SOUNDS = { music: { tag: "music", folder: "Music" }, effect: { tag: "sound effect", folder: "Sound effects" } } as const;
 export type Sound = keyof typeof SOUNDS;
+
+// ── shot descriptions (tasks/flywheel/PLAN.md stage 2) ─────────────────────────────────────────────────────────────
+
+/**
+ * A video's picture as numbers, one per frame read (api/library/look.ts readPicture): sent by whichever computer can
+ * read the file (the server, the studio's worker, a Mac), so the server finds the same stretches wherever it was read.
+ */
+export interface PictureSignal {
+  fps: number;
+  step: number[];
+  cut: number[];
+  lag: number[];
+}
+
+/**
+ * One stretch of a video between picture changes (a cut, or a long take split where it changes most), described by
+ * the person's own AI with the workspace's context: what happens, how much, and whether its subject is easy to see.
+ * Never who anyone is. The person can write their own line, which wins over the AI's.
+ */
+export interface Stretch {
+  versionId: string;
+  /** its place in the video, from 0 */
+  seg: number;
+  a: number;
+  b: number;
+  /** 0 still … 1 the most movement in this video */
+  motion: number;
+  /** 0 nothing changes (a menu, loading, standing) … 5 a peak of the action */
+  action: number;
+  /** the main subject is easy to see */
+  clear: boolean;
+  /** up to STRETCH_TAGS short free words */
+  tags: string[];
+  /** what happens, named in the workspace's words */
+  text: string;
+  /** 64-bit picture hash of its middle frame, hex */
+  ph: string;
+  source: "ai" | "user";
+  /** the context stamp it was written under (lib/workshop/context.ts contextStamp) */
+  stamp: string;
+}
+export const STRETCH_TEXT_MAX = 200;
+export const STRETCH_TAGS = 3;
+
+/**
+ * POST /api/library/:id/versions/:versionId/stretches: lines another computer's look wrote for a video's stretches
+ * (the ones POST …/picture answered with), under the context stamp it was written with. Each is checked and capped as
+ * the server's own are.
+ */
+export interface StretchLines {
+  stamp: string;
+  lines: { seg: number; text: string; action: number; clear: boolean; tags: string[]; ph: string }[];
+}

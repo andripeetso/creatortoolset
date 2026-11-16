@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
-import type { EditPlan } from "../../contracts/edit-plan";
+import type { Coverage, Critique, EditPlan } from "../../contracts/edit-plan";
 import { cardsView } from "./cards/state";
 import { waitLine } from "./reach";
 import { passesView } from "./passes";
@@ -54,6 +54,10 @@ export interface EditMeta extends EditBrief {
   size?: WorkingSize | null;
   /** which of the name and the brief came through an AI's tool, not from the person at their own screen (routes.ts): finished.ts keeps neither */
   byTool?: ("name" | "brief")[];
+  /** what the person said about its versions, word for word, oldest first (contracts/editor.ts EditFeedback) */
+  feedback?: EditFeedback[];
+  /** the person said to cut now (editor_run now): the plan takes the files the Media Library has ready and names the rest */
+  now?: boolean;
   trashedAt?: number;
 }
 
@@ -83,11 +87,37 @@ export function readEdit(id: string): EditMeta | null {
 
 export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, updatedAt: Date.now() });
 
+/**
+ * Adds what the person said to the edit's notes, word for word (cut only at EDIT_FEEDBACK_TEXT_MAX), oldest first. A
+ * note it holds already (same words, place, version and author) is not added twice; past EDIT_FEEDBACK_MAX the oldest
+ * go. Returns how many were added.
+ */
+export async function addFeedback(id: string, notes: EditFeedback[]): Promise<number> {
+  const e = readEdit(id);
+  if (!e) return 0;
+  const had = e.feedback ?? [];
+  const same = (a: EditFeedback, b: EditFeedback) => a.from === b.from && a.text === b.text && a.t === b.t && a.variant === b.variant && a.by === b.by;
+  const add: EditFeedback[] = [];
+  for (const n of notes) {
+    const note = { ...n, text: n.text.slice(0, EDIT_FEEDBACK_TEXT_MAX) };
+    if (note.text.trim() && ![...had, ...add].some((x) => same(x, note))) add.push(note);
+  }
+  if (add.length) await saveEdit({ ...e, feedback: [...had, ...add].slice(-EDIT_FEEDBACK_MAX) });
+  return add.length;
+}
+
+/** The version made last (its draft written most recently): what a note in chat is about. */
+export function newestDraft(id: string): string | undefined {
+  const at = (n: string) => statSync(path.join(editDir(id), "drafts", `${n}.json`)).mtimeMs;
+  return draftNames(id).filter((n) => n.startsWith("v")).sort((a, b) => at(b) - at(a))[0];
+}
+
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
   /** `eyeline`: per source version, the eye line found on this computer (eyeline.ts) */
   analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number> };
-  plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
+  /** `at`: when it was made; `coverage`: what footage a planned edit's cut was made from (plan.ts) */
+  plan: { lines: Line[]; plans: VersionPlan[]; notes: string[]; at?: number; coverage?: Coverage };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
   /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
@@ -99,7 +129,19 @@ export interface StepFiles {
   /** the passes Carry on queued for each version, in order (passes.ts) */
   passes: Record<string, string[]>;
   /** each planned version's plan as checked and repaired, and what was changed (plan.ts) */
-  shots: Record<string, { plan: EditPlan; notes: string[] }>;
+  shots: Record<string, PlannedVersion>;
+}
+
+/**
+ * A planned version's plan (plan.ts). After the look at its cut (critique.ts): `fix` on the plan of the one fix round,
+ * with the first cut's look and plan to go back to; `critique` on a plan whose cut was looked at already (the first,
+ * when the fix was no better), so its next draft is filed with that look and not looked at again.
+ */
+export interface PlannedVersion {
+  plan: EditPlan;
+  notes: string[];
+  fix?: { first: Critique; was: { plan: EditPlan; notes: string[] } };
+  critique?: Critique;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -132,6 +174,10 @@ export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: 
 export interface DraftFile {
   timeline: Timeline;
   notes: string[];
+  /** a planned version's cut as the AI made it: the round of the look it waits for before Review (critique.ts) */
+  due?: 1 | 2;
+  /** the look at this cut before Review: the shots that don't hold up */
+  critique?: Critique;
 }
 
 /** A draft's name: a version (v1…) or a moment of a long recording (m1…m20, moments.ts). Nothing else is a file name here. */
@@ -160,6 +206,9 @@ export async function saveDraft(id: string, name: string, d: DraftFile): Promise
   }
   await writeJsonAtomic(cur, d);
 }
+
+/** Writes what a step learned about a draft into it, with no new revision: the cut is the same (critique.ts). */
+export const markDraft = (id: string, name: string, d: DraftFile) => writeJsonAtomic(path.join(editDir(id), "drafts", `${name}.json`), d);
 
 /**
  * The timeline a Review version was rendered from (filed/<video>.<n>.json): what that version's timeline in Review
@@ -523,6 +572,7 @@ export function viewOf(e: EditMeta): Edit {
     lines: p?.lines ?? [],
     plans: p?.plans ?? [],
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
+    ...(p?.coverage ? { coverage: p.coverage } : {}),
     previews: readStep(e.id, "review") ?? {},
     flagDefs: pluginEditFlags(),
     ...(cards ? { cards } : {}),

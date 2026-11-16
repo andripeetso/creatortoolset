@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
@@ -25,6 +25,7 @@ import { storageApp } from "./devices-storage";
 import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
+import { lookSheetsClaim, macLookJob } from "./library/mac-look";
 import { env } from "./lib/env";
 
 /**
@@ -49,8 +50,11 @@ import { env } from "./lib/env";
 
 export const devicesApp = new Hono<{ Variables: AuthVars }>();
 
-/** The jobs on the device job road: the app's own folder listing (lib/folder-list.ts) and computer check (lib/helper-check.ts), then each plug-in's. */
-const deviceJobs = () => [folderListJob, helperCheckJob, ...pluginDeviceJobs()];
+/**
+ * The jobs on the device job road: the app's own folder listing (lib/folder-list.ts), computer check
+ * (lib/helper-check.ts) and shot descriptions of a file on a Mac (library/mac-look.ts), then each plug-in's.
+ */
+const deviceJobs = () => [folderListJob, helperCheckJob, macLookJob, ...pluginDeviceJobs()];
 
 /** The device behind a ctd_ token on an editor route; a 401 when there is none. Keeps the device here (it is alive). */
 function deviceCaller(c: Context): Device | null {
@@ -78,12 +82,15 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
   if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
-  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? (await editorStep(d, k)) } satisfies DeviceClaim);
+  // the shot description sheets it keeps: counted, and the ones to drop named (library/mac-look.ts)
+  const looks = lookSheetsClaim(d, b?.looks);
+  const sheets = looks ? { looks } : {};
+  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? (await editorStep(d, k)), ...sheets } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
   declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
   const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? (await editorStep(now, k));
-  return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
+  return c.json({ job, models: deviceOf(d.id)!.stt!.want, ...sheets } satisfies DeviceClaim);
 });
 /** An AI Editor step for the device, if one waits for it: a step that reads footage carries where its files are for it. */
 async function editorStep(d: Device, kinds: string[]) {
@@ -339,10 +346,10 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
     }));
   const balance = await readBalance(d.owner);
   // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
-  // a folder listing goes to the computer that holds the folder, a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
+  // a folder listing and a look at a file on a Mac go to the computer that holds them, a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
   // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
   // hold it back from every one that has them
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */

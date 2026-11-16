@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Card, EmptyRow, ErrorRow, LoadingRow, Notice, Row, saveFailed, Section } from "@/components/settings/ui";
 import { pluginOffHere, useMe } from "@/lib/auth";
 import { getEditSteps } from "@/lib/editor";
+import { scopeRequests } from "@/lib/current-workspace";
 import { useWorkspace } from "@/lib/workspace";
 import { webPlugins } from "@/plugins.gen";
 
@@ -27,15 +28,16 @@ async function send(id: string, body?: unknown): Promise<PluginWorkspacesView> {
   return j;
 }
 
-export function PluginWorkspaces({ id }: { id: string }) {
+export function PluginWorkspaces({ id, onView }: { id: string; onView?: (v: PluginWorkspacesView) => void }) {
   const [view, setView] = useState<PluginWorkspacesView | null>(null);
   const [failed, setFailed] = useState(false);
-  const load = useCallback(() => send(id).then(setView, () => setFailed(true)), [id]);
+  const show = useCallback((v: PluginWorkspacesView) => (setView(v), onView?.(v)), [onView]);
+  const load = useCallback(() => send(id).then(show, () => setFailed(true)), [id, show]);
   useEffect(() => void load(), [load]);
   const save = (body: { all: true } | { only: string[] }) =>
     send(id, body).then(
       (v) => {
-        setView(v);
+        show(v);
         // the switcher's copy says what is off where: the page hides it there at once
         void useWorkspace.getState().load();
       },
@@ -48,42 +50,38 @@ export function PluginWorkspaces({ id }: { id: string }) {
   // no switch: the row says why, in words
   else if (view.fixed) rows = <Row title="All workspaces" description={view.fixed} />;
   else if (!view.workspaces.length) rows = <EmptyRow title="All workspaces" description="You have no workspaces yet." />;
-  else
+  else {
+    const on = (w: { on: boolean }) => view.all || w.on;
     rows = (
       <>
         <Row
-          title="Works in"
+          title="All workspaces"
+          description="Also the ones you add later"
           control={
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              size="sm"
-              value={view.all ? "all" : "some"}
-              // Only these starts with every workspace on, so nothing disappears until a switch is turned off
-              onValueChange={(v) => v && v !== (view.all ? "all" : "some") && void save(v === "all" ? { all: true } : { only: view.workspaces.map((w) => w.id) })}
-              aria-label="Which workspaces"
-            >
-              <ToggleGroupItem value="all" className="px-2.5 text-xs">All workspaces</ToggleGroupItem>
-              <ToggleGroupItem value="some" className="px-2.5 text-xs">Only these</ToggleGroupItem>
-            </ToggleGroup>
+            <Switch
+              checked={view.all}
+              aria-label={`${view.name} in all workspaces`}
+              // off keeps every workspace on, so nothing disappears until one is switched off
+              onCheckedChange={(all) => void save(all ? { all: true } : { only: view.workspaces.map((w) => w.id) })}
+            />
           }
         />
-        {!view.all &&
-          view.workspaces.map((w) => (
-            <Row
-              key={w.id}
-              title={w.name}
-              control={
-                <Switch
-                  checked={w.on}
-                  aria-label={`${view.name} in ${w.name}`}
-                  onCheckedChange={(on) => void save({ only: view.workspaces.filter((x) => (x.id === w.id ? on : x.on)).map((x) => x.id) })}
-                />
-              }
-            />
-          ))}
+        {view.workspaces.map((w) => (
+          <Row
+            key={w.id}
+            title={w.name}
+            control={
+              <Switch
+                checked={on(w)}
+                aria-label={`${view.name} in ${w.name}`}
+                onCheckedChange={(v) => void save({ only: view.workspaces.filter((x) => (x.id === w.id ? v : on(x))).map((x) => x.id) })}
+              />
+            }
+          />
+        ))}
       </>
     );
+  }
   return (
     <Section title="Workspaces">
       <Card>{rows}</Card>
@@ -94,13 +92,60 @@ export function PluginWorkspaces({ id }: { id: string }) {
 /** The plug-in a Settings section belongs to (its own section, not a server-wide one), or undefined. */
 export const pluginOfSection = (sectionId: string) => webPlugins.find((p) => p.settings?.some((s) => s.id === sectionId && !s.adminTab))?.id;
 
-/** A plug-in's own settings under its workspaces; in a workspace where it is off, only a line on how to turn it on. */
+/**
+ * A plug-in's own settings under its workspaces. They are a workspace's own: the window's when the plug-in is on there,
+ * else one where it is on (its requests, /api/x/<id>/, say that workspace), and a choice when it is on in several.
+ */
 export function WithPluginWorkspaces({ id, children }: { id: string; children: ReactNode }) {
   useMe(); // drawn again when the workspace changes what is off here
+  const current = useWorkspace((s) => s.currentProjectId);
+  const [view, setView] = useState<PluginWorkspacesView | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const places = view && !view.fixed ? view.workspaces.filter((w) => view.all || w.on) : [];
+  const here = !pluginOffHere(id) && (!view || !!view.fixed || !view.workspaces.length || places.some((w) => w.id === current));
+  const target = places.find((w) => w.id === picked) ?? (here ? places.find((w) => w.id === current) : places[0]);
+  const prefix = `/api/x/${id}/`;
+  // set while drawing, before the settings below fetch in their effects
+  scopeRequests(prefix, target && target.id !== current ? target.id : null);
+  useEffect(() => () => scopeRequests(prefix, null), [prefix]);
+
+  let body: ReactNode = children;
+  if (!here && !target) body = view ? <Notice>It is off in every workspace. Switch it on for one above to change its settings.</Notice> : null;
+  else if (places.length > 1 && target)
+    body = (
+      <>
+        <Section title="Settings for">
+          <Card>
+            {places.map((w) => (
+              <Row
+                key={w.id}
+                title={w.name}
+                description={w.id === current ? "This workspace" : undefined}
+                control={
+                  w.id === target.id ? (
+                    <span className="text-xs text-muted-foreground">Shown below</span>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => setPicked(w.id)}>Show</Button>
+                  )
+                }
+              />
+            ))}
+          </Card>
+        </Section>
+        <div key={target.id}>{children}</div>
+      </>
+    );
+  else if (target && target.id !== current)
+    body = (
+      <>
+        <Notice>These are its settings for {target.name}.</Notice>
+        <div key={target.id}>{children}</div>
+      </>
+    );
   return (
     <>
-      <PluginWorkspaces id={id} />
-      {pluginOffHere(id) ? <Notice>It is off in this workspace. Switch it on for this workspace above to use it and change its settings here.</Notice> : children}
+      <PluginWorkspaces id={id} onView={setView} />
+      {body}
     </>
   );
 }

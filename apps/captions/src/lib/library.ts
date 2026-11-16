@@ -80,7 +80,7 @@ export const createLibrary = (name: string) =>
     (r) => json<LibrarySummary>(r),
   );
 
-/** The owner's switches for a library: AI descriptions, search by meaning. */
+/** The owner's switches for a library: AI descriptions, shot descriptions, search by meaning. */
 export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> }) =>
   send<LibrarySummary>(`/api/library/${libraryId}`, "PATCH", patch);
 
@@ -95,8 +95,12 @@ export const clearLibrarySpace = (libraryId: string, what: "proxies" | "models")
 export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput) => send<LibraryStorage>(`/api/library/${libraryId}/storage`, "PUT", input);
 
 /** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
-export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; aiTags?: string[]; description?: string }) =>
+export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; aiTags?: string[]; description?: string; turn?: number }) =>
   send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "PATCH", patch);
+
+/** The person's own line for one shot of a clip (empty: the AI's shows again). */
+export const updateShot = (libraryId: string, assetId: string, seg: number, text: string) =>
+  send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}/shots/${seg}`, "PATCH", { text });
 
 export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string; source?: string }): Promise<AssetPage> {
   const p = new URLSearchParams();

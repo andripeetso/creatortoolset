@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Copy, Download, FileText, FolderOpen, Pencil, RotateCcw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, useLibraryChanges } from "@/lib/library";
+import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
@@ -141,13 +142,50 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const newEdit = () => navigate("/editor?new=1", { state: { pick: [{ versionId: a.versionId, title: a.title }] } });
   // the folders it is in are read again after the move: its Folder line says where it is now
   const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
+  // a quarter turn each press: the player, the thumbnail and the strip show it so (api/library/turn.ts)
+  const rotate = (by: 90 | 270) => void updateAsset(libraryId, a.id, { turn: ((a.turn ?? 0) + by) % 360 }).then(saved, (e) => onError(message(e)));
 
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
-  const trash = !inTrash && !a.review && (
-    <Button size="icon" variant="ghost" aria-label="Move to trash" title="Move to trash" className={cn("h-8 w-8 shrink-0", !win && "-mr-2 -mt-1")} onClick={() => onTrash(true)}>
-      <Trash2 className="h-4 w-4" />
-    </Button>
+  // editing the description, shot lines and tags is rare: their controls show only after Edit details, for this clip
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const fixed = inTrash || editingId !== a.id;
+  // the clip's rare tools in one menu: editing, turning, the trash. It stays open on a turn, so upside down is two presses
+  const more = !inTrash && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="icon" variant="ghost" aria-label="More" title="More" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => setEditingId(a.id)}>
+          <Pencil className="h-4 w-4" />
+          Edit details
+        </DropdownMenuItem>
+        {a.kind === "video" && !a.review && (
+          <>
+            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(270); }}>
+              <RotateCcw className="h-4 w-4" />
+              Rotate left
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(90); }}>
+              <RotateCw className="h-4 w-4" />
+              Rotate right
+            </DropdownMenuItem>
+          </>
+        )}
+        {!a.review && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onTrash(true)}>
+              <Trash2 className="h-4 w-4" />
+              Move to trash
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
   const file = original(a, detail);
   const inFolders = detail?.collections ?? [];
@@ -165,12 +203,18 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const head = (
     <div className="flex flex-col gap-3">
       {!win && (
-        <div className="flex items-start gap-2">
-          {title}
-          {trash}
+        <div className="flex items-start gap-2">{title}</div>
+      )}
+      {!fixed && (
+        <div className="flex items-center justify-between rounded-md bg-zinc-500/10 px-2 py-1 text-xs text-zinc-500">
+          Editing details
+          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setEditingId(null)}>
+            Done
+          </Button>
         </div>
       )}
-      <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={inTrash} onSaved={saved} onError={onError} />
+      <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
+      <ShotLines key={`shots-${a.versionId}`} libraryId={libraryId} detail={detail} now={now} readOnly={fixed} onSeek={seek} onSaved={saved} onError={onError} />
       {(facts.length > 0 || inFolders.length > 0) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -196,7 +240,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
           </Button>
         </div>
       )}
-      <TagEditor libraryId={libraryId} asset={a} readOnly={inTrash} onSaved={saved} onError={onError} />
+      <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       {a.state === "missing" && (
         <p className="text-sm text-zinc-400">
           The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back
@@ -206,8 +250,10 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     </div>
   );
 
+  // one row: what the clip is shared or made into on the left; the quiet tools as icons on the right
+  const tool = "h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground";
   const actions = (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex items-center gap-2">
       {inTrash ? (
         !a.review && (
           <Button size="sm" variant="outline" onClick={() => onTrash(false)}>
@@ -221,14 +267,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             <Share2 className="h-4 w-4" />
             Share
           </Button>
-          {a.state !== "missing" && (
-            <Button size="sm" variant="outline" asChild>
-              <a href={file.href} download={file.name}>
-                <Download className="h-4 w-4" />
-                Download
-              </a>
-            </Button>
-          )}
           {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
           {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
             <Button size="sm" variant="outline" onClick={newEdit}>
@@ -236,24 +274,35 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               New edit
             </Button>
           )}
-          {moveTo.length > 0 && (
-            <select
-              aria-label="Move to"
-              value=""
-              onChange={(e) => e.target.value && move(e.target.value === "top" ? null : e.target.value)}
-              className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
-            >
-              <option value="">Move to…</option>
-              {moveTo.map((o) => (
-                <option key={o.id ?? "top"} value={o.id ?? "top"}>
-                  {`${"\u00a0".repeat(3 * o.depth)}${o.name}`}
-                </option>
-              ))}
-            </select>
-          )}
+          <div className="ml-auto flex items-center gap-0.5">
+            {a.state !== "missing" && (
+              <Button size="icon" variant="ghost" asChild className={tool}>
+                <a href={file.href} download={file.name} aria-label="Download" title="Download">
+                  <Download className="h-4 w-4" />
+                </a>
+              </Button>
+            )}
+            {moveTo.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon" variant="ghost" aria-label="Move to" title="Move to" className={tool}>
+                    <FolderInput className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-80">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
+                  {moveTo.map((o) => (
+                    <DropdownMenuItem key={o.id ?? "top"} onSelect={() => move(o.id)} style={{ paddingLeft: `${0.5 + o.depth * 0.75}rem` }}>
+                      {o.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {more}
+          </div>
         </>
       )}
-      {win && <span className="ml-auto">{trash}</span>}
     </div>
   );
 
@@ -455,8 +504,10 @@ function TagEditor({
       {asset.tags.length > 0 && (
         <ul className="flex flex-wrap gap-1">
           {[...userTags, ...aiTags].map((t) => (
-            <li key={t} className="flex items-center rounded-full border border-zinc-500/25 py-0.5 pl-2 pr-1 text-[11px] text-zinc-500">
-              {asset.aiTags.includes(t) && <span className="mr-1 font-medium uppercase opacity-70">AI</span>}
+            <li
+              key={t}
+              className={`flex items-center rounded-full border py-0.5 pl-2 pr-1 text-[11px] text-zinc-500 ${asset.aiTags.includes(t) ? "border-zinc-500/25" : "border-transparent bg-zinc-500/15"}`}
+            >
               {t}
               {readOnly ? (
                 <span className="w-1" />
@@ -537,6 +588,100 @@ export const AiBadge = () => (
     AI
   </span>
 );
+
+/**
+ * The clip's shot descriptions, under its description: one line a shot with its time, a click plays from there, the
+ * shot playing now is marked. The person can rewrite a line; theirs wins over the AI's (shown quieter, as the AI's
+ * description is), and saving it empty brings the AI's back. Nothing while the clip has none.
+ */
+function ShotLines({
+  libraryId,
+  detail,
+  now,
+  readOnly,
+  onSeek,
+  onSaved,
+  onError,
+}: {
+  libraryId: string;
+  detail: AssetDetail | null;
+  now: number;
+  readOnly: boolean;
+  onSeek: (s: number) => void;
+  onSaved: (a: AssetCard) => void;
+  onError: (e: string) => void;
+}) {
+  const [editing, setEditing] = useState<{ seg: number; text: string; was: string } | null>(null);
+  const shots = detail?.shots;
+  if (!detail || !shots?.length) return null;
+  const save = () =>
+    editing &&
+    updateShot(libraryId, detail.id, editing.seg, editing.text.trim())
+      .then((x) => {
+        setEditing(null);
+        onSaved(x);
+      })
+      .catch((e) => onError(message(e)));
+  return (
+    <section aria-label="Shot descriptions" className="flex flex-col gap-1">
+      <span className="text-xs text-zinc-500">Shot descriptions</span>
+      <div className="-mx-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
+        {shots.map((s) =>
+          editing?.seg === s.seg ? (
+            <form
+              key={s.seg}
+              className="flex flex-col gap-1.5 px-1 py-0.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void save();
+              }}
+            >
+              <input
+                autoFocus
+                value={editing.text}
+                maxLength={200}
+                aria-label={`Shot at ${clock(s.a)}`}
+                onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+                className="w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
+              />
+              <div className="flex items-center gap-2">
+                <Button size="sm" type="submit" disabled={editing.text.trim() === editing.was}>
+                  Save
+                </Button>
+                <Button size="sm" type="button" variant="ghost" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div key={s.seg} className={cn("group flex items-start rounded hover:bg-zinc-500/10", now >= s.a && now < s.b && "bg-zinc-500/15")}>
+              <button
+                type="button"
+                onClick={() => onSeek(s.a)}
+                aria-current={now >= s.a && now < s.b ? "true" : undefined}
+                className={cn("flex min-w-0 flex-1 gap-2 px-1 py-0.5 text-left text-sm", s.source === "ai" && "text-zinc-400")}
+              >
+                <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(s.a)}</span>
+                <span>{s.text}</span>
+              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  aria-label={`Edit the shot at ${clock(s.a)}`}
+                  title="Edit"
+                  onClick={() => setEditing({ seg: s.seg, text: s.text, was: s.text })}
+                  className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          ),
+        )}
+      </div>
+    </section>
+  );
+}
 
 /** What is said in the clip, each line a button that plays from there; the line playing now is marked. */
 function Transcript({

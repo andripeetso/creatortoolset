@@ -5,7 +5,7 @@ import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { AuthVars } from "./auth";
+import { jobTurn, type AuthVars } from "./auth";
 import type { Expired } from "./retention";
 import { sendFile } from "./lib/send-file";
 import { uploadRelayView } from "./lib/storage";
@@ -42,6 +42,7 @@ import { announceSoon } from "./lib/announce-soon";
 import { announce } from "./lib/sync";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
+import type { Critique } from "../contracts/edit-plan";
 
 export { sendFile };
 
@@ -134,10 +135,10 @@ interface Version {
   screen?: boolean;
   /** The timeline file from the editing app, kept as sent (v<n>/timeline); shows under the player. */
   timelineFile?: string;
-  /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. */
-  edit?: { project: string; draft: string };
-  /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. */
-  draft?: { edit: string; name: string };
+  /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. `fails`: as `draft`'s. */
+  edit?: { project: string; draft: string; fails?: Critique["fails"] };
+  /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. `fails`: the shots the look before Review found still don't hold up. */
+  draft?: { edit: string; name: string; fails?: Critique["fails"] };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
@@ -1067,7 +1068,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; fails?: Critique["fails"] }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1980,8 +1981,9 @@ reviewApp.delete("/projects/:pid", async (c) => {
 
 interface Note {
   id: string;
-  /** producing / delivered: a freelancer on a Workshop share link; workshop: a Content Workshop reply finished */
-  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "ready";
+  /** producing / delivered: a freelancer on a Workshop share link; workshop: a Content Workshop reply finished; waiting: an
+   * AI Editor edit still waits for the Media Library (editor/index.ts) */
+  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "ready" | "waiting";
   /** Who did it, as shown. */
   by: string;
   assetId: string;
@@ -2054,7 +2056,7 @@ async function notify(
 }
 
 /** A freelancer on a Content Workshop share link started or delivered, a Workshop reply finished, or a job failed: tell the owner. */
-export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed"; by: string; name: string; text?: string; href: string; ref: string }): Promise<void> {
+export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed" | "waiting"; by: string; name: string; text?: string; href: string; ref: string }): Promise<void> {
   if (!USERNAME_RE.test(owner)) return;
   await updateInbox(owner, (list) => {
     list.unshift({ id: randomUUID(), kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(note.text ? { text: note.text.slice(0, 140) } : {}), href: note.href, at: Date.now() });
@@ -2456,7 +2458,12 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       m.approval = { status, by, at: Date.now() };
     });
     if (!meta) return c.json({ error: "Not found" }, 404);
-    if (status === "approved") emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
+    if (status === "approved") {
+      const turn = jobTurn(c.req.header("authorization"));
+      const words = typeof body?.words === "string" ? body.words : "";
+      emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization"), ...(turn && words ? { turn, words } : {}) });
+    }
+    if (status === "changes") emitEvent("review.changes", { asset: meta.id, owner: meta.owner, by });
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }

@@ -9,8 +9,14 @@ import type { SessionStatus } from "./workshop/types";
 export interface CoreEvents {
   "export.finished": { id: string; owner?: string; kind: string; format: string; bytes: number };
   "review.version.added": { asset: string; n: number; owner: string };
-  /** A Review video was approved or sent to Finals. `by`: the signed-in account that pressed ("" for a guest on a share link); `key`: the request came with an AI key. */
-  "review.finished": { asset: string; owner: string; by: string; key: boolean };
+  /**
+   * A Review video was approved or sent to Finals. `by`: the signed-in account that pressed ("" for a guest on a share
+   * link); `key`: the request came with an AI key. An approval made from a reply in the assistant's chat carries that
+   * reply's `turn` and the `words` the AI passed as the person's own (checked where they are used: editor/finished.ts).
+   */
+  "review.finished": { asset: string; owner: string; by: string; key: boolean; words?: string; turn?: string };
+  /** A Review video was set to Changes (sent back to be fixed). `by`: who set it. */
+  "review.changes": { asset: string; owner: string; by: string };
   "session.published": { id: string; owner: string; from: SessionStatus };
   "session.status": { id: string; owner: string; from: SessionStatus; to: SessionStatus };
   /** Something in a Media Library changed (a piece, an item, a collection, a file): open Finals and Library pages refetch. */

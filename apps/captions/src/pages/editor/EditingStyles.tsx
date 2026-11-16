@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 import { MAX_VERSIONS, type EditorDefaults } from "@contracts/editor";
 import type { EditStepChoice, StepRow } from "@contracts/editor-steps";
-import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type AnimationStyle, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type WorkingSize } from "@contracts/editor-styles";
+import { cutLine, PACES, PACE_NAME, PLAYBOOK_MAX, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type AnimationStyle, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type StyleLearned, type WorkingSize } from "@contracts/editor-styles";
 import { placeOf } from "@contracts/skills";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { RowMenu } from "@/components/settings/ui";
-import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listAnimationStyles, listFinished, removeFinished, updateStyle } from "@/lib/editor";
+import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listAnimationStyles, listFinished, removeFinished, removeLearned, updateStyle } from "@/lib/editor";
 import { listCollections, listLibraries } from "@/lib/library";
 import { listSkills } from "@/lib/skills";
 import { AnimationSheet } from "./AnimationStyles";
@@ -55,16 +55,16 @@ export async function duplicateStyle(s: EditingStyle): Promise<EditingStyle> {
   return createStyle(body).catch((e) => (s.brollCollectionId ? createStyle({ ...body, brollCollectionId: null }) : Promise.reject(e)));
 }
 
-export function EditingStyles({ styles, open, onOpen, onChanged, onChat }: { styles: EditingStyle[]; open: OpenStyle; onOpen: (s: OpenStyle) => void; onChanged: () => Promise<unknown>; onChat?: () => void }) {
+export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editable = true }: { editable?: boolean; styles: EditingStyle[]; open: OpenStyle; onOpen: (s: OpenStyle) => void; onChanged: () => Promise<unknown>; onChat?: () => void }) {
   return (
     <>
       {styles.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-16">
-          <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
+          {editable && <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
             <Plus className="h-4 w-4" />
             New editing style
-          </Button>
-          {onChat && (
+          </Button>}
+          {editable && onChat && (
             <Button size="sm" variant="ghost" className="text-zinc-500" onClick={() => onOpen("new")}>
               Use a form
             </Button>
@@ -84,19 +84,19 @@ export function EditingStyles({ styles, open, onOpen, onChanged, onChat }: { sty
                 {s.notes && <span className="line-clamp-2 whitespace-pre-line text-xs text-zinc-500">{s.notes}</span>}
               </button>
               <div className="absolute right-2 top-2.5">
-                <RowMenu
+{editable &&                 <RowMenu
                   label={`More for ${s.name}`}
                   items={[
                     { label: "Duplicate", onSelect: () => duplicateStyle(s).then(onChanged) },
                     { label: "Delete", destructive: true, confirm: { title: `Delete “${s.name}”?` }, onSelect: () => deleteStyle(s.id).then(onChanged) },
                   ]}
-                />
+                />}
               </div>
             </li>
           ))}
         </ul>
       )}
-      {open && <StyleSheet key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
+      {open && <StyleSheet editable={editable} key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
     </>
   );
 }
@@ -114,8 +114,11 @@ export async function brollFolders(): Promise<{ id: string; name: string }[]> {
  * folder, no step in this app, no skill). The skills offered are the AI Editor script skills (the person's own, and
  * the ones their packs and plug-ins bring), and the one the style names from before skills had a place, so it can be
  * taken off. The Animation style select is always there: its last row makes one, which is then picked; the skill is sent only when changed here, so one the style names that is switched off for now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
+ * A style an AI researched shows its playbook under the notes as "Researched": changed here it is the person's, Delete
+ * takes it off (both on Save). Under the finished edits, what approved edits taught it ("From finished edits"): the
+ * rounds each took, its numbers and the person's own lines, each with an × that takes it off at once.
  */
-export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown> }) {
+export function StyleSheet({ style, onClose, onSaved, editable = true }: { style: EditingStyle | null; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown>; editable?: boolean }) {
   const [name, setName] = useState(style?.name ?? "");
   const [notes, setNotes] = useState(style?.notes ?? "");
   const [versions, setVersions] = useState(style?.versions ?? 1);
@@ -136,6 +139,8 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
   const [skill, setSkill] = useState<string | null>(null); // null: not changed here
   const [skills, setSkills] = useState<{ id: string; name: string }[]>([]);
   const [finished, setFinished] = useState<FinishedEdit[]>([]);
+  const [playbook, setPlaybook] = useState<string | null>(style?.playbook?.text ?? null); // null: none, or deleted here
+  const [learned, setLearned] = useState<StyleLearned[]>(style?.learned ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -185,6 +190,8 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
       ...(skill !== null ? { skill: skill || null } : {}),
       ...(grade !== null ? { grade } : {}),
       ...(steps ? { steps } : {}),
+      // sent only when changed here: the person's own from then on (the route marks it), or taken off
+      ...(style?.playbook && playbook !== style.playbook.text ? { playbook: playbook?.trim() ? { ...style.playbook, text: playbook } : null } : {}),
     };
     try {
       await onSaved(await (style ? updateStyle(style.id, body) : createStyle(body)));
@@ -198,6 +205,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" aria-describedby={undefined} className="w-full overflow-y-scroll p-0 sm:max-w-xl">
+        <fieldset disabled={!editable} className="contents">
         <form
           className="flex flex-col gap-4 p-4 pt-12"
           onSubmit={(e) => {
@@ -214,6 +222,28 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
             <Label htmlFor="style-notes">Describe the editing style</Label>
             <Textarea id="style-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} maxLength={STYLE_NOTES_MAX} placeholder="Fast, no intro: start on the strongest line. Keep the jokes and the laughs. One idea per line. End on the question." />
           </div>
+          {style?.playbook && playbook !== null && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="style-playbook">Researched</Label>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-zinc-500" onClick={() => setPlaybook(null)}>
+                  Delete
+                </Button>
+              </div>
+              <Textarea id="style-playbook" value={playbook} onChange={(e) => setPlaybook(e.target.value)} rows={8} maxLength={PLAYBOOK_MAX} />
+              {style.playbook.sources.length > 0 && (
+                <ul className="flex flex-col gap-0.5 text-xs">
+                  {style.playbook.sources.map((src, i) => (
+                    <li key={i} className="truncate">
+                      <a href={src.url} target="_blank" rel="noreferrer" className="text-zinc-500 underline">
+                        {src.title || src.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="style-versions">Versions</Label>
@@ -364,10 +394,10 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
             <Switch id="style-passes" checked={passes} onCheckedChange={setPasses} />
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <Button type="submit" disabled={busy || !name.trim()} className="self-start">
+{editable &&           <Button type="submit" disabled={busy || !name.trim()} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Save
-          </Button>
+          </Button>}
           {style && finished.length > 0 && (
             <section aria-label="Finished with this style" className="flex flex-col gap-2 pt-2">
               <h3 className="text-sm font-medium">Finished with this style</h3>
@@ -379,7 +409,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
                       <span className="min-w-0 truncate text-sm">{f.name || day}</span>
                       <span className="flex shrink-0 items-center gap-1 text-xs text-zinc-500">
                         {[f.seconds ? `${f.seconds} s` : "", f.name ? day : ""].filter(Boolean).join(" · ")}
-                        <Button
+{editable &&                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
@@ -388,7 +418,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
                           onClick={() => void removeFinished(style.id, f.editId).then(() => setFinished((list) => list.filter((x) => x.editId !== f.editId)), (e) => setError(message(e)))}
                         >
                           <X className="h-4 w-4" />
-                        </Button>
+                        </Button>}
                       </span>
                     </li>
                   );
@@ -396,7 +426,47 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
               </ul>
             </section>
           )}
+          {style && learned.length > 0 && (
+            <section aria-label="From finished edits" className="flex flex-col gap-2 pt-2">
+              <h3 className="text-sm font-medium">From finished edits</h3>
+              <p className="text-xs text-zinc-500">Rounds to approval: {learned.slice(0, 5).map((l) => l.rounds).join(" · ")}</p>
+              <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
+                {learned.map((l) => {
+                  const day = new Date(l.at).toLocaleDateString();
+                  return (
+                    <li key={l.editId} className="flex items-start justify-between gap-3 py-1.5 pl-3 pr-1.5">
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <span className="text-xs text-zinc-500">{[day, l.cut.shots ? cutLine(l.cut) : ""].filter(Boolean).join(" · ")}</span>
+                        {l.notes.map((n, i) => (
+                          <span key={i} className="whitespace-pre-line text-sm">
+                            {n}
+                          </span>
+                        ))}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        aria-label={`Remove what the edit of ${day} taught`}
+                        onClick={() =>
+                          void removeLearned(style.id, l.editId).then(() => {
+                            const next = learned.filter((x) => x.editId !== l.editId);
+                            setLearned(next);
+                            void onSaved({ ...style, learned: next });
+                          }, (e) => setError(message(e)))
+                        }
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
         </form>
+        </fieldset>
         {makingAnimation && (
           <AnimationSheet
             style={null}

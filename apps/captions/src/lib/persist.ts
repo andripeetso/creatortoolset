@@ -17,6 +17,7 @@ import { storedAutoCadence } from "./cadence-preference";
 import { onTopic, whenVisible } from "./sync";
 import { bumpCueIdCounter, type CadenceFit } from "./captions";
 import { storedStyle, storedTexts } from "./export-request";
+import { canChange, useAuth } from "./auth";
 import {
   deleteLocalRecoveryProject,
   listLocalRecoveryProjects,
@@ -656,7 +657,14 @@ async function syncData(id: string, payload: string): Promise<void> {
   });
 }
 
+/** An account set to Read on Caption Studio: the server would refuse every save, so none is sent. */
+const mayNotSave = (): boolean => {
+  const me = useAuth.getState().me;
+  return !!me && !canChange(me, "captions");
+};
+
 async function putData(id: string, payload: string): Promise<void> {
+  if (mayNotSave()) return;
   patchActiveProject(id, { saveState: "saving" });
   const previous = syncTails.get(id) ?? Promise.resolve();
   const current = previous.catch(() => {}).then(() => syncData(id, payload));
@@ -722,6 +730,7 @@ let pendingFor: string | null = null;
 let lastProject: string | null = null;
 
 function scheduleSave(s: StudioSnapshot): void {
+  if (mayNotSave()) return;
   const id = s.projectId!;
   const payload = buildPayload(s);
   pendingSave = () => putData(id, payload);
@@ -1294,6 +1303,7 @@ async function ensureRemoteClip(
 }
 
 async function ensureServerProject(): Promise<void> {
+  if (mayNotSave()) return;
   if (creatingProject) return creatingProject;
   const start = useStudio.getState();
   if (!start.projectId || start.serverProjectReady || start.clips.length === 0)

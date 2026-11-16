@@ -5,6 +5,7 @@ import { announce } from "../lib/sync";
 import { analyzeStep } from "./analyze";
 import { brollStep } from "./broll";
 import { cardsStep } from "./cards/step";
+import { critiqueStep } from "./critique";
 import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
 import { scriptStep } from "./script";
@@ -47,6 +48,8 @@ const KINDS: Record<string, EditKind> = {
   // the post-processing steps the edit uses (plug-ins, Settings → Tools → AI Editor); with none it only clears its notes
   post: { source: "core", next: ["preview"], run: postStep },
   preview: { source: "core", next: ["file"], run: previewStep },
+  // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, or queues the fix round's draft
+  critique: { source: "core", next: [], run: critiqueStep },
   file: { source: "core", next: [], run: fileStep },
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)
   [RESOLVE_KIND]: { source: "device", next: [] },
@@ -81,10 +84,13 @@ export function nextKinds(): Record<string, string[]> {
  * (Make cards again lays the B-roll first). A draft with no picture (a voice recording's) is recorded as having had its
  * B-roll (timeline.ts), so it goes on to it at once: that B-roll is its picture, and the first cut is filed with it.
  * A moment of a long recording is one line with no room for a card (cards/place.ts keeps the last line clear), so an
- * edit of moments never goes to the cards: no AI call and no Mac draw is spent on them.
+ * edit of moments never goes to the cards: no AI call and no Mac draw is spent on them. A preview of a cut that waits for
+ * its look (`due`, critique.ts) goes to the look, which files it.
  */
-export const nextFor = (kind: string, edit: Pick<EditMeta, "style" | "moments">, next: Record<string, string[]>, done: string[] = []): string[] =>
-  edit.style?.passes && ((kind === "draft" && !done.includes("broll")) || (kind === "broll" && !done.includes("cards")))
+export const nextFor = (kind: string, edit: Pick<EditMeta, "style" | "moments">, next: Record<string, string[]>, done: string[] = [], due = false): string[] =>
+  kind === "preview" && due
+    ? ["critique"]
+    : edit.style?.passes && ((kind === "draft" && !done.includes("broll")) || (kind === "broll" && !done.includes("cards")))
     ? ["post"]
     : kind === "broll" && edit.style?.animation && !edit.moments ? ["cards"] : (next[kind] ?? []);
 

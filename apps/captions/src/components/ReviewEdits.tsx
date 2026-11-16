@@ -471,6 +471,15 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           </button>
         </div>
       )}
+      {own && !!ownEdit.data?.coverage?.left.length && (
+        <div className="text-[11px] text-amber-300">
+          Footage left out: {ownEdit.data.coverage.left.map((l) => `${l.title} (${l.why})`).join(", ")}
+        </div>
+      )}
+      {/* the shots the look before Review found still don't hold up in this version, the app's own edit or a plug-in's (nothing when it passed) */}
+      {(own?.fails ?? edit?.fails)?.map((f) => (
+        <div key={f.n} className="text-[11px] text-amber-300">Shot {f.n}: {f.why}</div>
+      ))}
       {sentEdits.length > 0 && (
         <div className="text-[11px] text-zinc-500">
           {sentEdits.length} edit{sentEdits.length === 1 ? "" : "s"} already sent with an open comment, shown until it is resolved

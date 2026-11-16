@@ -383,4 +383,58 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE asset_versions ADD COLUMN from_path TEXT;
   ALTER TABLE asset_versions ADD COLUMN from_device TEXT;
   `,
+  // 21: shot descriptions (tasks/flywheel/PLAN.md stage 2): one line per stretch of a video that isn't a talking take,
+  // written by the person's AI with the workspace's context (look.ts); a line they write themselves (source 'user') wins.
+  // stretch_notes: what the person said in an edit about the shot that stretch was in, kept with the footage so later
+  // edits read it beside the line (a, b kept so a note survives the stretches being found again). descriptions gain
+  // what kind of footage the clip is and the context stamp they were written under.
+  `
+  CREATE TABLE stretches (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    seg INTEGER NOT NULL,
+    a REAL NOT NULL,
+    b REAL NOT NULL,
+    motion REAL NOT NULL,
+    action INTEGER,
+    clear INTEGER,
+    tags TEXT NOT NULL DEFAULT '[]',
+    text TEXT NOT NULL DEFAULT '',
+    ph TEXT,
+    source TEXT NOT NULL DEFAULT 'ai',
+    stamp TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (version_id, seg, source)
+  );
+  CREATE VIRTUAL TABLE search_stretches USING fts5(
+    version_id UNINDEXED, seg UNINDEXED, text, tags, tokenize = 'unicode61 remove_diacritics 2'
+  );
+  CREATE TABLE stretch_notes (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    a REAL NOT NULL,
+    b REAL NOT NULL,
+    text TEXT NOT NULL,
+    edit_id TEXT NOT NULL,
+    by TEXT NOT NULL,
+    at INTEGER NOT NULL
+  );
+  CREATE INDEX stretch_notes_version ON stretch_notes(version_id);
+  ALTER TABLE descriptions ADD COLUMN kind TEXT;
+  ALTER TABLE descriptions ADD COLUMN stamp TEXT;
+  `,
+  // 22: a video's shot descriptions keep their contact sheets ('looksheets', one JSON of JPEGs: stretches.ts), so they
+  // can be written again under a new context without reading the video. SQLite cannot change a CHECK: the table is
+  // rebuilt as in migration 3
+  `
+  CREATE TABLE derivatives_new (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    kind TEXT NOT NULL CHECK (kind IN ('thumb','sprite','proxy','wave','audio','fingerprint','looksheets')),
+    storage_key TEXT,
+    inline TEXT,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (version_id, kind)
+  );
+  INSERT INTO derivatives_new SELECT version_id, kind, storage_key, inline, bytes FROM derivatives;
+  DROP TABLE derivatives;
+  ALTER TABLE derivatives_new RENAME TO derivatives;
+  `,
 ];

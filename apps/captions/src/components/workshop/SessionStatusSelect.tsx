@@ -18,12 +18,18 @@ export function SessionStatusSelect({
   value,
   onChange,
   disabled,
+  readOnly,
 }: {
   value: SessionStatus | undefined;
   onChange: (status: SessionStatus) => void;
   disabled?: boolean;
+  /** Shows the stage as a label, no picker. */
+  readOnly?: boolean;
 }) {
   const current = sessionStatusOf(value);
+  if (readOnly) {
+    return <span className={`flex h-7 shrink-0 items-center rounded-md border bg-zinc-950 px-1.5 text-[11px] ${STATUS_CLASS[current]}`}>{SESSION_STATUSES.find((s) => s.id === current)?.label}</span>;
+  }
   return (
     <select
       value={current}
@@ -53,14 +59,17 @@ export function SessionPosted({
   versions = [],
   onChange,
   disabled,
+  readOnly,
 }: {
   postings: SessionPosting[];
   status: SessionStatus | undefined;
   versions?: Array<{ key: string; label: string }>;
   onChange: (patch: SessionPatch["posted"]) => void;
   disabled?: boolean;
+  /** Shows the posts as links only: no version picker, no "Not this post", no paste. */
+  readOnly?: boolean;
 }) {
-  const canPaste = status === "production" || status === "editing" || status === "toPost" || status === "published";
+  const canPaste = !readOnly && (status === "production" || status === "editing" || status === "toPost" || status === "published");
   if (!postings.length && !canPaste) return null;
   return (
     <span className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -76,7 +85,7 @@ export function SessionPosted({
             <ExternalLink className="h-3 w-3" />
             Post
           </a>
-          {versions.length > 0 && (
+          {versions.length > 0 && !readOnly && (
             <select
               disabled={disabled}
               aria-label="Which version this post is"
@@ -92,6 +101,7 @@ export function SessionPosted({
               ))}
             </select>
           )}
+          {!readOnly && (
           <button
             type="button"
             disabled={disabled}
@@ -102,6 +112,7 @@ export function SessionPosted({
           >
             <X className="h-3 w-3" />
           </button>
+          )}
         </span>
       ))}
       {canPaste && (

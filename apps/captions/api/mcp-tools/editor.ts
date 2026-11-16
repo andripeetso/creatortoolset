@@ -57,6 +57,12 @@ export const editorTools: ToolModule = {
     },
     { name: "editor_delete", description: "Move an AI Editor edit to the trash; what still runs is stopped.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
     {
+      name: "editor_feedback",
+      description:
+        "The user's notes on an edit's cut, in their own words (text: what they said, word for word, never summed up). Kept with the edit and read by every later version, and the next version is made from the last one, changing only what the notes speak to. Use it for their notes on a cut instead of rewriting the brief.",
+      inputSchema: { type: "object", properties: { edit, text: str }, required: ["edit", "text"] },
+    },
+    {
       name: "editor_cut",
       description:
         "A draft's timeline as Review shows its newest preview: each clip with its key, place and words, and how to write edits. With edits, cuts them into the draft with no AI (take out, trim, lengthen, split, move B-roll) and makes its next version: all of them as given, or none.",
@@ -133,6 +139,24 @@ export const editorTools: ToolModule = {
       await ctx.sure(`Move the edit "${String(e.name)}" to the trash?${jobsOf(e).some(going) ? " It is still running and will stop." : ""}`);
       await ctx.json(path, "DELETE");
       return { ...pick(e, ["id", "name"]), trashed: true };
+    },
+    editor_feedback: async (a, ctx) => {
+      const path = pathOf(a.edit);
+      const text = typeof a.text === "string" ? a.text : "";
+      if (!text.trim()) throw new ToolError("Give text: what the user said about the cut, word for word.");
+      const e = await ctx.json(`${path}/feedback`, "POST", { text });
+      // a cut around what is said is written again with the notes (script.ts); a shot list is made from its last version
+      const spoken = ((e.lines as unknown[] | undefined) ?? []).length > 0;
+      return {
+        ...pick(e, ["id", "name"]),
+        kept: ((e.feedback as unknown[] | undefined) ?? []).length,
+        queued: e.queued === true,
+        note:
+          e.queued === true
+            ? `The next version is being ${spoken ? "cut with" : "made from the last one with"} these notes; the chat says when it is in Review, so end your reply rather than wait.`
+            : "Kept. The edit is being made now: that run reads it.",
+        link: linkOf(ctx, e),
+      };
     },
     editor_cut: async (a, ctx) => {
       const path = pathOf(a.edit);
@@ -211,13 +235,14 @@ export const editorTools: ToolModule = {
     editor_update: "Updating the edit",
     // in the dock this call only asks: the edit goes on Yes
     editor_delete: "Asking before the edit goes to the trash",
+    editor_feedback: "Keeping the notes on the cut",
     editor_cut: "Working on the cut's timeline",
     voice_make: "Making the voice",
     ...editorStyleTools.steps,
   },
   // a retry starts work again: its card opens the edit, and ends when the run does (api/editor/ended.ts)
   work: (name, _a, r) =>
-    name === "editor_retry" && r.id
+    (name === "editor_retry" || (name === "editor_feedback" && r.queued === true)) && r.id
       ? { card: { id: `edit:${String(r.id)}:retry`, kind: "edit", title: String(r.name ?? "Edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: "running", detail: "The AI Editor is working on it" } }
       // a cut made from timeline edits: its card opens the cut in Review, and ends when the new version is filed
       : name === "editor_cut" && r.id && r.from_version

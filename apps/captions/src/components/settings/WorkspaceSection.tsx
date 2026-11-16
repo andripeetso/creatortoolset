@@ -231,6 +231,7 @@ export function WorkspaceSection() {
       {(view.members.some((m) => m.role !== "owner") || view.invites.length > 0) && (
         <Section id="team-access" title="Access">
           <AccessGrid
+            gates={me?.role === "admin" ? webPlugins.flatMap((p) => p.gates ?? []) : []}
             rows={[
               ...view.members
                 .filter((m) => m.role !== "owner")
@@ -424,7 +425,7 @@ interface AccessRow extends Access {
  * shows at once; `draft` holds a row while its save is on its way, so a second tick builds on the first, and a failed
  * save falls back to what the server has.
  */
-function AccessGrid({ rows }: { rows: AccessRow[] }) {
+function AccessGrid({ rows, gates }: { rows: AccessRow[]; gates: { id: string; name: string }[] }) {
   const [draft, setDraft] = useState<Record<string, Access>>({});
   const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, read: r.read, scripts: r.scripts };
   const change = (r: AccessRow, next: Access, patch: AccessPatch) => {
@@ -446,6 +447,11 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
                   {TOOL_NAMES[t]}
                 </th>
               ))}
+              {gates.map((g) => (
+                <th key={g.id} className="px-1 pb-2 text-center align-bottom font-normal">
+                  {g.name}
+                </th>
+              ))}
               <th className="px-1 pb-2 text-center align-bottom font-normal">Your scripts</th>
             </tr>
           </thead>
@@ -465,6 +471,10 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
                     const read = [...cur.read.filter((x) => x !== t), ...(next === "read" ? [t] : [])];
                     const who = typeof r.label === "string" ? r.label : "this invite";
                     return <LevelTick key={t} level={level} title={`${TOOL_NAMES[t]} for ${who}: ${LEVEL_TEXT[level]}`} onClick={() => change(r, { ...cur, off, read }, { off, read })} />;
+                  })}
+                  {gates.map((g) => {
+                    const off = offAfterToggle(cur.off, g.id, cur.off.includes(g.id));
+                    return <Tick key={g.id} on={!cur.off.includes(g.id)} title={`${g.name} for ${typeof r.label === "string" ? r.label : "this invite"}`} onClick={() => change(r, { ...cur, off }, { off })} />;
                   })}
                   <Tick on={cur.scripts} title="Can read your scripts" onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
                 </tr>

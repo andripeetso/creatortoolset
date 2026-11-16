@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { canChange, useMe } from "@/lib/auth";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
@@ -82,6 +83,8 @@ export function StateBadge({ state }: { state: string }) {
 }
 
 export default function EditorPage() {
+  // Read (Settings → Team → Access): edits and styles open to look at; nothing is created, moved, dropped in or changed
+  const editable = canChange(useMe(), "editor");
   // the saved list paints at once; a step that moves (the server's worker, a device) reads it again: lib/local-cache
   const list = useCachedLoad<EditSummary[]>("/api/editor", listEdits);
   // each workspace keeps its own edits apart: the page has only the current workspace's
@@ -94,7 +97,7 @@ export default function EditorPage() {
   // a page that hands clips over (the Screen Recorder's Send to AI Editor) puts them in the navigation's state: picked
   const handed = (useLocation().state as { pick?: Picked[] } | null)?.pick;
   const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "", pick: handed } : undefined;
-  const [creating, setCreating] = useState(!!start);
+  const [creating, setCreating] = useState(!!start && editable);
   // footage dropped on the page: New edit opens and takes it
   const [dropped, setDropped] = useState<File[]>([]);
   const [over, setOver] = useState(false);
@@ -153,6 +156,7 @@ export default function EditorPage() {
     const onOver = (e: DragEvent) => {
       if (!fileDrag(e)) return;
       e.preventDefault();
+      if (!editable) return;
       setOver(true);
       clearTimeout(out);
       out = setTimeout(() => setOver(false), 500);
@@ -161,6 +165,7 @@ export default function EditorPage() {
       if (!fileDrag(e) || !e.dataTransfer) return;
       e.preventDefault();
       setOver(false);
+      if (!editable) return;
       // a dropped folder is opened into its files; the drop's list is read before the first wait
       void droppedFiles(e.dataTransfer).then(({ files }) => {
         const footage = files.filter(isMediaFile);
@@ -191,7 +196,7 @@ export default function EditorPage() {
     return (
       <div className="flex min-h-dvh flex-col">
         <AppBar tool="AI Editor">
-          {!!animationList.data?.styles.length && (
+          {editable && !!animationList.data?.styles.length && (
             <Button size="sm" onClick={() => setOpenAnimation("new")}>
               <Plus className="h-4 w-4" />
               New animation style
@@ -200,7 +205,7 @@ export default function EditorPage() {
         </AppBar>
         <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
           {tabs}
-          {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} onChat={chat ? () => styleChat("animation") : undefined} />}
+          {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} onChat={chat ? () => styleChat("animation") : undefined} editable={editable} />}
           {!animationList.data && animationList.error && <p className="text-sm text-red-400">{animationList.error}</p>}
         </main>
       </div>
@@ -212,7 +217,7 @@ export default function EditorPage() {
     return (
       <div className="flex min-h-dvh flex-col">
         <AppBar tool="AI Editor">
-          {!!styleList.data?.styles.length && (
+          {editable && !!styleList.data?.styles.length && (
             <Button size="sm" onClick={() => setOpenStyle("new")}>
               <Plus className="h-4 w-4" />
               New editing style
@@ -221,7 +226,7 @@ export default function EditorPage() {
         </AppBar>
         <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
           {tabs}
-          {styleList.data && <EditingStyles styles={styleList.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styleList.refresh} onChat={chat ? () => styleChat("editing") : undefined} />}
+          {styleList.data && <EditingStyles styles={styleList.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styleList.refresh} onChat={chat ? () => styleChat("editing") : undefined} editable={editable} />}
           {!styleList.data && styleList.error && <p className="text-sm text-red-400">{styleList.error}</p>}
         </main>
       </div>
@@ -233,17 +238,17 @@ export default function EditorPage() {
       <AppBar tool="AI Editor">
         {/* the list is the current project's edits, so the project is picked here too, as in the Workshop */}
         <ProjectSwitcher />
-        {anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
-        <EditorDefaultsButton slots={["grade"]} />
-        <Button size="sm" onClick={() => setCreating(true)}>
+        {editable && anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
+        {editable && <EditorDefaultsButton slots={["grade"]} />}
+        {editable && <Button size="sm" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" />
           New edit
-        </Button>
+        </Button>}
       </AppBar>
       <main className={cn("mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
         {tabs}
         {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
-        {edits?.length === 0 && !anything && (
+        {editable && edits?.length === 0 && !anything && (
           <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
             <Clapperboard className="h-6 w-6 text-zinc-500" aria-hidden="true" />
             <p className="hidden text-sm font-medium sm:block">Drop your footage here</p>
@@ -285,8 +290,8 @@ export default function EditorPage() {
                 name={e.name}
                 meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
                 badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
-                drag={folders.drag(e.id)}
-                actions={folders.folders.length > 0 || folders.open ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
+                drag={editable ? folders.drag(e.id) : undefined}
+                actions={editable && (folders.folders.length > 0 || folders.open) ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
               />
             ))}
           </FolderGrid>
@@ -300,7 +305,7 @@ export default function EditorPage() {
           <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
             {shown.map((e) => (
               <li key={e.id} className="group flex items-center">
-                <Link to={`/editor/${e.id}`} {...folders.drag(e.id)} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
+                <Link to={`/editor/${e.id}`} {...(editable ? folders.drag(e.id) : {})} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
                   <div className="flex shrink-0 -space-x-3">
                     {e.sources.slice(0, 3).map((v) => (
                       // a take with no picture (a voice recording) has no thumbnail: the box stays, with no broken-image icon
@@ -318,7 +323,7 @@ export default function EditorPage() {
                   </div>
                   {e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 </Link>
-                <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
+                {editable && <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />}
               </li>
             ))}
           </ul>

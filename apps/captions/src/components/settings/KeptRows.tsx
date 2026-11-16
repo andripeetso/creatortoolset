@@ -32,6 +32,7 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   "chat-pictures": ["Chat pictures", "picture", "pictures"],
   exports: ["Exported videos", "video", "videos"],
   "chat-videos": ["Chat videos", "video", "videos"],
+  "look-sheets": ["Shot description sheets on your Mac", "clip", "clips"],
 };
 
 export const bytesLabel = (n: number) =>
@@ -70,13 +71,15 @@ const ASK: Partial<Record<KeptKind, [thing: string, after: string]>> = {
   "chat-pictures": ["chat picture", "The chats stay; the pictures show as removed."],
   exports: ["exported video", "The projects stay, so you can export again."],
   "chat-videos": ["chat video", "A video already sent on to Review, Video Notes, Caption Studio or the Media Library stays there."],
+  "look-sheets": ["", "The shot descriptions stay. A clip described again reads its video on the Mac again."],
 };
 
 /** The question Empty asks first, in the app's own dialog: how many of what, how much, what stays, and that it is for good. */
 export function emptyQuestion(r: KeptRow): DialogOpts {
   const [thing, after] = ASK[r.kind] ?? [LABEL[r.kind][1], ""];
+  const s = r.items === 1 ? "" : "s";
   return {
-    title: `Delete ${r.items} ${thing}${r.items === 1 ? "" : "s"}?`,
+    title: r.kind === "look-sheets" ? `Delete the shot description sheets of ${r.items} clip${s}?` : `Delete ${r.items} ${thing}${s}?`,
     body: [`${bytesLabel(r.bytes)}.`, after, "This cannot be undone."].filter(Boolean).join(" "),
     ok: `Delete ${bytesLabel(r.bytes)}`,
     danger: true,

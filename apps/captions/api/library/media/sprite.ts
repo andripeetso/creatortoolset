@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { SPRITE_FRAMES } from "../../../contracts/library";
+import { turned } from "../turn";
 import { ffmpegTo } from "./run";
 
 /** One frame of the strip, cut to the card's own shape (a card shows its picture 16:9, cover). */
@@ -36,7 +37,8 @@ async function lastFrame(src: string, duration: number): Promise<number> {
  * and in runs of 5 at one thread each 1.9 to 3.1 s at 0.45 GB. A keyframe every 10 s makes each seek decode up to 10 s
  * of 4K (about 20 s in all), still bounded by the gap, not the clip's length. From a 720p lighter copy it is quick.
  */
-export async function makeSprite(src: string, out: string, duration: number): Promise<void> {
+export async function makeSprite(src: string, out: string, duration: number, turn = 0): Promise<void> {
+  const cell = turned(turn, CELL); // upright first, then cut to the card's shape
   if (!(duration > 0)) throw new Error("No length to take frames from");
   const last = await lastFrame(src, duration);
   const parts: string[] = [];
@@ -44,7 +46,7 @@ export async function makeSprite(src: string, out: string, duration: number): Pr
     for (let from = 0; from < SPRITE_FRAMES; from += BATCH) {
       const n = Math.min(BATCH, SPRITE_FRAMES - from);
       const args = Array.from({ length: n }, (_, j) => ["-threads", "1", "-ss", (Math.floor(Math.min(spriteTime(from + j, duration), last) * 1000) / 1000).toFixed(3), "-i", src]).flat();
-      const graph = Array.from({ length: n }, (_, j) => `[${j}:v:0]${CELL}[f${j}]`).join(";") + ";" + Array.from({ length: n }, (_, j) => `[f${j}]`).join("") + `hstack=inputs=${n}`;
+      const graph = Array.from({ length: n }, (_, j) => `[${j}:v:0]${cell}[f${j}]`).join(";") + ";" + Array.from({ length: n }, (_, j) => `[f${j}]`).join("") + `hstack=inputs=${n}`;
       const part = `${out}.${from}.png`; // beside `out` (scratch), lossless between the runs: one JPEG encode at the end
       await ffmpegTo(part, [...args, "-filter_complex", graph, "-frames:v", "1"]);
       parts.push(part);

@@ -13,6 +13,9 @@ import { copyReady, original, playerNote, type PlayerNote } from "./clip";
  * window cannot decode says so in the player's place; while its lighter copy is being made the panel's detail says so
  * (read again on each library change), and the player starts once the copy is there: the same play address then
  * serves the copy. Under a video, its strip of frames (Filmstrip).
+ * A clip with its own turn (a screen recorded on its side) is turned here, the file never is. The window's own controls
+ * would turn with it, so it has none: a click plays or pauses, and the strip under it goes to a moment.
+ * ponytail: no volume or full screen on a turned clip; its own controls if he asks for them
  */
 
 type Phase = "loading" | "playing" | "paused" | "failed";
@@ -49,6 +52,12 @@ export function ClipPlayer({
   const phase = seen.src === src ? seen.phase : "loading";
   const to = (p: Phase) => setSeen({ src, phase: p });
   const [now, setNow] = useState(startAt);
+  // a jump (the strip, the player's bar, a line in the transcript) is fetching its moment: the spinner shows and the
+  // strip's line pulses there. `waiting` alone misses it: a paused clip, and WebKit often, only say `seeking`
+  const [seekingAt, setSeekingAt] = useState("");
+  const seeking = seekingAt === src;
+  // what of the file the window has fetched, as parts of its length, drawn along the strip's foot
+  const [fetched, setFetched] = useState<[number, number][]>([]);
 
   useEffect(() => {
     const v = media.current;
@@ -66,11 +75,21 @@ export function ClipPlayer({
   const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
   const note = said === "missing" ? null : said;
   const picture = a.thumbUrl;
+  const turn = a.kind === "video" ? a.turn : undefined;
+  const side = turn === 90 || turn === 270;
 
   const events = {
     onPlaying: () => to("playing"),
     onPause: () => to("paused"),
     onWaiting: () => to("loading"),
+    onSeeking: () => setSeekingAt(src),
+    onSeeked: () => setSeekingAt(""),
+    onProgress: () => {
+      const v = media.current;
+      if (!v || !v.duration) return;
+      const b = v.buffered;
+      setFetched(Array.from({ length: b.length }, (_, i) => [b.start(i) / v.duration, b.end(i) / v.duration]));
+    },
     onError: () => {
       if (!retry) setPlainFailed(true);
       to("failed");
@@ -101,6 +120,7 @@ export function ClipPlayer({
       <div
         className={cn(
           "relative w-full overflow-hidden bg-black bg-contain bg-center bg-no-repeat",
+          turn && "[container-type:size]",
           a.kind === "audio" ? "h-40 md:h-auto" : "aspect-[var(--ar)]",
           fill ? "max-h-[45dvh] md:min-h-0 md:flex-1 md:max-h-none md:aspect-auto" : "max-h-[70vh] rounded-lg",
         )}
@@ -114,15 +134,19 @@ export function ClipPlayer({
             key={src}
             ref={media}
             src={src}
-            poster={picture}
-            controls={phase !== "failed"}
+            // the picture is upright already: on a turned video it would be turned twice
+            poster={turn ? undefined : picture}
+            controls={phase !== "failed" && !turn}
             playsInline
             preload="auto"
-            className={phase === "failed" ? "hidden" : "absolute inset-0 h-full w-full object-contain"}
+            className={phase === "failed" ? "hidden" : turn ? "absolute left-1/2 top-1/2 cursor-pointer object-contain" : "absolute inset-0 h-full w-full object-contain"}
+            // turned about its middle; on its side it is laid out as tall as the box is wide, so it fills the box once turned
+            style={turn ? { width: side ? "100cqh" : "100%", height: side ? "100cqw" : "100%", transform: `translate(-50%, -50%) rotate(${turn}deg)` } : undefined}
+            onClick={turn ? (e) => void (e.currentTarget.paused ? e.currentTarget.play().catch(() => {}) : e.currentTarget.pause()) : undefined}
             {...events}
           />
         )}
-        {phase === "loading" && !note && a.kind === "video" && (
+        {(phase === "loading" || (seeking && phase !== "failed")) && !note && a.kind === "video" && (
           <Loader2 aria-label="Loading" className="pointer-events-none absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80 drop-shadow" />
         )}
         {note && (
@@ -157,7 +181,7 @@ export function ClipPlayer({
           </button>
         )}
       </div>
-    {strip && <Filmstrip {...strip} now={now} media={media} />}
+      {strip && <Filmstrip {...strip} now={now} media={media} seeking={seeking} fetched={fetched} />}
     </div>
   );
 }
@@ -167,14 +191,35 @@ const CELLS = 10;
 
 /**
  * The clip's strip of frames under its player. A mouse over it shows the frame there and its time, a thin line marks
- * where the clip is playing, and a click or a drag goes there. The player's own controls do the same from the keyboard.
+ * where the clip is playing, and a click or a drag goes there: the line moves at once and pulses until the moment is
+ * fetched (the player's spinner shows meanwhile). A light bar along its foot shows what of the file is fetched. The player's own controls do the same from the keyboard.
  */
-function Filmstrip({ url, duration, now, media }: { url: string; duration: number; now: number; media: RefObject<HTMLVideoElement | null> }) {
+function Filmstrip({
+  url,
+  duration,
+  now,
+  media,
+  seeking,
+  fetched,
+}: {
+  url: string;
+  duration: number;
+  now: number;
+  media: RefObject<HTMLVideoElement | null>;
+  seeking: boolean;
+  fetched: [number, number][];
+}) {
+  // the line goes where he clicked at once, not where the player still is
+  const [target, setTarget] = useState<number | null>(null);
+  useEffect(() => void (!seeking && setTarget(null)), [seeking]);
   const [hover, setHover] = useState<number | null>(null);
   const seek = (frac: number) => {
     const v = media.current;
-    if (v) v.currentTime = frac * duration;
+    if (!v) return;
+    v.currentTime = frac * duration;
+    setTarget(frac);
   };
+  const at = target ?? Math.min(1, now / duration);
   return (
     <div
       aria-hidden
@@ -194,7 +239,13 @@ function Filmstrip({ url, duration, now, media }: { url: string; duration: numbe
       {Array.from({ length: CELLS }, (_, i) => (
         <div key={i} className="aspect-video min-w-0 flex-1" style={frameStyle(url, Math.floor(((i + 0.5) * SPRITE_FRAMES) / CELLS))} />
       ))}
-      <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-white" style={{ left: `${Math.min(1, now / duration) * 100}%` }} />
+      {fetched.map(([a, b]) => (
+        <div key={a} className="pointer-events-none absolute bottom-0 h-1 bg-white/60" style={{ left: `${a * 100}%`, width: `${(b - a) * 100}%` }} />
+      ))}
+      <div
+        className={cn("pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-white", seeking && "w-1 animate-pulse")}
+        style={{ left: `${at * 100}%` }}
+      />
       {hover !== null && (
         <div
           data-frame

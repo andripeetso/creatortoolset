@@ -9,10 +9,34 @@ import { outputSize, type ScreenEvents, type ScreenLook } from "@/lib/screen-rec
 
 type Size = { width: number; height: number };
 type Way = { label: string; title?: string; primary?: boolean; run: () => void };
-/** Export's own settings, kept for the next export (not in the look). `short`: pixels on the frame's short side. */
-export type ExportSettings = { short: number; fps: number; quality: ExportQuality; mbps: number };
+/**
+ * Export's own settings, kept for the next export (not in the look). `short`: pixels on the frame's short side, the
+ * frame keeping the shape set above the picture. `size`: a Custom resolution, width and height each as typed; the
+ * background fills what the recording leaves.
+ */
+export type ExportSettings = { short: number; fps: number; quality: ExportQuality; mbps: number; size: Size | null };
 
-export const DEFAULT_EXPORT: ExportSettings = { short: 2160, fps: 60, quality: "high", mbps: 20 };
+export const DEFAULT_EXPORT: ExportSettings = { short: 2160, fps: 60, quality: "high", mbps: 20, size: null };
+
+/** The frame an export is made at: the Custom size, else the shape's at `short`. */
+export function exportSize(settings: ExportSettings, shape: ScreenLook["shape"], srcW: number, srcH: number): Size {
+  return settings.size ?? outputSize(shape, srcW, srcH, settings.short);
+}
+
+/** Ready-made settings for where the video goes. The frame keeps its shape: a tall video is 9:16 above the picture. */
+export const PRESETS: { id: string; label: string; settings: Pick<ExportSettings, "short" | "fps" | "quality"> }[] = [
+  { id: "master", label: "Master (4K, 60 fps, Best)", settings: { short: 2160, fps: 60, quality: "best" } },
+  { id: "youtube-4k", label: "YouTube 4K", settings: { short: 2160, fps: 60, quality: "high" } },
+  { id: "youtube", label: "YouTube 1080p", settings: { short: 1080, fps: 60, quality: "high" } },
+  { id: "social", label: "Instagram, TikTok, X", settings: { short: 1080, fps: 30, quality: "high" } },
+  { id: "small", label: "Small file (Slack, email)", settings: { short: 720, fps: 30, quality: "low" } },
+];
+
+/** The preset these settings are, or null when they are the person's own. */
+export function presetOf(s: ExportSettings): string | null {
+  if (s.size) return null;
+  return PRESETS.find((p) => p.settings.short === s.short && p.settings.fps === s.fps && p.settings.quality === s.quality)?.id ?? null;
+}
 const RESOLUTIONS = [
   [720, "720p"],
   [1080, "1080p HD"],
@@ -29,6 +53,9 @@ const QUALITIES: [ExportQuality, string][] = [
 ];
 const MIN_SHORT = 240;
 const MAX_SHORT = 4320;
+const MIN_SIDE = 128;
+const MAX_SIDE = 8192;
+const evenIn = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v / 2) * 2));
 
 /** Settings kept from an older visit, made safe: anything unknown falls back to the default. */
 export function parseExportSettings(raw: unknown): ExportSettings {
@@ -39,7 +66,13 @@ export function parseExportSettings(raw: unknown): ExportSettings {
     fps: FRAME_RATES.includes(o.fps as never) ? (o.fps as number) : DEFAULT_EXPORT.fps,
     quality: QUALITIES.some(([q]) => q === o.quality) ? (o.quality as ExportQuality) : DEFAULT_EXPORT.quality,
     mbps: num(o.mbps, 1, 400, DEFAULT_EXPORT.mbps),
+    size: o.size && typeof o.size === "object" ? parseSize(o.size as Record<string, unknown>) : null,
   };
+}
+
+function parseSize(o: Record<string, unknown>): Size | null {
+  const ok = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  return ok(o.width) && ok(o.height) ? { width: evenIn(o.width, MIN_SIDE, MAX_SIDE), height: evenIn(o.height, MIN_SIDE, MAX_SIDE) } : null;
 }
 
 const SHAPE_NAMES: Record<ScreenLook["shape"], string> = { source: "as recorded", "16:9": "16:9", "9:16": "9:16", "1:1": "1:1", "4:5": "4:5" };
@@ -127,12 +160,19 @@ export function ExportDialog({
   clear: boolean;
   ways: Way[];
 }) {
-  const short = clear ? 1080 : settings.short;
-  const size = outputSize(look.shape, src.width, src.height, short);
+  const custom = !clear && settings.size !== null;
+  const size = clear ? outputSize(look.shape, src.width, src.height, 1080) : exportSize(settings, look.shape, src.width, src.height);
   const ratio = size.width / size.height;
-  const preset = RESOLUTIONS.some(([s]) => s === short) ? String(short) : "custom";
+  // a resolution that keeps the shape but is no preset (a width typed in) is named by its short side
+  const resolution = custom ? "custom" : String(settings.short);
+  const named = RESOLUTIONS.some(([s]) => s === settings.short);
+  const preset = clear ? null : presetOf(settings);
   const set = (patch: Partial<ExportSettings>) => onSettings({ ...settings, ...patch });
-  const setShort = (v: number) => set({ short: Math.min(MAX_SHORT, Math.max(MIN_SHORT, Math.round(v / 2) * 2)) });
+  const setShort = (v: number) => set({ short: evenIn(v, MIN_SHORT, MAX_SHORT), size: null });
+  const setSide = (side: "width" | "height", v: number) =>
+    custom
+      ? set({ size: { ...size, [side]: evenIn(v, MIN_SIDE, MAX_SIDE) } })
+      : setShort(side === "width" ? (ratio >= 1 ? v / ratio : v) : ratio >= 1 ? v : v * ratio);
 
   const heard = heardTracks(look, events);
   const sound = heard.voice !== null && heard.sound !== null ? "Voice and Mac sound" : heard.voice !== null ? "Voice" : heard.sound !== null ? "Mac sound" : null;
@@ -142,7 +182,7 @@ export function ExportDialog({
   const trimmed = length < whole - 0.05;
   const summary = [
     trimmed ? `${clock(length, true)} of ${clock(whole, true)}` : clock(length, true),
-    `shape ${SHAPE_NAMES[look.shape]}`,
+    custom ? "custom frame" : `shape ${SHAPE_NAMES[look.shape]}`,
     ...(hasCamera ? [`camera ${CAMERA_NAMES[look.camera?.layout ?? "bubble"]}`] : []),
     ...(clear ? [] : [`up to about ${mb} MB`]),
   ];
@@ -157,6 +197,26 @@ export function ExportDialog({
         </DialogHeader>
 
         <section className="space-y-2.5">
+          {!clear && (
+            <Row label="Preset" title="Where the video goes. The frame keeps the shape set above the picture">
+              <select
+                aria-label="Preset"
+                value={preset ?? "own"}
+                onChange={(e) => {
+                  const p = PRESETS.find((x) => x.id === e.target.value);
+                  if (p) set({ ...p.settings, size: null });
+                }}
+                className={cn(field, "min-w-0 flex-1")}
+              >
+                {PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+                {!preset && <option value="own">Custom</option>}
+              </select>
+            </Row>
+          )}
           <h3 className="border-b border-zinc-800 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Video</h3>
           <Row label="Format">
             <Fixed>{clear ? "QuickTime (MOV), transparent background" : "MP4"}</Fixed>
@@ -167,9 +227,10 @@ export function ExportDialog({
           <Row label="Resolution">
             <select
               aria-label="Resolution"
-              value={preset}
+              title="A preset keeps the frame's shape: change the width and the height follows. Custom takes each as typed"
+              value={clear ? "1080" : resolution}
               disabled={clear}
-              onChange={(e) => e.target.value !== "custom" && setShort(Number(e.target.value))}
+              onChange={(e) => (e.target.value === "custom" ? set({ size }) : setShort(Number(e.target.value)))}
               className={cn(field, "min-w-0 flex-1")}
             >
               {RESOLUTIONS.map(([s, label]) => (
@@ -177,20 +238,21 @@ export function ExportDialog({
                   {label}
                 </option>
               ))}
+              {!custom && !named && <option value={settings.short}>{settings.short}p</option>}
               <option value="custom">Custom</option>
             </select>
             <NumberField
               label="Width"
               disabled={clear}
               value={size.width}
-              onCommit={(w) => setShort(ratio >= 1 ? w / ratio : w)}
+              onCommit={(w) => setSide("width", w)}
             />
             <span className="text-xs text-zinc-500">×</span>
             <NumberField
               label="Height"
               disabled={clear}
               value={size.height}
-              onCommit={(h) => setShort(ratio >= 1 ? h : h * ratio)}
+              onCommit={(h) => setSide("height", h)}
             />
           </Row>
           <Row label="Frame rate" title="60 is smooth for a pointer and scrolling; fewer frames make a smaller file">

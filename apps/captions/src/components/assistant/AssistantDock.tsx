@@ -676,7 +676,6 @@ export function AssistantDock() {
             BUBBLE_AT[corner],
           )}
         >
-          {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_50%,transparent)] motion-safe:animate-ping" aria-hidden />}
           <span
             className={cn(
               "relative flex size-full items-center justify-center rounded-full bg-[var(--tint)] text-white shadow-lg shadow-black/25",

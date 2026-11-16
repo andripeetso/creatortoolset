@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import type { EditStepChoice, StepInfo, StepRow, StepsView } from "../../contracts/editor-steps";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { folderPluginsEnabled, pluginsFolder } from "../lib/folder-plugins";
+import { folderPluginRows, folderPluginsEnabled, pluginsFolder } from "../lib/folder-plugins";
 import { loadedPluginInfo, pluginEditorSteps } from "../lib/plugin";
 import { writeJsonAtomic } from "../library/media/run";
 
@@ -70,6 +70,10 @@ export function stepsView(user: string): StepsView {
   }));
   const withSteps = new Set(loaded.map((s) => s.pluginId));
   const plugins = loadedPluginInfo();
+  // the person's own folder (the Mac app's own server): a plug-in from there has its folder, so its row gets the Mac app's switch
+  const mine = canAdd ? folderPluginRows().filter((r) => r.id && r.folder) : [];
+  const folderOf = (id: string) => mine.find((r) => r.id === id)?.folder;
+  for (const r of rows) r.folder = folderOf(r.pluginId!);
   if (canAdd) {
     const running = new Set(plugins.map((p) => p.id));
     for (const b of bundledPlugins()) {
@@ -81,7 +85,11 @@ export function stepsView(user: string): StepsView {
   // every other loaded plug-in that adds no step, on any server (one a hosted server is built with, in CT_PLUGINS): Installed
   for (const p of plugins) {
     if (withSteps.has(p.id) || rows.some((r) => r.id === p.id)) continue;
-    rows.push({ id: p.id, title: p.name, about: p.about, kind: p.kind, state: "loaded", use: false, values: {} });
+    rows.push({ id: p.id, title: p.name, about: p.about, kind: p.kind, state: "loaded", folder: folderOf(p.id), use: false, values: {} });
+  }
+  // one from the person's folder that was switched off stays listed, with its switch off
+  for (const r of mine) {
+    if (!r.on && !rows.some((x) => x.id === r.id || x.pluginId === r.id)) rows.push({ id: r.id!, title: r.name, about: r.about, state: "off", folder: r.folder, use: false, values: {} });
   }
   return { steps: rows, canAdd };
 }

@@ -113,8 +113,9 @@ export interface Cover {
   hidden?: boolean;
 }
 
-/** The folders view's folder: a 2×2 mosaic of `covers` (up to four), its name and `meta`. */
-export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { covers: Cover[]; aspect?: "video" | "portrait" | "square" }) {
+/** The folders view's folder: a 2×2 mosaic of `covers` (up to four), its name and `meta`. With no pictures, `lines`
+ *  (a few of the files in it by name, songs say) under its sign. */
+export function FolderCard({ covers, lines, aspect = "video", ...p }: FolderProps & { covers: Cover[]; lines?: string[]; aspect?: "video" | "portrait" | "square" }) {
   const { over, handlers } = useFolderDrop(p.drop);
   const shown = covers.slice(0, 4);
   const Icon = p.icon ?? FolderIcon;
@@ -142,6 +143,17 @@ export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { c
               {shown.map((c) => (
                 <Picture key={c.key ?? c.src} src={c.src} alt="" className="h-full min-h-0 w-full object-cover" style={c.hidden ? { opacity: 0 } : undefined} />
               ))}
+            </div>
+          ) : lines?.length ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4">
+              <Icon className="h-8 w-8 shrink-0 text-zinc-600" />
+              <ul className="w-full max-w-full text-center text-xs text-zinc-500">
+                {lines.map((l, i) => (
+                  <li key={i} className="truncate">
+                    {l}
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : (
             <Icon className="absolute inset-0 m-auto h-10 w-10 text-zinc-700" />

@@ -60,7 +60,8 @@ export function EnhancePlayer({ session, mix, onMix }: {
   session: EnhanceSession;
   /** the result's share against the original, 0..1 */
   mix: number;
-  onMix: (v: number) => void;
+  /** Absent: the strength is shown, not changed (a read-only account). */
+  onMix?: (v: number) => void;
 }) {
   const [track, setTrack] = useState<Track>(
     session.hasEnhanced ? "enhanced" : "original"
@@ -337,19 +338,23 @@ export function EnhancePlayer({ session, mix, onMix }: {
       {session.hasEnhanced && (
         <div className="mt-4 flex items-center gap-3">
           <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Strength</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={5}
-            value={Math.round(mix * 100)}
-            onChange={(e) => {
-              onMix(Number(e.target.value) / 100);
-              setTrack("enhanced");
-            }}
-            aria-label="Strength: how much of the enhanced voice against the original"
-            className="h-1.5 flex-1 cursor-pointer accent-violet-500"
-          />
+          {onMix ? (
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(mix * 100)}
+              onChange={(e) => {
+                onMix(Number(e.target.value) / 100);
+                setTrack("enhanced");
+              }}
+              aria-label="Strength: how much of the enhanced voice against the original"
+              className="h-1.5 flex-1 cursor-pointer accent-violet-500"
+            />
+          ) : (
+            <span className="flex-1" />
+          )}
           <span className="w-10 shrink-0 text-right text-xs tabular-nums text-zinc-300">{Math.round(mix * 100)}%</span>
         </div>
       )}

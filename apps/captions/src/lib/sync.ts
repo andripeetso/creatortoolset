@@ -10,7 +10,7 @@
  * This tab's own writes carry its id (X-CT-Client) and their notices are skipped here unless a list asks for them
  * (`own`): the page already shows what it saved, and a refetch could undo typing. Other tabs and devices refetch.
  */
-import { currentWorkspace } from "./current-workspace";
+import { currentWorkspace, workspaceFor } from "./current-workspace";
 
 /** The topic of a saved list's key or an /api address: "/api/review/x" → "review", "workshop/sessions?p=" → "workshop". */
 export function topicOf(key: string): string | null {
@@ -179,7 +179,7 @@ export function tagWrites() {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const same = url.startsWith("/") || url.startsWith(location.origin);
     const write = method !== "GET" && method !== "HEAD";
-    const ws = currentWorkspace();
+    const ws = workspaceFor(url);
     if (same && (write || ws)) {
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
       if (write) headers.set("X-CT-Client", clientId);

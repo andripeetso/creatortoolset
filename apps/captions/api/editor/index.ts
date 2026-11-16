@@ -3,14 +3,19 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FootageIndex, IndexShot, IndexSource, SongBeats } from "../../contracts/edit-plan";
+import type { Stretch } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
+import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
-import { parseJsonObject } from "../lib/instagram/vision";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
-import { ffmpegSlot, ffmpegTo, writeJsonAtomic } from "../library/media/run";
+import { ffmpegSlot, writeJsonAtomic } from "../library/media/run";
+import { lookFirst, lookStamp, queueLook } from "../library/shots";
+import { stretchesOf } from "../library/stretches";
+import { notifyWorkshopOwner } from "../review";
+import { clock, COLS, contactSheet, CX, CY, HUD_MAX, hudOf, junkOf, looks, lookPrompt, median, parseLooked, readPicture, ROWS, RULE, shotsOf } from "../library/look";
 import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey, segmentsOf, wordsOf } from "../library/transcribe";
 import { Waiting } from "./analyze";
@@ -27,162 +32,69 @@ import { macAway } from "./script";
 // ── the picture ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Bump when the shots a source gets would change: a cached index of another version is read again. */
-const INDEX_V = 1;
-/** Frames are read this small and grey: enough to see a cut and how much moves, cheap to compare. */
-const FW = 64;
-const FH = 36;
-const MAX_READ_FPS = 30;
-/** A cut is read on the frame-to-frame change over the two frames' own contrast (their spread of grey, never under
- * SPREAD_FLOOR), so a dark shot cuts as clearly as a bright one: the change must reach CUT_MIN and be CUT_OVER times
- * its neighbourhood's median plus CUT_PLUS */
-const SPREAD_FLOOR = 0.02;
-const CUT_MIN = 0.25;
-const CUT_OVER = 3;
-const CUT_PLUS = 0.08;
-/** Two cuts this close (s) are one: a flash frame is not a shot */
-const MIN_SHOT_S = 0.3;
-/** A take longer than LONG_S is split, no piece shorter than PIECE_S */
-const LONG_S = 8;
-const PIECE_S = 4;
-/** The change over this long (s) says where a long take changes most */
-const LAG_S = 0.5;
-/** Movement (mean |Δ| a second) below which a source counts as still, whatever its own most is */
-const STILL_PER_S = 0.15;
+const INDEX_V = 2;
+/** A phone game's skill buttons sit over a moving world and never stay put: in a very wide picture (a 9:16 window
+ * under WIDE of its width, a phone's 2.2:1) a window at the outer EDGE of either side never fills either. */
+const WIDE = 0.3;
+const EDGE = 0.15;
+/** A crop window off-centre must hold this much more of what moves: a game keeps its hero in the middle */
+const CENTRE = 0.25;
 
-export interface PictureRead {
-  /** frames read a second */
-  fps: number;
-  /** change from the frame before (mean |Δ| of grey 0..1; index 0: 0) */
-  step: Float32Array;
-  /** the same over the two frames' contrast: what a cut is read on */
-  cut: Float32Array;
-  /** change from LAG_S before (0 until then) */
-  lag: Float32Array;
-}
+/** A shot is no shot: measured junk, or the AI saw "junk: …" on the contact sheet. */
+export const isJunk = (x: Pick<IndexShot, "junk" | "desc">) => !!x.junk || /^junk\b/i.test(x.desc ?? "");
 
-/** Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before. */
-export async function readPicture(src: string, fps: number, signal?: AbortSignal): Promise<PictureRead> {
-  const rate = fps > 0 ? Math.min(fps, MAX_READ_FPS) : 25;
-  const L = Math.max(1, Math.round(LAG_S * rate));
-  const size = FW * FH;
-  return ffmpegSlot(
-    () =>
-      new Promise((resolve, reject) => {
-        const p = spawn(
-          ffmpegCommand(),
-          ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn", "-vf", `fps=${rate},scale=${FW}:${FH}:flags=area,format=gray`, "-f", "rawvideo", "pipe:1"],
-          { signal },
-        );
-        const ring: Buffer[] = []; // the last L+1 frames
-        const step: number[] = [];
-        const cut: number[] = [];
-        let spreadBefore = 0;
-        const spread = (x: Buffer) => {
-          let s = 0;
-          let q = 0;
-          for (let i = 0; i < size; i++) (s += x[i]!), (q += x[i]! * x[i]!);
-          return Math.sqrt(Math.max(0, q / size - (s / size) ** 2)) / 255;
-        };
-        const lag: number[] = [];
-        const diff = (x: Buffer, y: Buffer) => {
-          let s = 0;
-          for (let i = 0; i < size; i++) s += Math.abs(x[i]! - y[i]!);
-          return s / size / 255;
-        };
-        let carry = Buffer.alloc(0);
-        let err = "";
-        p.stdout.on("data", (d: Buffer) => {
-          let buf = carry.length ? Buffer.concat([carry, d]) : d;
-          while (buf.length >= size) {
-            const f = Buffer.from(buf.subarray(0, size));
-            buf = buf.subarray(size);
-            const prev = ring[ring.length - 1];
-            const d = prev ? diff(f, prev) : 0;
-            const sp = spread(f);
-            step.push(d);
-            cut.push(prev ? d / Math.max(SPREAD_FLOOR, (sp + spreadBefore) / 2) : 0);
-            spreadBefore = sp;
-            lag.push(ring.length > L ? diff(f, ring[ring.length - 1 - L]!) : 0);
-            ring.push(f);
-            if (ring.length > L + 1) ring.shift();
-          }
-          carry = Buffer.from(buf);
-        });
-        p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
-        p.on("error", reject);
-        p.on("close", (code) => {
-          if (code !== 0) return reject(new Error(err.trim() || `ffmpeg exited ${code}`));
-          resolve({ fps: rate, step: Float32Array.from(step), cut: Float32Array.from(cut), lag: Float32Array.from(lag) });
-        });
-      }),
-  );
-}
-
-const median = (xs: number[]) => {
-  if (!xs.length) return 0;
-  const s = [...xs].sort((a, b) => a - b);
-  return s[s.length >> 1]!;
-};
-
-/** The frames where a new shot starts (hard cuts), from `read`. */
-export function cutsOf({ fps, cut: step }: PictureRead): number[] {
-  const W = Math.round(fps);
-  const cuts: number[] = [];
-  for (let i = 1; i < step.length; i++) {
-    const d = step[i]!;
-    if (d < CUT_MIN) continue;
-    let peak = true;
-    for (let j = Math.max(1, i - 2); j <= Math.min(step.length - 1, i + 2); j++) if (j !== i && step[j]! > d) peak = false;
-    if (!peak) continue;
-    const around: number[] = [];
-    for (let j = Math.max(1, i - W); j <= Math.min(step.length - 1, i + W); j++) if (Math.abs(j - i) > 1) around.push(step[j]!);
-    if (d < CUT_OVER * median(around) + CUT_PLUS) continue;
-    const last = cuts[cuts.length - 1];
-    if (last !== undefined && i - last < MIN_SHOT_S * fps) {
-      if (d > step[last]!) cuts[cuts.length - 1] = i;
-      continue;
-    }
-    if (i < MIN_SHOT_S * fps || step.length - i < MIN_SHOT_S * fps) continue;
-    cuts.push(i);
+/** A window `r` of a line of cells wide over shares `e`: the place holding the most, a centred one favoured by CENTRE
+ * -> [place 0..1, share held, first and last edge as fractions]. */
+function place(e: number[], r: number): [number, number, number, number] {
+  if (r >= 0.98) return [0.5, 1, 0, 1];
+  const n = e.length;
+  const cum = [0];
+  for (const v of e) cum.push(cum[cum.length - 1]! + v);
+  const tot = cum[n]!;
+  const at = (u: number) => {
+    const x = Math.min(n, Math.max(0, u));
+    const i = Math.min(n - 1, Math.floor(x));
+    return cum[i]! + (cum[i + 1]! - cum[i]!) * (x - i);
+  };
+  const held = (x: number) => (tot > 0 ? (at((x * (1 - r) + r) * n) - at(x * (1 - r) * n)) / tot : r);
+  let best = 0;
+  let score = -Infinity;
+  for (let k = 0; k <= 40; k++) {
+    const x = k / 40;
+    const v = held(x) + CENTRE * (1 - 2 * Math.abs(x - 0.5));
+    if (v > score + 1e-12) [best, score] = [x, v];
   }
-  return cuts;
+  return [Math.round(best * 1000) / 1000, held(best), best * (1 - r), best * (1 - r) + r];
 }
 
-/** Splits frames [a, b) into pieces of PIECE_S..LONG_S where the picture changes most (the lag change's peak). */
-function splitLong(a: number, b: number, read: PictureRead): number[] {
-  const { fps, lag } = read;
-  if (b - a <= LONG_S * fps) return [];
-  const half = Math.round((LAG_S * fps) / 2);
-  let best = -1;
-  let at = Math.round((a + b) / 2);
-  for (let i = Math.ceil(a + PIECE_S * fps); i <= Math.floor(b - PIECE_S * fps); i++) {
-    const v = lag[Math.min(lag.length - 1, i + half)] ?? 0; // the change over LAG_S, centred on i
-    if (v > best) [best, at] = [v, i];
+/**
+ * Where a w:h crop window sits in a source's picture for its stretch a..b s, so it shows what moves there, never a HUD
+ * corner or empty floor: the shots' change across and down, weighted by how much of
+ * each the stretch covers, the HUD left out; then the window holding the most (`place`). One window a shot, no drift.
+ * `ok` is false when no window of that shape holds its share of what moves, it is more than HUD_MAX HUD, or it sits at
+ * the edge of a very wide picture (WIDE, EDGE): a fill becomes a blur (the whole picture over a blurred copy).
+ */
+export function focusOf(src: Pick<IndexSource, "w" | "h" | "shots" | "hud">, a: number, b: number, w: number, h: number): { x: number; y: number; ok: boolean } {
+  const cols = new Array<number>(CX).fill(0);
+  const rows = new Array<number>(CY).fill(0);
+  for (const x of src.shots) {
+    const k = Math.max(0, Math.min(b, x.b) - Math.max(a, x.a)) / Math.max(1e-6, x.b - x.a);
+    if (k <= 0 || !x.moves) continue;
+    x.moves.cols.forEach((v, i) => (cols[i] += k * v));
+    x.moves.rows.forEach((v, i) => (rows[i] += k * v));
   }
-  return [...splitLong(a, at, read), at, ...splitLong(at, b, read)];
-}
-
-/** Shots covering 0..dur from what was read: cuts, long takes split, motion against the source's own most. */
-export function shotsOf(read: PictureRead, dur: number): IndexShot[] {
-  const n = read.step.length;
-  if (!n) return dur > 0 ? [{ a: 0, b: dur, motion: 0 }] : [];
-  const edges = [0, ...cutsOf(read), n];
-  const all: number[] = [0];
-  for (let k = 1; k < edges.length; k++) all.push(...splitLong(edges[k - 1]!, edges[k]!, read), edges[k]!);
-  const per: number[] = [];
-  for (let k = 1; k < all.length; k++) {
-    let s = 0;
-    let c = 0;
-    for (let i = all[k - 1]! + 1; i < all[k]!; i++) (s += read.step[i]!), c++;
-    per.push(c ? (s / c) * read.fps : 0);
-  }
-  const most = Math.max(STILL_PER_S, ...per);
-  const r2 = (x: number) => Math.round(x * 100) / 100;
-  return per.map((m, k) => ({
-    a: r2(all[k]! / read.fps),
-    b: k === per.length - 1 ? dur : r2(all[k + 1]! / read.fps),
-    motion: r2(Math.min(1, m / most)),
-  }));
+  const rx = Math.min(1, w / h / (src.w / src.h));
+  const ry = Math.min(1, src.w / src.h / (w / h));
+  const [x, hx, x0, x1] = place(cols, rx);
+  const [y, hy, y0, y1] = place(rows, ry);
+  const hud = src.hud ?? [];
+  let n = 0;
+  let on = 0;
+  const c0 = Math.floor(x0 * CX + 1e-6);
+  const r0 = Math.floor(y0 * CY + 1e-6);
+  for (let r = r0; r < Math.max(r0 + 1, Math.ceil(y1 * CY - 1e-6)); r++)
+    for (let c = c0; c < Math.max(c0 + 1, Math.ceil(x1 * CX - 1e-6)); c++) (n++, (on += hud[r * CX + c] ?? 0));
+  return { x, y, ok: on / Math.max(1, n) <= HUD_MAX && hx >= 0.85 * rx && hy >= 0.85 * ry && (rx >= WIDE || (x >= EDGE && x <= 1 - EDGE)) };
 }
 
 /**
@@ -221,81 +133,206 @@ const rowOf = (id: string) =>
     .get(id) as Row | undefined;
 
 /**
- * What every source of the edit holds: length, frame rate, size, whether someone speaks, and its shots. A source not
- * probed yet, or whose transcript is being made, makes it wait (Waiting); one with no picture (a song) has no shots.
- * The picture is read once per version and cached; a transcript is never asked for here (analyze does that).
+ * The Media Library's side of shot descriptions (its `look` job, library/shots.ts): put these files' work first, write
+ * one file's stale lines again (a look job from its kept sheets, so the gate waits on it like any other), and the stamp
+ * that file's lines are written under. A test swaps these.
  */
-export async function indexSources(edit: { sources: string[] }, signal: AbortSignal): Promise<FootageIndex> {
+export const shotLog = {
+  first: (ids: string[]): void => lookFirst(ids),
+  redo: (versionId: string, actor: string | null): void => void queueLook(libraryDb(), versionId, actor, true),
+  stamp: (versionId: string): Promise<string> => lookStamp(libraryDb(), versionId),
+};
+
+/** The library's work on a file the gate waits for, and what failing it means. */
+const LIBRARY_WORK: Record<string, string> = { transcribe: "", describe: "the Media Library could not describe it", look: "the Media Library could not describe its shots" };
+/** After this long with no file getting ready, the person hears once that the edit still waits (inbox). */
+export const STILL_WAITING_MS = 30 * 60_000;
+/** Per edit: how many files were ready, since when, and whether the inbox has been told. */
+const waits = new Map<string, { ready: number; since: number; told?: true }>();
+/** "<version>:<stamp>" a redo was asked for: asked once, so a stamp that never matches is read as it is, not waited on forever. */
+const redone = new Set<string>();
+
+/** One of the edit's files the cut can't use, and why in plain words (Coverage.left). */
+export type LeftOut = { id: string; title: string; why: string };
+
+/**
+ * What every source of the edit holds: length, frame rate, size, whether someone speaks, and its shots. The gate
+ * (tasks/flywheel/PLAN.md 3.2) waits, and only waits, while the Media Library still works on a file (its probe, its
+ * transcript, its description, its shot descriptions, or lines written under another workspace context than now's):
+ * those files go first and the step says "Waiting for the Media Library: 3 of 12 files", with the library's own line
+ * for a computer that is off or an AI that isn't connected. A file the library failed on is left out (`left`); with
+ * `now` (the person said to cut now) so is every file not ready. A source with the library's shot descriptions takes
+ * them as its shots; one without is read here as before (its picture once per version, cached). One with no picture (a
+ * song) has no shots. A transcript is never asked for here (analyze does that).
+ */
+export async function indexSources(
+  edit: { id?: string; name?: string; createdBy?: string; projectId?: string; now?: boolean; sources: string[] },
+  signal: AbortSignal,
+  now = Date.now(),
+): Promise<FootageIndex & { left: LeftOut[] }> {
   const db = libraryDb();
-  const sources: IndexSource[] = [];
+  const ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[] }[] = [];
+  const left: LeftOut[] = [];
+  const pending: { id: string; title: string; line?: string }[] = [];
   for (const id of edit.sources) {
     if (signal.aborted) throw signal.reason ?? new Error("Stopped");
     const row = rowOf(id);
     if (!row) throw new Error(`A source of the edit is gone from the library (${id})`);
     const probe = JSON.parse(row.probe ?? "null") as ProbeSummary | null;
     if (!probe) {
-      if (row.state === "failed") throw new Error(`“${row.title}” could not be read by the library`);
-      throw new Waiting();
+      if (row.state === "failed") left.push({ id, title: row.title, why: "the Media Library could not read it" });
+      else pending.push({ id, title: row.title });
+      continue;
     }
-    const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(id) as { state: string } | undefined;
-    if (t?.state === "queued" || t?.state === "running") throw new Waiting();
+    const kinds = Object.keys(LIBRARY_WORK);
+    const work = db.prepare(`SELECT kind, state, error FROM jobs WHERE version_id = ? AND kind IN (${kinds.map(() => "?").join(", ")})`).all(id, ...kinds) as { kind: string; state: string; error: string | null }[];
+    const failed = work.find((w) => w.state === "failed" && LIBRARY_WORK[w.kind]);
+    if (failed) {
+      left.push({ id, title: row.title, why: LIBRARY_WORK[failed.kind]! });
+      continue;
+    }
+    // queued or running, or a description parked for an AI that isn't connected: its own line says which (a transcript
+    // parked for a key never holds a planned edit: it takes the words there are)
+    const busy = work.filter((w) => w.state === "queued" || w.state === "running" || (w.state === "needs_key" && w.kind !== "transcribe"));
+    if (busy.length) {
+      pending.push({ id, title: row.title, line: (busy.find((w) => w.kind === "transcribe") && deviceStatus(id)) || busy.find((w) => w.error)?.error || undefined });
+      continue;
+    }
+    const lines = stretchesOf(db, id);
+    const stamp = lines.some((s) => s.source === "ai") ? await shotLog.stamp(id) : "";
+    // written under another context than the workspace's now: written again, then used (asked once per stamp)
+    if (lines.some((s) => s.source === "ai" && s.stamp !== stamp) && !redone.has(`${id}:${stamp}`)) {
+      redone.add(`${id}:${stamp}`);
+      shotLog.redo(id, edit.createdBy ?? null);
+      pending.push({ id, title: row.title });
+      continue;
+    }
+    ready.push({ id, row, probe, lines });
+  }
+  const key = edit.id ?? edit.sources.join(",");
+  if (pending.length && !edit.now) {
+    shotLog.first(pending.map((p) => p.id));
+    const w = waits.get(key);
+    if (!w || w.ready !== ready.length) waits.set(key, { ready: ready.length, since: now });
+    else if (!w.told && now - w.since >= STILL_WAITING_MS && edit.createdBy && edit.id) {
+      w.told = true;
+      void notifyWorkshopOwner(edit.createdBy, { kind: "waiting", by: "AI Editor", name: edit.name ?? "An edit", text: `Still waiting for the Media Library: ${ready.length} of ${edit.sources.length} files`, href: `/editor/${edit.id}`, ref: edit.id }).catch(() => {});
+    }
+    const said = pending.find((p) => p.line)?.line;
+    throw new Waiting(30, `Waiting for the Media Library: ${ready.length} of ${edit.sources.length} files${said ? `. ${said.replace(/\.$/, "")}` : ""}`);
+  }
+  waits.delete(key);
+  for (const p of pending) left.push({ id: p.id, title: p.title, why: "still being read by the Media Library" });
+
+  const sources: IndexSource[] = [];
+  for (const { id, row, probe, lines } of ready) {
+    if (signal.aborted) throw signal.reason ?? new Error("Stopped");
     const speech = !!(wordsOf(db, id)?.length || segmentsOf(db, id).length);
+    const turned = probe.rotation === 90 || probe.rotation === 270;
+    const size = { dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height };
+    // the library's shot descriptions are its shots: the same stretches this file's picture gives (library/look.ts)
+    const described = !!probe.vcodec && !probe.cover && lines.length > 0;
+    // its picture is still read once per version (cached): the lines say what happens, the read where it moves and
+    // what is junk
     let src = (await cached(id))?.src;
     if (!src) {
-      const turned = probe.rotation === 90 || probe.rotation === 270;
       const picture = !!probe.vcodec && !probe.cover;
-      const shots = picture ? shotsOf(await readPicture(await readable(id, row.source_key), probe.fps, signal), probe.duration) : [];
-      src = { id, title: row.title, dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, shots };
-      await keep(src);
+      const reading = picture ? readable(id, row.source_key).then((f) => readPicture(f, probe.fps, signal)) : Promise.resolve(null);
+      // a source with shot descriptions that can't be read here (on a Mac, upload off) is cut from its lines alone
+      const read = await reading.catch((e: unknown) => {
+        if (described && !signal.aborted) return null;
+        throw e;
+      });
+      const shots = read ? shotsOf(read, probe.duration) : [];
+      src = { id, title: row.title, ...size, shots, ...(read ? { hud: hudOf(read) } : {}) };
+      if (read || !picture) await keep(src);
     }
+    if (described) src = { ...src, ...size, shots: lines.map((l) => lineShot(l, src!.shots)) };
     sources.push({ ...src, title: row.title, speech });
   }
-  return { sources };
+  return { sources, left };
 }
+
+/** What is known of a source's shots without reading it again: the library's shot descriptions (with what its cached
+ * index measured), else the AI Editor's own index of it. */
+export async function knownShots(versionId: string): Promise<IndexShot[]> {
+  const lines = stretchesOf(libraryDb(), versionId);
+  const measured = (await cached(versionId))?.src.shots ?? [];
+  return lines.length ? lines.map((l) => lineShot(l, measured)) : measured;
+}
+
+/** One shot description as the plan reads a shot, with what the picture measured at its middle (`measured`, the same
+ * finder's stretches): whether it is junk and where it moves, so its crop follows the action. */
+const lineShot = (s: Stretch, measured: IndexShot[] = []): IndexShot => {
+  const mid = (s.a + s.b) / 2;
+  const m = measured.find((x) => x.a <= mid && mid < x.b);
+  return { a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}), ...(m?.junk ? { junk: m.junk } : {}), ...(m?.moves ? { moves: m.moves } : {}) };
+};
+
+/** A source whose shots are the library's shot descriptions (each carries its action): the AI doesn't look at it again. */
+export const logged = (s: IndexSource): boolean => s.shots.length > 0 && s.shots.every((x) => x.action !== undefined);
+
+export { contactSheet, cutsOf, hudOf, junkOf, looks, lookPrompt, parseLooked, readPicture, shotsOf, type Looked, type PictureRead } from "../library/look";
+
+/**
+ * The last look before a shot is used: its frame at `t` s as the shot shows it (a `shape` window at `focus`, else the
+ * whole picture), at the index's scale -> why it is no shot (`junkOf`, or "ui" when more than UI_BRIGHT of it is bright
+ * and colourless: an app window or a document; snow stays well under), "" when fine or unreadable.
+ */
+export async function frameJunk(file: string, t: number, size: { w: number; h: number }, shape: [number, number] | null, focus?: { x: number; y: number }, signal?: AbortSignal): Promise<string> {
+  const buf = await ffmpegSlot(
+    () =>
+      new Promise<Buffer>((resolve) => {
+        const p = spawn(
+          ffmpegCommand(),
+          ["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", Math.max(0, t).toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale='if(gte(iw,ih),256,-2)':'if(gte(iw,ih),-2,256)'", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+          { signal },
+        );
+        const parts: Buffer[] = [];
+        p.stdout.on("data", (d: Buffer) => parts.push(d));
+        p.on("error", () => resolve(Buffer.alloc(0)));
+        p.on("close", () => resolve(Buffer.concat(parts)));
+      }),
+  );
+  if (!buf.length) return "";
+  // the frame is 256 on its long side
+  const [W, H] = size.w >= size.h ? [256, buf.length / 3 / 256] : [buf.length / 3 / 256, 256];
+  if (!Number.isInteger(W) || !Number.isInteger(H)) return "";
+  let [x0, y0, cw, ch] = [0, 0, W, H];
+  if (shape) {
+    const r = shape[0] / shape[1] / (W / H);
+    [cw, ch] = r < 1 ? [Math.round(W * r), H] : [W, Math.round(H / r)];
+    [x0, y0] = [Math.round((W - cw) * (focus?.x ?? 0.5)), Math.round((H - ch) * (focus?.y ?? 0.5))];
+  }
+  const gw = Math.max(4, Math.floor(cw / 4));
+  const gh = Math.max(4, Math.floor(ch / 4));
+  const g = new Float32Array(gw * gh);
+  const ch2 = new Float32Array(gw * gh);
+  let bright = 0;
+  for (let y = 0; y < gh * 4 && y < ch; y++)
+    for (let x = 0; x < gw * 4 && x < cw; x++) {
+      const i = ((y0 + y) * W + x0 + x) * 3;
+      const [r, gr, b] = [buf[i]!, buf[i + 1]!, buf[i + 2]!];
+      const hi = Math.max(r, gr, b);
+      if (hi > 217 && (hi - Math.min(r, gr, b)) / hi < 31 / 255) bright++;
+      const j = Math.floor(y / 4) * gw + Math.floor(x / 4);
+      g[j] += (0.299 * r + 0.587 * gr + 0.114 * b) / 16;
+      ch2[j] += Math.hypot(-0.1687 * r - 0.3313 * gr + 0.5 * b, 0.5 * r - 0.4187 * gr - 0.0813 * b) / 16;
+    }
+  return junkOf(looks(g, gw, gh, ch2)) || (bright / (Math.min(ch, gh * 4) * Math.min(cw, gw * 4)) > UI_BRIGHT ? "ui" : "");
+}
+
+/** A window more than this share bright and colourless is an app window or a document, not a shot */
+const UI_BRIGHT = 0.2;
 
 // ── contact sheets and the person's AI ──────────────────────────────────────────────────────────────────────────
 
 const LABEL = "AI Editor footage";
-/** Tiles a sheet: COLS across, up to ROWS down, one frame (the middle) per shot */
-const COLS = 4;
-const ROWS = 4;
 /** Sheets in one call: a call reads up to SHEETS_PER_CALL × COLS × ROWS shots */
 const SHEETS_PER_CALL = 6;
 /** Sheets per source at most: a longer source has every k-th shot looked at, the rest left without words */
 const MAX_SHEETS = 8;
 
-/**
- * A contact sheet of `src` at `times`, COLS across in reading order, written as a JPEG to `out`. Frames are taken a
- * row at a time (a few seeks per ffmpeg run, one thread each), so a 4K source never holds many decoders at once.
- */
-export async function contactSheet(src: string, times: number[], landscape: boolean, out: string): Promise<void> {
-  const [w, h] = landscape ? [256, 144] : [144, 256];
-  const cell = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w + 8}:${h + 8}:(ow-iw)/2:(oh-ih)/2:white,setsar=1`;
-  const rows: string[] = [];
-  try {
-    for (let r = 0; r * COLS < times.length; r++) {
-      const these = times.slice(r * COLS, (r + 1) * COLS);
-      const args = these.flatMap((t) => ["-threads", "1", "-ss", t.toFixed(3), "-i", src]);
-      // a short row is padded with blank cells so every row is as wide
-      const blanks = COLS - these.length;
-      const graph =
-        these.map((_, j) => `[${j}:v:0]${cell}[f${j}]`).join(";") +
-        (blanks ? `;color=white:s=${w + 8}x${h + 8}:d=1,split=${blanks}${Array.from({ length: blanks }, (_, k) => `[b${k}]`).join("")}` : "") +
-        ";" +
-        [...these.map((_, j) => `[f${j}]`), ...Array.from({ length: blanks }, (_, k) => `[b${k}]`)].join("") +
-        `hstack=inputs=${COLS}`;
-      const row = `${out}.${r}.png`;
-      await ffmpegTo(row, [...args, "-filter_complex", graph, "-frames:v", "1"]);
-      rows.push(row);
-    }
-    const stack = rows.length > 1 ? ["-filter_complex", `vstack=inputs=${rows.length}`] : [];
-    await ffmpegTo(out, [...rows.flatMap((p) => ["-i", p]), ...stack, "-frames:v", "1", "-q:v", "4"]);
-  } finally {
-    await Promise.all(rows.map((p) => rm(p, { force: true })));
-  }
-}
-
-const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 /** One tile of a call: which shot of which source, and its number in the call (from 1). */
 interface Tile {
@@ -309,41 +346,6 @@ interface Sheet {
   tiles: Tile[];
 }
 
-export interface Looked {
-  shots: Record<string, string>;
-  story?: string;
-}
-
-/** The answer: a few words per shot number, and the story when asked. */
-export function parseLooked(text: string): Looked {
-  const o = parseJsonObject(text);
-  const shots: Record<string, string> = {};
-  if (o.shots && typeof o.shots === "object")
-    for (const [k, v] of Object.entries(o.shots as Record<string, unknown>)) if (typeof v === "string" && v.trim()) shots[String(parseInt(k, 10))] = v.trim().slice(0, 200);
-  const story = typeof o.story === "string" && o.story.trim() ? o.story.trim().slice(0, 3000) : undefined;
-  if (!Object.keys(shots).length && !story) throw new Error("The AI described no shot");
-  return { shots, ...(story ? { story } : {}) };
-}
-
-const RULE = 'Never say who anyone is: no names, no guessed ages, no identities; "a person" or "people" is enough.';
-
-export function lookPrompt(lines: string[], story: boolean, workspace = ""): { system: string; user: string } {
-  return {
-    system:
-      "You look at contact sheets of footage for a video editor, so it can pick shots without watching them. For each numbered " +
-      "shot say in a few words what is seen: the subject, the action, the setting and the kind of shot (wide, close, screen, text). " +
-      `${RULE} Answer with JSON only.`,
-    user: [
-      ...(workspace
-        ? [`The workspace the footage is for. Use it to name what is seen (the product, the game, its places and features) when the pictures show it; never add what they don't show:\n${workspace}`]
-        : []),
-      ...lines,
-      story
-        ? 'Answer as {"shots": {"1": "a few words", "2": "…"}, "story": "what happens across all of the footage, in order, told from the pictures alone, in a few sentences"}'
-        : 'Answer as {"shots": {"1": "a few words", "2": "…"}}',
-    ].join("\n\n"),
-  };
-}
 
 /**
  * Fills each shot's `desc` (and the index's `story` when `ai.story`) from the person's own AI looking at contact
@@ -362,7 +364,8 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
   const sheets: Sheet[] = [];
   for (const [si, s] of sources.entries()) {
     const open = s.shots.map((x, i) => (x.desc ? -1 : i)).filter((i) => i >= 0);
-    if (!open.length || (await cached(s.id))?.looked) continue;
+    // the library's shot descriptions are its words already; a source the AI looked at before is not asked again
+    if (!open.length || logged(s) || (await cached(s.id))?.looked) continue;
     const known = libraryWords(s.id);
     if (s.shots.length === 1 && known) {
       s.shots[0]!.desc = known.slice(0, 200);
@@ -419,8 +422,9 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
       for (const si of new Set(batch.map((b) => b.src))) await keep(sources[si]!, !sheets.slice(c + SHEETS_PER_CALL).some((x) => x.src === si));
       if (value.story) story = value.story;
     }
-    // every shot was described before: the story is one question in words alone
-    if (ai.story && !story && !sheets.length) {
+    // every shot was described before: the story is one question in words alone. With the library's lines for every
+    // source the plan reads each line, so no story is asked for
+    if (ai.story && !story && !sheets.length && !sources.filter((s) => s.w > 0 && s.shots.length).every(logged)) {
       const lines = sources.flatMap((s) => s.shots.filter((x) => x.desc).map((x) => `${s.title} ${clock(x.a)}–${clock(x.b)}: ${x.desc}`));
       if (lines.length) {
         const system = `You read shot-by-shot notes of footage for a video editor and tell what happens across it, from the pictures alone. ${RULE} Answer with JSON only.`;

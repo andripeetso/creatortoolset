@@ -195,11 +195,11 @@ export interface UploadRelayView {
  */
 export const KEPT_KINDS = [
   "captions", "review", "notes", "guides", "enhance", "editor", "analyzer", "workshop", "designs",
-  "captions-trash", "review-trash", "library", "chat-pictures", "exports", "chat-videos",
+  "captions-trash", "review-trash", "library", "chat-pictures", "exports", "chat-videos", "look-sheets",
 ] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];
 /** The kinds Empty clears: the trash, and copies no work needs. The rest is the account's work, deleted one by one in its own tool. */
-export const EMPTIED: readonly KeptKind[] = ["captions-trash", "review-trash", "chat-pictures", "exports", "chat-videos"];
+export const EMPTIED: readonly KeptKind[] = ["captions-trash", "review-trash", "chat-pictures", "exports", "chat-videos", "look-sheets"];
 export interface KeptRow {
   kind: KeptKind;
   bytes: number;

@@ -324,32 +324,58 @@ describe("Media Library page", () => {
 
   it("the A-roll and B-roll tabs ask the server for that roll, so the whole library is narrowed", async () => {
     server.items = [clip("talk", { roll: "a" }), clip("cover", { roll: "b" })];
+    server.folders = [
+      { id: "col_a", name: "A-roll", parentId: null, kind: "smart", query: { roll: "a" }, createdBy: "admin" },
+      { id: "col_b", name: "B-roll", parentId: null, kind: "smart", query: { roll: "b" }, createdBy: "admin" },
+    ];
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     const host = await mount();
     expect(host.querySelector('[data-tab="a"]')?.textContent).toBe("A-roll1");
     const b = host.querySelector('[data-tab="b"]') as HTMLButtonElement;
     await act(async () => b.click());
-    expect(host.textContent).toContain("Tiny Acrobatics cover");
-    expect(host.textContent).not.toContain("Tiny Acrobatics talk");
-    expect(server.asked.at(-1)).not.toHaveProperty("unfiled"); // at the top level: from every folder too
+    expect(where()).toBe("?f=col_b"); // the folder, whose saved search the server runs
+    expect(server.asked.at(-1)).toMatchObject({ collectionId: "col_b" });
+    expect(server.asked.at(-1)).not.toHaveProperty("unfiled");
   });
 
-  it("with every clip in a folder the top level still offers A-roll and B-roll, and they reach into the folders", async () => {
+  it("with every clip in a folder the B-roll tab still reaches into the folders", async () => {
     server.items = [clip("talk", { roll: "a" }), clip("cover", { roll: "b" })];
     server.filed = new Set(["talk", "cover"]);
-    server.folders = [{ id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 2, createdBy: "admin" }];
+    server.folders = [
+      { id: "col_a", name: "A-roll", parentId: null, kind: "smart", query: { roll: "a" }, createdBy: "admin" },
+      { id: "col_b", name: "B-roll", parentId: null, kind: "smart", query: { roll: "b" }, createdBy: "admin" },
+      { id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 2, createdBy: "admin" },
+    ];
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     const host = await mount();
     await act(async () => new Promise((r) => setTimeout(r, 0)));
-    expect(host.textContent).not.toContain("Tiny Acrobatics cover"); // filed: not loose at the top
     const b = host.querySelector('[data-tab="b"]') as HTMLButtonElement;
     await act(async () => b.click());
-    expect(host.textContent).toContain("Tiny Acrobatics cover");
-    expect(host.textContent).not.toContain("Tiny Acrobatics talk");
+    expect(where()).toBe("?f=col_b");
+    expect(server.asked.at(-1)).not.toHaveProperty("unfiled");
   });
 
-  it("offers no A-roll or B-roll tab when no clip has been sorted and no such folder exists", async () => {
+  it("offers no A-roll or B-roll tab when no such folder exists, sorted clips or not; a renamed one has its new name", async () => {
+    server.items = [clip("cover", { roll: "b" })];
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     const host = await mount();
     expect(host.querySelector('[data-tab="a"]')).toBeNull();
     expect(host.querySelector('[data-tab="b"]')).toBeNull();
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    server.folders = [{ id: "col_b", name: "Footage", parentId: null, kind: "smart", query: { roll: "b" }, createdBy: "admin" }];
+    const renamed = await mount();
+    expect(renamed.querySelector('[data-tab="b"]')?.textContent).toBe("Footage1");
+  });
+
+  it("the Folders and List views show the folders and no tabs", async () => {
+    server.folders = [
+      { id: "col_a", name: "A-roll", parentId: null, kind: "smart", query: { roll: "a" }, createdBy: "admin" },
+      { id: "col_b", name: "B-roll", parentId: null, kind: "smart", query: { roll: "b" }, createdBy: "admin" },
+    ];
+    const host = await mount();
+    expect(host.querySelector('nav[aria-label="Library tabs"]')).toBeNull();
+    expect(host.querySelector('a[href="/library?f=col_b"]')).not.toBeNull();
   });
 
   it("a clip being prepared says so until its picture comes, with no amber", async () => {
@@ -399,14 +425,20 @@ describe("Media Library folders", () => {
 
   it("a folder opens from the address under its tab, a folder inside it with the trail back up; a clip dropped on one moves there", async () => {
     server.folders = folders;
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     const nested = await mount("/library?f=col_b");
     expect(nested.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyTripBeach");
     expect(nested.querySelector('[data-tab="col_t"]')?.getAttribute("aria-current")).toBe("page");
     act(() => root?.unmount());
     document.body.innerHTML = "";
+    const tabbed = await mount("/library?f=col_t");
+    expect(tabbed.querySelector('[data-tab="col_t"]')?.getAttribute("aria-current")).toBe("page");
+    expect(tabbed.querySelector('nav[aria-label="Folder"]')).toBeNull(); // the tab says where
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    localStorage.setItem("library:view", "folders"); // no tabs: the trail says where, the folders inside are cards
     const host = await mount("/library?f=col_t");
-    expect(host.querySelector('[data-tab="col_t"]')?.getAttribute("aria-current")).toBe("page");
-    expect(host.querySelector('nav[aria-label="Folder"]')).toBeNull(); // the tab says where
+    expect(host.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyTrip");
     expect(link(host, "Beach")).toBeDefined();
     expect(link(host, "Apples")).toBeUndefined();
     expect(server.asked.at(-1)).toMatchObject({ collectionId: "col_t" });
@@ -571,6 +603,7 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
   });
 
   it("the tabs are All, A-roll, B-roll, Photos, then the top folders, with counts", async () => {
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;
     server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
     const host = await mount();
@@ -581,14 +614,15 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(where()).toBe("?f=col_a");
   });
 
-  it("a clip moved onto a folder's tab leaves at once; Undo puts it back at once, then asks the server", async () => {
+  it("a clip moved onto a folder's tab stays in the Gallery's All; Undo takes it back out, then asks the server", async () => {
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;
     server.items = [clip("one"), clip("two")];
     const host = await mount();
     let answer!: () => void;
     server.gate = new Promise((r) => (answer = r));
     await act(async () => dropOn(tab(host, "col_m")!, "one"));
-    expect(host.textContent).not.toContain("Tiny Acrobatics one"); // before the server has answered
+    expect(host.textContent).toContain("Tiny Acrobatics one"); // All shows every clip, filed or not
     act(() => void undoLatest());
     expect(host.textContent).toContain("Tiny Acrobatics one");
     answer();
@@ -601,6 +635,7 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
   });
 
   it("a clip dropped on the B-roll tab is filed so, and Undo files it as nothing again; a photo is never sent", async () => {
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;
     server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
     const host = await mount();
@@ -627,6 +662,7 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
   });
 
   it("a folder's tab menu deletes it at once and Undo brings it back", async () => {
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;
     const host = await mount();
     await act(async () => void rightClick(tab(host, "col_m")!));
@@ -653,6 +689,7 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
   });
 
   it("a library given to look at has no Upload, New folder, Trash, page menu or drops", async () => {
+    localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.readOnly = true;
     server.folders = folders;
     const host = await mount();

@@ -27,7 +27,7 @@ vi.mock("@/components/settings/ui", async (orig) => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, embed: true, proxy: true, upload: "none" } };
+const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, look: true, embed: true, proxy: true, upload: "none" } };
 const watch = { allowed: false, folders: [], missing: 0 };
 const patches: unknown[] = [];
 

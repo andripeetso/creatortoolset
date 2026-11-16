@@ -100,6 +100,7 @@ private let verbs = [
     "comment": "commented on", "reply": "replied on", "approved": "approved", "changes": "requested changes on",
     "version": "uploaded a new version of", "ready": "made a cut for your review:", "producing": "started producing",
     "delivered": "delivered", "workshop": "finished a turn in", "failed": "could not finish a job in",
+    "waiting": "is still waiting on",
 ]
 
 func noteTitle(_ note: ReviewNote) -> String {

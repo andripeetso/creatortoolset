@@ -12,6 +12,9 @@ import type { EditStepChoice } from "./editor-steps";
  *   DELETE /api/editor/styles/:id      → { ok: true }
  *   GET    /api/editor/styles/:id/finished            → FinishedEdit[] (newest first)
  *   DELETE /api/editor/styles/:id/finished/:editId    → { ok: true }; that edit is never kept for the style again
+ *   DELETE /api/editor/styles/:id/learned/:editId     → { ok: true }; what that approved edit taught the style goes
+ * A `playbook` sent with POST or PUT is marked by the route: an AI's tool or key writes `by: "ai"`, the person's own screen
+ * `by: "person"`, and an AI can't replace or take off one that is the person's. null takes it off.
  *   POST   /api/editor/styles/asked    New edit's "How do you like to work?" was answered: it is not shown again → { ok: true }
  * POST /api/editor and PATCH /api/editor/:id take `style`: a style's id, or null for none.
  * A POST /api/editor/styles with `first: true` (that screen's button) also makes the style the one New edit opens on.
@@ -75,6 +78,12 @@ export interface EditingStyle {
   size?: WorkingSize | null;
   /** edit in passes: the first cut, then the B-roll, then the cards, each waits in Review for Carry on (POST /api/editor/:id/pass) */
   passes?: boolean;
+  /** what this kind of edit is, researched by the AI before the first edit in the style; marked as researched, the person's to edit or delete */
+  playbook?: StylePlaybook | null;
+  /** what finished edits in the style taught, newest first, at most LEARNED_MAX */
+  learned?: StyleLearned[];
+  /** edits whose learned entry the person removed: approving one of them again teaches the style nothing */
+  unlearned?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -205,3 +214,46 @@ export interface FinishedEdit {
   /** the spoken words of lines the script step planned for this version and the person took out */
   cut: string[];
 }
+
+// ── a style that learns (tasks/flywheel/PLAN.md stage 5) ───────────────────────────────────────────────────────────
+
+/** Characters of a researched playbook. */
+export const PLAYBOOK_MAX = 6000;
+/** Finished edits a style keeps what they taught from. */
+export const LEARNED_MAX = 12;
+/** Characters of the person's own lines from finished edits that one prompt gets (newest first, the edit's own workspace only). */
+export const LEARNED_PROMPT_MAX = 2000;
+
+/**
+ * What a kind of edit is, written by the AI from research (the web, example videos) the first time the style is used:
+ * its structure, its pace in numbers, its effects in the renderer's own names, what makes it fail, and where that came
+ * from. Shown as "Researched"; once the person edits it, it is theirs (`by: "person"`). Kept apart from `notes`, which
+ * stay the person's own words.
+ */
+export interface StylePlaybook {
+  text: string;
+  sources: { title: string; url: string }[];
+  at: number;
+  by: "ai" | "person";
+}
+
+/**
+ * What one finished edit in the style taught, kept when its maker approved it: their feedback on its versions word for
+ * word (EditFeedback.text), numbers measured by code from the approved cut, and how many rounds it took. Read as
+ * examples of their taste, never as rules; a planner reads only the entries from the edit's own workspace.
+ */
+export interface StyleLearned {
+  editId: string;
+  workspaceId: string;
+  at: number;
+  /** versions made after the first before the approval */
+  rounds: number;
+  notes: string[];
+  cut: { seconds: number; shots: number; avgShotS: number; fxPerShot: number; sourcesUsed: number };
+}
+
+const many = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+/** One approved cut's numbers, as the style's page shows them and a prompt reads them: "25 s, 38 shots, 0.66 s a shot, 9 sources". */
+export const cutLine = (c: StyleLearned["cut"]): string =>
+  [`${c.seconds} s`, many(c.shots, "shot"), `${c.avgShotS} s a shot`, c.fxPerShot > 0 && `${c.fxPerShot} effects a shot`, many(c.sourcesUsed, "source")].filter(Boolean).join(", ");

@@ -109,6 +109,7 @@ describe("AI Editor script: the prompt", () => {
     const input = { sentences, titles: { ver_a: "Take A", ver_b: "Take B" }, brief: "", script: "", versions: 1, targetS: 30 };
     const plain = scriptPrompt(input);
     expect(scriptPrompt({ ...input, packText: "" })).toEqual(plain);
+    expect(scriptPrompt({ ...input, notes: [] })).toEqual(plain);
     expect(scriptPrompt({ ...input, packText: "PACK-SCRIPT-ZQ" }).system).toBe(`${plain.system}\n\nPACK-SCRIPT-ZQ`);
   });
 });
@@ -135,6 +136,24 @@ describe("AI Editor script: the step", () => {
     vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, _u, _c, parse) => parse(JSON.stringify(answer)));
     expect(await runScript()).toEqual({ state: "done", error: null });
     expect(readEdit(editId)!.name).toBe("Crawlers");
+  });
+
+  it("reads the person's notes on its versions word for word, oldest first, as the shot-list revise does", async () => {
+    await saveEdit({
+      ...readEdit(editId)!,
+      feedback: [
+        { at: 1, from: "chat", variant: "v1", text: "Too slow at the start.\nOpen on the question.", by: "mem-a" },
+        { at: 2, from: "review", variant: "v1", t: 4, text: 'Cut the "um" here', by: "mem-a" },
+      ],
+    });
+    let user = "";
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, u, _c, parse) => ((user = u), parse(JSON.stringify(answer))));
+    expect(await runScript()).toEqual({ state: "done", error: null });
+    expect(user).toContain(
+      'What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n- In chat about v1: "Too slow at the start.\\nOpen on the question."\n- In Review on v1 at 4.0 s: "Cut the \\"um\\" here"\n\nSources:',
+    );
+    await saveEdit({ ...readEdit(editId)!, feedback: [] });
   });
 
   it("with no AI route parks as needs_key with aiFor's own message", async () => {

@@ -32,7 +32,7 @@ const STATUS_BAR: Record<string, string> = {
   shelved: "bg-zinc-700",
 };
 
-function Row({ r, active, n }: { r: SessionSummary; active: boolean; n?: number }) {
+function Row({ r, active, n, readOnly }: { r: SessionSummary; active: boolean; n?: number; readOnly?: boolean }) {
   // Rows: a reply you haven't looked at reads bright with a green Done; the rest stay quiet
   const unseen = r.ready && !r.working;
   // double-click renames in place
@@ -75,7 +75,7 @@ function Row({ r, active, n }: { r: SessionSummary; active: boolean; n?: number 
       }}
       onDoubleClick={(e) => {
         e.preventDefault();
-        setEditing(true);
+        if (!readOnly) setEditing(true);
       }}
       className={`group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] ${active ? "bg-zinc-800 text-zinc-50" : unseen ? "text-zinc-50 hover:bg-zinc-800/60" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100"}`}
       title={`${r.title}${n ? `  ⌘${n}` : ""} · double-click to rename`}
@@ -97,13 +97,13 @@ function Row({ r, active, n }: { r: SessionSummary; active: boolean; n?: number 
       )}
     </Link>
     {menu ? (
-      <SessionMenu id={r.id} title={r.title} status={r.status} pinned={r.pinned} open={active} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onRename={() => setEditing(true)} />
+      <SessionMenu id={r.id} title={r.title} status={r.status} pinned={r.pinned} open={active} readOnly={readOnly} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onRename={() => setEditing(true)} />
     ) : null}
     </>
   );
 }
 
-function Group({ label, rows, active, numbers, foldKey, foldDefault }: { label: string; rows: SessionSummary[]; active?: string; numbers: Map<string, number>; foldKey?: string; foldDefault?: boolean }) {
+function Group({ label, rows, active, numbers, foldKey, foldDefault, readOnly }: { label: string; rows: SessionSummary[]; active?: string; numbers: Map<string, number>; foldKey?: string; foldDefault?: boolean; readOnly?: boolean }) {
   const [open, setOpen] = useState(() => (foldKey ? (localStorage.getItem(foldKey) ?? (foldDefault ? "open" : "closed")) === "open" : true));
   if (!rows.length) return null;
   return (
@@ -123,12 +123,12 @@ function Group({ label, rows, active, numbers, foldKey, foldDefault }: { label: 
       ) : (
         <p className="px-2 pb-1 text-[11px] font-medium text-zinc-500">{label}</p>
       )}
-      {open && rows.map((r) => <Row key={r.id} r={r} active={r.id === active} n={numbers.get(r.id)} />)}
+      {open && rows.map((r) => <Row key={r.id} r={r} active={r.id === active} n={numbers.get(r.id)} readOnly={readOnly} />)}
     </div>
   );
 }
 
-export function WorkshopSidebar({ activeId, title }: { activeId?: string; title: string }) {
+export function WorkshopSidebar({ activeId, title, readOnly }: { activeId?: string; title: string; readOnly?: boolean }) {
   // the rows saved on this device paint at once and stay live (lib/workshop-summary)
   const all = useSessionSummaries();
   const navigate = useNavigate();
@@ -243,7 +243,7 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
             </div>
           ) : null}
         </span>
-        <button
+        {!readOnly && <button
           type="button"
           disabled={making}
           onClick={() => {
@@ -260,7 +260,7 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
           aria-label="New project"
         >
           {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <SquarePen className="h-4 w-4" />}
-        </button>
+        </button>}
         <button type="button" onClick={() => (localStorage.setItem("workshop:sidebar", "closed"), setCollapsed(true))} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" title="Hide projects" aria-label="Hide projects">
           <PanelLeftClose className="h-4 w-4" />
         </button>
@@ -274,11 +274,11 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
             ))}
           </div>
         ) : null}
-        <Group label="Pinned" rows={g.pinned} active={activeId} numbers={numbers} />
-        <Group label="Ideas & writing" rows={g.writing} active={activeId} numbers={numbers} />
-        <Group label="Ready & in production" rows={g.making} active={activeId} numbers={numbers} foldKey="workshop:side-production" foldDefault />
-        <Group label="Published" rows={g.published} active={activeId} numbers={numbers} foldKey="workshop:side-published" />
-        <Group label="Shelved" rows={g.shelved} active={activeId} numbers={numbers} foldKey="workshop:side-shelved" />
+        <Group label="Pinned" rows={g.pinned} active={activeId} numbers={numbers} readOnly={readOnly} />
+        <Group label="Ideas & writing" rows={g.writing} active={activeId} numbers={numbers} readOnly={readOnly} />
+        <Group label="Ready & in production" rows={g.making} active={activeId} numbers={numbers} foldKey="workshop:side-production" foldDefault readOnly={readOnly} />
+        <Group label="Published" rows={g.published} active={activeId} numbers={numbers} foldKey="workshop:side-published" readOnly={readOnly} />
+        <Group label="Shelved" rows={g.shelved} active={activeId} numbers={numbers} foldKey="workshop:side-shelved" readOnly={readOnly} />
       </nav>
       {finding ? <Finder rows={order} onClose={() => setFinding(false)} /> : null}
     </aside>

@@ -138,7 +138,12 @@ export async function sortUnsorted(db: DatabaseSync = libraryDb()): Promise<numb
 /** The roll a smart folder lists, when its saved query is a roll and nothing else (the A-roll folder). */
 export function rollFolder(db: DatabaseSync, libraryId: string, collectionId: string): Roll | null {
   const row = db.prepare("SELECT query FROM collections WHERE id = ? AND library_id = ? AND kind = 'smart'").get(collectionId, libraryId) as { query: string | null } | undefined;
-  const q = row?.query ? (JSON.parse(row.query) as Record<string, unknown>) : null;
+  return rollOf(row?.query);
+}
+
+/** The roll a saved search's stored query lists when it is a roll and nothing else (the A-roll and B-roll folders). */
+export function rollOf(query: string | null | undefined): Roll | null {
+  const q = query ? (JSON.parse(query) as Record<string, unknown>) : null;
   return q && Object.keys(q).length === 1 && (q.roll === "a" || q.roll === "b") ? q.roll : null;
 }
 

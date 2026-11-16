@@ -1,5 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { CARDS_DRAW_KIND, type DeviceJob } from "../../contracts/devices";
+import { isLimitLine, limitLine } from "../../contracts/plans";
+import { AiProviderError } from "../ai-complete";
+import { MacClaudeError } from "../lib/mac-claude";
 import { isOnline } from "../lib/devices";
 import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
@@ -11,7 +14,7 @@ import { scriptThrew } from "./cards/device";
 import { editStopped, runEnded } from "./ended";
 import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
 import { passesDone } from "./passes";
-import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
+import { purgeEdits, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 export type { StepContext } from "./engine";
 
@@ -57,7 +60,8 @@ export function releaseRunningSteps(now = Date.now()): void {
 
 /** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
 function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
-  if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT, passesDone(edit.id, variant))) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
+  const due = job.kind === "preview" && !!readDraft(edit.id, variant)?.due;
+  if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT, passesDone(edit.id, variant), due)) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
 }
 
 /** "<editId>:<variant>" split: the variant is "" for a whole-edit step. */
@@ -65,6 +69,24 @@ function splitVersion(job: JobRow): { editId: string; variant: string } {
   const vid = job.version_id ?? "";
   const cut = vid.indexOf(":");
   return { editId: vid.slice(0, cut), variant: vid.slice(cut + 1) };
+}
+
+/** A limit with no reset time given waits this long (seconds). */
+export const LIMIT_WAIT_S = 15 * 60;
+
+/**
+ * A usage limit or rate limit anywhere in the error's causes: how long until it opens again (its reset time, else
+ * LIMIT_WAIT_S) and the line said beside the step. Null for any other error.
+ */
+export function limitWait(e: unknown, now = Date.now()): { seconds: number; line: string } | null {
+  for (let x: unknown = e, depth = 0; x && depth < 5; x = (x as { cause?: unknown }).cause, depth++) {
+    const until = (x as { limited?: { until: number | null } }).limited?.until;
+    const limit = (x as { limited?: unknown }).limited || (x instanceof MacClaudeError && x.kind === "limit") || (x instanceof AiProviderError && x.code === "RATE_LIMIT");
+    if (!limit) continue;
+    const message = x instanceof Error ? x.message : "";
+    return { seconds: until && until > now ? Math.ceil((until - now) / 1000) : LIMIT_WAIT_S, line: isLimitLine(message) ? limitLine(message) : "The AI's usage limit is reached: it carries on when it opens again" };
+  }
+  return null;
 }
 
 /** Runs one queued step, if there is one. Returns false when the queue is empty. */
@@ -108,7 +130,17 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
     queueNext(db, job, edit, variant);
   } catch (e) {
     if (ctl.signal.aborted) return true;
-    if (e instanceof Waiting) return defer(db, job.id, e.seconds, now, T), true; // still going: it runs again in e.seconds
+    if (e instanceof Waiting) {
+      // still going: it runs again in e.seconds, its line beside the step says what it waits for
+      if (e.line) db.prepare(`UPDATE ${T} SET error = ? WHERE id = ?`).run(e.line, job.id);
+      return defer(db, job.id, e.seconds, now, T), true;
+    }
+    const hold = limitWait(e, now);
+    if (hold) {
+      // a usage limit is a wait, not a failed try: it runs again when the limit opens (PLAN.md 3.3)
+      db.prepare(`UPDATE ${T} SET error = ? WHERE id = ?`).run(hold.line, job.id);
+      return defer(db, job.id, hold.seconds, now, T), true;
+    }
     if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
     else finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Date.now(), T);
   } finally {

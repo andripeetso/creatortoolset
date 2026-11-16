@@ -167,7 +167,7 @@ describe("projects kept apart", () => {
     expect(got!.chars).toBeGreaterThan(0);
     expect(existsSync(ws("sources", first.id))).toBe(false);
   });
-  it("a dropped folder: Write it for me reads its files whole and files them; saving keeps them as one source of the project's own, a section a file", async () => {
+  it("a dropped folder: Write it for me reads its files whole and files them; saving keeps each as its own source of the project", async () => {
     const files = [
       { name: "kit/README.md", text: "Read the rules first." },
       { name: "kit/rules/copy.md", text: "Say 1x.\nUse the shop's own coin name." },
@@ -193,20 +193,53 @@ describe("projects kept apart", () => {
     expect(asked!.user).toContain("- kit/privacy.md");
 
     const kept = draft.files.filter((f) => f.keep).map((f) => ({ ...files.find((x) => x.name === f.file)!, about: f.about }));
-    const made = (await (await call("POST", "/api/workshop/sources", { name: "kit", files: kept, projectId: tiny })).json()) as Record<string, unknown>;
-    // filed by the draft: no second read
-    expect(made).toMatchObject({ status: "read", projectId: tiny, sections: [{ title: "kit/README.md", about: "Where to start." }, { title: "kit/rules/copy.md", about: "The copy rules." }] });
+    const made = (await (await call("POST", "/api/workshop/sources", { name: "kit", files: kept, projectId: tiny })).json()) as Array<Record<string, unknown>>;
+    // each file its own source, by its path; filed by the draft: no second read
+    expect(made).toMatchObject([
+      { name: "kit/README.md", status: "read", projectId: tiny, about: "Where to start." },
+      { name: "kit/rules/copy.md", status: "read", projectId: tiny, about: "The copy rules." },
+    ]);
     const t = session("Launch", tiny);
     const folder = await folderOf(t.id, t.docId);
     // each kept file at its own path in the writer's folder, as the instructions name it
     expect(folder["context/kit/rules/copy.md"]).toBe("Say 1x.\nUse the shop's own coin name.");
     expect(folder["context/kit/privacy.md"]).toBeUndefined();
     expect(folder["context/kit"]).toBeUndefined();
-    expect(folder["context/INDEX.md"]).toContain("## context/kit/rules/copy.md\nThe copy rules.");
+    expect(folder["context/INDEX.md"]).toMatch(/## context\/kit\/rules\/copy\.md\n.*\nThe copy rules\./);
     // another brand never reads it
     const hh = (await (await call("GET", "/api/workshop/projects")).json() as Array<{ id: string; name: string }>).find((p) => p.name === "Quiet Garden")!;
     const other = session("Elsewhere", hh.id);
     expect((await folderOf(other.id, other.docId))["context/kit/rules/copy.md"]).toBeUndefined();
   });
-});
 
+  it("a folder kept as one source splits into its files; a limit leaves one waiting, no error; the inbox hears when all are read", async () => {
+    const id = uuid();
+    const text = "# brandkit/a.md\n\nalpha\n\n# brandkit/b.md\n\nbeta";
+    writeFileSync(ws("sources", `${id}.json`), JSON.stringify({ id, owner: "alex", name: "brandkit", chars: text.length, status: "failed", error: "API Error: Request rejected (429)", createdAt: 5, updatedAt: 5 }));
+    writeFileSync(ws("sources", `${id}.txt`), text);
+    const ai = vi.mocked(completeWithFallback);
+    ai.mockImplementationOnce(async () => {
+      throw new Error("Claude on the Mac: Claude: API Error: Request rejected (429) · rate_limit_error (reset after 2h25m50s)");
+    });
+    type Row = { id: string; name: string; status: string; waitUntil?: number; error?: string };
+    const rows = async () => ((await (await call("GET", "/api/workshop/sources")).json()) as Row[]).filter((x) => x.name.startsWith("brandkit"));
+    let got: Row[] = [];
+    for (let i = 0; i < 100 && !got.some((x) => x.waitUntil); i++) {
+      got = await rows();
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    expect(got.map((x) => x.name)).toEqual(["brandkit/a.md", "brandkit/b.md"]);
+    expect(existsSync(ws("sources", `${id}.txt`))).toBe(false);
+    const waiting = got.find((x) => x.waitUntil)!;
+    expect(waiting).toMatchObject({ status: "queued" });
+    expect(waiting.error).toBeUndefined();
+    expect(waiting.waitUntil! - Date.now()).toBeGreaterThan(2 * 3600_000);
+    // Read again after the reset (here: by hand): both read, one note
+    for (const r of got) await call("POST", `/api/workshop/sources/${r.id}/read`);
+    for (let i = 0; i < 100 && !got.every((x) => x.status === "read"); i++) {
+      await new Promise((res) => setTimeout(res, 10));
+      got = await rows();
+    }
+    expect(got.every((x) => x.status === "read")).toBe(true);
+  });
+});

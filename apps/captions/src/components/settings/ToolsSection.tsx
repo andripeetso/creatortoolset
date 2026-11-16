@@ -21,7 +21,7 @@ import { RecorderSettings } from "./RecorderSettings";
 import { toolSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { PublishButton } from "@/components/community/PublishDialog";
-import { Card, LoadingRow, Section, Status, saveFailed } from "./ui";
+import { Card, Folded, LoadingRow, Section, Status, saveFailed } from "./ui";
 
 /** The hidden list after one tile's switch changes: on removes it from the list, off adds it. */
 export function hiddenAfter(hidden: readonly HomeTile[], tile: HomeTile, on: boolean): HomeTile[] {
@@ -74,8 +74,8 @@ function useHomeSwitches() {
 /** The skill places that are part of a tool (the assistant's are no tool's: Community → Skills has them). */
 export const skillPlacesOf = (t: HomeTile): SkillPlace[] => SKILL_PLACES.filter((p): p is PackSkillSlot | "workshop.write" => p !== "assistant" && SLOT_TOOL[p] === t);
 
-/** Community has something to add to a tool: packs and skills have a place in it, or a plug-in names it. */
-export const canAddTo = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
+/** Community has something to add to a tool: packs and skills have a place in it, or a plug-in adds a step to it. */
+export const canAddTo = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0;
 
 /** One tile's Home switch, with one amber line per thing it is missing and the button that goes where it is fixed. */
 function TileRow({ tile: t, have, shown, onChange, head }: { tile: HomeTile; have: readonly Have[]; shown: boolean; onChange: (on: boolean) => void; head: ReactNode }) {
@@ -154,10 +154,11 @@ function ToolsList() {
 }
 
 /**
- * Settings → Tools → <tool>: everything added to one tool, in one place. Its Home switch, the plug-ins that add to it (an
- * AI Editor step with its switch for new edits and options, on the Mac app's own server) and their own sections (a
- * plug-in section with `tool`), the installed packs that reach it, its skills by place, and the way to Community's
- * section for it.
+ * Settings → Tools → <tool>: everything about one tool, folded so the page reads as a short list (owner, 2026-11-15: "way
+ * too cluttered… hidden underneath trigger boxes… super unified"). On top its Home switch with what it is missing; then
+ * one closed fold per settings section (the Screen Recorder's Recording, each plug-in section that names the tool, under
+ * its title); last one fold for what Community adds to it: its plug-ins (an AI Editor step with its switch for new edits
+ * and options, on the Mac app's own server), its installed packs, its skills by place and Get more.
  */
 function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; recorder: boolean }) {
   const me = useMe();
@@ -168,40 +169,38 @@ function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; rec
   const mine = (packs.data ?? []).filter((p) => reachesTool(containsOf(p), tile));
   const places = skillPlacesOf(tile);
   return (
-    <>
-      <Section title="Shown on Home">
-        <Card>{view ? <TileRow tile={tile} have={view.have} shown={!hidden.includes(tile)} onChange={(on) => set(tile, on)} head={<div className="min-w-0 flex-1 text-sm text-muted-foreground">{HOME_TILE_LINES[tile]}</div>} /> : <LoadingRow />}</Card>
-      </Section>
+    <div className="space-y-3">
+      <Card>{view ? <TileRow tile={tile} have={view.have} shown={!hidden.includes(tile)} onChange={(on) => set(tile, on)} head={<div className="min-w-0 flex-1 text-sm font-medium text-foreground">Show on Home</div>} /> : <LoadingRow />}</Card>
       {tile === "record" && recorder && (
-        <Section title="Recording">
+        <Folded title="Recording">
           <RecorderSettings />
-        </Section>
+        </Folded>
       )}
-      <ToolPlugins steps={steps} tool={tile} switches={tile === "editor" && hasThisMac() && !hosted} />
       {toolSectionsFor(me, webPlugins, tile).map((s) => (
-        <Section key={s.id} title={s.title}>
+        <Folded key={s.id} title={s.title}>
           {s.body}
-        </Section>
+        </Folded>
       ))}
-      {mine.length > 0 && (
-        <Section title="Packs">
-          <Card>
-            {mine.map((p) => (
-              <div key={p.id} className="[&>*+*]:border-t [&>*+*]:border-border/50">
-                <PackRow pack={p} reload={() => packs.refresh().then(() => undefined)} />
-              </div>
-            ))}
-          </Card>
-        </Section>
-      )}
-      {places.length > 0 && <SkillsView places={places} title={(p) => `Skills for ${slotSpot(p as PackSlot)}`} />}
       {canAddTo(tile, steps.view) && (
-        <div>
-          <Button asChild size="sm" variant="outline">
-            <Link to={`/community/tool/${tile}`}>Get more for {name}</Link>
-          </Button>
-        </div>
+        <Folded title="Plug-ins, packs and skills">
+          <ToolPlugins steps={steps} tool={tile} switches={tile === "editor" && hasThisMac() && !hosted} />
+          {mine.length > 0 && (
+            <Section title="Packs">
+              <Card>
+                {mine.map((p) => (
+                  <PackRow key={p.id} pack={p} reload={() => packs.refresh().then(() => undefined)} />
+                ))}
+              </Card>
+            </Section>
+          )}
+          {places.length > 0 && <SkillsView places={places} title={(p) => `Skills for ${slotSpot(p as PackSlot)}`} />}
+          <div className="px-3 py-3 sm:px-4">
+            <Button asChild size="sm" variant="outline">
+              <Link to={`/community/tool/${tile}`}>Get more for {name}</Link>
+            </Button>
+          </div>
+        </Folded>
       )}
-    </>
+    </div>
   );
 }

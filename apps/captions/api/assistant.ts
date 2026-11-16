@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { workspaceContext } from "./lib/workshop/context";
+import { footageProfile, workspaceContext } from "./lib/workshop/context";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -73,7 +73,7 @@ You act in the app only through its tools (the creator-toolset MCP server):
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.
 - media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, and media_share makes a share link for a clip or a folder.
 - design_get, design_make and design_update: the Designer's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers the user edits by hand. You design them yourself, and you are shown each frame as it is drawn. On /design/<id> that id is the design, and the line "Picked:" on screen names the frame and layers the user has picked, by id.
-- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the footage's version ids (talking takes with the script and a B-roll folder, or any clips and a song, cut to the brief) and starts it. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking.
+- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the footage's version ids (talking takes with the script and a B-roll folder, or any clips and a song, cut to the brief) and starts it. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking. The user's notes on a cut go to editor_feedback in their own words, never into the brief: the next version is made from the last one. A kind of edit (a hard edit, a recap, a trailer…) uses its saved style (editor_style_use) or a new one named for it (editor_style_save); a style with no playbook gets one researched and saved first, if you can. An edit waits while the Media Library still describes its footage; when the user says to cut it now, editor_run with now=true. When editor_get lists left_out, say that first.
 - A cut or video in Review that the user turns down in the chat (it is wrong, bad, not what they asked for), set it to rejected with review_set_approval before anything else, and to changes when they ask for fixes to it instead; approved when they say it is good. Their answer is the review: never leave it waiting for their review.
 - Where the install has them: finals_pieces lists the user's Finals (finished pieces, each with versions and a winner) and gives the ids finals_piece_update, finals_piece_trash and finals_link_session take.
 - schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
@@ -132,13 +132,18 @@ const CONTEXT_MAX = 8000;
 
 /**
  * The turn's workspace in its memory: its folders (above), then its context, the instructions and what each file added
- * to it is (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking.
+ * to it is (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking; then
+ * what footage it holds and what was finished in it (footageProfile, finishedProfile), when there is any.
  */
 export async function workspaceNote(username: string, workspace?: string): Promise<string> {
   const context = await workspaceContext(workspace, CONTEXT_MAX);
+  // read when asked, as footageProfile reads the library: the editor's styles load the plug-in registry
+  const { finishedProfile } = await import("./editor/styles");
+  const profile = [await footageProfile(workspace), finishedProfile(username, workspace ?? "")].filter(Boolean).join("\n");
   return (
     (await foldersNote(username, workspace)) +
-    (context ? `\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\n${context}` : "")
+    (context ? `\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\n${context}` : "") +
+    (profile ? `\n\n${profile}` : "")
   );
 }
 

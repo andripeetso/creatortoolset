@@ -20,7 +20,7 @@ import { SourceReader } from "@/components/workshop/SourceReader";
 import { SourceResultCard } from "@/components/workshop/SourceResultCard";
 import { SourceSearch, type BrowseOrder } from "@/components/workshop/SourceSearch";
 import { workshopUsesByPost } from "@/components/instagram/PostCard";
-import { canUse, useMe } from "@/lib/auth";
+import { canChange, canUse, useMe } from "@/lib/auth";
 import { itemActionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { accountPathFor, addAccount, analyzerHome, findPosts, getPost, ingestPosts, recipeFromPreset, isOwnPost, listAccounts, listPosts, mediaUrl, mineAccount, patchPostResearch, type FindHit, type FindResult, type InstagramAccount, type InstagramPost, type PostKind, type SavedFor } from "@/lib/instagram";
@@ -121,6 +121,8 @@ function Ghost({ className }: { className: string }) {
 export default function WorkshopSessionPage() {
   const { sessionId = "" } = useParams();
   const me = useMe();
+  // Read on this app: the page shows the project and changes nothing (the server refuses those requests too)
+  const readOnly = !canChange(me, "workshop");
   // buttons a plug-in puts on a session (itemActions.session in its web.tsx), gated per account
   const sessionActions = useMemo(() => itemActionsFor(me, webPlugins, "session"), [me]);
   const allowed = canUse(me, "workshop");
@@ -375,7 +377,7 @@ export default function WorkshopSessionPage() {
   // reply here marks it seen, so its dot goes everywhere.
   const latestReply = [...messages].reverse().find((m) => m.role === "assistant");
   useEffect(() => {
-    if (!sessionId || !latestReply || latestReply.status === "thinking") return;
+    if (!sessionId || readOnly || !latestReply || latestReply.status === "thinking") return;
     const look = () => document.visibilityState === "visible" && markSeen(sessionId, latestReply.id);
     look();
     document.addEventListener("visibilitychange", look);
@@ -922,7 +924,7 @@ export default function WorkshopSessionPage() {
         .finally(() => {
           if (!stopped) setSearching(false);
         });
-      if (sessionId) patchSession(sessionId, { query: q.slice(0, 200) }).catch(() => {});
+      if (sessionId && !readOnly) patchSession(sessionId, { query: q.slice(0, 200) }).catch(() => {});
     }, 300);
     return () => {
       stopped = true;
@@ -1051,14 +1053,15 @@ export default function WorkshopSessionPage() {
               requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur());
             }
           }}
+          readOnly={readOnly}
           placeholder="Project title"
           className="col-start-1 row-start-1 w-full min-w-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-violet-500"
         />
         </span>
         }
       >
-        {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} /> : null}
-        {session ? <SessionStatusSelect value={session.status} onChange={setStatus} /> : <Ghost className="h-8 w-[107px]" />}
+        {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} readOnly={readOnly} /> : null}
+        {session ? <SessionStatusSelect value={session.status} onChange={setStatus} readOnly={readOnly} /> : <Ghost className="h-8 w-[107px]" />}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
         {!chatMode && <DeskControls layout={desk} onChange={setDesk} />}
@@ -1085,6 +1088,7 @@ export default function WorkshopSessionPage() {
         {session ? (
           <SharePopover
             sessionId={session.id}
+            readOnly={readOnly}
             title={session.title}
             onStatus={(status) => setSession((s) => (s ? { ...s, status } : s))}
             className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1092,7 +1096,7 @@ export default function WorkshopSessionPage() {
         ) : (
           <Ghost className="w-16" />
         )}
-        {session
+        {session && !readOnly
           ? sessionActions.map((a) => (
               <button
                 key={a.label}
@@ -1108,7 +1112,7 @@ export default function WorkshopSessionPage() {
       </AppBar>
 
       <div className="flex min-h-0 flex-1">
-      {!chatMode && !desk.focus && <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />}
+      {!chatMode && !desk.focus && <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} readOnly={readOnly} />}
       {pageError ? (
         // not theirs: the team owner's project in a workspace given to them opens to read (WorkshopShareView `src`)
         <TeamRead id={sessionId} fallback={<p className="p-6 text-sm text-red-300">{pageError}</p>} />
@@ -1137,7 +1141,7 @@ export default function WorkshopSessionPage() {
                     <span className="font-medium text-foreground">{peekInSession ? "This project’s sources" : "From Browse"}</span>
                     {peekAt >= 0 ? <span className="tabular-nums">{peekAt + 1} / {peekList.length}</span> : null}
                     <span className="text-[11px]">← → to step through · Esc to close</span>
-                    {selectedIds.includes(peek.id) ? (
+                    {readOnly ? null : selectedIds.includes(peek.id) ? (
                       <span className="ml-auto rounded-md border border-emerald-500/40 px-2 py-0.5 text-emerald-300">In this project</span>
                     ) : (
                       <button type="button" disabled={posts.length >= MAX_SESSION_SOURCES} onClick={() => toggle(peek)} className="ml-auto rounded-md bg-violet-600 px-2.5 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-50">
@@ -1158,10 +1162,10 @@ export default function WorkshopSessionPage() {
                         onPrev={() => peekStep(-1)}
                         onNext={() => peekStep(1)}
                         onSlide={(index) => setReaderSlide({ postId: peek.id, index })}
-                        onTag={selectedIds.includes(peek.id) ? () => tag(peek) : undefined}
+                        onTag={!readOnly && selectedIds.includes(peek.id) ? () => tag(peek) : undefined}
                         tagged={isTagged(peek.id)}
-                        onAudit={(depth) => void audit(depth, peek.id)}
-                        onSavedFor={(savedFor) => void markSavedFor(peek.id, savedFor)}
+                        onAudit={readOnly ? undefined : (depth) => void audit(depth, peek.id)}
+                        onSavedFor={readOnly ? undefined : (savedFor) => void markSavedFor(peek.id, savedFor)}
                         onOpenCreator={() => void openCreator(peek)}
                         analyzerHref={`${analyzerHome()}/${peek.id}`}
                         researchAvailable={researchAvailable}
@@ -1180,23 +1184,24 @@ export default function WorkshopSessionPage() {
                     docs={docs}
                     activeId={activeDocId}
                     busy={thinking}
-                    undo={closed.length ? { label: docTabLabel(closed[closed.length - 1]!.doc), onUndo: () => void restoreClosed() } : undefined}
+                    undo={closed.length && !readOnly ? { label: docTabLabel(closed[closed.length - 1]!.doc), onUndo: () => void restoreClosed() } : undefined}
                     onSelect={selectDoc}
                     onCreate={(k) => void createDoc(k)}
-                    onKind={(k) => void patchSettings({ kind: k })}
+                    onKind={readOnly ? undefined : (k) => void patchSettings({ kind: k })}
+                    readOnly={readOnly}
                     onRevert={(d, v) => void revertTo(d, v)}
                     onKeep={(d, input) => void keepVersion(d, input)}
                     onDelete={(d) => void removeDoc(d)}
                     tools={
                       activeDoc ? (
                         <>
-                          <DocShapeRules
+                          {!readOnly && <DocShapeRules
                             doc={activeDoc}
                             frameworks={frameworks.filter((f) => !sessionOff.includes(f.id) || activeDoc.frameworkIds.includes(f.id))}
                             rules={rules.filter((r) => !sessionOff.includes(r.id) || activeDoc.ruleIds?.includes(r.id))}
                             busy={thinking}
                             onPatch={(patch) => void patchSettings(patch)}
-                          />
+                          />}
                           <DocView
                             kind={activeDoc.kind}
                             preview={docPreview}
@@ -1226,16 +1231,16 @@ export default function WorkshopSessionPage() {
                     <DocumentEditor
                       key={activeDoc.id}
                       doc={activeDoc}
-                      locked={thinking || !fresh}
+                      locked={thinking || !fresh || readOnly}
                       quiet={!thinking}
                       saving={docSaving}
                       aiAvailable={aiAvailable}
                       onChange={(b, c) => onBlocks(activeDoc.id, b, c)}
-                      onGenerateCaption={generateCaption}
+                      onGenerateCaption={readOnly ? undefined : generateCaption}
                       finalsVersions={finalsTabs?.docId === activeDoc.id && finalsTabs.versions.length ? finalsTabs.versions : undefined}
-                      onVersionCaption={saveVersionCaption}
-                      onCarouselType={(id) => void patchSettings({ carouselType: id })}
-                      onLayouts={async (opts) => {
+                      onVersionCaption={readOnly ? undefined : saveVersionCaption}
+                      onCarouselType={readOnly ? undefined : (id) => void patchSettings({ carouselType: id })}
+                      onLayouts={readOnly ? undefined : async (opts) => {
                         await flushBlocks();
                         replaceDoc(await generateCarouselLayouts(session.id, activeDoc.id, opts));
                       }}
@@ -1243,9 +1248,9 @@ export default function WorkshopSessionPage() {
                       visualize={visualize}
                       onCloseVisualize={() => setVisualize(false)}
                       mine={mineSet}
-                      onLock={(ids) => void lockSlides(ids)}
+                      onLock={readOnly ? undefined : (ids) => void lockSlides(ids)}
                       onLines={(input) => lineOptions(session.id, activeDoc.id, input)}
-                      onQuote={cite}
+                      onQuote={readOnly ? undefined : cite}
                       onAsk={(input) => askAbout(session.id, activeDoc.id, input)}
                       changes={changes}
                     />
@@ -1267,6 +1272,7 @@ export default function WorkshopSessionPage() {
                 body: session ? (
                   <ChatPane
                     messages={shownMessages}
+                    readOnly={readOnly}
                     docs={docs}
                     activeDoc={activeDoc}
                     thinking={thinking}
@@ -1304,7 +1310,7 @@ export default function WorkshopSessionPage() {
                     macOff={macOff}
                     ai={session.ai}
                     onAiChange={
-                      me?.role === "admin"
+                      !readOnly && me?.role === "admin"
                         ? (ai) => {
                             setSession((s) => (s ? { ...s, ai: ai ?? undefined } : s));
                             patchSession(session.id, { ai }).catch(fail);
@@ -1319,7 +1325,7 @@ export default function WorkshopSessionPage() {
                     onProposal={(m, action, depth, question) => void respond(m, action, depth, question)}
                     draftKey={draftKey}
                     audit={
-                      activeDoc && activeDoc.kind !== "notes" && activeDoc.blocks.length > 0 ? (
+                      activeDoc && !readOnly && activeDoc.kind !== "notes" && activeDoc.blocks.length > 0 ? (
                         <>
                           <AuditButton
                             available={researchAvailable}
@@ -1362,6 +1368,7 @@ export default function WorkshopSessionPage() {
                           </p>
                           <SelectedSourcesStrip
                             posts={posts}
+                            readOnly={readOnly}
                             activeId={peekInSession ? (peek?.id ?? null) : null}
                             onCite={cite}
                             onRead={(id) => {
@@ -1391,7 +1398,7 @@ export default function WorkshopSessionPage() {
                           elsewhere={mineOnly ? undefined : { on: showElsewhere, count: elsewhereCount, onToggle: () => setShowElsewhere((v) => !v) }}
                           order={activeResults ? undefined : { value: order, onChange: setOrder }}
                         />
-                        {pastedLinks.length ? (
+                        {pastedLinks.length && !readOnly ? (
                           <div className="flex flex-col gap-2 rounded-lg border border-violet-400/30 bg-violet-500/[0.06] p-3 text-[12px]">
                             <p className="text-foreground">
                               {pastedLinks.length === 1 ? "A post or video" : `${pastedLinks.length} posts or videos`}: add {pastedLinks.length === 1 ? "it" : "them"} to your library and this project. The transcript and on-screen text start at once.
@@ -1426,14 +1433,14 @@ export default function WorkshopSessionPage() {
                           ) : (
                             <div className="grid gap-2 md:grid-cols-2">
                               {shelf.map((h) => (
-                                <SourceResultCard key={h.post.id} hit={h} plain selected={selectedIds.includes(h.post.id)} full={posts.length >= MAX_SESSION_SOURCES} usedIn={usesOf(h.post.id)} own={isOwnPost(h.post, contextAccount ?? mine)} onToggle={() => toggle(h.post)} onRead={() => openPeek(h.post)} />
+                                <SourceResultCard key={h.post.id} hit={h} plain selected={selectedIds.includes(h.post.id)} full={posts.length >= MAX_SESSION_SOURCES} usedIn={usesOf(h.post.id)} own={isOwnPost(h.post, contextAccount ?? mine)} onToggle={() => toggle(h.post)} onRead={() => openPeek(h.post)} readOnly={readOnly} />
                               ))}
                             </div>
                           )
                         ) : (
                           <div className="grid gap-2 md:grid-cols-2">
                             {hits.map((h) => (
-                              <SourceResultCard key={h.post.id} hit={h} selected={selectedIds.includes(h.post.id)} full={posts.length >= MAX_SESSION_SOURCES} usedIn={usesOf(h.post.id)} own={isOwnPost(h.post, contextAccount ?? mine)} onToggle={() => toggle(h.post)} onRead={() => openPeek(h.post)} />
+                              <SourceResultCard key={h.post.id} hit={h} selected={selectedIds.includes(h.post.id)} full={posts.length >= MAX_SESSION_SOURCES} usedIn={usesOf(h.post.id)} own={isOwnPost(h.post, contextAccount ?? mine)} onToggle={() => toggle(h.post)} onRead={() => openPeek(h.post)} readOnly={readOnly} />
                             ))}
                           </div>
                         )}
@@ -1458,6 +1465,7 @@ export default function WorkshopSessionPage() {
       {auditOpen?.audit?.result ? (
         <AuditModal
           audit={{ ...auditOpen.audit, result: auditOpen.audit.result }}
+          readOnly={readOnly}
           doc={docs.find((d) => d.id === auditOpen.audit!.target.id)}
           busy={thinking}
           onClose={() => setAuditMessageId(null)}

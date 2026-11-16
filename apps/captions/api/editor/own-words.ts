@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
+import { even, MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
 import { foundIn, pastedInChat, saidInChat } from "../assistant";
 import { jobTurn, type AuthVars } from "../auth";
 
@@ -20,6 +20,17 @@ export const WORDS_FROM = "x-ct-words-from";
  * access key, is theirs and is not checked. True when the save is refused; `from` is told which source each kept text
  * came from.
  */
+/**
+ * Whether the person typed `text` in the chat a reply is being written in: a phrase held to what a style's own text is
+ * held to above (saidInChat, foundIn, at least the shortest quote), or the whole of a shorter message of theirs ("ok").
+ * Never a paste. An approval the assistant made in that chat teaches the edit's style only with such words (finished.ts).
+ */
+export function typedIn(username: string, turn: string, text: string): boolean {
+  const t = tidy(text);
+  if (!t) return false;
+  return (saidInChat(username, turn) ?? []).some((m) => (t.length >= MEMORY_QUOTE_MIN ? !!foundIn(t, m.text) : even(m.text) === even(t)));
+}
+
 export function notTyped(c: Context<{ Variables: AuthVars }>, b: Record<string, unknown>, keys: string[]): boolean {
   const auth = c.req.header("authorization");
   if (!/^Bearer ctj_/.test(auth ?? "")) return false;

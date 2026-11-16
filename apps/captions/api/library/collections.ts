@@ -17,7 +17,7 @@ import { ffmpegTo } from "./media/run";
 import { externalCanSee, externalRefById } from "./refs";
 import { FINISHED, KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
-import { fileRoll, rollFolder, sortRoll } from "./roll";
+import { fileRoll, rollFolder, rollOf, sortRoll } from "./roll";
 
 /**
  * Folders and collections (tasks/media-library-plan.md, sections 2, 7 and 9). One table: a folder is a collection with
@@ -81,14 +81,16 @@ export function expandCollection(libraryId: string, query: SearchQuery): SearchQ
   return col.kind === "smart" ? { ...savedQuery(JSON.parse(col.query ?? "{}")), ...query, collectionId: undefined } : query;
 }
 
-const toCollection = (r: Row, count?: number, covers?: string[]): Collection => ({
+const toCollection = (r: Row, count?: number, covers?: string[], sounds?: string[]): Collection => ({
   id: r.id,
   name: r.name,
   parentId: r.parent_id,
   kind: r.kind,
   createdBy: r.created_by,
-  ...(r.kind === "smart" ? { query: savedQuery(JSON.parse(r.query ?? "{}")) } : count !== undefined ? { count } : {}),
+  ...(r.kind === "smart" ? { query: savedQuery(JSON.parse(r.query ?? "{}")) } : {}),
+  ...(count !== undefined ? { count } : {}),
   ...(covers?.length ? { covers } : {}),
+  ...(sounds?.length ? { sounds } : {}),
 });
 
 // GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId. A folder's
@@ -109,9 +111,30 @@ collectionApp.get("/:id/collections", async (c) => {
        AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
      ORDER BY i.position, i.asset_id LIMIT 4`,
   );
-  const coversOf = (r: Row) =>
-    r.kind === "manual" ? (pictures.all(r.id) as { v: string }[]).map((p) => `/api/library/media/${p.v}/thumb`) : undefined;
-  return c.json({ collections: rows.map((r) => toCollection(r, r.n, coversOf(r))) });
+  // a folder of songs or sounds has no pictures: its card names a few of them instead
+  const soundRows = db().prepare(
+    `SELECT a.title FROM collection_items i JOIN assets a ON a.id = i.asset_id
+     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND a.kind = 'audio' ORDER BY i.position, i.asset_id LIMIT 3`,
+  );
+  // the A-roll and B-roll folders list their roll: their count and pictures are the roll's
+  const rollCount = db().prepare(`SELECT COUNT(*) AS n FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}`);
+  const rollPictures = db().prepare(
+    `SELECT a.current_version_id AS v FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}
+       AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
+     ORDER BY a.created_at DESC, a.id LIMIT 4`,
+  );
+  const thumbs = (vs: { v: string }[]) => vs.map((p) => `/api/library/media/${p.v}/thumb`);
+  return c.json({
+    collections: rows.map((r) => {
+      if (r.kind === "manual") {
+        const covers = thumbs(pictures.all(r.id) as { v: string }[]);
+        return toCollection(r, r.n, covers, covers.length ? undefined : (soundRows.all(r.id) as { title: string }[]).map((x) => x.title));
+      }
+      const roll = rollOf(r.query);
+      if (!roll) return toCollection(r);
+      return toCollection(r, (rollCount.get(libraryId, roll) as { n: number }).n, thumbs(rollPictures.all(libraryId, roll) as { v: string }[]));
+    }),
+  });
 });
 
 // is `cid` the same as `parent` or somewhere above it? (a folder can't move inside itself)
@@ -139,7 +162,7 @@ collectionApp.post("/:id/collections", async (c) => {
   db()
     .prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(id, libraryId, parent, name, kind, query, Date.now(), user.username);
-  return c.json(toCollection({ id, library_id: libraryId, parent_id: parent, name, kind, query, created_by: user.username }, 0), 201);
+  return c.json(toCollection({ id, library_id: libraryId, parent_id: parent, name, kind, query, created_by: user.username }, kind === "manual" ? 0 : undefined), 201);
 });
 
 // PATCH /api/library/:id/collections/:cid { name?, parentId? } → rename or move (creator or owner)

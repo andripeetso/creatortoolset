@@ -2,28 +2,29 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import path from "node:path";
-import type { EditPlan, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
-import type { Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
+import type { Coverage, Critique, EditPlan, Focus, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
+import type { EditFeedback, Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { renderContext, workspaceKnowledge } from "../lib/workshop/context";
+import { footageProfile, renderContext, workspaceKnowledge } from "../lib/workshop/context";
 import { ownedProjects } from "../lib/workshop/workspace";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
+import { samePicture } from "../library/look";
 import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey } from "../library/transcribe";
 import type { StepContext } from "./engine";
 import { fitted } from "./framing";
 import { clearPasses } from "./passes";
 import { macAway } from "./script";
-import { describeShots, indexSources, songBeats } from "./index";
+import { describeShots, focusOf, frameJunk, indexSources, isJunk, logged, songBeats, type LeftOut } from "./index";
 import { readable } from "./media";
 import { generateClip, styles } from "./generate";
-import { editDir, readEdit, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta } from "./store";
-import { styleBlock } from "./styles";
+import { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta, type PlannedVersion } from "./store";
+import { finishedProfile, styleBlock } from "./styles";
 import { emptyTracks, sourceOf } from "./timeline";
 
 /**
@@ -262,9 +263,10 @@ function worth(shots: IndexShot[], k: number): number {
  * never two closer than POOL_GAP_S (or a 40th of the source). A shot the brief's words describe counts more.
  */
 export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
-  if (s.shots.length <= n) return s.shots;
+  if (s.shots.length <= n) return s.shots.filter((x) => !isJunk(x));
   const words = wordsOf(brief);
-  const score = s.shots.map((x, k) => worth(s.shots, k) + hits(words, x.desc));
+  // junk (a map, a menu, loading, dark, a desktop) is never offered: its change is no action
+  const score = s.shots.map((x, k) => (isJunk(x) ? -Infinity : worth(s.shots, k) + hits(words, x.desc)));
   const gap = Math.max(POOL_GAP_S, s.dur / 40);
   const picked: number[] = [];
   const free = (k: number) => !picked.includes(k) && picked.every((j) => Math.abs(s.shots[j]!.a - s.shots[k]!.a) >= gap);
@@ -274,8 +276,8 @@ export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
     const k = byScore.find((j) => s.shots[j]!.a >= (p * s.dur) / parts && s.shots[j]!.a < ((p + 1) * s.dur) / parts && free(j));
     if (k !== undefined) picked.push(k);
   }
-  for (const k of byScore) if (picked.length < n && free(k)) picked.push(k);
-  return picked.sort((a, b) => a - b).map((k) => s.shots[k]!);
+  for (const k of byScore) if (picked.length < n && free(k) && score[k] !== -Infinity) picked.push(k);
+  return picked.filter((k) => score[k] !== -Infinity).sort((a, b) => a - b).map((k) => s.shots[k]!);
 }
 
 const poolSize = (index: FootageIndex) => clamp(Math.floor(POOL_MAX / Math.max(1, index.sources.filter(pictured).length)), POOL_PER_SOURCE.min, POOL_PER_SOURCE.max);
@@ -288,7 +290,7 @@ Make exactly the kind of edit the brief asks for, whatever it is: a hard edit cu
 
 Write the edit as shots played one after another from 0, with no gaps. Times are seconds. When a song leads, cut on its beats (given as seconds in the edit) and land the hits (punch, flash, shake, stutter, zoomblur) on its strong beats. An effect's time is inside its shot, from 0.
 
-Never use the same moment of a source twice: each shot is a different stretch of footage. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
+Never use the same moment of a source twice: each shot is a different stretch of footage. Show each action once too: two stretches with the same thing happening (the same character casting the same skill, the same summon, the same view of a place), from one source or two, count as the same moment unless the brief asks for it again. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
 
 Answer with JSON only, in this shape:
 {"plans":[{"kind":"the brief's words for this kind of edit","variation":"what sets this version apart","lead":"song","shots":[{"src":"S1","in":12.5,"dur":1.0,"speed":1,"fx":[{"type":"punch","at":0,"amount":1.2}],"enter":"cut","frame":"fill","sound":"off","why":"a few words"}],"texts":[{"at":0,"dur":1.5,"text":"words on screen","place":"middle"}]}]}
@@ -314,6 +316,16 @@ export interface PlanInput {
   /** the generated clips' styles, each with a line saying what it looks like */
   gen: Array<{ id: string; line: string }>;
   packText?: string;
+  /** a version after the first: what the person said, and the last version of each plan (by name, v1 first) */
+  revise?: Revise;
+}
+
+/** What a revise reads: the person's notes, oldest first, and each version's last plan with the shots a note sits on. */
+export interface Revise {
+  notes: EditFeedback[];
+  last: { name: string; plan: EditPlan; marked: number[] }[];
+  /** the fix round (critique.ts): the shots the look at the last cut found don't hold up, by number from 1. The check's words, never the person's */
+  findings?: Critique["fails"];
 }
 
 /** S1, S2, … for the sources in index order. */
@@ -327,6 +339,66 @@ const list = (xs: number[], from: number, to: number) =>
     .map((b) => b.toFixed(2))
     .join(" ");
 
+/** Shot lines the plan reads in all: past this, the busiest (every line with action 2 or more first, then by action, then clear; never by motion). */
+export const LINES_MAX = 1500;
+/** A shot line's words, cut for the plan. */
+const LINE_TEXT = 100;
+const LINES_HOW =
+  "Shot lines: S<n> start–end (minutes:seconds) a<action: 0 nothing changes (a menu, loading, standing) … 5 a peak of the action>, clear when the main subject is easy to see, then tags and what happens. A shot's in is still seconds.";
+
+/** m:ss.d */
+const mmss = (t: number) => {
+  const d = Math.round(t * 10) / 10;
+  return `${Math.floor(d / 60)}:${(d % 60).toFixed(1).padStart(4, "0")}`;
+};
+
+/**
+ * Each source's shot descriptions from the library as plan lines (`S3 12:30.0–12:36.0 a4 clear · fight, boss · what
+ * happens`), by source id; a source without them has none here. Past LINES_MAX in all, the lines with the most action
+ * stay, in order.
+ */
+export function shotLines(index: FootageIndex): Map<string, string[]> {
+  const all = index.sources.filter((s) => pictured(s) && logged(s)).flatMap((s) => s.shots.map((x) => ({ s, x })));
+  const keep = new Set(all.length <= LINES_MAX ? all : [...all].sort((p, q) => (q.x.action ?? 0) - (p.x.action ?? 0) || Number(!!q.x.clear) - Number(!!p.x.clear)).slice(0, LINES_MAX));
+  const out = new Map<string, string[]>();
+  for (const l of all) {
+    if (!keep.has(l)) continue;
+    const { x } = l;
+    const text = (x.desc ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_TEXT);
+    const line = `${tagOf(index, l.s.id)} ${mmss(x.a)}–${mmss(x.b)} a${x.action ?? 0}${x.clear ? " clear" : ""}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
+    out.set(l.s.id, [...(out.get(l.s.id) ?? []), line]);
+  }
+  return out;
+}
+
+/** The person's notes as a prompt quotes them, oldest first: where each was said, then their words as they are. */
+export const noteLines = (notes: EditFeedback[]): string[] =>
+  notes.map((n) => `- ${n.from === "review" ? `In Review${n.variant ? ` on ${n.variant}` : ""}${n.t !== undefined ? ` at ${n.t.toFixed(1)} s` : ""}` : `In chat${n.variant ? ` about ${n.variant}` : ""}`}: ${JSON.stringify(n.text)}`);
+
+/** The person's notes on an edit's versions, oldest first, word for word: how every later version's prompt reads them
+ * (a shot-list revise here, a talking-head script in script.ts). */
+export function notesPrompt(notes: EditFeedback[]): string {
+  return `What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n${noteLines(notes).join("\n")}`;
+}
+
+/** The fix round's ask: only the shots the check named change. */
+const FIX_ASK =
+  'A check looked at the last version before the person saw it and found the shots marked "the check" don\'t hold up (the check\'s findings, not the person\'s words). Replace those shots and nothing else: in "shots", {"keep": n} for every other shot, and in place of each marked one a new shot from the footage, {"src": "S2", "in": 31.5, "why": "a few words"}, that holds up against the brief, the person\'s notes and the setup and shows a moment the version doesn\'t show yet. A new shot takes the marked shot\'s place, length and effects.';
+
+/** The revise's part of the prompt: the person's notes word for word, the last version shot by shot, and in the fix round what the check found. */
+function revisePrompt(r: Revise, index: FootageIndex): string[] {
+  const found = new Map((r.findings ?? []).map((f) => [f.n - 1, f.why]));
+  const shot = (s: PlanShot, k: number, marked: number[]) =>
+    `  ${k + 1}. ${"source" in s.src ? `${tagOf(index, s.src.source)} in ${s.src.inS.toFixed(1)}` : `generated ${s.src.generate.style}`}, ${s.dur.toFixed(2)} s${s.fx?.length ? `, ${s.fx.map((f) => f.type).join(" + ")}` : ""}${s.why ? `: ${s.why}` : ""}${marked.includes(k) ? "  ← a note sits on this shot" : ""}${found.has(k) ? `  ← the check: ${found.get(k)}` : ""}`;
+  return [
+    ...(r.notes.length ? [notesPrompt(r.notes)] : []),
+    `The last version${r.last.length > 1 ? "s" : ""}, shot by shot:\n${r.last.map((l) => `${l.name}:\n${l.plan.shots.map((s, k) => shot(s, k, l.marked)).join("\n")}`).join("\n")}`,
+    r.findings
+      ? FIX_ASK
+      : 'Make the next version from the last one and change what the notes speak to, nothing else: in each plan\'s "shots", {"keep": n} keeps shot n of that version as it is (its source, timing and effects), and a new shot takes the place of each one that changes. Plans are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another song), write all of its shots new.',
+  ];
+}
+
 export function planPrompt(i: PlanInput): { system: string; user: string } {
   const parts = [`Brief:\n${i.brief.trim() || "(none: make a good edit of this footage)"}`];
   if (i.setup.trim()) parts.push(`The workspace's setup:\n${i.setup.trim()}`);
@@ -337,14 +409,19 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   if (open) parts.push(`Open with: ${tagOf(i.index, open.source.id)}${open.shot ? ` at ${open.shot.a.toFixed(1)}-${open.shot.b.toFixed(1)}${open.shot.desc ? ` (${open.shot.desc})` : ""}` : ""}`);
   if (overdone(i.brief)) parts.push("Effects: overdone. Every shot gets at least one effect, the shots on strong beats get stacks of two to four (punch + flash + shake, stutter + zoomblur…), and the sizes vary (fill, fit, blur, letterbox, inset, split).");
   const n = poolSize(i.index);
+  const lines = shotLines(i.index);
   const src = i.index.sources.map((s) => {
     const head = `${tagOf(i.index, s.id)} ${JSON.stringify(s.title)}: ${s.dur.toFixed(1)} s, ${pictured(s) ? `${s.w}x${s.h} at ${Math.round(s.fps)} fps` : "sound only (no picture: not a shot)"}, ${s.sound === false ? "no sound" : "sound"}${s.speech ? ", someone speaks" : ""}`;
-    const pool = pictured(s) ? shotPool(s, n, i.brief) : [];
-    const shots = pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
-    if (pool.length < s.shots.length) shots.unshift(`  ${pool.length} of its ${s.shots.length} shots:`);
+    // the library's shot descriptions: every line (LINES_MAX in all, the busiest kept); else the strongest shots, spread out
+    const own = lines.get(s.id);
+    const pool = !own && pictured(s) ? shotPool(s, n, i.brief) : [];
+    const shots = own ?? pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
+    if (own && own.length < s.shots.length) shots.unshift(`  ${own.length} of its ${s.shots.length} shot lines (the busiest):`);
+    else if (!own && pool.length < s.shots.length) shots.unshift(`  ${pool.length} of its ${s.shots.length} shots:`);
     const said = i.words[s.id] ? [`  said: ${i.words[s.id]}`] : [];
     return [head, ...shots, ...said].join("\n");
   });
+  if (lines.size) parts.push(LINES_HOW);
   parts.push(`Sources:\n${src.join("\n")}`);
   const b = i.index.song;
   if (i.song && b) {
@@ -361,6 +438,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
     );
   } else parts.push("No song: the footage's own sound leads.");
   if (i.index.story) parts.push(`What happens across the footage, from the pictures:\n${i.index.story}`);
+  if (i.revise) parts.push(...revisePrompt(i.revise, i.index));
   if (i.gen.length)
     parts.push(
       `A shot can also be a clip made from nothing, moving to the sound under it: {"generate":{"style":"one of the styles","palette":["#rrggbb"],"seed":1},"dur":2} in place of src and in. Styles:\n${i.gen.map((g) => `- ${g.id}: ${g.line}`).join("\n")}`,
@@ -390,6 +468,8 @@ export interface RepairContext {
   gen: string[];
   /** the person's words: the length, the opener and how overdone it is are read from them */
   brief?: string;
+  /** a revise: this version's last plan, whose shots the answer keeps by number ({"keep": n}) */
+  last?: EditPlan;
 }
 
 /** The speed at `t` of a ramp (straight between its points, flat before the first and after the last). */
@@ -490,26 +570,102 @@ function srcOf(s: Record<string, unknown>, index: FootageIndex): Src | string {
   return { source, inS };
 }
 
+/** Whether `span` seconds from `x` keep `apart` from every stretch in `taken`. */
+const clearOf = (taken: Array<[number, number]>, x: number, span: number, apart: number) => taken.every(([a, b]) => x + span <= a - apart + 1e-6 || x >= b + apart - 1e-6);
+
 /**
- * The in-point nearest `want` where `span` seconds of a source of `dur` keep APART_S from every stretch in `taken`, or
- * undefined when none is left.
+ * The in-point nearest `want` where `span` seconds of a source of `dur` keep `apart` (APART_S) from every stretch in
+ * `taken`, or undefined when none is left. A source with shot descriptions keeps 0: its pictures are checked instead.
  */
-export function freeIn(taken: Array<[number, number]>, span: number, want: number, dur: number): number | undefined {
-  const fits = (x: number) => x >= -1e-9 && x + span <= dur + 1e-6 && taken.every(([a, b]) => x + span <= a - APART_S + 1e-6 || x >= b + APART_S - 1e-6);
-  return [want, ...taken.flatMap(([a, b]) => [b + APART_S, a - APART_S - span]), 0, dur - span]
+export function freeIn(taken: Array<[number, number]>, span: number, want: number, dur: number, apart = APART_S): number | undefined {
+  const fits = (x: number) => x >= -1e-9 && x + span <= dur + 1e-6 && clearOf(taken, x, span, apart);
+  return [want, ...taken.flatMap(([a, b]) => [b + apart, a - apart - span]), 0, dur - span]
     .filter(fits)
     .sort((x, y) => Math.abs(x - want) - Math.abs(y - want))[0];
 }
+
+/** The picture hashes of the stretches `span` seconds from `inS` show (more than a moment of each). */
+export function picturesAt(s: IndexSource, inS: number, span: number): string[] {
+  const mid = inS + span / 2;
+  return s.shots.filter((x) => x.ph && ((x.a <= mid && mid < x.b) || Math.min(x.b, inS + span) - Math.max(x.a, inS) > Math.min(0.2, span / 2))).map((x) => x.ph!);
+}
+
+const shownAlready = (phs: string[], shown: string[]) => phs.some((p) => shown.some((q) => samePicture(p, q)));
+
+/**
+ * The next best stretch not in the cut, for `span` seconds: one whose picture is not shown yet, with the most action,
+ * then clear, then from another source than `not`, then long enough on its own. Only sources with shot descriptions.
+ */
+export function nextBest(index: FootageIndex, used: Map<string, Array<[number, number]>>, shown: string[], span: number, not: string): { source: IndexSource; inS: number } | undefined {
+  let best: { source: IndexSource; inS: number; key: number[] } | undefined;
+  const ahead = (p: number[], q: number[]) => { const k = p.findIndex((v, j) => v !== q[j]); return k >= 0 && p[k]! > q[k]!; };
+  for (const s of index.sources) {
+    if (!pictured(s) || !logged(s)) continue;
+    for (const x of s.shots) {
+      if (x.a + span > s.dur + 1e-6 || !clearOf(used.get(s.id) ?? [], x.a, span, 0) || junkAt(s, x.a, span) || shownAlready(picturesAt(s, x.a, span), shown)) continue;
+      const key = [x.action ?? 0, x.clear ? 1 : 0, s.id !== not ? 1 : 0, x.b - x.a >= span ? 1 : 0];
+      if (!best || ahead(key, best.key)) best = { source: s, inS: x.a, key };
+    }
+  }
+  return best && { source: best.source, inS: best.inS };
+}
+
+/**
+ * A source's shots by action, then clear, in time order otherwise: how a source with shot descriptions is ranked.
+ * Never by motion: in gameplay, walking moves the whole picture more than a fight does.
+ */
+export const byAction = (s: IndexSource): IndexShot[] => [...s.shots].sort((p, q) => (q.action ?? 0) - (p.action ?? 0) || Number(!!q.clear) - Number(!!p.clear));
 
 /** A moment not in the edit yet, `span` long: the best free one of the least used source. */
 function spare(index: FootageIndex, used: Map<string, Array<[number, number]>>, span: number): { source: IndexSource; inS: number } | undefined {
   const pics = index.sources.filter(pictured).sort((a, b) => (used.get(a.id)?.length ?? 0) - (used.get(b.id)?.length ?? 0));
   for (const s of pics)
-    for (const x of shotPool(s, poolSize(index))) {
+    for (const x of logged(s) ? byAction(s) : shotPool(s, poolSize(index))) {
       const at = freeIn(used.get(s.id) ?? [], span, x.a, s.dur);
-      if (at !== undefined) return { source: s, inS: at };
+      if (at !== undefined && !junkAt(s, at, span)) return { source: s, inS: at };
     }
   return undefined;
+}
+
+/** The stretch inS..inS+span of a source shows junk: an index shot it overlaps by a fifth of its length or more is
+ * junk (`isJunk`: measured, or the AI saw it on the sheet). */
+export function junkAt(s: IndexSource, inS: number, span: number): boolean {
+  return s.shots.some((x) => isJunk(x) && Math.min(inS + span, x.b) - Math.max(inS, x.a) >= Math.max(0.2 * span, 1e-3));
+}
+
+/** The window a shot's picture is cropped to, as its frame shows it: the frame (fill), a letterbox band, a split's row;
+ * null when the whole picture shows (fit, blur, inset). */
+export function cropShape(s: Pick<PlanShot, "frame" | "split">, W: number, H: number): [number, number] | null {
+  if (s.split?.length) return [W, H / (1 + s.split.length)];
+  if (!s.frame || s.frame === "fill") return [W, H];
+  return s.frame === "letterbox" ? [W, W / LETTERBOX] : null;
+}
+
+/** Each source shot's crop where its picture moves (focusOf), and a fill no window holds shown whole over a blur. */
+export function placeShots(shots: PlanShot[], index: FootageIndex, W: number, H: number): number {
+  const byId = new Map(index.sources.map((s) => [s.id, s]));
+  let blurred = 0;
+  const at = (src: { source: string; inS: number }, span: number, shape: [number, number]): ReturnType<typeof focusOf> | null => {
+    const s = byId.get(src.source);
+    return s && s.w ? focusOf(s, src.inS, src.inS + span, shape[0], shape[1]) : null;
+  };
+  const keep = (f: ReturnType<typeof focusOf> | null): { focus?: Focus } => (f && (f.x !== 0.5 || f.y !== 0.5) ? { focus: { x: f.x, y: f.y } } : {});
+  for (const s of shots) {
+    if (!("source" in s.src)) continue;
+    delete s.focus;
+    const span = sourceSpan(s.dur, s.speed ?? 1, s.ramp);
+    const shape = cropShape(s, W, H);
+    if (!shape) continue;
+    const f = at(s.src, span, shape);
+    if (f && !f.ok && !s.split?.length && (!s.frame || s.frame === "fill")) {
+      s.frame = "blur";
+      blurred++;
+      continue;
+    }
+    Object.assign(s, keep(f));
+    if (s.split) s.split = s.split.map((p) => ({ source: p.source, inS: p.inS, ...keep(at(p, span, shape)) }));
+  }
+  return blurred;
 }
 
 const ROTATION = ["punch", "zoomblur", "rgb", "shake", "zoom", "glitch", "stutter"] as const;
@@ -555,9 +711,25 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
 
   // each shot on its own: a source that exists, a length, a speed, effects, how it sits in the frame
   type Pic = { source: IndexSource; inS: number };
-  type Draft = Omit<PlanShot, "src" | "at" | "split"> & { src: Src; split?: Pic[] };
+  type Draft = Omit<PlanShot, "src" | "at" | "split"> & { src: Src; split?: Pic[]; kept?: PlanShot };
   const shots: Draft[] = [];
-  for (const s of (Array.isArray(raw.shots) ? raw.shots : []).filter(obj).sort((a, b) => (num(a.at) ?? 0) - (num(b.at) ?? 0))) {
+  const given = (Array.isArray(raw.shots) ? raw.shots : []).filter(obj);
+  // a revise's answer is in its own order ({"keep": n} has no time): only a fresh plan is put in order by its times
+  const keeps = !!c.last && given.some((s) => s.keep !== undefined);
+  for (const s of keeps ? given : given.sort((a, b) => (num(a.at) ?? 0) - (num(b.at) ?? 0))) {
+    if (keeps && s.keep !== undefined) {
+      // a shot of the last version, copied as it was: its source, timing and effects
+      const n = Math.round(num(s.keep) ?? 0);
+      const k = c.last!.shots[n - 1];
+      const from = k && "source" in k.src ? c.index.sources.find((x) => "source" in k.src && x.id === k.src.source) : undefined;
+      if (!k || ("source" in k.src && !from)) {
+        notes.push(`The AI kept shot ${n} of the last version, which ${k ? "shows footage no longer in the edit" : "it does not have"}: left out`);
+        continue;
+      }
+      const { at: _at, split: _split, src: _src, ...rest } = k;
+      shots.push({ ...rest, src: "source" in k.src ? { source: from!, inS: k.src.inS } : { generate: k.src.generate as unknown as Record<string, unknown> }, kept: k });
+      continue;
+    }
     const src = srcOf(s, c.index);
     if (typeof src === "string") {
       notes.push(`The AI planned ${src}`);
@@ -599,7 +771,8 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   }
 
   // the opener the brief names goes first, at the moment it names
-  const open = c.brief ? openerOf(c.brief, c.index) : null;
+  // (a revise starts from the last version, whose first shot the person has seen: their notes decide it)
+  const open = c.brief && !c.last ? openerOf(c.brief, c.index) : null;
   if (open) {
     const from = (d: Draft) => "source" in d.src && d.src.source.id === open.source.id;
     const at = (d: Draft) => !open.shot || ("source" in d.src && d.src.inS >= open.shot.a - 1 && d.src.inS < open.shot.b);
@@ -607,7 +780,7 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     if (k < 0) k = shots.findIndex(from);
     if (k !== 0 || !at(shots[0]!)) {
       const d: Draft = k >= 0 ? shots.splice(k, 1)[0]! : { src: { source: open.source, inS: 0 }, dur: shots[0]?.dur ?? 1, speed: 1, fx: [], sound: song ? "off" : "full", why: "the opener the brief asks for" };
-      const inS = open.shot?.a ?? (k >= 0 && "source" in d.src ? d.src.inS : (shotPool(open.source, 1)[0]?.a ?? 0));
+      const inS = open.shot?.a ?? (k >= 0 && "source" in d.src ? d.src.inS : ((logged(open.source) ? byAction(open.source) : shotPool(open.source, 1))[0]?.a ?? 0));
       d.src = { source: open.source, inS };
       if (open.source.sound === false) d.sound = "off";
       shots.unshift(d);
@@ -650,8 +823,23 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   // every stretch of a source the edit shows so far: no moment is shown twice
   const used = new Map<string, Array<[number, number]>>();
   const take = (id: string, a: number, span: number) => used.set(id, [...(used.get(id) ?? []), [a, a + span]]);
+  // the pictures the cut shows so far (shot descriptions' hashes): the same picture is shown once (PLAN.md D9)
+  const shown: string[] = [];
+  const byId = (id: string) => c.index.sources.find((x) => x.id === id);
+  // the shots a revise keeps are in the cut already: the new ones go around them
+  for (const s of shots.slice(0, n)) {
+    if (!s.kept || !("source" in s.kept.src)) continue;
+    const span = sourceSpan(s.kept.dur, s.kept.speed, s.kept.ramp);
+    take(s.kept.src.source, s.kept.src.inS, span);
+    for (const p of s.kept.split ?? []) take(p.source, p.inS, span);
+    const from = byId(s.kept.src.source);
+    if (from) shown.push(...picturesAt(from, s.kept.src.inS, span));
+  }
+  const keptAt = new Set<number>();
+  let repeats = 0;
   let moved = 0;
   let gone = 0;
+  let junked = 0;
   const dense = overdone(c.brief ?? "");
   const strong = beat && song ? beat.strong.map((b) => b - beat.startS) : [];
   let added = 0;
@@ -659,6 +847,14 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     const s = shots[k]!;
     const a = frames[k]! / fps;
     const dur = (frames[k + 1]! - frames[k]!) / fps;
+    if (s.kept) {
+      // ponytail: a kept shot keeps its effects and speed as they were; a slot whose length moved (a shot before it
+      // changed length) is not re-fitted
+      keptAt.add(out.length);
+      lens.push(frames[k + 1]! - frames[k]!);
+      out.push({ ...s.kept, at: r3(a), dur: r3(dur) });
+      continue;
+    }
     let speed = s.speed ?? 1;
     let ramp = s.ramp?.map((p) => ({ t: r3(Math.min(p.t, dur)), speed: p.speed })).filter((p, j, all) => j === 0 || p.t > all[j - 1]!.t);
     if (ramp && ramp.length < 2) ramp = undefined;
@@ -677,9 +873,25 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         slowed++;
       }
       let inS = clamp(s.src.inS, 0, Math.max(0, source.dur - span - 0.001));
-      const free = freeIn(used.get(source.id) ?? [], span, inS, source.dur);
-      if (free === undefined) {
-        // the source has no stretch this long left unshown: a moment from the least used one
+      let free = freeIn(used.get(source.id) ?? [], span, inS, source.dur, logged(source) ? 0 : APART_S);
+      // a map, a menu, loading or a dark stretch is never shown: another moment instead
+      const junk = free !== undefined && junkAt(source, free, span);
+      if (junk) {
+        free = undefined;
+        junked++;
+      }
+      if (logged(source) && (free === undefined || shownAlready(picturesAt(source, free, span), shown))) {
+        // a picture the cut shows already, junk, or no room left in this source: the next best stretch not shown yet
+        const other = nextBest(c.index, used, shown, span, source.id);
+        if (!other) {
+          gone++;
+          continue;
+        }
+        ({ source, inS } = other);
+        if (source.sound === false) sound = "off";
+        if (!junk) repeats++;
+      } else if (free === undefined) {
+        // the source has no stretch this long left unshown (or only junk): a moment from the least used one
         const other = spare(c.index, used, span);
         if (!other) {
           gone++;
@@ -687,15 +899,16 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         }
         ({ source, inS } = other);
         if (source.sound === false) sound = "off";
-        moved++;
+        if (!junk) moved++;
       } else if (Math.abs(free - inS) > 1e-6) {
         inS = free;
         moved++;
       }
       take(source.id, inS, span);
+      shown.push(...picturesAt(source, inS, span));
       src = { source: source.id, inS: r3(inS) };
       const pics = (s.split ?? []).flatMap((p) => {
-        const at = freeIn(used.get(p.source.id) ?? [], span, clamp(p.inS, 0, Math.max(0, p.source.dur - span - 0.001)), p.source.dur);
+        const at = freeIn(used.get(p.source.id) ?? [], span, clamp(p.inS, 0, Math.max(0, p.source.dur - span - 0.001)), p.source.dur, logged(p.source) ? 0 : APART_S);
         if (at === undefined) return [];
         take(p.source.id, at, span);
         return [{ source: p.source.id, inS: r3(at) }];
@@ -744,6 +957,8 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     });
   }
   if (moved) notes.push(`${moved} ${moved === 1 ? "shot showed a moment" : "shots showed moments"} already in the edit: moved to footage not shown yet`);
+  if (repeats) notes.push(`${repeats} ${repeats === 1 ? "shot showed a picture" : "shots showed pictures"} already in the edit: the next best footage not shown yet is in ${repeats === 1 ? "its" : "their"} place`);
+  if (junked) notes.push(`${junked} ${junked === 1 ? "shot was" : "shots were"} on a map, a menu, a loading screen or a dark stretch: moved to action`);
   if (gone) notes.push(`${gone} ${gone === 1 ? "shot was" : "shots were"} left out: every moment long enough was already in the edit`);
   if (added) notes.push(`Effects added to ${added} ${added === 1 ? "shot" : "shots"}: an overdone edit has one on every shot and stacks on the strong beats`);
   if (dense && out.length >= 6) {
@@ -753,7 +968,7 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     let changed = 0;
     for (let k = 2; k < out.length && modes.size < 3; k += 3) {
       const x = out[k]!;
-      if (x.frame || x.split || "generate" in x.src) continue;
+      if (x.frame || x.split || "generate" in x.src || keptAt.has(k)) continue;
       x.frame = want.shift()!;
       modes.add(x.frame);
       changed++;
@@ -783,11 +998,16 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   const h = num(raw.h);
   const own = !c.fixedSize && w && h && w >= 240 && h >= 240 && w <= 4096 && h <= 4096;
   const variation = str(raw.variation, 200);
+  const W = own ? even(w) : c.size.w;
+  const H = own ? even(h) : c.size.h;
+  // a shot a revise keeps stays as it was, its crop too
+  const blurred = placeShots(out.filter((_, k) => !keptAt.has(k)), c.index, W, H);
+  if (blurred) notes.push(`${blurred} ${blurred === 1 ? "shot shows" : "shots show"} the whole picture over a blur: no crop of ${blurred === 1 ? "it" : "them"} holds what moves`);
   return {
     plan: {
       kind: str(raw.kind, 60) || "edit",
-      w: own ? even(w) : c.size.w,
-      h: own ? even(h) : c.size.h,
+      w: W,
+      h: H,
       fps,
       lead: song ? { type: "song", source: song.id, startS: beat!.startS } : { type: "sources" },
       shots: out,
@@ -889,11 +1109,12 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
       ...(fx?.length ? { fx } : {}),
       ...(enter && enter !== "cut" ? { enter } : {}),
       ...(s.frame && s.frame !== "fill" ? { frame: s.frame } : {}),
+      ...(s.focus ? { focus: s.focus } : {}),
     };
     const split = (s.split ?? []).filter((p) => sources[p.source]);
     if (split.length) {
       for (const p of split) tl.sources[p.source] = sources[p.source]!;
-      item.split = split.map((p) => ({ src: p.source, in: Math.round(p.inS * sources[p.source]!.fps) }));
+      item.split = split.map((p) => ({ src: p.source, in: Math.round(p.inS * sources[p.source]!.fps), ...(p.focus ? { focus: p.focus } : {}) }));
     }
     tl.tracks.V1.items.push(item);
     if (s.sound && s.sound !== "off") tl.tracks.A1.items.push({ src: key, in: inF, len, rec, link, ...(s.sound === "under" ? { gainDb: UNDER_DB } : {}), ...(item.speed ? { speed: item.speed } : {}), ...(item.ramp ? { ramp: item.ramp } : {}) });
@@ -943,28 +1164,10 @@ function frameOf(edit: EditMeta, index: FootageIndex): RepairContext["size"] {
  * planned version by that), and names an unnamed edit after its kind.
  */
 export async function planStep({ edit, job, signal }: StepContext, sentences: Sentence[]): Promise<void> {
-  const route = aiFor(whoFor(job.actor!), "editor", "AI Editor plan");
-  if (route.off) throw new NeedsKey(route.off);
-  let index = await indexSources(edit, signal);
-  // speech as the script step judged it (a few words made up over music are nobody speaking), and which have sound
-  const probe = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?");
-  for (const s of index.sources) {
-    s.speech = s.dur > 0 && speechShare(sentences.filter((x) => x.src === s.id), s.dur) >= SPEECH_SHARE;
-    s.sound = !!(JSON.parse((probe.get(s.id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null)?.acodec;
-  }
-  const song = songFor(edit, index);
-  if (song) index.song = await songBeats(await readable(song.id, song.key), 0, signal);
-  // the song is what is heard, not footage to cut
-  if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
-  // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
-  index = await describeShots(index, { actor: job.actor!, story: true, workspace: await workspaceSetup(edit, 6000) }, signal);
+  const { route, left, song, input, repair } = await planContext(edit, job.actor!, sentences, signal);
   if (signal.aborted) return;
-  const size = frameOf(edit, index);
-  const gen = styles();
-  const genIds = gen.map((g) => g.id);
-  const setup = [await workspaceSetup(edit, 24_000), styleBlock(edit.style)].filter(Boolean).join("\n\n");
-  const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
-  const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText });
+  const revise = reviseOf(edit);
+  const { system, user } = planPrompt({ ...input, ...(revise ? { revise } : {}) });
   let raws: Record<string, unknown>[];
   try {
     raws = await completeWithFallback(system, user, signal, parsePlans, route);
@@ -976,22 +1179,196 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   if (signal.aborted) return;
   const notes = [song ? `Cut to “${song.title}” (${song.from})` : "No song: the footage's own sound leads"];
   if (raws.length < edit.versions) notes.push(`The AI planned ${raws.length} of the ${edit.versions} versions asked for`);
-  const shots: Record<string, { plan: EditPlan; notes: string[] }> = {};
-  const plans = raws.slice(0, edit.versions).map((raw, k) => {
+  const shots: Record<string, PlannedVersion> = {};
+  const plans: Array<{ name: string; title: string; lines: [] }> = [];
+  for (const [k, raw] of raws.slice(0, edit.versions).entries()) {
     const name = `v${k + 1}`;
-    shots[name] = repairPlan(raw, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen: genIds, brief: edit.brief });
+    const last = revise?.last.find((l) => l.name === name)?.plan;
+    // a revise's answer may leave out what stays: the kind, the variation and the words on screen of the last version
+    const answer = last ? { kind: last.kind, ...(last.variation ? { variation: last.variation } : {}), ...(last.texts ? { texts: last.texts } : {}), ...raw } : raw;
+    shots[name] = repairPlan(answer, { ...repair, ...(last ? { last } : {}) });
+    const swapped = await lastLook(shots[name]!.plan, repair.index, signal, last?.shots);
+    if (swapped) shots[name]!.notes.push(lookedNote(swapped));
     const p = shots[name]!.plan;
-    return { name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] };
-  });
+    plans.push({ name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] });
+  }
   await saveStep(edit.id, "shots", shots);
-  await saveStep(edit.id, "plan", { lines: [], plans, notes });
+  await saveStep(edit.id, "plan", { lines: [], plans, notes, at: Date.now(), coverage: coverageOf(edit, repair.index, left, Object.values(shots).map((x) => x.plan), song?.id) });
   const kind = shots.v1?.plan.kind;
   const now = readEdit(edit.id);
   if (kind && now?.name === UNNAMED) await saveEdit({ ...now, name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`.slice(0, 60), byTool: [...new Set([...(now.byTool ?? []), "name" as const])] });
 }
 
+/**
+ * What a plan is written from: the person's own AI, the footage index with what is seen in it (`story`: and what
+ * happens across it), the song and its beats, and the prompt's and the repair's parts.
+ */
+async function planContext(edit: EditMeta, actor: string, sentences: Sentence[], signal: AbortSignal, story = true) {
+  const route = aiFor(whoFor(actor), "editor", "AI Editor plan");
+  if (route.off) throw new NeedsKey(route.off);
+  const { left, ...found } = await indexSources(edit, signal);
+  let index: FootageIndex = found;
+  // speech as the script step judged it (a few words made up over music are nobody speaking), and which have sound
+  const probe = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?");
+  for (const s of index.sources) {
+    s.speech = s.dur > 0 && speechShare(sentences.filter((x) => x.src === s.id), s.dur) >= SPEECH_SHARE;
+    s.sound = !!(JSON.parse((probe.get(s.id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null)?.acodec;
+  }
+  const song = songFor(edit, index);
+  if (song) index.song = await songBeats(await readable(song.id, song.key), 0, signal);
+  // the song is what is heard, not footage to cut
+  if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
+  // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
+  index = await describeShots(index, { actor, story, workspace: await workspaceSetup(edit, 6000) }, signal);
+  const gen = styles();
+  // what footage the workspace holds and what was finished in it (lib/workshop/context.ts, styles.ts); none adds nothing
+  const profile = [await footageProfile(edit.projectId), finishedProfile(edit.createdBy, edit.projectId ?? "")].filter(Boolean).join("\n");
+  const setup = [await workspaceSetup(edit, 24_000), profile, styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
+  const packText = [await packInstructions(actor, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
+  const input: PlanInput = { brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText };
+  const repair: RepairContext = { index, ...(song ? { song } : {}), targetS: edit.targetS, size: frameOf(edit, index), fixedSize: !!edit.size?.w, gen: gen.map((g) => g.id), brief: edit.brief };
+  return { route, left, song, input, repair };
+}
+
+/**
+ * The fix round (tasks/flywheel/PLAN.md 4.2): the shots the look at a version's cut named (critique.ts) go back through
+ * the revise with the check's findings, apart from the person's notes and never among them. Null when the AI's answer
+ * changes no shot.
+ */
+export async function fixPlan(edit: EditMeta, actor: string, variant: string, last: EditPlan, fails: Critique["fails"], signal: AbortSignal): Promise<{ plan: EditPlan; notes: string[] } | null> {
+  const { route, input, repair } = await planContext(edit, actor, readStep(edit.id, "analysis")?.sentences ?? [], signal, false);
+  if (signal.aborted) return null;
+  const { system, user } = planPrompt({ ...input, versions: 1, revise: { notes: edit.feedback ?? [], last: [{ name: variant, plan: last, marked: [] }], findings: fails } });
+  let raws: Record<string, unknown>[];
+  try {
+    raws = await completeWithFallback(system, user, signal, parsePlans, route);
+  } catch (e) {
+    const away = macAway(e);
+    if (away) throw new NeedsKey(away.message);
+    throw e;
+  }
+  if (signal.aborted) return null;
+  const fixed = swapShots(raws[0]!, last, fails.map((f) => f.n), repair);
+  // the new shots get the last look a plan's shots get (the ones kept passed it already)
+  const swapped = fixed ? await lastLook(fixed.plan, repair.index, signal, last.shots) : 0;
+  if (swapped) fixed!.notes.push(lookedNote(swapped));
+  return fixed;
+}
+
+/**
+ * The fix round's answer laid into the last version: each shot the check named takes the AI's next new shot, checked
+ * like any shot (a source that exists, a moment and a picture not shown yet) and given the slot's place, length, speed
+ * and effects; every other shot stays exactly as it was. Null when no shot changed.
+ */
+export function swapShots(raw: Record<string, unknown>, last: EditPlan, named: number[], c: RepairContext): { plan: EditPlan; notes: string[] } | null {
+  const given = (Array.isArray(raw.shots) ? raw.shots : []).filter(obj);
+  const usable = (s: Record<string, unknown> | undefined) => !!s && s.keep === undefined && typeof srcOf(s, c.index) !== "string";
+  // an answer with every slot is read slot by slot; a shorter one gives its new shots to the named slots in turn
+  const whole = given.length === last.shots.length;
+  const fresh = given.filter(usable);
+  const shots = last.shots.map((s, k) => {
+    const pick = !named.includes(k + 1) ? undefined : whole ? (usable(given[k]) ? given[k] : undefined) : fresh.shift();
+    return pick ? { ...pick, dur: s.dur, speed: s.speed ?? 1, ramp: s.ramp, fx: s.fx ?? [], enter: s.enter, frame: s.frame, scale: s.scale, sound: s.sound } : { keep: k + 1 };
+  });
+  if (shots.every((s) => "keep" in s)) return null;
+  // laid with no song, length or opener to fit again (those made the last version's timing): then given that timing, slot for slot
+  const r = repairPlan({ shots }, { ...c, song: undefined, brief: "", targetS: 0, last });
+  if (r.plan.shots.length !== last.shots.length) return null;
+  return { plan: { ...last, shots: r.plan.shots.map((s, k) => ({ ...s, at: last.shots[k]!.at, dur: last.shots[k]!.dur })) }, notes: r.notes };
+}
+
+/**
+ * A version after the first (tasks/flywheel/PLAN.md 3.5): the person's notes, oldest first, and each version's last
+ * plan with the shots a Review note made since sits on. Null for a first plan, or with no notes: planned as before.
+ */
+export function reviseOf(edit: Pick<EditMeta, "id" | "feedback">): Revise | null {
+  const notes = edit.feedback ?? [];
+  const before = readStep(edit.id, "shots");
+  if (!notes.length || !before) return null;
+  const since = readStep(edit.id, "plan")?.at ?? 0;
+  const last = Object.keys(before)
+    .filter((n) => /^v\d$/.test(n))
+    .sort()
+    .map((name) => {
+      const plan = before[name]!.plan;
+      // a note in Review on this version's last cut, at a time inside a shot (only shots of footage still in the edit)
+      const on = notes.filter((n) => n.from === "review" && n.variant === name && n.t !== undefined && n.at >= since).map((n) => n.t!);
+      const marked = plan.shots.flatMap((s, k) => (on.some((t) => t >= s.at && t < s.at + s.dur) ? [k] : []));
+      return { name, plan, marked };
+    });
+  return last.length ? { notes, last } : null;
+}
+
+/** What footage the cut was made from: every file but the song, the ones it could pick from, the ones it uses, the ones left out. */
+export function coverageOf(edit: Pick<EditMeta, "sources">, index: FootageIndex, left: LeftOut[], plans: EditPlan[], songId?: string): Coverage {
+  const probe = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?");
+  const minutes = (id: string) => ((JSON.parse((probe.get(id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null)?.duration ?? 0) / 60;
+  const files = edit.sources.filter((id) => id !== songId && !isMusic(id));
+  const pooled = index.sources.filter((s) => pictured(s) && files.includes(s.id));
+  const used = new Set(plans.flatMap((p) => p.shots.flatMap((s) => ["source" in s.src ? s.src.source : "", ...(s.split ?? []).map((x) => x.source)])).filter((id) => files.includes(id)));
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return {
+    files: files.length,
+    minutes: r1(files.reduce((m, id) => m + minutes(id), 0)),
+    pooled: pooled.length,
+    pooledMinutes: r1(pooled.reduce((m, s) => m + s.dur / 60, 0)),
+    used: used.size,
+    left: left.filter((l) => files.includes(l.id)).map(({ title, why }) => ({ title, why })),
+  };
+}
+
+/**
+ * The last look before a plan is drawn, so no shot is a frame of nothing: each shot's middle frame
+ * as it will show (its crop, frameJunk). One that is dark, flat or a screen of menus is moved to the best moment no
+ * shot shows yet (spare: never junk, the bad stretch left out), its crop placed again; up to LOOKS tries a shot. Counts
+ * the shots moved. A shot with no clean moment left keeps its picture; one showing a moment of `before` (the last
+ * version, whose kept shots were looked at then) is left as it is.
+ */
+export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: AbortSignal, before: PlanShot[] = []): Promise<number> {
+  const db = libraryDb();
+  const files = new Map<string, string>();
+  const file = async (id: string) => {
+    if (!files.has(id)) files.set(id, await readable(id, (db.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(id) as { source_key: string }).source_key));
+    return files.get(id)!;
+  };
+  const byId = new Map(index.sources.map((s) => [s.id, s]));
+  const used = new Map<string, Array<[number, number]>>();
+  const span = (s: PlanShot) => sourceSpan(s.dur, s.speed ?? 1, s.ramp);
+  for (const s of plan.shots) if ("source" in s.src) used.set(s.src.source, [...(used.get(s.src.source) ?? []), [s.src.inS, s.src.inS + span(s)]]);
+  let moved = 0;
+  // a moment the last version showed (a shot a revise keeps) was looked at then: it stays
+  const shown = (s: PlanShot) => before.some((b) => "source" in b.src && "source" in s.src && b.src.source === s.src.source && b.src.inS === s.src.inS);
+  for (const s of plan.shots) {
+    if (!("source" in s.src) || signal?.aborted || shown(s)) continue;
+    const n = span(s);
+    for (let k = 0; k < LOOKS; k++) {
+      const src = s.src as { source: string; inS: number };
+      const at = byId.get(src.source);
+      if (!at?.w) break;
+      const shape = cropShape(s, plan.w, plan.h);
+      // a file this server can't read keeps its picture, as an unreadable frame does (frameJunk)
+      const f = await file(src.source).catch(() => "");
+      if (!f || !(await frameJunk(f, src.inS + n / 2, at, shape, s.focus ?? (shape ? { x: 0.5, y: 0.5 } : undefined), signal))) break;
+      const other = spare(index, used, n);
+      if (!other) break;
+      used.set(other.source.id, [...(used.get(other.source.id) ?? []), [other.inS, other.inS + n]]);
+      s.src = { source: other.source.id, inS: r3(other.inS) };
+      if (other.source.sound === false) s.sound = "off";
+      placeShots([s], index, plan.w, plan.h);
+      if (k === 0) moved++;
+    }
+  }
+  return moved;
+}
+
+/** Tries of the last look per shot */
+const LOOKS = 4;
+
+/** What the last look moved, as the plan's notes say it. */
+const lookedNote = (n: number) => `${n} ${n === 1 ? "shot's picture was" : "shots' pictures were"} dark, empty or a screen of the game's menus as cropped: another moment instead`;
+
 /** The draft of a planned version: its sources and generated clips, laid as a timeline. */
-export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: EditPlan; notes: string[] }, signal: AbortSignal): Promise<void> {
+export async function draftPlan(edit: EditMeta, variant: string, saved: PlannedVersion, signal: AbortSignal): Promise<void> {
   const { plan } = saved;
   const db = libraryDb();
   const sources: Record<string, TimelineSource> = {};
@@ -1026,6 +1403,7 @@ export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: 
   if (signal.aborted) return;
   const timeline = planTimeline(plan, sources, `${edit.name} ${variant}`);
   if (!timeline.tracks.V1.items.length) throw new Error(`Nothing in ${variant}'s plan can be shown`);
-  await saveDraft(edit.id, variant, { timeline, notes: saved.notes });
+  // the AI's cut waits for its look before Review (critique.ts); a plan whose cut was looked at already carries the look
+  await saveDraft(edit.id, variant, { timeline, notes: saved.notes, ...(saved.critique ? { critique: saved.critique } : { due: saved.fix ? 2 : 1 }) });
   await clearPasses(edit.id, variant);
 }

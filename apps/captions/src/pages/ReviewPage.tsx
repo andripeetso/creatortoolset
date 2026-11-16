@@ -31,6 +31,7 @@ import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Fol
 import { useBrowseView } from "@/components/browse/views";
 import { FolderGrid, GridFrame } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
+import { canChange, useMe } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -164,6 +165,8 @@ export function reviewListing(
 /** Review library: projects (folders) and videos, newest activity first.
  *  Drag a video onto another to stack it as that video's next version. */
 export default function ReviewPage() {
+  // Read (Settings → Team → Access): looking, opening and downloading stay; every control that changes something is not shown
+  const editable = canChange(useMe(), "review");
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const assetsList = useCachedLoad("/api/review", listReviewAssets);
@@ -376,7 +379,7 @@ export default function ReviewPage() {
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
-        setDragging(true);
+        if (editable) setDragging(true);
       }}
       onDragLeave={(e) => leftFor(e) && setDragging(false)}
       // a dropped card may be gone before its own dragend fires
@@ -385,17 +388,17 @@ export default function ReviewPage() {
         e.preventDefault();
         setDragging(false);
         const files = media(e.dataTransfer.files);
-        if (files.length) setAdding({ files });
+        if (editable && files.length) setAdding({ files });
       }}
     >
       <AppBar tool="Review" to={project || trash ? "/review" : undefined} trail={project?.name ?? (trash ? "Trash" : undefined)}>
           {!project && !trash && (
             <>
               <TrashLink to="/review?trash=1" title="Trash: deleted videos, restorable for 30 days" />
-              <NewFolderButton label="New project" onClick={() => setAdding({ newProject: true })} />
+              {editable && <NewFolderButton label="New project" onClick={() => setAdding({ newProject: true })} />}
             </>
           )}
-          {project && (
+          {project && editable && (
             <ReviewShareButton
               share={project.share}
               url={project.share ? projectShareUrl(project.share.token) : ""}
@@ -407,7 +410,7 @@ export default function ReviewPage() {
               className="h-8 text-sm"
             />
           )}
-          {!trash && (
+          {!trash && editable && (
             <Button size="sm" onClick={() => setAdding({})} className="bg-violet-600 text-white hover:bg-violet-500">
               <UploadCloud /> <span className="hidden sm:inline">Upload</span>
             </Button>
@@ -490,7 +493,7 @@ export default function ReviewPage() {
           />
         )}
         {trash ? (
-          <TrashView onRestored={() => void load()} />
+          <TrashView editable={editable} onRestored={() => void load()} />
         ) : shown === null || (projectsList.data === null && !projectsList.error) ? (
           view === "list" ? (
             <div aria-hidden="true" className="flex flex-col gap-1.5">
@@ -507,7 +510,7 @@ export default function ReviewPage() {
           <p className="mt-16 text-center text-sm text-zinc-500">
             Nothing finished yet. A video lands here once it's marked finished.
           </p>
-        ) : shown.length === 0 && uploads.length === 0 && (project || shownProjects.length === 0) ? (
+        ) : editable && shown.length === 0 && uploads.length === 0 && (project || shownProjects.length === 0) ? (
           <button
             onClick={() => setAdding({})}
             className="mx-auto mt-16 flex w-full max-w-lg flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-800 px-6 py-16 text-center hover:border-violet-500/60"
@@ -531,6 +534,7 @@ export default function ReviewPage() {
               <ProjectCard
                 key={p.id}
                 row={view === "list"}
+                editable={editable}
                 project={p}
                 assets={assets!.filter((a) => folderOf(a) === p.id)}
                 dragId={dragId}
@@ -545,6 +549,7 @@ export default function ReviewPage() {
               <AssetCard
                 key={a.id}
                 row={view === "list"}
+                editable={editable}
                 asset={a}
                 projects={projects}
                 dragId={dragId}
@@ -566,7 +571,7 @@ export default function ReviewPage() {
         )}
       </main>
 
-      {picked.size > 0 && !trash && (
+      {picked.size > 0 && !trash && editable && (
         <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
           <div className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 pl-3.5 text-sm shadow-2xl">
             <span className="tabular-nums text-zinc-300">
@@ -636,6 +641,7 @@ function ListOrGrid({ view, grid, children }: { view: "grid" | "list"; grid: Rea
 /** A project (Review's folder): open it, drop videos (from here or the desktop) into it. A card, or a row (`row`). */
 function ProjectCard({
   row = false,
+  editable,
   project: p,
   assets,
   dragId,
@@ -646,6 +652,7 @@ function ProjectCard({
   reveal,
 }: {
   row?: boolean;
+  editable: boolean;
   project: ReviewProject;
   reveal: Set<string>;
   assets: ReviewAsset[];
@@ -670,18 +677,19 @@ function ProjectCard({
       </>
     ),
     drop: {
+      enabled: editable,
       type: DRAG,
       onItems: onMove,
       onFiles: (files) => onDropFiles(media(files)),
       label: !dragId ? "Upload into this project" : dragCount > 1 ? `Move ${dragCount} videos into this project` : "Move into this project",
     },
-    onRename: () => void askRename("Rename project", p.name).then((name) => name && act(patchReviewProject(p.id, { name }))),
-    menu: assets.length > 0 && (
+    onRename: editable ? () => void askRename("Rename project", p.name).then((name) => name && act(patchReviewProject(p.id, { name }))) : undefined,
+    menu: editable && assets.length > 0 && (
       <ContextMenuItem onClick={() => act(...markFinished(assets, !allDone))}>
         {allDone ? <><Undo2 /> Move to In progress</> : <><Check /> Mark finished</>}
       </ContextMenuItem>
     ),
-    onDelete: () => setDeleting(true),
+    onDelete: editable ? () => setDeleting(true) : undefined,
     deleteLabel: "Delete project",
   };
   return (
@@ -779,6 +787,7 @@ function DeleteProjectDialog({
  *  version, Shift/⌘-click to pick it with others, right-click for everything else. */
 function AssetCard({
   row = false,
+  editable,
   asset: a,
   projects,
   dragId,
@@ -796,6 +805,8 @@ function AssetCard({
   reveal,
 }: {
   asset: ReviewAsset;
+  /** Read: no status change, drags, drops, rename, move, stack, caption or delete */
+  editable: boolean;
   reveal: Set<string>;
   projects: ReviewProject[];
   dragId: string | null;
@@ -829,7 +840,12 @@ function AssetCard({
   };
   const moveTo = projects.filter((p) => p.id !== a.projectId);
   const many = carried().length;
-  const statusMenu = (
+  const statusMenu = !editable ? (
+    <span className="flex items-center gap-1.5">
+      <span className={cn("h-2 w-2 rounded-full", APPROVAL[a.approval.status].dot)} />
+      {APPROVAL[a.approval.status].label}
+    </span>
+  ) : (
     <DropdownMenu>
       <DropdownMenuTrigger
         className="-mx-1 flex items-center gap-1.5 rounded px-1 hover:bg-zinc-800 hover:text-zinc-200"
@@ -874,7 +890,7 @@ function AssetCard({
   );
   // the drags, drops and picks of a card and of a row
   const trigger = {
-    draggable: true,
+    draggable: editable,
     // Shift / ⌘ / Ctrl-click picks instead of opening
     onClickCapture: (e: React.MouseEvent) => {
       if (!e.shiftKey && !e.metaKey && !e.ctrlKey) return;
@@ -891,13 +907,14 @@ function AssetCard({
     onDragEnd: () => setDragId(null),
     onDragOver: (e: React.DragEvent) => {
       // a video stacks on one other; several go into a project, never onto a video
-      if (dragged || (dragId && dragCount > 1)) return;
+      if (!editable || dragged || (dragId && dragCount > 1)) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(true);
     },
     onDragLeave: (e: React.DragEvent) => leftFor(e) && setOver(false),
     onDrop: (e: React.DragEvent) => {
+      if (!editable) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(false);
@@ -1025,11 +1042,12 @@ function AssetCard({
         <ContextMenuItem asChild>
           <Link to={to}>Open</Link>
         </ContextMenuItem>
-        {v?.status === "ready" && onCaption && (
+        {editable && v?.status === "ready" && onCaption && (
           <ContextMenuItem onClick={onCaption}>
             <Captions /> Caption Studio
           </ContextMenuItem>
         )}
+        {editable && (<>
         <ContextMenuItem
           onClick={() => void askRename("Rename video", a.name).then((name) => name && act(patchReviewAsset(a.id, { name })))}
         >
@@ -1068,6 +1086,7 @@ function AssetCard({
             <Layers /> Edit stack…
           </ContextMenuItem>
         )}
+        </>)}
         <ContextMenuSeparator />
         {v?.status === "ready" && (
           <ContextMenuItem asChild>
@@ -1076,6 +1095,7 @@ function AssetCard({
             </a>
           </ContextMenuItem>
         )}
+        {editable && (
         <ContextMenuItem
           className="text-red-400"
           onClick={() => {
@@ -1087,6 +1107,7 @@ function AssetCard({
         >
           <Trash2 /> Delete
         </ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -1209,7 +1230,7 @@ function StackDialog({ asset: a, act, onClose }: { asset?: ReviewAsset; act: Act
 }
 
 /** Deleted videos, kept for 30 days: restore one, or delete it for good. */
-function TrashView({ onRestored }: { onRestored: () => void }) {
+function TrashView({ editable, onRestored }: { editable: boolean; onRestored: () => void }) {
   // the saved trash shows at once (lib/local-cache), refreshed underneath
   const trash = useCachedLoad("/api/review/trash", listReviewTrash);
   const items = trash.data;
@@ -1258,6 +1279,7 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
                 <p className="truncate text-sm font-medium text-zinc-100">{a.name}</p>
                 <p className="mt-1 text-xs text-zinc-500">Deleted {timeAgo(a.deletedAt ?? 0)}</p>
               </div>
+              {editable && (
               <Button
                 size="sm"
                 variant="outline"
@@ -1266,6 +1288,8 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
               >
                 <Undo2 /> Restore
               </Button>
+              )}
+              {editable && (
               <button
                 title="Delete forever"
                 aria-label="Delete forever"
@@ -1279,6 +1303,7 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
               >
                 <Trash2 className="h-4 w-4" />
               </button>
+              )}
             </div>
           </div>
         ))}

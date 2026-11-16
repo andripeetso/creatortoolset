@@ -2,6 +2,7 @@ import { chunkedUpload, json, putDirect, xhrSend } from "@/lib/uploads";
 import type { ScreenEvents, ScreenLook } from "./screen-recording";
 import type { TimelineView } from "@contracts/timeline-import";
 import type { UploadRelayTus, UploadRelayView } from "@contracts/storage";
+import type { Critique } from "@contracts/edit-plan";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
@@ -47,9 +48,9 @@ export interface ReviewVersion {
   /** It has a timeline to show under the player. */
   timeline?: boolean;
   /** (managers) the AI Editor draft it previews: its timeline, camera view and grade come from the editor. */
-  edit?: { project: string; draft: string };
-  /** (managers) the app's own AI Editor draft it was rendered from: its timeline edits can be made into the next version. */
-  draft?: { edit: string; name: string };
+  edit?: { project: string; draft: string; fails?: Critique["fails"] };
+  /** (managers) the app's own AI Editor draft it was rendered from: its timeline edits can be made into the next version. `fails`: the shots its look found still don't hold up. */
+  draft?: { edit: string; name: string; fails?: Critique["fails"] };
   /** (managers) a link back to what made it (a plug-in's own page). */
   source?: { kind: string; id: string; label: string; href: string };
   /** Its sound in parts (v<n>/stems/): the player's voice controls. */
@@ -100,7 +101,7 @@ export type SharePatch = { enabled?: boolean; download?: boolean; reset?: boolea
 /** One line in someone's inbox: "Ada commented on Launch cut". */
 export interface ReviewNote {
   id: string;
-  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed";
+  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "waiting";
   by: string;
   assetId: string;
   name: string;

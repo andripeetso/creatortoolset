@@ -1,8 +1,9 @@
 import { Hono, type Context } from "hono";
+import { turnVersion } from "./turn";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "../auth";
-import type { AssetDetail, SearchHit, SearchQuery } from "../../contracts/library";
+import type { AssetDetail, SearchHit, SearchQuery, StretchLines } from "../../contracts/library";
 import { deviceEmbedStatus } from "../lib/device-embed";
 import { env, hostedMode } from "../lib/env";
 import type { SessionUser } from "../users";
@@ -17,12 +18,14 @@ import { filterClauses } from "./query";
 import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
+import { ratedLine } from "./look";
+import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
 
 /**
  * Search, one asset in full, re-running jobs, and opening a clip in Caption Studio (tasks/media-library-plan.md,
  * sections 6, 7 and 10). Mounted at /api/library next to routes.ts. Search reads titles, tags and descriptions
- * (search_assets) and what is said in the clips (search_segments): a segment hit carries its second, so the preview
- * opens there. Only the current version of assets out of the trash is searched. Outsiders get 404 everywhere.
+ * (search_assets), what is said in the clips (search_segments) and their shot descriptions (search_stretches): a
+ * segment or shot hit carries its second, so the preview opens there. Only the current version of assets out of the trash is searched. Outsiders get 404 everywhere.
  */
 
 export const searchApp = new Hono<{ Variables: AuthVars }>();
@@ -44,7 +47,7 @@ export function searchClauses(query: SearchQuery): Clause[] {
   ];
 }
 
-/** Asset hits first (title weighs most), then the lines said in clips, each with the second it starts at. */
+/** Asset hits first (title weighs most), then the lines said in clips, then the shots seen in them, each with the second it starts at. */
 export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: Clause[] = []): SearchHit[] {
   const fts = ftsQuery(q);
   if (!fts) return [];
@@ -70,9 +73,19 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
     if (!segs.has(versionId)) segs.set(versionId, segmentsOf(db(), versionId));
     return segs.get(versionId)![seg]?.start ?? 0;
   };
+  const seen = db()
+    .prepare(
+      `SELECT ${CARD}, (SELECT st.a FROM stretches st WHERE st.version_id = s.version_id AND st.seg = s.seg LIMIT 1) AS at,
+         snippet(search_stretches, 2, '', '', '…', 16) AS snippet
+       FROM search_stretches s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
+       WHERE search_stretches MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       ORDER BY bm25(search_stretches) LIMIT ?`,
+    )
+    .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
   return [
     ...assets.map((r) => ({ asset: toCard(r) })),
     ...said.map((r) => ({ asset: toCard(r), seconds: startOf(r.version_id, r.seg), snippet: r.snippet })),
+    ...seen.map((r) => ({ asset: toCard(r), seconds: r.at ?? 0, snippet: r.snippet })),
   ];
 }
 
@@ -119,12 +132,16 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     return { kind: j.kind, state: j.state, ...(error ? { error } : {}) };
   });
   const t = db().prepare("SELECT provider FROM transcripts WHERE version_id = ?").get(row.version_id) as { provider: string } | undefined;
+  const shots = stretchesOf(db(), row.version_id)
+    .filter((s) => s.text)
+    .map((s) => ({ seg: s.seg, a: s.a, b: s.b, text: s.text, source: s.source }));
   return {
     ...toCard(row),
     versions,
     collections,
     jobs,
     ...(t ? { transcript: { provider: t.provider, segments: segmentsOf(db(), row.version_id) } } : {}),
+    ...(shots.length ? { shots } : {}),
     ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user)),
   };
 }
@@ -192,7 +209,8 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   return c.json(detail);
 });
 
-const RERUN = new Set(["transcribe", "describe", "fingerprint", "embed"]);
+// a look on one clip, asked for by name: never a whole library's (bulk.ts has no look)
+const RERUN = new Set(["transcribe", "describe", "look", "fingerprint", "embed"]);
 
 // POST /api/library/:id/assets/:assetId/jobs { kinds } → queued again, with the caller as the actor (their key)
 searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
@@ -213,7 +231,8 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
   return c.json({ ok: true });
 });
 
-// PATCH /api/library/:id/assets/:assetId { title?, tags?, description? }: the uploader or the owner.
+// PATCH /api/library/:id/assets/:assetId { title?, tags?, description?, turn? }: the uploader or the owner.
+// `turn`: clockwise degrees to show the clip upright (0, 90, 180, 270; turn.ts), set on its current version.
 // `tags` is the whole list people see: a tag left out goes (the AI's too), a new one is theirs. `description` is the
 // human one, shown over the AI's; empty removes it and the AI's shows again.
 // ponytail: a changed description is not re-embedded until the next transcribe or describe; Retry embed does it now
@@ -228,7 +247,7 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
         | undefined)
     : undefined;
   if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return notFound(c);
-  const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; aiTags?: unknown; description?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; aiTags?: unknown; description?: unknown; turn?: unknown } | null;
   const title = typeof b?.title === "string" ? b.title.trim().slice(0, 160) : undefined;
   const tags = Array.isArray(b?.tags)
     ? [...new Set(b.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().slice(0, 80)).filter(Boolean))].slice(0, 50)
@@ -236,9 +255,11 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
   // a tag the AI gave, put back by an undo, stays the AI's
   const aiTags = new Set(Array.isArray(b?.aiTags) ? b.aiTags.filter((t): t is string => typeof t === "string") : []);
   const description = typeof b?.description === "string" ? b.description.trim().slice(0, 4000) : undefined;
-  if (title === "" || (title === undefined && tags === undefined && description === undefined))
-    return c.json({ error: "Send a title, tags or a description", code: "invalid" }, 400);
+  const turn = typeof b?.turn === "number" && Number.isFinite(b.turn) ? b.turn : undefined;
+  if (title === "" || (title === undefined && tags === undefined && description === undefined && turn === undefined))
+    return c.json({ error: "Send a title, tags, a description or a turn", code: "invalid" }, 400);
   const d = db();
+  if (turn !== undefined) await turnVersion(d, a.current_version_id, turn);
   d.exec("BEGIN");
   try {
     if (title) d.prepare("UPDATE assets SET title = ? WHERE id = ?").run(title, assetId);
@@ -261,6 +282,72 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     throw e;
   }
   return c.json(assetDetail(libraryId, assetId, user));
+});
+
+// PATCH /api/library/:id/assets/:assetId/shots/:seg { text } → AssetDetail: the person's own line for one shot of the
+// current version, which wins over the AI's; empty removes it and the AI's shows again. Who may edit the clip may edit it.
+searchApp.patch("/:id/assets/:assetId/shots/:seg", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const assetId = c.req.param("assetId");
+  const a = libraryRole(user.username, libraryId)
+    ? (db().prepare("SELECT current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(assetId, libraryId) as { current_version_id: string | null } | undefined)
+    : undefined;
+  if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return notFound(c);
+  const seg = Number(c.req.param("seg"));
+  const b = (await c.req.json().catch(() => null)) as { text?: unknown } | null;
+  if (!Number.isSafeInteger(seg) || seg < 0 || typeof b?.text !== "string") return c.json({ error: "Send the line's text", code: "invalid" }, 400);
+  if (!setUserLine(db(), a.current_version_id, seg, b.text)) return notFound(c);
+  return c.json(assetDetail(libraryId, assetId, user));
+});
+
+/**
+ * A version another computer reads (the studio's worker, a Mac with the file), for the two routes below: the caller
+ * must be allowed to change the clip. Null: not found for them.
+ */
+async function writableVersion(c: Ctx): Promise<{ versionId: string; duration: number } | null> {
+  const user = c.get("user");
+  const libraryId = c.req.param("id") ?? "";
+  const versionId = c.req.param("versionId") ?? "";
+  const v = libraryRole(user.username, libraryId)
+    ? (db()
+        .prepare("SELECT a.id AS asset_id, a.kind, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL")
+        .get(versionId, libraryId) as { asset_id: string; kind: string; probe: string | null } | undefined)
+    : undefined;
+  if (!v || v.kind !== "video" || !(await mayWrite(user.username, libraryId, v.asset_id, versionId))) return null;
+  return { versionId, duration: Number((JSON.parse(v.probe ?? "null") as { duration?: number } | null)?.duration) || 0 };
+}
+
+// POST /api/library/:id/versions/:versionId/picture PictureSignal → { stretches: [{ seg, a, b, motion }] }: a video's
+// picture read on another computer (look.ts readPicture's numbers). The server finds the stretches the way it does for
+// a file it reads itself (shotsOf), stores them with no line yet (the AI's earlier rows go; the person's own lines
+// stay) and answers with them, so the other computer makes the sheets and the lines (…/stretches).
+searchApp.post("/:id/versions/:versionId/picture", async (c) => {
+  const v = await writableVersion(c);
+  if (!v) return notFound(c);
+  const x = parseSignal(await c.req.json().catch(() => null));
+  if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
+  return c.json({ stretches: takeSignal(db(), v.versionId, v.duration, x) });
+});
+
+// POST /api/library/:id/versions/:versionId/stretches StretchLines → { saved }: the lines another computer's look wrote
+// for the stretches …/picture answered with, under the context stamp it was given. Each is checked and capped as the
+// server's own (look.ts ratedLine); a line for a stretch the version doesn't have is left out.
+searchApp.post("/:id/versions/:versionId/stretches", async (c) => {
+  const v = await writableVersion(c);
+  if (!v) return notFound(c);
+  const b = (await c.req.json().catch(() => null)) as Partial<StretchLines> | null;
+  if (typeof b?.stamp !== "string" || !/^[\w.-]{1,64}$/.test(b.stamp)) return c.json({ error: "Send the stamp the lines were written under", code: "invalid" }, 400);
+  if (!Array.isArray(b.lines) || b.lines.length > MAX_SIGNAL_FRAMES) return c.json({ error: "Send the lines", code: "invalid" }, 400);
+  const lines: StretchLine[] = [];
+  for (const l of b.lines as unknown[]) {
+    const o = (l ?? {}) as Record<string, unknown>;
+    const line = ratedLine(o);
+    if (!line || !Number.isSafeInteger(o.seg) || (o.seg as number) < 0) continue;
+    const ph = typeof o.ph === "string" && /^[0-9a-f]{16}$/i.test(o.ph) ? o.ph.toLowerCase() : undefined;
+    lines.push({ seg: o.seg as number, ...line, ...(ph ? { ph } : {}) });
+  }
+  return c.json({ saved: storeLines(db(), v.versionId, b.stamp, lines) });
 });
 
 const opening = new Map<string, Promise<string>>();

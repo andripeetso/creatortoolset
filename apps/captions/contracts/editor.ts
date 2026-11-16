@@ -6,7 +6,8 @@
  *   GET    /api/editor                     → EditSummary[] (mine; a workspace owner: the workspace's too)
  *   GET    /api/editor/:id                 → Edit
  *   PATCH  /api/editor/:id                 EditPatch (the creator) → Edit
- *   POST   /api/editor/:id/run             { from?: EditStep } (the creator) → Edit
+ *   POST   /api/editor/:id/run             { from?: EditStep, now?: true } (the creator) → Edit
+ *   POST   /api/editor/:id/feedback        { text } what the person said about the cut, kept word for word; queues the next version → Edit & { queued }
  *   POST   /api/editor/:id/jobs/:jobId/retry  (the creator) → Edit
  *   POST   /api/editor/:id/stop            stops queued and running steps → Edit
  *   PUT    /api/editor/:id/eyeline/:versionId  { y: 0..1 } (the creator) → Edit
@@ -33,7 +34,7 @@
  */
 
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
-import type { PlanEffect, PlanFrame, PlanText } from "./edit-plan";
+import type { Coverage, Focus, PlanEffect, PlanFrame, PlanText } from "./edit-plan";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -207,6 +208,8 @@ export interface Edit extends EditSummary, EditBrief {
   cards?: Record<string, EditCards>;
   /** an edit in passes: the next pass Carry on queues (POST /api/editor/:id/pass), and whether it waits for it (nothing queued or running) */
   passes?: { waiting: boolean; next: "broll" | "cards" | null };
+  /** a planned edit: the footage its cut was made from, and each file left out (Review names those) */
+  coverage?: Coverage;
 }
 
 /** One version's cards as the edit page shows them. */
@@ -261,7 +264,9 @@ export interface Item {
   /** how it sits in the frame (PlanShot.frame); its zoom is the main picture's size, so an export shows that much */
   frame?: PlanFrame;
   /** pictures stacked in a column with it: a source key in Timeline.sources and its in-point (source frames) */
-  split?: Array<{ src: string; in: number }>;
+  split?: Array<{ src: string; in: number; focus?: Focus }>;
+  /** where the crop sits in the room the picture leaves (PlanShot.focus): the preview draws it; an export keeps the centre */
+  focus?: Focus;
 }
 
 export interface TimelineSource {
@@ -346,3 +351,23 @@ export interface FootageTarget {
   libraryId: string;
   collectionId: string;
 }
+
+/**
+ * One thing the person said about an edit's versions, kept word for word and read with every later version of that
+ * edit (tasks/flywheel/PLAN.md D8): a message in chat (tool editor_feedback) or a Review comment on a version set to
+ * Changes. Never rewritten or summed up; the newest is read last.
+ */
+export interface EditFeedback {
+  at: number;
+  from: "chat" | "review";
+  /** the version it was said about ("v1".."v5"; a Review comment's own version) */
+  variant?: string;
+  /** seconds into that version, when it sits on a moment (a Review comment) */
+  t?: number;
+  text: string;
+  /** who said it: their username */
+  by: string;
+}
+/** Notes one edit keeps, and the characters of each. */
+export const EDIT_FEEDBACK_MAX = 60;
+export const EDIT_FEEDBACK_TEXT_MAX = 4000;

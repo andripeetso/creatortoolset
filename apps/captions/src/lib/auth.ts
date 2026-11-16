@@ -17,6 +17,8 @@ export interface Me {
   cloud: boolean;
   /** Apps and plug-in gates switched off for this account (see canUse). */
   off: (Tool | PluginGateId)[];
+  /** Apps it opens but doesn't change (Settings → Team → Access: Read); the server refuses their writes. */
+  read?: Tool[];
   logins?: number | null; // real accounts only — used to spot a first login
   /** The picture from a linked Google or GitHub sign-in (its own URL); null: the initial is shown. */
   picture?: string | null;
@@ -40,6 +42,8 @@ export function setOffHere(ids: string[]): void {
   if (me) useAuth.setState({ me: { ...me } });
 }
 export const pluginOffHere = (id: string): boolean => offHere.includes(id);
+/** The app is on and not set to Read: this account may change things there, so its edit controls show. */
+export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool) && (me!.role === "admin" || !me!.read?.includes(tool));
 
 /** A Home tile: a tool, or the Screen Recorder, which is open to whoever can use Review or Video Notes (where a recording goes). */
 export const canUseTile = (me: Me | null, tile: HomeTile): boolean =>

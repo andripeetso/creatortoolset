@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Sentence, Take } from "../../contracts/editor";
+import type { Sentence, Take, Timeline } from "../../contracts/editor";
 import {
   FINISHED_BRIEF_MAX,
   FINISHED_CUT_LINES,
@@ -9,14 +9,17 @@ import {
   FINISHED_EXAMPLES,
   FINISHED_MAX,
   FINISHED_SAID_MAX,
+  LEARNED_MAX,
   type FinishedEdit,
+  type StyleLearned,
 } from "../../contracts/editor-styles";
 import { innerCall } from "../auth";
 import { env } from "../lib/env";
 import { onEvent } from "../lib/events";
 import { tfidf } from "../lib/workshop/posted";
+import { typedIn } from "./own-words";
 import { allEdits, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
-import { findStyle } from "./styles";
+import { change, findStyle } from "./styles";
 
 /**
  * What an editing style learns from (contracts/editor-styles.ts, FinishedEdit): the edits made with it that their
@@ -26,7 +29,8 @@ import { findStyle } from "./styles";
  *
  * An edit is finished when its maker approves a version's Review video or sends it to Finals, at their own screen
  * (Review says so with `review.finished`). A reviewer's approval, an admin's, and one an AI's tool or key made keep
- * nothing. So does an edit with no style, and one whose style is gone.
+ * nothing. So does an edit with no style, and one whose style is gone. The same press also keeps what the edit taught
+ * on the style itself (keepLearned), and so does an approval the maker's own chat made with words they typed there.
  *
  * Every word kept is the person's own: the brief they typed and the words spoken in the footage (the transcript's
  * sentences). Never a line's text or a version's title, which the AI wrote, and never a brief or a name that came
@@ -130,14 +134,60 @@ export function forgetFinished(username: string, styleId: string): void {
   }
 }
 
+/** An approved cut's numbers, measured from its timeline: its length, the shots on V1 and V2, effects a shot, the sources in them. */
+export function cutOf(tl: Timeline | undefined): StyleLearned["cut"] {
+  const items = tl ? [...tl.tracks.V1.items, ...tl.tracks.V2.items] : [];
+  if (!tl || !items.length) return { seconds: 0, shots: 0, avgShotS: 0, fxPerShot: 0, sourcesUsed: 0 };
+  const end = Math.max(...tl.tracks.V1.items.map((i) => i.rec + i.len), 0) / tl.fps;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    seconds: Math.round(end),
+    shots: items.length,
+    avgShotS: r2(end / items.length),
+    fxPerShot: r2(items.reduce((n, i) => n + (i.fx?.length ?? 0), 0) / items.length),
+    sourcesUsed: new Set(items.flatMap((i) => [i.src, ...(i.split ?? []).map((p) => p.src)])).size,
+  };
+}
+
+/**
+ * What an approved version of an edit taught its style (StyleLearned), kept on the style, newest first, one entry an
+ * edit: the maker's own feedback on it word for word (EditMeta.feedback), the cut's numbers, and the rounds it took (the
+ * versions of its Review video after the first). Nothing for an edit with no style or a style that is gone. Silent: no
+ * line anywhere says it was kept; the style's page lists it, removable for good.
+ */
+export function keepLearned(e: EditMeta, variant: string): void {
+  const id = e.style?.id;
+  if (!id) return;
+  const entry: StyleLearned = {
+    editId: e.id,
+    workspaceId: e.projectId ?? "",
+    at: Date.now(),
+    rounds: Math.max(0, (readStep(e.id, "review")?.[variant]?.n ?? 1) - 1),
+    notes: (e.feedback ?? []).filter((f) => f.by === e.createdBy).map((f) => f.text),
+    cut: cutOf(readDraft(e.id, variant)?.timeline),
+  };
+  change(e.createdBy, (f) => {
+    const s = f.editing.find((x) => x.id === id);
+    if (!s) return "gone";
+    if (s.unlearned?.includes(e.id)) return;
+    s.learned = [entry, ...(s.learned ?? []).filter((l) => l.editId !== e.id)].slice(0, LEARNED_MAX);
+  });
+}
+
 // ponytail: every edit on the server is read to find the one a Review video belongs to (one small file each, once per approval); an index by video when that is slow
-onEvent("review.finished", ({ asset, owner, by, key }) => {
-  // only the maker's own press, at their own screen: not a reviewer's or an admin's, not an AI's tool (innerCall) or key
-  if (by !== owner || key || innerCall.getStore()) return;
+onEvent("review.finished", ({ asset, owner, by, key, words, turn }) => {
+  // only the maker's own press: not a reviewer's or an admin's
+  if (by !== owner) return;
+  // an AI's tool (innerCall) or key: the style learns only when it is the maker's own chat approving it with what they
+  // typed there (own-words.ts), and the finished list keeps nothing, as before
+  const tool = key || !!innerCall.getStore();
+  if (tool && !(turn && words && typedIn(owner, turn, words))) return;
   for (const e of allEdits()) {
     if (e.createdBy !== owner || e.trashedAt) continue;
     const variant = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset)?.[0];
-    if (variant) return keepFinished(e, variant);
+    if (!variant) continue;
+    if (!tool) keepFinished(e, variant);
+    return keepLearned(e, variant);
   }
 });
 

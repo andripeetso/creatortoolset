@@ -22,6 +22,8 @@ import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
 import { offHere } from "./lib/plugin-workspaces";
 import { editorTools, hasStyle } from "./mcp-tools/editor";
+import { one } from "./mcp-tools/editor-styles";
+import type { EditingStylesView } from "../contracts/editor-styles";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import { SOUNDS, type AssetCard } from "../contracts/library";
@@ -83,6 +85,16 @@ their words (the kind of edit, its pace, effects, words on screen: "an overdone 
 recap"), and the length in target_s; the workspace's setup and the editing style are read with it. The song: the one
 they name, found with media_search kind audio (one not in the library yet goes in with use_file sound music first), as
 song; with none named, one among the sources, else the library's.
+
+An edit waits while the Media Library is still describing its footage, and its step says so; when the user says to cut
+it now, editor_run with now=true cuts from what is ready. editor_get lists the footage a cut left out (left_out): say
+that first when it is there. The user's notes on a cut go to editor_feedback in their own words, never into the brief:
+the next version is made from the last one, changing what they named.
+Editing styles: when the brief names one of the user's styles or clearly is that kind of edit, pass it as
+editor_create's style; when none fits, make one named for the kind of edit ("Hard edit") with editor_style_save first
+and pass that. A style can hold a playbook: what that kind of edit is, its structure, its pace in numbers, its
+effects by the editor's names (punch, zoom, flash, shake, rgb, glitch, blur, invert, strobe, zoomblur, reverse,
+stutter, freeze, whip), what makes it fail, and the sources. Save one with editor_style_save when you have it.
 
 A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
 as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
@@ -223,8 +235,8 @@ export const TOOLS = [
   },
   {
     name: "review_set_approval",
-    description: "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none.",
-    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "rejected", "approved"] } }, required: ["link", "status"] },
+    description: "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none. words: with approved, the user's message saying it is good, word for word.",
+    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "rejected", "approved"] }, words: str }, required: ["link", "status"] },
   },
   {
     name: "review_share",
@@ -245,17 +257,17 @@ export const TOOLS = [
   { name: "editor_get", description: "One AI Editor edit: its brief, drafts, notes and jobs.", inputSchema: { type: "object", properties: { edit: str }, required: ["edit"] } },
   {
     name: "editor_run",
-    description: "Run an AI Editor edit from a step on (analyze, script, draft); the run ends with each draft's preview filed in Review. send_to_review renders one draft's preview again and files it as the next version of its Review video (needs draft): only after the draft changed, never to show one that is already there.",
+    description: "Run an AI Editor edit from a step on (analyze, script, draft); the run ends with each draft's preview filed in Review. now=true: cut from the footage the Media Library has ready instead of waiting for the rest (it is named as left out). send_to_review renders one draft's preview again and files it as the next version of its Review video (needs draft): only after the draft changed, never to show one that is already there.",
     // a whole edit cannot run from broll (it belongs to one draft): the page never offers it either
-    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS.filter((s) => s !== "broll"), "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
+    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS.filter((s) => s !== "broll"), "send_to_review"] }, draft: str, now: { type: "boolean" } }, required: ["edit", "kind"] },
   },
   {
     name: "editor_create",
     description:
-      "Make a new AI Editor edit and start it (analyze → script or plan → draft → B-roll → a preview of each version, filed in Review). It cuts any footage into the kind of edit asked for: around what is said when someone talks, else as shots to a song or the brief. sources = the footage, as version_id from media_search or media_import_folder (up to 50): talking takes, any other clips, a song. script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel, in the user's words: the kind of edit, its length ('max 25 s'; a hard or social edit with none is 15-25 s), what to open with (a clip or a moment: 'start with the boss fight'), the look (pace, effects, sizes: not every shot has to fill the frame), words on screen. plan=true = planned as shots even though someone talks (a montage, a music edit); footage where nobody speaks is planned without it. song = the version_id of a song to cut to (media_search kind audio). broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+      "Make a new AI Editor edit and start it (analyze → script or plan → draft → B-roll → a preview of each version, filed in Review). It cuts any footage into the kind of edit asked for: around what is said when someone talks, else as shots to a song or the brief. sources = the footage, as version_id from media_search or media_import_folder (up to 50): talking takes, any other clips, a song. script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel, in the user's words: the kind of edit, its length ('max 25 s'; a hard or social edit with none is 15-25 s), what to open with (a clip or a moment: 'start with the boss fight'), the look (pace, effects, sizes: not every shot has to fill the frame), words on screen. plan=true = planned as shots even though someone talks (a montage, a music edit); footage where nobody speaks is planned without it. song = the version_id of a song to cut to (media_search kind audio). broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. style = the editing style for this kind of edit, its id or name (editor_style_save makes one). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
     inputSchema: {
       type: "object",
-      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, plan: { type: "boolean" }, song: str, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
+      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, plan: { type: "boolean" }, song: str, broll_folder: str, languages: { type: "array", items: str }, style: str, start: { type: "boolean" } },
       required: ["sources"],
     },
   },
@@ -835,7 +847,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     review_set_approval: async (a) => {
       const at = await reviewOf({ json, origin }, a.link);
       if (!at.manage && a.status !== "approved" && a.status !== "changes") throw new ToolError("That video is someone else's: on its share link you can approve it or ask for changes (approved, changes), nothing else.");
-      const r = await json(`${at.path}/approval`, "POST", { status: a.status });
+      const r = await json(`${at.path}/approval`, "POST", { status: a.status, ...(a.status === "approved" && typeof a.words === "string" ? { words: a.words } : {}) });
       return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
     },
     review_share: async (a) => {
@@ -896,6 +908,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           return { name, ...pick(plan ?? {}, ["title"]), ...pick({ said: saidIn(plan) }, ["said"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
         }),
         ...(Object.keys((e.flags as Args | undefined) ?? {}).length ? { flags: e.flags } : {}),
+        // footage the cut was not made from, and why: said only when there is some
+        ...(((e.coverage as Args | undefined)?.left as unknown[] | undefined)?.length ? { left_out: (e.coverage as Args).left } : {}),
         link: `${origin}/editor/${e.id}`,
         // the newest ten, and every one that failed or needs setup however old
         jobs: jobs.filter((j, i) => i >= jobs.length - 10 || j.state === "failed" || j.state === "needs_key").map((j) => pick(j, ["id", "kind", "variant", "state", "error"])),
@@ -908,8 +922,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         await json(`/api/editor/${edit}/drafts/${encodeURIComponent(String(a.draft))}/review`, "POST", {});
         return { status: "queued", draft: a.draft };
       }
-      await json(`/api/editor/${edit}/run`, "POST", { from: a.kind });
-      return { status: "queued", from: a.kind };
+      await json(`/api/editor/${edit}/run`, "POST", { from: a.kind, ...(a.now === true ? { now: true } : {}) });
+      return { status: "queued", from: a.kind, ...(a.now === true ? { now: true } : {}) };
     },
     editor_create: async (a) => {
       const sources = Array.isArray(a.sources) ? a.sources.map(String) : [];
@@ -917,6 +931,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages", "moments", "plan", "song"]) };
       if (a.target_s != null) body.targetS = a.target_s;
       if (a.broll_folder) body.brollCollectionId = a.broll_folder;
+      // the style by its id or name, as editor_style_use takes it
+      if (a.style != null && String(a.style).trim()) body.style = one((await json<EditingStylesView>("/api/editor/styles")).styles, a.style).id;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
       if (a.start !== false) await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
       return { id, name: a.name ?? "Untitled edit", status: a.start !== false ? "started" : "made", link: `${origin}/editor/${id}`, note: "It runs by itself and files each version's preview in Review; the chat says when it is ready, so end your reply rather than wait." };
@@ -1530,7 +1546,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  */
 const READS = new Set("captions_get captions_list chat_read chats_list design_get folder_list editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait workspace_files navigate show_video offer_choices".split(" "));
 const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_project_update workshop_sources workshop_update_session".split(" "));
-const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_retry editor_run editor_style_save animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
+const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_feedback editor_retry editor_run editor_style_save animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
 const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
 export const annotationsOf = (name: string) => ({
