@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { STRETCH_TEXT_MAX, type Stretch } from "../../contracts/library";
+import { STRETCH_TEXT_MAX, type PictureSignal, type Stretch } from "../../contracts/library";
+import { shotsOf } from "./look";
 
 /**
  * A video's shot descriptions (contracts/library.ts Stretch; table `stretches`, migration 21), in order. Where the
@@ -128,4 +129,30 @@ export function indexStretches(db: DatabaseSync, versionId: string): void {
   db.prepare("DELETE FROM search_stretches WHERE version_id = ?").run(versionId);
   const add = db.prepare("INSERT INTO search_stretches (version_id, seg, text, tags) VALUES (?, ?, ?, ?)");
   for (const s of stretchesOf(db, versionId)) if (s.text) add.run(versionId, s.seg, s.text, s.tags.join(" "));
+}
+
+/** The most frames a picture read elsewhere may send (six hours at 30 a second). */
+export const MAX_SIGNAL_FRAMES = 6 * 3600 * 30;
+const nums = (x: unknown, n: number) => Array.isArray(x) && x.length === n && x.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+
+/** A picture as numbers, checked (contracts PictureSignal): the same count of each, finite and not negative. */
+export function parseSignal(body: unknown): PictureSignal | string {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const fps = Number(b.fps);
+  if (!Number.isFinite(fps) || fps < 1 || fps > 120) return "fps must be between 1 and 120";
+  const n = Array.isArray(b.step) ? b.step.length : -1;
+  if (n < 1 || n > MAX_SIGNAL_FRAMES) return `step must hold 1 to ${MAX_SIGNAL_FRAMES} frames`;
+  if (!nums(b.step, n) || !nums(b.cut, n) || !nums(b.lag, n)) return "step, cut and lag must be as long as each other, of numbers 0 or more";
+  return { fps, step: b.step as number[], cut: b.cut as number[], lag: b.lag as number[] };
+}
+
+/**
+ * A picture read on another computer (the studio's worker, a Mac with the file): its stretches found as the server finds
+ * its own (look.ts shotsOf, D4) and stored with no line yet (storeStretches), answered in order.
+ */
+export function takeSignal(db: DatabaseSync, versionId: string, duration: number, x: PictureSignal): { seg: number; a: number; b: number; motion: number }[] {
+  const read = { fps: x.fps, step: Float32Array.from(x.step), cut: Float32Array.from(x.cut), lag: Float32Array.from(x.lag) };
+  const found = shotsOf(read, duration || x.step.length / x.fps);
+  storeStretches(db, versionId, found);
+  return found.map((s, seg) => ({ seg, a: s.a, b: s.b, motion: s.motion }));
 }
