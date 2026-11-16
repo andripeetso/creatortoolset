@@ -8,8 +8,9 @@ import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
+import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
 import { keptApp } from "./kept";
+import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
@@ -74,8 +75,15 @@ async function scopeOf(c: C): Promise<{ mine: (f: StorageFolder) => boolean; wor
   const workspace = inWs ? await currentWorkspaceId(u) : undefined;
   return { mine: (f) => !inWs || inWs(f.workspace), ...(workspace ? { workspace } : {}) };
 }
-/** The list the page gets: this workspace's folders only. */
-const shown = (st: StorageState, mine: (f: StorageFolder) => boolean): StorageState => ({ ...st, folders: st.folders.filter(mine) });
+/** The list the page gets: this workspace's folders only, with the account's computers that reach them through a connected share (lib/storage.ts withMounts). */
+const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string): StorageState =>
+  ({ ...st, folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))) });
+
+/** Whether a workspace's Media Library uploads what is added from a computer (`upload`: true or "all" or "proxies"; false or
+ *  "none" keeps the files where they are), so the server has a copy to work from. */
+const keepsCopies = (workspace: string): boolean =>
+  (libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE workspace_id = ?").all(workspace) as { v: unknown }[])
+    .some((r) => r.v === 1 || r.v === "all" || r.v === "proxies");
 
 export const storageApp = new Hono<{ Variables: AuthVars }>();
 
@@ -91,14 +99,14 @@ storageApp.route("/kept", keptApp);
  *  no drives (the row then has nothing else to show). */
 storageApp.get("/", async (c) => {
   const u = c.get("user");
-  const st = shown(await readStorage(u.username), (await scopeOf(c)).mine);
+  const st = shown(await readStorage(u.username), (await scopeOf(c)).mine, u.username);
   const lib = st.folders.find((f) => f.role === "library");
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
   const local = process.env.CT_LOCAL === "1" && u.role === "admin";
   // which of this account's computers is this machine: a folder added on it goes into the Library (the page asks first when it is big)
   const here = watchAllowed(u.username) ? listDevices((d) => !!mine(c, d.id) && isThisMachine(d.id)).map((d) => d.id) : [];
-  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here };
+  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies((await scopeOf(c)).workspace ?? u.username) };
   return c.json(view);
 });
 
@@ -126,11 +134,12 @@ storageApp.post("/library", async (c) => {
           st.folders.push({ id: randomUUID(), role, name: LIBRARY_SUBFOLDERS[role], origin: { host: old.origin.host, path: at }, make: false, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
       }
     }
-    st.folders.push({ id: randomUUID(), role: "library", name: LIBRARY_NAME, origin: { host, path: p }, make: true, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
+    const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
+    st.folders.push({ id: randomUUID(), role: "library", name: LIBRARY_NAME, origin: { host, path: p }, make: true, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });
-  return out ? c.json(shown(out, here)) : c.json({ error: "The library is already there" }, 400);
+  return out ? c.json(shown(out, here, user)) : c.json({ error: "The library is already there" }, 400);
 });
 
 /** Use a folder you already have as footage or music. */
@@ -152,11 +161,13 @@ storageApp.post("/folders", async (c) => {
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
-    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: false, createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}) });
+    // the share its drive is on that computer, so another computer can be told how to connect it (never a password)
+    const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
+    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: false, createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });
-  return out ? c.json(shown(out, here)) : c.json({ error: "That folder is already there" }, 400);
+  return out ? c.json(shown(out, here, user)) : c.json({ error: "That folder is already there" }, 400);
 });
 
 /** Forget a folder (its marker files stay where they are). */
@@ -176,5 +187,5 @@ storageApp.delete("/folders/:id", async (c) => {
   // another workspace may read the same folder: it stays on the Library's watch list while one still lists it
   const still = out.st.folders.some((f) => f.role !== "library" && f.origin.host === out.gone.origin.host && f.origin.path === out.gone.origin.path);
   if (out.gone.role !== "library" && !still && readHere(user, out.gone.origin.host)) await removeWatchFolder(user, out.gone.origin.path);
-  return c.json(shown(out.st, here));
+  return c.json(shown(out.st, here, user));
 });

@@ -29,6 +29,30 @@ describe("Storage rows", () => {
   });
 });
 
+describe("which computers can read a folder", () => {
+  const pc = { id: "dev_2", name: "Edit PC", owner: "sam", online: true, report: { machine: { os: "linux", cpus: 8, memGb: 16 } } } as unknown as Computer;
+  const laptop = { id: "dev_3", name: "Laptop", owner: "sam", online: true, report: { machine: { os: "mac", cpus: 8, memGb: 16 } } } as unknown as Computer;
+  const shoots: StorageFolder = {
+    id: "f_1", role: "footage", name: "Shoots", origin: { host: "dev_1", path: "/Volumes/Footage/Shoots" }, make: false, createdAt: 0,
+    reach: { dev_2: { path: "/mnt/footage/Shoots", at: 0 } }, mount: { fs: "smb", server: "nas", share: "Footage", sub: "Shoots" },
+  };
+  const rows = (copies?: boolean, devices = [mac, pc, laptop]) =>
+    renderToStaticMarkup(<Storage devices={devices} storage={{ ...view([shoots]), ...(copies ? { copies } : {}) }} onChanged={() => {}} />);
+
+  it("says per computer: on it, through the server copy, or not connected, with Connect for a share", () => {
+    const html = rows();
+    expect(html).toContain("Sam&#x27;s Mac Studio · On this computer");
+    expect(html).toContain("Edit PC · On this computer");
+    expect(html).toContain("Laptop · Not connected");
+    expect(html.match(/>Connect</g)).toHaveLength(1);
+    expect(rows(true)).toContain("Laptop · Through the server copy");
+  });
+
+  it("says nothing of it with one computer", () => {
+    expect(rows(false, [mac])).not.toContain("On this computer");
+  });
+});
+
 describe("the Drive select", () => {
   const system = { name: "System disk", path: "/", freeGb: 72, totalGb: 460 };
   const ssd = { name: "Footage SSD", path: "/Volumes/Footage SSD", freeGb: 759, totalGb: 1843 };

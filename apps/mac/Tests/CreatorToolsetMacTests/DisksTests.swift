@@ -30,6 +30,20 @@ final class DisksTests: XCTestCase {
         let share = diskReport(volume("/Volumes/footage", fstype: "smbfs", source: "//user@NAS-1._smb._tcp.local/footage"))
         XCTAssertEqual(share?["network"] as? Bool, true)
         XCTAssertEqual(share?["server"] as? String, "nas-1")
+        // how it is shared and its name there, so another computer can connect it; never the user name
+        XCTAssertEqual(share?["fs"] as? String, "smb")
+        XCTAssertEqual(share?["share"] as? String, "footage")
+    }
+
+    func testAShareSaysItsKindAndName() {
+        let nfs = diskReport(volume("/Volumes/rushes", fstype: "nfs", source: "NAS-1:/volume1/rushes"))
+        XCTAssertEqual(nfs?["server"] as? String, "nas-1")
+        XCTAssertEqual(nfs?["fs"] as? String, "nfs")
+        XCTAssertEqual(nfs?["share"] as? String, "volume1/rushes")
+        XCTAssertEqual(shareOf("//me@nas._smb._tcp.local/Team%20Footage", fstype: "smbfs")?.share, "Team Footage")
+        XCTAssertEqual(shareOf("afp://nas/x", fstype: "afpfs")?.fs, nil)   // not a mount source
+        XCTAssertNil(shareOf("/dev/disk3s1", fstype: "apfs"))
+        XCTAssertNil(diskReport(volume("/Volumes/home", fstype: "fuse.sshfs", source: "user@box:/home"))?["share"])
     }
 
     func testAnSshfsMountIsANetworkShareToo() {

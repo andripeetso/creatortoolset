@@ -33,6 +33,8 @@ export interface EditKind {
   next: string[];
   /** Core kinds only: the server's handler. */
   run?: StepRun;
+  /** Device kinds: false when the step never reads the edit's footage (it goes to any computer, api/editor/reach.ts) */
+  footage?: false;
 }
 
 const KINDS: Record<string, EditKind> = {
@@ -49,8 +51,11 @@ const KINDS: Record<string, EditKind> = {
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)
   [RESOLVE_KIND]: { source: "device", next: [] },
   // a Mac draws an edit's cards in its sandbox (cards/step.ts asks, cards/device.ts answers)
-  [CARDS_DRAW_KIND]: { source: "device", next: [] },
+  [CARDS_DRAW_KIND]: { source: "device", next: [], footage: false },
 };
+
+/** A device kind that reads the edit's footage: it goes only to a computer that can get at the files (api/editor/reach.ts). */
+export const usesFootage = (kind: string): boolean => KINDS[kind]?.source === "device" && KINDS[kind]!.footage !== false;
 
 /** Registers kinds that a device runs. Called once per kind (at boot, or by tests). */
 export function registerDeviceKinds(kinds: string[]): void {
@@ -97,6 +102,7 @@ export function claimableBy(declared: string[]): string[] {
  * Takes the oldest queued job whose kind is in `kinds` (or, with "server", any kind no device kind claims), leases it
  * and counts the attempt. Same contract as library/jobs claimJob, which takes any kind. A device passes `by`: only jobs
  * its owner's account queued are taken, and the job records the device, so its beats, done and fail can be checked.
+ * `fits`: of the queued jobs, the oldest it accepts (a device takes only a step whose footage it can get at, reach.ts).
  */
 export function claimStep(
   db: DatabaseSync,
@@ -105,6 +111,7 @@ export function claimStep(
   now: number,
   table: JobTable,
   by?: { actor: string; device: string },
+  fits?: (job: JobRow) => boolean,
 ): JobRow | null {
   let where: string;
   let args: (string | number)[];
@@ -121,14 +128,18 @@ export function claimStep(
     where += " AND actor = ?";
     args.push(by.actor);
   }
+  const queued = `SELECT * FROM ${table} WHERE state = 'queued' AND run_after <= ? ${where} ORDER BY id`;
+  // ponytail: the first 200 queued are looked at; a longer queue of steps nobody here can read waits its turn
+  const id = fits ? (db.prepare(`${queued} LIMIT 200`).all(now, ...args) as unknown as JobRow[]).find(fits)?.id : undefined;
+  if (fits && id === undefined) return null;
   return (
     (db
       .prepare(
         `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, device = ?
-         WHERE id = (SELECT id FROM ${table} WHERE state = 'queued' AND run_after <= ? ${where} ORDER BY id LIMIT 1)
+         WHERE id = ${fits ? "? AND state = 'queued'" : `(SELECT id FROM (${queued} LIMIT 1))`}
          RETURNING *`,
       )
-      .get(now + leaseSeconds * 1000, by?.device ?? null, now, ...args) as JobRow | undefined) ?? null
+      .get(now + leaseSeconds * 1000, by?.device ?? null, ...(fits ? [id!] : [now, ...args])) as JobRow | undefined) ?? null
   );
 }
 

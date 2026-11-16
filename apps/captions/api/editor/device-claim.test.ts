@@ -82,7 +82,7 @@ describe.skipIf(rootReplaced)("AI Editor on devices", () => {
   it("a device claims only the kinds it declares, and the claim is stored with the device", async () => {
     // fake-render is queued first, but this device does not declare it; analyze is a server kind and is ignored
     const got = await claim(mine.token, ["fake-kind", "analyze"]);
-    expect(got.job).toEqual({ id: expect.any(Number), kind: "fake-kind", editId, variant: "v1" });
+    expect(got.job).toEqual({ id: expect.any(Number), kind: "fake-kind", editId, variant: "v1", footage: [{ id: "ver_a1", copy: "original" }] });
     expect(jobRow("fake-kind")).toEqual({ state: "running", device: mine.device.id, error: null });
     expect(jobRow("fake-render")).toEqual({ state: "queued", device: null, error: null });
 
