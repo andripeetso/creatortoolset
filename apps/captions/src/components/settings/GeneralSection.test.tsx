@@ -90,6 +90,28 @@ describe("the dictation group", () => {
     expect(busy).toMatch(/aria-label="Download Whisper Base \(English\)"[^>]*disabled/);
   });
 
+  it("says when the speech server doesn't answer, and what happens to a dictation then", () => {
+    const server = "http://tiny-acrobatics.example:7886/api/transcribe";
+    // answering, or not checked yet (or an older app): nothing to say
+    for (const serverAnswers of [true, null, undefined]) {
+      expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers }) })} />)).not.toContain("Not answering");
+    }
+    // the chosen model (Turbo) is on this Mac: it transcribes
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers: false }) })} />)).toContain("Not answering · this Mac transcribes for now");
+    // the chosen model isn't here: nothing downloads by itself, the recording waits
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers: false, model: "whisper-base.en" }) })} />)).toContain("Not answering · recordings wait in History");
+  });
+
+  it("offers Cancel on a running download where the app can stop one, and says its size", () => {
+    const [turbo, small] = dictation().models;
+    const models = [turbo, { ...small, progress: 0.25 }];
+    const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ models, cancel: true }) })} />);
+    expect(html).toContain("Downloading · 25% of 145 MB");
+    expect(html).toContain('aria-label="Cancel the download of Whisper Base (English)"');
+    // an older app can't stop one: no button that does nothing
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ models }) })} />)).not.toContain(">Cancel</button>");
+  });
+
   it("says which permission is missing, next to Set up", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility" }) })} />);
     expect(html).toContain("Needs Accessibility");

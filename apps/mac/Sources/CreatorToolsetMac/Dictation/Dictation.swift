@@ -398,6 +398,26 @@ final class Dictation: ObservableObject {
     /// The person's own speech server, or nil when none is set.
     var speechServer: SpeechServerTranscriber? { SpeechServerTranscriber.url(prefs.server).map(SpeechServerTranscriber.init) }
 
+    /// The last check of the speech server, for its Settings row: the address checked, whether it answered (nil while
+    /// the first check runs), and when it was asked.
+    private var serverCheck: (address: String, answers: Bool?, at: Date)?
+
+    /// Whether the speech server answers, or nil (none set, or not checked yet). Asked only while Settings shows the
+    /// row (every `bridgeState`), at most every 15 s; the answer shows on the page's next poll.
+    private func serverAnswers() -> Bool? {
+        guard let server = speechServer else { return nil }
+        let address = prefs.server
+        let last = serverCheck?.address == address ? serverCheck : nil
+        if last == nil || Date().timeIntervalSince(last!.at) > 15 {
+            serverCheck = (address, last?.answers, Date())
+            Task {
+                let answers = await server.answers()
+                if self.serverCheck?.address == address { self.serverCheck = (address, answers, Date()) }
+            }
+        }
+        return last?.answers
+    }
+
     private func update(_ change: (inout DictationPrefs) -> Void) {
         let old = prefs
         change(&prefs)
@@ -700,10 +720,10 @@ final class Dictation: ObservableObject {
         if modelOnDisk { warm() } else { fetch(model, asked: asked) }
     }
 
-    /// Stops `id`'s download if it is the one running (the setup page left without Get Started).
-    func cancelDownload(_ id: String) {
+    /// Stops `id`'s download if it is the one running (the setup page left without Get Started, or Settings' Cancel).
+    func cancelDownload(_ id: String, why: String = "the setup page was left") {
         guard download?.id == id else { return }
-        DictationLog.info("download of \(id) stopped: the setup page was left")
+        DictationLog.info("download of \(id) stopped: \(why)")
         stopDownload()
     }
 
@@ -924,6 +944,9 @@ final class Dictation: ObservableObject {
             "keep": prefs.keep,
             "sounds": prefs.sounds,
             "server": prefs.server,
+            "serverAnswers": serverAnswers() ?? NSNull(),
+            // Settings may offer Cancel on a running download (`cancel` below)
+            "cancel": true,
             "needs": (!prefs.on ? nil
                 : MicrophoneAccess.status != .authorized ? "Microphone"
                 : !AXIsProcessTrusted() ? "Accessibility" : nil) ?? NSNull(),
@@ -939,6 +962,7 @@ final class Dictation: ObservableObject {
         case "model": if ModelRegistry.find(value) != nil { update { $0.model = value } }
         case "engine": if let e = DictationEngine(rawValue: value) { update { $0.engine = e } }
         case "download": if let m = ModelRegistry.find(value) { fetch(m) }
+        case "cancel": cancelDownload(value, why: "Cancel in Settings")
         case "remove": remove(value)
         case "keep": if let n = Int(value), (1...500).contains(n) { update { $0.keep = n } }
         case "sounds": update { $0.sounds = value == "1" }

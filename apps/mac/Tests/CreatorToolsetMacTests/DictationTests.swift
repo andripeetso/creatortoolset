@@ -492,6 +492,15 @@ final class SpeechServerTests: XCTestCase {
         XCTAssertNil(SpeechServerTranscriber.url("ftp://tiny-acrobatics.example/x"))
         XCTAssertEqual(SpeechServerTranscriber.timeout(seconds: 0), 4)
         XCTAssertEqual(SpeechServerTranscriber.timeout(seconds: 20), 9)
+        // Settings asks the server's /health whether it is up
+        XCTAssertEqual(SpeechServerTranscriber(endpoint: URL(string: "http://tiny-acrobatics.example:7886/api/transcribe")!).health.absoluteString,
+                       "http://tiny-acrobatics.example:7886/health")
+    }
+
+    func testAServerThatDoesNotAnswerSaysSo() async {
+        // nothing listens on port 9 of this Mac
+        let off = await SpeechServerTranscriber(endpoint: URL(string: "http://127.0.0.1:9/api/transcribe")!).answers()
+        XCTAssertFalse(off)
     }
 }
 
@@ -620,7 +629,7 @@ final class EarlierAppTests: XCTestCase {
 final class DictationBridgeStateTests: XCTestCase {
     func testTheSettingsAnswerBuildsWithEveryField() {
         let state = Dictation.shared.bridgeState()
-        for key in ["on", "keys", "picking", "paused", "setUp", "engine", "model", "models", "keep", "sounds", "server", "needs"] {
+        for key in ["on", "keys", "picking", "paused", "setUp", "engine", "model", "models", "keep", "sounds", "server", "serverAnswers", "cancel", "needs"] {
             XCTAssertNotNil(state[key], "missing \(key)")
         }
     }
