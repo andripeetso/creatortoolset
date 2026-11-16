@@ -86,7 +86,8 @@ beforeAll(async () => {
   // the arena opens on the castle run's first picture (the same select screen); its stretch 3 is the busiest of all
   describe6("ver_4", 36, (k) => (k === 3 ? 5 : 1), (k) => (k === 0 ? ph("ver_1:0") : ph(`ver_4:${k}`)));
   shotLog.first = vi.fn();
-  shotLog.redo = vi.fn();
+  shotLog.redo = vi.fn(() => false);
+  shotLog.retry = vi.fn();
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -127,6 +128,83 @@ describe.skipIf(rootReplaced)("the gate waits, and only waits", () => {
   });
 });
 
+describe.skipIf(rootReplaced)("the gate asks for what is missing, each once", () => {
+  /** A recording the library has read, with no shot descriptions and no file here to read. */
+  function recording(v: string, title: string) {
+    const db = libraryDb();
+    db.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, 'lib_a', 'video', ?, 'maker', 0)").run(`a_${v}`, title);
+    db.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, ?, 1, ?, 1, ?, ?, 'ready', 'maker', 0)").run(
+      v, `a_${v}`, `k_${v}`, `s_${v}`, JSON.stringify({ duration: 30, width: 1920, height: 1080, fps: 30, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }),
+    );
+  }
+  const failJob = (v: string, kind: string, error: string) => {
+    enqueueJob(libraryDb(), "lib_a", v, kind, "maker");
+    libraryDb().prepare("UPDATE jobs SET state = 'failed', error = ? WHERE version_id = ? AND kind = ?").run(error, v, kind);
+  };
+
+  it("a file from before shot descriptions gets them: asked for once, waited for, then cut from", async () => {
+    recording("ver_7", "From before");
+    vi.mocked(shotLog.redo).mockClear().mockReturnValueOnce(true);
+    const e = { id: randomUUID(), createdBy: "maker", projectId, sources: ["ver_1", "ver_7"] };
+    const err = await indexSources(e, signal).catch((x: unknown) => x);
+    expect((err as InstanceType<typeof Waiting>).line).toBe("Waiting for the Media Library: 1 of 2 files");
+    expect(shotLog.redo).toHaveBeenCalledWith("ver_7", "maker");
+    describe6("ver_7", 30, (k) => k % 5); // the library's look ran
+    expect((await indexSources(e, signal)).sources.map((s) => [s.id, s.shots.length])).toEqual([["ver_1", 10], ["ver_7", 5]]);
+    expect(shotLog.redo).toHaveBeenCalledTimes(1);
+  });
+
+  it("a look that failed is queued once more; failing again, the file is cut from the lines it has, and left out only with none and no file to read", async () => {
+    recording("ver_8", "Look failed");
+    failJob("ver_3", "look", "The AI returned no lines");
+    failJob("ver_8", "look", "The AI returned no lines");
+    const e = { id: randomUUID(), createdBy: "maker", projectId, sources: ["ver_3", "ver_8"] };
+    await expect(indexSources(e, signal)).rejects.toBeInstanceOf(Waiting);
+    expect(vi.mocked(shotLog.retry).mock.calls).toEqual([["lib_a", "ver_3", "look", "maker"], ["lib_a", "ver_8", "look", "maker"]]);
+    // it failed again (the stand-in queued nothing): asked no third time
+    const { sources, left } = await indexSources(e, signal);
+    expect(shotLog.retry).toHaveBeenCalledTimes(2);
+    expect(sources.map((s) => s.id)).toEqual(["ver_3"]);
+    expect(left).toEqual([{ id: "ver_8", title: "Look failed", why: "the Media Library could not describe its shots" }]);
+    libraryDb().exec("DELETE FROM jobs WHERE kind = 'look' AND version_id IN ('ver_3', 'ver_8')");
+  });
+
+  it("a look that failed for the file's size is not tried again", async () => {
+    const { TOO_BIG } = await import("../library/mac-look");
+    recording("ver_9", "Ten hours");
+    failJob("ver_9", "look", TOO_BIG);
+    vi.mocked(shotLog.retry).mockClear();
+    const { sources, left } = await indexSources({ id: randomUUID(), createdBy: "maker", projectId, sources: ["ver_1", "ver_9"] }, signal);
+    expect(shotLog.retry).not.toHaveBeenCalled();
+    expect(sources.map((s) => s.id)).toEqual(["ver_1"]);
+    expect(left.map((l) => l.id)).toEqual(["ver_9"]);
+  });
+
+  it("a file kept on a Mac with no shot descriptions is left out and named, and the cut is made from the rest; cut now asks for nothing", async () => {
+    recording("ver_10", "On the Mac");
+    libraryDb().exec("UPDATE asset_versions SET source_key = 'mac:dev-1:/Users/t/short.mov', mac_path = '/Users/t/short.mov' WHERE id = 'ver_10'");
+    vi.mocked(shotLog.redo).mockClear();
+    const e = { id: randomUUID(), createdBy: "maker", projectId, sources: ["ver_1", "ver_10"] };
+    const now = await indexSources({ ...e, now: true }, signal);
+    expect(shotLog.redo).not.toHaveBeenCalled();
+    const { sources, left } = await indexSources(e, signal); // asked (the stand-in says it gets no look), then read
+    expect(shotLog.redo).toHaveBeenCalledWith("ver_10", "maker");
+    expect(sources.map((s) => s.id)).toEqual(["ver_1"]);
+    expect(left).toEqual([{ id: "ver_10", title: "On the Mac", why: "it is kept on a Mac, not uploaded, and has no shot descriptions to cut from" }]);
+    expect(now.left).toEqual(left);
+  });
+
+  it("a description written under another context is written again before the file is used", async () => {
+    const real = shotLog.refresh;
+    shotLog.refresh = vi.fn(async (v: string) => v === "ver_4");
+    const e = { id: randomUUID(), createdBy: "maker", projectId, sources: ["ver_4"] };
+    await expect(indexSources(e, signal)).rejects.toBeInstanceOf(Waiting);
+    expect(shotLog.refresh).toHaveBeenCalledWith("ver_4", "maker");
+    shotLog.refresh = real;
+    expect((await indexSources(e, signal)).sources.map((s) => s.id)).toEqual(["ver_4"]);
+  });
+});
+
 describe.skipIf(rootReplaced)("a usage limit holds the step", () => {
   it("waits until the limit opens, the try not counted", async () => {
     const id = await create(["ver_1"]);
@@ -159,14 +237,47 @@ describe.skipIf(rootReplaced)("the person's notes", () => {
     expect(await editorTools.handlers.editor_feedback!({ edit: id, text }, ctx)).toMatchObject({ id, kept: 1, queued: true });
     expect(readEdit(id)!.feedback).toEqual([{ at: expect.any(Number), from: "chat", by: "maker", text }]);
     expect(jobsOf(id)).toEqual([{ kind: "analyze", state: "queued" }]);
-    // while it is being made: kept, and the run going reads it
-    expect(await editorTools.handlers.editor_feedback!({ edit: id, text: "Shorter." }, ctx)).toMatchObject({ kept: 2, queued: false });
+    // while it is being made: kept, and the tool says what happens to it (this run's plan, or the next version)
+    expect(await editorTools.handlers.editor_feedback!({ edit: id, text: "Shorter." }, ctx)).toMatchObject({ kept: 2, queued: false, note: expect.stringContaining("else into the next version, made when this run is done") });
+    // a note past the limit is refused with the reason, never cut
+    const long = await call("POST", `/api/editor/${id}/feedback`, { text: "x".repeat(4001) });
+    expect([long.status, (await json(long)).error]).toEqual([400, "A note is 4,000 characters at most"]);
+    expect((await call("POST", `/api/editor/${id}/feedback`, { text: "y".repeat(4000) })).status).toBe(200);
+    expect(readEdit(id)!.feedback!.map((n) => n.text.length)).toEqual([text.length, 8, 4000]);
     await call("POST", `/api/editor/${id}/stop`);
     // past the cap the oldest go, never the newest
     await addFeedback(id, Array.from({ length: EDIT_FEEDBACK_MAX }, (_, k) => ({ at: k, from: "chat" as const, by: "maker", text: `note ${k}` })));
     const kept = readEdit(id)!.feedback!;
     expect(kept).toHaveLength(EDIT_FEEDBACK_MAX);
     expect([kept[0]!.text, kept.at(-1)!.text]).toEqual(["note 0", `note ${EDIT_FEEDBACK_MAX - 1}`]);
+  });
+
+  it("a note sent while the edit is being made, after its script began, makes the next version when the run ends, once", async () => {
+    const id = await create(["ver_1"]);
+    await saveStep(id, "analysis", { sentences: [], notes: [] });
+    const was = { script: STEPS.script!, draft: STEPS.draft! };
+    // the scripts written, each with the notes it was given; the first is still being written when the note comes
+    const given: string[][] = [];
+    let sent: { queued?: boolean } = {};
+    STEPS.script = async ({ edit }) => {
+      given.push((edit.feedback ?? []).map((n) => n.text));
+      if (given.length === 1) sent = await json(call("POST", `/api/editor/${id}/feedback`, { text: "Shorter." }));
+    };
+    STEPS.draft = async () => {};
+    try {
+      await call("POST", `/api/editor/${id}/run`, { from: "script" });
+      while (await tick());
+      // kept and not queued while the run went on; the run's end queued the version that reads it, and that one no other
+      expect(sent.queued).toBe(false);
+      expect(given).toEqual([[], ["Shorter."]]);
+      expect(jobsOf(id)).toEqual([{ kind: "script", state: "done" }, { kind: "draft", state: "done" }]);
+      // a note the script was given (sent before it began) makes no second version
+      await call("POST", `/api/editor/${id}/feedback`, { text: "And louder." });
+      while (await tick());
+      expect(given).toEqual([[], ["Shorter."], ["Shorter.", "And louder."]]);
+    } finally {
+      Object.assign(STEPS, was);
+    }
   });
 
   it("copies the open comments of a Changes video's newest version, each once", async () => {

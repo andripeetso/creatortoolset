@@ -88,9 +88,12 @@ export async function generateGuideFromClip({
   clipId,
   assetsDir,
   owner,
+  workspace,
 }: {
   prompt: string;
   note?: string;
+  /** the workspace the guide is written in (workspaceContext), so the product and its screens are named as it names them */
+  workspace?: string;
   clipId: string;
   assetsDir: string;
   /** whose AI writes it: the document's owner, not whoever made the clip */
@@ -110,6 +113,9 @@ export async function generateGuideFromClip({
     .join("\n");
 
   const user = [
+    workspace
+      ? `The workspace this guide belongs to. Use it to name what is shown and said (the product, its screens and features); never add what the transcript doesn't say:\n${workspace}`
+      : "",
     prompt.trim() ? `Author brief:\n${prompt.trim().slice(0, 4000)}` : "",
     note?.trim() ? `How to use this source:\n${note.trim().slice(0, 400)}` : "",
     `Title: ${clip.name}`,

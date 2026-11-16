@@ -9,8 +9,7 @@ import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { footageProfile, renderContext, workspaceKnowledge } from "../lib/workshop/context";
-import { ownedProjects } from "../lib/workshop/workspace";
+import { footageProfile, workspaceContext, workspaceOf } from "../lib/workshop/context";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { samePicture } from "../library/look";
@@ -617,13 +616,13 @@ export function nextBest(index: FootageIndex, used: Map<string, Array<[number, n
  */
 export const byAction = (s: IndexSource): IndexShot[] => [...s.shots].sort((p, q) => (q.action ?? 0) - (p.action ?? 0) || Number(!!q.clear) - Number(!!p.clear));
 
-/** A moment not in the edit yet, `span` long: the best free one of the least used source. */
-function spare(index: FootageIndex, used: Map<string, Array<[number, number]>>, span: number): { source: IndexSource; inS: number } | undefined {
+/** A moment not in the edit yet, `span` long: the best free one of the least used source, never a picture the cut shows already (`shown`). */
+function spare(index: FootageIndex, used: Map<string, Array<[number, number]>>, span: number, shown: string[]): { source: IndexSource; inS: number } | undefined {
   const pics = index.sources.filter(pictured).sort((a, b) => (used.get(a.id)?.length ?? 0) - (used.get(b.id)?.length ?? 0));
   for (const s of pics)
     for (const x of logged(s) ? byAction(s) : shotPool(s, poolSize(index))) {
       const at = freeIn(used.get(s.id) ?? [], span, x.a, s.dur);
-      if (at !== undefined && !junkAt(s, at, span)) return { source: s, inS: at };
+      if (at !== undefined && !junkAt(s, at, span) && !shownAlready(picturesAt(s, at, span), shown)) return { source: s, inS: at };
     }
   return undefined;
 }
@@ -705,7 +704,8 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   const notes: string[] = [];
   const fps = c.size.fps;
   const beat = c.index.song;
-  const leadRaw = obj(raw.lead) ? str(raw.lead.type, 20) : str(raw.lead, 20);
+  // a revise's answer that leaves the lead out keeps the last version's: the song doesn't come in, or go, unasked
+  const leadRaw = (obj(raw.lead) ? str(raw.lead.type, 20) : str(raw.lead, 20)) || c.last?.lead.type || "";
   const song = c.song && beat && leadRaw !== "sources" ? c.song : undefined;
   const left = song ? song.dur - beat!.startS : Infinity;
   if (c.song && !song) notes.push("The AI kept the footage's own sound rather than the song");
@@ -893,7 +893,7 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         if (!junk) repeats++;
       } else if (free === undefined) {
         // the source has no stretch this long left unshown (or only junk): a moment from the least used one
-        const other = spare(c.index, used, span);
+        const other = spare(c.index, used, span, shown);
         if (!other) {
           gone++;
           continue;
@@ -1146,13 +1146,11 @@ function wordsBySource(sentences: Sentence[]): Record<string, string> {
 
 /**
  * The workspace the edit was made in: its instructions and what each context file is (lib/workshop/context.ts), in
- * `max`. It is its owner's (ownerOf), also for an edit a teammate made there.
+ * `max`. It is its owner's (ownerOf), also for an edit a teammate made there, looked up the one way (workspaceOf).
  */
 export async function workspaceSetup(edit: Pick<EditMeta, "createdBy" | "projectId"> & { workspaceId?: string }, max: number): Promise<string> {
   if (onComputer.on) return ask("workspaceSetup", max);
-  const projects = await ownedProjects(ownerOf(edit));
-  const p = projects.find((x) => x.id === edit.projectId) ?? (projects.length === 1 ? projects[0] : undefined);
-  return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
+  return workspaceContext(await workspaceOf(ownerOf(edit), edit.projectId), max);
 }
 
 /** The frame: the edit's working size, else the first source with a picture, at its rate. */
@@ -1325,7 +1323,7 @@ export function coverageOf(edit: Pick<EditMeta, "sources">, index: FootageIndex,
 /**
  * The last look before a plan is drawn, so no shot is a frame of nothing: each shot's middle frame
  * as it will show (its crop, frameJunk). One that is dark, flat or a screen of menus is moved to the best moment no
- * shot shows yet (spare: never junk, the bad stretch left out), its crop placed again; up to LOOKS tries a shot. Counts
+ * shot shows yet (spare: never junk, never a picture the cut shows, the bad stretch left out), its crop placed again; up to LOOKS tries a shot. Counts
  * the shots moved. A shot with no clean moment left keeps its picture; one showing a moment of `before` (the last
  * version, whose kept shots were looked at then) is left as it is.
  */
@@ -1339,7 +1337,14 @@ export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: Abo
   const byId = new Map(index.sources.map((s) => [s.id, s]));
   const used = new Map<string, Array<[number, number]>>();
   const span = (s: PlanShot) => sourceSpan(s.dur, s.speed ?? 1, s.ramp);
-  for (const s of plan.shots) if ("source" in s.src) used.set(s.src.source, [...(used.get(s.src.source) ?? []), [s.src.inS, s.src.inS + span(s)]]);
+  // the pictures the cut shows: a shot moved here never brings one of them back (the fix round's new shot, say)
+  const pictures: string[] = [];
+  for (const s of plan.shots) {
+    if (!("source" in s.src)) continue;
+    used.set(s.src.source, [...(used.get(s.src.source) ?? []), [s.src.inS, s.src.inS + span(s)]]);
+    const at = byId.get(s.src.source);
+    if (at) pictures.push(...picturesAt(at, s.src.inS, span(s)));
+  }
   let moved = 0;
   // a moment the last version showed (a shot a revise keeps) was looked at then: it stays
   const shown = (s: PlanShot) => before.some((b) => "source" in b.src && "source" in s.src && b.src.source === s.src.source && b.src.inS === s.src.inS);
@@ -1354,9 +1359,10 @@ export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: Abo
       // a file this server can't read keeps its picture, as an unreadable frame does (frameJunk)
       const f = await file(src.source).catch(() => "");
       if (!f || !(await frameJunk(f, src.inS + n / 2, at, shape, s.focus ?? (shape ? { x: 0.5, y: 0.5 } : undefined), signal))) break;
-      const other = spare(index, used, n);
+      const other = spare(index, used, n, pictures);
       if (!other) break;
       used.set(other.source.id, [...(used.get(other.source.id) ?? []), [other.inS, other.inS + n]]);
+      pictures.push(...picturesAt(other.source, other.inS, n));
       s.src = { source: other.source.id, inS: r3(other.inS) };
       if (other.source.sound === false) s.sound = "off";
       placeShots([s], index, plan.w, plan.h);

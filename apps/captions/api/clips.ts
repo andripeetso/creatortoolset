@@ -26,6 +26,7 @@ import { ffmpegCommand } from "./ffmpeg-runtime";
 import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
 import { env } from "./lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { isWithin, sharedFolder } from "./folders";
 import type { SharedFolder, ToolFolder } from "../contracts/folders";
 import {
@@ -600,6 +601,22 @@ function parseChaptersPayload(text: string): Chapter[] {
   return chapters;
 }
 
+/** Most of its workspace a call about one note carries. */
+const WORKSPACE_MAX = 6000;
+
+/**
+ * What a call that writes about a note reads: the workspace the note is in (lib/workshop/context.ts: its own, or the
+ * first brand's for one from before workspaces), so the product, the game or the people are named as the workspace
+ * names them, then its length and what was said. A note in no workspace reads as it always did.
+ */
+async function noteMaterial(meta: Meta, words: Word[]): Promise<string> {
+  const workspace = meta.owner ? await workspaceContext(await workspaceOf(meta.owner, meta.projectId), WORKSPACE_MAX) : "";
+  const about = workspace
+    ? `The workspace this recording belongs to. Use it to name what is seen and said (the product, the game, its places and features, the people); never add what the transcript doesn't say:\n${workspace}\n\n`
+    : "";
+  return `${about}Duration: ${Math.round(meta.duration)}s\nTranscript:\n${timedTranscript(words)}`;
+}
+
 async function generateBlock(
   meta: Meta,
   kind: BlockKind,
@@ -617,8 +634,7 @@ async function generateBlock(
   const words = await loadWords(meta.id);
   if (!words.length) throw new Error("No transcript to generate from");
   const ai = aiFor(meta.owner, "notes", "Video Notes");
-  const excerpt = timedTranscript(words);
-  const user = `Duration: ${Math.round(meta.duration)}s\nTranscript:\n${excerpt}`;
+  const user = await noteMaterial(meta, words);
 
   if (kind === "summary") {
     const out = await completeWithFallback(
@@ -771,7 +787,6 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       meta.progress = Math.max(meta.progress, 0.78);
       await jobPersist(meta);
       stopCrawl = crawlProgress(meta, 0.96);
-      const excerpt = timedTranscript(words);
       const { min: chMin, max: chMax } = chapterCountRange(meta.duration);
       const chapterHint =
         meta.duration < 120
@@ -782,7 +797,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
           `You title, summarize, and chapter-mark a screen recording from its transcript. Return JSON only:
 {"title":"short title, max 8 words","summary":"2-4 sentences covering the whole recording","chapters":[{"t":seconds,"title":"short chapter"}]}
 ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No markdown.`,
-          `Duration: ${Math.round(meta.duration)}s\nTranscript:\n${excerpt}`,
+          await noteMaterial(meta, words),
           undefined,
           parseSummary,
           aiFor(meta.owner, "notes", "Video Notes"),

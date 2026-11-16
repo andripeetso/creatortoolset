@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
+import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
 import { innerCall, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
@@ -12,7 +12,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { addFeedback, newestDraft, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, editSources, seesEdit, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
+import { addFeedback, newestDraft, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
@@ -295,18 +295,21 @@ editorApp.post("/:id/run", async (c) => {
 /**
  * What the person said about the edit's cut, word for word ({text}), kept with the edit for every later version
  * (contracts/editor.ts EditFeedback), and the next version queued: it starts from the last one (plan.ts reviseOf).
- * `queued` is false while the edit is being made: that run reads it.
+ * `queued` is false while the edit is being made: that run reads it when its script is not written yet, else the next
+ * version is queued with it when the run ends (worker.ts queueNext). A note past EDIT_FEEDBACK_TEXT_MAX characters is
+ * refused with the reason, never cut.
  */
 editorApp.post("/:id/feedback", async (c) => {
   const r = await load(c, true);
   if (!r) return notFound(c);
   const text = (await body(c)).text;
   if (typeof text !== "string" || !text.trim()) return c.json({ error: "text is what the person said about the cut", code: "invalid" }, 400);
+  if (text.length > EDIT_FEEDBACK_TEXT_MAX) return c.json({ error: `A note is ${EDIT_FEEDBACK_TEXT_MAX.toLocaleString("en-US")} characters at most`, code: "invalid" }, 400);
   const variant = newestDraft(r.e.id);
   await addFeedback(r.e.id, [{ at: Date.now(), from: "chat", by: c.get("user").username, ...(variant ? { variant } : {}), text }]);
   const db = libraryDb();
   const busy = !!db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id);
-  if (!busy) enqueueJob(db, r.e.workspaceId, `${r.e.id}:`, readStep(r.e.id, "analysis") ? "script" : "analyze", r.user, true, "edit_jobs");
+  if (!busy) queueVersion(r.e, r.user);
   return c.json({ ...viewFor(r, readEdit(r.e.id)!), queued: !busy });
 });
 

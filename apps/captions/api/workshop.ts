@@ -63,7 +63,7 @@ import {
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
-import { workspaceKnowledge } from "./lib/workshop/context";
+import { workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -351,9 +351,21 @@ async function sourceHead(id: string): Promise<string> {
   }
 }
 
-/** What a project's AI reads: the account's sources that are not another project's, minus the ones it switched off. */
+/**
+ * What a project's AI reads: its owner's sources that are not another project's, minus the ones it switched off.
+ * Someone else's project (an admin opened their session) reads its owner's files, never the caller's.
+ */
 const knowledgeFor = async (user: SessionUser, project: Project): Promise<KnowledgeFile[]> =>
-  workspaceKnowledge({ ...project, owner: user.username, knowledge: [] }, await listSources(user));
+  project.owner === user.username ? workspaceKnowledge({ ...project, knowledge: [] }, await listSources(user)) : workspaceKnowledge(project);
+
+/** Most of its workspace a one-shot call about one piece or question carries. */
+const WORKSPACE_MAX = 6000;
+/**
+ * What a one-shot call is told of the workspace a session is in (lib/workshop/context.ts: its own, or its owner's
+ * first brand for one from before workspaces); "" with no workspace, and the call reads what it always did.
+ */
+const contextOf = async (session: Pick<SessionMeta, "owner" | "projectId">): Promise<string> =>
+  workspaceContext(await workspaceOf(session.owner, session.projectId), WORKSPACE_MAX);
 
 /** A project as the prompts read it: its knowledge filled in from the account's sources. */
 async function projectForAi(id: string | undefined, user: SessionUser): Promise<Project | null> {
@@ -2156,6 +2168,26 @@ workshopApp.get("/sources/:id/text", async (c) => {
   return s ? c.text(await readSourceText(s.id)) : c.json({ error: "Not found" }, 404);
 });
 
+/**
+ * The context files of the workspace this call works in, as its AI is told of them (workspaceSources: its owner's, kept
+ * to it or to every workspace, minus the ones it switched off): what the workspace_files tool lists and reads. In a
+ * workspace given to this account they are the owner's, to read only. Which workspace that is comes from getWorkspace,
+ * which reads the giving fresh, never from an id in the request. With no workspace: the account's own sources.
+ */
+async function contextFiles(user: SessionUser): Promise<KnowledgeSource[]> {
+  const { currentProjectId, projects } = await getWorkspace(user);
+  const p = projects.find((x) => x.id === currentProjectId);
+  if (!p) return listSources(user);
+  return workspaceSources(p, p.owner === user.username ? await listSources(user) : undefined);
+}
+
+workshopApp.get("/context-files", async (c) => c.json(await contextFiles(c.get("user"))));
+
+workshopApp.get("/context-files/:id/text", async (c) => {
+  const s = (await contextFiles(c.get("user"))).find((x) => x.id === c.req.param("id"));
+  return s ? c.text(await readSourceText(s.id)) : c.json({ error: "Not found" }, 404);
+});
+
 /** A new source with its text (or the scanned pages to read first), filed in the background. */
 async function writePages(id: string, pages: string[]): Promise<number> {
   await mkdir(sourcePagesDir(id), { recursive: true });
@@ -3572,7 +3604,7 @@ workshopApp.post("/sessions/:id/docs/:docId/lines", async (c) => {
   if (start < 0 || end <= start || !text.slice(start, end).trim()) return c.json({ error: "Select the words you want said another way" }, 400);
   if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
   const notes = (await readChat(meta.id)).messages.filter((m) => m.docId === doc.id && m.role === "user" && m.text.trim()).map((m) => m.text.trim());
-  const { system, user: prompt } = buildLinesPrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, notes });
+  const { system, user: prompt } = buildLinesPrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, notes, workspace: await contextOf(meta) });
   try {
     let usage: MacUsage | undefined;
     const options = await completeWithFallback(system, prompt, undefined, parseLines, { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
@@ -3603,7 +3635,7 @@ workshopApp.post("/sessions/:id/docs/:docId/ask", async (c) => {
     .map((m) => ({ role: m.role, text: m.text.slice(0, 4000) }));
   const project = await projectForAi(meta.projectId, user);
   const { best } = await bestPosts(user, project, 10);
-  const { system, user: prompt } = buildAsidePrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, question, history, best });
+  const { system, user: prompt } = buildAsidePrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, question, history, best, workspace: await contextOf(meta) });
   try {
     let usage: MacUsage | undefined;
     const answer = await completeWithFallback(system, prompt, undefined, (t) => {

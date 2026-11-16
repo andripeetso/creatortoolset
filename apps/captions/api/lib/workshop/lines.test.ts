@@ -19,6 +19,16 @@ describe("other ways to say this", () => {
     expect(system).toContain('{"options": [string, string, string]}');
   });
 
+  it("is told the workspace first when the piece is in one, and reads exactly as before when it is in none", () => {
+    const input = { doc, blockId: "b2", text: doc.blocks[1]!.text, start: 0, end: 5, notes: [] };
+    const plain = buildLinesPrompt(input);
+    expect(buildLinesPrompt({ ...input, workspace: "" })).toEqual(plain);
+    const told = buildLinesPrompt({ ...input, workspace: "Workspace: Tiny Acrobatics\nVoice: warm, plain" });
+    expect(told.system).toBe(plain.system);
+    expect(told.user).toMatch(/^The workspace this piece belongs to\.[^\n]*\nWorkspace: Tiny Acrobatics\nVoice: warm, plain\n\nSlide 1\n/);
+    expect(told.user.endsWith(plain.user)).toBe(true);
+  });
+
   it("takes three clean options, without quote marks or repeats", () => {
     expect(parseLines('{"options": ["«On their tummy they lift their head»", "\\"They push up on their arms\\"", "They push up on their arms", "four"]}')).toEqual([
       "On their tummy they lift their head",

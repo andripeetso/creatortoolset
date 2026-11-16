@@ -13,6 +13,7 @@ import {
 } from "./ai-complete";
 import { env } from "./lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import {
   parseDocumentMarkdown,
   splitDocumentTitle,
@@ -180,6 +181,12 @@ async function written<T>(id: string, owner: string, name: string, projectId: st
   }
 }
 
+/**
+ * What the writer is told of the workspace a document or guide is in (lib/workshop/context.ts: its own, or the first
+ * brand's for one from before workspaces), in 6000 characters; "" with no workspace.
+ */
+const workspaceFor = async (meta: Meta): Promise<string> => (meta.owner ? workspaceContext(await workspaceOf(meta.owner, meta.projectId), 6000) : "");
+
 async function runGuideGenerate(
   meta: Meta,
   resolved: (DocSource & { pack: string })[],
@@ -198,6 +205,7 @@ async function runGuideGenerate(
       clipId: clip.id,
       assetsDir: tmp,
       owner,
+      workspace: await workspaceFor(meta),
     });
     if (existsSync(dest)) {
       await rename(dest, prev);
@@ -410,11 +418,16 @@ function parseSources(raw: unknown): DocSource[] {
 }
 
 async function generateBody(
-  prompt: string,
+  meta: Meta,
   resolved: (DocSource & { pack: string })[],
   owner: string | undefined,
 ): Promise<string> {
+  const { prompt } = meta;
+  const workspace = await workspaceFor(meta);
   const user = [
+    workspace
+      ? `The workspace this document belongs to. Use it to name what the sources show and say (the product, the game, its places and features, the people) and who it is written for; never add what the sources don't say:\n${workspace}`
+      : "",
     prompt.trim() ? `Author brief:\n${prompt.trim().slice(0, 4000)}` : "",
     ...resolved.map((s, i) => {
       const href = s.type === "clip" ? `/clips/${s.id}` : `/captions?view=projects`;
@@ -639,7 +652,7 @@ documentsApp.post("/", async (c) => {
     const md = await written(id, user.username, resolved[0]?.name ?? meta.name, meta.projectId, async () =>
       kind === "guide"
         ? (await runGuideGenerate(meta, resolved, user.username)).markdown
-        : await generateBody(prompt, resolved, user.username));
+        : await generateBody(meta, resolved, user.username));
     meta.name = titleFromBody(md, meta.name);
     await persist(meta);
     if (kind !== "guide") await writeBody(id, md);
@@ -780,7 +793,7 @@ documentsApp.post("/:id/generate", async (c) => {
     const md = await written(meta.id, user.username, meta.name, meta.projectId, async () =>
       kind === "guide"
         ? (await runGuideGenerate(meta, resolved, user.username)).markdown
-        : await generateBody(meta.prompt, resolved, user.username));
+        : await generateBody(meta, resolved, user.username));
     meta.name = titleFromBody(md, meta.name);
     meta.status = "ready";
     meta.error = undefined;

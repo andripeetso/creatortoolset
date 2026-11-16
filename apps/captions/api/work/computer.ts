@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { WORK_V, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
 import { Waiting } from "../editor/analyze";
 import { editDir, readEdit } from "../editor/store";
-import { limitWait, STEPS } from "../editor/worker";
+import { limitWait, markRead, STEPS } from "../editor/worker";
 import { env } from "../lib/env";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
@@ -363,6 +363,7 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
     turnOn(pkg, paths, server);
     try {
       await step({ edit, job, variant: pkg.job.variant, signal: ctl.signal });
+      if (job.kind === "script") await markRead(edit);
     } catch (e) {
       outcome = classify(e);
     } finally {

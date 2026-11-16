@@ -1579,7 +1579,7 @@ export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {
     const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
     // a reply in a chat works in that chat's workspace, whichever one the app has open meanwhile
     const turn = jobTurn(auth.get("authorization") ?? undefined);
-    const ws = workspaceOfTurn(user.username, turn);
+    const ws = await workspaceOfTurn(user.username, turn);
     const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws, turn: turn! }, fn) : fn());
     if (Array.isArray(body)) {
       const out = (await inWs(() => Promise.all(body.map((m) => handle(inner, auth, m, origin, user, plugged))))).filter(Boolean);

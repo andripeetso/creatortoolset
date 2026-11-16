@@ -19,7 +19,7 @@ import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
 import { renderPlanPreview } from "./plan-render";
-import { editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
+import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -223,14 +223,20 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
   const grade = onComputer.on ? (await ask<{ cdl?: Cdl }>("grade")).cdl : await gradeOf(ownerOf(edit), edit.bundle);
   await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, grade);
   if (signal.aborted || d.due) return;
-  await fileInReview(edit, variant, d.timeline, d.critique?.fails, job.actor);
+  await fileInReview(edit, variant, d.timeline, saidOf(d), job.actor);
 }
 
 /**
+ * What a draft's Review version says of the look before Review: the shots that don't hold up and, as shot 0 (no shot's
+ * own line), that the look or its fix could not be made and why. Nothing for a cut that passed, or was never due one.
+ */
+export const saidOf = (d: Pick<DraftFile, "critique" | "unchecked">): Critique["fails"] => [...(d.critique?.fails ?? []), ...(d.unchecked ? [{ n: 0, why: d.unchecked }] : [])];
+
+/**
  * The rendered preview into Review as the next version of the draft's Review video, with the timeline it was cut from.
- * `fails`: the shots its look found still don't hold up, named on that Review version. It is filed in the Review of the
- * edit's workspace (ownerOf), so its owner sees and comments on a teammate's edit as on their own; `by`: who asked for
- * this version, kept on it.
+ * `fails`: the shots its look found still don't hold up, named on that Review version (saidOf: and a look that was not
+ * made). It is filed in the Review of the edit's workspace (ownerOf), so its owner sees and comments on a teammate's
+ * edit as on their own; `by`: who asked for this version, kept on it.
  */
 export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = [], by?: string | null, given: { thumb?: string; wave?: string } = {}): Promise<void> {
   const out = previewFile(edit.id, variant);

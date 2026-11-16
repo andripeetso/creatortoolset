@@ -158,6 +158,29 @@ describe("scheduled tasks: per workspace", () => {
     expect(await names(A)).toEqual(["for A", "everywhere"]);
     expect(await names(B)).toEqual(["for B", "everywhere", "made in B"]);
   });
+
+  it("a task made for a workspace runs in it, whatever the app has open: its chat is that workspace's and the run is told its context", async () => {
+    const made = async (name: string) => (await json(await req("bob", "POST", "/workshop/projects", { name }))).id as string;
+    const first = await made("Tiny Acrobatics");
+    const swim = await made("Tiny Swimmers");
+    expect((await req("bob", "PATCH", "/workshop/workspace", { currentProjectId: first })).status).toBe(200);
+    const { streamMacClaude } = await import("./lib/mac-claude");
+    const systemOf = async (body: Record<string, unknown>) => {
+      await runAutomation("bobby", (await make("bob", { schedule: everyHour, prompt: "Plan the week", enabled: false, ...body })) as Automation, ready);
+      return vi.mocked(streamMacClaude).mock.calls.at(-1)![0];
+    };
+    // the run is told the task's workspace, not the one the app is in
+    const system = await systemOf({ name: "Swim week", project: swim });
+    expect(system).toContain("This workspace's context.");
+    expect(system).toContain("Workspace: Tiny Swimmers");
+    expect(system).not.toContain("Workspace: Tiny Acrobatics");
+    // its chat is that workspace's, so the reply's tools work there (mcp.ts reads the chat's); the app stays where it was
+    const all = (await json(await req("bob", "GET", "/assistant/chats"))).chats as Json[];
+    expect(all.find((c) => c.title === "Swim week")?.workspace).toBe(swim);
+    expect((await json(await req("bob", "GET", "/workshop/workspace"))).currentProjectId).toBe(first);
+    // a task for no workspace is told of none, as before
+    expect(await systemOf({ name: "Anywhere", project: null })).not.toContain("This workspace's context.");
+  });
 });
 
 describe("the scheduler", () => {

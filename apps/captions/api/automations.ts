@@ -169,6 +169,8 @@ export async function runAutomation(username: string, a: Automation, ready: { ro
       task: { id: a.id, name: a.name },
       prompt: a.prompt,
       preface: prefaceOf(a),
+      // the run works in the task's workspace and is told its context, whatever the app has open then
+      workspace: a.project,
       fresh: a.destination !== "continue",
       route: ready.route,
       url: ready.url,

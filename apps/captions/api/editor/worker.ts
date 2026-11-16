@@ -17,7 +17,7 @@ import { jobFiles } from "./reach";
 import { fitsWork, gates, serverMayTake } from "../work/place";
 import type { Device } from "../../contracts/providers";
 import { passesDone } from "./passes";
-import { editRole, ownerOf, purgeEdits, readDraft, readEdit, seesEdit, sourcesWorkspace, type EditMeta } from "./store";
+import { editRole, ownerOf, purgeEdits, queueVersion, readDraft, readEdit, saveStep, sourcesWorkspace, unreadNote, type EditMeta, seesEdit } from "./store";
 
 export type { StepContext } from "./engine";
 
@@ -61,10 +61,23 @@ export function releaseRunningSteps(now = Date.now()): void {
   for (const id of running.keys()) defer(libraryDb(), id, 0, now, T);
 }
 
-/** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
+/**
+ * The notes a script was written with are the ones the edit held when the step began: a note from chat sent since is
+ * unread, and makes the next version when the run ends (queueNext). Also for a script a computer ran (work/computer.ts).
+ */
+export const markRead = (edit: EditMeta) => saveStep(edit.id, "read", { at: Math.max(0, ...(edit.feedback ?? []).filter((n) => n.from === "chat").map((n) => n.at)) });
+
+/**
+ * Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue
+ * previews). When that leaves nothing of the edit queued or running, the run is over: a note from chat that no script
+ * or plan step read (sent while this run was being made) then makes the next version, as a note sent to an idle edit
+ * does (routes.ts). That version's script reads it, so it is asked for once.
+ */
 function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
   const due = job.kind === "preview" && !!readDraft(edit.id, variant)?.due;
   if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT, passesDone(edit.id, variant), due)) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
+  const by = unreadNote(edit.id);
+  if (by && !db.prepare(`SELECT 1 FROM ${T} WHERE edit_id = ? AND state IN ('queued', 'running')`).get(edit.id)) queueVersion(edit, by);
 }
 
 /** "<editId>:<variant>" split: the variant is "" for a whole-edit step. */
@@ -137,6 +150,7 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
   try {
     await step({ edit, job, variant, signal: ctl.signal });
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
+    if (job.kind === "script") await markRead(edit);
     finishJob(db, job.id, true, undefined, Date.now(), T);
     queueNext(db, job, edit, variant);
   } catch (e) {

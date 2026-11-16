@@ -233,6 +233,25 @@ describe("where a skill reaches", () => {
     await call(me, "/api/workshop/workspace", "PATCH", { currentProjectId: null });
   });
 
+  it("a chat's skills are its own workspace's, whatever the app has open: its reply's lines, its tool list and what skill_read opens", async () => {
+    await clear();
+    const a = await workshop("Tiny Tumblers");
+    const b = await workshop("Tiny Divers");
+    await add({ ...HOOKS, projectIds: [a.project] });
+    // a chat started in the first workspace; the app then shows the other
+    await call(me, "/api/workshop/workspace", "PATCH", { currentProjectId: a.project });
+    await (await dockTurn()).end();
+    await call(me, "/api/workshop/workspace", "PATCH", { currentProjectId: b.project });
+    expect((await call(me, "/api/assistant/turn", "POST", { text: "And the first line?" })).status).toBe(202);
+    const job = await claim();
+    const token = `Bearer ${job.mcp!.token}`;
+    expect(job.system).toContain(`[Skill "Hook rules"]`);
+    expect((await toolsOf(token)).map((t) => t.name)).toContain("skill_read");
+    expect(JSON.parse((await tool(token, "skill_read", { name: "Hook rules" })).text)).toMatchObject({ name: "Hook rules", text: HOOKS.body });
+    await relay(`${job.id}/done`, { text: "Done." });
+    await call(me, "/api/workshop/workspace", "PATCH", { currentProjectId: null });
+  });
+
   it("a scheduled run, where nobody is there, gets no skill line and no skill tool", async () => {
     await clear();
     await add(HOOKS);

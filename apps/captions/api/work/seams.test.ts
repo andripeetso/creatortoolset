@@ -139,7 +139,7 @@ beforeAll(async () => {
     for (let k = 0; k < 2; k++) q.run(f.v, k, k * 2, k * 2 + 2, JSON.stringify(["jump"]), `${f.title}, part ${k}`, `${f.v}${k}`.padEnd(16, "0"), stamp);
   }
   srv.shotLog.first = () => {};
-  srv.shotLog.redo = () => {};
+  srv.shotLog.redo = () => false;
 
   // the computer's copy: everything but the footage, its own database, then its own modules
   cpSync(S, C, { recursive: true, filter: (src) => !src.includes(`${path.sep}blobs`) && !src.endsWith(".db") && !src.endsWith(".mp4") && !/\.db-(wal|shm)$/.test(src) });

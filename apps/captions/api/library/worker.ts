@@ -5,7 +5,7 @@ import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
 import { blobs, libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "./db";
-import { describeSlot, describeVersion } from "./describe";
+import { describeFromLines, describeSlot, describeVersion } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
@@ -93,7 +93,12 @@ interface VersionRow {
 /** Seconds a describe or a look should wait before it tries again, or 0 when its error is a real failure. */
 function waitFor(e: unknown): number {
   const under = e instanceof AiProviderError && e.cause ? e.cause : e;
-  if (under instanceof MacClaudeError && under.kind === "limit") return 15 * 60;
+  // the plan's limit: until it opens again when the limit says when (a weekly one is days away: asking every 15
+  // minutes starts the person's AI some 200 times for nothing), else in 15 minutes
+  if (under instanceof MacClaudeError && under.kind === "limit") {
+    const until = under.limited?.until;
+    return until && until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 15 * 60;
+  }
   if (under instanceof MacClaudeError && under.kind === "unclaimed") return 5 * 60;
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
@@ -147,9 +152,12 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
   return row?.id ?? null;
 }
 
-/** A description got through: the plan answers again, so the ones held for its limit are work again (estimate.ts progress). */
+/**
+ * A description got through: the plan answers again (its limit was raised, or another AI answers now), so the ones held
+ * for its limit are work again at once, not at the reset they were held for (estimate.ts progress).
+ */
 export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | null): void {
-  db.prepare("UPDATE jobs SET error = NULL WHERE kind IN ('describe', 'look') AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
+  db.prepare("UPDATE jobs SET error = NULL, run_after = 0 WHERE kind IN ('describe', 'look') AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
 }
 
 // this computer's transcripts and search entries run one at a time (lib/device-transcribe.ts, lib/device-embed.ts: the
@@ -406,11 +414,16 @@ async function run(job: JobRow): Promise<void> {
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const frames = await macFrames(v.id);
-    if (!frames.length) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
-    const fresh = !described(v.id);
-    await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
-    await dropMacFrames(v.id);
-    if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
+    // its stills went with its first description: described again, it is written from its words (its shot
+    // descriptions, else the description it has and what is said)
+    if (!frames.length) {
+      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
+    } else {
+      const fresh = !described(v.id);
+      await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
+      await dropMacFrames(v.id);
+      if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
+    }
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     return;
   }

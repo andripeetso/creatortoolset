@@ -213,6 +213,9 @@ export interface FinishedEdit {
   said: string;
   /** the spoken words of lines the script step planned for this version and the person took out */
   cut: string[];
+  /** the workspace the edit was made in (its own `projectId`): only an edit of the same workspace reads it. One kept
+   *  before examples had this, or of an edit with none, is read as its edit's, else the maker's first brand's (finished.ts) */
+  workspaceId?: string;
 }
 
 // ── a style that learns (tasks/flywheel/PLAN.md stage 5) ───────────────────────────────────────────────────────────

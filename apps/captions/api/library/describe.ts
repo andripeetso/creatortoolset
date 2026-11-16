@@ -2,18 +2,21 @@ import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { aiFor, onApiKey } from "../ai-complete";
+import { aiFor, completeWithFallback, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS } from "../lib/mac-claude";
 import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "../users";
 import { projectOf } from "../lib/project-of";
-import { contextStamp, workspaceContext } from "../lib/workshop/context";
+import { stampOf, workspaceContext } from "../lib/workshop/context";
 import { homeOf } from "./access";
 import { transcriptExcerpt } from "./attach";
-import { RULE } from "./look";
+import { librarySetting } from "./db";
+import { enqueueJob } from "./jobs";
+import { clock, RULE } from "./look";
 import { ffmpegTo } from "./media/run";
 import { indexAsset } from "./query";
+import { stretchesOf } from "./stretches";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
@@ -67,6 +70,10 @@ export interface DescribeInput {
   newFolder?: boolean;
   /** the library's tags (tagsOf) so the answer reuses its words */
   tags?: { clips: number; list: { tag: string; count: number }[] };
+  /** in place of pictures: the clip's shot descriptions, in order (a file kept on a Mac described again, describeFromLines) */
+  shots?: string[];
+  /** in place of pictures, for a clip with no shot descriptions: the description it has now ("" when it has none) */
+  was?: string;
 }
 
 /** The tags on the library's other clips (not in the trash), most used first, and how many clips it has. */
@@ -98,19 +105,31 @@ export interface Described {
 }
 
 export function describePrompt(input: DescribeInput): { system: string; user: string } {
+  // described with no picture (shots, was): nothing is asked of frames, and neither its turn nor its roll, which stay
+  const words = !!input.shots || input.was !== undefined;
   return {
     system:
       "You describe one clip in a creator's media library so they can find it later by searching. Say what is seen and heard: " +
       `the setting, what happens, objects, shot type and mood. ${RULE} Answer with JSON only.`,
     user: [
       ...(input.workspace
-        ? [`The workspace this clip belongs to. Use it to name what is seen (the product, the game, its places and features) when the frames show it; never add what they don't show:\n${input.workspace}`]
+        ? [`The workspace this clip belongs to. Use it to name what is seen (the product, the game, its places and features) when ${words ? "its words show it; never add what they don't say" : "the frames show it; never add what they don't show"}:\n${input.workspace}`]
         : []),
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
-      input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
-      'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
-      'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
+      input.shots
+        ? `There are no pictures this time. What is seen in the clip, shot by shot, in order:\n${input.shots.join("\n")}`
+        : input.was !== undefined
+          ? `There are no pictures this time.${input.was ? ` The description it has now: keep what it says is seen. Where the workspace makes it certain what a thing is, name it in the workspace's words as a plain statement; where it doesn't, leave the words as they are. Add nothing it doesn't say:\n${input.was}` : " Describe it from its title and what is said."}`
+        : input.frames > 1
+          ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`
+          : "The picture is the whole clip: a photo, or a clip too short for more.",
+      ...(words
+        ? []
+        : [
+            'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
+            'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
+          ]),
       ...(input.folders
         ? [
             input.newFolder
@@ -122,7 +141,7 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       ...(input.tags?.list.length
         ? [`Tags already in this library of ${input.tags.clips} clips (tag: clips it is on): ${input.tags.list.map((t) => `${t.tag}: ${t.count}`).join(", ")}`]
         : []),
-      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], "roll": "a" or "b", "turn": 0, ${KIND_ANSWER}${input.folders ? ', "folder": "a folder name"' : ""}}`,
+      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], ${words ? "" : '"roll": "a" or "b", "turn": 0, '}${KIND_ANSWER}${input.folders ? ', "folder": "a folder name"' : ""}}`,
     ].join("\n\n"),
   };
 }
@@ -173,6 +192,71 @@ export async function workspaceIdOf(db: DatabaseSync, versionId: string): Promis
   const owner = [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === row.home) ?? row.home;
   const of = await projectOf({ username: owner } as SessionUser);
   return of ? of(row.ws ?? undefined) : undefined;
+}
+
+/** Most of a clip's shot descriptions a description written from them reads, spread over the clip. */
+const SHOTS_READ = 80;
+
+/**
+ * A version described again with no picture, under the workspace's context as it is now: for a file kept on a Mac,
+ * whose stills went with its first description. It is written from its shot descriptions; one with none (a short clip,
+ * a talking take) from the description it has and what is said, so a clip described before the workspace named its
+ * subject is named as the workspace names it, and nothing is added that its words don't say. The clip keeps its turn,
+ * its roll and its folder. False when it has no words at all to read.
+ */
+export async function describeFromLines(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
+  const all = stretchesOf(db, versionId).filter((s) => s.text);
+  const segments = segmentsOf(db, versionId);
+  // what the AI wrote before, and the roll it gave: the roll stays, since nothing is seen this time
+  const was = db.prepare("SELECT text, roll FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId) as { text: string; roll: Roll | null } | undefined;
+  if (!all.length && !segments.length && !was?.text) return false;
+  if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
+  // their own Anthropic key first, as the description from frames goes (describeVersion)
+  const route = onApiKey(actor, "analyzer", DESCRIBE_LABEL) || aiFor(whoFor(actor), "analyzer", DESCRIBE_LABEL);
+  if (route.off) throw new NeedsKey(route.off);
+  const onMac = !!route.only?.includes("mac");
+  const lines = all.length <= SHOTS_READ ? all : Array.from({ length: SHOTS_READ }, (_, k) => all[Math.floor((k * all.length) / SHOTS_READ)]!);
+  const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
+  const wsId = await workspaceIdOf(db, versionId);
+  const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
+  const { system, user } = describePrompt({
+    title,
+    ...(workspace ? { workspace } : {}),
+    frames: 0,
+    ...(lines.length ? { shots: lines.map((l) => `${clock(l.a)}–${clock(l.b)} ${l.text}`) } : { was: was?.text ?? "" }),
+    ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
+    tags: tagsOf(db, versionId),
+  });
+  const { turn: _, roll: __, folder: ___, ...value } = await completeWithFallback(system, user, undefined, parseDescribe, onMac ? { ...route, mac: { ...route.mac, background: true } } : route);
+  saveDescribed(db, versionId, { ...value, ...(was?.roll ? { roll: was.roll } : {}) }, route.mac?.provider?.instance ?? (onMac ? "mac" : "anthropic"), stampOf(workspace, DESCRIBE_VERSION));
+  // its words changed: the library's smart folders judge it again, as after a description from frames
+  await fileSmart(db, versionId, whoFor(actor), workspace).catch(() => 0);
+  return true;
+}
+
+/** "<version>:<stamp>" asked to be described again: once a context, so one that can't be written isn't asked on every look. */
+const refreshed = new Set<string>();
+
+/**
+ * Has the AI's description of a version written again when it was written under another workspace context than now's
+ * (or by an older describe prompt): the library's describe job, queued as `actor`. Asked when an edit uses the file and
+ * when someone who may change the clip opens it, once per context (tasks/flywheel/PLAN.md D12: when used, never a
+ * whole library). A description from before stamps counts as written with no context: it is stale once the workspace
+ * has some. A file kept on a Mac is described with no picture, from its words (describeFromLines). True when it queued
+ * one.
+ */
+export async function refreshDescription(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
+  const r = db
+    .prepare(
+      "SELECT a.library_id, d.stamp FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN descriptions d ON d.version_id = v.id AND d.source = 'ai' WHERE v.id = ?",
+    )
+    .get(versionId) as { library_id: string; stamp: string | null } | undefined;
+  if (!r || !librarySetting(r.library_id, "describe")) return false;
+  const now = stampOf(await workspaceOf(db, versionId), DESCRIBE_VERSION);
+  if ((r.stamp ?? stampOf("", DESCRIBE_VERSION)) === now || refreshed.has(`${versionId}:${now}`)) return false;
+  refreshed.add(`${versionId}:${now}`);
+  enqueueJob(db, r.library_id, versionId, "describe", actor, true);
+  return true;
 }
 
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */
@@ -266,7 +350,8 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       tags: tagsOf(db, versionId),
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
-    saveDescribed(db, versionId, value, provider, await contextStamp(wsId, WORKSPACE_MAX, DESCRIBE_VERSION));
+    // the stamp of the text this call sent: the workspace may have changed while the AI answered
+    saveDescribed(db, versionId, value, provider, stampOf(workspace, DESCRIBE_VERSION));
     if (value.turn) await turnVersion(db, versionId, base + value.turn);
     // the library's smart folders judge it first (smart.ts); one it went in is where it is filed
     const smart = (await fileSmart(db, versionId, who, workspace).catch(() => 0)) ?? 0;

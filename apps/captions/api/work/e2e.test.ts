@@ -266,7 +266,7 @@ beforeAll(async () => {
     for (let k = 0; k < 2; k++) q.run(f.v, k, k * 2, k * 2 + 2, JSON.stringify(["jump"]), `${f.title}, part ${k}`, `${f.v}${k}`.padEnd(16, "0"), stamp);
   }
   srv.shotLog.first = () => {};
-  srv.shotLog.redo = () => {};
+  srv.shotLog.redo = () => false;
   // the originals differ from the proxies by far: a byte count tells which was sent
   for (const f of FILES) expect(bytes.original[f.v]!).toBeGreaterThan(2 * bytes.proxy[f.v]!);
 
