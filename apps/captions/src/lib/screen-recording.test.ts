@@ -322,9 +322,10 @@ describe("screen recording", () => {
   });
 
   it("sizes output frames", () => {
-    expect(outputSize("9:16", 3840, 2160, false)).toEqual({ width: 1080, height: 1920 });
-    expect(outputSize("source", 3024, 1964, false)).toEqual({ width: 1662, height: 1080 });
-    expect(outputSize("16:9", 0, 0, true)).toEqual({ width: 3840, height: 2160 });
+    expect(outputSize("9:16", 3840, 2160, 1080)).toEqual({ width: 1080, height: 1920 });
+    expect(outputSize("source", 3024, 1964, 1080)).toEqual({ width: 1662, height: 1080 });
+    expect(outputSize("16:9", 0, 0, 2160)).toEqual({ width: 3840, height: 2160 });
+    expect(outputSize("9:16", 3840, 2160, 720)).toEqual({ width: 720, height: 1280 });
   });
 
   it("places the camera bubble in each corner with a 4% margin", () => {
