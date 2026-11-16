@@ -91,6 +91,17 @@ export async function readable(versionId: string, sourceKey: string): Promise<st
   }
 }
 
+/**
+ * A source's file for work that only measures it (sound levels, the picture read, frames for the AI, beats): its proxy,
+ * else what readable gives. Every place reads the same copy this way, so a cut planned on one comes out the same on
+ * another. A proxy has the original's length and every step reads by time, so the cut's times stay the original's. The
+ * preview and the plug-in steps read the best file instead (readable, preview.ts localFiles).
+ */
+export async function measurable(versionId: string, sourceKey: string): Promise<string> {
+  const proxy = libraryDb().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as { storage_key: string | null } | undefined;
+  return proxy?.storage_key ? blobs.localCopy(proxy.storage_key) : readable(versionId, sourceKey);
+}
+
 export interface MediaPaths {
   /** source key → the path the timeline names: absolute on this server's disk, media/<name> (relative to the timeline) from a bucket */
   files: Record<string, string>;
