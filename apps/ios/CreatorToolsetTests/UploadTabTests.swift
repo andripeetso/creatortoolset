@@ -417,6 +417,50 @@ final class OneTransferAClipTests: XCTestCase {
         new.cancel()
         try await wait("the new one's own end takes it off") { transfers.onTheWay[clip] == nil }
     }
+
+    /// A step's body file was written before the refusal was known: a refused start of the same step and part had
+    /// already rewritten the file the transfer on its way is sending. Every start that writes one asks first.
+    func testARefusedStartLeavesTheBodyFileOfTheTransferOnItsWay() throws {
+        let server = Server(url: URL(string: "https://one-transfer.example.test/")!, username: "sam")
+        Servers.shared.add(server, cookie: nil)
+        defer { Servers.shared.remove(server.id) }
+        let engine = UploadEngine(transfers: transfers)
+        let starts: [(kind: TransferStep.Kind, part: Int, again: (UUID) -> Void)] = [
+            (.patch, 0, { engine.startPatch($0, from: 4) }),
+            (.part, 2, { engine.startPart($0, 2) }),
+            (.finish, 0, { engine.startFinish($0) }),
+            (.relayPatch, 0, { engine.startRelayPatch($0, from: 4) }),
+            (.relayComplete, 0, { engine.startRelayComplete($0) }),
+            (.catalogPatch, 0, { engine.startCatalogPatch($0, from: 4) }),
+            (.catalogComplete, 0, { engine.startCatalogComplete($0) }),
+        ]
+        for start in starts {
+            // a clip that every route could send a step of
+            let id = UUID()
+            var item = UploadItem(id: id, filename: "tinyacrobatics.mp4", size: 10, server: server.id, state: .sending)
+            item.uploadId = "u1"
+            item.direct = UploadItem.Direct(partSize: 4, urls: Array(repeating: server.url, count: 3))
+            item.catalog = CatalogSend(relay: RelaySession(ingestId: "i1", videoId: "v1", libraryId: "l1", signature: "s", expiresAt: 0,
+                                                           uploadURL: server.url), ingestId: "i1")
+            engine.store.add(item)
+            defer {
+                engine.store.remove(id)
+                AppFiles.removeSlices(of: id)
+            }
+            try Data("0123456789".utf8).write(to: AppFiles.upload(id))
+            // its transfer on its way, sending the file a second start of the same step and part would write
+            let step = TransferStep(itemId: id, kind: start.kind, part: start.part)
+            let sending = AppFiles.slice(step)
+            try Data("on its way".utf8).write(to: sending)
+            XCTAssertTrue(transfers.start(request, file: sending, step: step))
+            let before = engine.store.item(id)
+
+            start.again(id)
+            XCTAssertEqual(try Data(contentsOf: sending), Data("on its way".utf8), "\(start.kind.rawValue): the body file being sent")
+            XCTAssertEqual(engine.store.item(id), before, "\(start.kind.rawValue): the clip")
+            XCTAssertEqual(transfers.onTheWay[id]?.taskDescription, step.encoded, "\(start.kind.rawValue): its one transfer")
+        }
+    }
 }
 
 /// The queue saved by an older build still reads, New edit clips included.
