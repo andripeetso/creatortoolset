@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { listPlaces, listTags, type LibraryFilters } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
+import { thisMacDevice } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { anyFilter, countryName, WhenPicker } from "./Filters";
+import { anyFilter, countryName, HereFilter, WhenPicker } from "./Filters";
 
 /**
  * The Media Library's sidebar (LibraryPage.tsx): Sort, When, Where (the countries clips were filmed in, with counts), Tags
@@ -130,6 +131,12 @@ export function LibrarySidebar(p: SidebarProps) {
               </Pill>
             ))}
           </div>
+        </Section>
+      )}
+
+      {thisMacDevice() && (
+        <Section title="Computer">
+          <HereFilter value={f} onChange={(here) => set({ here })} />
         </Section>
       )}
 

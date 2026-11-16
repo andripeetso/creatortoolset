@@ -5,10 +5,11 @@ import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
+import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges, useOffline, type OfflineList } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
@@ -240,6 +241,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
           </Button>
         </div>
       )}
+      {a.kind === "video" && !inTrash && <OfflineSwitch versionId={a.versionId} folders={inFolders} onError={onError} />}
       <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       {a.state === "missing" && (
         <p className="text-sm text-zinc-400">
@@ -580,6 +582,35 @@ function TagEditor({
         </div>
       )}
     </section>
+  );
+}
+
+/** Kept offline: the clip itself, or a folder it is in (the folder's switch is in its menu, LibraryPage.tsx). */
+export function offlineState(list: OfflineList, versionId: string, folders: { id: string; name: string }[]): { on: boolean; folder?: string } {
+  const folder = folders.find((f) => list.collections.includes(f.id))?.name;
+  return { on: list.versions.includes(versionId) || !!folder, ...(folder ? { folder } : {}) };
+}
+
+/**
+ * Available offline (the Mac app): the person's computers keep this clip's proxy, never removed by their size limit, and
+ * download it while nothing else runs. A clip in a folder kept offline is on with the folder, and says so.
+ */
+export function OfflineSwitch({ versionId, folders, onError }: { versionId: string; folders: { id: string; name: string }[]; onError: (e: string) => void }) {
+  const offline = useOffline();
+  if (!offline.list) return null;
+  const { on, folder } = offlineState(offline.list, versionId, folders);
+  return (
+    <label className="flex items-center justify-between gap-3 text-xs">
+      <span className="flex min-w-0 flex-col">
+        <span>Available offline</span>
+        {folder && <span className="truncate text-zinc-500">With the folder {folder}</span>}
+      </span>
+      <Switch
+        checked={on}
+        disabled={!!folder}
+        onCheckedChange={(next) => void offline.set({ version: versionId }, next).catch((e: unknown) => onError(message(e)))}
+      />
+    </label>
   );
 }
 

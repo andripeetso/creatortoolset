@@ -84,13 +84,24 @@ export interface WorkClaimBody {
   v: number;
   /** plug-in steps installed on this computer */
   steps: string[];
-  /** the proxy cache: bytes kept, and the versions kept offline */
-  cache?: { bytes: number; limit?: number; offline?: string[] };
+  /** the proxy cache: bytes kept, its size limit, the versions kept offline, and every version whose proxy it holds */
+  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] };
 }
 
-export type WorkClaim =
-  | { pkg: WorkPackage }
-  | { pkg: null; update?: true; empty?: true };
+/** A proxy a person keeps on their computers (Available offline): its version id, the clip's name and the proxy's size. */
+export interface WorkOffline {
+  id: string;
+  title: string;
+  bytes: number;
+}
+
+export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true }) & {
+  /** Settings → Storage → Empty: empty the proxy cache now; the proxies kept offline stay */
+  empty?: true;
+  /** the proxies to keep (Available offline): never removed by the size limit, downloaded while nothing else runs.
+   * Absent: an older server, keep the last list */
+  offline?: WorkOffline[];
+};
 
 export interface WorkBeat {
   line?: string;

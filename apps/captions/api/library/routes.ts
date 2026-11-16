@@ -27,7 +27,8 @@ import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
-import { buildAssetQuery, indexAsset, macPlace, pageOf, parseSearch, type CardRow } from "./query";
+import { offlineApp } from "../work/offline";
+import { buildAssetQuery, indexAsset, macPlace, markHere, pageOf, parseSearch, type CardRow } from "./query";
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
@@ -43,6 +44,7 @@ import { indexOnMac, parseOnMac } from "./on-mac";
 export const libraryApp = new Hono<{ Variables: AuthVars }>();
 libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
+libraryApp.route("/offline", offlineApp); // GET/POST /offline: Available offline (api/work/offline.ts)
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
@@ -821,11 +823,11 @@ libraryApp.get("/:id/assets", async (c) => {
     }
     return c.json({ items, ...(refused ? { refused } : {}) });
   }
-  const query = expandCollection(libraryId, parseSearch(c.req.query()));
+  const query = expandCollection(libraryId, parseSearch(c.req.query(), user.username));
   if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);
   const { sql, params, limit } = buildAssetQuery(libraryId, query);
   const page = pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit);
-  return c.json({ ...page, items: await visibleCards(viewer, libraryId, page.items) });
+  return c.json({ ...page, items: markHere(db(), await visibleCards(viewer, libraryId, page.items), query.device) });
 });
 
 /**

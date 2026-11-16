@@ -20,11 +20,12 @@ import type {
   ShareInput,
   WatchStatus,
 } from "@contracts/library";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { pathOnMac } from "@/lib/thisMac";
 import { deviceHere, indexOnMac } from "@/lib/onMac";
+import { thisMacDevice } from "@/lib/providers";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -197,15 +198,38 @@ export const searchLibrary = async (
   return { hits: await json<SearchHit[]>(r), meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready" };
 };
 
-/** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where. */
-export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place">;
+/** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where, on this computer. */
+export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here">;
 
-/** Those filters as query parameters (api/library/query.ts parseSearch reads them back). */
+/**
+ * Those filters as query parameters (api/library/query.ts parseSearch reads them back). In the Mac app the page also
+ * names its own computer, so cards on it are marked and On this computer can narrow to them.
+ */
 function setFilters(p: URLSearchParams, f: LibraryFilters) {
+  const device = thisMacDevice();
+  if (device) p.set("device", device);
+  if (device && f.here) p.set("here", "1");
   if (f.tags?.length) p.set("tag", f.tags.join(","));
   if (f.filmedFrom !== undefined) p.set("filmedFrom", String(f.filmedFrom));
   if (f.filmedTo !== undefined) p.set("filmedTo", String(f.filmedTo));
   if (f.place) p.set("place", f.place);
+}
+
+/** Available offline (api/work/offline.ts): the clips' versions and the folders the person's computers keep. */
+export interface OfflineList {
+  versions: string[];
+  collections: string[];
+}
+const OFFLINE_API = "/api/library/offline";
+
+/** The person's Available offline list, and its switch for a clip's version or a folder (the list as the server keeps it). */
+export function useOffline(): { list: OfflineList | null; set: (what: { version: string } | { collection: string }, on: boolean) => Promise<void> } {
+  const [list, setList] = useState<OfflineList | null>(null);
+  useEffect(() => {
+    if (thisMacDevice()) void fetch(OFFLINE_API).then((r) => json<OfflineList>(r)).then(setList, () => {});
+  }, []);
+  const set = async (what: { version: string } | { collection: string }, on: boolean) => setList(await send<OfflineList>(OFFLINE_API, "POST", { ...what, on }));
+  return { list, set };
 }
 
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */
