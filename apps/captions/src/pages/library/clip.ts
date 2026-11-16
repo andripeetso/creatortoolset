@@ -126,7 +126,7 @@ export const canReveal = () => typeof document !== "undefined" && document.docum
 /** Shows the clip's file in Finder: null when it did, else what went wrong. The Mac app asks the server for the file itself. */
 export async function revealClip(libraryId: string, assetId: string): Promise<string | null> {
   const bridge = thisMacBridge();
-  if (!bridge) return "Show in Finder works in the Mac app";
+  if (!bridge) return "Needs the Mac app";
   const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ library: libraryId, asset: assetId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
-  return r.ok ? null : (r.problem ?? "That file isn't on this Mac.");
+  return r.ok ? null : (r.problem ?? "File not found on this Mac");
 }

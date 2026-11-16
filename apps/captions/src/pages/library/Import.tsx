@@ -115,8 +115,8 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
 
 /** The two ways in, as words. */
 export const IMPORT_MODES: { value: ImportMode; label: string; detail: string }[] = [
-  { value: "in-place", label: "Use them where they are", detail: "Nothing is moved or copied. If you move them later, point the library to the new place" },
-  { value: "copy", label: "Copy them into the library", detail: "Into Footage, Audio and Pictures folders there. The library keeps track of them" },
+  { value: "in-place", label: "Keep in place", detail: "Files are read where they are." },
+  { value: "copy", label: "Copy into the library", detail: "Files are copied into the library's Footage, Audio and Pictures folders." },
 ];
 
 /**
@@ -213,12 +213,10 @@ export function useImportQuestion({ library, serverHere, owner, onSaved, onError
   const copyOk = !!look && copyAvailable(look.from);
   const fresh = look && library ? look.places.filter((p) => !placeOf(library.settings.places, p)) : [];
   const body =
-    !ask || !library ? null : ask.kind === "upload" ? (
-      <p className="text-sm text-zinc-500">From a browser, files upload to the server</p>
-    ) : (
+    !ask || !library || ask.kind === "upload" ? null : (
       <>
         <ImportCards
-          legend={ask.kind === "first" ? "How do you want to add your files?" : `Files from ${fresh.map(folderName).join(", ")}`}
+          legend={ask.kind === "first" ? "Import" : `Files from ${fresh.map(folderName).join(", ")}`}
           short={ask.kind === "new"}
           value={mode}
           onChange={setMode}

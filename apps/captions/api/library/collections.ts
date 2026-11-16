@@ -220,7 +220,7 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
   }
   let rule = row.rule ?? null;
   if (body?.rule !== undefined) {
-    if (row.kind !== "manual" || rollFolder(db(), libraryId, row.id)) return c.json({ error: "Only a plain folder sorts itself", code: "conflict" }, 409);
+    if (row.kind !== "manual" || rollFolder(db(), libraryId, row.id)) return c.json({ error: "Only a plain folder can have a rule", code: "conflict" }, 409);
     rule = ruleOf(body.rule);
     if (rule && !canJudge(user)) return c.json({ error: NO_JUDGE, code: "needs_key" }, 409);
   }
@@ -346,7 +346,7 @@ async function changeItems(c: Ctx, add: boolean) {
   const row = rowIn(libraryId, c.req.param("cid") ?? "");
   if (!row) return notFound(c);
   const roll = rollFolder(db(), libraryId, row.id);
-  if (row.kind !== "manual" && !roll) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+  if (row.kind !== "manual" && !roll) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   const body = (await c.req.json().catch(() => null)) as { assetIds?: unknown } | null;
   const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string").slice(0, 500) : [];
   if (!asked.length) return c.json({ error: "No assets given", code: "invalid" }, 400);

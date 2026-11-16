@@ -106,7 +106,7 @@ function waitFor(e: unknown): number {
 
 const MODEL_RETRY_S = 60;
 /** What the clip says while its transcript waits for the speech model (shown in its panel). */
-export const MODEL_WAITS = "The speech model's download stopped: it tries again in a minute.";
+export const MODEL_WAITS = "Waiting for the speech model to download";
 
 /** How a description held for the plan's limit is known (limitLine's words, contracts/plans.ts). */
 export const LIMIT_LIKE = "%limit is reached%";
@@ -425,7 +425,7 @@ async function run(job: JobRow): Promise<void> {
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
-  if (!v) throw new Error("The version is gone");
+  if (!v) throw new Error("Version not found");
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
   // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
@@ -446,7 +446,7 @@ async function run(job: JobRow): Promise<void> {
     // its stills went with its first description: described again, it is written from its words (its shot
     // descriptions, else the description it has and what is said)
     if (!frames.length) {
-      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
+      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac were not found: add the file again in the Mac app");
     } else {
       const fresh = !described(v.id);
       await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);

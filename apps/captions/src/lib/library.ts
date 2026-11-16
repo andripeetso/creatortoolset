@@ -33,7 +33,7 @@ import { thisMacDevice } from "@/lib/providers";
 /** The body, or the server's error with its `code` ("too_large": a refusal that a retry cannot change). */
 async function json<T>(r: Response): Promise<T> {
   const body = (await r.json().catch(() => ({}))) as T & { error?: string; code?: string };
-  if (!r.ok) throw Object.assign(new Error(body.error ?? `Request failed (${r.status})`), { code: body.code });
+  if (!r.ok) throw Object.assign(new Error(body.error ?? "Server error"), { code: body.code });
   return body;
 }
 
@@ -397,7 +397,7 @@ export async function uploadFile(
         });
         if (r.status === 409) offset = ((await r.json()) as { offset: number }).offset;
         else if (r.ok) offset = Number(r.headers.get("upload-offset"));
-        else throw new Error(`Upload failed (${r.status})`);
+        else throw new Error("Could not upload the file");
         failures = 0;
       } catch (e) {
         if (signal?.aborted || ++failures > 5) throw e;
@@ -495,7 +495,7 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
 /** The library's footage folders as its owner sees them (anyone else: an error, so no status). */
 export async function getWatch(libraryId: string): Promise<WatchStatus> {
   const r = await fetch(`/api/library/${libraryId}/watch`);
-  if (!r.ok) throw new Error(`Request failed (${r.status})`);
+  if (!r.ok) throw new Error("Server error");
   return (await r.json()) as WatchStatus;
 }
 

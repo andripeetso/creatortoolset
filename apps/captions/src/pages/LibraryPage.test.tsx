@@ -230,7 +230,7 @@ describe("Media Library page", () => {
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
     expect(more(host)).not.toBeNull(); // Library settings, in the More menu
     expect(host.textContent).not.toContain("Where are your videos?");
-    expect(host.textContent).toContain("raw materials");
+    expect(host.textContent).toContain("No clips");
     expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
     expect(host.textContent).not.toContain("Standard"); // asked in the first upload's dialog, not on the page
     expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
@@ -282,7 +282,7 @@ describe("Media Library page", () => {
     server.items = [];
     server.trash = [clip("gone")];
     const host = await mount();
-    expect(host.textContent).not.toContain("raw materials");
+    expect(buttons(host)).not.toContain("Choose a folder");
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull();
   });
 
@@ -290,7 +290,8 @@ describe("Media Library page", () => {
     server.items = [];
     server.watch = { allowed: true, folders: [{ path: "/Users/tiny/Movies/Trip", mode: "reference", addedBy: "admin", found: true, imported: 0, files: 0, adding: 0 }], missing: 0 };
     const host = await mount();
-    expect(host.textContent).toContain("No videos in your folder yet.");
+    expect(host.textContent).toContain("No clips");
+    expect(buttons(host)).not.toContain("Choose a folder");
   });
 
   it("shows no Finals: not the folder the Finals tool reads, not a way to make one", async () => {
@@ -404,7 +405,7 @@ describe("Media Library page", () => {
   it("a failed clip says why and a missing one says so", async () => {
     server.items = [clip("bad", { state: "failed" }), clip("away", { state: "missing" })];
     const host = await mount();
-    expect(host.textContent).toContain("Couldn't read this file");
+    expect(host.textContent).toContain("Could not read the file");
     expect(host.textContent).toContain("File not found");
   });
 });
@@ -493,7 +494,7 @@ describe("Media Library picks, menu, keys, link and drop", () => {
   const click = (el: Element, o: MouseEventInit = {}) => act(async () => void el.querySelector("button[data-state]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...o })));
   const key = (k: string, o: KeyboardEventInit = {}, target: EventTarget = window) =>
     act(async () => void target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...o })));
-  const bar = () => document.querySelector('[role="toolbar"][aria-label="Picked clips"]');
+  const bar = () => document.querySelector('[role="toolbar"][aria-label="Selected clips"]');
   beforeEach(() => {
     server.items = [clip("one"), clip("two"), clip("three")];
   });

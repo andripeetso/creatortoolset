@@ -4,7 +4,7 @@ import type { Collection, ReorganizeWay } from "@contracts/library";
 
 async function json<T>(r: Response): Promise<T> {
   const body = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
+  if (!r.ok) throw new Error(body.error ?? "Server error");
   return body;
 }
 

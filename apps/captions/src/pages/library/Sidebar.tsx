@@ -29,7 +29,7 @@ export const KINDS: { value: AssetKind | "all"; label: string }[] = [
   { value: "all", label: "All" },
   { value: "video", label: "Videos" },
   { value: "audio", label: "Audio" },
-  { value: "image", label: "Images" },
+  { value: "image", label: "Photos" },
   { value: "doc", label: "Documents" },
 ];
 
