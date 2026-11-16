@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { useSetup } from "@/lib/setup";
+import { useWorkspace } from "@/lib/workspace";
 import { webPlugins } from "@/plugins.gen";
 import { ToolsSection, canAddTo, hasToolPage, skillPlacesOf } from "./ToolsSection";
 
@@ -32,10 +33,24 @@ const engine = { id: "tiny-enhance", title: "Tiny Enhance", about: "", kind: "en
 const offPack = { id: "tiny-off", name: "Tiny off", author: "Tiny", version: "1.0.0", description: "", off: ["*"], instructions: { "editor.script": "Short." }, items: { frameworks: [], presets: [] } };
 const pack = { id: "tiny-cards", name: "Tiny cards", author: "Tiny", version: "1.0.0", description: "", off: [], instructions: { "editor.cards": "Bold." }, items: { frameworks: [], presets: [] } };
 
+// a pack's grade beside the built-in one: the one slot the AI Editor's defaults then offer
+const one = (id: string) => [{ id, title: id, from: null }];
+const defaults = (chosen: Record<string, string>, ws?: string | null) => ({
+  bundle: { designSystem: "plain", grade: chosen.grade ?? "none", voiceMix: "level", sfxSet: "none" },
+  chosen,
+  items: { designSystem: one("plain"), grade: [...one("none"), { id: "warm", title: `Warm ${ws ?? ""}`, from: "Tiny looks" }], voiceMix: one("level"), sfxSet: one("none") },
+});
+/** the workspace each defaults request named (X-CT-Workspace; null: none sent) */
+let asked: (string | null)[] = [];
+
 async function render(sub?: string) {
-  vi.stubGlobal("fetch", async (url: string) => {
+  asked = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    const ws = new Headers(init?.headers).get("X-CT-Workspace");
+    if (url.startsWith("/api/editor/defaults")) asked.push(ws);
     const body =
       url === "/api/edit-steps" ? { steps: [blur, engine], canAdd: true }
+      : url.startsWith("/api/editor/defaults") ? defaults(init?.method === "PUT" ? { grade: "warm" } : {}, ws)
       : url === "/api/packs" ? [pack, offPack]
       : url === "/api/skills" ? { skills: [], shared: [] }
       : { tools: null, hidden: [], plan: null, detected: null, done: true, have: [], mcpTo: [] };
@@ -91,7 +106,22 @@ describe("Settings → Tools", () => {
     expect(host!.querySelector('a[href="/community/tool/editor"]')?.textContent).toBe("Browse Community");
     // no Home switch a second time, and no section folded away
     expect(host!.querySelector('[aria-label="Show AI Editor on Home"]')).toBeNull();
-    expect([...host!.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(expect.arrayContaining(["Plug-ins", "Packs", "Skills for the script"]));
+    expect([...host!.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(expect.arrayContaining(["New edit defaults", "Plug-ins", "Packs", "Skills for the script"]));
+  });
+
+  it("the AI Editor's defaults are one workspace's: the window's to start with, and only on the AI Editor's page", async () => {
+    useWorkspace.setState({ currentProjectId: "one", projects: [{ id: "one", name: "Tiny Acrobatics" }, { id: "two", name: "Northlight" }] as never });
+    await render("editor");
+    expect(host!.textContent).toContain("Grade");
+    // the request names the workspace the page shows, whatever the window is in
+    expect(asked).toEqual(["one"]);
+    useWorkspace.setState({ currentProjectId: null, projects: [] });
+  });
+
+  it("another tool's page has no defaults and asks for none", async () => {
+    await render("workshop");
+    expect([...host!.querySelectorAll("h2")].map((h) => h.textContent)).not.toContain("New edit defaults");
+    expect(asked).toEqual([]);
   });
 
   it("a plug-in's section that names the tool is drawn on its page, under its title", async () => {

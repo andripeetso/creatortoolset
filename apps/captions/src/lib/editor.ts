@@ -5,10 +5,11 @@ import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, 
 
 /** The AI Editor's calls to api/editor/routes.ts. */
 
-async function send<T>(url: string, method = "GET", body?: unknown): Promise<T> {
+/** `workspace`: the request works in that workspace, whatever the window is in (Settings' selector; X-CT-Workspace). */
+async function send<T>(url: string, method = "GET", body?: unknown, workspace?: string | null): Promise<T> {
   const r = await fetch(url, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(workspace ? { "X-CT-Workspace": workspace } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const out = (await r.json().catch(() => ({}))) as T & { error?: string };
@@ -33,9 +34,10 @@ export const carryOn = (id: string) => send<Edit>(`${base(id)}/pass`, "POST");
 export const stopEdit = (id: string) => send<Edit>(`${base(id)}/stop`, "POST");
 export const deleteEdit = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const patchEdit = (id: string, body: EditPatch) => send<Edit>(base(id), "PATCH", body);
-export const getEditorDefaults = () => send<EditorDefaults>("/api/editor/defaults");
-/** Sets one slot's default to an item, or back to the pack's or built-in one with null. */
-export const setEditorDefault = (slot: EditSlot, id: string | null) => send<EditorDefaults>(`/api/editor/defaults/${slot}`, "PUT", { id });
+/** The defaults of a workspace: `workspace`, else the one the window is in. */
+export const getEditorDefaults = (workspace?: string | null) => send<EditorDefaults>("/api/editor/defaults", "GET", undefined, workspace);
+/** Sets one slot's default there to an item, or back to the pack's or built-in one with null. */
+export const setEditorDefault = (slot: EditSlot, id: string | null, workspace?: string | null) => send<EditorDefaults>(`/api/editor/defaults/${slot}`, "PUT", { id }, workspace);
 /** Settings → AI Editor: the post-processing steps (contracts/editor-steps.ts). */
 export const getEditSteps = () => send<StepsView>("/api/edit-steps");
 export const setEditStep = (id: string, change: { use?: boolean; values?: Record<string, string> }) => send<StepsView>(`/api/edit-steps/${id}`, "PUT", change);

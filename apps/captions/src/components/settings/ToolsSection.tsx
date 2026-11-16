@@ -17,6 +17,7 @@ import { SkillsView } from "@/components/community/SkillsView";
 import { ToolPlugins, stepsFor, useSteps, type Steps } from "@/components/community/PluginsCatalog";
 import { hasThisMac, useMacRecorder } from "./ThisMacSection";
 import { RecorderSettings } from "./RecorderSettings";
+import { EditorDefaultsSection } from "./EditorDefaultsDialog";
 import { toolSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { PublishButton } from "@/components/community/PublishDialog";
@@ -49,7 +50,7 @@ export function needFix(need: Need): { label: string; to: string } {
   if (need.form === "apify") return { label: "Add key", to: "/settings/keys#apify-key" };
   if (need.form === "library") return { label: "Open Media Library", to: "/library" };
   if (need.form === "project") return { label: "New workspace", to: "/projects" };
-  return { label: "Add AI", to: "/settings/providers" };
+  return { label: "Add provider", to: "/settings/providers" };
 }
 
 /** Home's switches: the list the page was just given while it saves behind; the saved one back when a save fails. */
@@ -64,7 +65,7 @@ function useHomeSwitches() {
     setMine(next);
     save({ hidden: next }).catch(() => {
       setMine(null);
-      saveFailed("The tools did not save. Try again.");
+      saveFailed("Home tools not saved");
     });
   };
   return { view, hidden, set };
@@ -139,7 +140,7 @@ function ToolsList() {
   const { view, hidden, set } = useHomeSwitches();
   return (
     <Section
-      title="Shown on Home"
+      title="Home tools"
       action={view && <PublishButton item={{ kind: "home", hidden, defaultName: "" }} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" />}
     >
       <Card>
@@ -170,9 +171,10 @@ function ToolsList() {
 /**
  * Settings → <tool> (`/settings/tools/<tile>`, an entry in the sidebar's Tool settings block): one tool's settings, every
  * section open on the page as on any other Settings page (owner, 2026-11-16, on folds and a repeated Home switch: "I
- * have to do more clicks… more trigger tools to go deeper"). The Screen Recorder's Recording, each plug-in section that
- * names the tool under its title, its plug-ins (an AI Editor step with its switch for new edits and options, on the Mac
- * app's own server), its installed packs, its skills by place, and the way to Community's section for it.
+ * have to do more clicks… more trigger tools to go deeper"). The Screen Recorder's Recording, the AI Editor's defaults
+ * for new edits (each workspace has its own: the section draws the workspace selector), each plug-in section that names
+ * the tool under its title, its plug-ins (an AI Editor step with its switch for new edits and options, on the Mac app's
+ * own server), its installed packs, its skills by place, and the way to Community's section for it.
  */
 function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; recorder: boolean }) {
   const me = useMe();
@@ -187,6 +189,8 @@ function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; rec
           <RecorderSettings />
         </Section>
       )}
+      {/* the grade is the one slot this editor reads (as its own Defaults button, EditorPage) */}
+      {tile === "editor" && <EditorDefaultsSection slots={["grade"]} />}
       {toolSectionsFor(me, webPlugins, tile).map((s) => (
         <Section key={s.id} title={s.title}>
           {s.body}
