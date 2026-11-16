@@ -60,7 +60,8 @@ export function SharePopover({
         setOn(all.some((s) => s.all));
         setLoaded(true);
       },
-      () => setLoaded(true),
+      // not known: the row keeps its loading look and says why (opening it again asks again)
+      (e) => setError(e instanceof Error ? e.message : String(e)),
     );
   }, [open, sessionId]);
 
@@ -86,13 +87,16 @@ export function SharePopover({
     }
   };
   const stop = async () => {
-    if (!link) return;
+    if (!link || busy) return;
+    setBusy(true);
     try {
       await stopShare(sessionId, link.token);
       setLink(null);
       turn(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -158,7 +162,7 @@ export function SharePopover({
                 </ul>
               ) : null}
               {!readOnly && (
-                <button type="button" onClick={() => void stop()} className="self-start rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-red-400">
+                <button type="button" disabled={busy} onClick={() => void stop()} className="self-start rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-red-400 disabled:opacity-50">
                   Stop this link
                 </button>
               )}

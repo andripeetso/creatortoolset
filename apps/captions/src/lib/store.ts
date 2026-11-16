@@ -1765,11 +1765,6 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       ? masterSnap.originalWords
       : masterWords;
 
-    // the AI places master fixes of names and numbers the exact replay
-    // couldn't (applyMaster.ts `missed`), when this account has the AI
-    const ai = await aiStatus().catch(() => null);
-    let check = !!(ai?.available && ai.allowed);
-
     const only = onlyIds ? new Set(onlyIds) : null;
     const targets = s.clips.slice(1).filter(
       (c) =>
@@ -1793,6 +1788,11 @@ export const useStudio = create<StudioState>((rawSet, get) => {
     const correctedCounts: Record<string, number> = {};
     let done = 0;
     try {
+      // the AI places master fixes of names and numbers the exact replay
+      // couldn't (applyMaster.ts `missed`), when this account has the AI.
+      // Asked once the pass is marked as running: a second click finds it busy
+      const ai = await aiStatus().catch(() => null);
+      let check = !!(ai?.available && ai.allowed);
       for (const clip of targets) {
         const read = () => {
           const now = get();

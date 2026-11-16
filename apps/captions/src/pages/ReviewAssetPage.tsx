@@ -1401,7 +1401,7 @@ function Header({
           {manage && !locked && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => fileInput.current?.click()}>Upload new version…</DropdownMenuItem>
+              <DropdownMenuItem disabled={uploadPct !== null} onClick={() => fileInput.current?.click()}>Upload new version…</DropdownMenuItem>
             </>
           )}
         </DropdownMenuContent>
@@ -1849,8 +1849,10 @@ function Thread({
     },
     edit: editingId === x.id ? { text: editText, set: setEditText, save: saveEdit, cancel: () => setEditingId(null) } : null,
   });
+  const sending = useRef(false);
   const send = async () => {
-    if (!body.trim()) return;
+    if (!body.trim() || sending.current) return;
+    sending.current = true;
     try {
       if (await onReply(body.trim())) {
         setBody("");
@@ -1858,6 +1860,8 @@ function Thread({
       }
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      sending.current = false;
     }
   };
   return (

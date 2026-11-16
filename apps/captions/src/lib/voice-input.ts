@@ -64,11 +64,16 @@ export function useVoiceInput(onText: (text: string) => void) {
 
   const start = async () => {
     if (control.current) return;
+    // held from the first tap, before the browser has given the mic: a second tap while it asks starts nothing more,
+    // and leaving the page then lets go of the mic as soon as it comes
+    let cancelled = false;
+    control.current = { stop: () => {}, cancel: () => void (cancelled = true) };
     setError(null);
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch (e) {
+      control.current = null;
       const inApp = document.documentElement.classList.contains("mac-app");
       setError(
         e instanceof DOMException && e.name === "NotFoundError"
@@ -77,6 +82,11 @@ export function useVoiceInput(onText: (text: string) => void) {
             ? "Mic blocked. Turn it on in System Settings → Microphone."
             : "Mic blocked. Allow it from the address bar.",
       );
+      return;
+    }
+    if (cancelled) {
+      stream.getTracks().forEach((t) => t.stop());
+      control.current = null;
       return;
     }
     const ctx = new AudioContext();
@@ -105,7 +115,6 @@ export function useVoiceInput(onText: (text: string) => void) {
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => chunks.push(e.data);
     const stopped = new Promise<void>((r) => (recorder.onstop = () => r()));
-    let cancelled = false;
     const limit = setTimeout(() => recorder.state === "recording" && recorder.stop(), MAX_S * 1000);
     control.current = {
       stop: () => recorder.state === "recording" && recorder.stop(),
