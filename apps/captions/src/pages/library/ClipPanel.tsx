@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Copy, Download, FileText, FolderOpen, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Download, FileText, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -141,8 +142,8 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const newEdit = () => navigate("/editor?new=1", { state: { pick: [{ versionId: a.versionId, title: a.title }] } });
   // the folders it is in are read again after the move: its Folder line says where it is now
   const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
-  // a quarter turn clockwise each press: the player, the thumbnail and the strip show it so (api/library/turn.ts)
-  const rotate = () => void updateAsset(libraryId, a.id, { turn: ((a.turn ?? 0) + 90) % 360 }).then(saved, (e) => onError(message(e)));
+  // a quarter turn each press: the player, the thumbnail and the strip show it so (api/library/turn.ts)
+  const rotate = (by: 90 | 270) => void updateAsset(libraryId, a.id, { turn: ((a.turn ?? 0) + by) % 360 }).then(saved, (e) => onError(message(e)));
 
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
@@ -150,6 +151,26 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     <Button size="icon" variant="ghost" aria-label="Move to trash" title="Move to trash" className={cn("h-8 w-8 shrink-0", !win && "-mr-2 -mt-1")} onClick={() => onTrash(true)}>
       <Trash2 className="h-4 w-4" />
     </Button>
+  );
+  // the clip's less used tools, out of the way: the menu stays open, so a clip upside down is two presses
+  const more = !inTrash && a.kind === "video" && !a.review && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="icon" variant="ghost" aria-label="More" title="More" className="h-8 w-8 shrink-0">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(270); }}>
+          <RotateCcw className="h-4 w-4" />
+          Rotate left
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(90); }}>
+          <RotateCw className="h-4 w-4" />
+          Rotate right
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
   const file = original(a, detail);
   const inFolders = detail?.collections ?? [];
@@ -232,12 +253,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               </a>
             </Button>
           )}
-          {a.kind === "video" && !a.review && (
-            <Button size="sm" variant="outline" title="Turn a quarter clockwise" onClick={rotate}>
-              <RotateCw className="h-4 w-4" />
-              Rotate
-            </Button>
-          )}
           {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
           {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
             <Button size="sm" variant="outline" onClick={newEdit}>
@@ -262,7 +277,10 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
           )}
         </>
       )}
-      {win && <span className="ml-auto">{trash}</span>}
+      <span className={cn("flex items-center", win && "ml-auto")}>
+        {more}
+        {win && trash}
+      </span>
     </div>
   );
 
