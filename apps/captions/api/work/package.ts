@@ -174,6 +174,11 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
     ...(gate === undefined ? {} : { gate }),
     ai: { editor: aiFor(who, "editor", "AI Editor").off ?? null, analyzer: aiFor(who, "analyzer", "AI Editor").off ?? null },
     ...(job.kind === "post" ? { steps: (edit.steps ?? []).map((s) => s.id) } : {}),
+    // the account's storage folders as paths on this computer, where files.ts looks for a copy by quick fingerprint
+    folders: folders.flatMap((f) => {
+      const at = f.reach[device.id]?.path ?? (f.origin.host === device.id ? f.origin.path : undefined);
+      return at ? [at] : [];
+    }),
   };
   await mkdir(path.dirname(keptPath(job.id)), { recursive: true });
   await writeJsonAtomic(keptPath(job.id), pkg);

@@ -155,12 +155,13 @@ describe("acceptUpload", () => {
     const j = held("v1", "preview");
     await buildPackage(j, me);
     const body = (s: string) => Readable.from([Buffer.from(s)]);
-    for (const bad of ["../x.mp4", "/etc/passwd", `editor/${EDIT}/../${OTHER}/x.mp4`, `editor/${OTHER}/previews/v1.mp4`, `editor/${EDIT}/edit.json`, `editor/${EDIT}/.incoming/1/x.mp4`, "editor/cache/ver_zz.energy.f32", "editor/cache/ver_a1.sh", "library/library.db"]) {
+    for (const bad of ["../x.mp4", "/etc/passwd", `editor/${EDIT}/../${OTHER}/x.mp4`, `editor/${OTHER}/previews/v1.mp4`, `editor/${EDIT}/edit.json`, `editor/${EDIT}/previews/plan.json`, `editor/${EDIT}/.incoming/1/x.mp4`, "editor/cache/ver_zz.energy.f32", "editor/cache/ver_a1.sh", "library/library.db"]) {
       expect(await acceptUpload(j.id, me.id, bad, body("x")), bad).toBe(false);
     }
     expect(await acceptUpload(j.id, "dev_two", `editor/${EDIT}/previews/v1.mp4`, body("x"))).toBe(false);
     expect(await acceptUpload(j.id, me.id, "editor/cache/ver_a1.energy.f32", Readable.from([Buffer.alloc(MAX_CACHE + 1)]))).toBe(false);
     expect(await acceptUpload(j.id, me.id, `editor/${EDIT}/previews/v1.mp4`, body("video"))).toBe(true);
+    expect(await acceptUpload(j.id, me.id, `editor/${EDIT}/previews/v1.wave.json`, body("{}"))).toBe(true);
     expect(await acceptUpload(j.id, me.id, "editor/cache/ver_a1.energy.f32", body("energy"))).toBe(true);
     expect(readdirSync(path.join(dir, "editor", OTHER))).toEqual([]);
     await applyResult(j.id, me.id, result({ uploads: [`editor/${EDIT}/previews/v1.mp4`, "editor/cache/ver_a1.energy.f32"] }));

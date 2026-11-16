@@ -42,7 +42,9 @@ function allowed(jobId: number, rel: string): { editId: string; cap: number } | 
   const { editId } = pkg.job;
   const parts = rel.split("/");
   if (parts[0] !== "editor") return null;
-  if (parts[1] === editId && parts.length > 2 && !rel.endsWith(".json")) return { editId, cap: MAX_MEDIA };
+  // media only: JSON comes back in result.edit, merged per key; the preview's waveform (previews/<v>.wave.json) is media
+  if (parts[1] === editId && parts.length > 2 && (!rel.endsWith(".json") || /^previews\/[^/]+\.wave\.json$/.test(parts.slice(2).join("/"))))
+    return { editId, cap: MAX_MEDIA };
   if (parts[1] === "cache" && parts.length === 3) {
     const ids = new Set((pkg.rows.asset_versions ?? []).map((v) => String(v.id)));
     const ok = CACHE_EXTS.some((ext) => parts[2]!.endsWith(`.${ext}`) && ids.has(parts[2]!.slice(0, -ext.length - 1)));
