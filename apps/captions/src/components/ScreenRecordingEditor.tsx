@@ -24,7 +24,7 @@ import {
   type ScreenEvents,
   type ScreenLook,
 } from "@/lib/screen-recording";
-import { renderScreenVideo } from "@/lib/screen-export";
+import { exportBitrate, renderScreenVideo } from "@/lib/screen-export";
 import { canSaveTransparent, transparentVideoMade } from "@/lib/mac-record";
 import type { ScreenSource } from "@/lib/screen-source";
 import { Inspector, type InspectorTab } from "@/components/screen-editor/Inspector";
@@ -32,7 +32,7 @@ import { Timeline } from "@/components/screen-editor/Timeline";
 import { Segmented } from "@/components/screen-editor/controls";
 import { useMacRecorderState } from "@/components/settings/ThisMacSection";
 import { usePlayer } from "@/components/screen-editor/usePlayer";
-import { ExportDialog, type ExportSettings } from "@/components/screen-editor/ExportDialog";
+import { ExportDialog, parseExportSettings, type ExportSettings } from "@/components/screen-editor/ExportDialog";
 
 /** A way out for the finished video. `run` gets it (`name` has no extension) and reports its own steps. */
 export type EditorAction = {
@@ -127,20 +127,14 @@ export function ScreenRecordingEditor({
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
   const [tab, setTab] = useState<InspectorTab>("background");
-  const [uhd, setUhd] = useState(() => {
-    try {
-      // 4K unless 1080p was picked: a Retina recording's text is about 4K's size, and blurs at half that
-      return localStorage.getItem(SIZE_KEY) !== "hd";
-    } catch {
-      return true;
-    }
-  });
   const [settings, setSettings] = useState<ExportSettings>(() => {
     try {
-      const kept = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Partial<ExportSettings>;
-      return { fps: kept.fps === 30 ? 30 : 60, detail: kept.detail === "smaller" || kept.detail === "best" ? kept.detail : "standard" };
+      const kept = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Record<string, unknown>;
+      // kept by the older dialog: 1080p or 4K, and a bit rate of smaller, standard or best
+      const old = { smaller: "medium", standard: "high", best: "best" }[String(kept.detail)];
+      return parseExportSettings({ short: localStorage.getItem(SIZE_KEY) === "hd" ? 1080 : undefined, quality: old, ...kept });
     } catch {
-      return { fps: 60, detail: "standard" };
+      return parseExportSettings(null);
     }
   });
   const [exporting, setExporting] = useState(false);
@@ -413,7 +407,7 @@ export function ScreenRecordingEditor({
     player.pause();
     const ctl = new AbortController();
     abort.current = ctl;
-    const out = outputSize(look.shape, width, height, uhd && !!a);
+    const out = outputSize(look.shape, width, height, a ? settings.short : 1080);
     const kept = trimOf(look, duration);
     try {
       setError("");
@@ -429,7 +423,7 @@ export function ScreenRecordingEditor({
         cursors: cursorImages,
         ...out,
         trim: look.trim ? kept : undefined,
-        ...(a ? settings : {}),
+        ...(a ? { fps: settings.fps, bitrate: exportBitrate(out.width, out.height, settings.fps, settings.quality, settings.mbps) } : {}),
         alpha: !a,
         signal: ctl.signal,
         onProgress: (p) => setMaking({ step: "Making", pct: Math.round(p * 100) }),
@@ -452,7 +446,6 @@ export function ScreenRecordingEditor({
     }
   };
 
-  const sizes = look ? { hd: outputSize(look.shape, width, height, false), uhd: outputSize(look.shape, width, height, true) } : null;
   // no background (only where the see-through video can be made): one way out, at 1080p
   const clear = look?.background === "none";
   const kept = look ? trimOf(look, duration) : null;
@@ -479,7 +472,7 @@ export function ScreenRecordingEditor({
           <Button size="sm" disabled={!look} onClick={() => setExporting(true)} className="bg-violet-600 text-white hover:bg-violet-500">
             <Upload /> Export
           </Button>
-          {look && events && sizes && kept && (
+          {look && events && kept && (
             <ExportDialog
               open={exporting}
               onOpenChange={setExporting}
@@ -487,16 +480,7 @@ export function ScreenRecordingEditor({
               look={look}
               events={events}
               hasCamera={!!source.cameraUrl}
-              sizes={sizes}
-              uhd={uhd}
-              onUhd={(v) => {
-                setUhd(v);
-                try {
-                  localStorage.setItem(SIZE_KEY, v ? "4k" : "hd");
-                } catch {
-                  // kept for this visit only
-                }
-              }}
+              src={{ width, height }}
               settings={settings}
               onSettings={(s) => {
                 setSettings(s);

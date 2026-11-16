@@ -16,18 +16,19 @@ import { frameReader } from "./frame-reader";
  * `alpha` (a look with no background) makes the file the Mac app turns into a see-through video instead: each frame
  * twice in one picture, its colours over black and its matte (`alphaPacking`). It is not a video to watch.
  */
-/** Export's bit rate choices: a share of the standard rate (exportBitrate). */
-export const DETAIL = { smaller: 0.5, standard: 1, best: 2 } as const;
-export type Detail = keyof typeof DETAIL;
+/** Export's automatic quality: a share of the High rate (exportBitrate). `custom`: a bit rate set by hand. */
+export const QUALITY = { best: 2, high: 1, medium: 0.5, low: 0.25 } as const;
+export type ExportQuality = keyof typeof QUALITY | "custom";
 
 /**
  * The video's bit rate (variable: a screen that stands still uses less), for a frame of this size: about 15 Mbit/s at
- * 1080p, 60 at 4K, at 60 frames a second and `standard` detail. Small text at 60 frames a second needs it; at the 5
+ * 1080p, 60 at 4K, at 60 frames a second and High quality. Small text at 60 frames a second needs it; at the 5
  * bits a pixel it had, a 1080p export came out at 6 Mbit/s and its text smeared. 30 frames a second need half as
- * many bits for the same frames. Export's dialog guesses the file size with it.
+ * many bits for the same frames. `custom` takes `mbps` as it is. Export's dialog guesses the file size with it.
  */
-export function exportBitrate(width: number, height: number, fps = 60, detail: Detail = "standard"): number {
-  return Math.round(Math.max(12_000_000, width * height * 8) * (fps / 60) * DETAIL[detail]);
+export function exportBitrate(width: number, height: number, fps = 60, quality: ExportQuality = "high", mbps = 0): number {
+  if (quality === "custom") return Math.round(Math.max(0.5, mbps) * 1e6);
+  return Math.round(Math.max(12_000_000, width * height * 8) * (fps / 60) * QUALITY[quality]);
 }
 
 export async function renderScreenVideo(opts: {
@@ -45,9 +46,9 @@ export async function renderScreenVideo(opts: {
   width: number;
   height: number;
   trim?: { start: number; end: number };
-  /** Frames a second (60 without) and how many bits they get (exportBitrate); the see-through video keeps its own. */
+  /** Frames a second (60 without) and bits a second (exportBitrate's High without); the see-through video keeps its own. */
   fps?: number;
-  detail?: Detail;
+  bitrate?: number;
   alpha?: boolean;
   onProgress: (p: number) => void;
   signal?: AbortSignal;
@@ -113,7 +114,7 @@ export async function renderScreenVideo(opts: {
         codec: "avc",
         // the packed picture is read once more by the app and thrown away: more bits, so its matte comes through clean
         quality: new Quality({
-          bitrate: packing ? packing.width * packing.height * 8 : exportBitrate(width, height, opts.fps, opts.detail),
+          bitrate: packing ? packing.width * packing.height * 8 : opts.bitrate ?? exportBitrate(width, height, opts.fps),
           bitrateMode: "variable",
         }),
         frameRate: packing ? 60 : (opts.fps ?? 60),
