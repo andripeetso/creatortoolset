@@ -1,4 +1,4 @@
-import { Children, createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { Children, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,19 +10,15 @@ import type { SearchRowId } from "./search";
  * Every component that takes `id` registers it for search (search.ts): the id must be in the index.
  */
 
-/** Inside a Folded card: its sections and cards draw flat, so a fold never holds a card in a card. */
-const InFold = createContext(false);
-
 /**
  * A section: `h2 text-base font-semibold`, an optional action on the right of the title (e.g. a `size="xs"` button "+ Add
  * computer"), then its cards or rows. Never text under the title. `id` lets a search result land on the section.
  */
 export function Section({ id, title, action, children, className }: { id?: SearchRowId; title: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
-  const flat = useContext(InFold);
   return (
-    <section data-settings-row={id} className={cn("space-y-2.5", flat && "py-3", className)}>
-      <div className={cn("flex min-h-7 items-center justify-between gap-4", flat ? "px-3 sm:px-4" : "px-0.5")}>
-        <h2 className={cn("font-semibold text-foreground", flat ? "text-sm" : "text-base")}>{title}</h2>
+    <section data-settings-row={id} className={cn("space-y-2.5", className)}>
+      <div className="flex min-h-7 items-center justify-between gap-4 px-0.5">
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
         {action && <div className="flex shrink-0 items-center">{action}</div>}
       </div>
       {children}
@@ -32,9 +28,8 @@ export function Section({ id, title, action, children, className }: { id?: Searc
 
 /** A rounded card of rows, with hairlines between its children. Rows, ListRows and EmptyRows go inside. */
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
-  const flat = useContext(InFold);
   return (
-    <div className={cn(!flat && "rounded-xl border border-border/60 bg-card/40", "text-foreground [&>*+*]:border-t [&>*+*]:border-border/50", className)}>
+    <div className={cn("rounded-xl border border-border/60 bg-card/40 text-foreground [&>*+*]:border-t [&>*+*]:border-border/50", className)}>
       {children}
     </div>
   );
@@ -164,8 +159,7 @@ export function ErrorRow({ title, detail, retry }: { title: ReactNode; detail?: 
 
 /**
  * A folded card (e.g. Load balancing): the header row has the chevron, the title, a muted summary and a
- * control on the right (a Switch); the rows are inside. Opens by itself when a search result lands on or inside it. The
- * sections and cards inside draw flat (InFold): a whole page's section can sit in one.
+ * control on the right (a Switch); the rows are inside. Opens by itself when a search result lands on or inside it.
  */
 export function Folded({ id, title, summary, control, children }: { id?: SearchRowId; title: ReactNode; summary?: ReactNode; control?: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -191,7 +185,7 @@ export function Folded({ id, title, summary, control, children }: { id?: SearchR
         {control && <div className="flex shrink-0 items-center">{control}</div>}
       </div>
       <div hidden={!open} className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
-        <InFold.Provider value={true}>{children}</InFold.Provider>
+        {children}
       </div>
     </div>
   );
