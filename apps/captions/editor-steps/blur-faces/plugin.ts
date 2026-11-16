@@ -7,6 +7,7 @@ import type { AuthVars } from "../../api/auth";
 import { anyVisionConfigured, completeVisionWithFallback } from "../../api/ai-vision";
 import { env } from "../../api/lib/env";
 import { chosenIn, FACE_PICK_SYSTEM } from "../../api/lib/face-pick";
+import { limitResetAt } from "../../contracts/plans";
 import { isOnline, listDevices } from "../../api/lib/devices";
 import { onEvent } from "../../api/lib/events";
 import { wakeEditorPolls } from "../../api/lib/mac-claude";
@@ -25,7 +26,8 @@ import { EXAMPLE_JPEG } from "./example";
  *                                        the fields it sends
  *   GET     /api/x/blur-faces/example    { picture }: the example picture (base64 JPEG) the style is previewed on
  *   POST    /api/x/blur-faces/pick       { who, faces: [{ id, picture, note }] } → { blur: [ids] }; 409 + { error } when
- *                                        the AI can't answer, and then the device writes nothing
+ *                                        the AI can't answer (+ limit: { until } at its usage limit), and then the device
+ *                                        writes nothing
  *   GET     /api/x/blur-faces/auto       { can, why?, failed: [{ versionId, title, error }] }: whether new Media Library
  *                                        files can be covered by themselves here, and the ones that could not
  *   POST    /api/x/blur-faces/auto/retry { versionId }   a failed one again
@@ -134,7 +136,7 @@ routes.post("/pick", async (c) => {
 });
 
 /** The ids of the faces that match `who`, by the person's own AI; an error sentence (ending "Nothing was blurred.") when it can't say. */
-export async function pickFaces(user: string, who: string, faces: Face[], signal?: AbortSignal): Promise<{ blur: string[] } | { error: string }> {
+export async function pickFaces(user: string, who: string, faces: Face[], signal?: AbortSignal): Promise<{ blur: string[] } | { error: string; limit?: { until: number | null } }> {
   if (!faces.length) return { blur: [] };
   if (!anyVisionConfigured(user)) return { error: `Face Blur needs your AI to choose the faces: connect one in Settings → Providers. ${NOTHING}` };
   const blur: string[] = [];
@@ -146,7 +148,11 @@ export async function pickFaces(user: string, who: string, faces: Face[], signal
     try {
       answer = (await completeVisionWithFallback(FACE_PICK_SYSTEM, ask, batch.map((f) => ({ jpegBase64: f.picture })), signal ?? new AbortController().signal, (t) => t, user, { label: "Face Blur" })).value;
     } catch (e) {
-      return { error: `Face Blur could not ask your AI which faces to blur (${(e as Error).message}). ${NOTHING}` };
+      const msg = (e as Error).message;
+      // a usage limit says when it resets, as the chat's does (mac-claude.ts marks it; a gateway's 429 only says it in words)
+      const limit = (e as { limited?: { until: number | null } }).limited ?? (/\b429\b|rate_limit_error/.test(msg) ? { until: limitResetAt(msg) } : undefined);
+      if (limit) return { error: `Your AI is at its usage limit. ${NOTHING}`, limit: { until: limit.until ?? limitResetAt(msg) } };
+      return { error: `Face Blur could not ask your AI which faces to blur (${msg}). ${NOTHING}` };
     }
     try {
       blur.push(...chosenIn(answer, ids));
