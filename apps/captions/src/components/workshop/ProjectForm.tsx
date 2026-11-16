@@ -18,6 +18,7 @@ import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { LanguageSelect } from "../LanguageSelect";
 import { CtMark } from "../CtMark";
 import { droppedFiles } from "../assistant/draft";
+import { KnowledgePanel } from "./KnowledgePanel";
 
 const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes: "", accountId: null };
 
@@ -63,8 +64,9 @@ const byFolder = (files: File[]) => {
 
 /**
  * A project: name, colour, its accounts, the instructions always in the prompt (written for you from whatever you drop
- * in, if you like) and the language of its videos. Which knowledge, frameworks and rules a project uses is switched where
- * they live (the Knowledge tab), not here: what it has switched off (`off`) goes back as it was. variant "setup" is
+ * in, if you like), the language of its videos and, once it is saved, its own context files (added and read here; every
+ * AI in the workspace reads them, lib/workshop/context.ts). Which account-wide knowledge, frameworks and rules a project
+ * uses is switched where they live (the Knowledge tab), not here: what it has switched off (`off`) goes back as it was. variant "setup" is
  * the first-run project step: name, colour, where it posts (handles only).
  */
 export function ProjectForm({
@@ -404,6 +406,12 @@ export function ProjectForm({
             // as wide as its list, not the window
             className={`${input} mt-1 w-64`}
           />
+        </div>
+      )}
+      {!setup && initial && (
+        <div className="text-[11px] text-zinc-400">
+          <p className="mb-1.5">Context files</p>
+          <KnowledgePanel projectId={initial.id} />
         </div>
       )}
       {/* Cancel / Save stay in view at the bottom while the form scrolls. -bottom-4 is the Projects window's own bottom

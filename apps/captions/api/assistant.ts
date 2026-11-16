@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { workspaceContext } from "./lib/workshop/context";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -124,6 +125,21 @@ export async function foldersNote(username: string, workspace?: string): Promise
     ...(lib ? [`- Finished videos: ${lib.origin.path}/${LIBRARY_SUBFOLDERS.finished}${on(lib)}`] : []),
   ];
   return lines.length ? `\n\nThis workspace's folders:\n${lines.join("\n")}` : "";
+}
+
+/** How much of the workspace's context rides each chat turn: the rest is a tool call away (workspace_files). */
+const CONTEXT_MAX = 8000;
+
+/**
+ * The turn's workspace in its memory: its folders (above), then its context, the instructions and what each file added
+ * to it is (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking.
+ */
+export async function workspaceNote(username: string, workspace?: string): Promise<string> {
+  const context = await workspaceContext(workspace, CONTEXT_MAX);
+  return (
+    (await foldersNote(username, workspace)) +
+    (context ? `\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\n${context}` : "")
+  );
 }
 
 /** Added for a turn whose AI has no tools (not Claude Code or Codex, which get Creator Toolset's; the Mac's are Claude Code's only). */
@@ -1462,7 +1478,7 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
     ask: asked.id,
     files: [],
     pasted: [],
-    memory: (await memoryBlock(user)) + (await foldersNote(user.username, workspaceOfTurn(user.username, turn))),
+    memory: (await memoryBlock(user)) + (await workspaceNote(user.username, workspaceOfTurn(user.username, turn))),
     skills: skillLines(await dockSkills(user.username), "tool"),
     url,
     admin: user.role === "admin",
@@ -1750,7 +1766,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const was = target();
   const ws = was?.workspace ?? (await resolveProjectId(u, was?.messages.length ? undefined : input.workspace));
   const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
-  const memory = (await inWs(() => memoryBlock(u))) + (await foldersNote(u.username, ws));
+  const memory = (await inWs(() => memoryBlock(u))) + (await workspaceNote(u.username, ws));
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
@@ -1928,7 +1944,7 @@ assistantApp.post("/chats/:id/limit", async (c) => {
   };
   if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
-  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: (await memoryBlock(u)) + (await foldersNote(u.username, chatOf(load(u.username), c.req.param("id"))?.workspace)), skills: skillLines(await dockSkills(u.username), "tool"), ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
+  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: (await memoryBlock(u)) + (await workspaceNote(u.username, chatOf(load(u.username), c.req.param("id"))?.workspace)), skills: skillLines(await dockSkills(u.username), "tool"), ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
   const m = found();
   if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   if (r) (load(u.username).resume ??= {})[m.id] = r;

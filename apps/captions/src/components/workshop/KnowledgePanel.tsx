@@ -89,11 +89,20 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
  * references, brand docs. Claude reads each once and files it; the filing shows here to check and change, and
  * which projects read each one is switched here or in a project's form.
  */
-export function KnowledgePanel() {
+/**
+ * The account's knowledge, as the open workspace reads it (the Workshop's Knowledge tab). With `projectId` (a
+ * workspace's own settings): only that workspace's own context files, added to it, with no switches.
+ */
+export function KnowledgePanel({ projectId }: { projectId?: string } = {}) {
   const projects = useWorkspace((s) => s.projects);
-  const here = useWorkspace((s) => s.currentProjectId);
+  const current = useWorkspace((s) => s.currentProjectId);
+  const here = projectId ?? current;
   // a saved list, live: a read running on the Mac saves as it goes, and each save refetches it (lib/local-cache)
-  const { items: sources, setItems: setSources, error: loadError } = useCachedList<KnowledgeSource>("workshop/sources", listSources);
+  const { items: listed, setItems: setSources, error: loadError } = useCachedList<KnowledgeSource>(
+    projectId ? `workshop/sources?ws=${projectId}` : "workshop/sources",
+    () => listSources(projectId),
+  );
+  const sources = projectId ? listed.filter((s) => s.projectId === projectId) : listed;
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +125,7 @@ export function KnowledgePanel() {
         setAdding(`Reading ${file.name}…`);
         const body = await toSource(file, setAdding);
         setAdding(`Adding ${file.name}…`);
-        put("pages" in body ? await addScan(file.name, body.pages, (i) => setAdding(`Sending ${file.name}: page ${i} of ${body.pages.length}`)) : await addSource({ name: file.name, ...body }));
+        put("pages" in body ? await addScan(file.name, body.pages, (i) => setAdding(`Sending ${file.name}: page ${i} of ${body.pages.length}`), projectId) : await addSource({ name: file.name, ...body, projectId }));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -149,7 +158,10 @@ export function KnowledgePanel() {
         <p className="text-[13px] text-zinc-200">Drop books, studies, old scripts, videos, references, brand docs</p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           PDF (scans too), Word, EPUB, videos, Markdown or text, or a link. Claude reads each one once and files it: what it is,
-          what it answers, where its parts are. This workspace uses it; set it to every workspace if it is general.
+          what it answers, where its parts are.{" "}
+          {projectId
+            ? "The chat, the Media Library, the AI Editor and the Workshop all read it in this workspace."
+            : "This workspace uses it; set it to every workspace if it is general."}
         </p>
         <div className="mt-3 flex justify-center gap-2">
           <button type="button" onClick={() => inputRef.current?.click()} disabled={!!adding} className={small}>
@@ -165,7 +177,7 @@ export function KnowledgePanel() {
             e.preventDefault();
             if (!link.trim()) return;
             setAdding(`Reading ${link.trim()}…`);
-            void act(addSourceLink(link.trim()).then((s) => (put(s), setLink("")))).finally(() => setAdding(null));
+            void act(addSourceLink(link.trim(), projectId).then((s) => (put(s), setLink("")))).finally(() => setAdding(null));
           }}
         >
           <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Or a link: an article, a YouTube video" className={field} />
@@ -185,7 +197,7 @@ export function KnowledgePanel() {
           className="mb-3 flex flex-col gap-1.5 rounded-lg border border-zinc-800 p-3"
           onSubmit={(e) => {
             e.preventDefault();
-            void act(addSource({ name: paste.name.trim() || paste.text.trim().split("\n", 1)[0]!.slice(0, 80), text: paste.text }).then((s) => (put(s), setPaste(null))));
+            void act(addSource({ name: paste.name.trim() || paste.text.trim().split("\n", 1)[0]!.slice(0, 80), text: paste.text, projectId }).then((s) => (put(s), setPaste(null))));
           }}
         >
           <input value={paste.name} onChange={(e) => setPaste({ ...paste, name: e.target.value })} placeholder="Name" className={field} />
@@ -208,6 +220,7 @@ export function KnowledgePanel() {
               s={s}
               open={open === s.id}
               here={projects.find((p) => p.id === here)}
+              own={!!projectId}
               onToggle={() => setOpen(open === s.id ? null : s.id)}
               onSave={(fields) => act(patchSource(s.id, fields).then(moved))}
               onRead={() => void act(readSourceAgain(s.id).then(put))}
@@ -230,8 +243,11 @@ function SourceRow({
   onRead,
   onDelete,
   onProject,
+  own,
 }: {
   s: KnowledgeSource;
+  /** in a workspace's own settings: no choice of workspaces */
+  own?: boolean;
   open: boolean;
   here: ReturnType<typeof useWorkspace.getState>["projects"][number] | undefined;
   onToggle: () => void;
@@ -281,7 +297,7 @@ function SourceRow({
             {s.readCost !== undefined && <span className="text-[10px] text-zinc-600">read for ${s.readCost.toFixed(2)} API-equivalent</span>}
           </p>
           {s.about && !open && <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{s.about}</p>}
-          <div className="mt-1 flex flex-wrap items-center gap-1">
+          {!own && <div className="mt-1 flex flex-wrap items-center gap-1">
             <select
               value={s.projectId ?? ""}
               onChange={(e) => void onSave({ projectId: e.target.value || null })}
@@ -306,7 +322,7 @@ function SourceRow({
                 </button>
               );
             })()}
-          </div>
+          </div>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button type="button" onClick={onRead} disabled={s.status === "reading"} className={small} title="Claude reads it again and files it fresh">

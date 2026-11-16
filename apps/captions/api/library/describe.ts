@@ -8,8 +8,7 @@ import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "../users";
 import { projectOf } from "../lib/project-of";
-import { ownedProjects } from "../lib/workshop/workspace";
-import { renderInstructions } from "../lib/workshop/prompt";
+import { workspaceContext } from "../lib/workshop/context";
 import { homeOf } from "./access";
 import { transcriptExcerpt } from "./attach";
 import { ffmpegTo } from "./media/run";
@@ -88,12 +87,12 @@ export function parseDescribe(text: string): Described {
   return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}) };
 }
 
-/** Most of a workspace's instructions a description carries: it rides every clip's call. */
-export const WORKSPACE_MAX = 4000;
+/** Most of the workspace's context a description carries: it rides every clip's call. */
+export const WORKSPACE_MAX = 6000;
 
 /**
- * The instructions of the workspace a version's library is in (Settings: name, audience, voice, CTA, instructions), cut
- * to WORKSPACE_MAX, or "" when the library's owner has no workspace. A library from before workspaces is the first brand's.
+ * The context of the workspace a version's library is in (its instructions and what each of its context files is,
+ * lib/workshop/context.ts) in WORKSPACE_MAX, or "" when the library's owner has no workspace. A library from before workspaces is the first brand's.
  */
 export async function workspaceOf(db: DatabaseSync, versionId: string): Promise<string> {
   const row = db
@@ -105,10 +104,7 @@ export async function workspaceOf(db: DatabaseSync, versionId: string): Promise<
   const owner = [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === row.home) ?? row.home;
   const of = await projectOf({ username: owner } as SessionUser);
   if (!of) return "";
-  const id = of(row.ws ?? undefined);
-  const p = (await ownedProjects(owner)).find((x) => x.id === id);
-  // ponytail: a cut, not a pick; knowledge files are left out (they would ride every clip), load the matching ones if he asks
-  return p ? renderInstructions(p).slice(0, WORKSPACE_MAX) : "";
+  return workspaceContext(of(row.ws ?? undefined), WORKSPACE_MAX);
 }
 
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */

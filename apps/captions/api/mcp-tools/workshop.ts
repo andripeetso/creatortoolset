@@ -24,6 +24,19 @@ function codeOf(link: string): string {
   }
 }
 
+/** The current workspace's context files (Workshop → Knowledge, or the workspace's own settings): the list, or one's text by lines. */
+async function workspaceFiles(a: Args, ctx: ToolContext) {
+  const list = await ctx.json<Args[]>("/api/workshop/sources");
+  if (!a.file) return { files: list.map((s) => pick(s, ["id", "name", "title", "kind", "about", "uses", "sections", "status"])) };
+  const s = list.find((x) => x.id === a.file || x.name === a.file);
+  if (!s) throw new ToolError("No such file in this workspace: workspace_files with no file lists them.");
+  const lines = (await (await ctx.api(`/api/workshop/sources/${String(s.id)}/text`)).text()).split("\n");
+  const from = Math.max(1, Math.floor(Number(a.from) || 1));
+  // ponytail: 600 lines a call, a file's sections (in the list) say where to read next
+  const to = Math.min(lines.length, Math.floor(Number(a.to) || from + 599), from + 599);
+  return { id: s.id, title: s.title || s.name, lines: lines.length, from, to, text: lines.slice(from - 1, to).join("\n") };
+}
+
 const notSaved = (ref: string) => new ToolError(`${ref} is not in the Analyzer's library: instagram_save saves it there, then add it here.`);
 
 async function sources(a: Args, ctx: ToolContext) {
@@ -103,6 +116,11 @@ export const workshopTools: ToolModule = {
       inputSchema: { type: "object", properties: { session: str, add: { type: "array", items: str }, remove: { type: "array", items: str } }, required: ["session"] },
     },
     {
+      name: "workspace_files",
+      description: "The current workspace's context files (brand docs, guides, research the user added for its AI): with no file, each one's id, title, what it is, what it answers and its parts by line; with file (id or name), its text, from/to lines (600 at most a call).",
+      inputSchema: { type: "object", properties: { file: str, from: { type: "integer" }, to: { type: "integer" } } },
+    },
+    {
       name: "workshop_set_project",
       description: "Switch the Workshop's current workspace (its id from workshop_projects; the API calls workspaces projects): new Workshop projects start in it, and the app opens in it next time. A window that is open stays in its own workspace.",
       inputSchema: { type: "object", properties: { project: str }, required: ["project"] },
@@ -119,6 +137,7 @@ export const workshopTools: ToolModule = {
   ],
   handlers: {
     workshop_sources: sources,
+    workspace_files: workspaceFiles,
     workshop_project_update: projectUpdate,
     workshop_set_project: async (a, ctx) => {
       // the route reads an empty id as "no current project": never what switching means
@@ -127,5 +146,5 @@ export const workshopTools: ToolModule = {
       return { current: pick(w.projects.find((p) => p.id === w.currentProjectId) ?? {}, ["id", "name"]) };
     },
   },
-  steps: { workshop_sources: "Going through the project's sources", workshop_set_project: "Switching the workspace", workshop_project_update: "Changing the workspace" },
+  steps: { workspace_files: "Reading the workspace's context", workshop_sources: "Going through the project's sources", workshop_set_project: "Switching the workspace", workshop_project_update: "Changing the workspace" },
 };

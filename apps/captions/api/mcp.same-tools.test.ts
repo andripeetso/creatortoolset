@@ -34,7 +34,7 @@ const toolsOf = async (authorization: string) =>
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
-const ADDED = ["upload_file", "workshop_project_update", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
+const ADDED = ["upload_file", "workspace_files", "workshop_project_update", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
 /** The tools only the app's own assistant gets since: an outside AI key is never given them, so its list does not move. */
 const DOCK_ADDED = ["folder_list", "chats_list", "chat_read"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
@@ -100,8 +100,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // are the user's own words, where the account's writer would otherwise draft them)
     // folder_list adds 824, in the dock only (a folder on the person's computer looked through, subfolders too, before
     // saying a file is not there; its 635-byte description, path, depth and match)
-    expect(bytes(dock) - bytes(main(dock))).toBe(7597);
+    // workspace_files adds 418 (the current workspace's context files listed, or one's text read by lines: its
+    // description, file, from and to), so a chat reads what was added beyond the summary its turn carries
+    expect(bytes(dock) - bytes(main(dock))).toBe(8015);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7533);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7951);
   });
 });

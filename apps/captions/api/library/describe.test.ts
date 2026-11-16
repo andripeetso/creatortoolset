@@ -114,12 +114,12 @@ describe("describe job", () => {
     const v = await seed("ast-ws-0001");
     expect(await workspaceOf(libraryDb(), v)).toBe(""); // no workspace yet
     mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
-    const project = { id: "p_ember", owner: "local", name: "Ember Realm", audience: "fantasy RPG veterans", voice: "", cta: "", notes: "A free online fantasy RPG server.", createdAt: 1, updatedAt: 1 };
-    writeFileSync(path.join(dir, "workshop", "projects", "p_ember.json"), JSON.stringify(project));
+    const project = { id: "p-ember", owner: "local", name: "Ember Realm", audience: "fantasy RPG veterans", voice: "", cta: "", notes: "A free online fantasy RPG server.", createdAt: 1, updatedAt: 1 };
+    writeFileSync(path.join(dir, "workshop", "projects", "p-ember.json"), JSON.stringify(project));
     const ws = await workspaceOf(libraryDb(), v);
     expect(ws).toMatch(/Workspace: Ember Realm[\s\S]*A free online fantasy RPG server/);
     expect(describePrompt({ title: "gameplay-1", frames: 4, workspace: ws }).user).toMatch(/^The workspace this clip belongs to[\s\S]*Ember Realm[\s\S]*Title: gameplay-1/);
-    rmSync(path.join(dir, "workshop", "projects", "p_ember.json"));
+    rmSync(path.join(dir, "workshop", "projects", "p-ember.json"));
   });
 
   it("with a route: four frames go to the actor's AI; the description and AI tags are stored and searchable", async () => {

@@ -9,7 +9,7 @@ import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { renderInstructions } from "../lib/workshop/prompt";
+import { renderContext, workspaceKnowledge } from "../lib/workshop/context";
 import { ownedProjects } from "../lib/workshop/workspace";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
@@ -922,11 +922,11 @@ function wordsBySource(sentences: Sentence[]): Record<string, string> {
   return out;
 }
 
-/** The workspace the edit was made in: its instructions, as the Workshop's writer reads them. */
-async function workspaceSetup(edit: EditMeta): Promise<string> {
+/** The workspace the edit was made in: its instructions and what each context file is (lib/workshop/context.ts), in `max`. */
+export async function workspaceSetup(edit: Pick<EditMeta, "createdBy" | "projectId">, max: number): Promise<string> {
   const projects = await ownedProjects(edit.createdBy);
   const p = projects.find((x) => x.id === edit.projectId) ?? (projects.length === 1 ? projects[0] : undefined);
-  return p ? renderInstructions(p) : "";
+  return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
 }
 
 /** The frame: the edit's working size, else the first source with a picture, at its rate. */
@@ -957,13 +957,12 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   // the song is what is heard, not footage to cut
   if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
   // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
-  const workspace = await workspaceSetup(edit);
-  index = await describeShots(index, { actor: job.actor!, story: true, workspace }, signal);
+  index = await describeShots(index, { actor: job.actor!, story: true, workspace: await workspaceSetup(edit, 6000) }, signal);
   if (signal.aborted) return;
   const size = frameOf(edit, index);
   const gen = styles();
   const genIds = gen.map((g) => g.id);
-  const setup = [workspace, styleBlock(edit.style)].filter(Boolean).join("\n\n");
+  const setup = [await workspaceSetup(edit, 24_000), styleBlock(edit.style)].filter(Boolean).join("\n\n");
   const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText });
   let raws: Record<string, unknown>[];
