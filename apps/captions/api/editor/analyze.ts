@@ -26,9 +26,15 @@ import type { StepContext } from "./worker";
  * not refused: the script step plans it.
  */
 
-/** The step waits on other work: the worker puts it back in the queue after `seconds`, the attempt not counted. */
+/**
+ * The step waits on other work: the worker puts it back in the queue after `seconds`, the attempt not counted. `line`
+ * says what it waits for, beside the step ("Waiting for the Media Library: 3 of 12 files").
+ */
 export class Waiting extends Error {
-  constructor(readonly seconds = 30) {
+  constructor(
+    readonly seconds = 30,
+    readonly line?: string,
+  ) {
     super("Waiting");
   }
 }
@@ -169,8 +175,10 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
   for (const row of rows) {
     const probe = JSON.parse(row.probe ?? "null") as ProbeSummary | null;
     if (!probe) {
-      if (row.state === "failed") throw new Error(`“${row.title}” could not be read by the library`);
-      wait = true; // the library probes it first, then queues its transcript
+      // a file the library could not read is left out and named; the cut is made from the rest
+      if (row.state === "failed") notes.push(`“${row.title}” could not be read by the Media Library: left out`);
+      // the library probes it first, then queues its transcript; a planned edit told to cut now goes without it
+      else if (!(planned && edit.now)) wait = true;
       continue;
     }
     // a song is what the edit is cut to, not words (plan.ts)

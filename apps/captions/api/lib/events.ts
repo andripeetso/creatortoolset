@@ -11,6 +11,8 @@ export interface CoreEvents {
   "review.version.added": { asset: string; n: number; owner: string };
   /** A Review video was approved or sent to Finals. `by`: the signed-in account that pressed ("" for a guest on a share link); `key`: the request came with an AI key. */
   "review.finished": { asset: string; owner: string; by: string; key: boolean };
+  /** A Review video was set to Changes (sent back to be fixed). `by`: who set it. */
+  "review.changes": { asset: string; owner: string; by: string };
   "session.published": { id: string; owner: string; from: SessionStatus };
   "session.status": { id: string; owner: string; from: SessionStatus; to: SessionStatus };
   /** Something in a Media Library changed (a piece, an item, a collection, a file): open Finals and Library pages refetch. */

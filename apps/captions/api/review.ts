@@ -2457,6 +2457,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     });
     if (!meta) return c.json({ error: "Not found" }, 404);
     if (status === "approved") emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
+    if (status === "changes") emitEvent("review.changes", { asset: meta.id, owner: meta.owner, by });
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }

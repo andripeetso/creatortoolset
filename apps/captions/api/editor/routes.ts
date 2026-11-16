@@ -12,7 +12,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
+import { addFeedback, newestDraft, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
@@ -21,6 +21,8 @@ import { cardsApp } from "./cards/routes";
 import { markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
+import { onEvent } from "../lib/events";
+import { readComments, readMeta } from "../review";
 import { inProjectOf, projectOf } from "../lib/project-of";
 import { resolveProjectId } from "../lib/workshop/workspace";
 
@@ -50,6 +52,20 @@ function load(c: C): { e: EditMeta } | null {
 
 // an edit made from clips still uploading (a phone's New edit) starts once the last one is in
 onUploadDone.push((id, version) => void uploadFinished(id, version));
+
+// ponytail: every edit on the server is read to find the one a Review video belongs to, as finished.ts does
+/** A Review video an edit made is set to Changes: the open comments of its newest version become the edit's notes, each once. */
+onEvent("review.changes", async ({ asset, owner }) => {
+  for (const e of allEdits()) {
+    if (e.createdBy !== owner || e.trashedAt) continue;
+    const variant = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset)?.[0];
+    if (!variant) continue;
+    const newest = Math.max(0, ...((await readMeta(asset))?.versions ?? []).map((v) => v.n));
+    const open = (await readComments(asset)).filter((x) => x.version === newest && !x.parentId && !x.resolved && x.text.trim());
+    await addFeedback(e.id, open.map((x) => ({ at: x.createdAt, from: "review" as const, variant, ...(x.t !== undefined ? { t: x.t } : {}), text: x.text, by: x.user ?? x.author })));
+    return;
+  }
+});
 
 editorApp.post("/", async (c) => {
   const user = c.get("user").username;
@@ -215,10 +231,34 @@ editorApp.patch("/:id", async (c) => {
 editorApp.post("/:id/run", async (c) => {
   const r = load(c);
   if (!r) return notFound(c);
-  const from = (await body(c)).from ?? "analyze";
+  const b = await body(c);
+  const from = b.from ?? "analyze";
   if (!EDIT_STEPS.includes(from as EditStep)) return c.json({ error: "Unknown step", code: "invalid" }, 400);
+  // now: cut from the footage the Media Library has ready and name the rest (plan.ts), for this run and until a run without it
+  if (!!b.now !== !!r.e.now) {
+    const { now: _, ...rest } = r.e;
+    await saveEdit(b.now === true ? { ...rest, now: true } : rest);
+  }
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:`, from as string, r.e.createdBy, true, "edit_jobs");
-  return c.json(viewOf(r.e));
+  return c.json(viewOf(readEdit(r.e.id)!));
+});
+
+/**
+ * What the person said about the edit's cut, word for word ({text}), kept with the edit for every later version
+ * (contracts/editor.ts EditFeedback), and the next version queued: it starts from the last one (plan.ts reviseOf).
+ * `queued` is false while the edit is being made: that run reads it.
+ */
+editorApp.post("/:id/feedback", async (c) => {
+  const r = load(c);
+  if (!r) return notFound(c);
+  const text = (await body(c)).text;
+  if (typeof text !== "string" || !text.trim()) return c.json({ error: "text is what the person said about the cut", code: "invalid" }, 400);
+  const variant = newestDraft(r.e.id);
+  await addFeedback(r.e.id, [{ at: Date.now(), from: "chat", by: c.get("user").username, ...(variant ? { variant } : {}), text }]);
+  const db = libraryDb();
+  const busy = !!db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id);
+  if (!busy) enqueueJob(db, r.e.workspaceId, `${r.e.id}:`, readStep(r.e.id, "analysis") ? "script" : "analyze", r.e.createdBy, true, "edit_jobs");
+  return c.json({ ...viewOf(readEdit(r.e.id)!), queued: !busy });
 });
 
 editorApp.post("/:id/jobs/:jobId/retry", (c) => {

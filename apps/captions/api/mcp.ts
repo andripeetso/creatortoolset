@@ -84,6 +84,11 @@ recap"), and the length in target_s; the workspace's setup and the editing style
 they name, found with media_search kind audio (one not in the library yet goes in with use_file sound music first), as
 song; with none named, one among the sources, else the library's.
 
+An edit waits while the Media Library is still describing its footage, and its step says so; when the user says to cut
+it now, editor_run with now=true cuts from what is ready. editor_get lists the footage a cut left out (left_out): say
+that first when it is there. The user's notes on a cut go to editor_feedback in their own words, never into the brief:
+the next version is made from the last one, changing what they named.
+
 A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
 as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
 picture gets its whole picture from B-roll: the edit's broll_folder, or every clip sorted B-roll when it names none.
@@ -245,9 +250,9 @@ export const TOOLS = [
   { name: "editor_get", description: "One AI Editor edit: its brief, drafts, notes and jobs.", inputSchema: { type: "object", properties: { edit: str }, required: ["edit"] } },
   {
     name: "editor_run",
-    description: "Run an AI Editor edit from a step on (analyze, script, draft); the run ends with each draft's preview filed in Review. send_to_review renders one draft's preview again and files it as the next version of its Review video (needs draft): only after the draft changed, never to show one that is already there.",
+    description: "Run an AI Editor edit from a step on (analyze, script, draft); the run ends with each draft's preview filed in Review. now=true: cut from the footage the Media Library has ready instead of waiting for the rest (it is named as left out). send_to_review renders one draft's preview again and files it as the next version of its Review video (needs draft): only after the draft changed, never to show one that is already there.",
     // a whole edit cannot run from broll (it belongs to one draft): the page never offers it either
-    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS.filter((s) => s !== "broll"), "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
+    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS.filter((s) => s !== "broll"), "send_to_review"] }, draft: str, now: { type: "boolean" } }, required: ["edit", "kind"] },
   },
   {
     name: "editor_create",
@@ -896,6 +901,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           return { name, ...pick(plan ?? {}, ["title"]), ...pick({ said: saidIn(plan) }, ["said"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
         }),
         ...(Object.keys((e.flags as Args | undefined) ?? {}).length ? { flags: e.flags } : {}),
+        // footage the cut was not made from, and why: said only when there is some
+        ...(((e.coverage as Args | undefined)?.left as unknown[] | undefined)?.length ? { left_out: (e.coverage as Args).left } : {}),
         link: `${origin}/editor/${e.id}`,
         // the newest ten, and every one that failed or needs setup however old
         jobs: jobs.filter((j, i) => i >= jobs.length - 10 || j.state === "failed" || j.state === "needs_key").map((j) => pick(j, ["id", "kind", "variant", "state", "error"])),
@@ -908,8 +915,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         await json(`/api/editor/${edit}/drafts/${encodeURIComponent(String(a.draft))}/review`, "POST", {});
         return { status: "queued", draft: a.draft };
       }
-      await json(`/api/editor/${edit}/run`, "POST", { from: a.kind });
-      return { status: "queued", from: a.kind };
+      await json(`/api/editor/${edit}/run`, "POST", { from: a.kind, ...(a.now === true ? { now: true } : {}) });
+      return { status: "queued", from: a.kind, ...(a.now === true ? { now: true } : {}) };
     },
     editor_create: async (a) => {
       const sources = Array.isArray(a.sources) ? a.sources.map(String) : [];
@@ -1530,7 +1537,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  */
 const READS = new Set("captions_get captions_list chat_read chats_list design_get folder_list editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait workspace_files navigate show_video offer_choices".split(" "));
 const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_project_update workshop_sources workshop_update_session".split(" "));
-const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_retry editor_run editor_style_save animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
+const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_feedback editor_retry editor_run editor_style_save animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
 const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
 export const annotationsOf = (name: string) => ({
