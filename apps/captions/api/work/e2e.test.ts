@@ -143,6 +143,7 @@ function ranBy(editId: string, kind: string, from = { hits: 0, server: 0 }): str
 }
 
 // ---- hooks the computers' traffic passes through ----
+const stopping = new Set<string>();
 const hooks: { put?: (who: string, jobId: number) => Promise<void>; done?: (who: string, jobId: number) => Promise<void>; old?: Set<string> } = {};
 const fetchFor = (who: string) => async (url: string, init: RequestInit = {}): Promise<Response> => {
   const p = new URL(url).pathname;
@@ -150,15 +151,23 @@ const fetchFor = (who: string) => async (url: string, init: RequestInit = {}): P
   if (m?.[2] === "file") await hooks.put?.(who, Number(m[1]));
   if (m?.[2] === "done") await hooks.done?.(who, Number(m[1]));
   // an older app: the same worker, its claim naming an older package version
+  // the test is done with this computer: its worker ends (the answer an app gets when it must update ends it too)
+  if (p.endsWith("/work/claim") && stopping.has(who)) return Response.json({ pkg: null, update: true });
   if (p.endsWith("/work/claim") && hooks.old?.has(who)) init = { ...init, body: JSON.stringify({ ...JSON.parse(String(init.body)), v: 0 }) };
   return fetch(url, init);
 };
 
 let base = "";
 let server: ReturnType<typeof serve>;
-/** Runs computer `c`'s worker until it has had nothing to do for a moment: "idle", or "update" when told to. */
+/** Runs computer `c`'s worker, as the app keeps it running, until `finish` (or the server says to update: "update"). */
 const work = (c: Computer) =>
-  ff.als.run("computer", () => c.mod.startComputerWorker({ server: base, token: c.token, fetch: fetchFor(c.name), beatMs: 50, downloadBeatMs: 50, idleMs: 4000, retryMs: 50 }));
+  ff.als.run("computer", () => c.mod.startComputerWorker({ server: base, token: c.token, fetch: fetchFor(c.name), beatMs: 50, downloadBeatMs: 50, retryMs: 50 }));
+/** Ends these computers' workers after their running step, once each asks for its next. */
+async function finish(cs: Computer[], runs: Promise<unknown>[]) {
+  for (const c of cs) stopping.add(c.name);
+  await Promise.all(runs);
+  for (const c of cs) stopping.delete(c.name);
+}
 
 /** Until each computer's worker has claimed with this app's package version (it is online, and takes steps). */
 const ready = (...cs: Computer[]) => until("the computers online", () => cs.every((c) => srv.isOnline(c.id) && srv.deviceOf(c.id)?.work?.v === WORK_V));
@@ -290,6 +299,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  for (const c of [boMac, studio, laptop]) stopping.add(c.name);
   loop.on = false;
   await loop.done;
   if (server) {
@@ -317,7 +327,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     startLoop();
     await until("bo's edit filed in Review", () => !!review(bos).v1 && !active(bos).length, bos);
     await stopLoop();
-    expect(await worker).toBe("idle");
+    await finish([boMac], [worker]);
     expect(ranBy(bos, "script")).toEqual(["bo-mac"]);
     expect(ranOnServer.filter((r) => r.version.startsWith(bos) && r.kind === "script")).toEqual([]);
   }, 180_000);
@@ -354,7 +364,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       startLoop();
       await until("filed again", () => review(bos).v1!.n > n && !active(bos).length, bos);
       await stopLoop();
-      await worker;
+      await finish([boMac], [worker]);
       expect(ranBy(bos, "preview", at)).toEqual(["bo-mac"]);
       return footage("bo-mac", from);
     };
@@ -364,7 +374,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     // emptied: the preview downloads the proxies its draft plays, once more
     expect(await again()).toEqual({ ver_a: bytes.proxy.ver_a, ver_b: bytes.proxy.ver_b });
     expect(serverDecodes()).toEqual([]);
-  }, 120_000);
+  }, 240_000);
 
   it("a teammate a library policy refuses one of the edit's clips gets no package and no footage for it", async () => {
     const at = mark();
@@ -374,7 +384,10 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       srv.enqueueJob(srv.libraryDb(), "t", `${bos}:v1`, "preview", "bo", true, "edit_jobs");
       const job = srv.libraryDb().prepare("SELECT id FROM edit_jobs WHERE edit_id = ? AND kind = 'preview' AND state = 'queued'").get(bos) as { id: number };
       // the server's loop is off: only the claim decides
-      expect(await work(boMac)).toBe("idle");
+      const worker = work(boMac);
+      await until("the claim refused it", () => jobRow(job.id)?.state !== "queued");
+      await sleep(300); // a few more claims: none hands it out
+      await finish([boMac], [worker]);
       expect(jobRow(job.id)).toMatchObject({ state: "failed", error: "Some footage is gone or no longer yours to read" });
       expect(existsSync(srv.keptPath(job.id))).toBe(false);
       expect(hits.slice(at.hits).filter((h) => h.who === "bo-mac" && !h.path.endsWith("/work/claim"))).toEqual([]);
@@ -425,7 +438,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       startLoop();
       await until("ana's two versions filed in Review", () => !!review(anas).v1 && !!review(anas).v2 && !active(anas).length, anas, 150_000);
       await stopLoop();
-      expect(await Promise.all(workers)).toEqual(["idle", "idle"]);
+      await finish([studio, laptop], workers);
     } finally {
       delete hooks.done;
     }
@@ -455,7 +468,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       startLoop();
       await until("filed again", () => review(anas).v1!.n > n && !active(anas).length, anas);
       await stopLoop();
-      await Promise.all(workers);
+      await finish([studio, laptop], workers);
     } finally {
       rmSync(path.join(S, "balance", "ana.json"));
     }
@@ -485,7 +498,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       startLoop();
       await until("stopped", () => !!jobId && !active(anas).length, anas);
       await stopLoop();
-      await Promise.all(workers);
+      await finish([studio, laptop], workers);
     } finally {
       delete hooks.put;
     }
