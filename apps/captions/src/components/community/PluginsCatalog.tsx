@@ -3,10 +3,11 @@ import { Link } from "react-router";
 import type { StepRow, StepsView } from "@contracts/editor-steps";
 import { isHomeTile, type HomeTile } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
-import { Card, InUse, ListRow, LoadingRow, saveFailed, Section } from "@/components/settings/ui";
+import { Switch } from "@/components/ui/switch";
+import { Card, ListRow, LoadingRow, saveFailed, Section } from "@/components/settings/ui";
 import { StepRowView } from "@/components/settings/EditorStepsSection";
 import { addEditStep, getEditSteps, setEditStep } from "@/lib/editor";
-import { switchPluginOn } from "@/lib/thisMac";
+import { switchPluginOff, switchPluginOn, type PluginReply } from "@/lib/thisMac";
 
 /**
  * The plug-ins the Creator Toolset team makes, each one a download, listed under the tool it adds to (its own plugin.ts
@@ -41,8 +42,8 @@ export function stepsFor(view: StepsView | null, tool: HomeTile | null | "all", 
 
 /**
  * A tool's "Plug-ins" section; nothing when it has none. With `switches` (on the tool's own page, on the Mac app's own
- * server, where that Mac app runs the steps) a loaded AI Editor step shows its switch for new edits and its options
- * instead of Installed.
+ * server, where that Mac app runs the steps) a loaded AI Editor step shows its switch for new edits and its options.
+ * Elsewhere a plug-in from the person's own folder has an On switch (the Mac app's), and an installed one Settings.
  */
 export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps; tool: HomeTile | null | "all"; q?: string; switches?: boolean }) {
   // best effort: a list that could not be read (a guest, the demo) leaves the section out, as for a tool with none
@@ -69,32 +70,51 @@ export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps
 
 function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
   const [busy, setBusy] = useState(false);
-  const download = async () => {
+  // the Mac app answers in its own dialog, then restarts its server and reloads this window; anything else gives the row back
+  const run = async (ask: () => Promise<PluginReply | null>, failed: string) => {
     setBusy(true);
     try {
-      if (row.state === "add") await addEditStep(row.folder!);
-      const r = await switchPluginOn(row.folder!);
+      const r = await ask();
       if (r && !r.ok && r.problem) saveFailed(r.problem);
+      if (!r?.ok) setBusy(false);
     } catch {
-      saveFailed(`${row.title} could not be downloaded. Try again.`);
-    } finally {
+      saveFailed(failed);
       setBusy(false);
     }
   };
+  const download = () =>
+    run(async () => {
+      if (row.state === "add") await addEditStep(row.folder!);
+      return switchPluginOn(row.folder!);
+    }, `${row.title} could not be downloaded. Try again.`);
+  const on = row.state === "on" || row.state === "loaded";
   // every installed plug-in has a page of its own: which workspaces it works in, then its settings (PluginWorkspaces.tsx)
   const to = `/settings/plugin/${encodeURIComponent(row.pluginId ?? row.id)}`;
-  const actions =
-    row.state === "on" || row.state === "loaded" ? (
-      <>
-        <InUse>Installed</InUse>
+  // one from the person's plug-ins folder, on the Mac app's own server, has the Mac app's switch; one the server is built with has none
+  const toggle = canAdd && row.folder && row.state !== "add" && (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>{on ? "On" : "Off"}</span>
+      <Switch
+        aria-label={`${row.title} on`}
+        checked={on}
+        disabled={busy}
+        onCheckedChange={(v) => void run(() => (v ? switchPluginOn(row.folder!) : switchPluginOff(row.pluginId ?? row.id)), "That did not save. Try again.")}
+      />
+    </div>
+  );
+  const actions = (
+    <>
+      {toggle}
+      {on ? (
         <Button asChild size="sm" variant="outline">
           <Link to={to}>Settings</Link>
         </Button>
-      </>
-    ) : canAdd ? (
-      <Button size="sm" disabled={busy} onClick={() => void download()}>
-        {row.state === "add" ? "Download" : "Switch on"}
-      </Button>
-    ) : undefined;
+      ) : row.state === "add" && canAdd ? (
+        <Button size="sm" disabled={busy} onClick={() => void download()}>
+          Download
+        </Button>
+      ) : null}
+    </>
+  );
   return <ListRow title={row.title} subtitle={row.about} actions={actions} />;
 }
