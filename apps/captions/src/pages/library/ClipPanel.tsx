@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -150,15 +150,27 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   // editing the description, shot lines and tags is rare: their controls show only after Edit details, for this clip
   const [editingId, setEditingId] = useState<string | null>(null);
   const fixed = inTrash || editingId !== a.id;
-  // the clip's rare tools in one menu: editing, turning, the trash. It stays open on a turn, so upside down is two presses
+  // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
   const more = !inTrash && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button size="icon" variant="ghost" aria-label="More" title="More" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
+        <Button size="icon" variant="ghost" aria-label="More" title="More" className="ml-auto h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
           <MoreHorizontal className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => setSharing(true)}>
+          <Share2 className="h-4 w-4" />
+          Share
+        </DropdownMenuItem>
+        {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
+        {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
+          <DropdownMenuItem onSelect={newEdit}>
+            <Clapperboard className="h-4 w-4" />
+            New edit
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => setEditingId(a.id)}>
           <Pencil className="h-4 w-4" />
           Edit details
@@ -250,8 +262,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     </div>
   );
 
-  // one row: what the clip is shared or made into on the left; the quiet tools as icons on the right
-  const tool = "h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground";
+  // one row: the two everyday tools written out, the rest in the menu at the end
   const actions = (
     <div className="flex items-center gap-2">
       {inTrash ? (
@@ -263,44 +274,32 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
         )
       ) : (
         <>
-          <Button size="sm" onClick={() => setSharing(true)}>
-            <Share2 className="h-4 w-4" />
-            Share
-          </Button>
-          {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
-          {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
-            <Button size="sm" variant="outline" onClick={newEdit}>
-              <Clapperboard className="h-4 w-4" />
-              New edit
+          {a.state !== "missing" && (
+            <Button size="sm" variant="outline" asChild>
+              <a href={file.href} download={file.name}>
+                <Download className="h-4 w-4" />
+                Download
+              </a>
             </Button>
           )}
-          <div className="ml-auto flex items-center gap-0.5">
-            {a.state !== "missing" && (
-              <Button size="icon" variant="ghost" asChild className={tool}>
-                <a href={file.href} download={file.name} aria-label="Download" title="Download">
-                  <Download className="h-4 w-4" />
-                </a>
-              </Button>
-            )}
-            {moveTo.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon" variant="ghost" aria-label="Move to" title="Move to" className={tool}>
-                    <FolderInput className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="max-h-80">
-                  <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
-                  {moveTo.map((o) => (
-                    <DropdownMenuItem key={o.id ?? "top"} onSelect={() => move(o.id)} style={{ paddingLeft: `${0.5 + o.depth * 0.75}rem` }}>
-                      {o.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            {more}
-          </div>
+          {moveTo.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <FolderInput className="h-4 w-4" />
+                  Move to
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-80">
+                {moveTo.map((o) => (
+                  <DropdownMenuItem key={o.id ?? "top"} onSelect={() => move(o.id)} style={{ paddingLeft: `${0.5 + o.depth * 0.75}rem` }}>
+                    {o.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {more}
         </>
       )}
     </div>
@@ -314,16 +313,17 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const similar = same.length > 0 && (
     <section aria-label="Shares pictures with" className="flex flex-col gap-1.5">
       <span className="text-xs text-zinc-500">Shares pictures with</span>
-      <ul className="flex flex-wrap gap-1.5">
+      <ul className="grid grid-cols-4 gap-1.5">
         {same.map((m) => (
           <li key={m.versionId}>
             <button
               type="button"
+              className="block w-full"
               title={`${m.title} · ${Math.round(m.overlap * 100)}% the same`}
               aria-label={`${m.title}, ${Math.round(m.overlap * 100)}% the same`}
               onClick={() => navigate(`/library?library=${encodeURIComponent(m.libraryId)}&asset=${encodeURIComponent(m.assetId)}`)}
             >
-              <img src={m.thumbUrl} alt="" className="aspect-video w-16 rounded bg-zinc-900 object-cover ring-1 ring-zinc-500/20 hover:ring-zinc-400/60" />
+              <img src={m.thumbUrl} alt="" className="aspect-video w-full rounded-md bg-zinc-900 object-cover transition-opacity hover:opacity-80" />
             </button>
           </li>
         ))}
@@ -335,14 +335,14 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const related = near.length > 0 && (
     <section aria-label="Close in meaning" className="flex flex-col gap-1.5">
       <span className="text-xs text-zinc-500">Close in meaning</span>
-      <ul className="flex flex-wrap gap-1.5">
+      <ul className="grid grid-cols-4 gap-1.5">
         {near.map((c) => (
           <li key={c.id}>
-            <button type="button" title={c.title} aria-label={c.title} onClick={() => open(c.id)}>
+            <button type="button" className="block w-full" title={c.title} aria-label={c.title} onClick={() => open(c.id)}>
               <img
                 src={`/api/library/media/${c.versionId}/thumb`}
                 alt=""
-                className="aspect-video w-16 rounded bg-zinc-900 object-cover ring-1 ring-zinc-500/20 hover:ring-zinc-400/60"
+                className="aspect-video w-full rounded-md bg-zinc-900 object-cover transition-opacity hover:opacity-80"
               />
             </button>
           </li>
