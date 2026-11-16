@@ -127,8 +127,10 @@ describe("moving a session to another workspace", () => {
     const theirs = "dddddddd-0000-4000-8000-0000000000a2";
     writeFileSync(path.join(projects, `${own}.json`), JSON.stringify({ id: own, owner: "tiny", name: "Tiny Acrobatics shop", createdAt: 1, updatedAt: 1 }));
     writeFileSync(path.join(projects, `${theirs}.json`), JSON.stringify({ id: theirs, owner: "someone", name: "Northlight", createdAt: 1, updatedAt: 1 }));
-    expect((await patch({ projectId: theirs })).status).toBe(400);
-    const moved = (await (await patch({ projectId: own })).json()) as { projectId?: string };
+    expect((await patch({ moveTo: theirs })).status).toBe(400);
+    // a plain projectId, as the old page sent on every workspace switch, moves nothing
+    expect(((await (await patch({ projectId: own })).json()) as { projectId?: string }).projectId).toBeUndefined();
+    const moved = (await (await patch({ moveTo: own })).json()) as { projectId?: string };
     expect(moved.projectId).toBe(own);
   });
 });

@@ -166,11 +166,11 @@ export function SessionMenu({
   const move = (to: { id: string; name: string }) => {
     onClose();
     const back = here;
-    put({ projectId: to.id })
+    put({ moveTo: to.id, projectId: to.id })
       .then(() => {
         void refreshSummaries(); // it leaves this workspace's list
         if (open) navigate(WORKSHOP_HOME);
-        if (back) undoable(`moved to ${to.name}`, () => put({ projectId: back }).then(() => void refreshSummaries()));
+        if (back) undoable(`moved to ${to.name}`, () => put({ moveTo: back, projectId: back }).then(() => void refreshSummaries()));
       })
       .catch(fail);
   };
