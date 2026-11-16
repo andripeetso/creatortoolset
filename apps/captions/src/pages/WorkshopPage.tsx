@@ -518,7 +518,7 @@ export default function WorkshopPage() {
               />
               <button type="submit" disabled={busy !== null || !newRule.trim()} className={primary}>
                 {busy === "rule" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                Add
+                Create
               </button>
             </form>
             <div className="flex flex-col gap-1.5">

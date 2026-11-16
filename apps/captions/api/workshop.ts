@@ -142,7 +142,7 @@ const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").
 /** A Mac CLI that can search the web (Codex's read-only sandbox has no network, so research never runs on it). */
 const onWebMac = (user: SessionUser, own?: Selection) => onMac(user, own) && (workshopAi(user, own).mac?.provider?.driver ?? "claude") !== "codex";
 const researchFor = (user: SessionUser) => !!perplexityFor(user) || onWebMac(user);
-const RESEARCH_OFF = "Research needs an AI on your Mac that can search the web (Claude Code, Gemini CLI or Grok) or your Perplexity key in Settings → API keys";
+const RESEARCH_OFF = "Needs an AI provider that can search the web or a Perplexity key";
 const researchLabel = (user: SessionUser) => (onWebMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
@@ -1202,7 +1202,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
   };
   try {
     const read = await readDoc(session.id, ask.docId);
-    if (!read) throw new Error("That document is gone");
+    if (!read) throw new Error("Piece not found");
     // a turn for one Finals version: the writer reads and writes that version's post description as the piece's
     const doc = ask.captionFor ? withVersionCaption(read, ask.captionFor) : read;
     await progress({ stage: "packing" }, true);
@@ -1245,7 +1245,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         if (e) fetched.push({ handle: e.handle, parts: a.parts });
       }
       const named = fresh.map((a) => index.find((x) => x.id === a.postId)?.handle).filter(Boolean);
-      step(`Pulled from the sources: ${[...new Set(named)].map((h) => `@${h}`).join(", ")} (${[...new Set(fresh.flatMap((a) => a.parts))].join(", ")})`);
+      step(`Loaded from the sources: ${[...new Set(named)].map((h) => `@${h}`).join(", ")} (${[...new Set(fresh.flatMap((a) => a.parts))].join(", ")})`);
       return true;
     };
     // A transcript the AI needs but nobody made yet: make it now, then the pull has words in it.
@@ -1489,7 +1489,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     let macMissed = false;
     for (;;) {
       calls++;
-      step(calls === 1 ? (folder ? "Reading your folder and thinking" : "Thinking") : research ? "Thinking again with what the web search found" : "Thinking again with what it pulled");
+      step(calls === 1 ? (folder ? "Reading the folder" : "Thinking") : research ? "Reading the web search results" : "Reading the loaded text");
       let out: { result: TurnPlan; provider: string } | null = null;
       // a provider on the Mac reads the folder; without one (it could not be made) it gets the packed prompt
       if (onMac(user, session.ai)) {
@@ -1515,7 +1515,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           if (e instanceof MacClaudeError) addUsage(e.usage);
           const kind = macErrorKind(e);
           if (signal.aborted || kind === "stopped") throw new Error("Stopped");
-          throw new Error(`${kind === "unclaimed" || kind === "limit" ? errorMessage(e) : `Your AI did not finish this reply (${errorMessage(e)})`}. Retry sends it again.`);
+          throw new Error(`${kind === "unclaimed" || kind === "limit" ? errorMessage(e) : `The AI provider did not finish this reply (${errorMessage(e)})`}. Retry sends it again.`);
         };
         // the Mac's Claude session is gone (the Mac relay): this same turn runs once more as a new session, and the reply says so
         let lost = false;
@@ -1622,7 +1622,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       const ok = await updateDoc(session.id, target.id, (d) => {
         if (revert(d, plan.revertTo!)) revertedTo = plan.revertTo;
       });
-      if (!ok) throw new Error("That document is gone");
+      if (!ok) throw new Error("Piece not found");
     } else if (plan.edits.length > applied || (created && plan.edits.length)) {
       const rest = created || fillEmpty ? editsForNewDocument(plan.edits) : plan.edits.slice(applied);
       await progress({ stage: "applying" }, true);
@@ -1661,28 +1661,28 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         ? { kind: "research", depth: plan.research.depth, question: plan.research.question, status: "open" }
         : undefined;
     const notes: string[] = [];
-    if (macLast?.session?.state === "lost") notes.push("Claude's earlier session for this conversation was gone, so this reply read the whole conversation again.");
-    if (plan.revertTo && !revertedTo) notes.push(`I could not find version ${plan.revertTo}.`);
+    if (macLast?.session?.state === "lost") notes.push("The earlier session was not found, so this reply read the whole chat again.");
+    if (plan.revertTo && !revertedTo) notes.push(`Version ${plan.revertTo} not found.`);
     if (plan.search) {
       notes.push(
         hits?.length
-          ? `I searched the library for “${plan.search}” — ${hits.length} related post${hits.length === 1 ? "" : "s"} below, add the ones you want.`
-          : `I searched the library for “${plan.search}” — nothing beyond what is already in the project.`,
+          ? `Searched posts for “${plan.search}”: ${hits.length} related post${hits.length === 1 ? "" : "s"} below.`
+          : `Searched posts for “${plan.search}”: nothing beyond what is already in the project.`,
       );
     }
     // Codex's sandbox has no network: an approved search runs only on Claude Code on the Mac (or Perplexity), say so otherwise
-    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Web search isn't set up for this AI, so I could not check that on the web. An AI on your Mac that can search can, or add a Perplexity key.");
+    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Not checked on the web: needs an AI provider that can search the web or a Perplexity key.");
     // a web search the model ran itself is said in the answer, in code (the model may not)
     const searched = steps.filter((x) => x.label.startsWith("Searched the web: ")).map((x) => x.label.slice("Searched the web: ".length));
     if (searched.length) notes.push(`Searched the web for ${searched.join(", ")}.`);
     if (unreadFiles.length) {
       const list = unreadFiles.map((f) => f.name).join(", ");
-      notes.push(macReads ? `Not read, the file is no longer in this project: ${list}.` : `Not read: ${list}. PDFs reach the AI only through the Mac, so this reply did not read them.`);
+      notes.push(macReads ? `Not read, the file is no longer in this project: ${list}.` : `Not read: ${list}. PDFs need an AI provider on a computer.`);
     }
     if (refused.size) {
       const at = (await readDoc(session.id, target.id))?.blocks.map((b) => b.id) ?? [];
       const nums = [...refused].map((id) => at.indexOf(id) + 1).filter((n) => n > 0).sort((a, b) => a - b);
-      notes.push(`Left ${nums.length ? `${nums.length > 1 ? "slides" : "slide"} ${nums.join(", ")}` : "your locked slides"} as you locked ${nums.length > 1 ? "them" : "it"}.`);
+      notes.push(`Locked and not changed: ${nums.length ? `${nums.length > 1 ? "slides" : "slide"} ${nums.join(", ")}` : "the locked slides"}.`);
     }
     // the read-through: the whole piece against what the model never checks, and against the author's posted carousels
     if (blockIds.length || created) {
@@ -1789,7 +1789,7 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
   const signal = stopSignal(messageId);
   try {
     const doc = await readDoc(session.id, docId);
-    if (!doc?.blocks.length) throw new Error("That document is empty");
+    if (!doc?.blocks.length) throw new Error("The piece is empty");
     const project = await projectForAi(session.projectId, user);
     const { handle, best } = await bestPosts(user, project, 8);
     const reader = fableProvider(user);
@@ -1845,12 +1845,12 @@ async function runAudit(session: SessionMeta, user: SessionUser, messageId: stri
     let covered: { chars: number; total: number } | undefined;
     if (target.type === "document") {
       const doc = await readDoc(session.id, target.id);
-      if (!doc) throw new Error("That document is gone");
-      if (!doc.blocks.length) throw new Error("The document is empty — nothing to check");
+      if (!doc) throw new Error("Piece not found");
+      if (!doc.blocks.length) throw new Error("The piece is empty: nothing to check");
       ({ text, covered } = documentAudit(doc));
     } else {
       const pack = (await packPostsForUser([target.id], user, { perPost: MAX_AUDIT_CHARS, total: MAX_AUDIT_CHARS, comments: false })).packs[0];
-      if (!pack) throw new Error("That source is gone");
+      if (!pack) throw new Error("Source not found");
       text = postAuditText(pack.handle, pack.kind, pack.markdown);
     }
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
@@ -2824,7 +2824,7 @@ workshopApp.delete("/sessions/:id", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is still generating — wait for it to finish" }, 409);
+    return c.json({ error: "A draft is still being written" }, 409);
   }
   await rm(sessionDir(meta.id), { recursive: true, force: true });
   return c.json({ ok: true });
@@ -3192,7 +3192,7 @@ workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
     return c.json(publicDoc(current));
   }
 
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 400);
 
   const fallback: SlideCompose[] = visualizeCarousel({
     typeId: type.id,
@@ -3272,7 +3272,7 @@ workshopApp.post("/sessions/:id/docs/:docId/revert", async (c) => {
     ok = revert(d, versionId);
   });
   if (!doc) return c.json({ error: "Not found" }, 404);
-  if (!ok) return c.json({ error: "That version is gone" }, 404);
+  if (!ok) return c.json({ error: "Version not found" }, 404);
   return c.json(publicDoc(doc));
 });
 
@@ -3291,7 +3291,7 @@ workshopApp.post("/sessions/:id/docs/:docId/keep", async (c) => {
   });
   if (!doc) return c.json({ error: "Not found" }, 404);
   if (doc.kind === "notes") return c.json({ error: "Notes has no versions" }, 400);
-  if (!ok) return c.json({ error: versionId ? "That version is gone" : "Nothing to keep" }, 404);
+  if (!ok) return c.json({ error: versionId ? "Version not found" : "Nothing to keep" }, 404);
   return c.json(publicDoc(doc));
 });
 
@@ -3420,18 +3420,18 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 400);
   let input;
   try {
     input = parseTurnInput(await c.req.json().catch(() => null));
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
   }
-  if (!(await readDoc(meta.id, input.docId))) return c.json({ error: "That document is gone" }, 404);
+  if (!(await readDoc(meta.id, input.docId))) return c.json({ error: "Piece not found" }, 404);
   const library: ClipRef[] = [];
   for (const r of input.library ?? []) {
     const ref = "assetId" in r ? await libraryRef(user.username, r.assetId, r.versionId) : await externalLibraryRef(user.username, r);
-    if (!ref) return c.json({ error: "A library clip is gone, or not in your library" }, 404);
+    if (!ref) return c.json({ error: "A Media Library clip was not found" }, 404);
     library.push(ref);
   }
   await readChat(meta.id); // a reply a restart left thinking is marked first; the one-turn check is in startTurn
@@ -3489,7 +3489,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     status: "done",
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking" };
-  if (!(await startTurn(meta.id, [ask, reply], input.retryOf))) return c.json({ error: "Still thinking about the last message — wait for it" }, 409);
+  if (!(await startTurn(meta.id, [ask, reply], input.retryOf))) return c.json({ error: "Still working on the last message" }, 409);
   void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id), meta.id);
   return c.json({ ask, reply }, 202);
 });
@@ -3510,14 +3510,14 @@ workshopApp.post("/sessions/:id/chat/:messageId/stop", async (c) => {
 async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInput): Promise<{ ask: ChatMessage; reply: ChatMessage } | { error: string; status: 400 | 404 | 409 }> {
   if (!researchFor(user)) return { error: RESEARCH_OFF, status: 400 };
   const doc = await readDoc(meta.id, input.docId);
-  if (!doc) return { error: "That document is gone", status: 404 };
+  if (!doc) return { error: "Piece not found", status: 404 };
   let target: AuditTarget;
   if (input.postId) {
     const post = (await postsForUser([input.postId], user))[0];
-    if (!post) return { error: "That source is gone", status: 404 };
+    if (!post) return { error: "Source not found", status: 404 };
     target = { type: "post", id: post.id, title: `@${post.creator.username} — ${post.kind}` };
   } else {
-    if (!doc.blocks.length) return { error: "The document is empty — nothing to check", status: 400 };
+    if (!doc.blocks.length) return { error: "The piece is empty: nothing to check", status: 400 };
     target = { type: "document", id: doc.id, title: doc.title };
   }
   await readChat(meta.id);
@@ -3531,7 +3531,7 @@ async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInpu
     status: "done",
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking", audit: { target, depth: input.depth } };
-  if (!(await startTurn(meta.id, [ask, reply]))) return { error: "Still working on the last message — wait for it", status: 409 };
+  if (!(await startTurn(meta.id, [ask, reply]))) return { error: "Still working on the last message", status: 409 };
   void inJob([meta.owner, user.username], () => runAudit(meta, user, reply.id, input, target), meta.id);
   return { ask, reply };
 }
@@ -3601,8 +3601,8 @@ workshopApp.post("/sessions/:id/docs/:docId/lines", async (c) => {
   const text = typeof body?.text === "string" ? body.text.slice(0, LIMITS.blockText) : "";
   const start = typeof body?.start === "number" ? Math.max(0, Math.floor(body.start)) : -1;
   const end = typeof body?.end === "number" ? Math.min(text.length, Math.floor(body.end)) : -1;
-  if (start < 0 || end <= start || !text.slice(start, end).trim()) return c.json({ error: "Select the words you want said another way" }, 400);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
+  if (start < 0 || end <= start || !text.slice(start, end).trim()) return c.json({ error: "Select the words to reword" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 503);
   const notes = (await readChat(meta.id)).messages.filter((m) => m.docId === doc.id && m.role === "user" && m.text.trim()).map((m) => m.text.trim());
   const { system, user: prompt } = buildLinesPrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, notes, workspace: await contextOf(meta) });
   try {
@@ -3626,7 +3626,7 @@ workshopApp.post("/sessions/:id/docs/:docId/ask", async (c) => {
   const text = typeof body?.text === "string" ? body.text.slice(0, LIMITS.blockText) : "";
   const question = typeof body?.question === "string" ? body.question.trim().slice(0, LIMITS.turnText) : "";
   if (!text.trim() || !question) return c.json({ error: "Ask something about the slide" }, 400);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 503);
   const start = typeof body?.start === "number" ? Math.max(0, Math.floor(body.start)) : undefined;
   const end = typeof body?.end === "number" ? Math.min(text.length, Math.floor(body.end)) : undefined;
   const history = (Array.isArray(body?.history) ? body!.history : [])
@@ -3639,7 +3639,7 @@ workshopApp.post("/sessions/:id/docs/:docId/ask", async (c) => {
   try {
     let usage: MacUsage | undefined;
     const answer = await completeWithFallback(system, prompt, undefined, (t) => {
-      if (!t.trim()) throw new Error("Empty answer");
+      if (!t.trim()) throw new Error("The reply was empty");
       return t.trim();
     }, { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
     bumpUsage(user.username, { aiRuns: 1 });
@@ -3657,12 +3657,12 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { docId?: unknown } | null;
   const doc = typeof body?.docId === "string" ? await readDoc(meta.id, body.docId) : null;
   if (!doc || doc.kind === "notes" || !doc.blocks.length) return c.json({ error: "Open a piece with some text first" }, 400);
-  if (!onMac(user)) return c.json({ error: "A follower's read runs through your AI on the Mac" }, 503);
+  if (!onMac(user)) return c.json({ error: "Read as a follower needs an AI provider on a computer" }, 503);
   await readChat(meta.id);
   const now = Date.now();
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: readerName(fableProvider(user)), review: { model: REVIEW_MODEL } };
-  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message" }, 409);
   void inJob([meta.owner, user.username], () => runReview(meta, user, reply.id, doc.id), meta.id);
   return c.json({ ask, reply }, 202);
 });
@@ -3700,7 +3700,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
     // a quick search the author approved: the next turn searches for it and answers with what it found
     const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Search the web: ${question}`, at: now, docId: m.docId, status: "done", web: question };
     const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking" };
-    if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+    if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message" }, 409);
     void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id), meta.id);
     const proposal: Proposal = { ...m.proposal, status: "accepted", depth, question };
     await patchMessage(meta.id, m.id, { proposal });
@@ -3708,7 +3708,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
   }
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Run deep research: ${question}`, at: now, docId: m.docId, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking", research: { question, depth: "deep", status: "running" } };
-  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message" }, 409);
   void inJob([meta.owner, user.username], () => runResearch(meta, user, reply.id, question), meta.id);
   return c.json({ message: await settle("accepted"), ask, reply }, 202);
 });
@@ -3722,9 +3722,9 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fix", async (c) => {
   const claim = m?.audit?.result?.claims.find((x) => x.id === body?.claimId);
   if (!m?.audit || !claim) return c.json({ error: "No such claim" }, 404);
   if (m.audit.target.type !== "document" || !claim.fix || !claim.where || !/^(b\d{1,5}|h\d{1,5}|caption|pinned)$/.test(claim.where)) {
-    return c.json({ error: "This claim has no fix that maps to a block" }, 400);
+    return c.json({ error: "This claim has no rewording to apply" }, 400);
   }
-  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message" }, 409);
   let applied = false;
   let locked = false;
   const doc = await updateDoc(meta.id, m.audit.target.id, (d) => {
@@ -3741,7 +3741,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fix", async (c) => {
       applied = true;
     }
   });
-  if (!doc) return c.json({ error: "That document is gone" }, 404);
+  if (!doc) return c.json({ error: "Piece not found" }, 404);
   if (!applied) return c.json({ error: locked ? lockedNote([slideOf(doc, claim.where!)]) : "That wording is no longer in the document" }, 400);
   const audit: AuditMeta = { ...m.audit, applied: [...(m.audit.applied ?? []), claim.id] };
   await patchMessage(meta.id, m.id, { audit });
@@ -3756,8 +3756,8 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fixes", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { claimIds?: unknown } | null;
   const ids = Array.isArray(body?.claimIds) ? body.claimIds.filter((x): x is string => typeof x === "string") : [];
   if (!m?.audit?.result) return c.json({ error: "No such audit" }, 404);
-  if (m.audit.target.type !== "document") return c.json({ error: "This claim has no fix that maps to a block" }, 400);
-  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (m.audit.target.type !== "document") return c.json({ error: "This claim has no rewording to apply" }, 400);
+  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message" }, 409);
   const already = new Set(m.audit.applied ?? []);
   const wanted = m.audit.result.claims.filter((claim) => ids.includes(claim.id) && !already.has(claim.id) && claim.fix && claim.where && /^(b\d{1,5}|h\d{1,5}|caption|pinned)$/.test(claim.where));
   if (!wanted.length) return c.json({ error: "Nothing to apply" }, 400);
@@ -3775,7 +3775,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fixes", async (c) => {
     appliedIds = found.filter((id) => landed.has(whereOf.get(id) ?? ""));
     if (appliedIds.length) snapshot(d, `after: audit — ${appliedIds.length} ${appliedIds.length === 1 ? "fix" : "fixes"}`);
   });
-  if (!doc) return c.json({ error: "That document is gone" }, 404);
+  if (!doc) return c.json({ error: "Piece not found" }, 404);
   const locked = lockedBlocks.map((b) => slideOf(doc, b));
   if (!appliedIds.length) return c.json({ error: locked.length ? lockedNote(locked) : "Those wordings are no longer in the document" }, 400);
   const applied = [...(m.audit.applied ?? []), ...appliedIds];
@@ -3787,7 +3787,7 @@ workshopApp.delete("/sessions/:id/chat/:messageId", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   const id = c.req.param("messageId");
-  if (chatting.has(id)) return c.json({ error: "Still thinking" }, 409);
+  if (chatting.has(id)) return c.json({ error: "Still working" }, 409);
   await updateChat(meta.id, (ch) => {
     ch.messages = ch.messages.filter((m) => m.id !== id);
   });
@@ -3849,7 +3849,7 @@ workshopApp.get("/sessions/:id/obsidian.md", async (c) => {
   const docs = await listDocs(meta.id);
   // one note per piece (reel, carousel): `part` picks one; without it, a session with several says how many
   const types = await pieceTypes(meta.id, docs);
-  if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words yet" }, 400);
+  if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words" }, 400);
   // the note says what a share would make it (In Production, not the Ready it had in the Workshop); this read shows
   // that without moving the session: the share route does the move
   const stored = meta.status ?? "draft";
@@ -4034,7 +4034,7 @@ workshopApp.post("/sessions/:id/export/:exportId", async (c) => {
   const day = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : new Date().toISOString().slice(0, 10);
   const docs = await listDocs(meta.id);
   const types = await pieceTypes(meta.id, docs);
-  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words yet" }, 400);
+  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words" }, 400);
   const status = await sharedForProduction(meta);
   const files = obsidianPieces({ ...meta, status }, docs, day, types).map((piece) => {
     const vars = exportVars(piece, status, day);
@@ -4083,7 +4083,7 @@ export async function draftRequest(session: SessionMeta, draft: DraftMeta, user:
   const noteFor = new Map(session.sources.map((s) => [s.postId, s.note]));
   const { packs, warning, missing } = await packPostsForUser(draft.sourceIds, user);
   if (draft.sourceIds.length && !packs.length) {
-    throw new Error("None of the selected sources are in the library anymore");
+    throw new Error("The selected sources were not found in Content Analyzer");
   }
   const [project, ...frameworkHits] = await Promise.all([
     projectForAi(draft.projectId, user),
@@ -4190,9 +4190,9 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 400);
   if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is already generating in this project — wait for it" }, 409);
+    return c.json({ error: "A draft is still being written" }, 409);
   }
   const made = draftFrom(meta, await c.req.json().catch(() => null));
   if ("error" in made) return c.json({ error: made.error }, 400);
@@ -4458,11 +4458,11 @@ workshopShareApp.post("/:token/answers/ask", async (c) => {
   const question = typeof body?.question === "string" ? body.question.trim().slice(0, LIMITS.turnText) : "";
   const commentId = typeof body?.commentId === "string" ? body.commentId : undefined;
   if (!question && !commentId) return c.json({ error: "Ask something" }, 400);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 503);
   const { handle, replies, file } = await loadPostComments(meta, user, false);
   const all = file.comments.flatMap((x) => [x, ...(x.replies ?? [])]);
   const comment = commentId ? all.find((x) => x.id === commentId) : undefined;
-  if (commentId && !comment) return c.json({ error: "That comment is gone; refresh the comments" }, 404);
+  if (commentId && !comment) return c.json({ error: "Comment not found: refresh the comments" }, 404);
   const docs = await listDocs(meta.id);
   const notesDoc = docs.find((d) => d.kind === "notes");
   const chat = [];
@@ -4486,7 +4486,7 @@ workshopShareApp.post("/:token/answers/ask", async (c) => {
   try {
     let usage: MacUsage | undefined;
     const answer = await completeWithFallback(system, prompt, undefined, (t) => {
-      if (!t.trim()) throw new Error("Empty answer");
+      if (!t.trim()) throw new Error("The reply was empty");
       return t.trim();
     }, { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
     bumpUsage(user.username, { aiRuns: 1 });

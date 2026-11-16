@@ -151,7 +151,6 @@ export function ExportMarkdown({
       <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogTitle>Content Workshop exports</DialogTitle>
         <DialogDescription>Where a project's note goes on export: a download or the Obsidian vault.</DialogDescription>
----
         <ExportsEditor onSaved={() => void reload()} />
       </DialogContent>
     </Dialog>

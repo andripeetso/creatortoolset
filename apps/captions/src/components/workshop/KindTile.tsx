@@ -19,7 +19,6 @@ export function KindTile({ kind, className = "" }: { kind?: PieceKind; className
   return (
     <span
       title={t?.label ?? "No pieces"}
----
       className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold ${t ? t.cls : "border border-dashed border-zinc-600 text-transparent"} ${className}`}
     >
       {t?.letter ?? "·"}

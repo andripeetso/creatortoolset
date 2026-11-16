@@ -86,7 +86,6 @@ export function AskPanel({
           }}
           rows={1}
           placeholder={history.length ? "Ask more" : "Question"}
----
           className="min-w-0 flex-1 resize-none rounded bg-background/60 px-2 py-1 text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
         />
         <button type="button" onClick={send} disabled={busy || !text.trim()} className="rounded-md bg-violet-600 p-1.5 text-white hover:bg-violet-500 disabled:opacity-50" aria-label="Ask">

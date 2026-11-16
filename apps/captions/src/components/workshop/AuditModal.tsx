@@ -164,8 +164,7 @@ export function AuditModal({
               className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-violet-500 disabled:opacity-40"
             >
               {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              Apply{accepted.length
---- ? ` ${accepted.length}` : ""}
+              Apply{accepted.length ? ` ${accepted.length}` : ""}
             </button>}
           </div>
         ) : null}

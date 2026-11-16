@@ -169,7 +169,6 @@ export function SharePopover({
                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />} Create and copy link
               </button>
               <p className="text-[10px] text-muted-foreground">Anyone with the link can read every piece of this project, mark progress and upload the finals.</p>
----
             </>
           )}
           {error ? <p className="text-[11px] text-red-300">{error}</p> : null}

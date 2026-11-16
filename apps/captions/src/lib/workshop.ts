@@ -269,7 +269,7 @@ export interface GenerateInput {
 }
 
 export const DRAFT_KINDS: { id: DraftKind; label: string; hint: string }[] = [
-  { id: "reel", label: "Reel script", hint: "Hook variations and a spoken script, caption" },
+  { id: "reel", label: "Reel script", hint: "Hook variations and a spoken script, post description" },
   { id: "carousel", label: "Carousel", hint: "Slide-by-slide headline and body, hook slide, CTA slide" },
   { id: "ad", label: "Ad copy", hint: "Three angles: primary text, headline, description, CTA" },
   { id: "free", label: "Anything else", hint: "Whatever the brief asks for" },
@@ -694,8 +694,8 @@ export const VERDICTS: Record<AuditVerdict, { label: string; className: string; 
 };
 
 export const AUDIT_DEPTHS: { id: AuditDepth; label: string; hint: string }[] = [
-  { id: "quick", label: "Quick check", hint: "About a minute — the main claims against the first sources found" },
-  { id: "deep", label: "Deep research", hint: "5–15 minutes — reads dozens of pages, finds primary sources" },
+  { id: "quick", label: "Quick check", hint: "About a minute: the main claims against the first sources found" },
+  { id: "deep", label: "Deep research", hint: "5–15 minutes: dozens of pages and primary sources" },
 ];
 
 export const startAudit = (sessionId: string, input: { docId: string; postId?: string; depth: AuditDepth }) =>
@@ -744,7 +744,7 @@ export function fileBase64(file: File): Promise<string> {
   return new Promise((ok, no) => {
     const r = new FileReader();
     r.onload = () => ok(String(r.result).split(",", 2)[1] ?? "");
-    r.onerror = () => no(new Error(`Couldn't read ${file.name}`));
+    r.onerror = () => no(new Error(`Could not read ${file.name}`));
     r.readAsDataURL(file);
   });
 }
@@ -760,7 +760,7 @@ export interface PendingImage {
 export const imageUrl = (sessionId: string, iid: string) => `/api/workshop/sessions/${sessionId}/images/${iid}`;
 /** A picture for a piece's text: shrunk here like a chat picture, stored by the session; returns its id. */
 export async function uploadPicture(sessionId: string, file: File): Promise<ImageRef> {
-  if (!file.type.startsWith("image/")) throw new Error("That isn't a picture");
+  if (!file.type.startsWith("image/")) throw new Error("Not a picture");
   const pic = await shrinkImage(file);
   return fetch(`/api/workshop/sessions/${sessionId}/media`, jsonInit({ name: pic.name, type: pic.type, data: pic.data })).then((r) => json<ImageRef>(r));
 }
@@ -786,7 +786,7 @@ export async function shrinkImage(file: File, max = 1568): Promise<PendingImage>
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  const blob = await new Promise<Blob>((ok, no) => canvas.toBlob((b) => (b ? ok(b) : no(new Error(`Couldn't read ${file.name}`))), "image/jpeg", 0.9));
+  const blob = await new Promise<Blob>((ok, no) => canvas.toBlob((b) => (b ? ok(b) : no(new Error(`Could not read ${file.name}`))), "image/jpeg", 0.9));
   const data = await new Promise<string>((ok) => {
     const r = new FileReader();
     r.onload = () => ok(String(r.result).split(",", 2)[1] ?? "");

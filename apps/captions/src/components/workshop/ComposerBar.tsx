@@ -70,8 +70,8 @@ export function DocView({
           onClick={onNotMine}
           aria-pressed={!!notMine}
           className={`${barBtn} ${notMine ? "!text-amber-300" : ""}`}
-          title={notMine ? "Stop marking words that are not yours" : "Mark words that are not yours"}
-          aria-label="Words that are not yours"
+          title={notMine ? "Not mine is on: every word never said in this project is marked" : "Not mine: mark every word never said in this project"}
+          aria-label="Not mine"
         >
           <Highlighter className="h-3 w-3" />
         </button>

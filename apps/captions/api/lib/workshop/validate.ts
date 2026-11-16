@@ -302,7 +302,7 @@ export function parseSessionPatch(raw: unknown): SessionPatch {
     if (body.ai === null) out.ai = null;
     else {
       const a = isRec(body.ai) ? body.ai : {};
-      if (typeof a.instance !== "string" || typeof a.model !== "string" || !EFFORTS.includes(a.effort as Effort)) throw new Error("Pick an AI, a model and an effort");
+      if (typeof a.instance !== "string" || typeof a.model !== "string" || !EFFORTS.includes(a.effort as Effort)) throw new Error("Pick an AI provider, a model and an effort");
       out.ai = { instance: a.instance.slice(0, 60), model: a.model.slice(0, 80), effort: a.effort as Effort };
     }
   }
@@ -551,7 +551,7 @@ export function parseFiles(raw: unknown): Array<{ name: string; type: FileRef["t
   for (const p of raw.slice(0, LIMITS.files)) {
     if (!isRec(p)) throw new Error("A file did not come through: send it again");
     const name = str(p.name, 80) || `File ${out.length + 1}`;
-    if (!isFileType(p.type)) throw new Error(`${name} can't be read yet: send a picture, a text file or a PDF`);
+    if (!isFileType(p.type)) throw new Error(`${name} cannot be read: send a picture, a text file or a PDF`);
     if (typeof p.data !== "string" || !/^[A-Za-z0-9+/]+=*$/.test(p.data) || p.data.length % 4 !== 0) throw new Error(`${name} did not come through: send it again`);
     if (p.data.length > LIMITS.fileData) throw new Error(`${name} is too big: send it under 10 MB`);
     if (Buffer.from(p.data.slice(0, 8), "base64").subarray(0, 4).toString("latin1") !== "%PDF") throw new Error(`${name} is not a PDF`);
@@ -564,7 +564,7 @@ export function parseFiles(raw: unknown): Array<{ name: string; type: FileRef["t
 
 export function parseTurnInput(raw: unknown): TurnInput {
   const body = isRec(raw) ? raw : {};
-  if (!okId(body.docId)) throw new Error("Pick a document to write in");
+  if (!okId(body.docId)) throw new Error("Pick a piece to write in");
   const pasted = parsePasted(body.pasted);
   const refs = (Array.isArray(body.pastedRefs) ? body.pastedRefs : [])
     .filter(isRec)
@@ -593,7 +593,7 @@ export function parseTurnInput(raw: unknown): TurnInput {
   const typed = str(body.text, LIMITS.turnText);
   const words = typed.replace(/⟦\d+⟧/g, "").trim();
   const text = words ? typed : pasted.length || refs.length ? "Read what I pasted." : images.length || imageRefs.length || files.length || fileRefs.length || quotes.length || library.length ? "Look at these." : "";
-  if (!text) throw new Error("Say something first");
+  if (!text) throw new Error("Write a message first");
   const retryOf = (Array.isArray(body.retryOf) ? body.retryOf : []).filter(okId).slice(0, 4);
   const reading =
     isRec(body.reading) && okId(body.reading.postId)
@@ -611,6 +611,6 @@ export interface AuditInput {
 
 export function parseAuditInput(raw: unknown): AuditInput {
   const body = isRec(raw) ? raw : {};
-  if (!okId(body.docId)) throw new Error("Pick a document first");
+  if (!okId(body.docId)) throw new Error("Pick a piece first");
   return { docId: body.docId, postId: okId(body.postId) ? body.postId : undefined, depth: body.depth === "deep" ? "deep" : "quick" };
 }

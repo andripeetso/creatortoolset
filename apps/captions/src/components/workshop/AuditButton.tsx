@@ -24,8 +24,7 @@ export function AuditButton({
         onClick={() => setOpen((o) => !o)}
         disabled={busy || !available}
         className={className ?? "flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"}
-        title={available ? "Check the facts against sources on the web" : "Needs an AI provider or a Perplexity key"
----}
+        title={available ? "Check the facts against sources on the web" : "Needs an AI provider or a Perplexity key"}
         aria-expanded={open}
       >
         <ShieldCheck className="h-3.5 w-3.5" /> Check accuracy <ChevronDown className="h-3 w-3" />

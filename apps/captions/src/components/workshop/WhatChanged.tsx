@@ -69,8 +69,7 @@ export function WhatChanged({ sessionId, doc, edits }: { sessionId: string; doc:
       </p>
       {error ? <p className="text-[12px] text-red-300">{error}</p> : null}
       {!error && rows === null ? <p className="text-[12px] text-muted-foreground">Loading…</p> : null}
-      {rows?.length === 0 ? <p className="text-[12px] text-muted-foreground">No words changed</p>
---- : null}
+      {rows?.length === 0 ? <p className="text-[12px] text-muted-foreground">No words changed</p> : null}
       {rows?.map((r) => (
         <div key={r.id}>
           <p className="text-[11px] text-muted-foreground">

@@ -176,7 +176,7 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
     setError(null);
     try {
       const r = await fetch(`/api/workshop-share/${token}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, by: name.trim() }) });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Could not save the progress");
       // the server's answer: the status it kept (a published or shelved session does not move)
       const { progress, status } = (await r.json()) as { progress: ShareProgress; status: SessionStatus };
       onChange({ progress, status });
@@ -195,7 +195,7 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
       try {
         const q = new URLSearchParams({ name: f.name, ...(name.trim() ? { by: name.trim() } : {}), ...(note.trim() ? { note: note.trim() } : {}) });
         const r = await fetch(`/api/workshop-share/${token}/deliveries?${q}`, { method: "POST", headers: { "Content-Type": f.type || "application/octet-stream" }, body: f });
-        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Could not upload");
         added.push((await r.json()) as ShareDelivery);
       } catch (e) {
         setError(`${f.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -212,15 +212,15 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
       <input
         value={name}
         onChange={(e) => keepName(e.target.value)}
-        placeholder="Your name"
+        placeholder="Name"
         className="rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
       />
       <div className="grid grid-cols-2 gap-2">
         <button type="button" disabled={!!busy} onClick={() => void mark("producing")} className={`${btn} ${data.progress?.state === "producing" ? "bg-amber-500 text-black" : "border border-amber-500/50 text-amber-200 hover:bg-amber-500/15"}`}>
-          <Hammer className="h-3.5 w-3.5" /> I'm producing it
+          <Hammer className="h-3.5 w-3.5" /> In production
         </button>
         <button type="button" disabled={!!busy} onClick={() => void mark("done")} className={`${btn} ${data.progress?.state === "done" ? "bg-emerald-500 text-black" : "border border-emerald-500/50 text-emerald-200 hover:bg-emerald-500/15"}`}>
-          <CheckCircle2 className="h-3.5 w-3.5" /> It's done
+          <CheckCircle2 className="h-3.5 w-3.5" /> Done
         </button>
       </div>
       {data.progress ? (
@@ -237,8 +237,8 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
         }}
         className="flex flex-col gap-2 rounded-lg border border-dashed border-zinc-700 p-3"
       >
-        <p className="text-[12px] text-zinc-300">{data.deliveries.length ? "Add more files or a new version. Drop files here." : "Upload the final version: the slides, the video, or both. Drop files here."}</p>
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="A note with it (optional)" className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600" />
+        <p className="text-[12px] text-zinc-300">{data.deliveries.length ? "Drop more files or a new version here." : "Drop the final slides or video here."}</p>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600" />
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => void upload(e.target.files)} />
         <button type="button" disabled={!!busy} onClick={() => fileRef.current?.click()} className={`${btn} bg-violet-600 text-white hover:bg-violet-500`}>
           {busy?.startsWith("Uploading") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} {busy?.startsWith("Uploading") ? busy : "Choose files"}
@@ -301,7 +301,7 @@ export function WorkshopShareView({ token, embedded = false, src }: { token: str
   if (!data) {
     return (
       <div className={`flex ${embedded ? "h-64" : "h-dvh"} items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400`}>
-        {error ? <p>This link is off or doesn't exist.</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
+        {error ? <p>Link off or not found</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
       </div>
     );
   }
@@ -389,7 +389,7 @@ export function WorkshopShareView({ token, embedded = false, src }: { token: str
       ) : (
         <main className="mx-auto grid max-w-6xl gap-8 px-4 py-6 lg:grid-cols-[minmax(0,1fr)_380px]">
           <div className="flex min-w-0 flex-col gap-12">
-            {pieces.length === 0 && <p className="mt-16 text-center text-sm text-zinc-500">Nothing here yet.</p>}
+            {pieces.length === 0 && <p className="mt-16 text-center text-sm text-zinc-500">No pieces</p>}
             {pieces.map((p) => (
               <PieceText key={p.id} piece={p} numbered={pieces.length > 1} />
             ))}

@@ -335,8 +335,7 @@ function Finder({ rows, onClose }: { rows: SessionSummary[]; onClose: () => void
               </button>
             ))
           ) : (
-            <p className="px-3 py-4 text-center text-[12px] text-zinc-500">No projects found
----</p>
+            <p className="px-3 py-4 text-center text-[12px] text-zinc-500">No projects found</p>
           )}
         </div>
       </div>

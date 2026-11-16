@@ -122,8 +122,7 @@ export function SessionPosted({
           title="Link the Instagram post"
           onClick={async (e) => {
             e.stopPropagation();
-            const url = await promptDialog({ title: "Instagram post link"
----, ok: "Link post" });
+            const url = await promptDialog({ title: "Instagram post link", ok: "Link post" });
             if (url?.trim()) onChange(url.trim());
           }}
           className="shrink-0 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-50"

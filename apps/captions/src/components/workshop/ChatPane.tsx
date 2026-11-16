@@ -504,7 +504,7 @@ export function ChatPane({
                   <p className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
                     {m.deep && <span>deep research first</span>}
                     {m.comments && <span>with comments</span>}
-                    {m.mine && <span>your words only</span>}
+                    {m.mine && <span>my words only</span>}
                     {m.scope && <span>{m.scope === "slight" ? "slight changes" : "rewrite"}</span>}
                   </p>
                 ) : null}
@@ -815,7 +815,7 @@ export function ChatPane({
               title="The piece is cut from your own sentences only; every word that is not yours is marked."
               aria-pressed={mineOnly}
             >
-              <Mic className="h-3.5 w-3.5" /> Your words only{mineOnly ? " on" : ""}
+              <Mic className="h-3.5 w-3.5" /> My words only{mineOnly ? " on" : ""}
             </button>
           ) : null}
           {onScope ? (

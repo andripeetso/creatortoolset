@@ -162,8 +162,7 @@ export function SessionMenu({
   const remove = () => {
     onClose();
     void (async () => {
-      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}”?`
----, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
       await deleteSession(id);
       if (open) navigate(WORKSHOP_HOME);
       void refreshSummaries();

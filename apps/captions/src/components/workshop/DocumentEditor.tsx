@@ -1105,7 +1105,6 @@ function PieceEditor({
                     changesOn={changesOn}
                     onSelectRange={onQuote ? (start, end, at) => select("pinned", start, end, at) : undefined}
                     className="w-full resize-none bg-transparent text-sm leading-relaxed text-muted-foreground outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
----
                   />
                   {citePill("pinned", pinned, { field: "pinned" })}
                 </div>

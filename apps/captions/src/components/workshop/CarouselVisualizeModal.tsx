@@ -275,8 +275,7 @@ export function CarouselVisualizeModal({
               onRedo={redoSlide}
             />
           ) : (
-            <p className="py-12 text-center text-sm text-zinc-500">No slides
----</p>
+            <p className="py-12 text-center text-sm text-zinc-500">No slides</p>
           )}
         </div>
       </div>

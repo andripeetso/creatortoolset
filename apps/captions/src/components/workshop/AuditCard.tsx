@@ -10,7 +10,6 @@ export function AuditOpenRow({ audit, onOpen }: { audit: AuditMeta & { result: A
   const applied = audit.applied?.length ?? 0;
   const score = liveAuditScore(audit);
   const status = left ? `${left} to review` : applied ? `${applied} applied` : "Nothing to reword";
----
   return (
     <button
       type="button"

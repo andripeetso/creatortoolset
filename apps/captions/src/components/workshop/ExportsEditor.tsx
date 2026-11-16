@@ -102,7 +102,6 @@ export function ExportsEditor({ onSaved }: { onSaved?: () => void }) {
         </Button>
         <Button size="sm" onClick={() => void save()}>
           Save
----
         </Button>
         {saved && <span className="text-xs text-muted-foreground">Saved</span>}
       </div>
