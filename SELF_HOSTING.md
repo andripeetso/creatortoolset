@@ -276,6 +276,17 @@ docker compose exec app node scripts/doctor.mjs
 Read what is coming before you update: `git fetch && git log --oneline HEAD..origin/main` lists the new commits.
 Back up first (step 9). To go back, check out the previous commit and run the same `build` and `up -d`.
 
+To update from the app instead, run the updater from cron on the machine (as a user that may run Docker):
+
+```sh
+*/5 * * * * CT_UPDATE_HOUR=4 /opt/creator-toolset/apps/captions/scripts/server-update.sh >> /var/log/creator-toolset-update.log 2>&1
+```
+
+An admin then sees how many changes are waiting in Settings → Storage → Update, with **Update now**. With
+`CT_UPDATE_HOUR` (0 to 23, the machine's clock) the server also updates in that hour each night; leave it out to
+update only on the button. Each update is the steps above, the wait for running work included. A build that fails is
+left alone until an admin presses Retry or a newer change arrives. There is no automatic way back: see above.
+
 An update restarts the app. What that does to work in progress:
 
 - **Goes on by itself:** uploads (they resume), and an assistant reply or a scheduled task that a computer is still

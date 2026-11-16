@@ -90,7 +90,7 @@ type Drag =
       add?: boolean; dup?: boolean; group?: string[] }
   | { kind: "hole"; ph: Placeholder; mode: Mode | "draw"; x0: number; f0: number; df: number; moved: boolean };
 
-export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true,
+export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true, notes,
   edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin, rules }: {
   view: TimelineView;
   /** seconds */
@@ -107,6 +107,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   /** a count clicked: its comment */
   onPin?: (key: string) => void;
   showFlags?: boolean;
+  /** shots someone said something about (frames), marked under the ruler; the text shows on hover */
+  notes?: { rec: number; len: number; text: string }[];
   /** hand edits to draw (the ones being made, or a picked comment's) */
   edits?: ItemEdit[];
   placeholders?: Placeholder[];
@@ -792,6 +794,10 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
               {showFlags && view.flags.map((f, i) => (
                 <span key={i} title={`${f.check}: ${f.what}`} className="absolute top-2 h-2 rounded-full bg-red-500"
                   style={{ left: x(f.rec), width: Math.max(4, x(f.len ?? 1)) }} />
+              ))}
+              {notes?.map((n) => (
+                <span key={n.rec} title={n.text} className="absolute bottom-0 h-1 rounded-full bg-amber-400"
+                  style={{ left: x(n.rec) + 1, width: Math.max(4, x(n.len) - 2) }} />
               ))}
             </>
         )}>

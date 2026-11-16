@@ -134,14 +134,20 @@ export function critiquePrompt(i: CritiqueInput): { system: string; user: string
   return { system: CRITIQUE_SYSTEM, user: parts.join("\n\n") };
 }
 
-/** The AI's answer as a Critique: shots that exist, each named once with a reason, in order; it passes when none is named. */
-export function parseCritique(text: string, shots: number, round: number): Critique {
+/**
+ * The AI's answer as a Critique: shots that exist, each named once with a reason, in order; it passes when none is named.
+ * `shots`: the cut's shots in order (each named one keeps its place, `at` and `dur`), or only how many there are.
+ */
+export function parseCritique(text: string, shots: number | { at: number; dur: number }[], round: number): Critique {
+  const count = typeof shots === "number" ? shots : shots.length;
   const o = parseJsonObject(text);
   const fails: Critique["fails"] = [];
   for (const f of Array.isArray(o.fails) ? (o.fails as Record<string, unknown>[]) : []) {
     const n = Math.round(Number(f?.n));
     const why = typeof f?.why === "string" ? f.why.replace(/\s+/g, " ").trim().slice(0, WHY_MAX) : "";
-    if (n >= 1 && n <= shots && why && !fails.some((x) => x.n === n)) fails.push({ n, why });
+    if (!(n >= 1 && n <= count && why && !fails.some((x) => x.n === n))) continue;
+    const s = typeof shots === "number" ? undefined : shots[n - 1];
+    fails.push(s ? { n, why, at: s.at, dur: s.dur } : { n, why });
   }
   return { ok: !fails.length, fails: fails.sort((a, b) => a.n - b.n), round };
 }
@@ -166,7 +172,7 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
       seconds: plan.shots.reduce((t, s) => Math.max(t, s.at + s.dur), 0),
       song: plan.lead.type === "song",
     });
-    return (await completeVisionWithFallback(system, user, images, signal, (t) => parseCritique(t, plan.shots.length, round), who, { label: LABEL, job: "editor" })).value;
+    return (await completeVisionWithFallback(system, user, images, signal, (t) => parseCritique(t, plan.shots, round), who, { label: LABEL, job: "editor" })).value;
   } catch (e) {
     const away = macAway(e);
     if (away) throw new NeedsKey(away.message);

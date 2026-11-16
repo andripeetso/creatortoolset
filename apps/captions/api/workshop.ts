@@ -79,7 +79,7 @@ import { channelFiles } from "./connectors";
 import { fetchYoutubeViaApify } from "./lib/youtube/fetch";
 import { PLAN_PARSERS } from "./lib/workshop/plans";
 import { renderDraft } from "./lib/workshop/render";
-import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, onVersion, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
+import { applyEdits, docToMarkdown, isHookId, keep, markEditsSeen, newDocument, onBase, onVersion, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./lib/workshop/doc";
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions, runsWithoutTools } from "./lib/packs";
@@ -1210,11 +1210,21 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
   };
   /** Locked slides the turn tried to change: refused, and said so. */
   const refused = new Set<string>();
+  // The piece stays open while the turn writes. What the author changes after the turn read it is theirs: the turn's
+  // edit to it is refused and said so, and taking the turn back out leaves it in place.
+  const since = Date.now();
+  const theirs = new Set<string>();
+  const noteSkipped = (skipped: ReturnType<typeof applyEdits>["skipped"]) => {
+    for (const x of skipped) {
+      if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
+      if (x.reason === "edited") theirs.add("id" in x.op ? x.op.id : x.op.op === "set_caption" ? "caption" : "pinned");
+    }
+  };
   const undoPartial = async () => {
     if (!applied || !versionBefore) return;
     const before = versionBefore;
     await updateDoc(session.id, ask.docId, (d) => {
-      revert(d, before);
+      undoTurn(d, before, since);
     }).catch(() => {});
     applied = 0;
     blockIds = [];
@@ -1489,9 +1499,9 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           const fresh = part.edits.slice(applied);
           await updateDoc(session.id, doc.id, (d) => {
             if (!versionBefore) versionBefore = d.headVersion ?? snapshot(d, `${d.dirty ? "your edits " : ""}before: ${ask.text.slice(0, 80)}`).id;
-            const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(fresh, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" })));
+            const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(fresh, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" }), { since, read: doc.blocks }));
             blockIds.push(...r.blockIds);
-            for (const x of r.skipped) if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
+            noteSkipped(r.skipped);
           });
           applied = part.edits.length;
           patch.edits = { docId: doc.id, blockIds: [...blockIds], versionBefore };
@@ -1647,9 +1657,9 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       await progress({ stage: "applying" }, true);
       await updateDoc(session.id, target.id, (d) => {
         if (!created && !versionBefore) versionBefore = d.headVersion ?? snapshot(d, `${d.dirty ? "your edits " : ""}before: ${ask.text.slice(0, 80)}`).id;
-        const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(rest, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" })));
+        const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(rest, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" }), { since, read: doc.blocks }));
         blockIds.push(...r.blockIds);
-        for (const x of r.skipped) if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
+        noteSkipped(r.skipped);
       });
       applied = plan.edits.length;
     }
@@ -1659,7 +1669,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         versionAfter = snapshot(d, `after: ${ask.text.slice(0, 80)}`).id;
       });
     }
-    await updateDoc(session.id, doc.id, (d) => markEditsSeen(d));
+    await updateDoc(session.id, doc.id, (d) => markEditsSeen(d, since));
     // a line of the piece they gave their own version of in this message is kept like a rewrite on the page (edit-log.ts)
     if (plan.theirs?.length) {
       const pointed = (ask.quotes ?? []).filter((q) => q.from !== "reply" && !q.postId);
@@ -1702,6 +1712,16 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       const at = (await readDoc(session.id, target.id))?.blocks.map((b) => b.id) ?? [];
       const nums = [...refused].map((id) => at.indexOf(id) + 1).filter((n) => n > 0).sort((a, b) => a - b);
       notes.push(`Locked and not changed: ${nums.length ? `${nums.length > 1 ? "slides" : "slide"} ${nums.join(", ")}` : "the locked slides"}.`);
+    }
+    if (theirs.size) {
+      const now = await readDoc(session.id, target.id);
+      const unit = now?.kind === "carousel" ? "slide" : now?.kind === "ad" ? "line" : now?.kind === "thread" ? "post" : "section";
+      const name = (id: string) =>
+        id === "caption" ? "the post description" : id === "pinned" ? "the pinned comment" : isHookId(id) ? "a hook" : now?.kind === "reel" ? "the script" : now?.kind === "notes" ? "the notes" : `${unit} ${(now?.blocks.findIndex((b) => b.id === id) ?? -1) + 1}`;
+      // one they have since removed is not named
+      const names = [...new Set([...theirs].map(name))].filter((n) => !n.endsWith(" 0")).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const one = names.length === 1;
+      if (names.length) notes.push(`You changed ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]} while this was being written, so ${one ? "it was" : "they were"} left as you wrote ${one ? "it" : "them"}.`);
     }
     // the draft changed: check it against its rules (flags only, never blocks)
     let flags: Awaited<ReturnType<typeof checkDraft>> | undefined;
@@ -2787,12 +2807,17 @@ workshopApp.patch("/sessions/:id", async (c) => {
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   try {
-    const patch = parseSessionPatch(await c.req.json().catch(() => null));
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    const patch = parseSessionPatch(body);
+    // A session changes workspace only when asked by name (`moveTo`, the menu's Move to), and only into one of this
+    // account's. A plain `projectId` is ignored: an app still running the old page sent it on every workspace switch
+    // (owner, 2026-11-16: switching workspace moved the open project into the new one).
+    const moveTo = okId(body?.moveTo) ? body.moveTo : undefined;
+    if (moveTo && !(await getWorkspace(user)).projects.some((p) => p.id === moveTo)) return c.json({ error: "Unknown workspace" }, 400);
     const next = await updateSession(meta.id, (m) => {
       if (patch.title !== undefined) m.title = patch.title || "Untitled project";
       if (patch.query !== undefined) m.query = patch.query;
-      if (patch.projectId === null) delete m.projectId;
-      else if (patch.projectId) m.projectId = patch.projectId;
+      if (moveTo) m.projectId = moveTo;
       if (patch.status) setSessionStatus(m, patch.status, "session"); // a refused move throws: 409 below
       if (patch.pinned === true) m.pinned = true;
       else if (patch.pinned === false) delete m.pinned;
@@ -3017,10 +3042,12 @@ workshopApp.patch("/sessions/:id/docs/:docId", async (c) => {
         else delete d.captions;
       }
       if (patch.blocks || patch.caption !== undefined || patch.pinned !== undefined || patch.hooks !== undefined) {
-        userEdit(d, patch.blocks ?? d.blocks.map((b) => ({ id: b.id, text: b.text })), Date.now(), {
-          caption: patch.caption,
-          pinned: patch.pinned,
-          ...(patch.hooks !== undefined ? { hooks: patch.hooks } : {}),
+        // an editor says what its save was typed on: what a turn wrote meanwhile stays (onBase)
+        const mine = patch.base ? onBase(d, patch.base, patch) : patch;
+        userEdit(d, mine.blocks ?? d.blocks.map((b) => ({ id: b.id, text: b.text })), Date.now(), {
+          caption: mine.caption,
+          pinned: mine.pinned,
+          ...(mine.hooks !== undefined ? { hooks: mine.hooks } : {}),
         }, byKey ? "ai" : "user");
       }
     });

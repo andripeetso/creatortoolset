@@ -1293,7 +1293,6 @@ export function Message({
           ))}
         </div>
       )}
-      {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
       <MessageMeta className="-ml-1 mt-1" text={working ? undefined : m.text} at={working ? undefined : (m.started ?? m.at) + (m.took ?? 0)} onBranch={working ? undefined : onBranch} />
     </div>
   );

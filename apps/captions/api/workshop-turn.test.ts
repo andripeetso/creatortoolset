@@ -184,6 +184,40 @@ describe("a turn's edits", () => {
     expect(done.edits?.versionAfter).toBeTruthy();
   });
 
+  it("leaves the slide the author changed while it wrote, says so, and a save typed on the older copy keeps what it wrote", async () => {
+    const { id, docId } = seed(["Hook for the piece", "Second slide", "Third slide"]);
+    let finish!: () => void;
+    const gate = new Promise<void>((r) => (finish = r));
+    let begun!: () => void;
+    const started = new Promise<void>((r) => (begun = r));
+    mocked.mockImplementationOnce((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown) => {
+      begun();
+      await gate;
+      const edits = [{ op: "replace", id: "b1", text: "A sharper hook" }, { op: "replace", id: "b2", text: "The AI's second slide" }, { op: "insert_after", id: "b2", text: "A new slide" }];
+      return { result: parse(answer({ reply: "Sharper now.", edits })), provider: "Claude (Mac)" };
+    }) as never);
+    const save = (blocks: object[], base: object[]) => call("PATCH", `/api/workshop/sessions/${id}/docs/${docId}`, { blocks, base: { blocks: base } });
+    const shown = (await docOf(id, docId)).blocks.map((b) => ({ id: b.id, text: b.text }));
+    const typed = shown.map((b) => (b.id === "b2" ? { ...b, text: "My second slide" } : b));
+    const { body } = await send(id, docId, "Make it sharper.");
+    try {
+      await started;
+      await new Promise((r) => setTimeout(r, 5));
+      // the piece is open while the turn is with the model: they type in slide 2
+      expect((await save(typed, shown)).status).toBe(200);
+      finish();
+      const done = await settled(id, body.reply!.id);
+      expect(done.notes).toContain("You changed slide 2 while this was being written, so it was left as you wrote it.");
+      expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["A sharper hook", "My second slide", "A new slide", "Third slide"]);
+      // their editor still shows the copy from before the turn: its next save changes slide 3 and nothing else
+      await save(typed.map((b) => (b.id === "b3" ? { ...b, text: "My third slide" } : b)), typed);
+      expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["A sharper hook", "My second slide", "A new slide", "My third slide"]);
+    } finally {
+      finish();
+      await settled(id, body.reply!.id).catch(() => {});
+    }
+  });
+
   it("keeps set_caption as the caption of a new document and turns the replaced slide into a new slide", async () => {
     const { id, docId } = seed(["Old slide"]);
     replies(answer({ reply: "Made the carousel.", newDocument: { kind: "carousel", title: "New carousel" }, edits: [{ op: "set_caption", text: "Caption for the post." }, { op: "replace", id: "b1", text: "A fresh first slide." }] }));

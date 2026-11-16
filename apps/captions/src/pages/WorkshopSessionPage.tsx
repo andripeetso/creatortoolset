@@ -76,6 +76,7 @@ import {
   type SessionRecord,
   type SessionRow,
   type SessionStatus,
+  type DocumentBase,
   type WorkshopDocument,
   type WorkshopFramework,
   type WorkshopProject,
@@ -158,6 +159,9 @@ export default function WorkshopSessionPage() {
   // A piece being typed in keeps the copy it showed until its save lands (`held`): a refetch caused elsewhere never
   // moves the text under the cursor.
   const held = useRef(new Map<string, WorkshopDocument>());
+  // What the next save of a piece was typed on, sent with it so the server keeps what a turn wrote meanwhile: the
+  // copy it showed, or the last save itself while newer typing kept that save's answer off the screen.
+  const based = useRef(new Map<string, DocumentBase>());
   const savingDocs = useRef(new Map<string, number>());
   // `held` changes only with a docs write, which changes the data
   const setDocsData = docsLoad.set;
@@ -422,11 +426,26 @@ export default function WorkshopSessionPage() {
     setDocSaving(true);
     const inFlight = (n: number) => savingDocs.current.set(p.docId, (savingDocs.current.get(p.docId) ?? 0) + n);
     inFlight(1);
-    return patchDocument(sessionId, p.docId, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}) })
+    const shown = held.current.get(p.docId);
+    const base: DocumentBase | undefined =
+      based.current.get(p.docId) ??
+      (shown && {
+        blocks: shown.blocks.map((b) => ({ id: b.id, text: b.text })),
+        caption: shown.caption?.text ?? "",
+        pinned: shown.pinned?.text ?? "",
+        ...(shown.kind === "reel" ? { hooks: (shown.hooks ?? []).map((h) => ({ id: h.id, text: h.text })) } : {}),
+      });
+    return patchDocument(sessionId, p.docId, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}), ...(base ? { base } : {}) })
       .then((doc) => {
         inFlight(-1);
         // the saved copy takes the server's; the piece on screen lets go of its own once no newer edit is waiting
-        if (pendingBlocks.current?.docId !== doc.id && !savingDocs.current.get(doc.id)) held.current.delete(doc.id);
+        if (pendingBlocks.current?.docId !== doc.id && !savingDocs.current.get(doc.id)) {
+          held.current.delete(doc.id);
+          based.current.delete(doc.id);
+        } else {
+          // ponytail: two saves in flight at once share one base; a queue per piece if a page's lines go missing that way
+          based.current.set(doc.id, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}) });
+        }
         setDocs((ds) => ds.map((d) => (d.id === doc.id ? doc : d)));
         return true;
       })
@@ -630,12 +649,9 @@ export default function WorkshopSessionPage() {
       .catch(fail);
   };
 
-  const setProject = (projectId: string | null) => {
-    if (!session) return;
-    setSession({ ...session, projectId: projectId ?? undefined });
-    patchSession(session.id, { projectId }).catch(fail);
-    if (projectId) void selectProject(projectId);
-  };
+  // switching workspace leaves this project where it is and opens the other workspace's list (owner, 2026-11-16: a
+  // switch made from here moved the open project into the workspace he switched to)
+  const leaveForWorkspace = useCallback(() => navigate("/workshop"), [navigate]);
   // ---- what the AI changed: the last turn's new words on the open piece light up while it
   // writes, fade out a few seconds after, and the Changes button shows them again
   const lastEdit = [...messages].reverse().find((m) => m.role === "assistant" && m.edits?.docId === activeDoc?.id && !!m.edits?.versionBefore)?.edits;
@@ -1112,7 +1128,7 @@ export default function WorkshopSessionPage() {
               </button>
             ))
           : null}
-        <ProjectSwitcher onSelect={setProject} />
+        <ProjectSwitcher onSelect={leaveForWorkspace} />
       </AppBar>
 
       <div className="flex min-h-0 flex-1">
@@ -1235,7 +1251,8 @@ export default function WorkshopSessionPage() {
                     <DocumentEditor
                       key={activeDoc.id}
                       doc={activeDoc}
-                      locked={thinking || !fresh || readOnly}
+                      locked={!fresh || readOnly}
+                      writing={thinking}
                       quiet={!thinking}
                       saving={docSaving}
                       aiAvailable={aiAvailable}
