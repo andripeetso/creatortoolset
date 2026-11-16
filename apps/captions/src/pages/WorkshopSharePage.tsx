@@ -301,7 +301,7 @@ export function WorkshopShareView({ token, embedded = false, src }: { token: str
   if (!data) {
     return (
       <div className={`flex ${embedded ? "h-64" : "h-dvh"} items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400`}>
-        {error ? <p>Link off or not found</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
+        {error ? <p>This link is turned off or not found. Ask the person who shared it for a new link.</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
       </div>
     );
   }

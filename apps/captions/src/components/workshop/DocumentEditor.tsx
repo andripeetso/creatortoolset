@@ -1093,7 +1093,7 @@ function PieceEditor({
                   )}
                 </div>
                 <div>
-                  <p className="mb-1.5 text-[11px] text-muted-foreground">
+                  <p className="mb-1.5 text-[11px] text-muted-foreground" title="Usually empty. Use only to sell something or to occupy a comment you know is coming. Never a question hoping people will reply.">
                     Pinned comment <span className="text-muted-foreground/70">(optional)</span>
                   </p>
                   <AutoTextarea
