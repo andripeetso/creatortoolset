@@ -1432,7 +1432,7 @@ Write it for me does.`;
 
 const TO_WRITER = "These words aren't the user's own, and this account's Workshop has a writer: it writes a piece's words. Call workshop_chat on the piece with what the user asked, in their own words, and what you found in notes.";
 const TO_MATERIAL = "Call workshop_chat on the piece first: it gives you the user's workspace, their posts closest to it and how they rewrote earlier drafts, to write these words from.";
-const MATERIAL_ANSWER = "Write the piece's words yourself from this material, then save them with workshop_edit_piece. their_posts and their_rewrites are how the user sounds (what they changed in the AI's drafts is what they want); project holds the workspace's facts about the brand.";
+const MATERIAL_ANSWER = "Write the piece's words yourself from this material, then save them with workshop_edit_piece. their_posts and their_rewrites are how the user sounds (what they changed in the AI's drafts is what they want); project holds the workspace's facts about the brand, and lists its context files: workspace_files reads one (file = the id in its brackets) when the piece needs what is in it.";
 
 /** Pieces whose material was given to a caller, by user and piece: when (an AI that writes, writes from it). */
 const given = new Map<string, number>();
