@@ -4,7 +4,7 @@ import { Gauge, ScanFace } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { upcoming } from "@/components/assistant/LimitBanner";
 import { dropZoneClass } from "@/components/DropZone";
-import { Card, Row, Section, SettingsSelect, TextField, saveFailed } from "@/components/settings/ui";
+import { Card, Row, Section, SettingsSelect, Status, TextField, saveFailed } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -59,18 +59,18 @@ const problemOf = (e: unknown): Problem => ({ text: (e as Error).message, limit:
 
 /** A usage limit is the chat's quiet amber notice with its reset time; anything else is said in red. */
 function ProblemLine({ problem }: { problem: Problem }) {
-  if (!problem.limit) return <span className="text-xs text-red-500">{problem.text}</span>;
+  if (!problem.limit) return <Status tone="broken">{problem.text}</Status>;
   const { until } = problem.limit;
   return (
     <span role="status" className="inline-flex items-center gap-1.5 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-0.5 text-xs dark:border-amber-400/25 dark:bg-amber-400/10">
       <Gauge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <span className="font-medium">Usage limit reached</span>
-      <span className="text-muted-foreground">{until && until > Date.now() ? `Try again ${upcoming(until)}` : "Try again later"}</span>
+      {until && until > Date.now() && <span className="text-muted-foreground">Resets {upcoming(until)}</span>}
     </span>
   );
 }
 
-/** The account's Face Blur settings, read once, and a save that puts the old ones back when it fails. */
+/** Face Blur's settings in the workspace the request works in, read once, and a save that puts the old ones back when it fails. */
 function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   useEffect(() => {
@@ -128,7 +128,7 @@ function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
       {settings.mode === "some" && (
         <Row
           title="Which faces"
-          description="Your AI looks at each face and picks the ones that match"
+          description="AI picks the faces that match this text."
           control={<TextField label="Which faces" value={settings.who} maxLength={500} onCommit={(who) => save({ ...settings, who })} />}
         >
           <div className="flex flex-wrap gap-1.5">
@@ -221,7 +221,7 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
             />
           )}
           <Row title="Soft edge" control={<StyleSlider label="Soft edge" value={style.softness} onMove={(softness) => move({ softness })} onCommit={(softness) => commit({ softness })} />} />
-          <Row title="Size" description="How far past the face it reaches" control={<StyleSlider label="Size" value={style.size} min={0.8} max={2} onMove={(size) => move({ size })} onCommit={(size) => commit({ size })} />} />
+          <Row title="Size" description="How far the cover reaches past the face." control={<StyleSlider label="Size" value={style.size} min={0.8} max={2} onMove={(size) => move({ size })} onCommit={(size) => commit({ size })} />} />
         </div>
       </div>
     </Card>
@@ -256,7 +256,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
           const at = `${mine?.path ?? "example"}\n${settings.who}`;
           let pick = picks.get(at);
           if (!pick) {
-            setBusy("Your AI is choosing the faces");
+            setBusy("AI is choosing faces");
             pick = (async () => {
               const faces = (await faceBlurTry(source, style, { facesOnly: true })).faces;
               return { faces, blur: faces.length ? (await call<{ blur: string[] }>(`${API}/pick`, "POST", { who: settings.who, faces })).blur : [] };
@@ -298,8 +298,8 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
     if (path) choose({ path, name: path.split("/").pop() ?? path });
   };
   if (mac === undefined) return null;
-  if (mac === null) return <p className="text-xs text-muted-foreground">The example is drawn by the Creator Toolset Mac app</p>;
-  if (mac < 2) return <p className="text-xs text-muted-foreground">Update the Mac app to see the example: Creator Toolset → Check for Updates</p>;
+  if (mac === null) return <Status tone="attention">Needs the Mac app</Status>;
+  if (mac < 2) return <Status tone="attention">Needs a newer Mac app</Status>;
   const frame = shown?.frames[moment] ?? shown?.frames[0];
   const covered = shown?.faces.filter((f) => f.covered).length ?? 0;
   return (
@@ -308,7 +308,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
         {frame && (
           <img
             src={`data:image/jpeg;base64,${frame}`}
-            alt={mine ? "Your file with its faces covered" : "The example with its faces covered"}
+            alt={mine ? "The file with its faces covered" : "The example with its faces covered"}
             className="h-full w-full object-contain"
             onLoad={(e) => setRatio(`${e.currentTarget.naturalWidth} / ${e.currentTarget.naturalHeight}`)}
           />
@@ -327,7 +327,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
       {problem && <p><ProblemLine problem={problem} /></p>}
       {shown && !busy && (
         <p className="text-xs text-muted-foreground">
-          {shown.faces.length ? `${covered} of ${shown.faces.length} ${shown.faces.length === 1 ? "face" : "faces"} covered${some ? ", your AI's pick" : ""}` : "No face found"}
+          {shown.faces.length ? `${covered} of ${shown.faces.length} ${shown.faces.length === 1 ? "face" : "faces"} covered${some ? ", chosen by AI" : ""}` : "No face found"}
         </p>
       )}
       {shown && shown.faces.length > 0 && (
@@ -344,7 +344,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
         {/* the example's credit is its licence: shown whole, never cut short */}
         <p className={`text-[11px] text-muted-foreground ${mine ? "min-w-0 truncate" : ""}`}>{mine ? mine.name : "Tears of Steel (CC BY 3.0) Blender Foundation"}</p>
         <Button size="sm" variant="ghost" onClick={() => void (mine ? choose(null) : pickFile())}>
-          {mine ? "Back to the example" : "Try your own file"}
+          {mine ? "Back to the example" : "Choose a file"}
         </Button>
       </div>
     </div>
@@ -352,8 +352,9 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
 }
 
 /**
- * "New Media Library files": its switch where a Mac of this account can cover them (or while it is on, so it can be
- * switched off), else the line that says why not; and the files it could not cover, each with why and Try again.
+ * "New Media Library files": its switch, which cannot be moved where no computer of this account can cover them (the
+ * description then says why; while it is on it can always be turned off); and the files it could not cover, each with why
+ * and Retry.
  */
 function AutoRows({ settings, save }: ReturnType<typeof useSettings>) {
   const [auto, setAuto] = useState<Auto | null>(null);
@@ -361,17 +362,14 @@ function AutoRows({ settings, save }: ReturnType<typeof useSettings>) {
   useEffect(load, []);
   if (!settings || !auto) return null;
   const retry = (versionId: string) => call(`${API}/auto/retry`, "POST", { versionId }).then(load, (e: Error) => saveFailed(e.message));
+  const can = auto.can || settings.auto;
   return (
     <Card>
-      {auto.can || settings.auto ? (
-        <Row
-          title="New Media Library files"
-          description="Each photo and video that comes into your Media Library is covered by your Mac with these settings, and the covered copy is added beside it"
-          control={<Switch checked={settings.auto} onCheckedChange={(on) => void save({ ...settings, auto: on })} aria-label="New Media Library files" />}
-        />
-      ) : (
-        <Row title="New Media Library files" description={auto.why} />
-      )}
+      <Row
+        title="New Media Library files"
+        description={can ? "Adds a covered copy beside each new photo and video." : auto.why}
+        control={<Switch checked={settings.auto} disabled={!can} onCheckedChange={(on) => void save({ ...settings, auto: on })} aria-label="New Media Library files" />}
+      />
       {auto.failed.map((f) => (
         <Row
           key={f.versionId}
@@ -379,7 +377,7 @@ function AutoRows({ settings, save }: ReturnType<typeof useSettings>) {
           description={f.error}
           control={
             <Button size="sm" variant="outline" onClick={() => void retry(f.versionId)}>
-              Try again
+              Retry
             </Button>
           }
         />
@@ -397,12 +395,6 @@ function FaceBlurSettings() {
         <StyleCard {...s} />
       </Section>
       <AutoRows {...s} />
-      <p className="text-sm text-muted-foreground">
-        Faces in AI Editor edits are covered by the AI Editor's own Blur faces step:{" "}
-        <Link to="/settings/tools/editor" className="underline underline-offset-2">
-          Settings → AI Editor
-        </Link>
-      </p>
     </div>
   );
 }
@@ -410,7 +402,7 @@ function FaceBlurSettings() {
 const STAGE: Record<FaceBlurItem["stage"], string> = {
   queued: "Waiting",
   scanning: "Finding faces",
-  choosing: "Your AI is choosing the faces",
+  choosing: "AI is choosing faces",
   writing: "Writing the copy",
   done: "Saved beside the original",
   failed: "Failed",

@@ -99,7 +99,7 @@ describe("choosing faces", () => {
     ai.configured = false;
     let r = await pick([face("T1")]);
     expect(r.status).toBe(409);
-    expect(((await r.json()) as { error: string }).error).toMatch(/connect one in Settings → Providers\. Nothing was blurred/);
+    expect(((await r.json()) as { error: string }).error).toMatch(/add one in Settings → Providers\. Nothing was blurred/);
     ai.configured = true;
     ai.answer = async () => {
       throw new Error("over its limit");
@@ -110,7 +110,7 @@ describe("choosing faces", () => {
     ai.answer = async () => "I can't tell";
     r = await pick([face("T1")]);
     expect(r.status).toBe(409);
-    expect(((await r.json()) as { error: string }).error).toMatch(/could not read your AI's answer/);
+    expect(((await r.json()) as { error: string }).error).toMatch(/could not read the AI provider's answer/);
   });
 
   it("says when a usage limit resets, as the chat does", async () => {
@@ -121,7 +121,7 @@ describe("choosing faces", () => {
     const r = await pick([face("T1")]);
     expect(r.status).toBe(409);
     const j = (await r.json()) as { error: string; limit: { until: number } };
-    expect(j.error).toBe("Your AI is at its usage limit. Nothing was blurred.");
+    expect(j.error).toBe("The AI provider is at its usage limit. Nothing was blurred.");
     expect(j.limit.until - before).toBeGreaterThanOrEqual((2 * 3600 + 15 * 60 + 45) * 1000);
     expect(j.limit.until - before).toBeLessThan((2 * 3600 + 16 * 60) * 1000);
   });
