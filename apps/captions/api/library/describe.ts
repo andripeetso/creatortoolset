@@ -105,13 +105,15 @@ export interface Described {
 }
 
 export function describePrompt(input: DescribeInput): { system: string; user: string } {
+  // described with no picture (shots, was): nothing is asked of frames, and neither its turn nor its roll, which stay
+  const words = !!input.shots || input.was !== undefined;
   return {
     system:
       "You describe one clip in a creator's media library so they can find it later by searching. Say what is seen and heard: " +
       `the setting, what happens, objects, shot type and mood. ${RULE} Answer with JSON only.`,
     user: [
       ...(input.workspace
-        ? [`The workspace this clip belongs to. Use it to name what is seen (the product, the game, its places and features) when the frames show it; never add what they don't show:\n${input.workspace}`]
+        ? [`The workspace this clip belongs to. Use it to name what is seen (the product, the game, its places and features) when ${words ? "its words show it; never add what they don't say" : "the frames show it; never add what they don't show"}:\n${input.workspace}`]
         : []),
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
@@ -122,8 +124,12 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
         : input.frames > 1
           ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`
           : "The picture is the whole clip: a photo, or a clip too short for more.",
-      'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
-      'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
+      ...(words
+        ? []
+        : [
+            'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
+            'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
+          ]),
       ...(input.folders
         ? [
             input.newFolder
@@ -135,7 +141,7 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       ...(input.tags?.list.length
         ? [`Tags already in this library of ${input.tags.clips} clips (tag: clips it is on): ${input.tags.list.map((t) => `${t.tag}: ${t.count}`).join(", ")}`]
         : []),
-      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], "roll": "a" or "b", "turn": 0, ${KIND_ANSWER}${input.folders ? ', "folder": "a folder name"' : ""}}`,
+      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], ${words ? "" : '"roll": "a" or "b", "turn": 0, '}${KIND_ANSWER}${input.folders ? ', "folder": "a folder name"' : ""}}`,
     ].join("\n\n"),
   };
 }
