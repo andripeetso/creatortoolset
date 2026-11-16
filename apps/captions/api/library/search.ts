@@ -20,6 +20,8 @@ import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 import { ratedLine } from "./look";
 import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
+// the studio plug-in reads it from here (it lived here before stretches.ts)
+export { parseSignal } from "./stretches";
 
 /**
  * Search, one asset in full, re-running jobs, and opening a clip in Caption Studio (tasks/media-library-plan.md,
