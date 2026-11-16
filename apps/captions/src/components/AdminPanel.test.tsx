@@ -53,6 +53,12 @@ it("shows a loading row only on a device with nothing saved, then the rows", asy
   expect(now()).not.toContain("Loading…");
 });
 
+it("a row says the project's tool, owner and when it changed", async () => {
+  open();
+  await flush();
+  expect(now()).toContain("Caption Studio · tinyacrobatics · updated ");
+});
+
 it("paints the saved rows on the first paint, with no loading row", () => {
   putCached("tinyadmin", "/api/admin/projects", [project]);
   const first = open();
@@ -60,18 +66,18 @@ it("paints the saved rows on the first paint, with no loading row", () => {
   expect(first).not.toContain("Loading…");
 });
 
-it("keeps the saved rows when the server can't be reached, and says the list did not load only when there is nothing to show", async () => {
+it("keeps the saved rows when the server can't be reached, and says the list could not load only when there is nothing to show", async () => {
   online = false;
   putCached("tinyadmin", "/api/admin/projects", [project]);
   open();
   await flush();
   expect(now()).toContain("Tiny Acrobatics reel");
-  expect(now()).not.toContain("did not load");
+  expect(now()).not.toContain("Could not load");
   act(() => root!.unmount());
   host!.remove();
   root = undefined;
   clearLocalCache();
   open();
   await flush();
-  expect(now()).toContain("The projects did not load.");
+  expect(now()).toContain("Could not load projects");
 });

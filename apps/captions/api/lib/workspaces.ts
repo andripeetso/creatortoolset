@@ -120,7 +120,7 @@ export const canManage = (role: WorkspaceRole | undefined) => role === "owner";
 
 export function renameWorkspace(w: Workspace, name: string): void {
   const n = name.trim().slice(0, 60);
-  if (!n) throw new Error("Give the team a name");
+  if (!n) throw new Error("Enter a team name.");
   w.name = n;
   persist();
 }
@@ -134,7 +134,7 @@ export function setSignInWith(w: Workspace, owner: string, list: unknown[]): voi
   const want = (["google", "apple", "github"] as const).filter((p) => list.includes(p));
   if (want.length && !findUser(owner)?.identities?.some((i) => want.some((p) => p === i.provider))) {
     const names = want.map((p) => SIGNIN_NAME[p]);
-    throw new Error(`Link your own ${names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0]} account first (Settings → Account)`);
+    throw new Error(`Add your own ${names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0]} sign-in first, in Settings → Account`);
   }
   if (want.length) w.signInWith = [...want];
   else delete w.signInWith;
@@ -144,7 +144,7 @@ export function setSignInWith(w: Workspace, owner: string, list: unknown[]): voi
 const isAi = (x: unknown): x is AiRoute => x === "own" || x === "budget";
 const budget = (x: unknown): number => {
   const n = typeof x === "number" && Number.isFinite(x) ? x : 0;
-  if (n < 0 || n > 10_000) throw new Error("A budget is between $0 and $10,000 a month");
+  if (n < 0 || n > 10_000) throw new Error("Enter a budget from $0 to $10,000 a month.");
   return Math.round(n * 100) / 100;
 };
 
@@ -198,7 +198,7 @@ export function removeMember(w: Workspace, username: string, by: WorkspaceRole):
   const m = memberIn(w, username);
   if (!m) throw new Error("Not a member");
   if (by !== "owner") throw new Error("Only the owner changes the team");
-  if (m.role === "owner") throw new Error("The owner can't be removed");
+  if (m.role === "owner") throw new Error("The owner cannot be removed");
   w.members = w.members.filter((x) => x !== m);
   persist();
 }
@@ -212,7 +212,7 @@ export function ownedTeamWithMembers(username: string): Workspace | null {
 export function forgetAccount(username: string): void {
   const s = store();
   const busy = ownedTeamWithMembers(username);
-  if (busy) throw new Error(`${username} owns ${busy.name}, which has other members: transfer ownership first`);
+  if (busy) throw new Error(`${username} owns ${busy.name}, which has other members: remove them first`);
   for (const w of s.workspaces) w.members = w.members.filter((m) => m.username !== username);
   s.workspaces = s.workspaces.filter((w) => w.members.length > 0);
   s.invites = s.invites.filter((i) => i.createdBy !== username);
@@ -281,7 +281,7 @@ const workspaceById = (id: string): Workspace | null => store().workspaces.find(
 /** What an invited person gets once they join (the owner sets it on the pending invite; `off` is checked by the route). */
 export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; read?: Tool[]; scripts?: boolean; workspaces?: string[] }): void {
   const i = store().invites.find((x) => x.id === id && x.workspaceId === w.id);
-  if (!i) throw new Error("No such invite");
+  if (!i) throw new Error("Invite not found");
   if (patch.off) i.off = patch.off;
   if (patch.read) i.read = patch.read;
   if (patch.scripts !== undefined) i.scripts = patch.scripts;

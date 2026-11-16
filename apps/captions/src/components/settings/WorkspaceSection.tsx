@@ -1,21 +1,19 @@
 import { SettingsDialog } from "./kit-dialog";
-import { Check, ChevronDown, Eye, Plus } from "lucide-react";
+import { Check, Eye, Plus } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
 import { DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { PROJECT_COLORS, projectColor } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
 import { webPlugins } from "@/plugins.gen";
 import { useCachedLoad } from "@/lib/local-cache";
 import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateInvite, updateMember } from "@/lib/workspaces";
 import { AskEveryone, Tick, useServerAccounts } from "@/components/AdminPanel";
-import type { RowMenuItem } from "./kit-controls";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
 import { useSignInApps } from "./AccountSection";
 import { lastActiveText, msg } from "./helpers";
@@ -26,12 +24,12 @@ const PROVIDER_NAME: Record<SignInProvider, string> = { google: "Google", apple:
 const orList = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : (names[0] ?? ""));
 
 /**
- * How the team signs in (api/auth.ts ruleFor enforces it): a password too, each sign-in the server has switched on alone,
- * and all the switched-on ones together. `saved` is what the team has now; a sign-in that is switched off here stays as
- * the last choice so the value shown is the one that is enforced.
+ * The team's sign-in methods (api/auth.ts ruleFor enforces it): a password too, each sign-in the server has switched on
+ * alone, and all the switched-on ones together. Each option names what it lets in. `saved` is what the team has now; a
+ * sign-in that is switched off here stays as the last choice so the value shown is the one that is enforced.
  */
 export function signInOptions(on: readonly SignInProvider[], saved: readonly string[] = []): { id: string; label: string; value: SignInProvider[] }[] {
-  const opts: { id: string; label: string; value: SignInProvider[] }[] = [{ id: "any", label: "Any way (password too)", value: [] }];
+  const opts: { id: string; label: string; value: SignInProvider[] }[] = [{ id: "any", label: orList(["Password", ...on.map((p) => PROVIDER_NAME[p])]), value: [] }];
   for (const p of on) opts.push({ id: p, label: `${PROVIDER_NAME[p]} only`, value: [p] });
   if (on.length > 1) opts.push({ id: "all", label: orList(on.map((p) => PROVIDER_NAME[p])), value: [...on] });
   const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
@@ -42,12 +40,18 @@ export function signInOptions(on: readonly SignInProvider[], saved: readonly str
 export const signInId = (opts: ReturnType<typeof signInOptions>, saved: readonly string[] | undefined) =>
   opts.find((o) => o.value.length === (saved ?? []).length && o.value.every((x) => (saved ?? []).includes(x)))?.id ?? "any";
 
+type Brand = { id: string; name: string };
+/** A team that was never named is stored as "Team" (or, before that, "Workspace"): shown as no name. */
+const teamName = (name: string) => (name === "Workspace" || name === "Team" ? "" : name);
+
 /**
- * Settings → Team (hosted servers only). The owner renames the team, sets how it signs in, invites people and removes
- * them. A member sees the team and their own row. A platform admin also runs every account on the server here (each
- * member's menu, Create account, Other accounts, Ask everyone for a sign-in code; api/admin.ts). Access is one grid of everyone in the team and everyone invited: the
- * apps each may open (the account's `off`) and whether they read the owner's scripts; an invite's row is what that
- * person gets once they join (api/workspace.ts PATCH /invites/:id).
+ * Settings → Team (hosted servers only). Membership is per server, so the page has no workspace selector. The owner
+ * names the team, sets its sign-in methods, invites people and removes them; which of the owner's workspaces a person
+ * works in is their row's "Workspaces…". A member sees their own row. Access is one grid of everyone in the team and
+ * everyone invited: the apps each may open (the account's `off` and `read`) and whether they read the owner's scripts;
+ * an invite's row is what that person gets once they join (api/workspace.ts PATCH /invites/:id). A platform admin also
+ * runs every account on the server, in one place: Accounts (New account and each account's menu; api/admin.ts), and the
+ * sign-in code for everyone.
  */
 export function WorkspaceSection() {
   const me = useMe();
@@ -64,20 +68,22 @@ export function WorkspaceSection() {
     setParams((p) => (p.delete("add"), p), { replace: true });
   }, [params, setParams, view]);
   const [aiFor, setAiFor] = useState<MemberView | null>(null);
+  const [spacesFor, setSpacesFor] = useState<{ who: string; given: string[]; save: (ids: string[]) => Promise<unknown> } | null>(null);
   // the sign-ins this server has switched on (the Account page's list): the team can only be set to these
   const apps = useSignInApps();
   const on: SignInProvider[] | null = apps ? PROVIDERS.filter((p) => apps[p]) : null;
 
   const refresh = saved.refresh;
   const load = useCallback(() => refresh().catch(() => {}), [refresh]);
-  // a platform admin also runs the server's accounts here (was Admin → Accounts): passwords, locks, admin or not, delete
-  const accounts = useServerAccounts(me?.role === "admin", () => void load());
+  // a platform admin also runs the server's accounts here: passwords, locks, admin or not, delete
+  const admin = me?.role === "admin";
+  const accounts = useServerAccounts(admin, () => void load());
 
   if (failed) {
     return (
       <Section title="Team">
         <Card>
-          <ErrorRow title="The team did not load" retry={() => void load()} />
+          <ErrorRow title="Could not load the team" retry={() => void load()} />
         </Card>
       </Section>
     );
@@ -95,7 +101,7 @@ export function WorkspaceSection() {
     return (
       <Section title="Team">
         <Card>
-          <EmptyRow title="You're not in a team" description="Someone who runs one sends you an invite link to join." />
+          <EmptyRow title="No team" />
         </Card>
       </Section>
     );
@@ -103,12 +109,12 @@ export function WorkspaceSection() {
 
   const owner = view.me === "owner";
   if (!owner) {
-    // a member can change nothing here: the team's name is the page, and their own line is the only row
+    // a member can change nothing here: their own line, with the team's name, is the only row
     const mine = view.members.find((m) => m.username === me?.username);
     return (
-      <Section title={view.workspace.name}>
+      <Section title="Team">
         <Card>
-          <ListRow title={me?.username ?? ""} subtitle={mine ? memberLine(mine, true, false) : undefined} />
+          <ListRow title={me?.username ?? ""} subtitle={[teamName(view.workspace.name), mine ? memberLine(mine, true, false) : ""].filter(Boolean).join(" · ") || undefined} />
         </Card>
       </Section>
     );
@@ -116,6 +122,10 @@ export function WorkspaceSection() {
   // every change reloads the view; a failure throws, so the control that asked shows its toast
   const act = (p: Promise<unknown>) => p.then(load);
   const attempt = (p: Promise<unknown>) => act(p).catch((e) => saveFailed(msg(e)));
+  const brands: Brand[] = view.brands ?? [];
+  /** A row menu's "Workspaces…": only when the owner has workspaces to give. */
+  const spacesItem = (who: string, given: string[] | undefined, save: (ids: string[]) => Promise<unknown>) =>
+    brands.length ? [{ label: "Workspaces…", onSelect: () => setSpacesFor({ who, given: given ?? [], save }) }] : [];
 
   return (
     <>
@@ -127,10 +137,9 @@ export function WorkspaceSection() {
             control={
               <TextField
                 label="Team name"
-                placeholder="Team name"
-                value={view.workspace.name === "Workspace" || view.workspace.name === "Team" ? "" : view.workspace.name}
+                value={teamName(view.workspace.name)}
                 onCommit={async (next) => {
-                  if (!next.trim()) throw new Error("A team needs a name.");
+                  if (!next.trim()) throw new Error("Enter a team name.");
                   await act(renameWorkspace(next.trim()));
                 }}
               />
@@ -140,11 +149,11 @@ export function WorkspaceSection() {
           {on !== null && on.length > 0 && (
             <Row
               id="team-sign-in"
-              title="How the team signs in"
+              title="Sign-in methods"
               control={
                 (
                   <SettingsSelect
-                    label="How the team signs in"
+                    label="Sign-in methods"
                     value={signInId(signInOptions(on, view.workspace.signInWith), view.workspace.signInWith)}
                     options={signInOptions(on, view.workspace.signInWith).map((o) => ({ value: o.id, label: o.label }))}
                     onValueChange={(id) =>
@@ -158,28 +167,20 @@ export function WorkspaceSection() {
         </Card>
       </Section>
 
-      {me?.role === "admin" && <AskEveryone />}
+      {admin && <AskEveryone />}
 
       <Section
         id="team-members"
         title="Members"
         action={
-          <div className="flex gap-1">
-            {me?.role === "admin" && (
-              <Button size="xs" variant="ghost" onClick={accounts.create}>
-                <Plus className="size-3" /> Create account
-              </Button>
-            )}
-            <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
-              <Plus className="size-3" /> Invite
-            </Button>
-          </div>
+          <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
+            <Plus className="size-3" /> Invite
+          </Button>
         }
       >
         <Card>
           {view.members.map((m) => {
             const self = m.username === me?.username;
-            const acct = accounts.users?.find((u) => u.username === m.username);
             return (
               <ListRow
                 key={m.username}
@@ -190,13 +191,17 @@ export function WorkspaceSection() {
                     {self && <span className="ml-1.5 font-normal text-muted-foreground">(you)</span>}
                   </>
                 }
-                subtitle={[memberLine(m, self, true), acct?.role === "admin" && m.role !== "owner" ? "Admin" : null, acct?.locked ? "Locked" : null].filter(Boolean).join(" · ")}
+                subtitle={[memberLine(m, self, true), worksIn(brands, m.workspaces)].filter(Boolean).join(" · ")}
                 actions={
                   m.role !== "owner" && !self ? (
-                    <>
-                      <WorkspacePicker brands={view.brands ?? []} given={m.workspaces ?? []} onChange={(workspaces) => act(updateMember(m.username, { workspaces }))} />
-                      <MemberMenu m={m} account={acct ? accounts.menuItems(acct) : []} onAi={() => setAiFor(m)} onRemove={() => attempt(removeMember(m.username))} />
-                    </>
+                    <RowMenu
+                      label={`More for ${m.username}`}
+                      items={[
+                        { label: "AI…", onSelect: () => setAiFor(m) },
+                        ...spacesItem(m.username, m.workspaces, (workspaces) => act(updateMember(m.username, { workspaces }))),
+                        { label: "Remove from team", destructive: true, confirm: { title: `Remove ${m.username} from the team?`, ok: "Remove" }, onSelect: () => act(removeMember(m.username)) },
+                      ]}
+                    />
                   ) : undefined
                 }
               />
@@ -211,16 +216,16 @@ export function WorkspaceSection() {
             {view.invites.map((i) => (
               <ListRow
                 key={i.id}
-                title={i.email ? `Emailed to ${i.email}` : "Link for one person"}
-                subtitle={`Expires ${new Date(i.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`}
+                title={i.email ?? "Invite link"}
+                subtitle={[`Expires ${new Date(i.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`, worksIn(brands, i.workspaces)].filter(Boolean).join(" · ")}
                 actions={
-                  <>
-                  <WorkspacePicker brands={view.brands ?? []} given={i.workspaces ?? []} onChange={(workspaces) => act(updateInvite(i.id, { workspaces }))} />
                   <RowMenu
-                    label="More for this invite"
-                    items={[{ label: "Revoke", destructive: true, confirm: { title: "Revoke this invite link?", body: "Nobody can join with it after this.", ok: "Revoke" }, onSelect: () => attempt(revokeInvite(i.id)) }]}
+                    label={`More for ${i.email ?? "this invite"}`}
+                    items={[
+                      ...spacesItem(i.email ?? "this invite", i.workspaces, (workspaces) => act(updateInvite(i.id, { workspaces }))),
+                      { label: "Delete", destructive: true, confirm: { title: "Delete this invite?", body: "Nobody can join with it after this." }, onSelect: () => act(revokeInvite(i.id)) },
+                    ]}
                   />
-                  </>
                 }
               />
             ))}
@@ -231,7 +236,7 @@ export function WorkspaceSection() {
       {(view.members.some((m) => m.role !== "owner") || view.invites.length > 0) && (
         <Section id="team-access" title="Access">
           <AccessGrid
-            gates={me?.role === "admin" ? webPlugins.flatMap((p) => p.gates ?? []) : []}
+            gates={admin ? webPlugins.flatMap((p) => p.gates ?? []) : []}
             rows={[
               ...view.members
                 .filter((m) => m.role !== "owner")
@@ -259,25 +264,37 @@ export function WorkspaceSection() {
         return Access && people.length > 0 ? <Access key={p.id} people={people} /> : null;
       })}
 
-      {(() => {
-        // accounts on the server that are in no team: made by hand, or left one
-        const others = accounts.users?.filter((u) => !view.members.some((m) => m.username === u.username)) ?? [];
-        return (
-          others.length > 0 && (
-            <Section id="team-other-accounts" title="Other accounts">
-              <Card>
-                {others.map((u) => (
-                  <ListRow key={u.username} title={u.name || u.username} subtitle={accounts.lineOf(u)} actions={<RowMenu label={`More for ${u.username}`} items={accounts.menuItems(u)} />} />
-                ))}
-              </Card>
-            </Section>
-          )
-        );
-      })()}
+      {/* every account on the server, in the team or not: the one place an account is made, changed or deleted */}
+      {admin && (
+        <Section
+          id="team-accounts"
+          title="Accounts"
+          action={
+            <Button size="xs" variant="ghost" onClick={accounts.create}>
+              <Plus className="size-3" /> New account
+            </Button>
+          }
+        >
+          <Card>
+            {accounts.failed && <ErrorRow title="Could not load accounts" retry={accounts.retry} />}
+            {!accounts.users && !accounts.failed && <LoadingRow />}
+            {accounts.users?.map((u) => (
+              <ListRow
+                key={u.username}
+                title={u.name || u.username}
+                subtitle={accounts.lineOf(u)}
+                // an admin's own account is changed on their Account page, as before
+                actions={u.username === me?.username ? undefined : <RowMenu label={`More for ${u.username}`} items={accounts.menuItems(u)} />}
+              />
+            ))}
+          </Card>
+        </Section>
+      )}
 
       {accounts.dialogs}
-      <InviteDialog open={inviting} mail={Boolean(view.mail)} brands={view.brands ?? []} onOpenChange={setInviting} onCreated={() => void load()} />
+      <InviteDialog open={inviting} mail={Boolean(view.mail)} brands={brands} onOpenChange={setInviting} onCreated={() => void load()} />
       {aiFor && <AiDialog member={aiFor} onClose={() => setAiFor(null)} onSave={(m, patch) => act(updateMember(m.username, patch))} />}
+      {spacesFor && <WorkspacesDialog who={spacesFor.who} brands={brands} given={spacesFor.given} onClose={() => setSpacesFor(null)} onSave={spacesFor.save} />}
     </>
   );
 }
@@ -286,16 +303,22 @@ export function WorkspaceSection() {
 export function memberLine(m: MemberView, self: boolean, owner: boolean): string {
   const parts = [m.role === "owner" ? "Owner" : null];
   if (owner || self) {
-    parts.push(m.ai === "own" ? (self ? "Your own AI" : "Own AI") : `API budget $${m.spentUsd.toFixed(2)} of $${m.budgetUsd} this month`);
+    parts.push(m.ai === "own" ? "Own AI provider" : `Team budget $${m.spentUsd.toFixed(2)} of $${m.budgetUsd} this month`);
     parts.push(lastActiveText(m.lastActiveAt));
   }
   return parts.filter(Boolean).join(" · ");
 }
 
+/** The owner's workspaces a person works in, for their row: the one's name, or how many. Nothing for none. */
+export function worksIn(brands: Brand[], given: string[] = []): string | null {
+  const picked = brands.filter((b) => given.includes(b.id));
+  return picked.length === 0 ? null : picked.length === 1 ? picked[0]!.name : `${picked.length} workspaces`;
+}
+
 /** A member's AI, as the owner picks it (api/lib/workspaces.ts updateMember: `ai` and, for a budget, `budgetUsd`). */
 const AI_CHOICES: { id: AiRoute; label: string }[] = [
-  { id: "own", label: "Their own AI" },
-  { id: "budget", label: "The team's key, up to a monthly budget" },
+  { id: "own", label: "Own AI provider" },
+  { id: "budget", label: "Team budget" },
 ];
 
 /** The budget a person typed: dollars, $1 to $10,000 a month (the server keeps it to cents and the same range). */
@@ -305,27 +328,7 @@ export function budgetFrom(text: string): { ok: true; usd: number } | { ok: fals
   return { ok: true, usd: Math.round(n * 100) / 100 };
 }
 
-/** A member's menu: AI, the account's own items for a platform admin (`account`), Remove from team, Delete account last. */
-function MemberMenu({ m, account, onAi, onRemove }: { m: MemberView; account: RowMenuItem[]; onAi: () => void; onRemove: () => Promise<void> }) {
-  return (
-    <RowMenu
-      label={`More for ${m.username}`}
-      items={[
-        { label: "AI…", onSelect: onAi },
-        ...account.filter((i) => !i.destructive),
-        {
-          label: "Remove from team",
-          destructive: true,
-          confirm: { title: `Remove ${m.username} from the team?`, body: "Their account stays theirs.", ok: "Remove" },
-          onSelect: onRemove,
-        },
-        ...account.filter((i) => i.destructive),
-      ]}
-    />
-  );
-}
-
-/** A member's AI: their own, or a monthly budget on the team's key. Saved with the button; a failed save is a toast. */
+/** A member's AI: their own provider, or a monthly budget on the server's key. Saved with the button; a failed save is a toast. */
 function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: () => void; onSave: (m: MemberView, patch: MemberPatch) => Promise<unknown> }) {
   const [mode, setMode] = useState<AiRoute>(member.ai);
   const [amount, setAmount] = useState(member.budgetUsd ? String(member.budgetUsd) : "");
@@ -353,60 +356,62 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
     }
   };
   return (
-    <FormDialog open onOpenChange={(o) => !o && onClose()} title={`AI for ${member.username}`} submitLabel="Save AI" onSubmit={submit} busy={busy} error={error}>
+    <FormDialog open onOpenChange={(o) => !o && onClose()} title={`AI for ${member.username}`} submitLabel="Save" onSubmit={submit} busy={busy} error={error}>
       <SettingsSelect label="AI" value={mode} onValueChange={(v) => setMode(v as AiRoute)} options={AI_CHOICES.map((o) => ({ value: o.id, label: o.label }))} className="sm:w-full" />
       {mode === "budget" && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Up to $</span>
-          <Input aria-label="Monthly budget in dollars" inputMode="decimal" placeholder="25" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="h-8 w-24" />
-          <span className="text-muted-foreground">a month</span>
+        <div className="space-y-1.5">
+          <label htmlFor="team-budget" className="text-xs text-muted-foreground">
+            Monthly budget in dollars
+          </label>
+          <Input id="team-budget" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="h-8 text-sm" />
         </div>
       )}
     </FormDialog>
   );
 }
 
+/** One switch per workspace of the owner's (Member.workspaces, Invite.workspaces), as a plug-in's Workspaces section has them. */
+function WorkspaceSwitches({ brands, given, who, onChange }: { brands: Brand[]; given: string[]; who: string; onChange: (ids: string[]) => void }) {
+  return (
+    <Card>
+      {brands.map((b) => (
+        <Row
+          key={b.id}
+          title={
+            <span className="flex items-center gap-2">
+              <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(b)].dot}`} />
+              <span className="truncate">{b.name}</span>
+            </span>
+          }
+          control={<Switch checked={given.includes(b.id)} aria-label={`${b.name} for ${who}`} onCheckedChange={(on) => onChange(on ? [...given, b.id] : given.filter((x) => x !== b.id))} />}
+        />
+      ))}
+    </Card>
+  );
+}
+
 /**
- * Which of your workspaces a person works in (Member.workspaces): the row's own button, their workspaces' dots and
- * names, ticked in a menu that stays open. A tick shows at once; a failed save falls back to what the server has.
+ * Which of the owner's workspaces a member, or the person an invite is for, works in: a switch each, saved with the
+ * button. A workspace the owner no longer has is left out of what is saved.
  */
-function WorkspacePicker({ brands, given, onChange }: { brands: { id: string; name: string }[]; given: string[]; onChange: (ids: string[]) => Promise<unknown> }) {
-  const [draft, setDraft] = useState<string[] | null>(null);
-  if (!brands.length) return null;
-  const ids = (draft ?? given).filter((id) => brands.some((b) => b.id === id));
-  const picked = brands.filter((b) => ids.includes(b.id));
-  const toggle = (id: string) => {
-    const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
-    setDraft(next);
-    void onChange(next)
-      .catch((e) => saveFailed(msg(e)))
-      .finally(() => setDraft((d) => (d === next ? null : d)));
+export function WorkspacesDialog({ who, brands, given, onClose, onSave }: { who: string; brands: Brand[]; given: string[]; onClose: () => void; onSave: (ids: string[]) => Promise<unknown> }) {
+  const [ids, setIds] = useState(() => given.filter((id) => brands.some((b) => b.id === id)));
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await onSave(ids);
+      onClose();
+    } catch (e) {
+      saveFailed(msg(e));
+    } finally {
+      setBusy(false);
+    }
   };
   return (
-    <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
-        <Button size="xs" variant="ghost" className="max-w-[16rem] gap-1.5 font-normal text-muted-foreground" aria-label="Workspaces">
-          {picked.length > 0 && (
-            <span className="flex shrink-0 -space-x-0.5">
-              {picked.slice(0, 3).map((b) => (
-                <span key={b.id} className={`h-2 w-2 rounded-full ring-1 ring-card ${PROJECT_COLORS[projectColor(b)].dot}`} />
-              ))}
-            </span>
-          )}
-          <span className="truncate">{picked.length === 0 ? "No workspace" : picked.length === 1 ? picked[0]!.name : `${picked.length} workspaces`}</span>
-          <ChevronDown className="size-3 shrink-0" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">Works in</DropdownMenuLabel>
-        {brands.map((b) => (
-          <DropdownMenuCheckboxItem key={b.id} checked={ids.includes(b.id)} onSelect={(e) => e.preventDefault()} onCheckedChange={() => toggle(b.id)}>
-            <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(b)].dot}`} />
-            <span className="truncate">{b.name}</span>
-          </DropdownMenuCheckboxItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <FormDialog open onOpenChange={(o) => !o && onClose()} title={`Workspaces for ${who}`} submitLabel="Save" onSubmit={submit} busy={busy}>
+      <WorkspaceSwitches brands={brands} given={ids} who={who} onChange={setIds} />
+    </FormDialog>
   );
 }
 
@@ -435,32 +440,34 @@ function AccessGrid({ rows, gates }: { rows: AccessRow[]; gates: { id: string; n
       .catch((e) => saveFailed(msg(e)))
       .finally(() => setDraft((d) => (d[r.key] === next ? (({ [r.key]: _, ...rest }) => rest)(d) : d)));
   };
+  const head = "px-1 pb-2 text-center align-bottom font-normal leading-tight";
   return (
     <Card>
       <div className="overflow-x-auto py-3 sm:py-4">
         <table className="w-full min-w-[640px] text-left text-xs">
           <thead>
-            <tr className="text-[11px] leading-tight text-muted-foreground">
-              <th className="sticky left-0 z-10 bg-card pb-2 pl-3 pr-3 text-left align-bottom text-[10px] font-medium uppercase tracking-wider sm:pl-4">Person</th>
+            <tr className="text-muted-foreground">
+              <th className="sticky left-0 z-10 bg-card pb-2 pl-3 pr-3 text-left align-bottom font-normal sm:pl-4">Person</th>
               {TOOLS.map((t) => (
-                <th key={t} className="px-1 pb-2 text-center align-bottom font-normal">
+                <th key={t} className={head}>
                   {TOOL_NAMES[t]}
                 </th>
               ))}
               {gates.map((g) => (
-                <th key={g.id} className="px-1 pb-2 text-center align-bottom font-normal">
+                <th key={g.id} className={head}>
                   {g.name}
                 </th>
               ))}
-              <th className="px-1 pb-2 text-center align-bottom font-normal">Your scripts</th>
+              <th className={head}>Your scripts</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const cur = now(r);
+              const who = typeof r.label === "string" ? r.label : "this invite";
               return (
                 <tr key={r.key} className="border-t border-border/50 hover:bg-accent/50">
-                  <td className="sticky left-0 z-10 bg-card py-2 pl-3 pr-3 font-medium text-foreground sm:pl-4">
+                  <td className="sticky left-0 z-10 bg-card py-2 pl-3 pr-3 text-sm font-medium text-foreground sm:pl-4">
                     <span className="block max-w-[14rem] truncate">{r.label}</span>
                   </td>
                   {TOOLS.map((t: Tool) => {
@@ -469,23 +476,21 @@ function AccessGrid({ rows, gates }: { rows: AccessRow[]; gates: { id: string; n
                     const next: Level = level === "write" ? "read" : level === "read" ? "off" : "write";
                     const off = offAfterToggle(cur.off, t, next !== "off");
                     const read = [...cur.read.filter((x) => x !== t), ...(next === "read" ? [t] : [])];
-                    const who = typeof r.label === "string" ? r.label : "this invite";
                     return <LevelTick key={t} level={level} title={`${TOOL_NAMES[t]} for ${who}: ${LEVEL_TEXT[level]}`} onClick={() => change(r, { ...cur, off, read }, { off, read })} />;
                   })}
                   {gates.map((g) => {
                     const off = offAfterToggle(cur.off, g.id, cur.off.includes(g.id));
-                    return <Tick key={g.id} on={!cur.off.includes(g.id)} title={`${g.name} for ${typeof r.label === "string" ? r.label : "this invite"}`} onClick={() => change(r, { ...cur, off }, { off })} />;
+                    return <Tick key={g.id} on={!cur.off.includes(g.id)} title={`${g.name} for ${who}`} onClick={() => change(r, { ...cur, off }, { off })} />;
                   })}
-                  <Tick on={cur.scripts} title="Can read your scripts" onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
+                  <Tick on={cur.scripts} title={`Your scripts for ${who}`} onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
                 </tr>
               );
             })}
           </tbody>
         </table>
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-3 text-[11px] text-muted-foreground sm:px-4">
+        <p className="flex items-center gap-x-4 whitespace-nowrap px-3 pt-3 text-xs text-muted-foreground sm:px-4">
           <span className="flex items-center gap-1.5"><LevelBox level="write" /> Opens and changes</span>
           <span className="flex items-center gap-1.5"><LevelBox level="read" /> Opens, changes nothing</span>
-          <span>A click steps to the next</span>
         </p>
       </div>
     </Card>
@@ -522,7 +527,7 @@ function LevelTick({ level, title, onClick }: { level: Level; title: string; onC
 
 /**
  * Makes an invite link (one person, 7 days), emailed when an address is given and the server can send email. The link
- * is shown here once; the pending list only has Revoke.
+ * is shown here once; the pending list only has Delete.
  */
 function InviteDialog({
   open,
@@ -533,7 +538,7 @@ function InviteDialog({
 }: {
   open: boolean;
   mail: boolean;
-  brands: { id: string; name: string }[];
+  brands: Brand[];
   onOpenChange: (o: boolean) => void;
   onCreated: () => void;
 }) {
@@ -580,10 +585,8 @@ function InviteDialog({
     <SettingsDialog open={open} onOpenChange={close}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Invite someone</DialogTitle>
-          <DialogDescription>
-            {sentTo ? `Emailed to ${sentTo}. The link is good for 7 days.` : mail ? "Good for 7 days. Leave the email empty to copy the link yourself." : "Good for 7 days. Shown once: copy it now."}
-          </DialogDescription>
+          <DialogTitle>New invite</DialogTitle>
+          <DialogDescription>{!link ? "The link works for 7 days." : sentTo ? `Emailed to ${sentTo}.` : "The link is shown only once."}</DialogDescription>
         </DialogHeader>
         {mail && !link && (
           <Input
@@ -592,21 +595,15 @@ function InviteDialog({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !busy && void make()}
-            placeholder="Their email"
-            aria-label="Their email"
+            placeholder="Email"
+            aria-label="Email"
             className="h-8 text-sm"
           />
         )}
         {!link && brands.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-xs text-muted-foreground">Workspaces they work in</p>
-            {brands.map((b) => (
-              <label key={b.id} className="flex items-center gap-2 text-sm">
-                <Checkbox checked={given.includes(b.id)} onCheckedChange={(on) => setGiven((g) => (on ? [...g, b.id] : g.filter((x) => x !== b.id)))} />
-                <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(b)].dot}`} />
-                {b.name}
-              </label>
-            ))}
+            <p className="text-xs text-muted-foreground">Workspaces</p>
+            <WorkspaceSwitches brands={brands} given={given} who="the invite" onChange={setGiven} />
           </div>
         )}
         {link && <code className="block truncate rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">{link}</code>}
@@ -617,7 +614,7 @@ function InviteDialog({
                 {copied ? "Copied" : "Copy link"}
               </Button>
               <Button size="sm" onClick={() => close(false)}>
-                Done
+                Close
               </Button>
             </>
           ) : (

@@ -136,7 +136,7 @@ adminApp.post("/users", async (c) => {
   }
   const username = (body.username ?? "").trim().toLowerCase();
   if (!USERNAME_RE.test(username)) {
-    return c.json({ error: "Username: 2–24 chars, letters/numbers/dash/underscore" }, 400);
+    return c.json({ error: "A username is 2 to 24 letters, numbers, dashes or underscores" }, 400);
   }
   try {
     const problem = passwordProblem(body.password ?? "");
@@ -153,7 +153,7 @@ adminApp.post("/users", async (c) => {
 
 adminApp.patch("/users/:username", async (c) => {
   const user = findUser(c.req.param("username"));
-  if (!user) return c.json({ error: "No such user" }, 404);
+  if (!user) return c.json({ error: "Account not found" }, 404);
   // `code: false` switches the account's sign-in code off (a lost phone); `unlock: true` lifts the lock on every address
   let body: { password?: string; role?: string; off?: unknown; code?: unknown; unlock?: unknown };
   try {
@@ -184,15 +184,15 @@ adminApp.patch("/users/:username", async (c) => {
 
 adminApp.delete("/users/:username", async (c) => {
   const target = findUser(c.req.param("username"));
-  if (!target) return c.json({ error: "No such user" }, 404);
+  if (!target) return c.json({ error: "Account not found" }, 404);
   if (target.username === c.get("user").username) {
-    return c.json({ error: "You can't delete your own account" }, 400);
+    return c.json({ error: "You cannot delete your own account" }, 400);
   }
   if (target.role === "admin" && adminCount() <= 1) {
-    return c.json({ error: "Can't delete the last admin" }, 400);
+    return c.json({ error: "The last admin cannot be deleted" }, 400);
   }
   const team = ownedTeamWithMembers(target.username);
-  if (team) return c.json({ error: `${target.username} owns ${team.name}, which has other members: transfer ownership first` }, 409);
+  if (team) return c.json({ error: `${target.username} owns ${team.name}, which has other members: remove them first` }, 409);
   await deleteUserContent(target.username);
   deleteUser(target.username);
   forgetAccount(target.username);
@@ -208,7 +208,7 @@ adminApp.put("/sign-in-code", async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as { required?: unknown };
   if (typeof b.required !== "boolean") return c.json({ error: "required: true or false" }, 400);
   const me = findUser(c.get("user").username);
-  if (b.required && !me?.code) return c.json({ error: "Switch on your own sign-in code first, in Settings → Account" }, 400);
+  if (b.required && !me?.code) return c.json({ error: "Turn on your own sign-in code first, in Settings → Account" }, 400);
   if (b.required && !codeRequired()) for (const u of listUsers()) if (!u.code) setSignInCode(u, null, true);
   setCodeRequired(b.required);
   return c.json({ required: codeRequired() });
@@ -220,7 +220,7 @@ adminApp.put("/sign-in-code", async (c) => {
  */
 adminApp.post("/view-as/:username", (c) => {
   const target = findUser(c.req.param("username"));
-  if (!target) return c.json({ error: "No such user" }, 404);
+  if (!target) return c.json({ error: "Account not found" }, 404);
   setCookie(c, VIEW_AS, target.username, { path: "/", httpOnly: true, sameSite: "Lax", secure: !!secureAttr(c) });
   return c.json({ ok: true, username: target.username });
 });
