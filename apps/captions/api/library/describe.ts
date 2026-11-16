@@ -217,6 +217,8 @@ export async function describeFromLines(db: DatabaseSync, versionId: string, act
   // the roll it had stays: nothing was seen this time
   const { roll } = db.prepare("SELECT roll FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId) as { roll: Roll | null };
   saveDescribed(db, versionId, { ...value, ...(roll ? { roll } : {}) }, route.mac?.provider?.instance ?? (onMac ? "mac" : "anthropic"), stampOf(workspace, DESCRIBE_VERSION));
+  // its words changed: the library's smart folders judge it again, as after a description from frames
+  await fileSmart(db, versionId, whoFor(actor), workspace).catch(() => 0);
   return true;
 }
 
