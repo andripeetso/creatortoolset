@@ -123,14 +123,14 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
       window.matchMedia = (q: string) => (q === "(pointer: coarse)" ? ({ ...real(q), matches: true } as MediaQueryList) : real(q));
     });
     await page.goto(url("/"));
-    await page.getByText("Set up Creator Toolset on your computer first. Then add this phone from there.").waitFor({ timeout: 60_000 });
-    expect(await page.getByRole("button", { name: "Share the download link" }).count()).toBe(1);
-    expect(await page.getByText("Finish setting up").count()).toBe(0);
+    await page.getByText("Set up Creator Toolset on a computer, then add this phone from there.").waitFor({ timeout: 60_000 });
+    expect(await page.getByRole("button", { name: "Share download link" }).count()).toBe(1);
+    expect(await page.getByText("Finish setup").count()).toBe(0);
     expect(await dialog.count()).toBe(0);
     await shot(page, "phone-home");
     // a link to the last screen opens nothing either, and so does not mark the account as set up
     await page.goto(url("/m?setup=try"));
-    await page.getByText("Set up Creator Toolset on your computer first.").waitFor();
+    await page.getByText("Set up Creator Toolset on a computer, then add this phone from there.").waitFor();
     await page.waitForTimeout(1500);
     expect(await dialog.count()).toBe(0);
     expect(saved().done).not.toBe(true);
@@ -150,7 +150,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await dialog.getByRole("button", { name: "Not now" }).first().click();
     await dialog.waitFor({ state: "hidden" });
     expect(saved().done).not.toBe(true);
-    await page.getByRole("button", { name: /Finish setting up/ }).click();
+    await page.getByRole("button", { name: /Finish setup/ }).click();
     await screen(dialog, "Connect your AI", "1 of 2");
 
     // nothing under the AI rows: no box, no link
@@ -166,7 +166,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await dialog.getByRole("button", { name: "Not now" }).last().click();
     await dialog.waitFor({ state: "hidden" });
     expect(saved().done).not.toBe(true);
-    await page.getByRole("button", { name: /Finish setting up/ }).click();
+    await page.getByRole("button", { name: /Finish setup/ }).click();
     await screen(dialog, "What do you make?", "2 of 2");
 
     // Back keeps the answer, even after something else was saved on the screen before
@@ -266,7 +266,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await page.goto(url("/"));
     await page.waitForTimeout(1500);
     expect(await dialog.count()).toBe(0);
-    expect(await page.getByText("Finish setting up").count()).toBe(0);
+    expect(await page.getByText("Finish setup").count()).toBe(0);
     await close();
   }, 60_000);
 });

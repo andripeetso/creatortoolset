@@ -31,7 +31,7 @@ export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.l
 export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[] {
   const review = assets
     .filter(waitsOnYou)
-    .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name} is waiting for your review`, icon: "review", asset: a.id }));
+    .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name}: needs review`, icon: "review", asset: a.id }));
   const edit = edits
     .filter(editWaits)
     .map((e): TodoRow => {
@@ -39,7 +39,7 @@ export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[]
       return {
         key: `e:${e.id}`,
         to: `/editor/${e.id}`,
-        text: needsKey ? `${e.name} needs a key to continue` : `${e.name}: the last step failed`,
+        text: needsKey ? `${e.name}: needs a key` : `${e.name}: the last step failed`,
         icon: needsKey ? "key" : "failed",
       };
     });
@@ -132,11 +132,11 @@ export function activityLines(server: ActivityRow[], sessions: SessionSummary[],
   return {
     running: [
       ...rows.filter((r) => r.state === "working").map((r) => line(r, "running")),
-      ...sessions.filter((s) => s.working).map((s) => session(s, "Workshop · writing a reply", "running")),
+      ...sessions.filter((s) => s.working).map((s) => session(s, "Content Workshop · writing a reply", "running")),
     ],
     waiting: [
       ...todo.map((t): Line => ({ key: t.key, to: t.to, title: t.text, detail: "", icon: t.icon, ...(t.asset ? { asset: t.asset } : {}) })),
-      ...sessions.filter((s) => s.ready && !s.working).map((s) => session(s, "Workshop · new reply", "reply")),
+      ...sessions.filter((s) => s.ready && !s.working).map((s) => session(s, "Content Workshop · new reply", "reply")),
       ...rows.filter((r) => r.state === "ready").map((r) => line(r, "key")),
     ],
   };
@@ -249,7 +249,7 @@ function ActivityButton({ me }: { me: Me }) {
       <PopoverContent align="end" collisionPadding={12} className="w-96 max-w-[calc(100vw-24px)] p-0">
         <p className="border-b px-3 py-2 text-sm font-medium">Activity</p>
         <div className="max-h-96 overflow-y-scroll pb-1">
-          {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">Nothing is running or waiting on you.</p>}
+          {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">No activity</p>}
           <Part label="Running" lines={running} />
           <Part label="Waiting on you" lines={waiting} onClear={(ids) => void clear(ids)} />
         </div>
