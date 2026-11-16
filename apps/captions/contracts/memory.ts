@@ -6,8 +6,10 @@
 /** One kept sentence. `project`: the Workshop project it was said for; none = about the person, in every project. */
 export interface MemoryFact {
   id: string;
-  /** The person's words as they wrote them in the chat. */
+  /** The rule the assistant wrote from what the person said: what its prompt gets. */
   text: string;
+  /** The person's own words in the chat; none on a fact kept before rules were written (then `text` is theirs). */
+  said?: string;
   at: number;
   project?: { id: string; name: string };
 }
@@ -17,6 +19,8 @@ export const MEMORY_CAP = 2000;
 /** One kept sentence: at least a few words, at most a short paragraph. */
 export const MEMORY_QUOTE_MIN = 8;
 export const MEMORY_QUOTE_MAX = 300;
+/** One rule: a plain sentence. */
+export const MEMORY_RULE_MAX = 200;
 
 /** Spacing and the shape of quote marks evened out; the letters stay as written. */
 export const tidy = (s: string): string => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();

@@ -8,6 +8,7 @@ import { getEditSteps } from "@/lib/editor";
 import { scopeRequests } from "@/lib/current-workspace";
 import { useWorkspace } from "@/lib/workspace";
 import { webPlugins } from "@/plugins.gen";
+import { HOME_TILE_NAMES } from "@contracts/tools";
 
 /**
  * Which workspaces an installed plug-in works in (api/lib/plugin-workspaces.ts): every workspace, or only the ones
@@ -159,18 +160,16 @@ export function PluginSettingsPage({ sub }: { sub?: string }) {
   const own = webPlugins.find((p) => p.id === id)?.settings?.filter((s) => !s.adminTab) ?? [];
   const [step, setStep] = useState(false);
   useEffect(() => void getEditSteps().then((v) => setStep(v.steps.some((r) => r.pluginId === id && r.state === "on")), () => {}), [id]);
-  const links = [
-    ...own.filter((s) => s.tool).map((s) => ({ to: `/settings/tools/${s.tool}`, text: s.title })),
-    ...(step ? [{ to: "/settings/tools/editor", text: "Its options for new AI Editor edits" }] : []),
-  ];
+  // the tool pages that hold its settings (a section that names a tool, an AI Editor step's options), one link each
+  const tools = [...new Set([...own.flatMap((s) => (s.tool ? [s.tool] : [])), ...(step ? (["editor"] as const) : [])])];
   return (
     <WithPluginWorkspaces id={id}>
       {own.filter((s) => !s.tool).map((s) => <div key={s.id}>{s.body}</div>)}
-      {links.length > 0 && (
+      {tools.length > 0 && (
         <Section title="Settings">
           <Card>
-            {links.map((l) => (
-              <Row key={l.to} title={<Link to={l.to} className="underline-offset-4 hover:underline">{l.text}</Link>} />
+            {tools.map((t) => (
+              <Row key={t} title={<Link to={`/settings/tools/${t}`} className="underline-offset-4 hover:underline">{HOME_TILE_NAMES[t]}</Link>} />
             ))}
           </Card>
         </Section>

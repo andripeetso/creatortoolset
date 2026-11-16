@@ -9,6 +9,7 @@ import SwiftUI
 /// after it installs.
 @MainActor func watchForUpdates(_ updater: SPUUpdater) {
     guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
+    UpdateWhenIdle.shared.updater = updater
     updater.checkForUpdatesInBackground()
     var last = Date()
     NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in

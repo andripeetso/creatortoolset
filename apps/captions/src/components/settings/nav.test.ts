@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { navBlocks, navListFor, resolveSection, type NavContext } from "./nav";
+import { navBlocks, navListFor, resolveSection, withToolPages, type NavContext } from "./nav";
 
 const at = (hosted: boolean, admin: boolean, mac = false): NavContext => ({ hosted, admin, mac });
 const listed = (ctx: NavContext) => navListFor(ctx, []).map((s) => s.id);
@@ -66,6 +66,15 @@ describe("the sidebar blocks", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), [{ settings: [{ id: "tiny", title: "Tiny", body: null } as never] }]));
     expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Server", "Tool settings"]);
     expect(blocks[3].items.map((s) => s.id)).toEqual(["tiny"]);
+  });
+
+  it("a tool that has a settings page is an entry in the Tool settings block, before the plug-ins' own sections", () => {
+    const tools = [{ id: "editor", title: "AI Editor", icon: null as never }];
+    const alone = navBlocks(withToolPages(navListFor(at(true, true, true), []), tools));
+    expect(alone.map((b) => b.heading)).toEqual(["You", "AI", "Server", "Tool settings"]);
+    expect(alone[3].items.map((s) => [s.id, s.title])).toEqual([["tools/editor", "AI Editor"]]);
+    const withPlugin = navBlocks(withToolPages(navListFor(at(true, true, true), [{ settings: [{ id: "tiny", title: "Tiny", body: null } as never] }]), tools));
+    expect(withPlugin[3].items.map((s) => s.id)).toEqual(["tools/editor", "tiny"]);
   });
 
   it("a plug-in section that names a tool is on that tool's page: no sidebar block, and its address goes there", () => {

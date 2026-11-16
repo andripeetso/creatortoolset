@@ -7,7 +7,7 @@ import { webPlugins } from "@/plugins.gen";
 import type { HomeTile } from "@contracts/tools";
 import { ToolPlugins, useSteps } from "./PluginsCatalog";
 
-// A tool's Plug-ins section (Community → <tool>, Settings → Tools → <tool>): the team's plug-ins that add to that tool;
+// A tool's Plug-ins section (Community → <tool>, Settings → <tool>): the team's plug-ins that add to that tool;
 // the ones that name no tool are Community → Other. Download takes the same road as a step's (the folder copied, then the Mac app's own
 // switch), an installed one links to its own settings, and one from the person's folder has the Mac app's On switch. Server and bridge stubbed.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

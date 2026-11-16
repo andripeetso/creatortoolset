@@ -66,7 +66,7 @@ export interface ServerPlugin {
   // editor.ingest: where footage an account adds to an AI Editor edit from its computer is filed (api/editor/ingest.ts).
   // The first plug-in that answers wins; null or absent = the account's own library's A-roll folder. A throw refuses (fails closed).
   // editor.steps: post-processing steps of the AI Editor (contracts/editor-steps.ts), run in `order` after the B-roll and
-  // before the preview (api/editor/post.ts); Settings → Tools → AI Editor lists them for each account to use or not.
+  // before the preview (api/editor/post.ts); Settings → AI Editor lists them for each account to use or not.
   editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null>; steps?: EditorStep[] };
   // Workshop "check now" for a post he pasted or shared (PATCH /sessions/:id with posted): reads it and matches it to a version.
   // The session's own write stays in core; the first plug-in that answers wins. `account` is the project's Instagram account.

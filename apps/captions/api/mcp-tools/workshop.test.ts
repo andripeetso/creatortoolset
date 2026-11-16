@@ -447,7 +447,7 @@ describe("the writer the assistant asked", { timeout: 30_000 }, () => {
     await page(cookie, `/api/workshop/sessions/${id}/chat/${String(reply.id)}/stop`, "POST", {});
     w.release();
     const v = await shown(cookie, (x) => cardOf(x, id).status !== "running");
-    expect(cardOf(v, id)).toMatchObject({ status: "failed", detail: "Stopped" });
+    expect(cardOf(v, id)).toMatchObject({ status: "stopped", detail: "Stopped" });
     expect(v.messages).toHaveLength(said);
   });
 

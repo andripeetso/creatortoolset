@@ -74,6 +74,7 @@ final class WheelGlideTests: XCTestCase {
         window.contentView = web
         window.alphaValue = 0
         window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false   // ARC owns it: closing must not release it a second time (a later test's run loop crashed on it)
         window.orderFrontRegardless()
         defer { window.close() }
         web.loadHTMLString("<body style='margin:0'><div style='height:6000px'></div>", baseURL: nil)

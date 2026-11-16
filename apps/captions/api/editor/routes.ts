@@ -12,7 +12,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { addFeedback, newestDraft, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
+import { addFeedback, newestDraft, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, editSources, seesEdit, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
@@ -48,12 +48,15 @@ const body = async (c: C): Promise<Record<string, unknown>> => {
 /** A request an AI makes (one of its tools' own calls, or one with an AI key), not the person at their own screen. */
 const viaTool = (c: C) => !!innerCall.getStore() || !!c.req.header("authorization");
 
-/** The edit, when the caller sees it, with who they are to it; null (answer 404) otherwise. */
-async function load(c: C) {
+/**
+ * The edit, when the caller sees it, with who they are to it; null (answer 404) otherwise. `use`: they change it, run
+ * it or take its footage, so a teammate must also see every clip it uses (store.ts seesEdit), as the library would.
+ */
+async function load(c: C, use = false) {
   const user = c.get("user").username;
   const e = readEdit(c.req.param("id") ?? "");
   const role = await editRole(user, e);
-  return e && role ? { e, role, user } : null;
+  return e && role && (!use || (await seesEdit(user, e))) ? { e, role, user } : null;
 }
 type Loaded = NonNullable<Awaited<ReturnType<typeof load>>>;
 
@@ -227,7 +230,7 @@ editorApp.route("/", cardsApp);
 
 /** Carry on, for an edit in passes: every drafted version's next pass is queued (and recorded as done); 409 while it is being made, or when no pass is left. */
 editorApp.post("/:id/pass", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   const db = libraryDb();
   if (db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id)) return c.json({ error: "This edit is still being made", code: "conflict" }, 409);
@@ -244,7 +247,7 @@ editorApp.get("/:id", async (c) => {
 });
 
 editorApp.patch("/:id", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   let patch;
   let styled: Partial<EditMeta> = {};
@@ -275,7 +278,7 @@ editorApp.patch("/:id", async (c) => {
 });
 
 editorApp.post("/:id/run", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   const b = await body(c);
   const from = b.from ?? "analyze";
@@ -295,7 +298,7 @@ editorApp.post("/:id/run", async (c) => {
  * `queued` is false while the edit is being made: that run reads it.
  */
 editorApp.post("/:id/feedback", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   const text = (await body(c)).text;
   if (typeof text !== "string" || !text.trim()) return c.json({ error: "text is what the person said about the cut", code: "invalid" }, 400);
@@ -308,7 +311,7 @@ editorApp.post("/:id/feedback", async (c) => {
 });
 
 editorApp.post("/:id/jobs/:jobId/retry", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   const job = libraryDb().prepare("SELECT version_id, kind FROM edit_jobs WHERE id = ? AND edit_id = ?").get(Number(c.req.param("jobId")), r.e.id) as
     | { version_id: string; kind: string }
@@ -327,7 +330,7 @@ editorApp.post("/:id/stop", async (c) => {
 });
 
 editorApp.put("/:id/eyeline/:versionId", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   const v = c.req.param("versionId");
   const y = (await body(c)).y;
@@ -348,7 +351,7 @@ editorApp.get("/:id/sentences", async (c) => {
  * line has. Only those versions are drafted again, with no AI.
  */
 editorApp.put("/:id/lines", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   if (!r) return notFound(c);
   const plan = readStep(r.e.id, "plan");
   if (!plan) return c.json({ error: "There is no script yet", code: "conflict" }, 409);
@@ -375,7 +378,7 @@ editorApp.put("/:id/lines", async (c) => {
 
 /** Renders the draft's preview again and files it in Review as the next version (the chain does this after a draft). */
 editorApp.post("/:id/drafts/:name/review", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   const name = c.req.param("name");
   if (!r || !readDraft(r.e.id, name)) return notFound(c);
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "preview", r.user, true, "edit_jobs");
@@ -392,7 +395,7 @@ const HAND_NOTE = "Cut by hand in Review";
  * never covered), is rendered and is filed in Review as the next version.
  */
 editorApp.post("/:id/drafts/:name/cut", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
@@ -437,7 +440,7 @@ editorApp.get("/:id/drafts/:name", async (c) => {
 
 /** The draft for the user's own editor: OTIO, FCPXML, or both in a zip (with download links when the footage is in a bucket). */
 editorApp.get("/:id/drafts/:name/export", async (c) => {
-  const r = await load(c);
+  const r = await load(c, true);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
