@@ -86,7 +86,7 @@ describe("with nothing kept, nothing is different", () => {
     await a.end();
     await newChat();
     const b = await turn("Hello");
-    expect(b.job.system).toBe(`${UNCHANGED}\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I post every day at 18:00`);
+    expect(b.job.system).toBe(`${UNCHANGED}\n\nStanding rules from the user's earlier chats; follow them (their list: Settings, Memory):\n- I post every day at 18:00`);
     await b.end();
     await removeAll();
     await newChat();
@@ -96,7 +96,7 @@ describe("with nothing kept, nothing is different", () => {
     await c.end();
   });
 
-  it("the two tools are the assistant's alone, and together stay under 500 bytes", async () => {
+  it("the two tools are the assistant's alone, and together stay under 600 bytes", async () => {
     const outside = (await rpc(fullKey, "tools/list")).result.tools!.map((t) => t.name);
     expect(outside).not.toContain("remember");
     expect(outside).not.toContain("forget");
@@ -108,8 +108,8 @@ describe("with nothing kept, nothing is different", () => {
     expect(mine).toEqual(memoryTools.defs.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })));
     // what every turn of every person with a tool-taking AI now carries: say so in the commit when this number moves
     const bytes = (list: unknown[]) => Buffer.byteLength(JSON.stringify(list));
-    expect(bytes(inside) - bytes(inside.filter((x) => !mine.includes(x)))).toBe(493);
-    expect(bytes(mine)).toBe(494);
+    expect(bytes(inside) - bytes(inside.filter((x) => !mine.includes(x)))).toBe(560);
+    expect(bytes(mine)).toBe(561);
   });
 
   it("only the assistant's turn reads the store: no other prompt builder imports it", () => {
@@ -157,6 +157,32 @@ describe("only what the person said is kept", () => {
     expect(next.job.system.endsWith("(their list: Settings, Memory):\n- No music on talking reels\n- I don’t use emojis")).toBe(true);
     expect(next.job.user).toBe("User: Hello again\n\nAnswer the user's last message.");
     await next.end();
+    await removeAll();
+  });
+
+  it("a rule written from their words is what the next chat gets; their words stay beside it; an old fact is reworded from its own words", async () => {
+    await newChat();
+    const t = await turn("remember for my voice to never shorthand want to to wanna i hihgly hate that");
+    const said = "never shorthand want to to wanna";
+    expect(JSON.parse((await tool(t.token, "remember", { quote: said, rule: "Never shorten “want to” to “wanna” in my voice." })).text)).toEqual({ kept: "Never shorten \"want to\" to \"wanna\" in my voice." });
+    // a rule with no words of theirs under it is still refused
+    expect(await tool(t.token, "remember", { quote: "I hate emojis", rule: "Never use emojis." })).toEqual({ error: true, text: NOT_SAID });
+    // a fact kept before rules (no rule): reworded later from its own words, in another chat
+    expect((await tool(t.token, "remember", { quote: "i hihgly hate that" })).error).toBe(false);
+    await t.end();
+    await newChat();
+    const later = await turn("Rewrite my memories properly");
+    expect(JSON.parse((await tool(later.token, "remember", { quote: "i hihgly hate that", rule: "Never use shorthand like wanna or gonna." })).text)).toEqual({ kept: "Never use shorthand like wanna or gonna." });
+    expect((await tool(later.token, "remember", { quote: "x".repeat(20), rule: "x".repeat(201) })).text).toBe("Write the rule as one sentence of up to 200 characters.");
+    await later.end();
+    expect((await kept()).map((f) => [f.text, f.said])).toEqual([
+      ["Never use shorthand like wanna or gonna.", "i hihgly hate that"],
+      ["Never shorten \"want to\" to \"wanna\" in my voice.", said],
+    ]);
+    // forget finds a rule by what they said too
+    const f = await turn("Forget the wanna one");
+    expect(JSON.parse((await tool(f.token, "forget", { quote: said })).text)).toEqual({ forgot: "Never shorten \"want to\" to \"wanna\" in my voice." });
+    await f.end();
     await removeAll();
   });
 
@@ -336,7 +362,7 @@ describe("projects are kept apart", () => {
     await newChat();
     const here = await turn("Hello");
     expect(here.job.system.slice(UNCHANGED.length)).toBe(
-      '\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone\nOnly for their current workspace, "Tiny Acrobatics":\n- we never show faces' +
+      `\n\nStanding rules from the user's earlier chats; follow them (their list: Settings, Memory):\n- I only film on my phone\nOnly for their current workspace, "Tiny Acrobatics":\n- we never show faces` +
         // the workspace's own context follows its facts (lib/workshop/context.ts)
         "\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\nWorkspace: Tiny Acrobatics",
     );
@@ -346,7 +372,7 @@ describe("projects are kept apart", () => {
     await newChat();
     const there = await turn("Hello");
     expect(there.job.system.slice(UNCHANGED.length)).toBe(
-      "\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone" +
+      "\n\nStanding rules from the user's earlier chats; follow them (their list: Settings, Memory):\n- I only film on my phone" +
         "\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\nWorkspace: Tiny Gardens",
     );
     expect(there.job.system).not.toContain("faces");

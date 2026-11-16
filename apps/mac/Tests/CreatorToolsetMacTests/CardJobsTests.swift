@@ -374,9 +374,9 @@ final class CardJobsTests: XCTestCase {
         XCTAssertTrue(seen.statuses.isEmpty, "none of it is an error a person sees")
 
         // the poll's body: as today when no kind is to be said, the kinds otherwise, and none for a Mac that can't draw
-        XCTAssertEqual(runner.waitBody(listing: nil) as NSDictionary, ["blobs": true])
-        XCTAssertEqual(runner.waitBody(listing: ["cards-draw"]) as NSDictionary, ["blobs": true, "editor": ["cards-draw"]])
-        XCTAssertEqual(runner.waitBody(listing: []) as NSDictionary, ["blobs": true, "editor": [String]()])
+        XCTAssertEqual(runner.waitBody(listing: nil) as NSDictionary, ["blobs": true, "work": 1])
+        XCTAssertEqual(runner.waitBody(listing: ["cards-draw"]) as NSDictionary, ["blobs": true, "work": 1, "editor": ["cards-draw"]])
+        XCTAssertEqual(runner.waitBody(listing: []) as NSDictionary, ["blobs": true, "work": 1, "editor": [String]()])
         // only {"editor": true} is the hint
         XCTAssertTrue(RelayRunner.editorWaits(Data(#"{"editor":true}"#.utf8)))
         for other in [#"{"editor":false}"#, #"{"editor":"yes"}"#, "{}", #"{"job":null}"#, "", "not json"] {

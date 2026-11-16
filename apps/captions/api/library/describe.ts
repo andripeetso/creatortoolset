@@ -269,7 +269,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     saveDescribed(db, versionId, value, provider, await contextStamp(wsId, WORKSPACE_MAX, DESCRIBE_VERSION));
     if (value.turn) await turnVersion(db, versionId, base + value.turn);
     // the library's smart folders judge it first (smart.ts); one it went in is where it is filed
-    const smart = await fileSmart(db, versionId, who, workspace).catch(() => 0);
+    const smart = (await fileSmart(db, versionId, who, workspace).catch(() => 0)) ?? 0;
     // a new name only while the library may get one; fileInto makes the folder with its first file
     const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
     if (!smart && filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);

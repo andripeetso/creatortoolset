@@ -91,7 +91,8 @@ export interface AssistantWork {
   kind: "workshop" | "edit" | "review" | "automation" | "link" | "notes" | "captions";
   title: string;
   href: string;
-  status: "running" | "done" | "failed";
+  /** stopped: it ended before it finished (a Stop, a cancel, a delete, a server restart), so nothing runs any more. */
+  status: "running" | "done" | "failed" | "stopped";
   detail?: string;
 }
 

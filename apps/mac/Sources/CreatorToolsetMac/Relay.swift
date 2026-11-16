@@ -233,6 +233,9 @@ final class RelayRunner {
     private var cannotDraw = false
     private let onStatus: (AIStatus) -> Void
     private let onRevoked: () -> Void
+    /// A computer step waits for this Mac (`{"work": true}`): the app starts its worker (Worker.swift) unless one runs.
+    /// Whether one was started now.
+    private let onWork: () -> Bool
     /// What this server may make this Mac do past the app's defaults (Consent.swift).
     private let consent: Consent
     /// This Mac's speech models (TranscribeJob.swift); nil: it takes no transcript.
@@ -244,7 +247,7 @@ final class RelayRunner {
 
     init(base: URL, token: String, work: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser,
          prompt: @escaping ConsentPrompt = { _, _, _, _ in false }, speech: SpeechLink? = nil,
-         onStatus: @escaping (AIStatus) -> Void, onRevoked: @escaping () -> Void) {
+         onStatus: @escaping (AIStatus) -> Void, onRevoked: @escaping () -> Void, onWork: @escaping () -> Bool = { false }) {
         api = DeviceAPI(base: base, token: token)
         self.speech = speech
         announce = speech != nil
@@ -253,6 +256,7 @@ final class RelayRunner {
         self.work = work
         self.onStatus = onStatus
         self.onRevoked = onRevoked
+        self.onWork = onWork
         api.onRevoked = { [weak self] in
             self?.stop()
             self?.onRevoked()
@@ -325,6 +329,13 @@ final class RelayRunner {
                 DispatchQueue.global(qos: .utility).async { [self] in job(req) }   // job() releases the slot
                 continue
             }
+            // a computer step waits: the worker claims it itself. Already running (or held for an update), the hint
+            // is not news, and a server that repeats it at once is asked again a little later, never in a loop
+            if reply.status == 200, Self.workWaits(reply.data), !onWork(), !Self.editorWaits(reply.data) {
+                slots.signal()
+                sleepUnlessStopped(5)
+                continue
+            }
             if reply.status == 200, Self.editorWaits(reply.data) {
                 if listed?.isEmpty == false, let step = claimStep() {
                     DispatchQueue.global(qos: .utility).async { [self] in runSteps(step) }   // runSteps() releases the slot
@@ -387,7 +398,9 @@ final class RelayRunner {
 
     /// The long poll's body: big files come as hashes, and the editor kinds this Mac would take now, if any are to be said.
     func waitBody(listing kinds: [String]?) -> [String: Any] {
-        var body: [String: Any] = ["blobs": true]
+        // `work`: the work package version this app's worker runs (contracts/work.ts WORK_V), so the server tells this Mac
+        // when one of its steps waits, before the worker ever claimed (Worker.swift)
+        var body: [String: Any] = ["blobs": true, "work": Worker.packageVersion]
         if let kinds { body["editor"] = kinds }
         return body
     }
@@ -395,6 +408,11 @@ final class RelayRunner {
     /// Whether a long poll's answer is the site's hint that an editor step of a listed kind waits: `{"editor": true}`.
     static func editorWaits(_ answer: Data) -> Bool {
         ((try? JSONSerialization.jsonObject(with: answer)) as? [String: Any])?["editor"] as? Bool == true
+    }
+
+    /// Whether a long poll's answer says a computer step waits for this Mac: `{"work": true}`.
+    static func workWaits(_ answer: Data) -> Bool {
+        ((try? JSONSerialization.jsonObject(with: answer)) as? [String: Any])?["work"] as? Bool == true
     }
 
     /// Takes the editor step a hint spoke of (serve() calls it with a free slot in hand, and only after a hint). When

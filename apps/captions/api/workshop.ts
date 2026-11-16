@@ -1144,8 +1144,18 @@ async function writerEnded(session: SessionMeta, user: SessionUser, docId: strin
   const named = (await readSession(session.id))?.title.trim() ?? "";
   const title = UNTITLED.test(named) ? ((await readDoc(session.id, docId))?.title ?? "your piece") : named;
   const say = failed === TURN_STOPPED ? {} : { say: failed ? `The writer could not finish “${title}”.` : `The writer finished “${title}”.`, choices: ["Show me"] };
-  for (const username of new Set([session.owner, user.username])) workEnded(username, `workshop:${session.id}`, { status: failed ? "failed" : "done", detail: failed ?? "The writer is done", ...say });
+  for (const username of new Set([session.owner, user.username]))
+    workEnded(username, `workshop:${session.id}`, { status: failed === TURN_STOPPED ? "stopped" : failed ? "failed" : "done", detail: failed ?? "The writer is done", ...say });
 }
+
+// the writer's card runs while a reply of its session is being written here (assistant.ts sweepWork)
+void import("./assistant").then(({ checkWork }) => checkWork("workshop", async (id) => {
+  const messages = (await readChat(id.slice("workshop:".length))).messages;
+  if (messages.some(turnRunning)) return null;
+  const last = messages.filter((m) => m.role === "assistant").at(-1);
+  if (last?.status !== "error") return { status: "done", detail: "The writer is done" };
+  return last.error === TURN_STOPPED ? { status: "stopped", detail: TURN_STOPPED } : { status: "failed", detail: last.error ?? "The writer stopped" };
+}));
 
 async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage, assistantId: string): Promise<void> {
   const progress = progressWriter(session.id, assistantId);

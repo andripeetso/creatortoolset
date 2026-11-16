@@ -1,11 +1,13 @@
+import { readFile } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { aiFor, completeWithFallback } from "../ai-complete";
+import { completeVisionWithFallback } from "../ai-vision";
 import { emitEvent } from "../lib/events";
 import { ask, noul, yes } from "../lib/jev";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { keyFor } from "../my-keys";
 import type { SessionUser } from "../users";
-import { libraryDb } from "./db";
+import { blobs, libraryDb } from "./db";
 import { FINISHED } from "./query";
 
 /**
@@ -14,9 +16,10 @@ import { FINISHED } from "./query";
  * folder's count, pictures, the top level and drag work as for any folder. A clip the person takes out is never filed
  * there again (folder_out); one they put in stays whatever the rule says.
  *
- * The judge reads what each clip already has (title, description, tags, kind, length, picture size), never its frames:
- * TypeSafe Jev (lib/jev.ts) with one yes/no per smart folder per clip, about 0.0001 cents each; without a Jev key the
- * library's AI reads 40 clips at a time. A new clip is judged once it is described (describe.ts); saving a rule
+ * The judge reads what each clip already has (title, description, tags, kind, length, picture size): TypeSafe Jev
+ * (lib/jev.ts) with one yes/no per smart folder per clip, about 0.0001 cents each; without a Jev key the library's AI
+ * reads 40 clips at a time. Only a clip Jev is unsure of (between UNSURE and YES) is looked at: its card picture and
+ * frame strip go to the person's AI with just those folders. A clip still unsure stays where it was. A new clip is judged once it is described (describe.ts); saving a rule
  * judges the whole library against that folder (sortFolder). Reorganize (suggestWays) has the AI propose whole ways of
  * sorting the library, each folder with its rule and how many clips would go in it.
  */
@@ -24,6 +27,9 @@ import { FINISHED } from "./query";
 export const LABEL = "Media Library smart folders";
 /** Jev's yes at or over this files the clip. ponytail: one cut for every folder; per folder if some come out too loose */
 const YES = 0.6;
+/** Jev's yes from here up to YES: the pictures decide (look) */
+const UNSURE = 0.3;
+const LOOK_AT_ONCE = 2;
 const RULE_MAX = 600;
 const AI_BATCH = 40;
 const JEV_AT_ONCE = 6;
@@ -39,6 +45,7 @@ export interface Rule {
 }
 interface Clip {
   id: string;
+  version: string;
   title: string;
   kind: string;
   what: string | null;
@@ -57,7 +64,7 @@ export const ruleOf = (v: unknown): string | null => (typeof v === "string" && v
 /** Whether `who` has something to judge with: a Jev key, or an AI. */
 export const canJudge = (who: Who): boolean => !!keyFor(who, "TYPESAFE_API_KEY").key || !aiFor(who, "analyzer", LABEL).off;
 
-const CLIP = `SELECT a.id, a.title, a.kind,
+const CLIP = `SELECT a.id, v.id AS version, a.title, a.kind,
     (SELECT d.kind FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS what,
     (SELECT d.text FROM descriptions d WHERE d.version_id = v.id ORDER BY d.source = 'user' DESC LIMIT 1) AS description,
     (SELECT group_concat(t.tag, ', ') FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
@@ -125,12 +132,67 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>): Prom
   }));
 }
 
+/** The folders a clip goes in, and the ones it was not judged on clearly (left as they are). */
+export interface Verdict {
+  in: string[];
+  unsure: string[];
+}
+
+/** The clip's pictures the library keeps (its card picture, its frame strip), for the AI to look at. */
+async function picturesOf(d: DatabaseSync, versionId: string): Promise<{ jpegBase64: string }[]> {
+  const rows = d.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind IN ('thumb', 'sprite') AND storage_key IS NOT NULL ORDER BY kind DESC").all(versionId) as {
+    storage_key: string;
+  }[];
+  const out: { jpegBase64: string }[] = [];
+  for (const r of rows) {
+    const file = await blobs.localCopy(r.storage_key).catch(() => null);
+    if (file) out.push({ jpegBase64: (await readFile(file)).toString("base64") });
+  }
+  return out;
+}
+
+/** A clip Jev was unsure of, looked at: which of `rules` its pictures show it belongs in. Null: nothing to look at, or no answer. */
+async function look(d: DatabaseSync, who: Who, ws: string, c: Clip, rules: Rule[], examples: Record<string, { in: string[]; out: string[] }>): Promise<string[] | null> {
+  const images = await picturesOf(d, c.version);
+  if (!images.length) return null;
+  const user = [
+    ws && `The workspace this clip belongs to:\n${ws}`,
+    `The folders:\n\n${rules.map((r, i) => `${i + 1}. ${question(r, examples[r.id]).replace(/\n\nDoes this clip belong in "[^"]*"\?$/, "")}`).join("\n\n")}`,
+    `The clip:\n${clipText(c)}`,
+    `The pictures are the clip's card picture${images.length > 1 ? " and a strip of frames from its start to its end, cropped to 16:9 (the Picture line above has its real shape)" : ""}.`,
+    'Answer as {"in": [folder numbers]}: the folders it belongs in, [] for none.',
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const picked = await completeVisionWithFallback(
+    "You sort one clip of a creator's media library into folders by what each folder says it holds, looking at its pictures. Put it in a folder only when the pictures and what is known about it clearly fit. Answer with JSON only.",
+    user,
+    images,
+    undefined,
+    (text) => {
+      const o = parseJsonObject(text);
+      if (!Array.isArray(o.in)) throw new Error("No folders in the answer");
+      return o.in as unknown[];
+    },
+    who,
+    { label: LABEL, background: true, preferKey: true },
+  ).then((r) => r.value, () => null);
+  return picked ? rules.filter((_, i) => picked.includes(i + 1)).map((r) => r.id) : null;
+}
+
 /**
- * For each clip, the ids of the folders it belongs in. A clip whose judging fails is left out of the answer (filed as
- * it was). Jev when `who` has a key, else their AI; with neither, nothing is judged.
+ * For each clip, the folders it belongs in. A clip whose judging fails is left out of the answer (filed as it was).
+ * Jev when `who` has a key (with `pictures`, what it was unsure of is looked at), else their AI; with neither, nothing.
  */
-export async function judge(who: Who, workspace: string, clips: Clip[], rules: Rule[], examples: Record<string, { in: string[]; out: string[] }> = {}): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
+export async function judge(
+  who: Who,
+  workspace: string,
+  clips: Clip[],
+  rules: Rule[],
+  examples: Record<string, { in: string[]; out: string[] }> = {},
+  pictures = true,
+): Promise<Map<string, Verdict>> {
+  const out = new Map<string, Verdict>();
   if (!clips.length || !rules.length) return out;
   const key = keyFor(who, "TYPESAFE_API_KEY").key;
   const ws = workspace.slice(0, WORKSPACE_MAX);
@@ -138,7 +200,18 @@ export async function judge(who: Who, workspace: string, clips: Clip[], rules: R
     const questions = Object.fromEntries(rules.map((r, i) => [`f${i}`, noul(question(r, examples[r.id]))]));
     await pool(clips, JEV_AT_ONCE, async (c) => {
       const a = await ask(key, { ...(ws ? { workspace: ws } : {}), clip: clipText(c) }, questions).catch(() => null);
-      if (a) out.set(c.id, rules.filter((_, i) => yes(a[`f${i}`]) >= YES).map((r) => r.id));
+      if (!a) return;
+      const p = (i: number) => yes(a[`f${i}`]);
+      out.set(c.id, { in: rules.filter((_, i) => p(i) >= YES).map((r) => r.id), unsure: rules.filter((_, i) => p(i) >= UNSURE && p(i) < YES).map((r) => r.id) });
+    });
+    if (!pictures) return out;
+    const d = libraryDb();
+    const doubts = clips.filter((c) => out.get(c.id)?.unsure.length);
+    await pool(doubts, LOOK_AT_ONCE, async (c) => {
+      const v = out.get(c.id)!;
+      const asked = rules.filter((r) => v.unsure.includes(r.id));
+      const seen = await look(d, who, ws, c, asked, examples);
+      if (seen) out.set(c.id, { in: [...v.in, ...seen], unsure: [] });
     });
     return out;
   }
@@ -165,14 +238,14 @@ export async function judge(who: Who, workspace: string, clips: Clip[], rules: R
     if (!parsed) continue;
     batch.forEach((c, k) => {
       const picks = parsed[String(k + 1)];
-      if (Array.isArray(picks)) out.set(c.id, rules.filter((_, n) => picks.includes(n + 1)).map((r) => r.id));
+      if (Array.isArray(picks)) out.set(c.id, { in: rules.filter((_, n) => picks.includes(n + 1)).map((r) => r.id), unsure: [] });
     });
   }
   return out;
 }
 
-/** Files and unfiles by the judge's answer, within `rules`: never a clip the person took out, never one they put in. Returns how many it filed. */
-function apply(d: DatabaseSync, answers: Map<string, string[]>, rules: Rule[]): number {
+/** Files and unfiles by the judge's answer, within `rules`: never a clip the person took out, never one they put in, and a folder it is still unsure of stays as it was. Returns how many it filed. */
+function apply(d: DatabaseSync, answers: Map<string, Verdict>, rules: Rule[]): number {
   const kept = d.prepare("SELECT 1 FROM folder_out WHERE collection_id = ? AND asset_id = ?");
   const add = d.prepare(
     `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by, by_ai)
@@ -180,21 +253,23 @@ function apply(d: DatabaseSync, answers: Map<string, string[]>, rules: Rule[]): 
   );
   const drop = d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ? AND by_ai = 1");
   let filed = 0;
-  for (const [asset, ins] of answers) {
+  for (const [asset, v] of answers) {
     for (const r of rules) {
-      if (!ins.includes(r.id)) drop.run(r.id, asset);
-      else if (!kept.get(r.id, asset)) filed += add.run(r.id, asset, r.id).changes as number;
+      if (v.in.includes(r.id)) {
+        if (!kept.get(r.id, asset)) filed += add.run(r.id, asset, r.id).changes as number;
+      } else if (!v.unsure.includes(r.id)) drop.run(r.id, asset);
     }
   }
   return filed;
 }
 
-/** A clip just described: judged against every smart folder of its library. Returns how many folders it went in. */
-export async function fileSmart(d: DatabaseSync, versionId: string, who: Who, workspace: string): Promise<number> {
+/** A clip just described, or its words or picture changed by hand: judged against every smart folder of its library. Returns how many folders it went in; null when the library has no smart folder. */
+export async function fileSmart(d: DatabaseSync, versionId: string, who: Who, workspace: string): Promise<number | null> {
   const c = d.prepare(`${CLIP} WHERE v.id = ? AND a.current_version_id = v.id AND a.trashed_at IS NULL AND NOT ${FINISHED}`).get(versionId) as unknown as Clip | undefined;
   const lib = c && (d.prepare("SELECT library_id FROM assets WHERE id = ?").get(c.id) as { library_id: string }).library_id;
   const rules = lib ? rulesOf(d, lib) : [];
-  if (!c || !rules.length) return 0;
+  if (!rules.length) return null;
+  if (!c) return 0;
   return apply(d, await judge(who, workspace, [c], rules, examplesOf(d, rules)), rules);
 }
 
@@ -308,13 +383,13 @@ export async function suggestWays(libraryId: string, who: Who, workspace: string
   );
   const sample = clips.slice(0, COUNT_SAMPLE);
   const all: Rule[] = ways.flatMap((w, i) => w.folders.map((f, k) => ({ id: `${i}.${k}`, name: f.name, rule: f.rule })));
-  const answers = await judge(who, workspace, sample, all).catch(() => new Map<string, string[]>());
+  const answers = await judge(who, workspace, sample, all, {}, false).catch(() => new Map<string, Verdict>());
   if (answers.size) {
     const scale = clips.length / answers.size;
     ways.forEach((w, i) =>
       w.folders.forEach((f, k) => {
         let n = 0;
-        for (const ins of answers.values()) if (ins.includes(`${i}.${k}`)) n++;
+        for (const v of answers.values()) if (v.in.includes(`${i}.${k}`)) n++;
         f.count = Math.round(n * scale);
       }),
     );

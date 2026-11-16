@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
 import { ClipImage, ClipPlayer } from "./ClipPlayer";
 import { ClipShare } from "./ClipShare";
+import { Locate } from "./Locate";
 
 /**
  * One clip, opened from the Media Library's grid, in a window (the player large on the left, a column on the right:
@@ -247,6 +248,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
           when the file does.
         </p>
       )}
+      <Locate libraryId={libraryId} versionId={a.versionId} missing={a.state === "missing"} onMac={!!a.onMac} />
     </div>
   );
 

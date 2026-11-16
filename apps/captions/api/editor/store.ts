@@ -20,6 +20,8 @@ import { deviceName } from "../lib/devices";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
 import { accountOf, givenLibrary, homeOf, libraryRole } from "../library/access";
+import { readerOf } from "../library/reader";
+import { assetRef, canSee } from "../library/sources";
 import { sharedTo } from "../lib/project-of";
 import { ownedTeamWithMembers } from "../lib/workspaces";
 import { libraryDb } from "../library/db";
@@ -50,7 +52,7 @@ export interface EditMeta extends EditBrief {
   eyeline?: Record<string, number>;
   /** the items the edit was made with, recorded by createEdit and never changed by a later default */
   bundle: EditBundle;
-  /** the post-processing steps it was made with (Settings → Tools → AI Editor at the time), run by post.ts */
+  /** the post-processing steps it was made with (Settings → AI Editor at the time), run by post.ts */
   steps?: EditStepChoice[];
   /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
   style?: EditStyleCopy;
@@ -286,14 +288,24 @@ export const mayRename = (username: string, e: EditMeta, role: Awaited<ReturnTyp
 export const ownerOf = (e: Pick<EditMeta, "createdBy"> & { workspaceId?: string }): string =>
   !e.workspaceId || homeOf(e.createdBy) === e.workspaceId ? e.createdBy : (accountOf(e.workspaceId) ?? e.workspaceId);
 
-/** A version's library and its workspace, while its asset is out of the trash. */
+/** A version's library, asset and workspace, while its asset is out of the trash. */
 const libraryOf = (versionId: string) =>
   libraryDb()
     .prepare(
-      `SELECT l.id AS library_id, l.workspace_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+      `SELECT l.id AS library_id, l.workspace_id, a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.trashed_at IS NULL`,
     )
-    .get(versionId) as { library_id: string; workspace_id: string } | undefined;
+    .get(versionId) as { library_id: string; workspace_id: string; asset_id: string } | undefined;
+
+/**
+ * Whether `username` may see the clip as the Media Library's own routes would show it (library/routes.ts
+ * libraryMedia): they read its library (readerOf), and for anyone but its owner every policy of its source says yes
+ * (sources.ts canSee: a plug-in's gate, say one that shows a member only blurred footage). Its owner is never stopped here.
+ */
+export async function seesClip(username: string, versionId: string, row = libraryOf(versionId)): Promise<boolean> {
+  const viewer = row ? await readerOf(username, row.library_id) : null;
+  return !!row && !!viewer && (viewer.role === "owner" || (await canSee(viewer, assetRef(row.library_id, row.asset_id, versionId))));
+}
 
 /**
  * The workspace the versions' libraries are in, when they are all `username`'s own (out of the trash, in one
@@ -314,11 +326,27 @@ export async function editSources(username: string, versionIds: string[]): Promi
   let ws: string | null = null;
   for (const id of versionIds) {
     const row = libraryOf(id);
-    if (!row || (ws && ws !== row.workspace_id)) return null;
-    if (!libraryRole(username, row.library_id) && !(await givenLibrary(username, row.library_id))) return null;
+    if (!row || (ws && ws !== row.workspace_id) || !(await seesClip(username, id, row))) return null;
     ws = row.workspace_id;
   }
   return ws;
+}
+
+/** Every library clip the edit uses: its footage, its song and each draft's B-roll (a timeline's sources but the edit's own files). */
+export function clipsOf(e: EditMeta): string[] {
+  const out = new Set([...e.sources, ...(e.song ? [e.song] : [])]);
+  for (const n of draftNames(e.id)) for (const [id, s] of Object.entries(readDraft(e.id, n)?.timeline.sources ?? {})) if (!s.file) out.add(id);
+  return [...out];
+}
+
+/**
+ * Whether `username` may make, change, run or watch the edit: its workspace is theirs, or they may see every clip it
+ * uses (seesClip). A teammate refused one clip gets the not-found the library gives for it.
+ */
+export async function seesEdit(username: string, e: EditMeta): Promise<boolean> {
+  if (e.workspaceId === homeOf(username)) return true;
+  const ids = clipsOf(e);
+  return !ids.length || (await editSources(username, ids)) === e.workspaceId;
 }
 
 const BUILT_IN_ITEMS: Record<EditSlot, EditItem[]> = {
