@@ -30,6 +30,7 @@ import {
   type ExportJob,
 } from "@/lib/exports";
 import { retryClipUpload } from "@/lib/persist";
+import { canChange, useMe } from "@/lib/auth";
 import {
   canExportCaptionedVideoLocal,
   exportCaptionedVideoLocal,
@@ -215,6 +216,7 @@ function downloadBlob(blob: Blob, name: string) {
 }
 
 export function ExportDialog({ onClose }: { onClose: () => void }) {
+  const editable = canChange(useMe(), "captions");
   const cues = useStudio((s) => s.cues);
   const texts = useStudio((s) => s.texts);
   const clips = useStudio((s) => s.clips);
@@ -535,6 +537,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const prepareAndExport = () => {
     setError(null);
     if (
+      editable &&
       activeClip &&
       (activeClip.uploadState === "local" || activeClip.uploadState === "error")
     ) {
@@ -730,13 +733,15 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                     )}{" "}
                     MB · Full-quality renders
                   </span>
-                  <button
-                    onClick={removeOriginal}
-                    title="Delete the source from cloud storage (captions stay editable; re-attach anytime)"
-                    className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
-                  >
-                    <Trash2 className="h-3 w-3" /> Free up space
-                  </button>
+                  {editable && (
+                    <button
+                      onClick={removeOriginal}
+                      title="Delete the source from cloud storage (captions stay editable; re-attach anytime)"
+                      className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
+                    >
+                      <Trash2 className="h-3 w-3" /> Free up space
+                    </button>
+                  )}
                 </span>
               ) : activeClip?.uploadState === "error" ? (
                 <span className="flex items-center justify-between gap-3">
@@ -754,12 +759,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                       </span>
                     )}
                   </span>
-                  <button
-                    onClick={() => retryClipUpload(activeClip.id)}
-                    className="flex shrink-0 items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-amber-200 hover:bg-amber-500/10"
-                  >
-                    <CloudUpload className="h-3 w-3" /> Retry upload
-                  </button>
+                  {editable && (
+                    <button
+                      onClick={() => retryClipUpload(activeClip.id)}
+                      className="flex shrink-0 items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-amber-200 hover:bg-amber-500/10"
+                    >
+                      <CloudUpload className="h-3 w-3" /> Retry upload
+                    </button>
+                  )}
                 </span>
               ) : sourcePreparing ? (
                 <span className="block">
@@ -813,6 +820,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                   <span className="text-zinc-400">
                     Source video is not in cloud storage — attach it to render.
                   </span>
+                  {editable && (
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-800">
                     {attaching ? (
                       <>
@@ -834,6 +842,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                       }}
                     />
                   </label>
+                  )}
                 </span>
               )}
             </div>

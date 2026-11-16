@@ -4,6 +4,7 @@ import { SHAREABLE_TOOLS, type FolderTool, type ToolFolder, type ToolFolders } f
 import { askFolderName, askRename, folderOptions, folderPath } from "@/components/browse/browse";
 import { byName, matches } from "@/components/browse/views";
 import { confirmDialog } from "@/lib/dialogs";
+import { canChange, useMe } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { json } from "@/lib/uploads";
 import { undoable } from "@/lib/undo";
@@ -34,6 +35,8 @@ export function useToolFolders<T extends { id: string }>(tool: FolderTool, items
   const [params] = useSearchParams();
   const { pathname } = useLocation();
   const load = useCachedLoad<ToolFolders>(enabled ? url(tool) : null, () => getFolders(tool));
+  // the tool on Read for this account: folders open, nothing in them changes
+  const editable = canChange(useMe(), tool);
   const data = load.data ?? EMPTY;
   const byId = new Map(data.folders.map((f) => [f.id, f]));
   /** the folder an item is in; null at the top (or when its folder is gone) */
@@ -90,7 +93,8 @@ export function useToolFolders<T extends { id: string }>(tool: FolderTool, items
       if (yes) await deleteFolder(tool, f.id).finally(again);
     },
     /** Whole folders can be shared by a link in this tool. */
-    shareable: SHAREABLE_TOOLS.includes(tool),
+    editable,
+    shareable: editable && SHAREABLE_TOOLS.includes(tool),
     /** Turns the folder's link on (kept if it is on) and copies it. */
     share: async (f: ToolFolder) => {
       const token = f.share

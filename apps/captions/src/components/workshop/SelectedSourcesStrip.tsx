@@ -17,6 +17,7 @@ export function SelectedSourcesStrip({
   onMove,
   onRemove,
   onCite,
+  readOnly,
 }: {
   posts: InstagramPost[];
   activeId?: string | null;
@@ -24,6 +25,8 @@ export function SelectedSourcesStrip({
   onMove: (id: string, dir: -1 | 1) => void;
   onRemove: (id: string) => void;
   onCite?: (quote: PieceQuote, at: { x: number; y: number }) => void;
+  /** Shows the project's posts: no move or remove. */
+  readOnly?: boolean;
 }) {
   const [menu, setMenu] = useState<{ post: InstagramPost; at: { x: number; y: number } } | null>(null);
   useEffect(() => {
@@ -84,7 +87,7 @@ export function SelectedSourcesStrip({
             <span className="absolute right-1 top-1 rounded bg-violet-600/85 px-1 text-[9px] font-medium text-white">C</span>
           )}
           <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1 text-[9px] text-zinc-200">{i + 1}</span>
-          <div className="absolute inset-x-0 bottom-0 flex justify-between bg-black/70 opacity-0 transition-opacity group-hover:opacity-100">
+          {!readOnly && <div className="absolute inset-x-0 bottom-0 flex justify-between bg-black/70 opacity-0 transition-opacity group-hover:opacity-100">
             <button type="button" onClick={() => onMove(p.id, -1)} disabled={i === 0} className="p-1 text-zinc-300 hover:text-zinc-50 disabled:opacity-30" title="Move left">
               <ChevronLeft className="h-3 w-3" />
             </button>
@@ -94,7 +97,7 @@ export function SelectedSourcesStrip({
             <button type="button" onClick={() => onMove(p.id, 1)} disabled={i === posts.length - 1} className="p-1 text-zinc-300 hover:text-zinc-50 disabled:opacity-30" title="Move right">
               <ChevronRight className="h-3 w-3" />
             </button>
-          </div>
+          </div>}
         </div>
       ))}
       {menu && onCite ? (

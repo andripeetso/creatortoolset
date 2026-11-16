@@ -45,6 +45,7 @@ export function SessionMenu({
   onClose,
   onRename,
   onChanged,
+  readOnly,
 }: {
   id: string;
   title: string;
@@ -58,6 +59,8 @@ export function SessionMenu({
   onRename: () => void;
   /** after a change the list page reloads its own rows */
   onChanged?: () => void;
+  /** Copy only: the menu's changes are hidden */
+  readOnly?: boolean;
 }) {
   const kinds = useDocKinds();
   const ref = useRef<HTMLDivElement>(null);
@@ -182,22 +185,26 @@ export function SessionMenu({
       className="fixed z-[60] w-56 rounded-xl border border-zinc-700 bg-zinc-900 p-1 text-[13px] shadow-2xl"
       style={{ left, top }}
     >
-      <button type="button" role="menuitem" className={item} onClick={() => change(pinned ? "unpinned" : "pinned", { pinned: !pinned }, [{ pinned: !!pinned }])}>
-        {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-        {pinned ? "Unpin" : "Pin"}
-      </button>
-      <button type="button" role="menuitem" className={item} onClick={() => (onClose(), onRename())}>
-        <Pencil className="h-3.5 w-3.5" /> Rename
-      </button>
-      <button type="button" role="menuitem" className={item} onClick={regenerate}>
-        <CtMark className="h-3.5 w-3.5" /> Regenerate title
-      </button>
-      {hasReply ? (
-        <button type="button" role="menuitem" className={item} onClick={() => (onClose(), markUnread(id))}>
-          <CircleDot className="h-3.5 w-3.5" /> Mark unread
-        </button>
-      ) : null}
-      <div className="my-1 h-px bg-zinc-800" />
+      {!readOnly && (
+        <>
+          <button type="button" role="menuitem" className={item} onClick={() => change(pinned ? "unpinned" : "pinned", { pinned: !pinned }, [{ pinned: !!pinned }])}>
+            {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+            {pinned ? "Unpin" : "Pin"}
+          </button>
+          <button type="button" role="menuitem" className={item} onClick={() => (onClose(), onRename())}>
+            <Pencil className="h-3.5 w-3.5" /> Rename
+          </button>
+          <button type="button" role="menuitem" className={item} onClick={regenerate}>
+            <CtMark className="h-3.5 w-3.5" /> Regenerate title
+          </button>
+          {hasReply ? (
+            <button type="button" role="menuitem" className={item} onClick={() => (onClose(), markUnread(id))}>
+              <CircleDot className="h-3.5 w-3.5" /> Mark unread
+            </button>
+          ) : null}
+          <div className="my-1 h-px bg-zinc-800" />
+        </>
+      )}
       <Sub icon={<Copy className="h-3.5 w-3.5" />} label="Copy" item={item} flip={flip}>
         <button type="button" role="menuitem" className={item} onClick={() => copy(`${window.location.origin}${sessionPath(id)}`)}>
           <Link2 className="h-3.5 w-3.5" /> Copy link
@@ -209,24 +216,28 @@ export function SessionMenu({
           Copy script
         </button>
       </Sub>
-      <button type="button" role="menuitem" className={item} onClick={duplicate}>
-        <CopyPlus className="h-3.5 w-3.5" /> Duplicate
-      </button>
-      <Sub icon={<Repeat2 className="h-3.5 w-3.5" />} label="Convert to" item={item} flip={flip}>
-        {kinds.map((k) => (
-          <button key={k.id} type="button" role="menuitem" className={item} onClick={() => convert(k.id)}>
-            {k.label}
+      {!readOnly && (
+        <>
+          <button type="button" role="menuitem" className={item} onClick={duplicate}>
+            <CopyPlus className="h-3.5 w-3.5" /> Duplicate
           </button>
-        ))}
-      </Sub>
-      <button type="button" role="menuitem" className={item} onClick={() => change(shelved ? "unshelved" : "shelved", { status: shelved ? "writing" : "shelved" }, statusSteps(shelved ? "writing" : "shelved", status ?? "draft").map((s) => ({ status: s })))}>
-        {shelved ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-        {shelved ? "Unshelve" : "Shelve"}
-      </button>
-      <div className="my-1 h-px bg-zinc-800" />
-      <button type="button" role="menuitem" className={`${item} text-red-300 hover:bg-red-500/10`} onClick={remove}>
-        <Trash2 className="h-3.5 w-3.5" /> Delete
-      </button>
+          <Sub icon={<Repeat2 className="h-3.5 w-3.5" />} label="Convert to" item={item} flip={flip}>
+            {kinds.map((k) => (
+              <button key={k.id} type="button" role="menuitem" className={item} onClick={() => convert(k.id)}>
+                {k.label}
+              </button>
+            ))}
+          </Sub>
+          <button type="button" role="menuitem" className={item} onClick={() => change(shelved ? "unshelved" : "shelved", { status: shelved ? "writing" : "shelved" }, statusSteps(shelved ? "writing" : "shelved", status ?? "draft").map((s) => ({ status: s })))}>
+            {shelved ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+            {shelved ? "Unshelve" : "Shelve"}
+          </button>
+          <div className="my-1 h-px bg-zinc-800" />
+          <button type="button" role="menuitem" className={`${item} text-red-300 hover:bg-red-500/10`} onClick={remove}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </button>
+        </>
+      )}
     </div>,
     document.body,
   );

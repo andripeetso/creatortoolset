@@ -6,7 +6,8 @@ import { afterAll, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 
 // A member the team's owner gave one of their workspaces (Settings → Team → Access) sees the owner's library there and
-// opens it, read-only: no other workspace's library, and nothing they write reaches it.
+// opens it, read-only: no other workspace's library, and nothing they change reaches it. With the Media Library on
+// Read & write they add footage to it, never change or delete what is there.
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-given-"));
 process.env.DATA_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -39,7 +40,9 @@ libraryDb().prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
-  c.set("user", { username: c.req.header("x-test-user") ?? "", role: "user", off: [] } as never);
+  // "bo:read": bo with the Media Library on Read (Settings → Team → Access)
+  const [username, read] = (c.req.header("x-test-user") ?? "").split(":");
+  c.set("user", { username, role: "user", off: [], read: read ? ["media"] : [] } as never);
   return next();
 });
 app.use(inRequestWorkspace);
@@ -51,14 +54,20 @@ const call = (user: string, url: string, init: RequestInit = {}, ws?: string) =>
 
 it("lists and opens the owner's library in the given workspace only, read-only", async () => {
   const listed = (await (await call("bo", "/api/library", {}, FIRST)).json()) as { libraries: { id: string; readOnly?: boolean }[] };
-  expect(listed.libraries).toEqual([expect.objectContaining({ id: "lib_old", readOnly: true })]);
+  expect(listed.libraries).toEqual([expect.objectContaining({ id: "lib_old", readOnly: true, canAdd: true })]);
   expect((await call("bo", "/api/library/lib_old/assets")).status).toBe(200);
   expect((await call("bo", "/api/library/lib_old/collections")).status).toBe(200);
   expect((await call("bo", "/api/library/lib_two/assets")).status).toBe(404);
   expect((await call("cy", "/api/library/lib_old/assets")).status).toBe(404);
   // writes ask whose library it is: never the member's
   expect((await call("bo", "/api/library/lib_old", { method: "PATCH", body: JSON.stringify({ name: "Mine" }) })).status).toBe(404);
-  expect((await call("bo", "/api/library/lib_old/uploads/check", { method: "POST", body: JSON.stringify({ files: [] }) })).status).toBe(404);
+  expect((await call("bo", "/api/library/lib_old/assets/ast_x", { method: "DELETE" })).status).toBe(404);
+  // with the Media Library on Read & write the member adds footage to it; on Read not even that
+  const check = { method: "POST", body: JSON.stringify({ size: 10 }) };
+  expect((await call("bo", "/api/library/lib_old/uploads/check", check)).status).toBe(200);
+  expect((await call("bo:read", "/api/library/lib_old/uploads/check", check)).status).toBe(404);
+  const asReader = (await (await call("bo:read", "/api/library", {}, FIRST)).json()) as { libraries: { canAdd?: boolean }[] };
+  expect(asReader.libraries[0]!.canAdd).toBeUndefined();
   // the owner's own view is as before
   const own = (await (await call("ana", "/api/library", {}, FIRST)).json()) as { libraries: { id: string; readOnly?: boolean }[] };
   expect(own.libraries).toEqual([expect.objectContaining({ id: "lib_old" })]);

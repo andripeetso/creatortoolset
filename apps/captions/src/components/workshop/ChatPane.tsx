@@ -49,6 +49,7 @@ function thinkingHint(m: ChatMessage): string {
 }
 
 export function ChatPane({
+  readOnly,
   messages,
   docs,
   activeDoc,
@@ -88,6 +89,8 @@ export function ChatPane({
   ai,
   onAiChange,
 }: {
+  /** Reads the chat only: no message box. */
+  readOnly?: boolean;
   messages: ChatMessage[];
   docs: WorkshopDocument[];
   activeDoc: WorkshopDocument | null;
@@ -532,7 +535,7 @@ export function ChatPane({
                 ) : m.status === "error" ? (
                   <Notice
                     action={
-                      <button type="button" onClick={() => onRetry(m)} disabled={thinking} className="-my-0.5 flex shrink-0 items-center gap-1 rounded-md border border-red-400/30 px-2 py-0.5 text-[11px] text-red-100 hover:bg-red-500/15 disabled:opacity-50">
+                      !readOnly && <button type="button" onClick={() => onRetry(m)} disabled={thinking} className="-my-0.5 flex shrink-0 items-center gap-1 rounded-md border border-red-400/30 px-2 py-0.5 text-[11px] text-red-100 hover:bg-red-500/15 disabled:opacity-50">
                         <RotateCcw className="h-3 w-3" /> Retry
                       </button>
                     }
@@ -572,13 +575,13 @@ export function ChatPane({
                       </div>
                     ) : null}
                     {m.research?.answer ? <ResearchCard research={m.research} /> : null}
-                    {m.proposal ? <ProposalRow proposal={m.proposal} busy={thinking} onRespond={(action, depth, question) => onProposal(m, action, depth, question)} /> : null}
+                    {m.proposal && !readOnly ? <ProposalRow proposal={m.proposal} busy={thinking} onRespond={(action, depth, question) => onProposal(m, action, depth, question)} /> : null}
                     {m.flags?.length ? (
                       <p className="mt-1.5 text-[11px] text-amber-300/90" title="Jev's check of the edited draft against its rules. Nothing was blocked.">
                         May break: {m.flags.map((f) => `${f.name} (${Math.round(f.p * 100)}%)`).join(" · ")}
                       </p>
                     ) : null}
-                    <TurnMeta m={m} thinking={thinking} docs={docs} onOpenDoc={onOpenDoc} onRevert={undo} composerBusy={composerBusy} sessionId={sessionId} />
+                    <TurnMeta m={m} thinking={thinking} docs={docs} onOpenDoc={onOpenDoc} readOnly={readOnly} onRevert={undo} composerBusy={composerBusy} sessionId={sessionId} />
                   </>
                 )}
               </div>
@@ -712,7 +715,7 @@ export function ChatPane({
           </ul>
         )}
         <VoiceError v={v} />
-        <div
+        {!readOnly && <div
           className={cn(boxClass(v.recording), "cursor-text pl-1.5")}
           onKeyDown={(e) => v.recording && e.key === "Escape" && v.voice.cancel()}
           onMouseDown={(e) => {
@@ -758,7 +761,7 @@ export function ChatPane({
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
           <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
           </>}
-        </div>
+        </div>}
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <input
             ref={pickRef}
@@ -931,9 +934,11 @@ function TurnMeta({
   docs,
   onOpenDoc,
   onRevert,
+  readOnly,
   composerBusy,
   sessionId,
 }: {
+  readOnly?: boolean;
   m: ChatMessage;
   thinking: boolean;
   docs: WorkshopDocument[];
@@ -982,7 +987,7 @@ function TurnMeta({
             Edited {editSummary(kind, m.edits?.blockIds ?? [])} in “{title}”
           </span>
         ) : null}
-        {change?.kind === "edited" && change.versionBefore ? (
+        {change?.kind === "edited" && change.versionBefore && !readOnly ? (
           <button
             type="button"
             onClick={() => onRevert(m)}

@@ -31,6 +31,7 @@ import { DropZoneText, dropZoneClass } from "./DropZone";
 import { BrowseBar, NewFolderButton, ViewSwitch as ViewToggle, type BrowseView } from "./browse/Bar";
 import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "./browse/ToolFolders";
 import { useToolFolders, type ToolFoldersState } from "@/lib/folders";
+import { canChange, useMe } from "@/lib/auth";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "./browse/views";
 import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
@@ -78,6 +79,8 @@ function OpeningLine() {
 }
 
 interface SessionHandlers {
+  /** false on an account set to Read: no project is moved, renamed, restored or deleted */
+  editable: boolean;
   opening: string | null;
   renaming: string | null;
   draft: string;
@@ -100,6 +103,7 @@ function ActionButtons({
   h: SessionHandlers;
   className?: string;
 }) {
+  if (!h.editable) return null;
   return (
     <div className={className}>
       {h.folders && <MoveToMenu state={h.folders} id={s.id} className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" />}
@@ -192,7 +196,7 @@ function SessionRow({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
   return (
     <div
       onClick={() => h.renaming !== s.id && h.open(s.id)}
-      {...h.folders?.drag(s.id)}
+      {...(h.editable ? h.folders?.drag(s.id) : undefined)}
       aria-busy={h.opening === s.id || undefined}
       className="group relative flex cursor-pointer items-center gap-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-2 transition-colors hover:border-violet-500/50 hover:bg-zinc-900 aria-busy:border-violet-500/50"
     >
@@ -220,7 +224,7 @@ function SessionTile({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
   return (
     <div
       onClick={() => h.renaming !== s.id && h.open(s.id)}
-      {...h.folders?.drag(s.id)}
+      {...(h.editable ? h.folders?.drag(s.id) : undefined)}
       aria-busy={h.opening === s.id || undefined}
       className="group cursor-pointer overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-violet-500/50 hover:bg-zinc-900 aria-busy:border-violet-500/50"
     >
@@ -289,6 +293,7 @@ function SessionsBlock({
 
 export function ImportScreen() {
   const navigate = useNavigate();
+  const editable = canChange(useMe(), "captions");
   const importFiles = useStudio((s) => s.importFiles);
   const hasCurrentProject = useStudio((s) => s.clips.length > 0);
   const [drag, setDrag] = useState(false);
@@ -396,6 +401,7 @@ export function ImportScreen() {
   };
 
   const handlers: SessionHandlers = {
+    editable,
     folders,
     opening,
     renaming,
@@ -449,6 +455,7 @@ export function ImportScreen() {
       <div ref={column} className="flex flex-1 flex-col items-center justify-center py-8">
       <ToolIntro icon={Captions} title="Caption Studio" line="Transcribe · caption · export with alpha" className="mt-0" />
 
+      {editable && (
       <label
         onDragOver={(e) => {
           e.preventDefault();
@@ -475,6 +482,7 @@ export function ImportScreen() {
           }}
         />
       </label>
+      )}
 
       {recent.length > 0 && (
         <div className="mt-8 w-[560px] max-w-[90%]">
@@ -503,7 +511,7 @@ export function ImportScreen() {
         </div>
       )}
 
-      {deletedSessions.length > 0 && (
+      {editable && deletedSessions.length > 0 && (
         <details className="mt-4 w-[560px] max-w-[90%] rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
           <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
             Trash · {deletedSessions.length} project
@@ -564,7 +572,7 @@ export function ImportScreen() {
               All projects ({sessions.length})
             </h2>
             <div className="flex items-center gap-2">
-              <NewFolderButton onClick={() => void folders.newFolder()} />
+              {editable && <NewFolderButton onClick={() => void folders.newFolder()} />}
               <ViewToggle view={view} onChange={changeView} />
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { mayChange } from "../users";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +8,7 @@ import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { readerOf } from "./reader";
-import { ensureLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayWrite } from "./access";
+import { ensureLibrary, givenLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
@@ -271,10 +272,10 @@ const db = () => libraryDb();
 const IN_REVIEW = { error: "This video lives in Review: change it there", code: "conflict" } as const;
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
-function ownUpload(c: Context<{ Variables: AuthVars }>): UploadRow | null {
+async function ownUpload(c: Context<{ Variables: AuthVars }>): Promise<UploadRow | null> {
   const user = c.get("user");
   const row = db().prepare("SELECT * FROM uploads WHERE id = ?").get(c.req.param("uploadId") ?? "") as UploadRow | undefined;
-  if (!row || row.created_by !== user.username || !libraryRole(user.username, row.library_id)) return null;
+  if (!row || row.created_by !== user.username || !(await mayAdd(user, row.library_id))) return null;
   return row;
 }
 
@@ -383,7 +384,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
 // only then). With the sha256: the clip it is, by the same check an upload's finish makes.
 libraryApp.post("/:id/uploads/check", async (c) => {
   const libraryId = c.req.param("id");
-  if (!libraryRole(c.get("user").username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!(await mayAdd(c.get("user"), libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown } | null;
   const size = Number(b?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
@@ -398,8 +399,7 @@ libraryApp.post("/:id/uploads/check", async (c) => {
 libraryApp.post("/:id/uploads", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const role = libraryRole(user.username, libraryId);
-  if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
@@ -532,7 +532,7 @@ libraryApp.post("/:id/in-place", async (c) => {
 libraryApp.post("/:id/on-mac", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   if (x.collectionId) {
@@ -546,7 +546,7 @@ libraryApp.post("/:id/on-mac", async (c) => {
 // HEAD /api/library/uploads/:uploadId → Upload-Offset: what is on disk. Hono sends HEAD through GET, so this is a GET
 // route (the body is empty for HEAD).
 libraryApp.get("/uploads/:uploadId", async (c) => {
-  const row = ownUpload(c);
+  const row = await ownUpload(c);
   const received = row && (await stagedBytes(row.staging_path));
   if (!row || received === -1) return c.body(null, 404);
   c.header("Upload-Offset", String(received));
@@ -555,7 +555,7 @@ libraryApp.get("/uploads/:uploadId", async (c) => {
 
 // DELETE /api/library/uploads/:uploadId → 204: a cancelled upload; what reached the server goes now, not in STAGE_DAYS
 libraryApp.delete("/uploads/:uploadId", async (c) => {
-  const row = ownUpload(c);
+  const row = await ownUpload(c);
   if (!row || row.state !== "open") return c.json({ error: "Not found", code: "not_found" }, 404);
   // a chunk still being written ends with the connection the page closed; the file goes either way
   await dropUpload(row);
@@ -564,7 +564,7 @@ libraryApp.delete("/uploads/:uploadId", async (c) => {
 
 // PATCH /api/library/uploads/:uploadId, Upload-Offset: n, body from n → 204 Upload-Offset | 409 { offset }
 libraryApp.patch("/uploads/:uploadId", async (c) => {
-  const row = ownUpload(c);
+  const row = await ownUpload(c);
   if (!row || row.state !== "open") return c.json({ error: "Not found", code: "not_found" }, 404);
   if (row.direct_upload_id) return c.json({ error: "This upload goes straight to the bucket", code: "conflict" }, 409);
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
@@ -593,7 +593,7 @@ libraryApp.patch("/uploads/:uploadId", async (c) => {
 
 // POST /api/library/uploads/:uploadId/finish → { assetId, versionId } | { duplicateOf } | 409 { offset }
 libraryApp.post("/uploads/:uploadId/finish", async (c) => {
-  const row = ownUpload(c);
+  const row = await ownUpload(c);
   if (!row) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (row.state !== "open") return c.json({ error: "Already finished", code: "conflict" }, 409);
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
@@ -665,7 +665,7 @@ libraryApp.get("/", async (c) => {
     name: r.name,
     storage: r.storage_kind as LibrarySummary["storage"],
     settings: settingsOf(r.settings),
-    ...(given ? { readOnly: true as const } : {}),
+    ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
   }));
   return c.json({ libraries });
 });
@@ -932,13 +932,17 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   const user = c.get("user");
   const libraryId = c.req.param("id") ?? "";
   const assetId = c.req.param("assetId") ?? "";
-  const role = libraryRole(user.username, libraryId);
+  // an admin in a workspace the owner gave them may move footage to the trash too: its purge takes the server's and the
+  // cloud's copies, never a file on a computer (trash.ts). A member never deletes.
+  const role =
+    libraryRole(user.username, libraryId) ??
+    (user.role === "admin" && (await givenLibrary(user.username, libraryId)) ? ("admin" as const) : null);
   const a = role
     ? (db().prepare("SELECT created_by, trashed_at, current_version_id FROM assets WHERE id = ? AND library_id = ?").get(assetId, libraryId) as
         | { created_by: string; trashed_at: number | null; current_version_id: string }
         | undefined)
     : undefined;
-  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) {
+  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null) || (role === "owner" && !(await mayWrite(user.username, libraryId, assetId, a.current_version_id)))) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
   if (inReview(assetId)) return c.json(IN_REVIEW, 409);

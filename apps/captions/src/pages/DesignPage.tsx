@@ -9,6 +9,7 @@ import { CtMark } from "@/components/CtMark";
 import { FramePresets } from "@/components/design/FramePresets";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
 import { usePageNeeds } from "@/lib/chat-mode";
+import { canChange, useMe } from "@/lib/auth";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
@@ -87,6 +88,8 @@ export default function DesignRoute() {
 function DesignPage({ id }: { id: string }) {
   // the layers, the canvas and what is picked side by side: beside the chats (chat mode) the page asks for that much
   usePageNeeds(920);
+  // Read (Settings → Team → Access): the design opens to look at; nothing in it changes, saves or shows a control to change it
+  const locked = !canChange(useMe(), "design");
   const [design, setDesign] = useState<Design | null>(null);
   /** The name in the top bar while it is being typed (null: not being typed, the design's own name shows). */
   const [naming, setNaming] = useState<string | null>(null);
@@ -103,7 +106,9 @@ function DesignPage({ id }: { id: string }) {
   const [cutting, setCutting] = useState(false);
   /** The path layer whose points are shown for moving, and the picked one of them. */
   const [shaping, setShaping] = useState<{ id: string; anchor: number | null } | null>(null);
-  const [tool, setTool] = useState<Tool>("move");
+  const [pickedTool, setTool] = useState<Tool>("move");
+  // Read: the hand (pan) is the only tool, so nothing picked here draws or moves
+  const tool = locked ? "hand" : pickedTool;
   // where the canvas is scrolled to and how far it is zoomed: kept beside this page's state, so a wheel draws the canvas again and not the whole page
   const view = useRef(viewStore()).current;
   const [pointed, setPointed] = useState<string | null>(null);
@@ -288,12 +293,13 @@ function DesignPage({ id }: { id: string }) {
    */
   const merging = useRef<string | null>(null);
   const change = useCallback((fn: (pages: Page[]) => Page[], merge?: string) => {
+    if (locked) return;
     const join = !!merge && merging.current === merge;
     merging.current = merge ?? null;
     setLive(null);
     // a loose picture keeps to the box round it, whatever changed it
     setHist((h) => (!h ? h : join ? { ...h, now: hugLoose(fn(h.now)) } : histChange(h, (all) => hugLoose(fn(all)))));
-  }, []);
+  }, [locked]);
   /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
   const setPages = useCallback((next: readonly Page[], merge?: string) => change((all) => [...all.map((p) => next.find((n) => n.id === p.id) ?? p), ...next.filter((n) => !all.some((p) => p.id === n.id))], merge), [change]);
   const setPage = useCallback((next: Page, merge?: string) => setPages([next], merge), [setPages]);
@@ -308,6 +314,7 @@ function DesignPage({ id }: { id: string }) {
     setError(null);
   }, []);
   const step = (back: boolean) => {
+    if (locked) return;
     merging.current = null;
     setLive(null);
     // the path being shaped may have other points now: none of them is the picked one
@@ -510,6 +517,7 @@ function DesignPage({ id }: { id: string }) {
    * before any save that names it, and taken back out (and why said) when it cannot be.
    */
   const fromComputer = async (given: readonly File[], drop?: { x: number; y: number }) => {
+    if (locked) return;
     const files = given.filter(isPicture);
     if (!design || !given.length) return;
     if (!files.length) return setError("Only JPEG, PNG and WebP pictures can be put on a canvas");
@@ -581,6 +589,7 @@ function DesignPage({ id }: { id: string }) {
     if (!hasFiles(e)) return;
     e.preventDefault();
     setDropping(false);
+    if (locked) return;
     const r = frame.current?.getBoundingClientRect();
     const onCanvas = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     const v = view.get();
@@ -634,6 +643,7 @@ function DesignPage({ id }: { id: string }) {
 
   /** The picked picture split into layers by a Mac of the person's own (lib/design/split.ts): one step ⌘Z takes back. */
   const split = async () => {
+    if (locked) return;
     const l = mine.length === 1 ? mine[0]! : null;
     if (!design || !base || l?.type !== "image" || cutting) return;
     const img = loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined;
@@ -799,6 +809,7 @@ function DesignPage({ id }: { id: string }) {
 
   /** The frame he liked goes into a carousel style's Made & liked: a new one named after the design when `to` is null. */
   const likeFrame = async (n: number, to: AnimationStyle | null) => {
+    if (locked) return;
     if (!design || !pages[n]) return;
     setError(null);
     try {
@@ -861,6 +872,7 @@ function DesignPage({ id }: { id: string }) {
   /** The typed name, saved (Enter or leaving the field). Empty or unchanged keeps the old one. */
   const rename = (typed: string) => {
     setNaming(null);
+    if (locked) return;
     const name = typed.trim().slice(0, DESIGN_LIMITS.name);
     const old = design.name;
     if (!name || name === old) return;
@@ -884,7 +896,7 @@ function DesignPage({ id }: { id: string }) {
         if (!hasFiles(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
-        if (!dropping) setDropping(true);
+        if (!locked && !dropping) setDropping(true);
       }}
       onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
       onDrop={dropped}
@@ -893,7 +905,7 @@ function DesignPage({ id }: { id: string }) {
           // as wide as the name (an invisible copy sizes it), so the rest of the bar stays free to drag the Mac window
           <span className="inline-grid min-w-0">
             <span aria-hidden className="invisible col-start-1 row-start-1 truncate whitespace-pre border border-transparent px-2 py-1 text-sm">{naming ?? design.name}</span>
-            <input
+            {locked ? <span className="col-start-1 row-start-1 truncate px-2 py-1 text-sm text-zinc-500">{design.name}</span> : <input
               value={naming ?? design.name}
               aria-label="Design name"
               title="Rename"
@@ -910,7 +922,7 @@ function DesignPage({ id }: { id: string }) {
                 }
               }}
               className="col-start-1 row-start-1 w-full min-w-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-normal text-zinc-500 outline-none hover:border-border focus:border-violet-500 focus:text-foreground"
-            />
+            />}
           </span>
         }>
         {piece && (
@@ -921,12 +933,14 @@ function DesignPage({ id }: { id: string }) {
         <span className="text-xs text-zinc-500" aria-live="polite">
           {saved === "unsaved" ? "Not saved yet" : saved === "saving" ? "Saving" : ""}
         </span>
+        {!locked && <>
         <Button size="icon" variant="ghost" aria-label="Undo" disabled={!hist.past.length} onClick={() => step(true)}>
           <Undo2 className="h-4 w-4" />
         </Button>
         <Button size="icon" variant="ghost" aria-label="Redo" disabled={!hist.future.length} onClick={() => step(false)}>
           <Redo2 className="h-4 w-4" />
         </Button>
+        </>}
         <Button size="sm" disabled={!frameCount} onClick={() => void exportPngs()}>
           <Download className="h-4 w-4" />
           {frameCount === 1 ? "Export PNG" : `Export ${frameCount} PNGs`}
@@ -993,7 +1007,11 @@ function DesignPage({ id }: { id: string }) {
               onCrop={setCropping}
               pointed={pointed}
               dropper={dropper ? (hex) => (dropper.take(hex), setDropper(null)) : null}
-              menu={
+              menu={locked ? (
+                <ContextMenuContent className="w-56">
+                  {item("Copy", "⌘C", copy, none)}
+                </ContextMenuContent>
+              ) : (
                 <ContextMenuContent className="w-56">
                   {item("Copy", "⌘C", copy, none)}
                   {item("Paste here", "⌘V", paste, !clip)}
@@ -1032,12 +1050,12 @@ function DesignPage({ id }: { id: string }) {
                     </ContextMenuSubContent>
                   </ContextMenuSub>
                 </ContextMenuContent>
-              }
+              )}
             />
           )}
 
           <div role="toolbar" aria-label="Tools" className={cn("absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border p-1.5 shadow-lg", BAR)}>
-            {TOOLS.map(([t, label, keys, Icon]) => (
+            {TOOLS.filter(([t]) => !locked || t === "hand").map(([t, label, keys, Icon]) => (
               // the button lets the keys go again, so Space still drags the canvas after a click here
               <Tip key={t} label={label} keys={keys}>
               <button type="button" aria-label={label} aria-pressed={tool === t} disabled={!frameCount && !NEED_NO_FRAME.includes(t)} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
@@ -1046,13 +1064,13 @@ function DesignPage({ id }: { id: string }) {
               </Tip>
             ))}
             <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Pictures from this computer" onChange={(e) => (void fromComputer([...(e.target.files ?? [])]), (e.target.value = ""))} />
-            <Tip label="Picture from this computer">
+            {!locked && <Tip label="Picture from this computer">
               <button type="button" aria-label="Picture" onClick={(e) => (fileRef.current?.click(), e.currentTarget.blur())} className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-500/15">
                 <ImagePlus className="h-4 w-4" />
               </button>
-            </Tip>
+            </Tip>}
             {/* one picture picked: what the AI can make of it, in a pill of its own beside the tools, so they never move */}
-            {mine.length === 1 && mine[0]!.type === "image" && (
+            {!locked && mine.length === 1 && mine[0]!.type === "image" && (
               <div className={cn("absolute left-full top-1/2 ml-2 flex -translate-y-1/2 rounded-xl border p-1.5 shadow-lg", BAR)}>
                 <button type="button" disabled={cutting} onClick={(e) => (void split(), e.currentTarget.blur())} className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm enabled:hover:bg-zinc-500/15 disabled:opacity-50">
                   <CtMark className="h-4 w-4 text-violet-500" />

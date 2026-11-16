@@ -162,7 +162,7 @@ export function PostCard({
   onSelect: () => void;
   onOpen: () => void;
   onOpenAccount?: (href: string) => void;
-  onMark: (patch: { ideaStatus?: IdeaStatus; rank?: number | null }) => void;
+  onMark?: (patch: { ideaStatus?: IdeaStatus; rank?: number | null }) => void;
   /** A failed post: run it again from the card. None while posts can't be read: the page's amber line says so. */
   onRetry?: () => Promise<unknown>;
 }) {
@@ -186,7 +186,7 @@ export function PostCard({
   // a post a Workshop session uses is filed under To make
   const stored = ideaStatusOf(post.ideaStatus);
   const status = workshop?.length && stored === "inbox" ? "idea" : stored;
-  const toggle = (to: IdeaStatus) => onMark({ ideaStatus: status === to ? "inbox" : to });
+  const toggle = (to: IdeaStatus) => onMark?.({ ideaStatus: status === to ? "inbox" : to });
 
   return (
     <div
@@ -253,9 +253,9 @@ export function PostCard({
                 <span className="block h-full bg-violet-500 transition-[width]" style={{ width: `${pct}%` }} />
               </span>
             </>
-          ) : active ? (
+          ) : active && onMark ? (
             <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-black/70 px-2.5 py-2">
-              <RankStars value={post.rank} onChange={(rank) => onMark({ rank })} onMedia />
+              <RankStars value={post.rank} onChange={(rank) => onMark?.({ rank })} onMedia />
               <span className="flex items-center gap-1.5">
                 <button
                   type="button"

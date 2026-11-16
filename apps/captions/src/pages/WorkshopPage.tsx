@@ -23,7 +23,7 @@ import { useWorkshopTitle } from "@/components/workshop/WorkshopSidebar";
 import { MAKING, patchSummary, useSessionSummaries } from "@/lib/workshop-summary";
 import { undoable } from "@/lib/undo";
 import { KindTile } from "@/components/workshop/KindTile";
-import { canUse, useAuth, useMe } from "@/lib/auth";
+import { canChange, canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import {
@@ -79,6 +79,8 @@ export default function WorkshopPage() {
   const me = useMe();
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "workshop");
+  // Read on this app: the page shows what is there and changes nothing (the server refuses those requests too)
+  const editable = canChange(me, "workshop");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
 
   const [tab, setTab] = useState<Tab>("sessions");
@@ -183,13 +185,13 @@ export default function WorkshopPage() {
   // /workshop?add=id1,id2 — sent from the Analyzer: open a session with those sources.
   const add = searchParams.get("add");
   useEffect(() => {
-    if (!allowed || !add) return;
+    if (!allowed || !editable || !add) return;
     const ids = add.split(",").filter(Boolean);
     setSearchParams({}, { replace: true });
     createSession({ sourceIds: ids })
       .then((s) => navigate(sessionPath(s.id), { replace: true }))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [allowed, add, navigate, setSearchParams]);
+  }, [allowed, editable, add, navigate, setSearchParams]);
 
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -354,6 +356,7 @@ export default function WorkshopPage() {
               patchSession(s.id, { title: next }).then(() => load()).catch(() => load());
             }}
             onChanged={load}
+            readOnly={!editable}
           />
         ) : null}
 
@@ -395,10 +398,10 @@ export default function WorkshopPage() {
                   <button type="button" onClick={() => setPicked(new Set())} title="Clear (Esc)" aria-label="Clear the selection" className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100">
                     <X className="h-3.5 w-3.5" />
                   </button>
-                  <button type="button" disabled={busy !== null} onClick={() => void sharePicked()} title="A share link for each, all copied; each project moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
+                  {editable && <button type="button" disabled={busy !== null} onClick={() => void sharePicked()} title="A share link for each, all copied; each project moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
                     {busy === "share" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
                     Share {picked.size}
-                  </button>
+                  </button>}
                   <button type="button" disabled={busy !== null} onClick={() => void exportPicked()} title="Each as its own Obsidian note (a note with pictures as a zip with a folder); each project moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
                     {busy === "export" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                     Export {picked.size}
@@ -406,7 +409,7 @@ export default function WorkshopPage() {
                 </span>
               )}
               {/* hidden while rows are picked, so Share / Export take its place and nothing wraps */}
-              {!picked.size && <button type="button" disabled={busy !== null} onClick={() => void newSession()} className={`${primary} h-8 py-0`}>
+              {!picked.size && editable && <button type="button" disabled={busy !== null} onClick={() => void newSession()} className={`${primary} h-8 py-0`}>
                 {busy === "session" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                 New session
               </button>}
@@ -467,10 +470,11 @@ export default function WorkshopPage() {
                           ) : null}
                           <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-zinc-500">{timeAgo(s.updatedAt)}</span>
                         </RowLink>
-                        <SessionPosted postings={postingsOfSession(s)} status={s.status} disabled={busy !== null} onChange={(posted) => void setPosted(s.id, posted)} />
-                        <SessionStatusSelect value={s.status} disabled={busy !== null} onChange={(status) => setStatus(s.id, status)} />
+                        <SessionPosted postings={postingsOfSession(s)} status={s.status} disabled={busy !== null} readOnly={!editable} onChange={(posted) => void setPosted(s.id, posted)} />
+                        <SessionStatusSelect value={s.status} disabled={busy !== null} readOnly={!editable} onChange={(status) => setStatus(s.id, status)} />
                         <SharePopover
                           sessionId={s.id}
+                          readOnly={!editable}
                           title={s.title}
                           onStatus={(status) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, status } : r)))}
                           shared={!!s.shared}
@@ -523,6 +527,7 @@ export default function WorkshopPage() {
                   key={r.id}
                   rule={r}
                   busy={busy !== null}
+                  readOnly={!editable}
                   onSave={(fields: Partial<RuleFields>) => void run(`rule:${r.id}`, () => patchRule(r.id, fields))}
                   onDelete={() => void run(`delr:${r.id}`, () => deleteRule(r.id))}
                 />
@@ -531,15 +536,15 @@ export default function WorkshopPage() {
           </section>
         )}
 
-        {tab === "knowledge" && <KnowledgePanel />}
+        {tab === "knowledge" && <KnowledgePanel readOnly={!editable} />}
 
         {tab === "frameworks" && (
           <section>
             <div className="mb-3 flex items-center justify-between">
               <p className={`${label} mb-0`}>Storytelling frameworks</p>
-              <button type="button" disabled={busy !== null || editing === "new"} onClick={() => setEditing("new")} className={secondary}>
+              {editable && <button type="button" disabled={busy !== null || editing === "new"} onClick={() => setEditing("new")} className={secondary}>
                 <Plus className="h-3.5 w-3.5" /> New framework
-              </button>
+              </button>}
             </div>
             <div className="flex flex-col gap-2">
               {editing === "new" && (
@@ -567,23 +572,23 @@ export default function WorkshopPage() {
                       {fw.whenToUse ? <p className="mt-1 text-[11px] text-zinc-600">Best for: {fw.whenToUse}</p> : null}
                       {fw.pairsWith ? <p className="mt-0.5 text-[11px] text-zinc-600">Pairs with: {fw.pairsWith}</p> : null}
                     </div>
-                    {fw.owner === me?.username && (
+                    {editable && fw.owner === me?.username && (
                       <PublishButton
                         item={{ kind: "framework", id: fw.id, defaultName: fw.name, defaultDescription: fw.summary }}
                         className={secondary}
                       />
                     )}
-                    <button type="button" onClick={() => setEditing(fw.id)} className={secondary} disabled={busy !== null}>
+                    {editable && <button type="button" onClick={() => setEditing(fw.id)} className={secondary} disabled={busy !== null}>
                       <Pencil className="h-3 w-3" /> Edit
-                    </button>
-                    <ConfirmButton
+                    </button>}
+                    {editable && <ConfirmButton
                       label="Delete"
                       confirmLabel="Click again"
                       disabled={busy !== null}
                       onConfirm={() => run(`delf:${fw.id}`, () => deleteFramework(fw.id))}
                       className="rounded-md px-2 py-1.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-50"
                       armedClassName="!bg-red-500/10 !text-red-200"
-                    />
+                    />}
                   </div>
                 ),
               )}
