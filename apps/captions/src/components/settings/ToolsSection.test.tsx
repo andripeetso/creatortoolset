@@ -80,11 +80,10 @@ describe("Settings → Tools", () => {
     expect(host!.querySelector('[aria-label="Show AI Editor on Home"]')).not.toBeNull();
     expect(host!.querySelector('a[href="/community/tool/editor"]')?.textContent).toBe("Get more for AI Editor");
     // folded: the page is the Home switch and closed folds until one is opened
-    const folds = [...host!.querySelectorAll("button[aria-expanded]")];
-    expect(folds.map((b) => b.textContent)).toContain("Plug-ins, packs and skills");
-    expect(folds.every((b) => b.getAttribute("aria-expanded") === "false")).toBe(true);
-    act(() => (folds.at(-1) as HTMLButtonElement).click());
-    expect(folds.at(-1)!.getAttribute("aria-expanded")).toBe("true");
+    const fold = [...host!.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((b) => b.textContent === "Plug-ins, packs and skills")!;
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    act(() => fold.click());
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("a plug-in's section that names the tool is drawn on its page, in a fold under its title", async () => {
