@@ -165,7 +165,7 @@ describe("dictation and the models on a Mac", () => {
 
   it("on this Mac the engine is chosen; the server's says what it needs and has no model row", () => {
     const mac = withMac(view(), dictation());
-    expect(mac).toContain("Engine");
+    expect(mac).toContain("Transcribed by");
     expect(mac).toContain("Speech model");
     const need = { use: "mic" as const, needs: "Needs a Deepgram key", key: "DEEPGRAM_API_KEY" as const };
     const server = withMac(view({ resolved: [...view().resolved.filter((r) => r.use !== "mic"), need] }), dictation({ engine: "server" }));
