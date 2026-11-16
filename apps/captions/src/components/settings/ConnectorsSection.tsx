@@ -129,12 +129,14 @@ export function everyRow(view: RowsView, off: LoginKind[] = []): PlatformRow[] {
  * sign-in that would come from the sign-in service is not offered there: that form cannot know it will finish, and a row
  * that ends nowhere is worse than no row.
  */
-export function ConnectorsSection({ back = "/settings/connectors", compact, projectId: pinned }: {
+export function ConnectorsSection({ back = "/settings/connectors", compact, projectId: pinned, title }: {
   sub?: string;
   back?: string;
   compact?: boolean;
   /** One workspace's accounts (the workspace form): no selector, and a platform with nothing to add has no row. */
   projectId?: string;
+  /** With `projectId`: the heading over the card, drawn only while there is a row under it. */
+  title?: string;
 }) {
   const w = useSettingsWorkspace("list");
   const me = useMe()?.username;
@@ -320,8 +322,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
       )}
     </Card>
   );
-  // in the workspace form the rows stand under its own heading
-  if (pinned) return card;
+  if (pinned) return title ? <Section title={title}>{card}</Section> : card;
   return (
     <>
       <WorkspacePick mode="list" />

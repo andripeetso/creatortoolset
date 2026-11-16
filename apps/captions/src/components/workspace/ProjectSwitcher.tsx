@@ -55,7 +55,7 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
         </DropdownMenuLabel>
         {projects.length === 0 ? (
           <DropdownMenuItem asChild>
-            <Link to="/projects?add=1">Create a workspace</Link>
+            <Link to="/projects?add=1">New workspace…</Link>
           </DropdownMenuItem>
         ) : (
           projects.map((p) => (

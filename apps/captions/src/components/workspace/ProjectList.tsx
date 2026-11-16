@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useCachedList } from "@/lib/local-cache";
 import { Loader2, Pencil, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { PLATFORMS } from "@contracts/connectors";
 import type { LibraryUpload } from "@contracts/library";
 import { setWorkspaceUpload } from "@/lib/library";
-import { UPLOAD_OPTIONS } from "@/pages/library/UploadSelect";
+import { UploadRow } from "@/pages/library/UploadSelect";
 import { ProjectForm, type KeptFile } from "@/components/workshop/ProjectForm";
-import { listAccounts, mineAccount, type InstagramAccount } from "@/lib/instagram";
+import { listAccounts, type InstagramAccount } from "@/lib/instagram";
 import {
   addProjectFiles,
   createProject,
@@ -22,9 +23,6 @@ import {
 } from "@/lib/workshop";
 import { PROJECT_ACCOUNTS_KEY, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
-
-const secondary =
-  "flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50";
 
 /**
  * Create, edit, switch, and delete workspaces (the switcher's Manage workspaces window). `current`: the Content
@@ -95,36 +93,22 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
 
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-          {only ? "What the AI should already know in this workspace" : "Instructions and context the AI should already know"}
-        </p>
-        {!making && !only && (
-          <button type="button" disabled={busy} onClick={() => setEditing("new")} className={secondary}>
-            <Plus className="h-3.5 w-3.5" /> New workspace
-          </button>
-        )}
-      </div>
-      {error ? <p className="mb-3 text-xs text-red-400">{error}</p> : null}
+      {!making && !only && (
+        <div className="mb-3 flex justify-end">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => setEditing("new")}>
+            <Plus /> New workspace
+          </Button>
+        </div>
+      )}
+      {error ? <p role="alert" className="mb-3 text-xs text-red-600 dark:text-red-400">{error}</p> : null}
       <div className="flex flex-col gap-2">
         {editing === "new" ? (
           <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)}>
-            <label className="text-[11px] text-zinc-400">
-              Upload footage to the server
-              <select value={upload} onChange={(e) => setUpload(e.target.value as LibraryUpload)} className="mt-1 block w-64 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100">
-                {UPLOAD_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <UploadRow value={upload} onChange={setUpload} />
           </ProjectForm>
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (
-          <p className="py-10 text-center text-sm text-zinc-600">
-            {only ? "No workspace yet. Make one in the workspace menu at the top right." : "No workspaces yet. Analyzer and Workshop both use the current one."}
-          </p>
+          <p className="py-10 text-center text-sm text-muted-foreground">{only ? "No workspace" : "No workspaces"}</p>
         ) : null}
         {projects.map((p) =>
           editing === p.id ? (
@@ -134,7 +118,6 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
               key={p.id}
               project={p}
               account={accounts.find((a) => a.id === p.accountId)}
-              mineId={mineAccount(accounts)?.id}
               current={p.id === currentProjectId}
               busy={busy}
               onUse={() => void select(p.id)}
@@ -151,27 +134,24 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
   );
 }
 
-/** Step 2 of a new workspace: its accounts, on their own, skippable. */
+/** Step 2 of a new workspace: its social accounts, on their own. Nothing has to be added: Done closes it either way. */
 function AccountsStep({ project, id, busy, error, onClose }: { project?: WorkshopProject; id: string; busy: boolean; error: string | null; onClose: () => void }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[min(720px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
         <div className="border-b border-border px-6 py-4">
-          <DialogTitle className="text-lg font-semibold tracking-tight">{project?.name ? `${project.name}: accounts` : "Accounts"}</DialogTitle>
-          <DialogDescription>Step 2 of 2. Optional: they can be connected any time in Settings → Social accounts.</DialogDescription>
+          <DialogTitle className="text-lg font-semibold tracking-tight">{project?.name ? `${project.name}: social accounts` : "Social accounts"}</DialogTitle>
+          <DialogDescription>Step 2 of 2</DialogDescription>
         </div>
         <div className="min-h-0 flex-auto overflow-y-auto px-6 py-4">
           <ConnectorsSection projectId={id} back={`/projects?accounts=${id}`} />
-          {busy ? <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Keeping its files</p> : null}
-          {error ? <p className="mt-3 text-xs text-red-400">{error}</p> : null}
+          {busy ? <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving files</p> : null}
+          {error ? <p role="alert" className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p> : null}
         </div>
-        <div className="flex justify-end gap-2 border-t border-border px-6 py-3">
-          <button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
-            Skip for now
-          </button>
-          <button type="button" onClick={onClose} className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">
+        <div className="flex justify-end border-t border-border px-6 py-3">
+          <Button size="sm" onClick={onClose}>
             Done
-          </button>
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -181,7 +161,6 @@ function AccountsStep({ project, id, busy, error, onClose }: { project?: Worksho
 function ProjectRow({
   project: p,
   account,
-  mineId,
   current,
   busy,
   onUse,
@@ -191,7 +170,6 @@ function ProjectRow({
 }: {
   project: WorkshopProject;
   account?: InstagramAccount;
-  mineId?: string;
   current: boolean;
   busy: boolean;
   onUse: () => void;
@@ -205,40 +183,30 @@ function ProjectRow({
   const blurb = foldProjectInstructions(p);
   const handles = Object.entries(p.handles ?? {}).filter((e): e is [string, string] => Boolean(e[1]));
   return (
-    <div
-      className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${
-        current ? "border-violet-500/40 bg-violet-600/10" : "border-zinc-800 bg-zinc-900/50"
-      }`}
-    >
-      <button type="button" onClick={onUse} disabled={busy || current} className="-my-2.5 -ml-3 min-w-0 flex-1 self-stretch py-2.5 pl-3 text-left disabled:cursor-default">
-        <p className="flex items-center gap-2 text-sm text-zinc-100">
+    <div className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 sm:px-4 ${current ? "border-[var(--tint)]/40 bg-[var(--tint)]/10" : "border-border/60 bg-card/40"}`}>
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-2 text-sm font-medium text-foreground">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />
           <span className="truncate">{p.name}</span>
-          {current && badge ? (
-            <span className="shrink-0 rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">Current</span>
-          ) : null}
+          {current && badge ? <span className="shrink-0 text-xs font-normal text-muted-foreground">Current</span> : null}
         </p>
-        {account ? (
-          <p className="mt-0.5 text-[11px] text-violet-300/80">
-            {account.mine || account.id === mineId ? "My account" : "Account"} · @{account.username}
-          </p>
-        ) : null}
+        {account ? <p className="mt-0.5 text-xs text-muted-foreground">Instagram @{account.username}</p> : null}
         {handles.length ? (
-          <p className="mt-0.5 text-[11px] text-zinc-500">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {handles.map(([id, h]) => `${PLATFORMS.find((x) => x.id === id)?.label ?? id} @${h.replace(/^@/, "")}`).join(" · ")}
           </p>
         ) : null}
-        {blurb ? <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{blurb}</p> : null}
-      </button>
+        {blurb ? <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{blurb}</p> : null}
+      </div>
       {!current ? (
-        <button type="button" onClick={onUse} className={secondary} disabled={busy}>
+        <Button size="sm" variant="outline" onClick={onUse} disabled={busy}>
           Use
-        </button>
+        </Button>
       ) : null}
       {onEdit ? (
-        <button type="button" onClick={onEdit} className={secondary} disabled={busy}>
-          <Pencil className="h-3 w-3" /> Edit
-        </button>
+        <Button size="sm" variant="outline" onClick={onEdit} disabled={busy}>
+          <Pencil /> Edit
+        </Button>
       ) : null}
       {onDelete ? (
         <ConfirmButton
@@ -246,8 +214,8 @@ function ProjectRow({
           confirmLabel="Click again"
           disabled={busy}
           onConfirm={onDelete}
-          className="rounded-md px-2 py-1.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-50"
-          armedClassName="!bg-red-500/10 !text-red-200"
+          className="h-8 rounded-md px-3 text-sm text-muted-foreground hover:bg-accent hover:text-red-600 disabled:opacity-50 dark:hover:text-red-400"
+          armedClassName="!bg-red-500/10 !text-red-600 dark:!text-red-400"
         />
       ) : null}
     </div>
