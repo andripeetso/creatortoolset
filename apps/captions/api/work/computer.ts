@@ -357,6 +357,8 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
     const edit = readEdit(pkg.job.editId);
     if (!edit) throw new Error("The edit is gone");
 
+    // lost while the files came (a beat said so, or Cancel): the step never starts
+    ctl.signal.throwIfAborted();
     let outcome: WorkOutcome = { done: true };
     turnOn(pkg, paths, server);
     try {

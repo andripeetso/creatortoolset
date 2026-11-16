@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
@@ -71,5 +72,15 @@ export function ffmpegTo(out: string, args: string[], soon = false): Promise<voi
   return atomically(out, (tmp) => ffmpeg([...args, tmp], soon));
 }
 
-export const writeJsonAtomic = (out: string, value: unknown) =>
-  atomically(out, (tmp) => writeFile(tmp, JSON.stringify(value)));
+/** A JSON file written whole or not at all. Its temp name is its own: two writers of one file at once (two computers'
+ *  results for one edit, api/work/result.ts) never rename each other's temp away. */
+export async function writeJsonAtomic(out: string, value: unknown): Promise<void> {
+  const tmp = `${out}.${randomUUID()}.part`;
+  try {
+    await writeFile(tmp, JSON.stringify(value));
+    await rename(tmp, out);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
+}

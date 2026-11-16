@@ -37,6 +37,7 @@ const ffmpegFiles = [
   "api/review-library.test.ts",
   "api/review.test.ts",
   "api/transcribe-computers.test.ts",
+  "api/work/e2e.test.ts",
   "scripts/plugin-build.test.mjs",
   "editor-steps/colour/plugin.test.ts",
   "editor-steps/face-blur/plugin.test.ts",
