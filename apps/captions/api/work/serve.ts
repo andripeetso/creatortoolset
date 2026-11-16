@@ -16,6 +16,7 @@ import { editRole, gradeOf, ownerOf, readEdit, type EditMeta } from "../editor/s
 import { finishedProfile, styleBlock } from "../editor/styles";
 import { analyzeGate } from "../editor/analyze";
 import { indexGate } from "../editor/index";
+import { finishedBlock } from "../editor/finished";
 import { gates } from "./place";
 
 // the gates a claim runs on the server for a computer's step; their output is its pkg.gate (on-computer.ts gateOf)
@@ -82,6 +83,7 @@ const CALLS: Record<string, (h: { edit: EditMeta; actor: string }, args: unknown
   footageProfile: ({ edit }) => footageProfile(edit.projectId),
   styleBlock: ({ edit }) => styleBlock(edit.style, edit),
   finishedProfile: ({ edit }) => finishedProfile(ownerOf(edit), edit.projectId ?? ""),
+  finishedBlock: ({ edit }) => finishedBlock(edit),
   // the edit's own workspace or none; a slot of the AI Editor's only
   packInstructions: ({ edit, actor }, [slot, projectId, tools]) => {
     if (typeof slot !== "string" || !slot.startsWith("editor.")) throw new Refused("Not an AI Editor slot");
