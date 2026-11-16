@@ -630,12 +630,9 @@ export default function WorkshopSessionPage() {
       .catch(fail);
   };
 
-  const setProject = (projectId: string | null) => {
-    if (!session) return;
-    setSession({ ...session, projectId: projectId ?? undefined });
-    patchSession(session.id, { projectId }).catch(fail);
-    if (projectId) void selectProject(projectId);
-  };
+  // switching workspace leaves this project where it is and opens the other workspace's list (owner, 2026-11-16: a
+  // switch made from here moved the open project into the workspace he switched to)
+  const leaveForWorkspace = useCallback(() => navigate("/workshop"), [navigate]);
   // ---- what the AI changed: the last turn's new words on the open piece light up while it
   // writes, fade out a few seconds after, and the Changes button shows them again
   const lastEdit = [...messages].reverse().find((m) => m.role === "assistant" && m.edits?.docId === activeDoc?.id && !!m.edits?.versionBefore)?.edits;
@@ -1112,7 +1109,7 @@ export default function WorkshopSessionPage() {
               </button>
             ))
           : null}
-        <ProjectSwitcher onSelect={setProject} />
+        <ProjectSwitcher onSelect={leaveForWorkspace} />
       </AppBar>
 
       <div className="flex min-h-0 flex-1">

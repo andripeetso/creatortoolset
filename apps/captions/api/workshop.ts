@@ -2788,6 +2788,8 @@ workshopApp.patch("/sessions/:id", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   try {
     const patch = parseSessionPatch(await c.req.json().catch(() => null));
+    // a session moves only into a workspace this account works in
+    if (patch.projectId && !(await getWorkspace(user)).projects.some((p) => p.id === patch.projectId)) return c.json({ error: "Unknown workspace" }, 400);
     const next = await updateSession(meta.id, (m) => {
       if (patch.title !== undefined) m.title = patch.title || "Untitled project";
       if (patch.query !== undefined) m.query = patch.query;
