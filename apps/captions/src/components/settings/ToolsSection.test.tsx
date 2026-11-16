@@ -95,9 +95,8 @@ describe("Settings → Tools", () => {
     expect(host!.querySelector('a[href="/settings/tools/enhance"]')).toBeNull();
   });
 
-  it("in a browser the step shows Installed, not its switch", async () => {
+  it("in a browser the step shows no switch (the Mac app's own server has it)", async () => {
     await render("editor");
     expect(host!.querySelector('[aria-label="Blur faces in new edits"]')).toBeNull();
-    expect(host!.textContent).toContain("Installed");
   });
 });
