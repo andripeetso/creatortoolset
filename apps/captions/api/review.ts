@@ -478,7 +478,8 @@ async function processVersion(id: string, n: number): Promise<void> {
       height: info.height,
       progress: 0.1,
     });
-    if (info.vcodec) {
+    // a thumbnail given with the file (an AI Editor preview rendered on a computer) is kept
+    if (info.vcodec && !existsSync(thumbPath(id, n))) {
       await ffmpeg(key, [
         "-ss", String(Math.min(1, info.duration / 2)),
         "-i", src,
@@ -663,7 +664,7 @@ export async function toLibrary(id: string): Promise<void> {
 
   // the files first (async); then every row in one transaction
   const added: { x: Version; key: string; sha256: string; probe: string | null }[] = [];
-  const derived: { versionId: string; kind: "thumb" | "proxy"; key: string; bytes: number }[] = [];
+  const derived: { versionId: string; kind: "thumb" | "proxy" | "wave"; key: string; bytes: number }[] = [];
   for (const x of shown) {
     const vid = x.versionId!;
     const base = `libraries/${libraryId}/v/${vid}`;
@@ -675,7 +676,8 @@ export async function toLibrary(id: string): Promise<void> {
       const p = there ? await probeSummary(src).catch(() => null) : null;
       added.push({ x, key: `${base}/source`, sha256: there ? await sha256File(src) : "", probe: p && JSON.stringify(p) });
     }
-    for (const [kind, name] of [["thumb", "thumb.jpg"], ["proxy", "proxy.mp4"]] as const) {
+    // wave.json: a waveform given with the file (addVersion's place), so no wave job decodes it again
+    for (const [kind, name] of [["thumb", "thumb.jpg"], ["proxy", "proxy.mp4"], ["wave", "wave.json"]] as const) {
       const f = file(x.n, name);
       if (!existsSync(f) || d.prepare("SELECT 1 FROM derivatives WHERE version_id = ? AND kind = ?").get(vid, kind)) continue;
       const key = `${base}/${name}`;
@@ -701,7 +703,7 @@ export async function toLibrary(id: string): Promise<void> {
       ).run(a.x.versionId!, id, a.x.n, a.key, a.x.bytes, a.sha256, a.x.mime, a.probe, state(a.x), m.owner, a.x.createdAt);
       // the local, keyless extras: a waveform and the fingerprint the duplicate check reads
       if (state(a.x) === "ready" && a.probe) {
-        enqueueJob(d, libraryId, a.x.versionId!, "wave", m.owner);
+        if (!derived.some((r) => r.versionId === a.x.versionId && r.kind === "wave")) enqueueJob(d, libraryId, a.x.versionId!, "wave", m.owner);
         if (a.x.width) enqueueJob(d, libraryId, a.x.versionId!, "fingerprint", m.owner);
       }
     }

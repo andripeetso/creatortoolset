@@ -232,7 +232,7 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
  * edit's workspace (ownerOf), so its owner sees and comments on a teammate's edit as on their own; `by`: who asked for
  * this version, kept on it.
  */
-export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = [], by?: string | null): Promise<void> {
+export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = [], by?: string | null, given: { thumb?: string; wave?: string } = {}): Promise<void> {
   const out = previewFile(edit.id, variant);
   // on a computer: the server files it (work/result.ts), with Review's thumbnail and the library's waveform made here
   if (onComputer.on) {
@@ -249,7 +249,13 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
   const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId };
-  const place = (dest: string) => rename(out, dest);
+  // `given`: the thumbnail and waveform made where the preview was rendered (a computer, api/work/result.ts), so Review
+  // and the library take them instead of decoding the preview again
+  const place = async (dest: string) => {
+    await rename(out, dest);
+    if (given.thumb) await rename(given.thumb, path.join(path.dirname(dest), "thumb.jpg"));
+    if (given.wave) await rename(given.wave, path.join(path.dirname(dest), "wave.json"));
+  };
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));

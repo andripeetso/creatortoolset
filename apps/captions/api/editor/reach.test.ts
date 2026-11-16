@@ -16,7 +16,7 @@ const { enqueueJob } = await import("../library/jobs");
 const { pairDevice, devicesSaved, setDeviceKinds } = await import("../lib/devices");
 const { registerDeviceKinds } = await import("./engine");
 const { blobs } = await import("../library/db");
-const { fileFor, rankOf, waitLine } = await import("./reach");
+const { fileFor, lightKey, rankOf, waitLine } = await import("./reach");
 
 const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
 const post = (token: string, url: string, body: unknown) =>
@@ -32,15 +32,23 @@ describe("how a computer gets at a file", () => {
     expect(fileFor(onMac, "mac", [], nobody)).toEqual({ path: "/Users/tiny/Movies/a.mp4" });
     expect(fileFor(onMac, "pc", [], nobody)).toBeNull();
   });
-  it("from the server's copy: the video file, or only its proxy", () => {
-    expect(fileFor(row({}), "pc", [], nobody)).toEqual({ copy: "original" });
+  it("from the server's copy: only its proxy, never the original", () => {
+    expect(fileFor(row({}), "pc", [], nobody)).toBeNull();
+    expect(fileFor(row({ proxy: "p" }), "pc", [], nobody)).toEqual({ copy: "proxy" });
     expect(fileFor({ ...onMac, proxy: "p" }, "pc", [], nobody)).toEqual({ copy: "proxy" });
     expect(fileFor({ ...onMac, source_key: "p", proxy: "p" }, "pc", [], nobody)).toEqual({ copy: "proxy" });   // upload "proxies": the original was dropped
     expect(fileFor({ ...onMac, source_key: "p", proxy: "p" }, "mac", [], nobody)).toEqual({ path: "/Users/tiny/Movies/a.mp4" });
   });
+  it("a file light enough to need no proxy is its own light copy; a heavy one without a proxy is not reachable", () => {
+    const probe = (w: number, h: number, vcodec = "h264") => JSON.stringify({ duration: 9, width: w, height: h, fps: 30, rotation: 0, format: "mov,mp4", vcodec, pixFmt: "yuv420p", acodec: "aac" });
+    expect(fileFor(row({ probe: probe(1920, 1080) }), "pc", [], nobody)).toEqual({ copy: "proxy" });
+    expect(lightKey(row({ probe: probe(1920, 1080) }))).toBe("k");
+    expect(fileFor(row({ probe: probe(3840, 2160) }), "pc", [], nobody)).toBeNull();
+    expect(lightKey(row({ probe: probe(3840, 2160), proxy: "p" }))).toBe("p");
+    expect(lightKey(row({ source_key: "mac:v", probe: probe(1920, 1080) }))).toBeNull();
+  });
   it("ranks a step by its worst file", () => {
-    expect(rankOf([{ path: "/a" }, { copy: "original" }])).toBe(2);
-    expect(rankOf([{ path: "/a" }, { copy: "proxy" }])).toBe(1);
+    expect(rankOf([{ path: "/a" }, { copy: "proxy" }])).toBe(2);
     expect(rankOf([{ path: "/a" }, null])).toBe(0);
     expect(rankOf([{ path: "/a" }])).toBe(3);
   });
@@ -87,8 +95,8 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     expect((await claim(strong.token, ["reach-render"])).job).toBeNull();
     expect(libraryDb().prepare("SELECT state FROM edit_jobs WHERE version_id = ?").get(`${editId}:v2`)).toEqual({ state: "queued" });
   });
-  it("with a copy on the server: a free computer that reads it on its own disk first, else one that downloads it", async () => {
-    libraryDb().exec("UPDATE asset_versions SET source_key = 'k_r1' WHERE id = 'ver_r1'");
+  it("with a copy on the server: a free computer that reads it on its own disk first, else one that downloads its proxy", async () => {
+    libraryDb().exec("UPDATE asset_versions SET source_key = 'k_r1' WHERE id = 'ver_r1'; INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_r1', 'proxy', 'libraries/lib_r/ver_r1/proxy.mp4', 1)");
     // the laptop is busy with v1, so the PC takes v2 from the server's copy rather than leave it waiting
     expect((await claim(strong.token, ["reach-render"])).job).toMatchObject({ kind: "reach-render", editId });
     // both free: the laptop has the file on its disk, which beats a download
@@ -112,19 +120,21 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     // the laptop is busy with v3, so the PC takes it, reading the file where it is on its own disk
     expect((await claim(strong.token, ["reach-render"])).job).toMatchObject({ editId: other, footage: [{ id: "ver_r2", path: "/mnt/footage/Shoot 1/b.mp4" }] });
   });
-  it("a computer that takes a step from the server's copy downloads it, and only the one holding the step can", async () => {
+  it("a computer that takes a step from the server's copy downloads its proxy, and only the one holding the step can", async () => {
     const key = "libraries/lib_r/ver_r1/source.mp4";
-    const file = path.join(dir, "take1.mp4");
-    writeFileSync(file, "take one");
-    await blobs.put(key, file);
+    for (const [k, text] of [[key, "take one"], ["libraries/lib_r/ver_r1/proxy.mp4", "take one, smaller"]] as const) {
+      const file = path.join(dir, `${path.basename(k)}`);
+      writeFileSync(file, text);
+      await blobs.put(k, file);
+    }
     libraryDb().exec(`UPDATE asset_versions SET source_key = '${key}' WHERE id = 'ver_r1'; UPDATE edit_jobs SET state = 'done', device = NULL WHERE device = '${strong.device.id}'`);
     enqueueJob(libraryDb(), "maker", `${editId}:v4`, "reach-render", "maker", false, "edit_jobs");
     const job = (await claim(strong.token, ["reach-render"])).job!;
-    expect(job.footage).toEqual([{ id: "ver_r1", copy: "original" }]);
+    expect(job.footage).toEqual([{ id: "ver_r1", copy: "proxy" }]);
     const get = (token: string, version: string) => app.request(`/api/devices/relay/editor/job/${job.id}/footage/${version}`, { headers: { authorization: `Bearer ${token}` } });
     const got = await get(strong.token, "ver_r1");
     expect(got.status).toBe(200);
-    expect(await got.text()).toBe("take one");
+    expect(await got.text()).toBe("take one, smaller");
     expect((await get(weak.token, "ver_r1")).status).toBe(404);
     expect((await get(strong.token, "ver_r2")).status).toBe(404);   // not this step's file
   });

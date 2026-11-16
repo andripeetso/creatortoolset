@@ -12,7 +12,10 @@ import { trashDays } from "../library/trash";
 import { Waiting } from "./analyze";
 import { scriptThrew } from "./cards/device";
 import { editStopped, runEnded } from "./ended";
-import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
+import { claimableBy, claimStep, coreKinds, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
+import { jobFiles } from "./reach";
+import { fitsWork, gates, serverMayTake } from "../work/place";
+import type { Device } from "../../contracts/providers";
 import { passesDone } from "./passes";
 import { editRole, ownerOf, purgeEdits, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
@@ -94,7 +97,8 @@ export async function tick(now = Date.now()): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now, T);
   releaseQuietDevices(db, isOnline);
-  const job = claimStep(db, "server", LEASE_S, now, T);
+  // a step that reads video or sound is left to one of the asker's computers while one that can take it is online (work/place.ts)
+  const job = claimStep(db, "server", LEASE_S, now, T, undefined, serverMayTake);
   if (!job) return false;
   moved(job);
   try {
@@ -169,6 +173,49 @@ export async function claimForDevice(device: { id: string; owner: string }, kind
   if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), null;
   if (!(await stillReadable(job.actor ?? "", edit))) return fail(db, job, "Some footage is gone or no longer yours to read"), null;
   return { id: job.id, kind: job.kind, editId, variant };
+}
+
+/**
+ * A computer's work claim (POST /api/devices/relay/work/claim, api/work/routes.ts): a core step of its own account placed
+ * on a computer (work/place.ts fitsWork), up to 5 candidates. Each is checked as claimForDevice checks a step (a gone or
+ * unreadable edit fails it, as do files of another workspace), then its kind's gate runs here: a Waiting puts it back
+ * with its line, as runStep does, and the next is tried. Returns the step and the gate's output, or null.
+ */
+export async function claimForComputer(d: Device, now = Date.now()): Promise<{ job: JobRow; gate?: unknown } | null> {
+  const db = libraryDb();
+  releaseQuietDevices(db, isOnline);
+  const fits = await fitsWork(d, now);
+  for (let i = 0; i < 5; i++) {
+    const job = claimStep(db, coreKinds(), LEASE_S, now, T, { actor: d.owner, device: d.id }, fits);
+    if (!job) return null;
+    moved(job);
+    const { editId, variant } = splitVersion(job);
+    const edit = readEdit(editId);
+    if (!edit || edit.trashedAt) {
+      fail(db, job, "The edit is gone");
+      continue;
+    }
+    // only the files the step names, and every one still in the edit's workspace (the draft's B-roll too)
+    if (!(await stillReadable(job.actor ?? "", edit)) || sourcesWorkspace(ownerOf(edit), jobFiles(job).map((f) => f.id)) !== edit.workspaceId) {
+      fail(db, job, "Some footage is gone or no longer yours to read");
+      continue;
+    }
+    const gate = gates[job.kind];
+    if (!gate) return { job };
+    try {
+      return { job, gate: await gate({ edit, job, variant, signal: new AbortController().signal }) };
+    } catch (e) {
+      db.prepare(`UPDATE ${T} SET device = NULL WHERE id = ?`).run(job.id);
+      const hold = e instanceof Waiting ? { seconds: e.seconds, line: e.line } : limitWait(e, now);
+      if (hold) {
+        if (hold.line) db.prepare(`UPDATE ${T} SET error = ? WHERE id = ?`).run(hold.line, job.id);
+        defer(db, job.id, hold.seconds, now, T);
+      } else if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
+      else finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Date.now(), T);
+      moved(job);
+    }
+  }
+  return null;
 }
 
 /** Whether a claim by a device of `owner` with these kinds would be handed a step right now: what its long poll is told (devices.ts). */

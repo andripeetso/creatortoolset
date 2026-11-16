@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { canChange, useMe } from "@/lib/auth";
 import { Link, useNavigate, useParams } from "react-router";
 import { Download, ExternalLink, Loader2, Play, RotateCcw, Scissors, Square, ThumbsUp, Trash2 } from "lucide-react";
-import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
+import { DEFAULT_EYELINE, type Draft, type Edit, type EditJob, type Sentence } from "@contracts/editor";
+import { aboutTime, gbOf } from "@/components/LibraryProcessing";
 import { AppBar } from "@/components/AppBar";
 import { EditorCutPanel, type CutEdits } from "@/components/EditorCutPanel";
 import { Button } from "@/components/ui/button";
@@ -173,7 +174,7 @@ export default function EditorEditPage() {
                 {j.variant && <span className="text-xs text-zinc-500">{edit.plans.find((p) => p.name === j.variant)?.title ?? j.variant}</span>}
                 <StateBadge state={j.error === "Stopped" ? "stopped" : j.state} />
                 {j.state === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
-                {(j.state === "running" || j.state === "queued") && j.line && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{j.line}</span>}
+                {(j.state === "running" || j.state === "queued") && stepLine(j) && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{stepLine(j)}</span>}
                 {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
@@ -432,6 +433,19 @@ export default function EditorEditPage() {
 }
 
 /** A clip's frame with its eye line: drag (or click) to move it; it is saved when let go. */
+/**
+ * The line beside a step: why it waits, or what it does now, led by the computer working on it with the download's bytes
+ * and time left ("Mac Studio: downloading proxies, 340 MB of 1.2 GB, about 3 min left").
+ */
+export function stepLine(j: EditJob): string | undefined {
+  const p = j.state === "running" ? j.progress : undefined;
+  if (!p) return j.line;
+  const bytes = p.total ? `${p.done ? gbOf(p.done) : "0 MB"} of ${gbOf(p.total)}` : "";
+  const left = p.leftS != null ? `${aboutTime(p.leftS)} left` : "";
+  const what = [j.line, bytes, left].filter(Boolean).join(", ");
+  return what ? `${p.device}: ${what}` : p.device;
+}
+
 function EyeLine({ versionId, y, note, onSet, onNoPicture }: { versionId: string; y: number; note?: string; onSet: (y: number) => void; onNoPicture: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);

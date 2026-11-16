@@ -4,7 +4,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
-import { EDITOR_HINT } from "../../contracts/devices";
+import type { DeviceHint } from "../../contracts/devices";
 import { limitLine, limitMessage, limitResetAt } from "../../contracts/plans";
 import { env, keepsOverRestart } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
@@ -198,14 +198,16 @@ interface Req {
 
 const reqs = new Map<string, Req>();
 /** the polls waiting for a request, each for its device; `step` asks again whether the hint is due (a poll that listed editor kinds) */
-let waiters: Array<{ device: string; fn: (r: Req | "hint" | null) => void; step?: () => Promise<boolean> }> = [];
+let waiters: Array<{ device: string; fn: (r: Req | DeviceHint | null) => void; step?: () => Promise<DeviceHint | null> }> = [];
 
 /** A step a device may claim was queued (a cut-out, lib/cutouts.ts): each held poll that listed editor kinds is asked again and answered with the hint when it is due. */
 export async function wakeEditorPolls(): Promise<void> {
   // never rejects: it runs unawaited, and an unhandled rejection ends the server (folder-plugins.ts)
-  for (const w of [...waiters]) if (w.step && (await w.step().catch(() => false)) && waiters.includes(w)) {
+  for (const w of [...waiters]) {
+    const hint = w.step && (await w.step().catch(() => null));
+    if (!hint || !waiters.includes(w)) continue;
     waiters = waiters.filter((x) => x !== w);
-    w.fn("hint");
+    w.fn(hint);
   }
 }
 
@@ -470,7 +472,7 @@ const unclaimedMessage = (device: string, on: boolean): string =>
  * The relay's routes for a device (mounted at /api/devices/relay, its ctd_ token). `deviceOf` says which device the
  * caller is (null = not allowed).
  */
-export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits?: (device: string, kinds: unknown) => Promise<boolean>) {
+export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits?: (device: string, kinds: unknown) => Promise<DeviceHint | null>) {
   const app = new Hono<{ Variables: { device: string } }>();
 
   /** Any call from the relay says its device is here: a running job's text, step, done or fail keeps it on while every slot is busy (no poll then). */
@@ -492,15 +494,15 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const keeps = b.blobs === true;
     // a poll that lists editor step kinds (contracts/devices.ts): when one waits that this device could claim now, the
     // poll is answered with the hint, after any AI request. A poll that lists none is never answered with it.
-    const step = "editor" in b && !!(await editorWaits?.(device, b.editor));
+    const step = "editor" in b ? await editorWaits?.(device, b.editor) : null;
     const queued = next(device);
     if (queued) return c.json(packFor(claim(queued), keeps));
-    if (step) return c.json(EDITOR_HINT);
-    const got = await new Promise<Req | "hint" | null>((resolve) => {
+    if (step) return c.json(step);
+    const got = await new Promise<Req | DeviceHint | null>((resolve) => {
       const w = {
         device,
         ...("editor" in b && editorWaits ? { step: () => editorWaits(device, b.editor) } : {}),
-        fn: (r: Req | "hint" | null) => {
+        fn: (r: Req | DeviceHint | null) => {
           clearTimeout(timer);
           resolve(r);
         },
@@ -511,7 +513,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
       }, 25_000);
       waiters.push(w);
     });
-    return got === "hint" ? c.json(EDITOR_HINT) : got ? c.json(packFor(got, keeps)) : c.body(null, 204);
+    return !got ? c.body(null, 204) : "id" in got ? c.json(packFor(got as Req, keeps)) : c.json(got);
   });
 
   /** A big file of one of this device's requests, by its hash (the relay asks once and keeps it). */

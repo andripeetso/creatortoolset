@@ -62,6 +62,7 @@ beforeAll(async () => {
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_a1', 'lib_a', 'video', 'Take 1', 'maker', 0, NULL);
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES
       ('ver_a1', 'ast_a1', 1, 'k1', 1, 'x1', 'ready', 'maker', 0);
+    INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_a1', 'proxy', 'p1', 1);
   `);
   mine = pairDevice("maker", "Studio Mac");
   theirs = pairDevice("other", "Other Mac");
@@ -82,7 +83,7 @@ describe.skipIf(rootReplaced)("AI Editor on devices", () => {
   it("a device claims only the kinds it declares, and the claim is stored with the device", async () => {
     // fake-render is queued first, but this device does not declare it; analyze is a server kind and is ignored
     const got = await claim(mine.token, ["fake-kind", "analyze"]);
-    expect(got.job).toEqual({ id: expect.any(Number), kind: "fake-kind", editId, variant: "v1", footage: [{ id: "ver_a1", copy: "original" }] });
+    expect(got.job).toEqual({ id: expect.any(Number), kind: "fake-kind", editId, variant: "v1", footage: [{ id: "ver_a1", copy: "proxy" }] });
     expect(jobRow("fake-kind")).toEqual({ state: "running", device: mine.device.id, error: null });
     expect(jobRow("fake-render")).toEqual({ state: "queued", device: null, error: null });
 
