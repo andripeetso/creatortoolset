@@ -8,7 +8,7 @@ import { putCached } from "@/lib/local-cache";
 import { useChapters } from "./ClipBlocks";
 
 // The chapters row of a clip: what it holds from the first frame until the request has ended. A request that ends with
-// no chapters must leave the row saying so (with Try again), never nothing: the page under it would jump up. With no AI
+// no chapters must leave the row saying so (with Retry), never nothing: the page under it would jump up. With no AI
 // connected there is nothing to ask and no row at all.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,7 +40,7 @@ function Row() {
   return (
     <p>
       {making.pending ? "generating" : making.failed ? `failed: ${making.failed}` : "nothing"}
-      <button onClick={making.retry}>Try again</button>
+      <button onClick={making.retry}>Retry</button>
     </p>
   );
 }
@@ -66,7 +66,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("a request that ends with no chapters leaves the row in place, saying why, and Try again asks once more", async () => {
+it("a request that ends with no chapters leaves the row in place, saying why, and Retry asks once more", async () => {
   replies = [
     { status: 400, body: { error: "No AI is set up for you yet." } },
     { status: 200, body: { ...clip, chapters: [{ t: 0, title: "Warm-up" }] } },
@@ -87,7 +87,7 @@ it("an answer without chapters is a failure too, in plain words", async () => {
   replies = [{ status: 200, body: { ...clip, chapters: [] } }];
   mount();
   await flush();
-  expect(says()).toBe("failed: Couldn't make chapters.");
+  expect(says()).toBe("failed: Could not make chapters");
 });
 
 it("with no AI connected, as the saved copy says before the first frame, it asks for nothing and draws no row", async () => {

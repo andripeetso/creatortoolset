@@ -208,7 +208,7 @@ export function Timeline({
             onClick={() => setSnapOn(!snapOn)}
             aria-pressed={snapOn}
             aria-label="Snapping"
-            title={`Snapping ${snapOn ? "on" : "off"} (N): a dragged zoom or end lands on the playhead, a click or another zoom's end`}
+            title={`Snapping ${snapOn ? "on" : "off"} (N): a dragged zoom or end snaps to the playhead, a click or another zoom's end`}
           >
             <Magnet />
           </button>
@@ -217,8 +217,8 @@ export function Timeline({
             className={cn(icon, player.loop && "bg-zinc-800 text-zinc-50")}
             onClick={() => player.setLoop(!player.loop)}
             aria-pressed={player.loop}
-            aria-label="Play round and round"
-            title={player.loop ? "Plays round and round: press to stop at the end" : "Stops at the end: press to play round and round"}
+            aria-label="Loop"
+            title={player.loop ? "Loops: press to stop at the end" : "Stops at the end: press to loop"}
           >
             <Repeat />
           </button>
@@ -264,7 +264,7 @@ export function Timeline({
                 <div
                   key={grip}
                   role="slider"
-                  aria-label={grip === "start" ? "Where the video starts" : "Where the video ends"}
+                  aria-label={grip === "start" ? "Start of the video" : "End of the video"}
                   aria-valuemin={0}
                   aria-valuemax={Math.round(duration * 10) / 10}
                   aria-valuenow={Math.round(trim[grip] * 10) / 10}

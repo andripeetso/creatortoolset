@@ -212,7 +212,7 @@ describe("Video Notes by their tools", () => {
     writeFileSync(path.join(dir, "transcript.json"), JSON.stringify({ words: [{ text: "Roll.", start: 0, end: 1 }] }));
     const token = `Bearer ${mintJobToken("nico", "turn-nico-notes")}`;
     const out = (await tool(token, "notes_get", { id: "aaaaaaaa-3333-4333-8333-333333333333", add: ["takeaways"] })).out;
-    expect(out.could_not_write).toEqual({ takeaways: "AI is not configured" });
+    expect(out.could_not_write).toEqual({ takeaways: "Needs an AI provider" });
     expect(out.still_writing ?? out.takeaways).toBeUndefined();
     // someone else's note is not found
     expect(await tool(token, "notes_get", { id: (await tool(anaKey, "notes_list")).out.notes[0].id, add: ["takeaways"] })).toMatchObject({ error: true, text: "Not found, or not this account's." });

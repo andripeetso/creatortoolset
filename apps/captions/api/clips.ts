@@ -331,7 +331,7 @@ async function readMeta(id: string): Promise<Meta | null> {
     if (meta.status === "processing" && !active.has(id)) {
       if (!resumeJob(meta)) {
         meta.status = "error";
-        meta.error = "Processing stopped several times when the server restarted. Try again.";
+        meta.error = "Processing stopped when the server restarted";
       }
       await persist(meta);
     }
@@ -630,10 +630,10 @@ async function generateBlock(
     return { id: "chapters", kind: "chapters", chapters: meta.chapters };
   }
   if (!anyAiConfigured(meta.owner)) {
-    throw new AiProviderError("AI is not configured", "FAILED", false);
+    throw new AiProviderError("Needs an AI provider", "FAILED", false);
   }
   const words = await loadWords(meta.id);
-  if (!words.length) throw new Error("No transcript to generate from");
+  if (!words.length) throw new Error("Needs a transcript");
   const ai = aiFor(meta.owner, "notes", "Video Notes");
   const user = await noteMaterial(meta, words);
 
@@ -1290,7 +1290,7 @@ clipsApp.post("/:id/cleanup", async (c) => {
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (!anyAiConfigured(user)) {
-    return c.json({ error: "AI is not configured" }, 400);
+    return c.json({ error: "Needs an AI provider" }, 400);
   }
   const file = await loadTranscript(meta.id);
   if (!file.words.length) {
