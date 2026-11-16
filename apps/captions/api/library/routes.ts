@@ -13,7 +13,7 @@ import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
-import { estimate, progress } from "./estimate";
+import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
 import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
@@ -755,6 +755,14 @@ libraryApp.get("/:id/progress", async (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   return c.json(await progress(libraryId, user.username));
+});
+
+// GET /api/library/:id/status → LibraryStatus: the whole library, step by step
+libraryApp.get("/:id/status", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json(libraryStatus(libraryId));
 });
 
 // PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;

@@ -17,7 +17,7 @@ delete process.env.ANTHROPIC_API_KEY;
 process.env.DEEPGRAM_API_KEY = "dg-test";
 const { libraryDb } = await import("./db");
 const { claimJob, enqueueJob, folderWalks } = await import("./jobs");
-const { estimate, progress } = await import("./estimate");
+const { estimate, libraryStatus, progress } = await import("./estimate");
 const { describeSlot } = await import("./describe");
 const { holdForLimit, releaseLimit, tick } = await import("./worker");
 
@@ -73,6 +73,22 @@ describe("estimate", () => {
     expect(p).toMatchObject({ left: 1, clips: 1 });
     expect(p.seconds).toBeGreaterThan(0);
     d.prepare("DELETE FROM jobs WHERE kind = 'thumb'").run();
+  });
+
+  it("the whole library's status counts every clip in it, never the trash", () => {
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_e', 'v1', 'transcribe', 'failed'), ('lib_e', 'v2', 'transcribe', 'needs_key')").run();
+    expect(libraryStatus("lib_e")).toEqual({
+      clips: 3,
+      unreadable: 0,
+      stages: [
+        { kind: "transcribe", done: 0, failed: 1, open: 1, of: 2 },
+        { kind: "describe", done: 3, failed: 0, open: 0, of: 3 },
+      ],
+    });
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a1'").run();
+    expect(libraryStatus("lib_e").stages[0]).toMatchObject({ failed: 0, of: 1 });
+    d.prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'a1'").run();
+    d.prepare("DELETE FROM jobs WHERE kind = 'transcribe'").run();
   });
 });
 
