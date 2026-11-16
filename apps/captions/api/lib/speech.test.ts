@@ -32,7 +32,7 @@ describe("which engine turns speech into text", () => {
     expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram" });
     writeVoicePrefs("local", { stt: { default: { engine: "local" } } });
     // the AI Editor goes to computers only when picked on its own row: on the Default it stays on Deepgram, and says why
-    expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only when picked on this row: this runs on Deepgram" });
+    expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram", note: "Runs on Deepgram: your computers are used only when chosen on this row." });
     expect(speechFor("local", "transcripts")).toEqual({ needs: "Needs a speech model on one of your computers" });
     expect(resolvedFor("local").find((r) => r.use === "mic")).toEqual({ use: "mic", engine: "openai", model: "whisper-1" });
     writeVoicePrefs("local", { stt: { default: { engine: "auto" }, per: { mic: null } } });

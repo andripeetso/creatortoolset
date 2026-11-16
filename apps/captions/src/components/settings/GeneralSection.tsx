@@ -33,12 +33,12 @@ function Working() {
       <Card>
         <Row
           id="confirm-deletes"
-          title="Ask before moving to trash or deleting a comment"
-          description="Deleting for good always asks."
+          title="Confirm deletes"
+          description="Moving to the trash and deleting a comment are confirmed; a permanent delete always is."
           control={
             <Switch
               checked={confirm}
-              aria-label="Ask before moving to trash or deleting a comment"
+              aria-label="Confirm deletes"
               onCheckedChange={(on) => {
                 setConfirm(on);
                 persistConfirmDeletes(on);
@@ -48,11 +48,11 @@ function Working() {
         />
         <Row
           id="status-colours"
-          title="Colour bar beside each project in the Workshop"
+          title="Workshop status colours"
           control={
             <Switch
               checked={bars}
-              aria-label="Colour bar beside each project in the Workshop"
+              aria-label="Workshop status colours"
               onCheckedChange={(on) => {
                 setBars(on);
                 persistStatusBars(on);
@@ -67,7 +67,7 @@ function Working() {
   );
 }
 
-/** The assistant asks when dropped footage doesn't seem to fit the open project (work-prefs askFit; its "Don't ask again" turns it off). */
+/** The assistant asks when dropped footage doesn't seem to fit the open workspace (work-prefs askFit; its "Don't ask again" turns it off). */
 function AskFit() {
   const prefs = useWorkPrefs((s) => s.prefs);
   // read each time the page opens: the chat's "Don't ask again" may have turned it off meanwhile
@@ -76,8 +76,9 @@ function AskFit() {
   return (
     <Row
       id="ask-fit"
-      title="Ask when dropped footage doesn't fit the open workspace"
-      control={<Switch checked={prefs.askFit !== false} aria-label="Ask when dropped footage doesn't fit the open workspace" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
+      title="Footage workspace prompt"
+      description="The assistant asks when dropped footage does not fit the open workspace."
+      control={<Switch checked={prefs.askFit !== false} aria-label="Footage workspace prompt" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
     />
   );
 }
@@ -90,15 +91,15 @@ function UsageLimits() {
     <>
       <Row
         id="auto-resume-limited"
-        title="Resume after usage limits"
-        description="Automatically resume chats when their usage limits reset. You can cancel auto-resume in each chat."
-        control={<Switch checked={prefs.autoResume !== false} aria-label="Resume after usage limits" onCheckedChange={(on) => void useWorkPrefs.getState().put({ autoResume: on })} />}
+        title="Auto-resume"
+        description="A chat stopped by a usage limit resumes when the limit resets."
+        control={<Switch checked={prefs.autoResume !== false} aria-label="Auto-resume" onCheckedChange={(on) => void useWorkPrefs.getState().put({ autoResume: on })} />}
       />
       <Row
         id="snooze-limited"
-        title="Snooze until limits reset"
-        description="Snooze chats until their usage limits reset. Turn on auto-resume to continue the chat after the reset."
-        control={<Switch checked={prefs.snoozeLimited === true} aria-label="Snooze until limits reset" onCheckedChange={(on) => void useWorkPrefs.getState().put({ snoozeLimited: on })} />}
+        title="Limit snooze"
+        description="A chat stopped by a usage limit is snoozed until the limit resets."
+        control={<Switch checked={prefs.snoozeLimited === true} aria-label="Limit snooze" onCheckedChange={(on) => void useWorkPrefs.getState().put({ snoozeLimited: on })} />}
       />
     </>
   );
@@ -108,12 +109,12 @@ function UsageLimits() {
 export function ScreenRecording({ mac }: { mac: ThisMacState | null }) {
   if (typeof mac?.shortcut !== "string") return null;
   return (
-    <Section title="Screen recording">
+    <Section title="Screen Recorder">
       <Card>
         <Row
           id="recording-shortcut"
           title="Recording shortcut"
-          status={mac.shortcut || "Off"}
+          status={mac.shortcut || "Not set"}
           control={<Button size="sm" variant="outline" onClick={() => tell("shortcut")}>Change</Button>}
         />
       </Card>
@@ -136,7 +137,7 @@ export function ThisComputer({ version }: { version?: string }) {
     try {
       clearAccountCache(me?.username);
     } catch {
-      saveFailed("The saved lists did not clear. Try again.");
+      saveFailed("Cache not cleared");
     }
     measure();
   };
@@ -149,8 +150,8 @@ export function ThisComputer({ version }: { version?: string }) {
         <Row
           id="saved-lists"
           title="Cache"
-          description="Lists kept on this computer so screens open at once. Clearing it loses no work."
-          status={`${usage.items} ${usage.items === 1 ? "list" : "lists"} · ${size(usage.bytes)}`}
+          description="Lists saved on this computer so screens open at once."
+          status={size(usage.bytes)}
           control={
             <Button size="sm" variant="outline" onClick={clear} disabled={usage.items === 0}>
               Clear
@@ -185,15 +186,15 @@ function Reports() {
       setState(await r.json());
     } catch {
       setState({ ...state, on: !on });
-      saveFailed("The switch did not save. Try again.");
+      saveFailed("Usage and crash reports not saved");
     }
   };
   return (
     <Row
       id="usage-reports"
-      title="Send anonymous usage and crash reports"
-      description="Which pages you open, which AIs are set up, and error messages, under a random id. Never your name, files or content."
-      control={<Switch checked={state.on} aria-label="Send anonymous usage and crash reports" onCheckedChange={(on) => void toggle(on)} />}
+      title="Usage and crash reports"
+      description="Sends the pages opened, the AI providers set up and error messages, under a random id."
+      control={<Switch checked={state.on} aria-label="Usage and crash reports" onCheckedChange={(on) => void toggle(on)} />}
     />
   );
 }

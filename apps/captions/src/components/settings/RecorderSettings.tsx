@@ -27,14 +27,14 @@ export function RecorderSettings() {
     <Card>
       <Row
         id="recorder-streams"
-        title="Save the streams separately"
-        description="Save also writes the camera, your voice and the Mac's sound as their own files beside the video, and Send uploads the camera as its own video, so an AI or another editor can work with each one."
-        control={<Switch checked={r.keep} aria-label="Save the streams separately" onCheckedChange={(on) => set("keep", on ? "1" : "0")} />}
+        title="Separate streams"
+        description="Save also writes the camera, the voice and the Mac's sound as their own files, and Send uploads the camera as its own video."
+        control={<Switch checked={r.keep} aria-label="Separate streams" onCheckedChange={(on) => set("keep", on ? "1" : "0")} />}
       />
       <Row
         id="recorder-screen-quality"
         title="Screen quality"
-        description="At 60 frames a second. Smaller makes smaller files."
+        description="At 60 frames a second."
         control={<SettingsSelect label="Screen quality" value={String(r.screen)} onValueChange={(v) => set("screen", v)} options={SCREEN} />}
       />
       <Row

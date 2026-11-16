@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { DEFAULT_VOICE_PREFS, isLanguage, type VoiceView } from "@contracts/voice";
-import { LANGUAGES, engineOptions, keyFix, languageName } from "@/lib/voice";
+import { LANGUAGES, engineOptions, languageName } from "@/lib/voice";
 import { VoiceBody, VoiceSection } from "./VoiceSection";
 
 const view = (over: Partial<VoiceView> = {}): VoiceView => ({
@@ -27,21 +27,23 @@ const view = (over: Partial<VoiceView> = {}): VoiceView => ({
 const html = (v: VoiceView) => renderToStaticMarkup(<MemoryRouter><VoiceBody view={v} save={() => {}} /></MemoryRouter>);
 
 describe("the Voice page", () => {
-  it("with no languages says it detects them; with some, each is a chip by name", () => {
-    expect(html(view())).toContain("Detect it");
+  it("the spoken languages are the person's own: one row each with its Remove, under the row that adds one", () => {
+    const none = html(view());
+    expect(none).toContain("Spoken languages");
+    expect(none).not.toContain(">Remove<");
     const two = html(view({ languages: ["et", "en"] }));
-    expect(two).not.toContain("Detect it");
     expect(two).toContain('aria-label="Remove Estonian"');
     expect(two).toContain('aria-label="Remove English"');
+    expect(two.split(">Remove<").length - 1).toBe(2);
   });
 
-  it("the Default names its model, licence and page; a use that needs a key says so with the button to it", () => {
+  it("the Default names its model and what it is good at, nothing else; a use that needs a key says so, with no link off the page", () => {
     const out = html(view());
-    expect(out).toContain("Deepgram Nova-3");
-    expect(out).toContain("Paid API, your own key");
-    expect(out).toContain('href="https://developers.deepgram.com/docs/models-languages-overview"');
+    expect(out).toContain("Deepgram Nova-3: Most accurate · keeps filler words");
+    expect(out).not.toContain("Paid API");
+    expect(out).not.toContain("Model page");
     expect(out).toContain("Needs an OpenAI key");
-    expect(out).toContain('href="/settings/keys#api-key-OPENAI_API_KEY"');
+    expect(out).not.toContain("<a ");
   });
 
   it("with no key at all the need is said once, on the Default, not again on each use that follows it", () => {
@@ -52,7 +54,6 @@ describe("the Voice page", () => {
       resolvedDefault: { use: "default", ...need },
     }));
     expect(out.split("Needs a Deepgram key").length - 1).toBe(1);
-    expect(out).toContain('href="/settings/keys#api-key-DEEPGRAM_API_KEY"');
   });
 });
 
@@ -68,8 +69,8 @@ describe("a use's own need", () => {
 });
 
 describe("the AI Editor on your computers", () => {
-  it("offered On my computers when one has Parakeet; on Deepgram anyway, its row says why in one line", () => {
-    const note = "On your computers only edits in English: this runs on Deepgram";
+  it("offered Your computers when one has Parakeet; on Deepgram anyway, its row says why in one line", () => {
+    const note = "Runs on Deepgram: your computers are used for edits in English only.";
     const out = html(view({
       stt: { default: { engine: "auto" }, per: { editor: { engine: "local" } } },
       availableFor: { captions: ["deepgram"], transcripts: ["deepgram"], editor: ["deepgram", "local"], mic: ["deepgram"] },
@@ -77,19 +78,20 @@ describe("the AI Editor on your computers", () => {
     }));
     expect(out).toContain(note);
     expect(out.split(note).length - 1).toBe(1);
-    expect(engineOptions(["deepgram", "local"], "local", false).map((o) => o.label)).toContain("On my computers");
+    expect(engineOptions(["deepgram", "local"], "local", false).map((o) => o.label)).toContain("Your computers");
   });
 });
 
 describe("models on your computers", () => {
-  it("with none, offers to add a computer; with one, each model can be downloaded, and one it has removed", () => {
-    expect(html(view())).toContain('href="/settings/devices"');
+  it("with none, says so; with one, each model can be downloaded, and one it has removed; a model's line is what it is good at and its size", () => {
+    expect(html(view())).toContain("No computers");
     const out = html(view({ computers: [{ id: "d1", name: "Studio PC", online: false, os: "linux", models: [{ id: "whisper-large-v3-turbo", state: "ready" }] }] }));
     expect(out).toContain("Studio PC");
-    expect(out).toContain("Off");
+    expect(out).toContain("Offline");
     expect(out).toContain(">Remove<");
     expect(out).toContain(">Download<");
-    expect(out).toContain("By OpenAI");
+    expect(out).toContain("Most accurate · every language · 1.6 GB");
+    expect(out).not.toContain("By OpenAI");
   });
 
   it("a use offers a model on your computers only when it can run there", () => {
@@ -110,7 +112,7 @@ describe("read-aloud", () => {
       await new Promise((done) => setTimeout(done, 0));
     });
     expect(document.body.textContent).toContain("Could not load the voice settings");
-    expect(document.body.textContent).toContain("Read the assistant's replies aloud");
+    expect(document.body.textContent).toContain("Read replies aloud");
     act(() => root.unmount());
     document.body.innerHTML = "";
     vi.unstubAllGlobals();
@@ -124,11 +126,6 @@ describe("the engine choices", () => {
     expect(engineOptions(view().available, undefined, false).map((o) => o.value)).toEqual(["same", "deepgram"]);
   });
 
-  it("a key need goes to that key's row; a local engine has no key", () => {
-    expect(keyFix("DEEPGRAM_API_KEY")).toBe("/settings/keys#api-key-DEEPGRAM_API_KEY");
-    expect(keyFix("OPENAI_API_KEY")).toBe("/settings/keys#api-key-OPENAI_API_KEY");
-    expect(keyFix(undefined)).toBeNull();
-  });
 });
 
 describe("the language picker", () => {
@@ -165,17 +162,12 @@ describe("dictation and the models on a Mac", () => {
 
   it("on this Mac the engine is chosen; the server's says what it needs and has no model row", () => {
     const mac = withMac(view(), dictation());
-    expect(mac).toContain("Transcribed by");
-    expect(mac).toContain("Speech model");
+    expect(mac).toContain("Dictation engine");
+    expect(mac).toContain("Dictation model");
     const need = { use: "mic" as const, needs: "Needs a Deepgram key", key: "DEEPGRAM_API_KEY" as const };
     const server = withMac(view({ resolved: [...view().resolved.filter((r) => r.use !== "mic"), need] }), dictation({ engine: "server" }));
     expect(server).toContain("Needs a Deepgram key");
-    expect(server).not.toContain("Speech model");
-  });
-
-  it("in the Mac app, the computers' empty row says what it is for, apart from Dictation's own models", () => {
-    expect(withMac(view(), dictation())).toContain("Dictation has its own, below.");
-    expect(html(view())).not.toContain("Dictation has its own");
+    expect(server).not.toContain("Dictation model");
   });
 
   it("while the other dictation app is open, one quiet line says why it is off", () => {

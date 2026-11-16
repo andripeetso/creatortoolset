@@ -1,11 +1,9 @@
-import { Link } from "react-router";
-import { ExternalLink, X } from "lucide-react";
 import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, runsOn, sizeOn, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
-import { LANGUAGES, SAME, engineOptions, keyFix, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
-import { Card, ErrorRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { LANGUAGES, SAME, engineOptions, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
 import { Dictation } from "./DictationSettings";
 import { hasThisMac, useThisMac, type ThisMacState } from "./ThisMacSection";
@@ -13,9 +11,10 @@ import { hasThisMac, useThisMac, type ThisMacState } from "./ThisMacSection";
 type Body = Parameters<typeof putVoice>[0];
 
 /**
- * Settings → AI → Voice: the languages spoken in the person's videos, which engine turns speech into text (a default
- * and one per use), and the assistant's read-aloud. Each choice saves at once; what each use runs on comes from the
- * server (`resolved`, api/lib/speech.ts), never worked out here.
+ * Settings → Voice: the languages the person speaks, which engine turns speech into text (a default and one per use),
+ * the speech models on their computers, dictation and the assistant's read-aloud. Each choice saves at once; what each
+ * use runs on comes from the server (`resolved`, api/lib/speech.ts), never worked out here. The language of a
+ * workspace's videos is the workspace's own (Settings → Workspace → Details); one with none set uses the list here.
  */
 export function VoiceSection() {
   const { data, error, refresh, set } = useVoice();
@@ -68,28 +67,24 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
         <Card>
           <Row
             id="voice-languages"
-            title="Spoken in your videos"
-            status={view.languages.length ? undefined : "Detect it"}
+            title="Spoken languages"
+            description="Used for dictation, talking to the assistant, and videos in a workspace with no language set."
             control={
               <SettingsSelect
-                label="Add a language"
+                label="Add language"
                 value="add"
                 onValueChange={(c) => c !== "add" && setLanguages(withLanguage(view, c, true))}
-                options={[{ value: "add", label: "Add a language" }, ...unused.map((c) => ({ value: c, label: languageName(c) }))]}
+                options={[{ value: "add", label: "Add language" }, ...unused.map((c) => ({ value: c, label: languageName(c) }))]}
               />
             }
-          >
-            {view.languages.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {view.languages.map((c) => (
-                  <Button key={c} size="sm" variant="secondary" aria-label={`Remove ${languageName(c)}`} onClick={() => setLanguages(withLanguage(view, c, false))}>
-                    {languageName(c)}
-                    <X />
-                  </Button>
-                ))}
-              </div>
-            )}
-          </Row>
+          />
+          {view.languages.map((c) => (
+            <ListRow
+              key={c}
+              title={languageName(c)}
+              actions={<Button size="sm" variant="outline" aria-label={`Remove ${languageName(c)}`} onClick={() => setLanguages(withLanguage(view, c, false))}>Remove</Button>}
+            />
+          ))}
         </Card>
       </Section>
 
@@ -97,9 +92,9 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
         <Card>
           <Row
             id="stt-default"
-            title="Default"
+            title="Default engine"
             status={<Runs r={view.resolvedDefault} full />}
-            control={<SettingsSelect label="Default: engine" value={view.stt.default.engine} onValueChange={(v) => setChoice("default", v)} options={engineOptions(view.available, view.stt.default.engine, true)} />}
+            control={<SettingsSelect label="Default engine" value={view.stt.default.engine} onValueChange={(v) => setChoice("default", v)} options={engineOptions(view.available, view.stt.default.engine, true)} />}
           />
           {SPEECH_USES.map((use) => {
             const own = view.stt.per[use];
@@ -115,7 +110,7 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
                 // (the Default runs on a computer, this use can't) is said here
                 status={r && (own || !("needs" in r) || !("needs" in view.resolvedDefault)) && <Runs r={r} full={!!own} />}
                 control={
-                  <SettingsSelect label={`${SPEECH_USE_NAMES[use]}: engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view.availableFor[use], own?.engine, false)} />
+                  <SettingsSelect label={`${SPEECH_USE_NAMES[use]} engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view.availableFor[use], own?.engine, false)} />
                 }
               />
             );
@@ -123,7 +118,7 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
         </Card>
       </Section>
 
-      <OnMyComputers computers={view.computers} want={want} dictation={!!mac?.dictation} />
+      <SpeechModels computers={view.computers} want={want} />
 
       <Dictation mac={mac} serverNeeds={needsOf(view.resolved.find((r) => r.use === "mic"))} />
 
@@ -135,41 +130,28 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
 /** The models a computer can download: one row each per computer, with where it comes from and its licence. */
 const COMPUTER_MODELS = STT_MODELS.filter((m) => m.computer);
 
-/** A model's origin in one line: who made it, its licence, its size, its page. */
-function Origin({ m, os }: { m: SttModel; os?: string }) {
-  const mb = sizeOn(m, os);
-  return (
-    <>
-      {m.by ? `By ${m.by}` : null}
-      {m.by ? " · " : null}
-      {m.licence}
-      {mb ? ` · ${mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`}` : null} ·{" "}
-      <a href={m.page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
-        Model page
-        <ExternalLink className="size-3" aria-hidden />
-      </a>
-    </>
-  );
-}
+const sizeText = (mb: number | undefined) => (mb ? (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`) : null);
+/** A model in one line: what it is good at and its size, nothing else. */
+const lineOf = (m: SttModel, os?: string) => [m.about, sizeText(sizeOn(m, os))].filter(Boolean).join(" · ");
 
 /**
  * Speech models on the person's own computers: nothing downloads until Download is pressed, and the strongest computer
- * that has a model does the work. No computer runs them yet: the button that adds one.
+ * that has a model does the work. Computers are added on their own page (Settings → Computers).
  */
-function OnMyComputers({ computers, want, dictation }: { computers: SttComputer[]; want: (computer: string, model: string, keep: boolean) => void; dictation?: boolean }) {
+function SpeechModels({ computers, want }: { computers: SttComputer[]; want: (computer: string, model: string, keep: boolean) => void }) {
   return (
-    <Section title="Models on your computers">
+    <Section title="Speech models">
       {computers.length ? (
         computers.map((c) => (
           <Card key={c.id}>
-            <Row title={c.name} status={c.online ? undefined : "Off"} />
+            <Row title={c.name} status={c.online ? undefined : "Offline"} />
             {COMPUTER_MODELS.filter((m) => runsOn(m, c.os, c.version) || c.models.some((x) => x.id === m.id)).map((m) => {
               const has = c.models.find((x) => x.id === m.id);
               return (
                 <Row
                   key={m.id}
                   title={m.name}
-                  status={<Origin m={m} os={c.os} />}
+                  status={lineOf(m, c.os)}
                   control={
                     !has ? (
                       <Button size="sm" variant="outline" onClick={() => want(c.id, m.id, true)}>Download</Button>
@@ -177,7 +159,7 @@ function OnMyComputers({ computers, want, dictation }: { computers: SttComputer[
                       <Button size="sm" variant="outline" onClick={() => want(c.id, m.id, false)}>Remove</Button>
                     ) : (
                       <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                        {has.state === "downloading" ? "Downloading" : c.online ? "Starting" : "When it's on"}
+                        {has.state === "downloading" ? "Downloading" : c.online ? "Starting" : "Waiting for the computer"}
                         <Button size="sm" variant="ghost" onClick={() => want(c.id, m.id, false)}>Cancel</Button>
                       </span>
                     )
@@ -189,52 +171,19 @@ function OnMyComputers({ computers, want, dictation }: { computers: SttComputer[
         ))
       ) : (
         <Card>
-          <Row
-            title="Run speech models on your own computers"
-            // in the Mac app, Dictation's own list of this Mac's models is right below: this one is for the uses above
-            description={dictation ? "For captions, transcripts, the AI Editor and the assistant. Dictation has its own, below." : undefined}
-            control={
-              <Button asChild size="sm" variant="outline">
-                <Link to="/settings/devices">Add a computer</Link>
-              </Button>
-            }
-          />
+          <EmptyRow title="No computers" />
         </Card>
       )}
     </Section>
   );
 }
 
-/**
- * What a row runs on now: the model (its name; with `full` also what it is good at, its licence and its page), or
- * what it needs with the button that fixes it.
- */
+/** What a row runs on now: the model (its name; with `full` also what it is good at and its size), or what it needs. */
 function Runs({ r, full }: { r: SttResolved; full?: boolean }) {
-  if ("needs" in r) {
-    const to = keyFix(r.key);
-    return (
-      <span className="flex flex-wrap items-center gap-2">
-        <Status tone="attention">{needWords(r)}</Status>
-        {to && (
-          <Button asChild size="sm" variant="outline">
-            <Link to={to}>Add key</Link>
-          </Button>
-        )}
-      </span>
-    );
-  }
+  if ("needs" in r) return <Status tone="attention">{needWords(r)}</Status>;
   const m = modelOf(r.model);
   if (!m) return <>{r.model}</>;
-  if (!full) return <>{m.name}</>;
-  return (
-    <>
-      {m.name}{m.by && !m.name.includes(m.by) ? ` by ${m.by}` : ""}: {m.about} · {m.licence} ·{" "}
-      <a href={m.page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
-        Model page
-        <ExternalLink className="size-3" aria-hidden />
-      </a>
-    </>
-  );
+  return <>{full ? `${m.name}: ${lineOf(m)}` : m.name}</>;
 }
 
 /** The assistant's read-aloud add-on (lib/read-aloud.ts): off until switched on here; the voice downloads then. */
@@ -246,9 +195,9 @@ export function TextToSpeech() {
       <Card>
         <Row
           id="read-aloud"
-          title="Read the assistant's replies aloud"
-          description={loading !== null ? `Downloading the voice · ${Math.round(loading * 100)}%` : "Downloads once, about 90 MB."}
-          control={<Switch checked={on} aria-label="Read the assistant's replies aloud" onCheckedChange={toggle} />}
+          title="Read replies aloud"
+          description={loading !== null ? `Downloading the voice · ${Math.round(loading * 100)}%` : "The voice downloads once, about 90 MB."}
+          control={<Switch checked={on} aria-label="Read replies aloud" onCheckedChange={toggle} />}
         />
       </Card>
     </Section>

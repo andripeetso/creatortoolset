@@ -7,7 +7,7 @@ import { availableEngines, availableFor, readVoicePrefs, resolvedFor, resolvedOn
 import type { SttComputer, VoiceView } from "../contracts/voice";
 
 /**
- * Settings → AI → Voice (contracts/voice.ts). Accounts only: a share-link visitor has none.
+ * Settings → Voice (contracts/voice.ts). Accounts only: a share-link visitor has none.
  *   PUT /api/voice-prefs/models { computer, model, keep } → VoiceView   Download (keep: true) or Remove a model on a computer
  */
 export const voicePrefsApp = new Hono<{ Variables: AuthVars }>();

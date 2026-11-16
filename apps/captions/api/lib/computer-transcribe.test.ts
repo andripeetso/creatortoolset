@@ -169,17 +169,17 @@ describe("speechFor with computers", () => {
     expect(speechJob("ana", "editor", ["en"])).toEqual({ engine: "local", model: "parakeet-tdt-0.6b-v3", languages: ["en"] });
     // an edit in another language, in two, or in none known: Deepgram, and the row says why
     saveMyKey("ana", "DEEPGRAM_API_KEY", "dg-ana");
-    const english = "On your computers only edits in English: this runs on Deepgram";
+    const english = "Runs on Deepgram: your computers are used for edits in English only.";
     expect(speechFor("ana", "editor", ["et"])).toEqual({ engine: "deepgram", model: "nova-3", key: "dg-ana", languages: ["et"], note: english });
     expect(speechJob("ana", "editor", ["en", "et"])).toEqual({ engine: "deepgram", model: "nova-3", languages: ["en", "et"] });
     writeVoicePrefs("ana", { languages: [] });
     expect(resolvedOne("ana", "editor")).toEqual({ use: "editor", engine: "deepgram", model: "nova-3", note: english });
     // another model on computers: Deepgram too
     writeVoicePrefs("ana", { languages: ["en"], stt: { per: { editor: { engine: "local", model: "whisper-large-v3-turbo" } } } });
-    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only with Parakeet: this runs on Deepgram" });
+    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "Runs on Deepgram: your computers are used with Parakeet only." });
     // the Default set to computers does not move the AI Editor: only its own row does
     writeVoicePrefs("ana", { stt: { default: { engine: "local" }, per: { editor: null } } });
-    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only when picked on this row: this runs on Deepgram" });
+    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "Runs on Deepgram: your computers are used only when chosen on this row." });
     // with a key, Automatic stays on Deepgram
     writeVoicePrefs("ana", { stt: { default: { engine: "auto" } } });
     expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", model: "nova-3" });

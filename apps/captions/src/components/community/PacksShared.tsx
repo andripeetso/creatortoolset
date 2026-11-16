@@ -31,7 +31,7 @@ export function ContentsView({ pack }: { pack: Contents }) {
         </div>
       )}
       {c.captionStyles.length > 0 && <ListLine label={`Caption styles (${c.captionStyles.length})`} items={c.captionStyles} />}
-      {c.home && <ListLine label={`Shown on Home (${c.home.length})`} items={c.home} />}
+      {c.home && <ListLine label={`Home tools (${c.home.length})`} items={c.home} />}
     </div>
   );
 }

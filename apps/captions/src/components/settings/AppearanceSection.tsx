@@ -111,8 +111,8 @@ export function AppearanceSection() {
           <Row
             id="chat-wave"
             title="Transition effect"
-            description="A wave from the button when chat mode turns on or off"
-            control={<Switch checked={chatWave} aria-label="Chat mode transition effect" onCheckedChange={persistChatWave} />}
+            description="A wave from the button when chat mode turns on or off."
+            control={<Switch checked={chatWave} aria-label="Transition effect" onCheckedChange={persistChatWave} />}
           />
         </Card>
       </Section>
@@ -121,15 +121,15 @@ export function AppearanceSection() {
         <Card>
           <Row
             id="clip-view"
-            title="Clips open in"
+            title="Clip view"
             control={
               <SettingsSelect
-                label="Clips open in"
+                label="Clip view"
                 value={clipView}
                 onValueChange={(v) => persistClipView(v as ClipView)}
                 options={[
-                  { value: "window", label: "A window" },
-                  { value: "side", label: "A side panel" },
+                  { value: "window", label: "Window" },
+                  { value: "side", label: "Side panel" },
                 ]}
               />
             }
@@ -276,7 +276,7 @@ function Colour({ dark }: { dark: boolean }) {
           ref={picker}
           type="color"
           tabIndex={-1}
-          aria-label="Your own colour"
+          aria-label="Custom colour"
           className="sr-only"
           value={custom ?? "#7c3aed"}
           onChange={(e) => persistOwnColour(e.target.value)}
