@@ -53,7 +53,7 @@ export function WhatChanged({ sessionId, doc, edits }: { sessionId: string; doc:
         );
       })
       .catch((e: Error & { status?: number }) => {
-        if (!stale) setError(e.status === 404 ? "The text from before this turn was pruned, so there is nothing to compare with." : e.message);
+        if (!stale) setError(e.status === 404 ? "The earlier text was not kept, so there is nothing to compare" : e.message);
       });
     return () => {
       stale = true;
@@ -63,13 +63,14 @@ export function WhatChanged({ sessionId, doc, edits }: { sessionId: string; doc:
   return (
     <div className="mt-1.5 flex flex-col gap-3 rounded-lg border border-border bg-background/70 p-2.5 text-[13px] leading-relaxed text-foreground">
       <p className="text-[10px] text-muted-foreground">
-        Before this turn against {edits.versionAfter ? "the text as the turn left it" : "the text now"} ·{" "}
+        Before this reply against {edits.versionAfter ? "the text after it" : "the text now"} ·{" "}
         <del className="rounded-sm bg-red-500/20 px-0.5 text-red-200/90 line-through">removed</del>{" "}
         <ins className="rounded-sm bg-emerald-500/20 px-0.5 text-emerald-100 no-underline">added</ins>
       </p>
       {error ? <p className="text-[12px] text-red-300">{error}</p> : null}
       {!error && rows === null ? <p className="text-[12px] text-muted-foreground">Loading…</p> : null}
-      {rows?.length === 0 ? <p className="text-[12px] text-muted-foreground">The words of these blocks are the same as before.</p> : null}
+      {rows?.length === 0 ? <p className="text-[12px] text-muted-foreground">No words changed</p>
+--- : null}
       {rows?.map((r) => (
         <div key={r.id}>
           <p className="text-[11px] text-muted-foreground">

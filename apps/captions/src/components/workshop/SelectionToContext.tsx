@@ -69,7 +69,7 @@ export function SelectionToContext({ onPin, children }: { onPin: (snippet: Conte
           style={{ top: chip.top, left: chip.left }}
           className="absolute z-30 flex items-center gap-1 rounded-md bg-violet-600 px-2 py-1 text-[11px] font-medium text-white shadow-lg hover:bg-violet-500"
         >
-          <Pin className="h-3 w-3" /> Add to AI context
+          <Pin className="h-3 w-3" /> Add to context
         </button>
       )}
     </div>

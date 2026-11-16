@@ -89,7 +89,7 @@ function Row({ r, active, n, readOnly }: { r: SessionSummary; active: boolean; n
           <Loader2 className="h-3 w-3 animate-spin" /> Working
         </span>
       ) : unseen ? (
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-300" title="A reply finished that you haven't looked at">
+        <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-300" title="Unread reply">
           <CircleCheck className="h-3.5 w-3.5" /> Done
         </span>
       ) : (
@@ -316,7 +316,7 @@ function Finder({ rows, onClose }: { rows: SessionSummary[]; onClose: () => void
             }
             else if (e.key === "Enter") go(hits[at]);
           }}
-          placeholder="Find a project…"
+          placeholder="Search projects"
           className="w-full border-b border-zinc-800 bg-transparent px-4 py-3 text-[15px] text-zinc-100 outline-none placeholder:text-zinc-500"
         />
         <div className="max-h-80 overflow-y-auto p-1.5">
@@ -335,7 +335,8 @@ function Finder({ rows, onClose }: { rows: SessionSummary[]; onClose: () => void
               </button>
             ))
           ) : (
-            <p className="px-3 py-4 text-center text-[12px] text-zinc-500">No project by that name.</p>
+            <p className="px-3 py-4 text-center text-[12px] text-zinc-500">No projects found
+---</p>
           )}
         </div>
       </div>

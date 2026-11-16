@@ -11,8 +11,8 @@ export const STACKED_ORDER: IslandId[] = ["writing", "cowork", "content"];
 export const COLUMNS_ORDER: IslandId[] = ["cowork", "writing", "content"];
 export const ISLAND_LABEL: Record<IslandId, string> = {
   writing: "Writing",
-  cowork: "Cowork",
-  content: "Content",
+  cowork: "Chat",
+  content: "Browse",
 };
 
 export interface DeskSnapshot {

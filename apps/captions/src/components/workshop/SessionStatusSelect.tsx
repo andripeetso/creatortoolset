@@ -35,7 +35,7 @@ export function SessionStatusSelect({
       value={current}
       disabled={disabled}
       aria-label="Project status"
-      title="Where this piece sits"
+      title="Project status"
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => onChange(e.target.value as SessionStatus)}
       className={`h-7 shrink-0 rounded-md border bg-zinc-950 px-1.5 text-[11px] ${STATUS_CLASS[current]} disabled:opacity-50`}
@@ -79,7 +79,7 @@ export function SessionPosted({
             href={p.url}
             target="_blank"
             rel="noreferrer"
-            title={p.by === "auto" ? "Matched to this post by its words" : "The link you pasted"}
+            title={p.by === "auto" ? "Matched by its words" : "Pasted link"}
             className="flex items-center gap-1 px-1.5 py-1 hover:text-zinc-50"
           >
             <ExternalLink className="h-3 w-3" />
@@ -88,12 +88,12 @@ export function SessionPosted({
           {versions.length > 0 && !readOnly && (
             <select
               disabled={disabled}
-              aria-label="Which version this post is"
+              aria-label="Version of this post"
               value={p.version ?? ""}
               onChange={(e) => e.target.value && onChange({ url: p.url, version: e.target.value })}
               className="h-full border-l border-violet-500/30 bg-transparent px-1 text-[11px] text-violet-100 disabled:opacity-50"
             >
-              <option value="" className="bg-zinc-900">{p.version ? "" : "Which version?"}</option>
+              <option value="" className="bg-zinc-900">{p.version ? "" : "Version"}</option>
               {versions.map((v) => (
                 <option key={v.key} value={v.key} className="bg-zinc-900">
                   {v.label}
@@ -105,8 +105,8 @@ export function SessionPosted({
           <button
             type="button"
             disabled={disabled}
-            title="Not this post"
-            aria-label="Not this post"
+            title="Remove post"
+            aria-label="Remove post"
             onClick={() => onChange({ remove: p.shortcode })}
             className="border-l border-violet-500/30 px-1 py-1 text-violet-300/70 hover:text-zinc-50 disabled:opacity-50"
           >
@@ -119,10 +119,11 @@ export function SessionPosted({
         <button
           type="button"
           disabled={disabled}
-          title="Paste the Instagram link of a post this became"
+          title="Link the Instagram post"
           onClick={async (e) => {
             e.stopPropagation();
-            const url = await promptDialog({ title: "Paste the post's Instagram link", ok: "Link post" });
+            const url = await promptDialog({ title: "Instagram post link"
+---, ok: "Link post" });
             if (url?.trim()) onChange(url.trim());
           }}
           className="shrink-0 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-50"

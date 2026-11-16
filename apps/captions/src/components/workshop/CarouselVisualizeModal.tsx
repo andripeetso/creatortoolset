@@ -174,7 +174,7 @@ export function CarouselVisualizeModal({
                   type="button"
                   disabled={!!busy || locked || !aiAvailable || !blocks.length}
                   onClick={() => void run(live ? { regenerate: true } : {})}
-                  title={aiAvailable ? (live ? "Pick a new pairing from the same kit" : "Compose text layout and image wells from the kit") : "AI is not configured"}
+                  title={aiAvailable ? (live ? "Pick a new pairing from the same kit" : "Compose text layout and image wells from the kit") : "Needs an AI provider"}
                   className={`${pickOff} inline-flex items-center gap-1 disabled:opacity-40`}
                 >
                   <CtMark className="h-3 w-3" />
@@ -275,7 +275,8 @@ export function CarouselVisualizeModal({
               onRedo={redoSlide}
             />
           ) : (
-            <p className="py-12 text-center text-sm text-zinc-500">No slides yet.</p>
+            <p className="py-12 text-center text-sm text-zinc-500">No slides
+---</p>
           )}
         </div>
       </div>

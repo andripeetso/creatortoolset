@@ -120,7 +120,7 @@ export function SessionMenu({
   const mainPieceText = () =>
     listDocuments(id).then((docs) => {
       const piece = docs.find((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim()));
-      if (!piece) throw new Error("There is no written piece to copy yet");
+      if (!piece) throw new Error("No written piece to copy");
       return piece.blocks.map((b) => b.text).join("\n\n");
     });
   const regenerate = () => {
@@ -149,7 +149,7 @@ export function SessionMenu({
     onClose();
     void (async () => {
       const from = (await listDocuments(id)).find((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim()));
-      if (!from) throw new Error("There is no written piece to convert yet");
+      if (!from) throw new Error("No written piece to convert");
       const copy = await duplicateSession(id);
       await patchSession(copy.id, { title: `${title.trim() || "Untitled project"}-${CONVERT_SUFFIX[kind]}`, status: "writing" });
       const doc = await createDocument(copy.id, { kind });
@@ -162,7 +162,8 @@ export function SessionMenu({
   const remove = () => {
     onClose();
     void (async () => {
-      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}” for good?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}”?`
+---, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
       await deleteSession(id);
       if (open) navigate(WORKSHOP_HOME);
       void refreshSummaries();

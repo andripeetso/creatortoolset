@@ -58,8 +58,8 @@ export function DocView({
           onClick={onChanges}
           aria-pressed={!!changes}
           className={`${barBtn} ${changes ? "!text-emerald-300" : ""}`}
-          title={changes ? "Showing what the AI's last reply changed (in green). Click to hide." : "Show what the AI's last reply changed on the piece (in green)"}
-          aria-label="AI changes"
+          title={changes ? "Hide what the last reply changed" : "Show what the last reply changed"}
+          aria-label="Changes"
         >
           <Diff className="h-3 w-3" /> <span className={barName}>Changes</span>
         </button>
@@ -70,8 +70,8 @@ export function DocView({
           onClick={onNotMine}
           aria-pressed={!!notMine}
           className={`${barBtn} ${notMine ? "!text-amber-300" : ""}`}
-          title={notMine ? "Not mine is on: every word on the AI's slides that you never said in this project is marked. Click to turn it off." : "Not mine: mark every word on the AI's slides that you never said in this project"}
-          aria-label="Not mine"
+          title={notMine ? "Stop marking words that are not yours" : "Mark words that are not yours"}
+          aria-label="Words that are not yours"
         >
           <Highlighter className="h-3 w-3" />
         </button>
@@ -82,7 +82,7 @@ export function DocView({
         </button>
       ) : null}
       {kind === "carousel" && onDesign ? (
-        <button type="button" onClick={onDesign} className={barBtn} title="Design: the slides as pictures your AI designs and you change by hand" aria-label="Design">
+        <button type="button" onClick={onDesign} className={barBtn} title="Open in Designer" aria-label="Design">
           <Palette className="h-3 w-3" /> <span className={barName}>Design</span>
         </button>
       ) : null}
@@ -152,7 +152,7 @@ export function DocShapeRules({
           })}
           {frameworks.length === 0 && (
             <Link to="/workshop" className="text-[11px] text-muted-foreground hover:text-foreground">
-              No frameworks yet — add some
+              No frameworks
             </Link>
           )}
         </div>
@@ -174,7 +174,7 @@ export function DocShapeRules({
               </span>
             </label>
           ))}
-          {rules.length === 0 && <span className="text-[11px] text-muted-foreground">No rules yet.</span>}
+          {rules.length === 0 && <span className="text-[11px] text-muted-foreground">No rules</span>}
         </div>
       </CraftMenu>
     </div>

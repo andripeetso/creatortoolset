@@ -71,9 +71,9 @@ export function knowledgeSizeLabel(n: number): string {
 export type FrameworkRole = "narrative" | "persuasion" | "argument";
 
 export const FRAMEWORK_ROLES: { id: FrameworkRole; label: string; hint: string }[] = [
-  { id: "narrative", label: "Shape", hint: "Sets the order of the whole piece — pick one" },
-  { id: "persuasion", label: "Persuasion", hint: "Shapes how the piece asks — pick one, optional" },
-  { id: "argument", label: "Argument", hint: "Shapes the reasoning — optional" },
+  { id: "narrative", label: "Shape", hint: "Sets the order of the whole piece" },
+  { id: "persuasion", label: "Persuasion", hint: "Sets how the piece asks" },
+  { id: "argument", label: "Argument", hint: "Sets the reasoning" },
 ];
 
 export interface WorkshopFramework {
@@ -528,7 +528,7 @@ export interface WorkshopDocument {
 
 /** The parts of a source the AI can pull, in value order. */
 export type SourcePart = "slides" | "transcript" | "caption" | "comments";
-export const PART_LABELS: Record<SourcePart, string> = { slides: "on-screen text", transcript: "transcript", caption: "caption", comments: "comments" };
+export const PART_LABELS: Record<SourcePart, string> = { slides: "on-screen text", transcript: "transcript", caption: "post description", comments: "comments" };
 export interface LoadedSource {
   postId: string;
   parts: SourcePart[];
@@ -1036,11 +1036,11 @@ export function moveId(ids: string[], id: string, dir: -1 | 1): string[] {
 }
 
 export const STAGE_LABELS: Record<NonNullable<ChatMessage["stage"]>, string> = {
-  packing: "Packing the sources",
-  thinking: "Reading and thinking",
+  packing: "Loading the sources",
+  thinking: "Reading",
   writing: "Writing",
   applying: "Applying the edits",
-  searching: "Searching the library",
+  searching: "Searching posts",
   researching: "Reading sources on the web",
 };
 
