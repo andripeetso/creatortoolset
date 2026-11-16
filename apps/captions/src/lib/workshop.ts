@@ -244,7 +244,8 @@ export interface SessionRow extends Omit<SessionMeta, "drafts" | "sources"> {
 export interface SessionPatch {
   title?: string;
   query?: string;
-  projectId?: string | null;
+  /** the workspace it moves to (Move to); nothing else moves a session */
+  moveTo?: string;
   status?: SessionStatus;
   sources?: Array<Pick<SessionSource, "postId" | "note"> & Partial<SessionSource>>;
   notes?: string;
