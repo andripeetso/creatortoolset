@@ -157,7 +157,7 @@ const send = <T,>(url: string, method: string, body?: unknown): Promise<T> =>
 export const listCollections = (libraryId: string) =>
   send<{ collections: Collection[] }>(`/api/library/${libraryId}/collections`, "GET").then((x) => x.collections);
 
-export const createCollection = (libraryId: string, input: { name: string; kind?: "manual" | "smart"; query?: SearchQuery; parentId?: string }) =>
+export const createCollection = (libraryId: string, input: { name: string; kind?: "manual" | "smart"; query?: SearchQuery; parentId?: string; rule?: string }) =>
   send<Collection>(`/api/library/${libraryId}/collections`, "POST", input);
 
 export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>
@@ -165,6 +165,9 @@ export const changeFolderItems = (libraryId: string, collectionId: string, asset
 
 export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
   send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
+
+/** The folders in this order (the tabs dragged into place); the server keeps it for everyone who opens the library */
+export const orderCollections = (libraryId: string, ids: string[]) => send<{ ok: true }>(`/api/library/${libraryId}/collections/order`, "PUT", { ids });
 
 /** The folder goes (api/library/collections.ts): its folders move up one level, its clips stay in the library. */
 export const deleteCollection = (libraryId: string, collectionId: string) =>

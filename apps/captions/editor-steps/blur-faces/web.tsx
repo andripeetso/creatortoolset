@@ -400,7 +400,7 @@ function FaceBlurSettings() {
       <p className="text-sm text-muted-foreground">
         Faces in AI Editor edits are covered by the AI Editor's own Blur faces step:{" "}
         <Link to="/settings/tools/editor" className="underline underline-offset-2">
-          Settings → Tools → AI Editor
+          Settings → AI Editor
         </Link>
       </p>
     </div>

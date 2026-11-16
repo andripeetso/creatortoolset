@@ -1,6 +1,8 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
-import { Folder, LayoutGrid, List } from "lucide-react";
+import { Check, ChevronDown, Folder, LayoutGrid, List } from "lucide-react";
 import { pageView } from "@/components/browse/views";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /**
  * The Media Library's three views, kept on this device under its own key: Folders (the folder cards, then the clips),
@@ -46,27 +48,49 @@ export function useLibraryView(): [LibraryView, (v: LibraryView) => void] {
 const ICONS = { folders: Folder, gallery: LayoutGrid, list: List } as const;
 const TITLES = { folders: "Folders", gallery: "Gallery", list: "List" } as const;
 
-/** The three views, side by side. */
-export function LibraryViewSwitch({ view, onChange }: { view: LibraryView; onChange: (v: LibraryView) => void }) {
+/**
+ * The View button: one control for how the clips are shown. Its panel holds the three views as rows and, for the
+ * cards, their size. The panel stays open between picks, so a view and a size take one visit.
+ */
+export function LibraryViewMenu({ view, onChange, size, onSize }: { view: LibraryView; onChange: (v: LibraryView) => void; size: number | null; onSize: (n: number) => void }) {
+  const Current = ICONS[view];
   return (
-    <div role="group" aria-label="View" className="flex gap-0.5 rounded-md border border-zinc-800 p-0.5">
-      {VIEWS.map((v) => {
-        const Icon = ICONS[v];
-        return (
-          <button
-            key={v}
-            type="button"
-            onClick={() => onChange(v)}
-            title={TITLES[v]}
-            aria-label={TITLES[v]}
-            aria-pressed={view === v}
-            className={`rounded p-1 transition-colors ${view === v ? "bg-zinc-700 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}`}
-          >
-            <Icon className="h-3.5 w-3.5" />
-          </button>
-        );
-      })}
-    </div>
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8" title={`View: ${TITLES[view]}`}>
+          <Current className="h-4 w-4" />
+          View
+          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-56 flex-col gap-3 p-2">
+        <div role="group" aria-label="Layout" className="flex flex-col">
+          {VIEWS.map((v) => {
+            const Icon = ICONS[v];
+            return (
+              <button
+                key={v}
+                type="button"
+                onClick={() => onChange(v)}
+                aria-label={TITLES[v]}
+                aria-pressed={view === v}
+                className="flex h-8 items-center gap-2 rounded px-2 text-left text-sm hover:bg-accent"
+              >
+                <Icon className="h-4 w-4 text-muted-foreground" />
+                <span className="flex-1">{TITLES[v]}</span>
+                {view === v && <Check className="h-4 w-4" />}
+              </button>
+            );
+          })}
+        </div>
+        {view !== "list" && (
+          <label className="flex flex-col gap-1.5 border-t px-2 pt-3 text-xs text-muted-foreground">
+            Card size
+            <CardSizeSlider size={size} onChange={onSize} />
+          </label>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -109,7 +133,7 @@ export function useCardSize(): [number | null, (n: number) => void] {
 export const cardColumns = (size: number): CSSProperties => ({ gridTemplateColumns: `repeat(auto-fill, minmax(min(${size}px, calc(50% - 6px)), 1fr))` });
 
 /** Smaller cards to the left, more of them in a row. */
-export function CardSizeSlider({ size, onChange }: { size: number | null; onChange: (n: number) => void }) {
+function CardSizeSlider({ size, onChange }: { size: number | null; onChange: (n: number) => void }) {
   return (
     <input
       type="range"
@@ -120,7 +144,7 @@ export function CardSizeSlider({ size, onChange }: { size: number | null; onChan
       step={10}
       value={size ?? SIZE.start}
       onChange={(e) => onChange(Number(e.target.value))}
-      className="h-8 w-24 cursor-pointer accent-zinc-400"
+      className="h-6 w-full cursor-pointer accent-zinc-400"
     />
   );
 }

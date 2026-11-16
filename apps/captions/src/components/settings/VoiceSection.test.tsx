@@ -173,6 +173,11 @@ describe("dictation and the models on a Mac", () => {
     expect(server).not.toContain("Speech model");
   });
 
+  it("in the Mac app, the computers' empty row says what it is for, apart from Dictation's own models", () => {
+    expect(withMac(view(), dictation())).toContain("Dictation has its own, below.");
+    expect(html(view())).not.toContain("Dictation has its own");
+  });
+
   it("while the other dictation app is open, one quiet line says why it is off", () => {
     const out = withMac(view(), dictation({ paused: "Off while your earlier dictation app is open", needs: "Accessibility" }));
     expect(out).toContain("Off while your earlier dictation app is open");

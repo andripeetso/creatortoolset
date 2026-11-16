@@ -27,7 +27,7 @@ export type ThisMacState = {
   device?: string | null;
   /** Settings → General → Dictation (apps/mac Dictation.swift `bridgeState`); missing in older Mac apps */
   dictation?: DictationState;
-  /** Settings → Tools → Screen Recorder (apps/mac RecordTypes.swift `RecordPrefs`): streams saved separately, the screen's longest side, the camera's height; missing in older Mac apps */
+  /** Settings → Screen Recorder (apps/mac RecordTypes.swift `RecordPrefs`): streams saved separately, the screen's longest side, the camera's height; missing in older Mac apps */
   recorder?: { keep: boolean; screen: number; camera: number; faces?: boolean };
   /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
   version?: string;
@@ -57,6 +57,10 @@ export type DictationState = {
   sounds: boolean;
   /** the person's own speech server, tried before this Mac's model ("" = none); missing in older Mac apps */
   server?: string;
+  /** whether that server answered its last check; null with none set or before the first check; missing in older Mac apps */
+  serverAnswers?: boolean | null;
+  /** the app stops a running download on `dictation:cancel:<id>`; missing in older Mac apps */
+  cancel?: true;
   /** the permission still to give, or null */
   needs: "Microphone" | "Accessibility" | null;
 };

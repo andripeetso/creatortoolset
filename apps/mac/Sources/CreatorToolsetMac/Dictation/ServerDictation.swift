@@ -101,9 +101,20 @@ struct SpeechServerTranscriber: Transcriber {
         }
     }
 
+    /// The server's /health, next to its /api/transcribe.
+    var health: URL { endpoint.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("health") }
+
+    /// Whether the server answers at all within 3 s (any HTTP answer: a server without /health is still up), for
+    /// Settings' Speech server row.
+    func answers() async -> Bool {
+        var request = URLRequest(url: health)
+        request.timeoutInterval = 3
+        return (try? await URLSession.shared.data(for: request))?.1 is HTTPURLResponse
+    }
+
     /// Opens the connection early (its /health), so the first dictation doesn't pay for it.
     func warmUp() async {
-        var request = URLRequest(url: endpoint.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("health"))
+        var request = URLRequest(url: health)
         request.timeoutInterval = 5
         for attempt in 1...10 {
             if (try? await URLSession.shared.data(for: request)) != nil {

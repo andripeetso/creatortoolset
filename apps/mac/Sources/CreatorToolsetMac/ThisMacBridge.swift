@@ -112,7 +112,7 @@ extension Shell {
         case "page": break  // an older page's page:calm|busy: nothing opens by itself
         // dictation:<what>:<value> (Dictation.swift `command`)
         case "dictation": Dictation.shared.command(arg, parts.count > 2 ? parts[2] : "")
-        // recorder:<what>:<value> (Settings → Tools → Screen Recorder, RecordTypes.swift RecordPrefs)
+        // recorder:<what>:<value> (Settings → Screen Recorder, RecordTypes.swift RecordPrefs)
         case "recorder": RecordPrefs.command(arg, parts.count > 2 ? parts[2] : "")
         default: break
         }
@@ -191,7 +191,7 @@ extension Shell {
             "version": appVersion,
             // Settings → General → Dictation (Dictation.swift)
             "dictation": Dictation.shared.bridgeState(),
-            // Settings → Tools → Screen Recorder
+            // Settings → Screen Recorder
             "recorder": RecordPrefs.bridgeState(),
         ]
     }

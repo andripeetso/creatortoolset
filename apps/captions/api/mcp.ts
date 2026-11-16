@@ -131,8 +131,8 @@ Media Library: the user's footage, their raw material. media_import_folder bring
 reads the script files there), media_search finds files by what they show or say, media_folders lists the folders.
 media_search looks in the library and in every source a plug-in adds to it: a hit then names its source, and the answer
 says when a filter could not be applied to one. media_get reads one clip in full (its description, what is said in it),
-media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_share makes a
-link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
+media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_smart_folder
+makes a folder sort itself by what the user says goes in it, media_share makes a link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
 B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
@@ -943,7 +943,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const { collections } = await json<{ collections: Args[] }>(`/api/library/${lib}/collections`);
       return {
         library: lib,
-        folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])),
+        folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count", "rule"])),
         // a plug-in's source has no folders here
         ...(others.length ? { note: `These are the Library's own folders. media_search also searches, with no folders here: ${others.map((s) => s.label).join(", ")}.` } : {}),
       };
@@ -1546,7 +1546,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  */
 const READS = new Set("captions_get captions_list chat_read chats_list design_get folder_list editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait workspace_files navigate show_video offer_choices".split(" "));
 const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_project_update workshop_sources workshop_update_session".split(" "));
-const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_feedback editor_retry editor_run editor_style_save animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
+const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_feedback editor_retry editor_run editor_style_save animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share media_smart_folder notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
 const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
 export const annotationsOf = (name: string) => ({
