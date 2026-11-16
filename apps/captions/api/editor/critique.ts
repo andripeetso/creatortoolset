@@ -94,7 +94,7 @@ export async function cutLines(plan: EditPlan, titles: Record<string, string>): 
 
 export const CRITIQUE_SYSTEM = `You watch a cut of a video before the person who asked for it does. You get what they asked for (the brief), their own words on earlier versions when there are any, the editing style, a line for each shot (when it plays, which footage it is and where in it, what that stretch of footage is described as, and why it was picked), and pictures of the cut: two frames of every shot, one just after it starts and one just before it ends.
 
-Judge the whole cut against all of that at once, the way the person will when they watch it. A shot fails when it doesn't hold up in this cut: watching it, the person would want it out or changed (a stretch where nothing happens in a cut that asks for action, say, a picture you can't make out, or the same picture twice). Name only the shots that fail, by number, each with one short reason in plain words, under ten words, about what is seen ("walking through town, nothing happens"). When every shot holds up, name none.
+Judge the whole cut against all of that at once, the way the person will when they watch it. A shot fails when it doesn't hold up in this cut: watching it, the person would want it out or changed (a stretch where nothing happens in a cut that asks for action, say, a picture you can't make out, or something already shown: the same picture, or the same action again from another stretch). Name only the shots that fail, by number, each with one short reason in plain words, under ten words, about what is seen ("walking through town, nothing happens"). When every shot holds up, name none.
 
 ${RULE}
 
