@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { checkUpload } from "@/lib/library";
 
-/** The Media Library's uploads on their way (LibraryPage.tsx sends them one after another), with Cancel, Cancel all, Retry and Clear finished. */
+/** The Media Library's uploads on their way (LibraryPage.tsx sends them one after another), copies into the library's folder among them, with Cancel, Cancel all, Retry and Clear finished. */
 
 export interface Upload {
   key: number;
@@ -11,10 +11,11 @@ export interface Upload {
   sent: number;
   /** the manual folder open when the file was dropped: it goes in there */
   folderId?: string;
-  status: "waiting" | "checking" | "uploading" | "added" | "duplicate" | "failed" | "cancelled";
+  status: "waiting" | "checking" | "copying" | "uploading" | "added" | "duplicate" | "failed" | "cancelled";
   error?: string;
   inPlace?: boolean; // added where it is on this Mac, not uploaded
-  path?: string; // where it is on this Mac, known from a Finder drop
+  path?: string; // where it is on this Mac, known from a Finder drop (once copied: the copy's)
+  copyTo?: string; // copied here first (the library's folder on this Mac), then taken in from there
   final?: boolean; // refused for good (too large for this server): no Retry
 }
 
@@ -23,6 +24,8 @@ const label = (u: Upload) =>
     ? "Waiting"
     : u.status === "checking"
     ? "Checking"
+    : u.status === "copying"
+    ? `Copying ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
     : u.status === "uploading"
     ? u.inPlace ? "Adding" : `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
     : u.status === "added"
@@ -34,7 +37,7 @@ const label = (u: Upload) =>
           : "Failed";
 
 /** Still to go or on its way: Cancel stops it. */
-const going = (u: Upload) => u.status === "waiting" || u.status === "checking" || u.status === "uploading";
+const going = (u: Upload) => u.status === "waiting" || u.status === "checking" || u.status === "copying" || u.status === "uploading";
 
 export function UploadTray({ uploads, onRetry, onCancel, onClear }: { uploads: Upload[]; onRetry: (u: Upload) => void; onCancel: (keys: number[]) => void; onClear: () => void }) {
   if (!uploads.length) return null;
@@ -70,6 +73,7 @@ export function UploadTray({ uploads, onRetry, onCancel, onClear }: { uploads: U
           {/* a file added where it is has no bytes to count: its bar moves until it is in */}
           {/* nor one being matched with the library's clips before it goes */}
           {u.status === "checking" && <MovingBar />}
+          {u.status === "copying" && <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />}
           {u.status === "uploading" && (u.inPlace ? <MovingBar /> : <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />)}
           {u.status === "cancelled" && (
             <div className="flex items-center gap-2 text-xs">

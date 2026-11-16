@@ -1,27 +1,30 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Settings2 } from "lucide-react";
-import { NEEDS, type Collection, type LibraryEstimate, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { Folder, Settings2 } from "lucide-react";
+import { NEEDS, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Card, Row, Section, SettingsSelect, StatusDot } from "@/components/settings/ui";
+import { Card, ListRow, Row, Section, SettingsSelect, StatusDot } from "@/components/settings/ui";
 import type { Organize } from "@contracts/library";
+import { CopyTo, folderName } from "@/components/LibraryProcessing";
 import { ORGANIZE } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
-import { thisMacBridge } from "@/lib/thisMac";
-import { UploadSwitch, uploadSwitchApplies } from "./UploadSwitch";
+import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
+import { UploadSelect } from "./UploadSelect";
+import { addFrom, copyAvailable, copyRoot, IMPORT_MODES, lookForNew, NEEDS_MAC } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
- * The Media Library's settings, behind one button beside its search (the owner's: the footage folders and where the
- * files are kept are theirs only): the footage folders (on the person's own computer), how the library is organized
- * (./Organize.tsx), storage with the space the library's own made files take, and the two AI switches, each saying
- * where it runs. The button carries an amber dot
- * while a folder or clip is not found.
+ * The Media Library's settings (the owner's: the places and where the files are kept are theirs only), behind one
+ * button beside its search and as Settings → Media Library (the same body, LibrarySettingsBody): how files are added
+ * and the places they came from (./Import.tsx) with Look for new files, the footage folders on the server's own
+ * computer, what uploads to the server, how the library is sorted (./Organize.tsx), storage with the space the
+ * library's own made files take, the two AI switches, each saying where it runs, and Redo for every clip. The button
+ * carries an amber dot while a folder or clip is not found.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -77,17 +80,145 @@ export function LibrarySettings({
           {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
           <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
             <SheetTitle className="text-base">Library settings</SheetTitle>
-            {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
-            {open && <OrganizeRow library={library} onChange={onChange} onError={onError} />}
-            <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
-              {(saved) => open && <SpaceRows library={library} saved={saved} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />}
-            </LibraryStorageSettings>
-            {open && <AiSwitches library={library} onChange={onChange} onError={onError} />}
-            {open && <RedoAll library={library} onError={onError} />}
+            <LibrarySettingsBody library={library} watch={watch} folders={folders} onChange={onChange} onError={onError} />
           </div>
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+/** The settings themselves, in the sheet and in Settings → Media Library. */
+export function LibrarySettingsBody({ library, watch, folders, onChange, onError }: { library: LibrarySummary; watch: WatchStatus; folders: Collection[]; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+  return (
+    <>
+      <AddingFiles library={library} watch={watch} onChange={onChange} onError={onError} />
+      {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
+      {/* on the server's own computer the same choice is the cloud copy, under Storage */}
+      {!watch.allowed && (
+        <Section title="Upload">
+          <Card>
+            <UploadSelect library={library} onChange={onChange} onError={onError} />
+          </Card>
+        </Section>
+      )}
+      <OrganizeRow library={library} onChange={onChange} onError={onError} />
+      <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
+        {(saved) => <SpaceRows library={library} saved={saved} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />}
+      </LibraryStorageSettings>
+      <AiSwitches library={library} onChange={onChange} onError={onError} />
+      <RedoAll library={library} onError={onError} />
+    </>
+  );
+}
+
+const MODE_WORDS: Record<ImportMode, string> = { "in-place": "Used where they are", copy: "Copied into the library" };
+
+/**
+ * How files are added (asked on the first add, ./Import.tsx), where copies go, the places files came from (each with
+ * how it was taken, and Remove: the next add from there asks again), and Look for new files: from the Mac app with the
+ * server elsewhere each place used where it is is read again on this Mac; on the server's own computer its footage
+ * folders are looked at now. Not shown in a browser with the server elsewhere, where files upload.
+ */
+function AddingFiles({ library, watch, onChange, onError }: { library: LibrarySummary; watch: WatchStatus; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+  const [line, setLine] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const from = addFrom(watch.allowed);
+  if (from === "browser") return null;
+  const mode = library.settings.importMode ?? "in-place";
+  // a folder on the server's own computer is copied by the server; anything else by the Mac app
+  const copyOk = copyAvailable(from, true);
+  const save = (settings: Partial<Settings>) =>
+    updateLibrary(library.id, { settings })
+      .then(onChange)
+      .catch((e) => onError(message(e)));
+  // the footage folders on the server's own computer are listed in their own section
+  const places = (library.settings.places ?? []).filter((p) => !watch.folders.some((f) => f.path === p.path));
+  const canLook = from === "here" ? watch.folders.length > 0 : macImports() && places.some((p) => p.mode === "in-place");
+  const look = async () => {
+    setBusy(true);
+    try {
+      if (from === "here") {
+        // the footage folders saved again as they are: the server looks at them at once
+        const folders = watch.folders.map(({ path, mode, collectionId, copyTo }) => ({ path, mode, collectionId, copyTo }));
+        const r = await fetch(`/api/library/${library.id}/watch`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folders }) });
+        if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Couldn't look (${r.status})`);
+        setLine("Looking now: new files show up as they are found");
+      } else {
+        const n = await lookForNew(library, setLine);
+        setLine(n ? `${n.toLocaleString()} new ${n === 1 ? "file" : "files"} added` : "No new files");
+      }
+    } catch (e) {
+      setLine(null);
+      onError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const change = async () => {
+    const picked = await chooseFolderOnMac();
+    if (picked) await save({ copyTo: picked });
+  };
+  return (
+    <Section title="Adding files">
+      <Card>
+        <Row
+          id="library-adding"
+          title="How files come in"
+          description={copyOk ? IMPORT_MODES.find((o) => o.value === mode)?.detail : `${IMPORT_MODES[0]!.detail}. Copying them: ${NEEDS_MAC.toLowerCase()}`}
+          control={
+            <SettingsSelect
+              label="How files come in"
+              value={mode}
+              options={copyOk ? IMPORT_MODES : IMPORT_MODES.filter((o) => o.value === "in-place")}
+              onValueChange={(v) => void save({ importMode: v as ImportMode })}
+            />
+          }
+        />
+        {mode === "copy" && copyOk && (
+          <Row
+            title="Library folder"
+            description={<CopyTo path={from === "here" && watch.copyTo ? watch.copyTo : copyRoot(library)} />}
+            control={
+              from === "here" ? (
+                <Button size="sm" variant="outline" asChild>
+                  <Link to="/settings/folders">Change</Link>
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => void change()}>
+                  Change
+                </Button>
+              )
+            }
+          />
+        )}
+        {places.map((p) => (
+          <ListRow
+            key={p.path}
+            icon={<Folder />}
+            title={folderName(p.path)}
+            subtitle={<span title={p.path}>{MODE_WORDS[p.mode]} · {p.path}</span>}
+            actions={
+              <Button size="sm" variant="ghost" onClick={() => void save({ places: (library.settings.places ?? []).filter((x) => x.path !== p.path) })}>
+                Remove
+              </Button>
+            }
+          />
+        ))}
+        {canLook && (
+          <Row
+            id="library-look"
+            title="New files in these places"
+            description={line}
+            control={
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => void look()}>
+                Look for new files
+              </Button>
+            }
+          />
+        )}
+      </Card>
+    </Section>
   );
 }
 
@@ -137,7 +268,7 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
     />
   );
   return (
-    <Section title="AI">
+    <Section id="library-ai" title="AI">
       <Card>
         {row("describe", "describe", "Write down what is in each video")}
         {row("embed", "embed", "Search by meaning, not exact words")}
@@ -150,14 +281,15 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
 function OrganizeRow({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const value = library.settings.organize ?? "own";
   return (
-    <Section title="Folders">
+    <Section title="Sorting">
       <Card>
         <Row
-          title="Sorting"
+          id="library-sorting"
+          title="Folders"
           description={ORGANIZE.find((o) => o.value === value)?.detail}
           control={
             <SettingsSelect
-              label="Sorting"
+              label="Folders"
               value={value}
               options={ORGANIZE}
               onValueChange={(v) =>
@@ -200,8 +332,7 @@ export function videoPlace(v: LibrarySpace["videos"], o: { saved: LibraryStorage
 }
 
 /**
- * Where the files are, and what the library makes (api/library/space.ts): the videos, the upload switch in the Mac app
- * with the server elsewhere, the proxies switch and what they take with Clear, the thumbnails, and the downloaded speech
+ * Where the files are, and what the library makes (api/library/space.ts): the videos, the proxies switch and what they take with Clear, the thumbnails, and the downloaded speech
  * and search models with Clear. The person's own files are never cleared. Proxies kept in the cloud (one for every
  * video) have no switch and no Clear: both would do nothing there.
  */
@@ -224,13 +355,13 @@ function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { libr
     updateLibrary(library.id, { settings: { proxy: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
-  const onMac = uploadSwitchApplies(onThisComputer) ? { upload: library.settings.upload !== "none" } : null;
+  const onMac = thisMacBridge() && !onThisComputer ? { upload: library.settings.upload !== "none" } : null;
   return (
     <>
       {space && <Row title="Video files" description={videoPlace(space.videos, { saved, onThisComputer, onMac })} />}
-      {onMac && <UploadSwitch library={library} onChange={onChange} onError={onError} />}
       {!cloud && (
         <Row
+          id="library-proxies"
           title="Generate proxies"
           description="Smaller copies of 4K, 10-bit and camera files, for smooth playback"
           control={<Switch aria-label="Generate proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}

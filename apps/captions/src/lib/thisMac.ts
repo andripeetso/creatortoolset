@@ -321,3 +321,42 @@ export async function faceBlurTry(
   const r = await faceBlurAsk(`faceblur:try:${JSON.stringify({ ...source, ...style, ...opts })}`);
   return { kind: r.kind === "video" ? "video" : "photo", faces: Array.isArray(r.faces) ? (r.faces as FaceBlurTrial["faces"]) : [], frames: Array.isArray(r.frames) ? (r.frames as string[]) : [] };
 }
+
+/**
+ * Media Library imports on this Mac (the Mac app's import asks): copy files into the library's folder, read the media
+ * files under a place again, and fingerprint files by path. Only a Mac app that has them says so on the page
+ * (`<html data-mac-import="1">`); an older one answers every ask with its state.
+ */
+export const macImports = () => typeof document !== "undefined" && document.documentElement.dataset.macImport === "1";
+
+/** One import ask; throws with the Mac's reason. */
+async function importAsk<T>(ask: string): Promise<T> {
+  const bridge = thisMacBridge();
+  if (!bridge || !macImports()) throw new Error("Needs the latest Mac app");
+  let r: Record<string, unknown>;
+  try {
+    r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Record<string, unknown>;
+  } catch {
+    throw new Error("The Creator Toolset Mac app did not answer. Try again.");
+  }
+  if (typeof r.error === "string") throw new Error(r.error);
+  return r as T;
+}
+
+export type ImportCopied = { copied: { from: string; to: string }[]; failed: { from: string; error: string }[]; stopped?: boolean };
+/** Copies each `from` to `to` ("~/" is this Mac's home folder), never over another file; answers when all are done. */
+export const importCopy = (id: string, files: { from: string; to: string }[]) =>
+  importAsk<ImportCopied>(`import:copy:${JSON.stringify({ id, files })}`).then((r) => ({ copied: r.copied ?? [], failed: r.failed ?? [], stopped: r.stopped }));
+export const importProgress = (id: string) => importAsk<{ bytes: number; of: number; file?: string }>(`import:progress:${id}`);
+/** Stops a copy; the file it was writing is removed. */
+export const importCancel = (id: string) => importAsk<unknown>(`import:cancel:${id}`);
+/** The media files under a place on this Mac (one the person dropped or picked before). */
+export const importScan = (path: string) =>
+  importAsk<{ files?: { path: string; size: number; mtime: number }[] }>(`import:scan:${JSON.stringify({ path })}`).then((r) => r.files ?? []);
+/** Each path's fingerprint, the one lib/onMac.ts quickPrint makes from the file. */
+export const importPrint = (paths: string[]) =>
+  importAsk<{ prints?: Record<string, string> }>(`import:print:${JSON.stringify({ paths })}`).then((r) => r.prints ?? {});
+
+/** The address the page reads a file on this Mac by (the Mac app's media scheme): the path, base64url. */
+export const macMediaUrl = (path: string) =>
+  `ctlocal://media/${btoa(String.fromCharCode(...new TextEncoder().encode(path))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;

@@ -6,6 +6,9 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { PLATFORMS } from "@contracts/connectors";
+import type { LibraryUpload } from "@contracts/library";
+import { setWorkspaceUpload } from "@/lib/library";
+import { UPLOAD_OPTIONS } from "@/pages/library/UploadSelect";
 import { ProjectForm, type KeptFile } from "@/components/workshop/ProjectForm";
 import { listAccounts, mineAccount, type InstagramAccount } from "@/lib/instagram";
 import {
@@ -50,6 +53,8 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
     setParams((p) => (p.delete("add"), p.delete("edit"), p.delete("accounts"), p), { replace: true });
   }, [params, setParams, only]);
   const [busy, setBusy] = useState(false);
+  // a new workspace's upload choice (Off by default), kept on its library once it exists
+  const [upload, setUpload] = useState<LibraryUpload>("none");
   const [error, setError] = useState<string | null>(null);
   // every project's accounts, from their saved copy (warmed at sign-in), live
   const { items: accounts, refresh } = useCachedList<InstagramAccount>(PROJECT_ACCOUNTS_KEY, () => listAccounts("", { projectId: null }));
@@ -77,6 +82,8 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
           const p = await createProject(fields);
           setEditing(null);
           setMade(p.id);
+          if (upload !== "none") await setWorkspaceUpload(p.id, upload);
+          setUpload("none");
           if (files.length) await addProjectFiles(p.id, files);
         }, () => {})
       : run(async () => {
@@ -101,7 +108,18 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
       {error ? <p className="mb-3 text-xs text-red-400">{error}</p> : null}
       <div className="flex flex-col gap-2">
         {editing === "new" ? (
-          <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)} />
+          <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)}>
+            <label className="text-[11px] text-zinc-400">
+              Upload footage to the server
+              <select value={upload} onChange={(e) => setUpload(e.target.value as LibraryUpload)} className="mt-1 block w-64 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100">
+                {UPLOAD_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </ProjectForm>
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (
           <p className="py-10 text-center text-sm text-zinc-600">

@@ -62,6 +62,12 @@ const STATIC_ROWS = [
   // Storage: where footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
+  { section: "library", id: "library-adding", title: "How files come in", description: "Use them where they are, or copy them into the library", keywords: ["media library", "import", "copy", "in place", "places", "look for new files", "rescan"] },
+  { section: "library", id: "library-look", title: "Look for new files", keywords: ["media library", "rescan", "scan", "new files", "places", "nas"] },
+  { section: "library", id: "library-upload", title: "Upload to the server", description: "Off, proxies only, or video files and proxies", keywords: ["media library", "upload", "proxies", "cloud", "server"] },
+  { section: "library", id: "library-sorting", title: "Folders", description: "How the Media Library sorts files", keywords: ["media library", "organize", "sort", "folders", "ai"] },
+  { section: "library", id: "library-proxies", title: "Generate proxies", keywords: ["media library", "proxies", "playback", "4k", "storage", "thumbnails"] },
+  { section: "library", id: "library-ai", title: "Media Library AI", description: "Descriptions and search by meaning", keywords: ["media library", "describe", "search", "meaning", "ai"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default AI", description: "Which AI does the work unless a tool picks another", keywords: ["provider", "default", "which ai", "model", "thinking"] },

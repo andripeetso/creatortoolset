@@ -79,7 +79,7 @@ describe("where a chosen folder's files are kept", () => {
     act(() => root!.render(<KeepChoice libraryId="lib_1" folder="/Volumes/Card/Trip" bytes={5e9} to="~/Movies/Creator Toolset/Footage" free={free} onChange={(c) => picked.push(c)} />));
     await flush();
     const radio = (text: string) => [...host!.querySelectorAll("label")].find((l) => l.textContent?.startsWith(text))!.querySelector("input")!;
-    return { picked, copy: radio("Copy them to"), keep: radio("Keep them where they are") };
+    return { picked, copy: radio("Copy them into the library"), keep: radio("Use them where they are") };
   }
 
   it("copies into the library folder when there is room", async () => {

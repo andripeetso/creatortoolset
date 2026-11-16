@@ -12,6 +12,7 @@ import type {
   LibraryStorage,
   LibraryStorageInput,
   LibrarySummary,
+  LibraryUpload,
   Piece,
   SearchHit,
   SearchQuery,
@@ -23,7 +24,7 @@ import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { pathOnMac } from "@/lib/thisMac";
-import { indexOnMac } from "@/lib/onMac";
+import { deviceHere, indexOnMac } from "@/lib/onMac";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -38,6 +39,17 @@ export const listLibraries = () =>
   fetch("/api/library")
     .then((r) => json<{ libraries: LibrarySummary[] }>(r))
     .then((x) => x.libraries);
+
+/**
+ * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
+ * made the way the Media Library page makes one when the workspace has none yet.
+ */
+export async function setWorkspaceUpload(workspaceId: string, upload: LibraryUpload): Promise<void> {
+  const headers = { "content-type": "application/json", "X-CT-Workspace": workspaceId };
+  const own = (await fetch("/api/library", { headers }).then((r) => json<{ libraries: LibrarySummary[] }>(r))).libraries.find((l) => !l.readOnly);
+  const library: LibrarySummary = own ?? (await fetch("/api/library", { method: "POST", headers, body: JSON.stringify({ name: "Library" }) }).then((r) => json<LibrarySummary>(r)));
+  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings: { upload } }) }).then((r) => json<LibrarySummary>(r));
+}
 
 /** What is going in: `clips` files of `bytes`, `audio` of them sound only (`audioBytes`), from a music folder or not. */
 export interface Drop {
@@ -306,10 +318,12 @@ export async function uploadFile(
   }
   if (onMac) throw new NotUploaded("Not added: where it is on this Mac is unknown. Drop it from Finder");
   signal?.throwIfAborted();
+  // where it is on this Mac, and which Mac: with "proxies only" the server keeps that place and lets the original go
+  const fromDevice = where ? await deviceHere() : undefined;
   const init = await fetch(`/api/library/${libraryId}/uploads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ filename: file.name, size: file.size, collectionId }),
+    body: JSON.stringify({ filename: file.name, size: file.size, collectionId, ...(where ? { fromPath: where } : {}), ...(fromDevice ? { fromDevice } : {}) }),
     signal,
   }).then((r) => json<{ id: string; offset: number; chunkSize: number; direct?: { partSize: number; urls: string[] } }>(r));
   const url = `/api/library/uploads/${init.id}`;

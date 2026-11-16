@@ -128,6 +128,19 @@ describe("uploadFile from the Mac app on its own server", () => {
     }
   });
 
+  it("an upload says where the file is on this Mac and which Mac (proxies only keeps that place, not the original)", async () => {
+    mac({ ...picked, device: "dev_1" });
+    const starts: unknown[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/in-place")) return new Response(JSON.stringify({ code: "forbidden" }), { status: 403 });
+      if (url.endsWith("/uploads")) return starts.push(JSON.parse(String(init!.body))), new Response(JSON.stringify({ id: "u1", offset: 0, chunkSize: 1 << 20 }), { status: 201 });
+      if (url.endsWith("/finish")) return new Response(JSON.stringify({ assetId: "a3" }));
+      return new Response(null, { status: 204, headers: { "upload-offset": "5000" } });
+    });
+    expect(await uploadFile("lib_1", clip(), () => {})).toEqual({ assetId: "a3" });
+    expect(starts).toEqual([{ filename: "C0001.MP4", size: 5000, fromPath: "/Volumes/Card/C0001.MP4", fromDevice: "dev_1" }]);
+  });
+
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "This file is 12 GB. This server takes files up to 8 GB.", code: "too_large" }), { status: 413 }));
     await expect(uploadFile("lib_1", clip(), () => {})).rejects.toMatchObject({ message: expect.stringContaining("12 GB"), code: "too_large" });

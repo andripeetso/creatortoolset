@@ -9,7 +9,7 @@ describe("the sidebar per install and role", () => {
     expect(listed(at(false, true))).toEqual([
       "general", "appearance", "tools", "voice", "devices", "connectors", "own-ai",
       "providers", "memory", "automations", "usage",
-      "folders", "keys",
+      "folders", "library", "keys",
     ]);
   });
 
@@ -32,7 +32,7 @@ describe("the sidebar per install and role", () => {
 
   it("a hosted member and admin both see Team under Server", () => {
     expect(listed(at(true, false))).toContain("team");
-    expect(listed(at(true, true)).slice(-3)).toEqual(["team", "folders", "keys"]);
+    expect(listed(at(true, true)).slice(-4)).toEqual(["team", "folders", "library", "keys"]);
   });
 
   it("a plug-in's server-wide page (was an Admin tab) is in Plug-ins for an admin on a hosted server only", () => {
@@ -59,7 +59,7 @@ describe("the sidebar blocks", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
     expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Server"]);
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "devices", "servers", "connectors", "own-ai"]);
-    expect(blocks[2].items.map((s) => s.id)).toEqual(["team", "folders", "keys"]);
+    expect(blocks[2].items.map((s) => s.id)).toEqual(["team", "folders", "library", "keys"]);
   });
 
   it("a plug-in's own section with no group heads a Plug-ins block, last", () => {
