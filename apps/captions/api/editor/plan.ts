@@ -20,7 +20,7 @@ import { fitted } from "./framing";
 import { clearPasses } from "./passes";
 import { macAway } from "./script";
 import { describeShots, focusOf, frameJunk, indexSources, isJunk, logged, songBeats, type LeftOut } from "./index";
-import { readable } from "./media";
+import { measurable, readable } from "./media";
 import { generateClip, styles } from "./generate";
 import { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta, type PlannedVersion } from "./store";
 import { finishedProfile, styleBlock } from "./styles";
@@ -1213,7 +1213,7 @@ async function planContext(edit: EditMeta, actor: string, sentences: Sentence[],
     s.sound = !!(JSON.parse((probe.get(s.id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null)?.acodec;
   }
   const song = songFor(edit, index);
-  if (song) index.song = await songBeats(await readable(song.id, song.key), 0, signal);
+  if (song) index.song = await songBeats(await measurable(song.id, song.key), 0, signal);
   // the song is what is heard, not footage to cut
   if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
   // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
@@ -1326,7 +1326,7 @@ export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: Abo
   const db = libraryDb();
   const files = new Map<string, string>();
   const file = async (id: string) => {
-    if (!files.has(id)) files.set(id, await readable(id, (db.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(id) as { source_key: string }).source_key));
+    if (!files.has(id)) files.set(id, await measurable(id, (db.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(id) as { source_key: string }).source_key));
     return files.get(id)!;
   };
   const byId = new Map(index.sources.map((s) => [s.id, s]));

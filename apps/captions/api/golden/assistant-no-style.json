@@ -1405,11 +1405,14 @@
   },
   {
    "name": "remember",
-   "description": "Keep a standing fact or preference about the user or their work for later chats. quote: their exact words, never a guess. Not for a request about the piece at hand.",
+   "description": "Keep a standing preference about the user or their work for later chats. quote: their exact words. rule: it as one clean instruction. To reword a kept one, quote its words. Not for the piece at hand.",
    "inputSchema": {
     "type": "object",
     "properties": {
      "quote": {
+      "type": "string"
+     },
+     "rule": {
       "type": "string"
      },
      "project_only": {
@@ -1417,7 +1420,8 @@
      }
     },
     "required": [
-     "quote"
+     "quote",
+     "rule"
     ]
    }
   },

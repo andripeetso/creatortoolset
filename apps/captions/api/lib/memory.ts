@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "./env";
 import { getWorkspace } from "./workshop/workspace";
 import type { SessionUser } from "../users";
-import { MEMORY_CAP, MEMORY_QUOTE_MAX, MEMORY_QUOTE_MIN, even, foundIn, tidy, type MemoryFact } from "../../contracts/memory";
+import { MEMORY_CAP, MEMORY_QUOTE_MAX, MEMORY_RULE_MAX, MEMORY_QUOTE_MIN, even, foundIn, tidy, type MemoryFact } from "../../contracts/memory";
 
 /**
  * What the assistant keeps from one chat to the next: one file per account, $DATA_DIR/memory/<user>.json (0600).
@@ -13,14 +13,18 @@ import { MEMORY_CAP, MEMORY_QUOTE_MAX, MEMORY_QUOTE_MIN, even, foundIn, tidy, ty
  * Workshop's writer, the AI Editor, captions, a scheduled run or any other job (memory.test.ts checks who imports
  * this file). Those jobs' prompts are not this feature's to change.
  *
- * A fact gets in one way, keep(): its quote must stand in something the person typed themselves in that chat, and
- * what is stored is their wording, not the quote's. Nothing an AI wrote is ever stored. The store has a fixed size
+ * A fact gets in one way, keep(): its quote must stand in something the person typed themselves in that chat. What
+ * is kept is the rule the assistant writes from it (one plain sentence: what the prompt and Settings show), with
+ * their wording beside it (`said`). A fact kept before rules were written has only their wording. The store has a fixed size
  * (MEMORY_CAP): when it is full keep() refuses, and nothing is dropped to make room.
  */
 
 interface Kept {
   id: string;
+  /** The rule: what the prompt gets. */
   text: string;
+  /** The person's own words it was written from; none = `text` is their words. */
+  said?: string;
   at: number;
   /** The Workshop project it was said for; none = about the person. */
   project?: string;
@@ -74,6 +78,8 @@ const sizeOf = (facts: Array<Pick<Kept, "text">>) => facts.reduce((n, f) => n + 
 
 export { foundIn };
 
+const FULL = "Memory is full, so this was not kept. Tell the user: they can remove something in Settings, Memory, and then say it again.";
+
 export type KeepResult = { fact: Kept; added: boolean } | { error: string };
 
 /**
@@ -81,11 +87,22 @@ export type KeepResult = { fact: Kept; added: boolean } | { error: string };
  * those, and their wording is what is kept. A fact they removed is not kept again from a message they had already
  * sent by then, and never from the message it came from. The same wording twice is kept once.
  */
-export function keep(username: string, quote: unknown, said: Said[], project?: string): KeepResult {
+export function keep(username: string, quote: unknown, said: Said[], project?: string, rule?: unknown): KeepResult {
   const q = typeof quote === "string" ? tidy(quote) : "";
   if (q.length < MEMORY_QUOTE_MIN) return { error: "Give the user's own words as the quote: a whole sentence of theirs, or nothing." };
   if (q.length > MEMORY_QUOTE_MAX) return { error: `Keep one short thing: a quote of up to ${MEMORY_QUOTE_MAX} characters.` };
+  const r = typeof rule === "string" && rule.trim() ? tidy(rule) : undefined;
+  if (r && (r.length < MEMORY_QUOTE_MIN || r.length > MEMORY_RULE_MAX)) return { error: `Write the rule as one sentence of up to ${MEMORY_RULE_MAX} characters.` };
   const store = read(username);
+  // rewording a kept fact: the quote stands in the words it was kept from (checked when it was kept)
+  const old = r && store.facts.find((f) => (!f.project || f.project === project) && foundIn(q, f.said ?? f.text));
+  if (old) {
+    const next = { ...old, text: r, said: old.said ?? old.text };
+    if (sizeOf(store.facts.map((f) => (f === old ? next : f))) > MEMORY_CAP) return { error: FULL };
+    store.facts = store.facts.map((f) => (f === old ? next : f));
+    write(username, store);
+    return { fact: next, added: false };
+  }
   let wasRemoved = false;
   for (const msg of said) {
     const text = foundIn(q, msg.text);
@@ -95,11 +112,10 @@ export function keep(username: string, quote: unknown, said: Said[], project?: s
       wasRemoved = true;
       continue;
     }
-    const same = store.facts.find((f) => even(f.text) === key && (!f.project || f.project === project));
+    const same = store.facts.find((f) => even(f.said ?? f.text) === key && (!f.project || f.project === project));
     if (same) return { fact: same, added: false };
-    const fact: Kept = { id: randomUUID(), text, at: Date.now(), ...(project ? { project } : {}), from: msg.id };
-    if (sizeOf(store.facts) + sizeOf([fact]) > MEMORY_CAP)
-      return { error: "Memory is full, so this was not kept. Tell the user: they can remove something in Settings, Memory, and then say it again." };
+    const fact: Kept = { id: randomUUID(), text: r ?? text, ...(r ? { said: text } : {}), at: Date.now(), ...(project ? { project } : {}), from: msg.id };
+    if (sizeOf(store.facts) + sizeOf([fact]) > MEMORY_CAP) return { error: FULL };
     store.facts.push(fact);
     write(username, store);
     return { fact, added: true };
@@ -117,7 +133,7 @@ export function remove(username: string, id: string): boolean {
   const gone = store.facts.find((f) => f.id === id);
   if (!gone) return false;
   store.facts = store.facts.filter((f) => f !== gone);
-  store.removed = [...store.removed, { text: even(gone.text), from: gone.from, at: Date.now() }].slice(-REMOVED_KEPT);
+  store.removed = [...store.removed, { text: even(gone.said ?? gone.text), from: gone.from, at: Date.now() }].slice(-REMOVED_KEPT);
   write(username, store);
   return true;
 }
@@ -135,7 +151,7 @@ export async function listMemory(user: SessionUser, here = false): Promise<Memor
   const inWs = ws && !here ? await (await import("./workspace-scope")).inCurrentWorkspace(user) : null;
   return facts
     .filter((f) => !f.project || (here ? f.project === ws?.currentProjectId : !inWs || inWs(f.project)))
-    .map(({ id, text, at, project }) => ({ id, text, at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A workspace that is gone" } } : {}) }))
+    .map(({ id, text, said, at, project }) => ({ id, text, ...(said ? { said } : {}), at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A workspace that is gone" } } : {}) }))
     .reverse();
 }
 
@@ -145,7 +161,7 @@ export const currentProject = async (user: SessionUser) => {
   return ws.projects.find((p) => p.id === ws.currentProjectId);
 };
 
-const HEAD = "Things the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):";
+const HEAD = "Standing rules from the user's earlier chats; follow them (their list: Settings, Memory):";
 const forProject = (name: string) => `Only for their current workspace, ${JSON.stringify(name.replace(/\s+/g, " ").trim().slice(0, 60))}:`;
 /** The longest the block can ever be: its two headings and a full store. */
 export const MEMORY_BLOCK_MAX = 2 + HEAD.length + 1 + forProject("x".repeat(60)).length + 1 + MEMORY_CAP;

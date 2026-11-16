@@ -23,7 +23,7 @@ import { clock, COLS, contactSheet, CX, CY, HUD_MAX, hudOf, junkOf, looks, lookP
 import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey, segmentsOf, wordsOf } from "../library/transcribe";
 import { Waiting } from "./analyze";
-import { readable } from "./media";
+import { measurable } from "./media";
 import { macAway } from "./script";
 
 /**
@@ -280,7 +280,7 @@ export async function indexSources(
     let src = (await cached(id))?.src;
     if (!src) {
       const picture = !!probe.vcodec && !probe.cover;
-      const reading = picture ? readable(id, row.source_key).then((f) => readPicture(f, probe.fps, signal)) : Promise.resolve(null);
+      const reading = picture ? measurable(id, row.source_key).then((f) => readPicture(f, probe.fps, signal)) : Promise.resolve(null);
       // a source with shot descriptions that can't be read here (on a Mac, upload off) is cut from its lines alone; one
       // with no lines that the library failed on, or that is kept on a Mac, is left out and named, and the cut is
       // made from the rest
@@ -451,7 +451,7 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
         if (!row) throw new Error(`A source of the edit is gone from the library (${s.id})`);
         const file = path.join(scratch, `${k}.jpg`);
         await contactSheet(
-          await readable(s.id, row.source_key),
+          await measurable(s.id, row.source_key),
           sh.tiles.map((t) => Math.max(0, Math.min(s.dur - 0.1, (s.shots[t.shot]!.a + s.shots[t.shot]!.b) / 2))),
           s.w >= s.h,
           file,

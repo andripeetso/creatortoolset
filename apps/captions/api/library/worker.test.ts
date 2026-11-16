@@ -53,8 +53,8 @@ vi.mock("./transcribe", async (real) => {
   };
 });
 
-describe("a transcript of a clip whose original is not on this server", () => {
-  it("is made from its proxy's sound; a clip whose original is here keeps using the original", async () => {
+describe("a transcript of a clip with a proxy", () => {
+  it("is made from its proxy's sound, as every reader that only measures a clip, also when the original is here", async () => {
     const { tick: run } = await import("./worker");
     const { blobs: store } = await import("./db");
     const { readFileSync, writeFileSync: write } = await import("node:fs");
@@ -79,7 +79,7 @@ describe("a transcript of a clip whose original is not on this server", () => {
         enqueueJob(d, "lib_a", id, "transcribe", "local");
         expect(await run(Date.now(), LANES.find((l) => l.name === "transcripts")!.kinds)).toBe(true);
       }
-      expect(heard.files.map((f) => readFileSync(f, "utf-8"))).toEqual(["v_px proxy", "v_or original"]);
+      expect(heard.files.map((f) => readFileSync(f, "utf-8"))).toEqual(["v_px proxy", "v_or proxy"]);
       expect(d.prepare("SELECT version_id, state FROM jobs WHERE kind = 'transcribe' ORDER BY version_id").all()).toEqual([
         { version_id: "v_or", state: "done" },
         { version_id: "v_px", state: "done" },

@@ -18,7 +18,8 @@ vi.mock("./media/probe", async (real) => ({
 const { blobs, libraryDb } = await import("./db");
 const { libraryApp, mediaFile } = await import("./routes");
 const { dropOriginal, tick, LANES } = await import("./worker");
-const { readable } = await import("../editor/media");
+const { measurable, readable } = await import("../editor/media");
+const { localFiles, onlyProxy } = await import("../editor/preview");
 
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
@@ -116,6 +117,30 @@ describe("a Media Library whose upload is proxies only", () => {
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_p', ?, 'thumb', 'queued')").run(id);
     await tick(Date.now(), files);
     expect((d.prepare("SELECT error FROM jobs WHERE version_id = ? AND kind = 'thumb'").get(id) as { error: string | null }).error ?? "").not.toMatch(/on a Mac/);
+  });
+
+  it("measures the proxy while the original is still there; the preview and the plug-in steps read the original", async () => {
+    const id = await upload("lib_p", "Flip.mp4");
+    const tl = { sources: { [id]: {} } } as never;
+    expect(readFileSync(await measurable(id, version(id).source_key), "utf8")).toBe("lib_p Flip.mp4 original"); // no proxy yet
+    await proxied(id);
+    expect(readFileSync(await measurable(id, version(id).source_key), "utf8")).toBe(`${id} proxy`);
+    expect(readFileSync(await readable(id, version(id).source_key), "utf8")).toBe("lib_p Flip.mp4 original");
+    expect(readFileSync((await localFiles(tl, undefined, true))[id]!, "utf8")).toBe("lib_p Flip.mp4 original");
+    expect(readFileSync((await localFiles(tl))[id]!, "utf8")).toBe("lib_p Flip.mp4 original");
+  });
+
+  it("never hands a plug-in step the proxy once the original is gone; the preview plays it and the export names the original", async () => {
+    const id = await upload("lib_p", "Pike.mp4");
+    await proxied(id);
+    await dropOriginal(id);
+    const tl = { sources: { [id]: {} } } as never;
+    await expect(localFiles(tl)).rejects.toThrow(onlyProxy("Pike"));
+    expect(readFileSync((await localFiles(tl, undefined, true))[id]!, "utf8")).toBe(`${id} proxy`);
+    expect(readFileSync(await measurable(id, version(id).source_key), "utf8")).toBe(`${id} proxy`);
+    const { mediaPaths } = await import("../editor/media");
+    const edit = { id: "edit_pike", sources: [id] } as never;
+    expect((await mediaPaths(edit, [id])).files[id]).toBe("/Users/tiny/Movies/Pike.mp4");
   });
 
   it("keeps the proxy that is all the library has of a clip when its proxies are cleared", async () => {
