@@ -24,7 +24,7 @@ import { useEffect, useRef, useState } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { pathOnMac } from "@/lib/thisMac";
-import { deviceHere, indexOnMac } from "@/lib/onMac";
+import { deviceHere, indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
@@ -351,12 +351,26 @@ export async function uploadFile(
   signal?.throwIfAborted();
   // where it is on this Mac, and which Mac: with "proxies only" the server keeps that place and lets the original go
   const fromDevice = where ? await deviceHere() : undefined;
+  // and this Mac may send it itself (send): it makes the proxy and the small files from the file where it is, and the
+  // server takes them instead of the original, or with it when the library keeps originals. No bytes go from here then
+  const quick = where && fromDevice ? await quickPrint(file) : undefined;
   const init = await fetch(`/api/library/${libraryId}/uploads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ filename: file.name, size: file.size, collectionId, ...(where ? { fromPath: where } : {}), ...(fromDevice ? { fromDevice } : {}) }),
+    body: JSON.stringify({
+      filename: file.name,
+      size: file.size,
+      collectionId,
+      ...(where ? { fromPath: where } : {}),
+      ...(fromDevice ? { fromDevice } : {}),
+      ...(quick ? { quick, send: true } : {}),
+    }),
     signal,
-  }).then((r) => json<{ id: string; offset: number; chunkSize: number; direct?: { partSize: number; urls: string[] } }>(r));
+  }).then((r) => json<{ id: string; offset: number; chunkSize: number; direct?: { partSize: number; urls: string[] }; sent?: true; assetId?: string; duplicateOf?: string }>(r));
+  if (init.sent || init.duplicateOf) {
+    onProgress(file.size);
+    return init.duplicateOf ? { duplicateOf: init.duplicateOf } : { assetId: init.assetId! };
+  }
   const url = `/api/library/uploads/${init.id}`;
   // cancelled: the server drops what it has (DELETE), so nothing picks it up again
   const drop = () => void fetch(url, { method: "DELETE" }).catch(() => {});

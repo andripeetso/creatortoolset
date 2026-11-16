@@ -13,6 +13,7 @@ import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { cacheReport, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
+import { cancelLibraryJob, runLibraryJob } from "./library";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 
 /**
@@ -50,7 +51,7 @@ const tell = (s: string) => {
   if (process.env.CT_WORKER) process.stdout.write(`${STATUS}${s}\n`);
 };
 
-const client = (o: WorkerOptions) => {
+export const client = (o: WorkerOptions) => {
   const f = o.fetch ?? fetch;
   const url = (p: string) => `${o.server.replace(/\/$/, "")}/api/devices/relay/${p}`;
   const auth = { authorization: `Bearer ${o.token}` };
@@ -92,7 +93,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
     let claim: WorkClaim;
     try {
-      claim = await c.post<WorkClaim>("work/claim", { v: WORK_V, steps: pluginEditorSteps().map((s) => s.id), cache: cacheReport() });
+      claim = await c.post<WorkClaim>("work/claim", { v: WORK_V, steps: pluginEditorSteps().map((s) => s.id), cache: cacheReport(), library: true });
     } catch (e) {
       console.warn("[work] claim:", e instanceof Error ? e.message : e);
       await new Promise((r) => setTimeout(r, o.retryMs ?? 5000));
@@ -103,6 +104,9 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
     if (claim.pkg) {
       await runJob(claim.pkg, o);
       trimCache();
+      idleSince = Date.now();
+    } else if (claim.lib) {
+      await runLibraryJob(claim.lib, o);
       idleSince = Date.now();
     } else if ("update" in claim && claim.update) {
       console.log("[work] the server needs a newer Creator Toolset to hand it steps");
@@ -139,6 +143,7 @@ export async function keepOffline(list: WorkOffline[], o: WorkerOptions): Promis
 /** The running step, for Cancel (the menu): it ends as "Stopped". */
 let current: { ctl: AbortController; cancelled: boolean } | null = null;
 export function cancelStep(): void {
+  cancelLibraryJob();
   if (!current) return;
   current.cancelled = true;
   current.ctl.abort();

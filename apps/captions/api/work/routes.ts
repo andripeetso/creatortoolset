@@ -13,6 +13,7 @@ import { libraryDb } from "../library/db";
 import { libraryMedia } from "../library/routes";
 import { finishJob, type JobRow } from "../library/jobs";
 import { claimExtras, offlineFor } from "./offline";
+import { claimLibraryForComputer, libWorkApp } from "./library-package";
 import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
@@ -43,6 +44,9 @@ const strings = (v: unknown, max: number): string[] | null =>
 
 export const workApp = new Hono();
 
+// library jobs (phase 6): their own ids, under work/lib/:id/
+workApp.route("/lib", libWorkApp);
+
 workApp.post("/claim", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
@@ -59,10 +63,18 @@ workApp.post("/claim", async (c) => {
         ...(strings(raw.versions, 20_000) ? { versions: raw.versions as string[] } : {}),
       }
     : undefined;
+  // a worker that runs library jobs says so: one that doesn't is never handed one
+  const library = b?.library === true;
   // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
   // told yet stays, and the cache it will empty counts as emptied
   const empty = deviceOf(d.id)?.work?.empty;
-  setDeviceWork(d.id, { v, steps, ...(cache ? { cache: empty ? { ...cache, bytes: 0, versions: [] } : cache } : {}), ...(empty ? { empty } : {}) });
+  setDeviceWork(d.id, {
+    v,
+    steps,
+    ...(cache ? { cache: empty ? { ...cache, bytes: 0, versions: [] } : cache } : {}),
+    ...(empty ? { empty } : {}),
+    ...(library ? { library: true as const } : {}),
+  });
   // Empty and the proxies kept offline go with every answer (api/work/offline.ts)
   const answer = async (claim: WorkClaim) => c.json({ ...claim, ...(await claimExtras(d.id, cache?.offline)) } satisfies WorkClaim);
   if (v < WORK_MIN) return answer({ pkg: null, update: true });
@@ -80,6 +92,8 @@ workApp.post("/claim", async (c) => {
         continue;
       }
     }
+    const lib = library ? await claimLibraryForComputer(deviceOf(d.id)!) : null;
+    if (lib) return answer({ pkg: null, lib });
     if (Date.now() >= end || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
     await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
     touchDevice(d.id, c.req.header("user-agent"));
