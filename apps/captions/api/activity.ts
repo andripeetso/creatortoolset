@@ -179,7 +179,7 @@ async function appWork(user: SessionUser): Promise<AppWork> {
     : [];
   const u = user.username;
   const [analyzer, notes, enhance, review, guides, captioning, knowledge] = await Promise.all([
-    soft(may(user, "instagram"), async () => (await import("./instagram")).analyzerWork(u)),
+    soft(may(user, "instagram"), async () => (await import("./instagram")).analyzerWork(u, here)),
     soft(may(user, "notes"), async () => (await import("./clips")).notesWork(u, here)),
     soft(may(user, "enhance"), async () => (await import("./enhance")).enhancing(u, here)),
     soft(may(user, "review"), async () => (await import("./review")).reviewWork(u)),

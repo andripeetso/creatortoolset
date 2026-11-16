@@ -60,3 +60,16 @@ describe("snapshot history on a connected account", () => {
     expect("daily" in fresh.publicAccount(stored)).toBe(false);
   });
 });
+
+describe("an account's workspace", () => {
+  // an account belongs to one workspace: signing in again (an expired login, say) from another workspace must not take it along
+  it("signing in again from another workspace never moves an account that has one", () => {
+    const account = { platform: "youtube" as const, platformId: "ws1", handle: "tinyacrobatics", via: "login" as const };
+    expect(saveAccounts("ws-tiny", [{ ...account, projectId: "a" }])[0]!.projectId).toBe("a");
+    expect(saveAccounts("ws-tiny", [{ ...account, projectId: "b" }])[0]!.projectId).toBe("a");
+    // one with no workspace yet takes the one it is signed in from
+    const loose = { ...account, platformId: "ws2" };
+    expect(saveAccounts("ws-tiny", [loose])[0]!.projectId).toBeUndefined();
+    expect(saveAccounts("ws-tiny", [{ ...loose, projectId: "b" }])[0]!.projectId).toBe("b");
+  });
+});
