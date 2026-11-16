@@ -22,7 +22,8 @@ import { NeedsKey } from "./transcribe";
  * most: look.ts shotsOf), written by the person's own AI from contact sheets with the workspace's context, routed as
  * the description is (describe.ts). It reads the same file the description read: the proxy when there is one, else
  * the original. The sheets are kept (a 'looksheets' derivative), so the lines can be written again under a new context
- * without reading the video (redoLook). A file kept on a Mac is not read here: its look waits for that Mac.
+ * without reading the video (redoLook). A file kept on a Mac is not read here: its look waits for that Mac, which reads
+ * it and sends the sheets for the AI's call only (mac-look.ts, lookFromSheets).
  * Each row keeps the stretch's motion (look.ts shotsOf), but motion is not action: walking scrolls the whole picture,
  * so dull stretches moved about twice as much as fights (measured 2026-11-15). Nothing here ranks or filters by it.
  */
@@ -35,15 +36,21 @@ export const LOOK_VERSION = "look-1";
 export const LOOK_MIN_S = 8;
 /** Sheets in one AI call, as the AI Editor sends them: up to SHEETS_PER_CALL × SHEET_STRETCHES stretches a call. */
 export const SHEETS_PER_CALL = 6;
-/** The kept sheets' format (look.ts stretchSheet): sheets of another format are made again from the video. */
-const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
+/** The kept sheets' format (look.ts stretchSheet): sheets of another format are made again from the video, and a Mac's are refused (mac-look.ts). */
+export const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
 /** Why a look of a file kept on a Mac waits (estimate.ts progress tells these apart by it). */
 export const MAC_WAITS = "Waits for the Mac this file is on to read its picture";
 
-/** The kept sheets of a version: each sheet's JPEG and the stretches on it, in reading order. */
+/** One sheet: the stretches on it, in reading order, and its JPEG (base64). */
+export interface LookSheet {
+  segs: number[];
+  jpeg: string;
+}
+
+/** The kept sheets of a version. */
 interface KeptSheets {
   format: string;
-  sheets: { segs: number[]; jpeg: string }[];
+  sheets: LookSheet[];
 }
 
 /**
@@ -87,11 +94,25 @@ export function lookFirst(versionIds: string[]): void {
  * limit picks up there), then the lines.
  */
 export async function lookVersion(db: DatabaseSync, versionId: string, src: () => Promise<string>, p: ProbeSummary, actor: string | null, scratch: string): Promise<void> {
+  needLookRoute(actor);
+  const kept = (await keptSheets(db, versionId)) ?? (await readAndKeep(db, versionId, await src(), p, scratch));
+  await writeLines(db, versionId, actor, kept);
+}
+
+/** Parks the look (NeedsKey) when no one runs it or their AI isn't connected: no picture is read for nothing. */
+export function needLookRoute(actor: string | null): asserts actor is string {
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
   const route = aiFor(whoFor(actor), "analyzer", LOOK_LABEL);
   if (route.off) throw new NeedsKey(route.off);
-  const kept = (await keptSheets(db, versionId)) ?? (await readAndKeep(db, versionId, await src(), p, scratch));
-  await writeLines(db, versionId, actor, kept);
+}
+
+/**
+ * The lines of a file kept on a Mac, from the sheets that Mac made and sent (mac-look.ts): asked as the server's own look
+ * asks, only for the stretches whose line is missing or stale. The sheets are never written here. Returns the AI calls.
+ */
+export async function lookFromSheets(db: DatabaseSync, versionId: string, actor: string | null, sheets: LookSheet[]): Promise<number> {
+  needLookRoute(actor);
+  return writeLines(db, versionId, actor, { format: SHEET_FORMAT, sheets });
 }
 
 /**

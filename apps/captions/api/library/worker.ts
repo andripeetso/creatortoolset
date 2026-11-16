@@ -14,7 +14,7 @@ import { isThisMachine } from "../lib/devices";
 import { ModelNotReady } from "../lib/device-transcribe";
 import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
-import { MacClaudeError } from "../lib/mac-claude";
+import { MacClaudeError, wakeEditorPolls } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
 import { SOUNDS } from "../../contracts/library";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
@@ -25,7 +25,8 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
-import { lookVersion, MAC_WAITS, queueLook } from "./shots";
+import { lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, queueLook } from "./shots";
+import { takeMacSheets } from "./mac-look";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 
@@ -336,8 +337,15 @@ async function run(job: JobRow): Promise<void> {
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
   if (v.source_key.startsWith("mac:")) {
     if (job.kind === "embed") return embedVersion(db, v.id, job.actor);
-    // its picture is read on that Mac: the look waits for it there, never fails
-    if (job.kind === "look") throw new NeedsKey(MAC_WAITS);
+    // its picture is read on that Mac (mac-look.ts): the sheets it sent are looked at here once and dropped; until it
+    // sends them the look waits for it, never fails. No AI to ask: it waits for that, and the Mac reads nothing
+    if (job.kind === "look") {
+      needLookRoute(job.actor);
+      const sheets = takeMacSheets(v.id);
+      if (sheets) return void (await lookFromSheets(db, v.id, job.actor, sheets));
+      void wakeEditorPolls(); // the Mac's long poll hears of it at once
+      throw new NeedsKey(MAC_WAITS);
+    }
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const frames = await macFrames(v.id);

@@ -17,7 +17,10 @@ final class FrameReader {
 
     /// - Parameters:
     ///   - longSide: frames are scaled so their long side is at most this.
-    init(asset: AVAsset, range: ClosedRange<Double>, longSide: CGFloat) async throws {
+    ///   - exact: frames are this size instead, squeezed to it whatever their shape (the library's picture read, LookPicture.swift).
+    ///   - pixelFormat: the frames' pixel format.
+    init(asset: AVAsset, range: ClosedRange<Double>, longSide: CGFloat, exact: CGSize? = nil,
+         pixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) async throws {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw MediaError.noVideoTrack
         }
@@ -30,7 +33,7 @@ final class FrameReader {
         )
         let upright = composition.renderSize
         let scale = min(1, longSide / max(upright.width, upright.height))
-        let target = CGSize(
+        let target = exact ?? CGSize(
             width: max(2, (upright.width * scale / 2).rounded(.down) * 2),
             height: max(2, (upright.height * scale / 2).rounded(.down) * 2)
         )
@@ -54,7 +57,7 @@ final class FrameReader {
         output = AVAssetReaderVideoCompositionOutput(
             videoTracks: [track],
             videoSettings: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
                 kCVPixelBufferIOSurfacePropertiesKey as String: [:],
             ]
         )
