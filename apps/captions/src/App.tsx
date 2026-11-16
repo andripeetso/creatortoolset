@@ -3,7 +3,7 @@ import "@/lib/undo";
 import { CornerNav } from "@/components/CornerNav";
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, type Location } from "react-router";
 import { useTelemetry } from "@/lib/telemetry";
-import { lazy, Suspense, useEffect, useRef, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import ToolsetHome from "./pages/ToolsetHome";
 import Home from "./pages/Home";
 import EnhancePage from "./pages/EnhancePage";
@@ -299,6 +299,15 @@ export default function App() {
     behind.current = location;
     behindIdx.current = window.history.state?.idx ?? null;
   }
+  // one modal replacing another (Community's Settings button, a link in Settings to Community) shows no fade: the backdrop
+  // would vanish with the old one and fade in again with the new, and the whole window blinks (index.css, data-modal-swap)
+  const modal = inSettings ? "settings" : inCommunity ? "community" : inProjects ? "projects" : null;
+  const lastModal = useRef(modal);
+  useLayoutEffect(() => {
+    if (!modal) document.documentElement.removeAttribute("data-modal-swap");
+    else if (lastModal.current && lastModal.current !== modal) document.documentElement.setAttribute("data-modal-swap", "");
+    lastModal.current = modal;
+  }, [modal]);
   const page = inSettings || inProjects || inCommunity ? (behind.current ?? { ...location, pathname: "/", search: "", hash: "" }) : location;
   // closing steps back to the page behind, so Back never reopens the modal; opened straight from a URL there is
   // nothing behind it, so it is replaced by that page (or home)
