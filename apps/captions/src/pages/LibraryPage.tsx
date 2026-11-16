@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { MoreHorizontal, Music, Quote, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, MoreHorizontal, Music, Quote, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -12,7 +12,7 @@ import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
+import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
@@ -122,6 +122,7 @@ export default function LibraryPage() {
   const [view, setView] = useLibraryView();
   const [cardSize, setCardSize] = useCardSize();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const columns = cardSize === null ? undefined : cardColumns(cardSize);
   const navigate = useNavigate();
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
@@ -964,6 +965,9 @@ export default function LibraryPage() {
                               {needsAttention(watch) && <span aria-hidden className="ml-auto h-2 w-2 rounded-full bg-amber-500" />}
                             </DropdownMenuItem>
                           )}
+                          <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
+                            <Activity /> Library status
+                          </DropdownMenuItem>
                           {changing && !firstScreen && (
                             <DropdownMenuItem asChild>
                               <Link to="/library?trash=1">
@@ -1017,6 +1021,7 @@ export default function LibraryPage() {
                 {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
 
                 <LibraryProgressBar libraryId={library.id} />
+                {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
 
                 <UploadTray
                   uploads={uploads}
