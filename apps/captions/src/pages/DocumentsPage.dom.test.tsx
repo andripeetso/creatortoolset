@@ -89,6 +89,16 @@ it("a name being typed stays when the guide is renamed elsewhere, and is the nam
   expect(title().value).toBe("Renamed later");
 });
 
+it("Escape in the name box puts the saved name back and saves nothing", async () => {
+  arrives(record({ guide: guide("Purpose") }));
+  act(() => title().focus());
+  type(title(), "A name I don't want");
+  act(() => void title().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await wait(1000);
+  expect(title().value).toBe("Setup");
+  expect(sent).toEqual([]);
+});
+
 it("while editing, a save's answer does not rewrite the boxes: a space typed before a pause stays, a cleared step title stays empty", async () => {
   arrives(record({ guide: guide("Old purpose") }));
   press("Edit");

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import {
   ArrowDown,
@@ -730,7 +731,8 @@ export function Editor({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") e.currentTarget.blur();
                   else if (e.key === "Escape") {
-                    setName(null);
+                    // the box shows the saved name before it is left: leaving reads the box, and saves what it says
+                    flushSync(() => setName(null));
                     e.currentTarget.blur();
                   }
                 }}
