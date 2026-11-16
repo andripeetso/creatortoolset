@@ -115,14 +115,17 @@ async function watchIn(user: string, folderPath: string, workspace: string): Pro
 
 /**
  * After a folder on this computer left a workspace (moved or forgotten): the Library of each workspace that still lists
- * its path keeps reading it, the others stop. The files already in a Library stay.
- * ponytail: removeWatchFolder takes the path off every Library of the account, so the ones that keep it are put back
- * as a plain folder read in place (a copy-to or Library folder set on that entry in the Media Library is lost); a
- * remove for one Library in library/watch.ts when that matters.
+ * its path keeps reading it, with its entry as it was; the others stop. The files already in a Library stay.
  */
 async function unwatch(user: string, folderPath: string, was: Set<string>, now: Set<string>): Promise<void> {
   if (![...was].some((id) => !now.has(id))) return;
-  await removeWatchFolder(user, folderPath);
+  const keep = new Set<string>();
+  for (const id of now) {
+    const library = await (id ? ensureLibrary(user, id) : ensureLibrary(user));
+    if (library) keep.add(library);
+  }
+  await removeWatchFolder(user, folderPath, keep);
+  // one that lists the folder but did not read it yet starts now; one that already does is left as it is
   for (const id of now) await watchIn(user, folderPath, id);
 }
 

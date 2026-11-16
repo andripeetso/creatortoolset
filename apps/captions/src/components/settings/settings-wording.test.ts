@@ -38,7 +38,6 @@ const NOT_YET = new Set([
   "components/settings/ComputersSection.tsx",
   "components/settings/OwnAiSection.tsx",
   "components/settings/ProvidersSection.tsx",
-  "components/settings/StorageRows.tsx",
   "components/settings/UsageSection.tsx",
   "pages/library/LibrarySettings.tsx",
   "components/setup/HelperStep.tsx",

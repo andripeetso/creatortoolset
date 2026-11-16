@@ -409,10 +409,12 @@ export async function addWatchFolder(username: string, folderPath: string, libra
 }
 
 /** Stops watching a folder in any of the account's libraries (Settings → Devices: forget). The files already in the Library stay. */
-export async function removeWatchFolder(username: string, folderPath: string): Promise<void> {
+export async function removeWatchFolder(username: string, folderPath: string, keep?: ReadonlySet<string>): Promise<void> {
   const p = expandHome(folderPath);
   const real = await realpath(p).catch(() => p);
   for (const { id } of await librariesHere(username, "")) {
+    // a Library that still lists the folder keeps its entry as it is (its copy-to and Library folder too)
+    if (keep?.has(id)) continue;
     const current = foldersOf(id);
     if (current.some((g) => g.path === real || g.path === p)) writeWatch(id, current.filter((g) => g.path !== real && g.path !== p));
   }
