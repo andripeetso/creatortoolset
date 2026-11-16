@@ -1,5 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { CARDS_DRAW_KIND, type DeviceJob } from "../../contracts/devices";
+import { isLimitLine, limitLine } from "../../contracts/plans";
+import { AiProviderError } from "../ai-complete";
+import { MacClaudeError } from "../lib/mac-claude";
 import { isOnline } from "../lib/devices";
 import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
@@ -67,6 +70,24 @@ function splitVersion(job: JobRow): { editId: string; variant: string } {
   return { editId: vid.slice(0, cut), variant: vid.slice(cut + 1) };
 }
 
+/** A limit with no reset time given waits this long (seconds). */
+export const LIMIT_WAIT_S = 15 * 60;
+
+/**
+ * A usage limit or rate limit anywhere in the error's causes: how long until it opens again (its reset time, else
+ * LIMIT_WAIT_S) and the line said beside the step. Null for any other error.
+ */
+export function limitWait(e: unknown, now = Date.now()): { seconds: number; line: string } | null {
+  for (let x: unknown = e, depth = 0; x && depth < 5; x = (x as { cause?: unknown }).cause, depth++) {
+    const until = (x as { limited?: { until: number | null } }).limited?.until;
+    const limit = (x as { limited?: unknown }).limited || (x instanceof MacClaudeError && x.kind === "limit") || (x instanceof AiProviderError && x.code === "RATE_LIMIT");
+    if (!limit) continue;
+    const message = x instanceof Error ? x.message : "";
+    return { seconds: until && until > now ? Math.ceil((until - now) / 1000) : LIMIT_WAIT_S, line: isLimitLine(message) ? limitLine(message) : "The AI's usage limit is reached: it carries on when it opens again" };
+  }
+  return null;
+}
+
 /** Runs one queued step, if there is one. Returns false when the queue is empty. */
 export async function tick(now = Date.now()): Promise<boolean> {
   const db = libraryDb();
@@ -108,7 +129,17 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
     queueNext(db, job, edit, variant);
   } catch (e) {
     if (ctl.signal.aborted) return true;
-    if (e instanceof Waiting) return defer(db, job.id, e.seconds, now, T), true; // still going: it runs again in e.seconds
+    if (e instanceof Waiting) {
+      // still going: it runs again in e.seconds, its line beside the step says what it waits for
+      if (e.line) db.prepare(`UPDATE ${T} SET error = ? WHERE id = ?`).run(e.line, job.id);
+      return defer(db, job.id, e.seconds, now, T), true;
+    }
+    const hold = limitWait(e, now);
+    if (hold) {
+      // a usage limit is a wait, not a failed try: it runs again when the limit opens (PLAN.md 3.3)
+      db.prepare(`UPDATE ${T} SET error = ? WHERE id = ?`).run(hold.line, job.id);
+      return defer(db, job.id, hold.seconds, now, T), true;
+    }
     if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
     else finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Date.now(), T);
   } finally {

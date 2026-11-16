@@ -6,7 +6,8 @@
  *   GET    /api/editor                     → EditSummary[] (mine; a workspace owner: the workspace's too)
  *   GET    /api/editor/:id                 → Edit
  *   PATCH  /api/editor/:id                 EditPatch (the creator) → Edit
- *   POST   /api/editor/:id/run             { from?: EditStep } (the creator) → Edit
+ *   POST   /api/editor/:id/run             { from?: EditStep, now?: true } (the creator) → Edit
+ *   POST   /api/editor/:id/feedback        { text } what the person said about the cut, kept word for word; queues the next version → Edit & { queued }
  *   POST   /api/editor/:id/jobs/:jobId/retry  (the creator) → Edit
  *   POST   /api/editor/:id/stop            stops queued and running steps → Edit
  *   PUT    /api/editor/:id/eyeline/:versionId  { y: 0..1 } (the creator) → Edit
@@ -33,7 +34,7 @@
  */
 
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
-import type { PlanEffect, PlanFrame, PlanText } from "./edit-plan";
+import type { Coverage, PlanEffect, PlanFrame, PlanText } from "./edit-plan";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -207,6 +208,8 @@ export interface Edit extends EditSummary, EditBrief {
   cards?: Record<string, EditCards>;
   /** an edit in passes: the next pass Carry on queues (POST /api/editor/:id/pass), and whether it waits for it (nothing queued or running) */
   passes?: { waiting: boolean; next: "broll" | "cards" | null };
+  /** a planned edit: the footage its cut was made from, and each file left out (Review names those) */
+  coverage?: Coverage;
 }
 
 /** One version's cards as the edit page shows them. */

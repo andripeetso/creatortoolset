@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
-import type { EditPlan } from "../../contracts/edit-plan";
+import type { Coverage, EditPlan } from "../../contracts/edit-plan";
 import { cardsView } from "./cards/state";
 import { waitLine } from "./reach";
 import { passesView } from "./passes";
@@ -56,6 +56,8 @@ export interface EditMeta extends EditBrief {
   byTool?: ("name" | "brief")[];
   /** what the person said about its versions, word for word, oldest first (contracts/editor.ts EditFeedback) */
   feedback?: EditFeedback[];
+  /** the person said to cut now (editor_run now): the plan takes the files the Media Library has ready and names the rest */
+  now?: boolean;
   trashedAt?: number;
 }
 
@@ -85,11 +87,37 @@ export function readEdit(id: string): EditMeta | null {
 
 export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, updatedAt: Date.now() });
 
+/**
+ * Adds what the person said to the edit's notes, word for word (cut only at EDIT_FEEDBACK_TEXT_MAX), oldest first. A
+ * note it holds already (same words, place, version and author) is not added twice; past EDIT_FEEDBACK_MAX the oldest
+ * go. Returns how many were added.
+ */
+export async function addFeedback(id: string, notes: EditFeedback[]): Promise<number> {
+  const e = readEdit(id);
+  if (!e) return 0;
+  const had = e.feedback ?? [];
+  const same = (a: EditFeedback, b: EditFeedback) => a.from === b.from && a.text === b.text && a.t === b.t && a.variant === b.variant && a.by === b.by;
+  const add: EditFeedback[] = [];
+  for (const n of notes) {
+    const note = { ...n, text: n.text.slice(0, EDIT_FEEDBACK_TEXT_MAX) };
+    if (note.text.trim() && ![...had, ...add].some((x) => same(x, note))) add.push(note);
+  }
+  if (add.length) await saveEdit({ ...e, feedback: [...had, ...add].slice(-EDIT_FEEDBACK_MAX) });
+  return add.length;
+}
+
+/** The version made last (its draft written most recently): what a note in chat is about. */
+export function newestDraft(id: string): string | undefined {
+  const at = (n: string) => statSync(path.join(editDir(id), "drafts", `${n}.json`)).mtimeMs;
+  return draftNames(id).filter((n) => n.startsWith("v")).sort((a, b) => at(b) - at(a))[0];
+}
+
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
   /** `eyeline`: per source version, the eye line found on this computer (eyeline.ts) */
   analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number> };
-  plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
+  /** `at`: when it was made; `coverage`: what footage a planned edit's cut was made from (plan.ts) */
+  plan: { lines: Line[]; plans: VersionPlan[]; notes: string[]; at?: number; coverage?: Coverage };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
   /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
@@ -525,6 +553,7 @@ export function viewOf(e: EditMeta): Edit {
     lines: p?.lines ?? [],
     plans: p?.plans ?? [],
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
+    ...(p?.coverage ? { coverage: p.coverage } : {}),
     previews: readStep(e.id, "review") ?? {},
     flagDefs: pluginEditFlags(),
     ...(cards ? { cards } : {}),

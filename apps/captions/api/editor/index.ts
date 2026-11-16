@@ -2,14 +2,20 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import type { FootageIndex, IndexSource, SongBeats } from "../../contracts/edit-plan";
+import type { FootageIndex, IndexShot, IndexSource, SongBeats } from "../../contracts/edit-plan";
+import type { Stretch } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
+import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
+import { contextStamp } from "../lib/workshop/context";
 import { libraryDb } from "../library/db";
-import { whoFor } from "../library/describe";
+import { whoFor, WORKSPACE_MAX } from "../library/describe";
+import { prepareFirst } from "../library/jobs";
 import { ffmpegSlot, writeJsonAtomic } from "../library/media/run";
+import { stretchesOf } from "../library/stretches";
+import { notifyWorkshopOwner } from "../review";
 import { clock, COLS, contactSheet, lookPrompt, median, parseLooked, readPicture, ROWS, RULE, shotsOf } from "../library/look";
 import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey, segmentsOf, wordsOf } from "../library/transcribe";
@@ -65,37 +71,122 @@ const rowOf = (id: string) =>
     .get(id) as Row | undefined;
 
 /**
- * What every source of the edit holds: length, frame rate, size, whether someone speaks, and its shots. A source not
- * probed yet, or whose transcript is being made, makes it wait (Waiting); one with no picture (a song) has no shots.
- * The picture is read once per version and cached; a transcript is never asked for here (analyze does that).
+ * The Media Library's side of shot descriptions (its `look` job, api/library): put these files' work first, write one
+ * file's lines again, and the stamp a line written now carries. The library exports lookFirst and redoLook; until it
+ * does, its files go first the way a transcript's do and a stale line is used as it is. A test swaps these.
  */
-export async function indexSources(edit: { sources: string[] }, signal: AbortSignal): Promise<FootageIndex> {
+export const shotLog = {
+  first: (ids: string[]): void => ids.forEach((id) => prepareFirst(id)),
+  redo: (_versionId: string): void => {},
+  stamp: (projectId: string | undefined): Promise<string> => contextStamp(projectId, WORKSPACE_MAX),
+};
+
+/** The library's work on a file the gate waits for, and what failing it means. */
+const LIBRARY_WORK: Record<string, string> = { transcribe: "", describe: "the Media Library could not describe it", look: "the Media Library could not describe its shots" };
+/** After this long with no file getting ready, the person hears once that the edit still waits (inbox). */
+export const STILL_WAITING_MS = 30 * 60_000;
+/** Per edit: how many files were ready, since when, and whether the inbox has been told. */
+const waits = new Map<string, { ready: number; since: number; told?: true }>();
+/** "<version>:<stamp>" a redo was asked for: asked once, so a stamp that never matches is read as it is, not waited on forever. */
+const redone = new Set<string>();
+
+/** One of the edit's files the cut can't use, and why in plain words (Coverage.left). */
+export type LeftOut = { id: string; title: string; why: string };
+
+/**
+ * What every source of the edit holds: length, frame rate, size, whether someone speaks, and its shots. The gate
+ * (tasks/flywheel/PLAN.md 3.2) waits, and only waits, while the Media Library still works on a file (its probe, its
+ * transcript, its description, its shot descriptions, or lines written under another workspace context than now's):
+ * those files go first and the step says "Waiting for the Media Library: 3 of 12 files", with the library's own line
+ * for a computer that is off or an AI that isn't connected. A file the library failed on is left out (`left`); with
+ * `now` (the person said to cut now) so is every file not ready. A source with the library's shot descriptions takes
+ * them as its shots; one without is read here as before (its picture once per version, cached). One with no picture (a
+ * song) has no shots. A transcript is never asked for here (analyze does that).
+ */
+export async function indexSources(
+  edit: { id?: string; name?: string; createdBy?: string; projectId?: string; now?: boolean; sources: string[] },
+  signal: AbortSignal,
+  now = Date.now(),
+): Promise<FootageIndex & { left: LeftOut[] }> {
   const db = libraryDb();
-  const sources: IndexSource[] = [];
+  const stamp = await shotLog.stamp(edit.projectId);
+  const ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[] }[] = [];
+  const left: LeftOut[] = [];
+  const pending: { id: string; title: string; line?: string }[] = [];
   for (const id of edit.sources) {
     if (signal.aborted) throw signal.reason ?? new Error("Stopped");
     const row = rowOf(id);
     if (!row) throw new Error(`A source of the edit is gone from the library (${id})`);
     const probe = JSON.parse(row.probe ?? "null") as ProbeSummary | null;
     if (!probe) {
-      if (row.state === "failed") throw new Error(`“${row.title}” could not be read by the library`);
-      throw new Waiting();
+      if (row.state === "failed") left.push({ id, title: row.title, why: "the Media Library could not read it" });
+      else pending.push({ id, title: row.title });
+      continue;
     }
-    const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(id) as { state: string } | undefined;
-    if (t?.state === "queued" || t?.state === "running") throw new Waiting();
+    const kinds = Object.keys(LIBRARY_WORK);
+    const work = db.prepare(`SELECT kind, state, error FROM jobs WHERE version_id = ? AND kind IN (${kinds.map(() => "?").join(", ")})`).all(id, ...kinds) as { kind: string; state: string; error: string | null }[];
+    const failed = work.find((w) => w.state === "failed" && LIBRARY_WORK[w.kind]);
+    if (failed) {
+      left.push({ id, title: row.title, why: LIBRARY_WORK[failed.kind]! });
+      continue;
+    }
+    // queued or running, or a description parked for an AI that isn't connected: its own line says which (a transcript
+    // parked for a key never holds a planned edit: it takes the words there are)
+    const busy = work.filter((w) => w.state === "queued" || w.state === "running" || (w.state === "needs_key" && w.kind !== "transcribe"));
+    if (busy.length) {
+      pending.push({ id, title: row.title, line: (busy.find((w) => w.kind === "transcribe") && deviceStatus(id)) || busy.find((w) => w.error)?.error || undefined });
+      continue;
+    }
+    const lines = stretchesOf(db, id);
+    // written under another context than the workspace's now: written again, then used (asked once per stamp)
+    if (lines.some((s) => s.source === "ai" && s.stamp !== stamp) && !redone.has(`${id}:${stamp}`)) {
+      redone.add(`${id}:${stamp}`);
+      shotLog.redo(id);
+      pending.push({ id, title: row.title });
+      continue;
+    }
+    ready.push({ id, row, probe, lines });
+  }
+  const key = edit.id ?? edit.sources.join(",");
+  if (pending.length && !edit.now) {
+    shotLog.first(pending.map((p) => p.id));
+    const w = waits.get(key);
+    if (!w || w.ready !== ready.length) waits.set(key, { ready: ready.length, since: now });
+    else if (!w.told && now - w.since >= STILL_WAITING_MS && edit.createdBy && edit.id) {
+      w.told = true;
+      void notifyWorkshopOwner(edit.createdBy, { kind: "workshop", by: "AI Editor", name: edit.name ?? "An edit", text: `Still waiting for the Media Library: ${ready.length} of ${edit.sources.length} files`, href: `/editor/${edit.id}`, ref: edit.id }).catch(() => {});
+    }
+    const said = pending.find((p) => p.line)?.line;
+    throw new Waiting(30, `Waiting for the Media Library: ${ready.length} of ${edit.sources.length} files${said ? `. ${said.replace(/\.$/, "")}` : ""}`);
+  }
+  waits.delete(key);
+  for (const p of pending) left.push({ id: p.id, title: p.title, why: "still being read by the Media Library" });
+
+  const sources: IndexSource[] = [];
+  for (const { id, row, probe, lines } of ready) {
+    if (signal.aborted) throw signal.reason ?? new Error("Stopped");
     const speech = !!(wordsOf(db, id)?.length || segmentsOf(db, id).length);
-    let src = (await cached(id))?.src;
+    const turned = probe.rotation === 90 || probe.rotation === 270;
+    const size = { dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height };
+    // the library's shot descriptions are its shots: the same stretches this file's picture gives (library/look.ts)
+    const described = !!probe.vcodec && !probe.cover && lines.length > 0;
+    let src = described ? { id, title: row.title, ...size, shots: lines.map(lineShot) } : (await cached(id))?.src;
     if (!src) {
-      const turned = probe.rotation === 90 || probe.rotation === 270;
       const picture = !!probe.vcodec && !probe.cover;
       const shots = picture ? shotsOf(await readPicture(await readable(id, row.source_key), probe.fps, signal), probe.duration) : [];
-      src = { id, title: row.title, dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, shots };
+      src = { id, title: row.title, ...size, shots };
       await keep(src);
     }
     sources.push({ ...src, title: row.title, speech });
   }
-  return { sources };
+  return { sources, left };
 }
+
+/** One shot description as the plan reads a shot. */
+const lineShot = (s: Stretch): IndexShot => ({ a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}) });
+
+/** A source whose shots are the library's shot descriptions (each carries its action): the AI doesn't look at it again. */
+export const logged = (s: IndexSource): boolean => s.shots.length > 0 && s.shots.every((x) => x.action !== undefined);
 
 export { contactSheet, cutsOf, lookPrompt, parseLooked, readPicture, shotsOf, type Looked, type PictureRead } from "../library/look";
 
@@ -138,7 +229,8 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
   const sheets: Sheet[] = [];
   for (const [si, s] of sources.entries()) {
     const open = s.shots.map((x, i) => (x.desc ? -1 : i)).filter((i) => i >= 0);
-    if (!open.length || (await cached(s.id))?.looked) continue;
+    // the library's shot descriptions are its words already; a source the AI looked at before is not asked again
+    if (!open.length || logged(s) || (await cached(s.id))?.looked) continue;
     const known = libraryWords(s.id);
     if (s.shots.length === 1 && known) {
       s.shots[0]!.desc = known.slice(0, 200);
@@ -195,8 +287,9 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
       for (const si of new Set(batch.map((b) => b.src))) await keep(sources[si]!, !sheets.slice(c + SHEETS_PER_CALL).some((x) => x.src === si));
       if (value.story) story = value.story;
     }
-    // every shot was described before: the story is one question in words alone
-    if (ai.story && !story && !sheets.length) {
+    // every shot was described before: the story is one question in words alone. With the library's lines for every
+    // source the plan reads each line, so no story is asked for
+    if (ai.story && !story && !sheets.length && !sources.filter((s) => s.w > 0 && s.shots.length).every(logged)) {
       const lines = sources.flatMap((s) => s.shots.filter((x) => x.desc).map((x) => `${s.title} ${clock(x.a)}–${clock(x.b)}: ${x.desc}`));
       if (lines.length) {
         const system = `You read shot-by-shot notes of footage for a video editor and tell what happens across it, from the pictures alone. ${RULE} Answer with JSON only.`;
