@@ -300,6 +300,8 @@ export function ChatPane({
   const [held, setHeld] = useState(false);
   // the queued message on its way to the server: its row can't be edited or removed meanwhile
   const [sendingId, setSendingId] = useState<string | null>(null);
+  // the box's message on its way to the server (pictures take a few seconds): Send shows it, and Stop can't take its place yet
+  const [sendingNow, setSendingNow] = useState(false);
   useEffect(() => {
     try {
       if (queue.length) localStorage.setItem(`${draftKey}:queue`, JSON.stringify(queue.map((it) => ({ ...it, images: it.images.map((im) => ({ ...im, url: "" })) }))));
@@ -370,6 +372,7 @@ export function ChatPane({
     const sentImages = images;
     const sentFiles = pendingFiles;
     sending.current = true;
+    setSendingNow(true);
     follow();
     try {
       const ok = await deliver({ id: "", text: sentText, pasted: sentPasted, images: sentImages, files: sentFiles, quotes: quotesIn(sentText) });
@@ -387,6 +390,7 @@ export function ChatPane({
       setPendingFiles((fs) => fs.filter((f) => !fileIds.has(f.id)));
     } finally {
       sending.current = false;
+      setSendingNow(false);
     }
   };
   // Undo puts the question back in the box when the box is empty, so the wording can be changed and sent again.
@@ -440,8 +444,10 @@ export function ChatPane({
           </p>
         )}
         <div className="flex flex-col gap-2">
-          {/* a reply you stopped (Stop, or Steer) leaves no trace: your message stays, the empty reply goes */}
-          {messages.filter((m) => !(m.role === "assistant" && m.status === "error" && m.error === TURN_STOPPED)).map((m) =>
+          {/* a reply you stopped (Stop, or Steer) leaves no trace once the chat goes on: your message stays, the empty reply
+              goes. Only while it is the last one it says Stopped, so a message that got no answer never looks answered;
+              the next message's reply answers it too (the server names it to the AI). */}
+          {messages.filter((m, i) => !(m.role === "assistant" && m.status === "error" && m.error === TURN_STOPPED && i < messages.length - 1)).map((m) =>
             m.role === "user" ? (
               <div key={m.id} className="ml-2 rounded-2xl bg-muted px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground">
                 <p className="whitespace-pre-wrap">{withChips(m.text, m.quotes, activeDoc?.kind)}</p>
@@ -533,6 +539,15 @@ export function ChatPane({
                       <span className="text-muted-foreground/70">{thinkingHint(m)}</span>
                     </p>
                   </div>
+                ) : m.status === "error" && m.error === TURN_STOPPED ? (
+                  <p key={m.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {TURN_STOPPED}
+                    {!readOnly && (
+                      <button type="button" onClick={() => onRetry(m)} disabled={thinking} className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted hover:text-foreground disabled:opacity-40">
+                        <RotateCcw className="h-3 w-3" /> Retry
+                      </button>
+                    )}
+                  </p>
                 ) : m.status === "error" ? (
                   <Notice
                     action={
@@ -763,7 +778,7 @@ export function ChatPane({
           <MicButton v={v} />
           {aiChip}
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
-          <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
+          <SendButton empty={!composerBusy} waiting={thinking} sending={sendingNow} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
           </>}
           </div>
         </div>}

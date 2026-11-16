@@ -417,14 +417,28 @@ function readSelection(v: unknown): Selection {
   return { instance: x.instance, model: x.model, effort: x.effort as Selection["effort"] };
 }
 
-/** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
-const attachedName = (name: string, i: number, ext: string, dir = "") => `${dir}attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
+/** A picture's file in the Mac's folder: attached/<message id, 8 chars>/NN-<name>.<ext>, the same for the whole chat. */
+const picturePath = (msgId: string, name: string, i: number, ext: string) => `attached/${msgId.slice(0, 8)}/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
 const pastedName = (name: string, i: number, dir = "") => `${dir}pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
 
-/** The newest message's files for the Mac (the relay writes "base64:" entries as bytes), or undefined with none. */
-function filesFor(input: TurnInput): Record<string, string> | undefined {
+/** A message's stored pictures with their paths in the folder, numbered over the ones that exist (as startHeld reads them). */
+function folderPictures(username: string, m: AssistantMessage): Array<{ path: string; file: string }> {
+  const out: Array<{ path: string; file: string }> = [];
+  for (const im of m.images ?? []) {
+    const found = imageFile(username, im.id);
+    if (found) out.push({ path: picturePath(m.id, im.name, out.length, IMAGE_EXT[found.type]), file: found.file });
+  }
+  return out;
+}
+
+/**
+ * The Mac's files for a turn (the relay writes "base64:" entries as bytes), or undefined with none: every picture the chat
+ * holds, at its path, and the newest message's pastes. Only Claude gets the earlier messages' pictures (`keeps`); any other
+ * AI gets the newest message's, as before.
+ */
+function filesFor(username: string, chat: AssistantMessage[], newest: string, input: TurnInput, keeps: boolean): Record<string, string> | undefined {
   const files: Record<string, string> = {};
-  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)] = `base64:${im.data}`));
+  for (const m of chat) if (m.role === "user" && (keeps || m.id === newest)) for (const p of folderPictures(username, m)) files[p.path] = `base64:${readFileSync(p.file).toString("base64")}`;
   input.pasted.forEach((p, i) => (files[pastedName(p.name, i, input.dir)] = p.text));
   return Object.keys(files).length ? files : undefined;
 }
@@ -1035,15 +1049,23 @@ const asked = (m: AssistantMessage) =>
 /** What a reply started or opened, with its page, so "show me" a few messages later has somewhere to go. */
 const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : w.status === "stopped" ? "stopped" : "made"}: ${w.title} → ${w.href}]`);
 
-/** An earlier message's attachments, by count and name only: their files went with that turn. */
-const marks = (m: AssistantMessage) =>
-  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`)].filter(Boolean).join(" ");
+/** An earlier message's pictures: where the Mac's folder keeps them, or that they are not with this turn (names only). */
+const pictures = (username: string, m: AssistantMessage, folder: boolean): string => {
+  const n = m.images?.length ?? 0;
+  if (!n) return "";
+  const word = n === 1 ? "1 picture" : `${n} pictures`;
+  return folder ? `[${word} in attached/${m.id.slice(0, 8)}/: ${folderPictures(username, m).map((p) => path.basename(p.path)).join(", ")}]` : `[${word}, not with this turn: ${m.images!.map((im) => im.name).join(", ")}]`;
+};
+
+/** An earlier message's attachments: its pictures (where they are, or names only), pastes, videos and folders. */
+const marks = (username: string, m: AssistantMessage, folder: boolean) =>
+  [...cards(m), ...asked(m), pictures(username, m, folder), ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
-function newestFacts(input: TurnInput): string[] {
+function newestFacts(input: TurnInput, msgId: string): string[] {
   const out: string[] = [];
   const n = input.images.length;
-  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)).join(", ")} (the Read tool shows a picture).`);
+  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => picturePath(msgId, im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const f of input.uploading ?? [])
     out.push(`The user attached a video still uploading from their phone: "${f.name}", file id ${f.id}. Go on with it now: use_file waits for it (and says when to call again), and a tool whose description says it takes videos still uploading takes it at once. Never wait for it yourself or ask the user to.`);
@@ -1081,13 +1103,13 @@ export const projectLine = (project: { id: string; name: string }) =>
   `The user's current workspace is ${JSON.stringify(project.name.replace(/\s+/g, " ").trim().slice(0, 60))} (id ${project.id}). Work in it unless they name another: give this id to a tool that takes a workspace (the API calls it a project).`;
 
 /** The prompt: the recent messages, what came with the newest one, then the reply it is for. */
-function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
+function promptFor(username: string, messages: AssistantMessage[], input?: TurnInput, folder = false): string {
   const newest = input ? [...messages].reverse().find((m) => m.role === "user") : undefined;
   const lines = messages
     .filter((m) => m.status !== "thinking")
     .slice(-HISTORY)
-    .map((m) => `${m.role === "user" ? "User" : m.role === "note" ? "Note" : "Assistant"}: ${[m.text, m === newest ? "" : marks(m)].filter(Boolean).join(" ")}`);
-  const facts = input ? newestFacts(input) : [];
+    .map((m) => `${m.role === "user" ? "User" : m.role === "note" ? "Note" : "Assistant"}: ${[m.text, m === newest ? "" : marks(username, m, folder)].filter(Boolean).join(" ")}`);
+  const facts = input ? newestFacts(input, newest?.id ?? "") : [];
   return `${lines.join("\n\n")}${facts.length ? `\n\n${facts.join("\n")}` : ""}\n\nAnswer the user's last message.`;
 }
 
@@ -1577,7 +1599,11 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   if (h.context?.mac) fromMac.add(reply.id);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
   const knows = turnKnows(username, reply.id);
-  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), knows, filesFor(input)).then(() => {
+  const chat = list.slice(0, i + 1);
+  // the chat's earlier pictures go to Claude only, which opens one when it needs it: Grok takes no picture, and Codex is
+  // handed every picture in the folder on every turn
+  const keeps = route.instance.driver === "claude";
+  void runTurn(username, reply.id, route, h.url, promptFor(username, chat, input, keeps), knows, filesFor(username, chat, asked.id, input, keeps)).then(() => {
     // a usage limit stopped it: what it needs to carry on when the limit resets (pump)
     if (!messageOf(username, reply.id)?.limit?.until) return;
     (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, ...(h.ai ? { ai: h.ai } : {}) };
@@ -1764,7 +1790,7 @@ export async function runInChat(
   chat.messages.push(asked, reply);
   save(username);
   tell(username, reply.id);
-  const prompt = `${o.preface}\n\n${promptFor(o.fresh ? [asked] : chat.messages)}`;
+  const prompt = `${o.preface}\n\n${promptFor(username, o.fresh ? [asked] : chat.messages)}`;
   const stop = new AbortController();
   const chatId = chat.id; // `chat` may be the open one, whose id changes with a New chat
   runsOf(username).set(reply.id, stop);

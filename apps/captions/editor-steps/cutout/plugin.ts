@@ -63,15 +63,21 @@ routes.get("/:name", async (c) => {
   return c.body(new Uint8Array(png), 200, { "content-type": "image/png", "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" });
 });
 
-/** A picture of the message the running reply answers, by the name the AI was told (attached/01-<name>.png), as base64. */
+/**
+ * A picture of this chat by the path the AI was told, as base64: attached/<the first 8 of its message's id>/<nn>-<name>,
+ * the same for the whole chat, so an earlier message's picture is found too. attached/<nn>-<name> (no message) is one of
+ * the message the running reply answers.
+ */
 async function chatPicture(ctx: ToolContext, name: string): Promise<string> {
-  const n = Number(/(?:^|\/)(\d{2})-[^/]*$/.exec(name)?.[1]);
-  if (!n) throw new ToolError("Give picture as its attached/ name, or path for a file on this computer.");
+  const at = /attached\/(?:([^/]+)\/)?(\d{2})-[^/]*$/.exec(name);
+  const n = Number(at?.[2]);
+  if (!at || !n) throw new ToolError("Give picture as its attached/ name, or path for a file on this computer.");
   const messages = (await ctx.json<AssistantView>("/api/assistant")).messages;
   const running = messages.findIndex((m) => m.status === "thinking" && !m.wait);
-  const asked = messages.slice(0, running < 0 ? messages.length : running).reverse().find((m) => m.role === "user");
-  const im = asked?.images?.[n - 1];
-  if (!im) throw new ToolError(`${name} isn't a picture of the message you are answering: ask for it again.`);
+  const sent = messages.slice(0, running < 0 ? messages.length : running).filter((m) => m.role === "user");
+  const of = at[1] ? sent.find((m) => m.id.startsWith(at[1]!)) : sent.at(-1);
+  const im = of?.images?.[n - 1];
+  if (!im) throw new ToolError(`${name} isn't a picture of this chat: ask for it again.`);
   return Buffer.from(await (await ctx.api(`/api/assistant/images/${im.id}`)).arrayBuffer()).toString("base64");
 }
 

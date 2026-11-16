@@ -375,6 +375,42 @@ describe("stop and the Mac fallback", () => {
     expect((await call("POST", `/api/workshop/sessions/${id}/chat/${body.reply!.id}/stop`)).status).toBe(404);
   });
 
+  it("the next turn answers a stopped message with its pictures, and every picture of the chat stays in the folder", async () => {
+    const { id, docId } = seed(["Piece"]);
+    let started!: () => void;
+    const begun = new Promise<void>((r) => (started = r));
+    mocked.mockImplementationOnce((async (_s: string, _u: string, signal: AbortSignal) => {
+      started();
+      return await new Promise((_, reject) => signal.addEventListener("abort", () => reject(new MacClaudeError("Stopped", "stopped"))));
+    }) as never);
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
+    const slides = await send(id, docId, "the conclusion slide, you tell me", { images: [{ name: "1.jpg", type: "image/jpeg", data: jpeg }] });
+    await begun;
+    await call("POST", `/api/workshop/sessions/${id}/chat/${slides.body.reply!.id}/stop`);
+    await settled(id, slides.body.reply!.id);
+
+    const seen: Array<{ user: string; files: Record<string, string> }> = [];
+    const hear = () =>
+      mocked.mockImplementationOnce((async (_s: string, user: string, _sig: unknown, parse: (t: string) => unknown, _h: unknown, opts: { mac: { files: Record<string, string> } }) => {
+        seen.push({ user, files: opts.mac.files });
+        return { result: parse(answer({ reply: "Looked at it.", edits: [] })), provider: "Claude (Mac)" };
+      }) as never);
+    const dir = `attached/${slides.body.ask!.id.slice(0, 8)}/`;
+    hear();
+    const next = await send(id, docId, "you stopped?");
+    await settled(id, next.body.reply!.id);
+    expect(seen[0]!.files[`${dir}01-1.jpg`]).toBe(`base64:${jpeg}`);
+    expect(seen[0]!.user).toContain("never got your reply");
+    expect(seen[0]!.user).toContain(`picture 1.jpg: read ${dir}01-1.jpg`);
+
+    // answered now: the turn after that no longer asks again, and the picture is still there for it
+    hear();
+    const third = await send(id, docId, "update the slides from those pictures");
+    await settled(id, third.body.reply!.id);
+    expect(seen[1]!.files[`${dir}01-1.jpg`]).toBe(`base64:${jpeg}`);
+    expect(seen[1]!.user).not.toContain("never got your reply");
+  });
+
   it("a turn the provider didn't finish ends with a message and runs nowhere else", async () => {
     const { id, docId } = seed(["Piece"]);
     mocked.mockImplementationOnce((async () => {
