@@ -199,6 +199,9 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     // a folder is a plain collection; Finals (finals.ts) and a saved search's old item rows are not
     where.push(`a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
       WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
+    // nor a clip the A-roll or B-roll folder lists: it is filed there, the top level would show it twice
+    where.push(`NOT (a.roll IS NOT NULL AND EXISTS (SELECT 1 FROM collections rc WHERE rc.library_id = a.library_id AND rc.kind = 'smart'
+      AND json_extract(rc.query, '$.roll') = a.roll AND (SELECT COUNT(*) FROM json_each(rc.query)) = 1))`);
   }
   for (const f of facetClauses(query.facets ?? {})) {
     where.push(f.sql);
