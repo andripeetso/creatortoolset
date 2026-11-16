@@ -3,6 +3,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { Critique, EditPlan, IndexShot } from "../../contracts/edit-plan";
 import type { EditFeedback } from "../../contracts/editor";
+import { isLimitLine } from "../../contracts/plans";
 import { aiFor } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
@@ -15,8 +16,8 @@ import { NeedsKey } from "../library/transcribe";
 import { Waiting } from "./analyze";
 import type { StepContext } from "./engine";
 import { knownShots } from "./index";
-import { fixPlan, noteLines, sourceSpan } from "./plan";
-import { fileInReview, previewFile } from "./preview";
+import { fixPlan, noteLines, sourceSpan, workspaceSetup } from "./plan";
+import { fileInReview, previewFile, saidOf } from "./preview";
 import { macAway } from "./script";
 import { editDir, markDraft, readDraft, readStep, saveStep, type DraftFile, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
@@ -27,8 +28,10 @@ import { styleBlock } from "./styles";
  * editing style and each shot's line, for one judgement of the whole cut: the shots that don't hold up, and why. When
  * some don't, the one fix round (plan.ts fixPlan) replaces those shots, and the new cut is drafted, post-processed,
  * rendered and looked at once more. The person then gets one version in Review: the fixed one when it has fewer failing
- * shots, else the first, with the shots still failing named on it. A cut is never held back: a look that can't be made
- * after its last try files the cut as it is.
+ * shots, else the first, with the shots still failing named on it. A cut is never held back (PLAN.md D7): a look or a
+ * fix that can't be made (the plan's usage limit, no AI connected, footage still being read, or a failure after its
+ * last try) files the cut as it is, at once, with one line on its Review version saying it was not looked at, or not
+ * fixed, and why.
  */
 
 const LABEL = "AI Editor check";
@@ -38,6 +41,8 @@ const PER_SHEET = (COLS * ROWS) / 2;
 const WHY_MAX = 120;
 /** What a shot's footage is described as, in characters (as the plan reads it) */
 const LINE_TEXT = 100;
+/** Why a look or a fix could not be made, in characters */
+const CANT_MAX = 200;
 
 /** Two frames of each shot of the cut (frame numbers): a little after it starts and a little before it ends, always increasing. */
 export function shotFrames(plan: Pick<EditPlan, "fps" | "shots">): number[] {
@@ -102,6 +107,8 @@ Answer with JSON only: {"ok": true, "fails": []}, or {"ok": false, "fails": [{"n
 
 export interface CritiqueInput {
   brief: string;
+  /** the workspace the edit is for: its instructions and what each context file is (plan.ts workspaceSetup); none adds nothing */
+  workspace?: string;
   /** the person's notes on the edit, oldest first (EditMeta.feedback) */
   notes: EditFeedback[];
   /** the editing style's block (styles.ts styleBlock) */
@@ -115,6 +122,7 @@ export interface CritiqueInput {
 
 export function critiquePrompt(i: CritiqueInput): { system: string; user: string } {
   const parts = [`Brief:\n${i.brief.trim() || "(none: a good edit of this footage)"}`];
+  if (i.workspace?.trim()) parts.push(`The workspace's setup:\n${i.workspace.trim()}`);
   if (i.notes.length) parts.push(`The person's own words on earlier versions, word for word, oldest first (the newest says what they want now):\n${noteLines(i.notes).join("\n")}`);
   if (i.style.trim()) parts.push(i.style.trim());
   parts.push(`The cut: ${i.seconds.toFixed(1)} s, ${i.shots.length} shots, ${i.song ? "cut to a song" : "with the footage's own sound"}. Its shots, by number:\n${i.shots.join("\n")}`);
@@ -150,6 +158,7 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
     const titles = Object.fromEntries(Object.entries(d.timeline.sources).map(([id, s]) => [id, s.name]));
     const { system, user } = critiquePrompt({
       brief: edit.brief,
+      workspace: await workspaceSetup(edit, 6000),
       notes: edit.feedback ?? [],
       style: styleBlock(edit.style, edit),
       shots: await cutLines(plan, titles),
@@ -172,21 +181,31 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
  * or the fix's round 2, and filed in Review here; any other cut is filed as it is. Round 1 passing files the cut. Round 1
  * failing writes the fix round's plan and queues its draft. Round 2 files the fixed cut when it has fewer failing shots,
  * else puts the first plan back with its look and queues its draft again, filed then by the preview (the copies its
- * post-processing made went with the fix's).
+ * post-processing made went with the fix's). A look or a fix that can't be made files the cut it has, and says so on it.
  */
 export async function critiqueStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d || !existsSync(previewFile(edit.id, variant))) throw new Error(`Render ${variant || "the"} preview first`);
   const then = (kind: "file" | "draft") => enqueueJob(libraryDb(), edit.workspaceId, `${edit.id}:${variant}`, kind, job.actor, true, "edit_jobs");
   const { due, ...looked } = d;
-  const file = async (c: Critique | undefined) => {
-    await markDraft(edit.id, variant, c ? { ...looked, critique: c } : looked);
-    await fileInReview(edit, variant, d.timeline, c?.fails);
+  // `skipped`: the look or the fix that could not be made, said on the Review version and kept with the draft
+  const file = async (c: Critique | undefined, skipped?: string) => {
+    const kept = { ...looked, ...(c ? { critique: c } : {}), ...(skipped ? { unchecked: skipped } : {}) };
+    await markDraft(edit.id, variant, kept);
+    await fileInReview(edit, variant, d.timeline, saidOf(kept));
     then("file");
   };
-  // a look or a fix that can't be made holds the cut back for its tries only (a limit or a missing AI waits, as any step);
-  // the worker is read when it's needed, as it registers this step
-  const last = async (e: unknown) => !signal.aborted && !(e instanceof NeedsKey) && !(e instanceof Waiting) && job.attempts >= MAX_ATTEMPTS && !(await import("./worker")).limitWait(e);
+  // Why a look or a fix can't be made, in the person's words, or null while it is to be tried again. A rendered cut
+  // never waits on its check: the plan's limit (days, on a weekly one), an AI that isn't connected and footage still
+  // being read say so at once, any other failure after its last try. The worker is read when it's needed, as it
+  // registers this step
+  const cant = async (e: unknown): Promise<string | null> => {
+    if (signal.aborted) return null;
+    const limit = (await import("./worker")).limitWait(e);
+    if (!limit && !(e instanceof NeedsKey) && !(e instanceof Waiting) && job.attempts < MAX_ATTEMPTS) return null;
+    const why = limit ? (isLimitLine(limit.line) ? limit.line : "The AI's usage limit is reached") : e instanceof Waiting ? (e.line ?? "The footage is still being read") : e instanceof Error ? e.message : String(e);
+    return why.replace(/\s+/g, " ").trim().replace(/\.$/, "").slice(0, CANT_MAX);
+  };
   const shots = readStep(edit.id, "shots");
   const saved = shots?.[variant];
   if (!due || !saved) return file(d.critique);
@@ -197,7 +216,8 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
     try {
       c = await look(edit, job.actor!, variant, saved.plan, d, round, signal);
     } catch (e) {
-      if (await last(e)) return file(undefined);
+      const why = await cant(e);
+      if (why) return file(undefined, `Not looked at before Review: ${why}`);
       throw e;
     }
     if (signal.aborted) return;
@@ -214,7 +234,10 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
   try {
     fixed = await fixPlan(edit, job.actor!, variant, saved.plan, c.fails, signal);
   } catch (e) {
-    if (!(await last(e))) throw e;
+    const why = await cant(e);
+    if (!why) throw e;
+    // looked at, and its failing shots are named: the fix is what was skipped
+    return file(c, `Not fixed before Review: ${why}`);
   }
   if (signal.aborted) return;
   if (!fixed) return file(c);

@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EditPlan } from "../../contracts/edit-plan";
+import type { EditPlan, IndexSource } from "../../contracts/edit-plan";
 import type { Timeline } from "../../contracts/editor";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
@@ -31,7 +31,7 @@ const { critiquePrompt, parseCritique, shotFrames } = await import("./critique")
 const { nextFor } = await import("./engine");
 const { shotLog } = await import("./index");
 const { addFeedback, createEdit, readDraft, readEdit, readStep, saveDraft, saveEdit, saveStep } = await import("./store");
-const { swapShots } = await import("./plan");
+const { lastLook, swapShots } = await import("./plan");
 const { emptyTracks } = await import("./timeline");
 const { NEXT, tick } = await import("./worker");
 
@@ -199,19 +199,45 @@ describe("the look at a planned cut before Review", () => {
     expect(looks).toHaveLength(0);
   }, 120_000);
 
-  it("a usage limit during the look waits until it opens, the try not counted, and files nothing meanwhile", async () => {
+  it("a usage limit during the look never holds the cut: it is filed at once, with one line saying it was not looked at and why", async () => {
     const e = await planned();
     const until = clock + 10 ** 9;
     answers = [Object.assign(new MacClaudeError("Your Claude plan's 5-hour limit is reached; it resets 5pm.", "limit"), { limited: { until } })];
-    await run(e, "draft");
-    expect(db().prepare("SELECT state, attempts, run_after, error FROM edit_jobs WHERE edit_id = ? AND kind = 'critique'").get(e.id)).toEqual({
-      state: "queued",
-      attempts: 0,
-      run_after: until,
-      error: "Your Claude plan's 5-hour limit is reached; it resets 5pm.",
-    });
-    expect(readStep(e.id, "review")).toBeNull();
-    expect(readDraft(e.id, "v1")!.due).toBe(1);
+    expect(await run(e, "draft")).toEqual(doneAll(["draft", "broll", "post", "preview", "critique", "file"]));
+    expect(looks).toHaveLength(1);
+    const line = "Not looked at before Review: Your Claude plan's 5-hour limit is reached; it resets 5pm";
+    const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
+    expect(v).toHaveLength(1);
+    // the line rides where the failing shots are named, as shot 0: no shot's own
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", fails: [{ n: 0, why: line }] });
+    const d = readDraft(e.id, "v1")!;
+    expect([d.due, d.critique, d.unchecked]).toEqual([undefined, undefined, line]);
+  }, 120_000);
+
+  it("a fix that can't be made (no AI connected) files the cut that was looked at: its failing shots named, and that they were not fixed", async () => {
+    const e = await planned();
+    answers = [{ ok: false, fails: [{ n: 2, why: TOWN }] }];
+    vi.mocked(completeWithFallback).mockRejectedValue(new MacClaudeError("No Mac runs this provider: open Creator Toolset on your Mac.", "unclaimed"));
+    expect(await run(e, "draft")).toEqual(doneAll(["draft", "broll", "post", "preview", "critique", "file"]));
+    expect(looks).toHaveLength(1);
+    expect((await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions.map((x) => x.draft)).toEqual([
+      { edit: e.id, name: "v1", fails: [{ n: 2, why: TOWN }, { n: 0, why: "Not fixed before Review: No Mac runs this provider: open Creator Toolset on your Mac" }] },
+    ]);
+    // the plan is the one that was cut: no fix round was started
+    expect(readStep(e.id, "shots")!.v1).toEqual({ plan: PLAN, notes: [] });
+  }, 120_000);
+
+  it("the look carries the workspace's context, so it can tell what the footage is of", async () => {
+    const file = path.join(dir, "workshop", "projects", "p-tiny.json");
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ id: "p-tiny", owner: "mem-a", name: "Tiny Acrobatics", audience: "", voice: "", cta: "", notes: "A game about riders at a castle gate.", createdAt: 1, updatedAt: 1 }));
+    try {
+      const e = await planned();
+      await run(e, "draft");
+      expect(looks[0]!.user).toMatch(/^Brief:\nA hard edit, 3 seconds\n\nThe workspace's setup:\n[\s\S]*A game about riders at a castle gate\.[\s\S]*\n\nThe person's own words/);
+    } finally {
+      rmSync(file);
+    }
   }, 120_000);
 });
 
@@ -240,8 +266,28 @@ describe("the look's parts", () => {
     expect(parseCritique('{"ok": false, "fails": []}', 4, 2)).toEqual({ ok: true, fails: [], round: 2 });
   });
 
+  it("the last look never moves a shot onto a picture the cut already shows", async () => {
+    // a recording that is black all through: the last look moves its shot to the best moment of the arena
+    const file = path.join(dir, "ver_dark.mp4");
+    execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "color=black:duration=1:size=320x180:rate=30", "-c:v", "libx264", "-pix_fmt", "yuv420p", file]);
+    db().exec("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_ver_dark', 'lib_a', 'video', 'Dark', 'mem-a', 0)");
+    db().exec("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_dark', 'a_ver_dark', 1, 'libraries/lib_a/v/ver_dark/source', 1, 's_dark', 'ready', 'mem-a', 0)");
+    await blobs.put("libraries/lib_a/v/ver_dark/source", file);
+    const line = (k: number, action: number, picture: string) => ({ a: k * 2, b: k * 2 + 2, motion: 0.5, action, clear: true, ph: ph(picture) });
+    const src = (id: string, dur: number, shots: IndexSource["shots"]): IndexSource => ({ id, title: id, dur, fps: 30, w: 320, h: 180, speech: false, sound: true, shots });
+    // the arena's busiest stretch (2-4 s) shows the gate again, the picture the cut opens on; the jump (4-6 s) is not shown yet
+    const arena = src("ver_a", 10, [line(0, 3, "gate"), line(1, 5, "gate"), line(2, 2, "jump"), line(3, 1, "walk"), line(4, 1, "rest")]);
+    const dark = src("ver_dark", 1, [{ a: 0, b: 1, motion: 0, action: 1, clear: false, ph: ph("dark") }]);
+    const plan: EditPlan = { ...PLAN, shots: [{ at: 0, dur: 1, src: { source: "ver_a", inS: 0 }, sound: "full" }, { at: 1, dur: 1, src: { source: "ver_dark", inS: 0 }, sound: "full" }] };
+    expect(await lastLook(plan, { sources: [arena, dark] })).toBe(1);
+    expect(plan.shots[1]!.src).toEqual({ source: "ver_a", inS: 4 });
+  }, 60_000);
+
   it("asks one judgement of the whole cut, with no notes or style when there are none", () => {
     const { system, user } = critiquePrompt({ brief: "", notes: [], style: "", shots: ["1. 0.00–1.00 s · x"], sheets: 1, seconds: 1, song: true });
+    // no workspace context: the prompt is what it was
+    expect(critiquePrompt({ brief: "", workspace: " ", notes: [], style: "", shots: ["1. 0.00–1.00 s · x"], sheets: 1, seconds: 1, song: true }).user).toBe(user);
+    expect(user).not.toContain("workspace");
     expect(user).not.toContain("own words");
     expect(user).toContain("The cut: 1.0 s, 1 shots, cut to a song.");
     expect(system).toContain('"fails"');

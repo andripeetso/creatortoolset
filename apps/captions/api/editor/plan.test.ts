@@ -83,6 +83,17 @@ describe("the plan: checked and repaired, never trusted", () => {
     expect(plan.lead).toEqual({ type: "song", source: "ver_song", startS: 0 });
   });
 
+  it("a revise whose answer leaves the lead out keeps the last version's: the song doesn't come in unasked", () => {
+    const shots = [{ src: "S1", in: 0, dur: 1 }, { src: "S1", in: 5, dur: 1 }];
+    const own = repairPlan({ lead: "sources", shots }, ctx()).plan;
+    expect(own.lead).toEqual({ type: "sources" });
+    const keep = [{ keep: 1 }, { keep: 2 }];
+    expect(repairPlan({ shots: keep }, ctx({ last: own })).plan.lead).toEqual({ type: "sources" });
+    // an answer that names the lead changes it; a first plan that names none is cut to the song, as before
+    expect(repairPlan({ lead: "song", shots: keep }, ctx({ last: own })).plan.lead.type).toBe("song");
+    expect(repairPlan({ shots }, ctx()).plan.lead.type).toBe("song");
+  });
+
   it("holds the length the brief asks for and never runs past the song", () => {
     const shots = Array.from({ length: 30 }, () => ({ src: "S1", in: 0, dur: 1 }));
     expect(repairPlan({ shots }, ctx({ targetS: 12 })).plan.shots.reduce((n, s) => n + s.dur, 0)).toBeCloseTo(12, 5);

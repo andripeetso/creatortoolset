@@ -476,9 +476,10 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           Footage left out: {ownEdit.data.coverage.left.map((l) => `${l.title} (${l.why})`).join(", ")}
         </div>
       )}
-      {/* the shots the look before Review found still don't hold up in this version, the app's own edit or a plug-in's (nothing when it passed) */}
+      {/* the shots the look before Review found still don't hold up in this version, the app's own edit or a plug-in's (nothing when it passed);
+          shot 0 is no shot: the line of a look or a fix that could not be made, and why */}
       {(own?.fails ?? edit?.fails)?.map((f) => (
-        <div key={f.n} className="text-[11px] text-amber-300">Shot {f.n}: {f.why}</div>
+        <div key={f.n} className="text-[11px] text-amber-300">{f.n ? `Shot ${f.n}: ` : ""}{f.why}</div>
       ))}
       {sentEdits.length > 0 && (
         <div className="text-[11px] text-zinc-500">

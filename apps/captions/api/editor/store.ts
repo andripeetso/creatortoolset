@@ -178,6 +178,9 @@ export interface DraftFile {
   due?: 1 | 2;
   /** the look at this cut before Review: the shots that don't hold up */
   critique?: Critique;
+  /** the look, or the fix after it, could not be made (a usage limit, no AI connected, a failure): the cut went to
+   *  Review as it was, and this line says so on its Review version (critique.ts) */
+  unchecked?: string;
 }
 
 /** A draft's name: a version (v1…) or a moment of a long recording (m1…m20, moments.ts). Nothing else is a file name here. */
