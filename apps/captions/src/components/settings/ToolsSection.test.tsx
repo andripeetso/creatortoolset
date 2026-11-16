@@ -89,9 +89,9 @@ describe("Settings → Tools", () => {
     expect(text).toContain("Tiny cards");
     expect(host!.querySelector('[aria-label="Blur faces in new edits"]')).not.toBeNull();
     expect(host!.querySelector('a[href="/community/tool/editor"]')?.textContent).toBe("Browse Community");
-    // no Home switch a second time, and nothing folded away
+    // no Home switch a second time, and no section folded away
     expect(host!.querySelector('[aria-label="Show AI Editor on Home"]')).toBeNull();
-    expect(host!.querySelectorAll("button[aria-expanded]").length).toBe(0);
+    expect([...host!.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(expect.arrayContaining(["Plug-ins", "Packs", "Skills for the script"]));
   });
 
   it("a plug-in's section that names the tool is drawn on its page, under its title", async () => {
