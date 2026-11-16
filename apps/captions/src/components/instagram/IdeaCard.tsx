@@ -109,7 +109,7 @@ export function IdeaCard({
           onClick={onMake}
           className="mt-0.5 shrink-0 rounded-lg bg-violet-600 px-2.5 py-1.5 text-[12px] font-medium text-white hover:bg-violet-500 disabled:opacity-50"
         >
-          {making ? <Loader2 className="h-4 w-4 animate-spin" /> : "Do this"}
+          {making ? <Loader2 className="h-4 w-4 animate-spin" /> : "New project"}
         </button>}
       </div>
       {workshops.length ? (

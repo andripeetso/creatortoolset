@@ -28,7 +28,7 @@ function Column({
               className={`w-12 shrink-0 text-right font-mono text-[11px] ${VERDICT_STYLE[r.verdict]}`}
               title={
                 r.verdict === "too few"
-                  ? "Fewer than 5 posts — not enough to say"
+                  ? "Fewer than 5 posts"
                   : `Median post gets ${r.lift}× the views of comparable posts`
               }
             >
@@ -73,9 +73,8 @@ export function WhatWorksPane({
   return (
     <div className="mt-4">
       <p className="mb-3 text-[11px] leading-relaxed text-zinc-500">
-        ×1.00 is typical for this account. Each post is compared with posts of the same type and
-        visibility, so trial reels only count against trial reels. Labels come from captions ({data.labelled}{" "}
-        posts). Numbers link to the best posts with that label.
+        Views against this account’s typical post of the same type and visibility, with labels from {data.labelled}{" "}
+        post descriptions.
       </p>
       <div className="flex flex-col gap-3 md:flex-row">
         <Column title="Hook" rows={data.hook} urlOf={urlOf} />

@@ -441,7 +441,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-60">
                         <DropdownMenuItem className="text-xs" onSelect={() => void toggleMine()}>
-                          {account.own ? "This isn’t my account" : "This is my account"}
+                          {account.own ? "Unmark as your account" : "Mark as your account"}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-xs"
@@ -456,7 +456,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                             void remove();
                           }}
                         >
-                          {armed ? "Click again to remove (posts stay)" : "Remove from the Analyzer"}
+                          {armed ? "Click again to remove (saved posts are kept)" : "Remove account"}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -477,7 +477,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
             {account.status === "error" && !processing && (
               <p className="mt-4 flex items-center gap-2 text-xs text-zinc-400" title={account.error}>
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
-                Couldn’t update the account
+                Could not update the account
                 {owns ? (
                   <button
                     type="button"
@@ -485,7 +485,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                     onClick={() => void runJobs(updateJobs)}
                     className="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
                   >
-                    Try again
+                    Retry
                   </button>
                 ) : null}
               </p>
@@ -580,7 +580,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                         key={v}
                         type="button"
                         aria-pressed={libView === v}
-                        title={v === "grid" ? "Grid, like Instagram" : "List with details"}
+                        title={v === "grid" ? "Grid" : "List"}
                         onClick={() => setLibView(v)}
                         className={`rounded px-1.5 py-1 ${
                           libView === v ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
@@ -594,8 +594,8 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                 {posts.length === 0 ? (
                   <p className="py-8 text-center text-sm text-zinc-600">
                     {account.mine
-                      ? "Save a video from Public or Trial when you want its video or transcript to remake it."
-                      : "Nothing saved from this account yet. Pick posts in All posts and save them."}
+                      ? "No saved posts"
+                      : "No saved posts"}
                   </p>
                 ) : libView === "grid" ? (
                   <div className="grid grid-cols-3 gap-1 sm:gap-1.5">
@@ -656,12 +656,12 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                 {catalog.length === 0 ? (
                   <p className="py-8 text-center text-sm text-zinc-600">
                     {pane === "trial"
-                      ? "No trial reels: the official login marks none as not shared to the feed."
+                      ? "No trial reels"
                       : pane === "public"
-                        ? "No public posts listed yet. Update lists them."
+                        ? "No public posts listed"
                         : posts.length
-                          ? "Update to list more of this account’s posts."
-                          : "No posts listed yet. Update lists them."}
+                          ? "No posts listed"
+                          : "No posts listed"}
                   </p>
                 ) : (
                   <div className="flex select-none flex-col gap-1">
@@ -707,7 +707,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                           value={count}
                           onChange={(e) => setCount(clampCatalogCount(e.target.value, count))}
                           className="w-14 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-500"
-                          aria-label="How many posts to list"
+                          aria-label="Posts to list"
                         />
                         {COUNT_PRESETS.map((n) => (
                           <button
@@ -732,7 +732,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
               <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-3">
                 <div className="pointer-events-auto w-full max-w-xl rounded-2xl border border-zinc-700 bg-zinc-900 px-3 py-3">
                   <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-zinc-400">
-                    <span>{selected.size} selected · click a row, shift-click a range</span>
+                    <span>{selected.size} selected</span>
                     <button
                       type="button"
                       onClick={() => setSelected(new Set())}
@@ -757,7 +757,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                       onClick={() => void pull("now")}
                       className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
                     >
-                      {busy === "pull" ? "Running…" : `Run ${selected.size}`}
+                      {busy === "pull" ? "Analyzing…" : `Analyze ${selected.size}`}
                     </button>
                   </div>
                 </div>
@@ -959,7 +959,7 @@ function CatalogRow({
             </span>
           ) : null}
         </p>
-        <p className="truncate text-xs text-zinc-500">{row.captionPreview || "No caption"}</p>
+        <p className="truncate text-xs text-zinc-500">{row.captionPreview || "No post description"}</p>
         <p className="text-[11px] text-zinc-600">
           {row.takenAt ? `${fmtDate(row.takenAt)} · ${fmtAgeSince(row.takenAt)} old` : "Date unknown"}
         </p>
@@ -1025,7 +1025,7 @@ function RepostCluster({
             onClick={onStack}
             className="text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
           >
-            Stack these
+            New topic
           </button>
         )}
       </div>
