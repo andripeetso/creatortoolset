@@ -521,7 +521,6 @@ export function ChatPane({
                     {m.text ? (
                       <div>
                         <LiveReply text={m.text} />
-                        <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
                       </div>
                     ) : null}
                     {m.steps?.length ? <Steps steps={stepRows(m.steps, now)} working /> : null}
