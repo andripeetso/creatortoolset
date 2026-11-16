@@ -14,7 +14,6 @@ const ELSEWHERE = [
   "pages/library/UploadSelect.tsx",
   "pages/LibraryStorage.tsx",
   "pages/LibraryWatchFolders.tsx",
-  "components/setup/HelperStep.tsx",
 ];
 const files = [
   ...readdirSync(dir)
@@ -34,13 +33,7 @@ const BANNED: Array<[RegExp, string]> = [
 
 /** Screens not yet rewritten to the standard: the list only shrinks, and a new screen never goes on it. */
 const NOT_YET = new Set([
-  "components/settings/AccessKeys.tsx",
-  "components/settings/ComputersSection.tsx",
-  "components/settings/OwnAiSection.tsx",
-  "components/settings/ProvidersSection.tsx",
-  "components/settings/UsageSection.tsx",
   "pages/library/LibrarySettings.tsx",
-  "components/setup/HelperStep.tsx",
 ]);
 
 const offences = (file: string): string[] =>

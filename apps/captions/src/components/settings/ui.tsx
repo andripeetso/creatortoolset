@@ -18,6 +18,7 @@
  *   saveFailed   the toast for a failed save                              kit-controls.tsx
  *   FormDialog   small form dialog shell (title, fields, one button)      kit-dialog.tsx
  *   PageAction   a button in the page header (page-action.tsx)
+ *   CopyBox      a line to copy (a command, a link), with its Copy button    copy-box.tsx
  *   WorkspacePick / WorkspaceTag / useSettingsWorkspace / inWorkspace / moveItems
  *                the workspace selector in the page header, a row's workspace, and the hooks (workspace-pick.tsx)
  *   legacy       Group, Footnote, Dot, Notice, Loading, ModelSelect, EffortSelect (legacy.tsx, deprecated)
@@ -29,4 +30,5 @@ export * from "./kit-controls";
 export * from "./kit-dialog";
 export * from "./legacy";
 export { PageAction } from "./page-action";
+export { CopyBox } from "./copy-box";
 export { ALL_WORKSPACES, WorkspacePick, WorkspaceTag, inWorkspace, moveItems, useSettingsWorkspace, type SettingsWorkspace } from "./workspace-pick";

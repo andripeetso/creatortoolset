@@ -43,7 +43,7 @@ export function OwnAiStep({ into }: { into?: HTMLElement | null }) {
 
 function OwnAiRows({ keys, local, error, load, disconnect }: ReturnType<typeof useOwnAiSaved>) {
   if (!local || !keys)
-    return <Card>{error ? <ErrorRow title="Couldn't load your AI apps" detail={error} retry={load} /> : <LoadingRow />}</Card>;
+    return <Card>{error ? <ErrorRow title="Could not load AI apps" detail={error} retry={load} /> : <LoadingRow />}</Card>;
   if (!local.local)
     return (
       <Card>

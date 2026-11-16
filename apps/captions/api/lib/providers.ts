@@ -210,7 +210,7 @@ export function modelsFor(inst: ProviderInstance): string[] {
 function parseSelection(raw: unknown, instances: ProviderInstance[], what: string): Selection {
   const s = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const inst = instances.find((i) => i.id === s.instance);
-  if (!inst) throw new Error(`${what}: choose one of the AIs`);
+  if (!inst) throw new Error(`${what}: choose an AI provider`);
   // "" = the tool's own default model (a tool with no list of models here)
   if (typeof s.model !== "string" || (s.model !== "" && !MODEL_RE.test(s.model))) throw new Error(`${what}: that model name is not valid`);
   if (!isEffort(s.effort)) throw new Error(`${what}: choose a thinking level`);
