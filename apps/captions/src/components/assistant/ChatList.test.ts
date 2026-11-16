@@ -17,7 +17,7 @@ describe("groupChats", () => {
   it("what asks you first, then what works, then the rest: what finished unseen, the others; a chat nothing was said in is not listed", () => {
     const { groups, settled } = groupChats(chats);
     expect(groups.map((g) => [g.name, g.chats.map((c) => c.id)])).toEqual([
-      ["Needs an answer", ["asks"]],
+      ["Needs you", ["asks"]],
       ["Working", ["working"]],
       ["Recent", ["done", "plain", "read"]],
     ]);

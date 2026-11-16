@@ -931,7 +931,7 @@ export function AssistantDock() {
                 // the new-chat screen: the question, what this chat is to work on (something new, or a thing in the
                 // works), then the message box. The row keeps its height while the list of work is read
                 <div className="flex flex-col items-center pb-5">
-                  <h3 className="text-center text-3xl font-normal tracking-tight text-balance">New chat</h3>
+                  <h3 className="text-center text-3xl font-normal tracking-tight text-balance">What should we make?</h3>
                   <div className="mt-2 flex h-7 max-w-full items-center gap-2">
                     <NewChatWorkspace />
                     <WorkPicker />

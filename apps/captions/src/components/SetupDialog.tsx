@@ -75,17 +75,17 @@ import { cn } from "@/lib/utils";
 
 /** Each screen: its title and the line under it (none on the two that need none). The first five are the path, with `own` after them for an own-AI answer; the rest open alone from a `?setup=` link. */
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
-  theme: { title: "Theme", hint: "" },
-  job: { title: "First task", hint: "" },
+  theme: { title: "Pick your look", hint: "" },
+  job: { title: "What do you want to do first?", hint: "" },
   agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT, Claude, Google, Grok or Meta plan you already have." },
-  make: { title: "Content types", hint: "Sets which tools are turned on." },
-  connect: { title: "Computers and phones", hint: "Add a phone or another computer." },
+  make: { title: "What do you make?", hint: "Sets which tools are turned on." },
+  connect: { title: "Connect your computers", hint: "Add a phone or another computer." },
   folders: {
-    title: "Folders",
+    title: "Where are your videos?",
     hint: "The folders with footage and music, read by the AI Editor and the Media Library.",
   },
-  how: { title: "Way of working", hint: "" },
-  own: { title: "AI apps", hint: "Installs Creator Toolset in the AI apps on this computer." },
+  how: { title: "How do you work best?", hint: "" },
+  own: { title: "Add Creator Toolset to an AI app", hint: "Installs Creator Toolset in the AI apps on this computer." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
   account: { title: "Account", hint: "" },
   // titled with the other computer's name when there is one (SetupDialog)
@@ -332,7 +332,7 @@ export function SetupDialog() {
           )}
         >
           {step === "theme" && (
-            <div role="radiogroup" aria-label="Theme" className="grid gap-4 sm:grid-cols-3">
+            <div role="radiogroup" aria-label="Pick your look" className="grid gap-4 sm:grid-cols-3">
               {LOOK_CHOICES.map((o) => (
                 <PictureCard key={o.id} on={theme.choice === o.id} onClick={() => theme.setChoice(o.id)} art={<LookArt look={o.id} />} name={o.name} />
               ))}
@@ -343,7 +343,7 @@ export function SetupDialog() {
 
           {step === "make" && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-3" role="group" aria-label="Content types">
+              <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-3" role="group" aria-label="What do you make?">
                 {MAKES.map((m) => (
                   <Choice key={m} dense multi on={!notSure && makes.includes(m)} onClick={() => toggleMake(m)} icon={MAKE_ICONS[m]} name={MAKE_NAMES[m]} />
                 ))}

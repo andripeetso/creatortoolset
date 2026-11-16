@@ -276,14 +276,14 @@ export default function MobileInstagramPage() {
                 className="flex min-h-11 items-center gap-1.5 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white active:bg-violet-500 disabled:opacity-50"
               >
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                {crawlNow ? "Run" : "Save"}
+                {crawlNow ? "Analyze" : "Save"}
               </button>
             </div>
           </div>
           {!crawlNow && avail ? (
             <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-amber-400/90">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Needs an Apify key to run: the links are saved until then.
+              Needs an Apify key: the links are saved until then.
             </p>
           ) : null}
           {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}

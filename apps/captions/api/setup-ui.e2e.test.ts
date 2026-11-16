@@ -157,7 +157,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     expect(await dialog.getByRole("checkbox").count()).toBe(0);
 
     await pastAi(dialog);
-    await screen(dialog, "Content types", "2 of 2");
+    await screen(dialog, "What do you make?", "2 of 2");
     await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
     await plain(dialog);
     await shot(page, "2-make");
@@ -173,7 +173,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await dialog.getByRole("button", { name: "Back" }).click();
     await screen(dialog, "Connect your AI", "1 of 2");
     await pastAi(dialog);
-    await screen(dialog, "Content types", "2 of 2");
+    await screen(dialog, "What do you make?", "2 of 2");
     expect(await dialog.getByRole("checkbox", { name: /Short videos/ }).isChecked()).toBe(true);
 
     // Done makes the first project, with no form (named after the one thing picked), ends setup and lands on Home:
@@ -197,7 +197,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
       await page.goto(url("/?setup=start"));
       await screen(dialog, "Connect your AI", "1 of 2");
       await pastAi(dialog);
-      await screen(dialog, "Content types", "2 of 2");
+      await screen(dialog, "What do you make?", "2 of 2");
       await plain(dialog);
       await dialog.getByRole("button", { name: "Done", exact: true }).click();
       await dialog.waitFor({ state: "hidden" });
@@ -211,7 +211,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
 
   it("old links land on the screen they now belong to", async () => {
     const { page, dialog, close } = await open();
-    for (const [id, title, count] of [["done", "Content types", "2 of 2"], ["try", "Content types", "2 of 2"], ["project", "Content types", "2 of 2"], ["ai", "Connect your AI", "1 of 2"]] as const) {
+    for (const [id, title, count] of [["done", "What do you make?", "2 of 2"], ["try", "What do you make?", "2 of 2"], ["project", "What do you make?", "2 of 2"], ["ai", "Connect your AI", "1 of 2"]] as const) {
       await page.goto(url(`/?setup=${id}`));
       await screen(dialog, title, count);
     }
@@ -222,7 +222,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     const { page, dialog, scans, close } = await open();
     // from a link: the join form opens alone
     await page.goto(url("/?setup=connect"));
-    await screen(dialog, "Computers and phones", null);
+    await screen(dialog, "Connect your computers", null);
     expect(await dialog.getByRole("button", { name: /^(Back|Continue)$/ }).count()).toBe(0);
     // a pasted link that is not another server's link is refused on this server before anything is fetched
     await dialog.getByRole("button", { name: "Add another computer" }).click();
@@ -235,7 +235,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
 
     // the same for the way of working
     await page.goto(url("/?setup=how"));
-    await screen(dialog, "Way of working", null);
+    await screen(dialog, "How do you work best?", null);
     expect(await dialog.getByRole("radio").count()).toBe(3);
     await dialog.getByRole("button", { name: "Done" }).click();
     await dialog.waitFor({ state: "hidden" });
@@ -255,7 +255,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
       await screen(dialog, "Connect your AI", "1 of 2");
       await fits("1-ai");
       await pastAi(dialog);
-      await screen(dialog, "Content types", "2 of 2");
+      await screen(dialog, "What do you make?", "2 of 2");
       await fits("2-make");
       await close();
     }, 120_000);

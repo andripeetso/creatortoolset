@@ -22,7 +22,7 @@ import { timeAgo } from "@/lib/exports";
 function statusLine(post: InstagramPost, health: PostHealth): string {
   switch (health) {
     case "failed":
-      return post.error || "Run failed";
+      return post.error || "Could not analyze";
     case "stuck":
       return `Stuck since ${timeAgo(post.updatedAt)}`;
     case "partial": {
@@ -30,11 +30,11 @@ function statusLine(post: InstagramPost, health: PostHealth): string {
       return `Part failed${bad ? ` (${bad.type})` : ""}${bad?.error ? `: ${bad.error}` : ""}`;
     }
     case "waiting":
-      return "Not run";
+      return "Not analyzed";
     case "working": {
       const pct = Math.round(Math.max(0, Math.min(1, post.progress)) * 100);
-      if (post.step === "queued") return "Queued";
-      return pct ? `Running · ${pct}%` : "Running";
+      if (post.step === "queued") return "Waiting";
+      return pct ? `Analyzing · ${pct}%` : "Analyzing";
     }
     default:
       return post.pulledAt ? timeAgo(post.pulledAt) : "Saved";
@@ -110,7 +110,7 @@ export function MobileAnalyzerLibrary({ posts, known, onChanged }: { posts: Inst
             className="flex min-h-8 items-center gap-1 rounded-md bg-amber-500/20 px-2.5 text-[12px] font-medium active:bg-amber-500/30 disabled:opacity-50"
           >
             {running.size > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
-            Run all
+            Analyze all
           </button>
         </div>
       )}
@@ -230,7 +230,7 @@ function PostRow({ post, running, onOpen, onRun }: { post: InstagramPost; runnin
         </p>
       </div>
     </button>
-    {needsRun(health) && <RunButton running={running} onRun={onRun} label={health === "waiting" ? "Run" : "Retry"} />}
+    {needsRun(health) && <RunButton running={running} onRun={onRun} label={health === "waiting" ? "Analyze" : "Retry"} />}
     </div>
   );
 }

@@ -88,7 +88,7 @@ export function groupChats(chats: AssistantChat[], query = ""): { groups: ChatGr
   return {
     groups: [
       { name: "Pinned", chats: here.filter((c) => c.pinned).sort((a, b) => b.pinned! - a.pinned!) },
-      { name: "Needs an answer", chats: loose.filter((c) => c.asks) },
+      { name: "Needs you", chats: loose.filter((c) => c.asks) },
       { name: "Working", chats: loose.filter((c) => !c.asks && c.working) },
       { name: "Recent", chats: [...rest.filter(done), ...rest.filter((c) => !done(c))] },
     ].filter((g) => g.chats.length),

@@ -69,7 +69,7 @@ export function PictureCard({ on, onClick, art, name, what }: { on: boolean; onC
 /** Setup's question about where they talk to the AI (work-prefs `talk`). Three cards side by side, each a picture of it. */
 export function HowPicker({ value, onChange }: { value: Talk; onChange: (v: Talk) => void }) {
   return (
-    <div role="radiogroup" aria-label="Way of working" className="grid gap-4 sm:grid-cols-3">
+    <div role="radiogroup" aria-label="How do you work best?" className="grid gap-4 sm:grid-cols-3">
       {WAYS.map((w) => (
         <PictureCard key={w.talk} on={w.talk === value} onClick={() => onChange(w.talk)} art={<w.art />} name={w.name} what={w.what} />
       ))}
