@@ -9,6 +9,20 @@ import { videoPlace } from "./library/LibrarySettings";
 // Storage in the library's settings: where nothing can change there is no choice that does nothing (the rows say where
 // the files are, videoPlace); where it can change, the choice is there.
 
+// the kit's select as a plain one, so a test can read its options
+vi.mock("@/components/settings/kit-controls", async (orig) => ({
+  ...(await orig<object>()),
+  SettingsSelect: ({ label, value, options, onValueChange }: { label: string; value: string; options: { value: string; label: string }[]; onValueChange: (v: string) => void }) => (
+    <select aria-label={label} value={value} onChange={(e) => onValueChange(e.target.value)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | undefined;
@@ -31,31 +45,44 @@ async function render(s: LibraryStorage, onThisComputer = true) {
 }
 
 const local: LibraryStorage = { kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] };
+const uploadOf = (el: HTMLElement) => el.querySelector('select[aria-label="Upload to the server"]') as HTMLSelectElement;
 
 describe("library storage", () => {
   it("a library holding files on a server: no dead choices", async () => {
     const el = await render(local, false);
     expect(el.textContent).toBe("Storage");
-    expect(el.querySelectorAll("input, button")).toHaveLength(0);
+    expect(el.querySelectorAll("input, button, select")).toHaveLength(0);
   });
 
   it("a library holding files on this computer: its proxies may still go to the cloud, its originals may not", async () => {
-    const el = await render(local);
-    const radio = (text: string) => [...el.querySelectorAll("label")].find((l) => l.textContent === text)!.querySelector("input")!;
-    expect(radio("Off").checked).toBe(true);
-    expect(radio("Proxies only").disabled).toBe(false);
-    expect(radio("Video files and proxies").disabled).toBe(true);
+    const upload = uploadOf(await render(local));
+    expect(upload.value).toBe("none");
+    // what cannot be chosen is not offered
+    expect([...upload.options].map((o) => o.textContent)).toEqual(["Off", "Proxies only"]);
   });
 
   it("proxies in a bucket: their choice is the one picked", async () => {
     const el = await render({ ...local, proxies: { kind: "bunny", zone: "tiny-proxies", keysSet: true }, storedBytes: 2e9, days: [] });
-    expect(([...el.querySelectorAll("label")].find((l) => l.textContent === "Proxies only")!.querySelector("input") as HTMLInputElement).checked).toBe(true);
+    expect(uploadOf(el).value).toBe("proxies");
   });
 
   it("an empty library: the choice and Save", async () => {
     const el = await render({ ...local, locked: false });
-    expect(el.querySelectorAll('input[type="radio"]').length).toBeGreaterThan(1);
+    expect([...uploadOf(el).options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Video files and proxies"]);
     expect(el.textContent).toContain("Save");
+  });
+
+  it("the cloud copy and where it goes are the Settings rows, one control for the upload choice", async () => {
+    const el = await render({ ...local, locked: false, serverBucket: true });
+    expect(el.querySelector('select[aria-label="Location"]')).toBeNull();
+    await act(async () => {
+      uploadOf(el).value = "proxies";
+      uploadOf(el).dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const where = el.querySelector('select[aria-label="Location"]') as HTMLSelectElement;
+    expect(where.value).toBe("server");
+    expect([...where.options].map((o) => o.textContent)).toEqual(["The server's bucket", "Bunny Storage", "Amazon S3 or Cloudflare R2"]);
+    expect(el.querySelectorAll('input[type="radio"], select:not([aria-label])')).toHaveLength(0);
   });
 });
 

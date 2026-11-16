@@ -281,8 +281,8 @@ describe("Instagram login reader", () => {
   it("reads nothing for an Instagram account with no login: no Graph call, and no other reader takes it", async () => {
     const seen: URL[] = [];
     fakeGraph(seen);
-    await expect(pullAccount({ ...ig, token: undefined }, "tinyacrobatics")).rejects.toThrow("Connect this Instagram account with its login");
-    await expect(pullAccount({ ...ig, via: "apify", token: undefined }, "tinyacrobatics")).rejects.toThrow("Connect this Instagram account with its login");
+    await expect(pullAccount({ ...ig, token: undefined }, "tinyacrobatics")).rejects.toThrow("Needs the Instagram account's sign-in");
+    await expect(pullAccount({ ...ig, via: "apify", token: undefined }, "tinyacrobatics")).rejects.toThrow("Needs the Instagram account's sign-in");
     expect(seen).toHaveLength(0);
   });
 });
@@ -370,7 +370,7 @@ describe("Business Discovery reader", () => {
     vi.stubEnv("INSTAGRAM_BUSINESS_DISCOVERY", "");
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-    await expect(pullAccount(byHandle, "owner")).rejects.toThrow("Connect this Instagram account with its login to read it");
+    await expect(pullAccount(byHandle, "owner")).rejects.toThrow("Needs the Instagram account's sign-in");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

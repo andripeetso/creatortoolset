@@ -5,98 +5,109 @@ import { NEEDS, type Collection, type ImportMode, type LibraryEstimate, type Lib
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Card, ListRow, Row, Section, SettingsSelect, StatusDot } from "@/components/settings/ui";
+import { Card, ListRow, Row, Section, SettingsSelect, Status } from "@/components/settings/ui";
 import type { Organize } from "@contracts/library";
 import { CopyTo, folderName } from "@/components/LibraryProcessing";
-import { ORGANIZE } from "./Organize";
+import { FOLDER_NAMES } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
-import { addFrom, copyAvailable, copyRoot, IMPORT_MODES, lookForNew, NEEDS_MAC } from "./Import";
+import { addFrom, copyAvailable, copyRoot, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
  * The Media Library's settings (the owner's: the places and where the files are kept are theirs only), behind one
- * button beside its search and as Settings → Media Library (the same body, LibrarySettingsBody): how files are added
- * and the places they came from (./Import.tsx) with Look for new files, the footage folders on the server's own
- * computer, what uploads to the server, how the library is sorted (./Organize.tsx), storage with the space the
- * library's own made files take, the two AI switches, each saying where it runs, and Redo for every clip. The button
- * carries an amber dot while a folder or clip is not found.
+ * button beside its search and as Settings → Media Library (the same body, LibrarySettingsBody). Files: how files are
+ * imported and the places they came from (./Import.tsx) with Look for new files, and how the library is sorted
+ * (./Organize.tsx). The footage folders on the server's own computer (the library's own sheet only: in Settings they
+ * are the Folders page's). Storage: where the files are, what uploads to the server, and the space the library's own
+ * made files take. The AI switches, each saying where it runs, and Redo for all clips. The button carries an amber dot
+ * while a folder or clip is not found.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Where a step runs, in the words of the progress line (LibraryProcessing stepLine); "off" and "none" say nothing here. */
 const WHERE: Partial<Record<LibraryStepRoute, string>> = {
-  provider: "your connected AI",
-  api: "your Anthropic key",
-  budget: "your team's AI budget",
+  provider: "the AI provider",
+  api: "the Anthropic key",
+  budget: "the team budget",
   device: "this computer",
   server: "this server",
-  openai: "your OpenAI key",
+  openai: "the OpenAI key",
 };
 
-/** What each switch gives the person, before where it runs. */
+/** What each switch adds, before where it runs. */
 const WHAT: Record<"describe" | "look" | "embed", string> = {
-  describe: "So search finds what happens on screen, not only what is said",
-  look: "A line for each shot of a longer video, so a search opens it at the moment",
-  embed: "A search for \"beach\" also finds \"sand and waves\"",
+  describe: "What is on screen in each video, written down for search.",
+  look: "A line for each shot of a longer video.",
+  embed: "Search matches by meaning as well as by exact words.",
 };
+
+/** The two ways a file is imported, in the words of these settings (the add dialog asks the same in its own, ./Import.tsx). */
+const IMPORT: { value: ImportMode; label: string; detail: string; was: string }[] = [
+  { value: "in-place", label: "Keep in place", detail: "Files are read where they are.", was: "Kept in place" },
+  { value: "copy", label: "Copy into the library", detail: "Files are copied into the library's Footage, Audio and Pictures folders.", was: "Copied into the library" },
+];
+
+/** How the library is sorted into folders, in the words of these settings (the first upload asks the same, ./Organize.tsx). */
+const SORTING: { value: Organize; label: string; detail: string }[] = [
+  { value: "default", label: "Usual folders", detail: `The library has the folders ${FOLDER_NAMES}.` },
+  { value: "ai", label: "Folders by AI", detail: "Folders are made to fit the footage, and each new file is filed in one." },
+  { value: "own", label: "No folders", detail: "Files stay in one list." },
+];
 
 /** A footage folder or a clip the library cannot find: the page's More button carries a dot. */
 export const needsAttention = (watch: WatchStatus) => watch.missing > 0 || watch.folders.some((f) => !f.found);
 
-/** Library settings, a sheet on the right; the page's More menu opens it. */
-export function LibrarySettings({
-  open,
-  onOpenChange,
-  library,
-  watch,
-  folders,
-  onChange,
-  onError,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface BodyProps {
   library: LibrarySummary;
   watch: WatchStatus;
   /** the library's manual folders, for a footage folder's "into" */
   folders: Collection[];
   onChange: (l: LibrarySummary) => void;
   onError: (e: string) => void;
-}) {
+}
+
+/** Library settings, a sheet on the right; the page's More menu opens it by that name. */
+export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-lg">
         {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
         <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
           <SheetTitle className="text-base">Library settings</SheetTitle>
-          <LibrarySettingsBody library={library} watch={watch} folders={folders} onChange={onChange} onError={onError} />
+          <LibrarySettingsBody {...body} />
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-/** The settings themselves, in the sheet and in Settings → Media Library. */
-export function LibrarySettingsBody({ library, watch, folders, onChange, onError }: { library: LibrarySummary; watch: WatchStatus; folders: Collection[]; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+/**
+ * The settings themselves, in the sheet and in Settings → Media Library. `inSettings`: what Settings → Folders owns is
+ * left out (the footage folders, and the folder a copy goes into).
+ */
+export function LibrarySettingsBody({ library, watch, folders, onChange, onError, inSettings }: BodyProps & { inSettings?: boolean }) {
   return (
     <>
-      <AddingFiles library={library} watch={watch} onChange={onChange} onError={onError} />
-      {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
-      {/* on the server's own computer the same choice is the cloud copy, under Storage */}
-      {!watch.allowed && (
-        <Section title="Upload">
-          <Card>
-            <UploadSelect library={library} onChange={onChange} onError={onError} />
-          </Card>
-        </Section>
-      )}
-      <OrganizeRow library={library} onChange={onChange} onError={onError} />
-      <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
+      <Section title="Files">
+        <Card>
+          <ImportRows library={library} watch={watch} onChange={onChange} onError={onError} inSettings={inSettings} />
+          <SortingRow library={library} onChange={onChange} onError={onError} />
+        </Card>
+      </Section>
+      {watch.allowed && !inSettings && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
+      {/* Upload to the server: with the server elsewhere the library's own setting; on its own computer the cloud copy */}
+      <LibraryStorageSettings
+        libraryId={library.id}
+        onThisComputer={watch.allowed}
+        onSaved={(storage) => onChange({ ...library, storage })}
+        upload={<UploadSelect library={library} onChange={onChange} onError={onError} />}
+      >
         {(saved) => <SpaceRows library={library} saved={saved} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />}
       </LibraryStorageSettings>
       <AiSwitches library={library} onChange={onChange} onError={onError} />
@@ -105,15 +116,13 @@ export function LibrarySettingsBody({ library, watch, folders, onChange, onError
   );
 }
 
-const MODE_WORDS: Record<ImportMode, string> = { "in-place": "Used where they are", copy: "Copied into the library" };
-
 /**
- * How files are added (asked on the first add, ./Import.tsx), where copies go, the places files came from (each with
+ * How files are imported (asked on the first add, ./Import.tsx), where copies go, the places files came from (each with
  * how it was taken, and Remove: the next add from there asks again), and Look for new files: from the Mac app with the
- * server elsewhere each place used where it is is read again on this Mac; on the server's own computer its footage
+ * server elsewhere each place kept in place is read again on this Mac; on the server's own computer its footage
  * folders are looked at now. Not shown in a browser with the server elsewhere, where files upload.
  */
-function AddingFiles({ library, watch, onChange, onError }: { library: LibrarySummary; watch: WatchStatus; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<BodyProps, "library" | "watch" | "onChange" | "onError"> & { inSettings?: boolean }) {
   const [line, setLine] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const from = addFrom(watch.allowed);
@@ -135,8 +144,8 @@ function AddingFiles({ library, watch, onChange, onError }: { library: LibrarySu
         // the footage folders saved again as they are: the server looks at them at once
         const folders = watch.folders.map(({ path, mode, collectionId, copyTo }) => ({ path, mode, collectionId, copyTo }));
         const r = await fetch(`/api/library/${library.id}/watch`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folders }) });
-        if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Couldn't look (${r.status})`);
-        setLine("Looking now: new files show up as they are found");
+        if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Could not look for new files (${r.status})`);
+        setLine("Looking for new files…");
       } else {
         const n = await lookForNew(library, setLine);
         setLine(n ? `${n.toLocaleString()} new ${n === 1 ? "file" : "files"} added` : "No new files");
@@ -153,70 +162,62 @@ function AddingFiles({ library, watch, onChange, onError }: { library: LibrarySu
     if (picked) await save({ copyTo: picked });
   };
   return (
-    <Section title="Adding files">
-      <Card>
+    <>
+      <Row
+        id="library-adding"
+        title="Import"
+        description={IMPORT.find((o) => o.value === (copyOk ? mode : "in-place"))?.detail}
+        status={!copyOk && <Status>Copy needs the latest Mac app</Status>}
+        control={<SettingsSelect label="Import" value={mode} options={copyOk ? IMPORT : IMPORT.filter((o) => o.value === mode || o.value === "in-place")} onValueChange={(v) => void save({ importMode: v as ImportMode })} />}
+      />
+      {mode === "copy" && copyOk && !inSettings && (
         <Row
-          id="library-adding"
-          title="How files come in"
-          description={copyOk ? IMPORT_MODES.find((o) => o.value === mode)?.detail : `${IMPORT_MODES[0]!.detail}. Copying them: ${NEEDS_MAC.toLowerCase()}`}
+          title="Library folder"
+          description={<CopyTo path={from === "here" && watch.copyTo ? watch.copyTo : copyRoot(library)} />}
           control={
-            <SettingsSelect
-              label="How files come in"
-              value={mode}
-              options={copyOk ? IMPORT_MODES : IMPORT_MODES.filter((o) => o.value === "in-place")}
-              onValueChange={(v) => void save({ importMode: v as ImportMode })}
-            />
+            from === "here" ? (
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/settings/folders">Change</Link>
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => void change()}>
+                Change
+              </Button>
+            )
           }
         />
-        {mode === "copy" && copyOk && (
-          <Row
-            title="Library folder"
-            description={<CopyTo path={from === "here" && watch.copyTo ? watch.copyTo : copyRoot(library)} />}
-            control={
-              from === "here" ? (
-                <Button size="sm" variant="outline" asChild>
-                  <Link to="/settings/folders">Change</Link>
-                </Button>
-              ) : (
-                <Button size="sm" variant="outline" onClick={() => void change()}>
-                  Change
-                </Button>
-              )
-            }
-          />
-        )}
-        {places.map((p) => (
-          <ListRow
-            key={p.path}
-            icon={<Folder />}
-            title={folderName(p.path)}
-            subtitle={<span title={p.path}>{MODE_WORDS[p.mode]} · {p.path}</span>}
-            actions={
-              <Button size="sm" variant="ghost" onClick={() => void save({ places: (library.settings.places ?? []).filter((x) => x.path !== p.path) })}>
-                Remove
-              </Button>
-            }
-          />
-        ))}
-        {canLook && (
-          <Row
-            id="library-look"
-            title="New files in these places"
-            description={line}
-            control={
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void look()}>
-                Look for new files
-              </Button>
-            }
-          />
-        )}
-      </Card>
-    </Section>
+      )}
+      {places.map((p) => (
+        <ListRow
+          key={p.path}
+          icon={<Folder />}
+          title={folderName(p.path)}
+          subtitle={<span title={p.path}>{IMPORT.find((o) => o.value === p.mode)?.was} · {p.path}</span>}
+          actions={
+            <Button size="sm" variant="ghost" onClick={() => void save({ places: (library.settings.places ?? []).filter((x) => x.path !== p.path) })}>
+              Remove
+            </Button>
+          }
+        />
+      ))}
+      {canLook && (
+        <Row
+          id="library-look"
+          title="New files"
+          status={line && <Status>{line}</Status>}
+          control={
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void look()}>
+              Look for new files
+            </Button>
+          }
+        />
+      )}
+    </>
   );
 }
 
-/** The two AI switches (api/library/db.ts SETTING_DEFAULTS): each says where it runs for this account, read from the server's own routes (the estimate). */
-function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+/** The AI switches (api/library/db.ts SETTING_DEFAULTS): each says where it runs for this account, read from the server's own routes (the estimate). */
+function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError">) {
   const [routes, setRoutes] = useState<LibraryEstimate["steps"] | null>(null);
   const { describe, look, embed } = library.settings;
   useEffect(() => {
@@ -235,67 +236,58 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
   const where = (step: LibraryStep) => {
     const s = routes?.find((r) => r.step === step);
     if (!s || s.route === "off") return null;
-    // what needs the person, in a few words, with the page that gives it
+    // what is missing, in a few words, with the page that has it
     if (s.route === "none")
       return (
-        <span className="flex items-baseline gap-1.5">
-          <StatusDot tone="attention" />
+        <Status tone="attention">
           <Link to={NEEDS[step].href} className="underline-offset-4 hover:underline">
             Needs {NEEDS[step].needs}
           </Link>
-        </span>
+        </Status>
       );
-    return WHERE[s.route] ? `Uses ${WHERE[s.route]}` : null;
+    return WHERE[s.route] ? <Status>Uses {WHERE[s.route]}</Status> : null;
   };
   const row = (key: "describe" | "look" | "embed", step: LibraryStep, title: string) => (
     <Row
       title={title}
-      // where search by meaning runs: the "meaning" worker's key-free route answers "device" here ("Uses this computer")
-      description={
-        <span className="flex flex-col gap-0.5">
-          <span>{WHAT[key]}</span>
-          {library.settings[key] && where(step)}
-        </span>
-      }
+      description={WHAT[key]}
+      // where search by meaning runs: the "meaning" worker's key-free route says "device" here ("Uses this computer")
+      status={library.settings[key] && where(step)}
       control={<Switch aria-label={title} checked={library.settings[key]} onCheckedChange={(on) => void flip(key, on)} />}
     />
   );
   return (
     <Section id="library-ai" title="AI">
       <Card>
-        {row("describe", "describe", "Write down what is in each video")}
+        {row("describe", "describe", "Descriptions")}
         {row("look", "look", "Shot descriptions")}
-        {row("embed", "embed", "Search by meaning, not exact words")}
+        {row("embed", "embed", "Search by meaning")}
       </Card>
     </Section>
   );
 }
 
 /** How the library sorts files into folders (the first upload's question, ./Organize.tsx); a library never asked shows No folders. */
-function OrganizeRow({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+function SortingRow({ library, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError">) {
   const value = library.settings.organize ?? "own";
   return (
-    <Section title="Sorting">
-      <Card>
-        <Row
-          id="library-sorting"
-          title="Folders"
-          description={ORGANIZE.find((o) => o.value === value)?.detail}
-          control={
-            <SettingsSelect
-              label="Folders"
-              value={value}
-              options={ORGANIZE}
-              onValueChange={(v) =>
-                void updateLibrary(library.id, { settings: { organize: v as Organize } })
-                  .then(onChange)
-                  .catch((e) => onError(message(e)))
-              }
-            />
+    <Row
+      id="library-sorting"
+      title="Sorting"
+      description={SORTING.find((o) => o.value === value)?.detail}
+      control={
+        <SettingsSelect
+          label="Sorting"
+          value={value}
+          options={SORTING}
+          onValueChange={(v) =>
+            void updateLibrary(library.id, { settings: { organize: v as Organize } })
+              .then(onChange)
+              .catch((e) => onError(message(e)))
           }
         />
-      </Card>
-    </Section>
+      }
+    />
   );
 }
 
@@ -326,11 +318,11 @@ export function videoPlace(v: LibrarySpace["videos"], o: { saved: LibraryStorage
 }
 
 /**
- * Where the files are, and what the library makes (api/library/space.ts): the videos, the proxies switch and what they take with Clear, the thumbnails, and the downloaded speech
- * and search models with Clear. The person's own files are never cleared. Proxies kept in the cloud (one for every
- * video) have no switch and no Clear: both would do nothing there.
+ * Where the files are, and what the library makes (api/library/space.ts): the videos, the proxies switch, the proxy
+ * files with what they take and Clear, and the downloaded speech and search models with Clear. The person's own files are
+ * never cleared. Proxies kept in the cloud (one for every video) have no switch and no Clear: both would do nothing there.
  */
-function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { library: LibrarySummary; saved: LibraryStorage | null; onThisComputer: boolean; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+function SpaceRows({ library, saved, onThisComputer, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; onThisComputer: boolean }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
   const cloud = saved?.proxies ?? null;
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
@@ -338,8 +330,8 @@ function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { libr
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
       what === "proxies"
-        ? { title: "Clear the proxies?", body: `They take ${size(bytes)}. Each is generated again when a clip that needs one is opened. Your own footage is not touched.`, ok: "Clear" }
-        : { title: "Clear the speech and search models?", body: `They take ${size(bytes)} and download again the next time they are needed. Your own footage is not touched.`, ok: "Clear" },
+        ? { title: "Clear the proxy files?", body: `${size(bytes)} of proxy files are removed. The video files are not deleted.`, ok: "Clear" }
+        : { title: "Clear the speech and search models?", body: `${size(bytes)} of models are removed.`, ok: "Clear" },
     );
     if (!ok) return;
     await clearLibrarySpace(library.id, what).catch((e: unknown) => onError(message(e)));
@@ -356,26 +348,23 @@ function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { libr
       {!cloud && (
         <Row
           id="library-proxies"
-          title="Generate proxies"
-          description="Smaller copies of 4K, 10-bit and camera files, for smooth playback"
-          control={<Switch aria-label="Generate proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
+          title="Proxies"
+          description="Smaller copies of 4K, 10-bit and camera files, for smooth playback."
+          control={<Switch aria-label="Proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
         />
       )}
-      {space && (
+      {space && cloud && <Row title="Proxy files" description={`In ${storeName(cloud)}, ${size(saved?.storedBytes ?? 0)}`} />}
+      {space && !cloud && space.proxies.files > 0 && (
         <Row
-          title="Proxies"
-          description={cloud ? `In ${storeName(cloud)}, ${size(saved?.storedBytes ?? 0)}` : space.proxies.files ? size(space.proxies.bytes) : "None yet"}
+          title="Proxy files"
+          description={size(space.proxies.bytes)}
           control={
-            space.proxies.files > 0 &&
-            !cloud && (
-              <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
-                Clear
-              </Button>
-            )
+            <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
+              Clear
+            </Button>
           }
         />
       )}
-      {space && <Row title="Thumbnails" description={space.pictures.files ? size(space.pictures.bytes) : "None yet"} />}
       {space?.models && space.models.bytes > 0 && (
         <Row
           title="Speech and search models"
@@ -392,10 +381,10 @@ function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { libr
 }
 
 /**
- * Redo for every clip: descriptions, transcripts or search data made again for the whole library, on the person's own
- * AI. A press asks once more in its own row, saying how many clips it is, before anything runs.
+ * Redo for all clips: descriptions, transcripts or search data made again for the whole library, on the person's own
+ * AI provider. A press asks once more in its own row, saying how many clips it is, before anything runs.
  */
-function RedoAll({ library, onError }: { library: LibrarySummary; onError: (e: string) => void }) {
+function RedoAll({ library, onError }: Pick<BodyProps, "library" | "onError">) {
   const [asking, setAsking] = useState<{ kind: string; clips: number } | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const ask = (kind: string) =>
@@ -409,13 +398,13 @@ function RedoAll({ library, onError }: { library: LibrarySummary; onError: (e: s
       (e: unknown) => onError(message(e)),
     );
   return (
-    <Section title="Redo for every clip">
+    <Section title="All clips">
       <Card>
         {redoKinds(library.settings).map((r) => (
           <Row
             key={r.kind}
             title={r.label}
-            description={asking?.kind === r.kind ? (asking.clips === 1 ? "For 1 clip" : `For ${asking.clips} clips`) : done === r.kind ? "On its way" : null}
+            status={asking?.kind === r.kind ? <Status>{asking.clips === 1 ? "For 1 clip" : `For ${asking.clips} clips`}</Status> : done === r.kind ? <Status>Started</Status> : null}
             control={
               asking?.kind === r.kind ? (
                 <div className="flex gap-1.5">

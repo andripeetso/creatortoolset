@@ -14,7 +14,11 @@ import {
   type WorkshopProject,
 } from "@/lib/workshop";
 import { PROJECT_COLORS, projectColor, type ProjectColor } from "@/lib/workspace";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
+import { Card, Row, Section } from "@/components/settings/ui";
+import { cn } from "@/lib/utils";
 import { LanguageSelect } from "../LanguageSelect";
 import { CtMark } from "../CtMark";
 import { droppedFiles } from "../assistant/draft";
@@ -22,13 +26,18 @@ import { KnowledgePanel } from "./KnowledgePanel";
 
 const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes: "", accountId: null };
 
-const input =
-  "w-full rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500";
-
+/**
+ * The form's starting values. The old audience, voice and CTA fields are moved into the instructions, where they can be
+ * read and changed. The prompts still read those fields (api/lib/workshop/prompt.ts renderInstructions, review.ts
+ * audienceOf), so they are emptied only when their text is in the instructions whole: one the 20,000 limit would cut
+ * stays in its field, as it was.
+ */
 function fieldsFrom(initial?: WorkshopProject): ProjectFields {
   // knowledge lives in the account's Knowledge now (sources); the form never sends the old context files back
   const { knowledge: _old, ...cur } = initial ? { ...EMPTY, ...initial, accountId: initial.accountId ?? null } : EMPTY;
-  return { ...cur, notes: foldProjectInstructions(cur), audience: "", voice: "", cta: "" };
+  const notes = foldProjectInstructions(cur);
+  const whole = [cur.audience, cur.voice, cur.cta].every((v) => !v.trim() || notes.includes(v.trim()));
+  return whole ? { ...cur, notes, audience: "", voice: "", cta: "" } : cur;
 }
 
 /** Setup's payload: the name, the colour and the handles that have text. No accountId, so no Analyzer account and no fetch. */
@@ -63,11 +72,14 @@ const byFolder = (files: File[]) => {
 };
 
 /**
- * A project: name, colour, its accounts, the instructions always in the prompt (written for you from whatever you drop
- * in, if you like), the language of its videos and, once it is saved, its own context files (added and read here; every
- * AI in the workspace reads them, lib/workshop/context.ts). Which account-wide knowledge, frameworks and rules a project
- * uses is switched where they live (the Knowledge tab), not here: what it has switched off (`off`) goes back as it was. variant "setup" is
- * the first-run project step: name, colour, where it posts (handles only).
+ * A workspace's own settings: name, colour, the instructions always in the prompt (written from whatever is dropped in),
+ * the language of its videos and, once it is saved, its own context files (added and read here; every AI in the
+ * workspace reads them, lib/workshop/context.ts). Which account-wide knowledge, frameworks and rules a workspace uses is
+ * switched where they live (the Knowledge tab), not here: what it has switched off (`off`) goes back as it was.
+ *
+ * Drawn three ways from the same rows: `settings` is the page Settings → Details (a section with one Save; its social
+ * accounts are their own page there), the Manage workspaces window (its accounts under the rows, Cancel and Save kept
+ * in view), and variant "setup", the first-run step: name, colour and where it posts (handles only).
  */
 export function ProjectForm({
   initial,
@@ -76,26 +88,31 @@ export function ProjectForm({
   onCancel,
   formId,
   variant,
+  settings,
   onReady,
   children,
 }: {
   initial?: WorkshopProject;
   busy: boolean;
-  /** `files`: what was dropped on the instructions, kept as the project's own Knowledge once it is saved. */
+  /** `files`: what was dropped on the instructions, kept as the workspace's own context files once it is saved. */
   onSave: (fields: ProjectFields, files: KeptFile[]) => void | Promise<unknown>;
-  /** Absent = no Cancel (the first-run setup, where a project is required). */
+  /** Absent = no Cancel (the first-run setup, where a workspace is required). */
   onCancel?: () => void;
-  /** First-run setup: the form gets this id and the setup window's own button submits it (no box, no buttons here). */
+  /** First-run setup: the form gets this id and the setup window's own button submits it (no buttons here). */
   formId?: string;
-  /** "setup": the first-run project step. No accounts, instructions or knowledge; handles only. */
+  /** "setup": the first-run step. No accounts, instructions or context files; handles only. */
   variant?: "setup";
+  /** The page Settings → Details: no accounts block, and Save is on only while something changed. */
+  settings?: boolean;
   /** Tells the parent whether the name has text, so it can enable its own Create button. */
   onReady?: (ready: boolean) => void;
-  /** More fields under the form's own (a new workspace's upload choice) */
+  /** More rows under the form's own (a new workspace's upload choice) */
   children?: React.ReactNode;
 }) {
   const setup = variant === "setup";
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
+  // what the server has, as text: on Settings → Details Save is on only while the form differs from it
+  const [saved, setSaved] = useState(() => JSON.stringify(f));
   // setup's edit shows the saved handles, so saving again keeps them (and the page can change them)
   const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>(() => (setup && initial?.handles ? { ...initial.handles } : {}));
   const [pending, setPending] = useState(false);
@@ -132,9 +149,9 @@ export function ProjectForm({
     const room = MAX_FILES - dropped.length;
     setError(
       bad.length && !folder
-        ? `Can't read ${bad.map((x) => x.name).join(", ")}: drop text, PDF, Word, OpenDocument or EPUB`
+        ? `Can't read ${bad.map((x) => x.name).join(", ")} (text, PDF, Word, OpenDocument or EPUB only)`
         : folder && !ok.length
-          ? "Nothing in that folder to read: text, PDF, Word, OpenDocument or EPUB"
+          ? "No text, PDF, Word, OpenDocument or EPUB file in the folder"
           : ok.length > room
             ? `Only the first ${MAX_FILES} files are read`
             : null,
@@ -181,108 +198,93 @@ export function ProjectForm({
     onReady?.(f.name.trim().length > 0);
   }, [f.name, onReady]);
 
-  return (
-    <div className={formId ? "flex flex-col gap-4" : "flex flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"}>
-      <form
-      id={fid}
-      className="contents"
-      onSubmit={(e) => {
-        e.preventDefault();
-        setError(null);
-        if (setup && !f.name.trim()) return;
-        setPending(true);
-        const said = new Map(filing.map((x) => [x.file, x]));
-        const kept = dropped.map((file): KeptFile => ({ file, about: said.get(filePath(file))?.about, kind: said.get(filePath(file))?.kind }));
-        // the project's Analyzer account (f.accountId) goes back as it was: accounts are connected below, not typed here
-        void Promise.resolve(onSave(setup ? setupProjectFields(f, where) : { ...f, audience: "", voice: "", cta: "" }, setup ? [] : kept))
-          .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-          .finally(() => alive.current && setPending(false));
-      }}
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (setup && !f.name.trim()) return;
+    setPending(true);
+    const said = new Map(filing.map((x) => [x.file, x]));
+    const kept = dropped.map((file): KeptFile => ({ file, about: said.get(filePath(file))?.about, kind: said.get(filePath(file))?.kind }));
+    // the workspace's Analyzer account (f.accountId) goes back as it was: accounts are connected on their own page.
+    // Setup sends the name, colour and handles; a workspace it edits keeps its instructions
+    const fields = setup ? { ...setupProjectFields(f, where), ...(initial ? { audience: initial.audience, voice: initial.voice, cta: initial.cta, notes: initial.notes } : {}) } : f;
+    void Promise.resolve(onSave(fields, setup ? [] : kept))
+      .then(() => {
+        // Settings → Details stays open after a save (its onSave rejects when it failed): the files are the workspace's
+        // context files now, and a second Save must not add them again. The other windows close the form themselves,
+        // and one that failed keeps the files for the next try
+        if (!alive.current || !settings) return;
+        setDropped([]);
+        setFiling([]);
+        setBefore(null);
+        setSaved(JSON.stringify(f));
+      })
+      .catch((err) => alive.current && setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => alive.current && setPending(false));
+  };
+  const changed = JSON.stringify(f) !== saved || dropped.length > 0;
+  const quiet = "text-muted-foreground hover:text-foreground";
+
+  const rows = (
+    <Card>
+      <Row
+        id="workspace-name"
+        title={<label htmlFor={`${fid}-name`}>Name</label>}
+        control={<Input id={`${fid}-name`} form={fid} autoFocus={!settings} required value={f.name} onChange={set("name")} className="h-8 sm:w-72" />}
       />
-      <label className="text-[11px] text-zinc-400">
-        Name
-        <input
-          form={fid}
-          autoFocus
-          required
-          value={f.name}
-          onChange={set("name")}
-          placeholder={setup ? "My workspace" : undefined}
-          className={`${input} mt-1`}
-        />
-      </label>
-      <div>
-        <p className="text-[11px] text-zinc-400">Colour</p>
-        <div className="mt-1.5 flex flex-wrap gap-2" role="radiogroup" aria-label="Workspace colour">
-          {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => {
-            const on = projectColor({ id: initial?.id ?? "new", color: f.color }) === c;
-            return (
-              <button
-                key={c}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                aria-label={c}
-                title={c}
-                onClick={() => setF((cur) => ({ ...cur, color: c }))}
-                className={`h-7 w-7 rounded-full transition-transform ${PROJECT_COLORS[c].dot} ${on ? "ring-2 ring-zinc-200 ring-offset-2 ring-offset-zinc-900" : "hover:scale-110"}`}
-              />
-            );
-          })}
-        </div>
-      </div>
-      {setup ? (
-        <div>
-          <p className="text-[11px] text-zinc-400">Where do you post?</p>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {PLATFORMS.map((p) => {
-              const on = p.id in where;
+      <Row
+        id="workspace-colour"
+        title="Colour"
+        control={
+          <div className="flex max-w-80 flex-wrap gap-2 sm:justify-end" role="radiogroup" aria-label="Workspace colour">
+            {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => {
+              const on = projectColor({ id: initial?.id ?? "new", color: f.color }) === c;
               return (
                 <button
-                  key={p.id}
+                  key={c}
                   type="button"
-                  aria-pressed={on}
-                  disabled={locked}
-                  onClick={() => togglePlatform(p.id)}
-                  className={`rounded-full border px-2.5 py-1 text-[11px] ${on ? "border-violet-500/50 bg-violet-500/10 text-zinc-100" : "border-zinc-800 text-zinc-400 hover:text-zinc-200"}`}
-                >
-                  {p.label}
-                </button>
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={c}
+                  title={c}
+                  onClick={() => setF((cur) => ({ ...cur, color: c }))}
+                  className={cn("size-6 rounded-full transition-transform", PROJECT_COLORS[c].dot, on ? "ring-2 ring-foreground ring-offset-2 ring-offset-background" : "hover:scale-110")}
+                />
               );
             })}
           </div>
+        }
+      />
+      {setup && (
+        <Row title="Platforms">
+          <div className="flex flex-wrap gap-1.5">
+            {PLATFORMS.map((p) => (
+              <Button key={p.id} type="button" size="xs" variant={p.id in where ? "secondary" : "outline"} aria-pressed={p.id in where} disabled={locked} onClick={() => togglePlatform(p.id)} className="rounded-full">
+                {p.label}
+              </Button>
+            ))}
+          </div>
           {PLATFORMS.filter((p) => p.id in where).map((p) => (
-            <label key={p.id} className="mt-2 block text-[11px] text-zinc-400">
-              {p.label} handle
-              <input
+            <label key={p.id} className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="w-28 shrink-0">{p.label} handle</span>
+              <Input
                 value={where[p.id] ?? ""}
                 form={fid}
                 onChange={(e) => setWhere((cur) => ({ ...cur, [p.id]: e.target.value }))}
-                placeholder="@yourhandle"
+                placeholder="@handle"
                 disabled={locked}
                 spellCheck={false}
-                className={`${input} mt-1`}
+                className="h-8 sm:w-72"
               />
             </label>
           ))}
-          <p className="mt-1 text-[10px] text-zinc-600">Only the handle is saved. Nothing is fetched.</p>
-        </div>
-      ) : initial ? (
-        // a new workspace connects its accounts in step 2, once it exists (ProjectList's AccountsStep)
-        <div>
-          <p className="text-[11px] text-zinc-400">Accounts</p>
-          <div className="mt-1">
-            <ConnectorsSection projectId={initial.id} back={`/projects?edit=${initial.id}`} />
-          </div>
-          <p className="mt-1 text-[10px] text-zinc-600">Optional. Skip it if you like: they can be connected any time in Settings → Social accounts.</p>
-        </div>
-      ) : null}
+        </Row>
+      )}
       {!setup && (
-        <div className="text-[11px] text-zinc-400">
-          <label htmlFor="project-notes">Instructions</label>
+        <Row id="workspace-instructions" title={<label htmlFor="project-notes">Instructions</label>}>
           {/* one box, like the chat's: files dropped, pasted or picked show at its top, the clip and Write it for me at its foot */}
           <div
-            className={`mt-1 rounded-2xl border bg-zinc-950 transition-colors focus-within:border-zinc-600 ${over ? "border-zinc-500 bg-zinc-900" : "border-zinc-800"}`}
+            className={cn("rounded-xl border border-input transition-colors focus-within:border-ring", over && "border-ring bg-accent/40")}
             onDragOver={(e) => {
               if (!hasFiles(e) || locked) return;
               e.preventDefault();
@@ -341,101 +343,142 @@ export function ProjectForm({
               onChange={(e) => (set("notes")(e), setBefore(null))}
               maxLength={PROJECT_NOTES_MAX}
               disabled={drafting}
-              placeholder="Who you write for, how you sound, what never to say. Or drop in links, @handles, files and folders, and have it written for you."
+              placeholder="Audience, voice and what never to say"
               // grows with the text: one scroll for the window, not a second one inside the box
-              className="block min-h-24 w-full resize-none bg-transparent px-3.5 pt-3 text-sm text-zinc-100 outline-none [field-sizing:content] placeholder:text-zinc-600"
+              className="block min-h-24 w-full resize-none bg-transparent px-3.5 pt-3 text-sm text-foreground outline-none [field-sizing:content] placeholder:text-muted-foreground"
             />
             <div className="flex items-center gap-1 px-2 pb-2">
               <input ref={pick} type="file" multiple hidden accept={ACCEPT} onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 onClick={() => pick.current?.click()}
                 disabled={locked}
                 aria-label="Add files"
-                title="Add files: text, PDF, Word, OpenDocument or EPUB (or drop them, or a folder, here)"
-                className="flex size-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
+                title="Add files or a folder: text, PDF, Word, OpenDocument or EPUB"
+                className={cn("rounded-full", quiet)}
               >
-                <Paperclip className="size-4" />
-              </button>
+                <Paperclip />
+              </Button>
               <span className="flex-1" />
-              <span className="px-1 text-[10px] tabular-nums text-zinc-600" title="Always in the prompt, so keep it short">
+              <span className="px-1 text-[10px] tabular-nums text-muted-foreground" title="Always in the prompt">
                 {f.notes.length.toLocaleString("en-US")}/{PROJECT_NOTES_MAX.toLocaleString("en-US")}
               </span>
               {before ? (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => (setF((cur) => ({ ...cur, notes: before.notes })), setDropped(before.files), setFiling(before.filing), setBefore(null))}
-                  className="flex h-8 items-center gap-1 rounded-full px-2.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                  className={cn("rounded-full", quiet)}
                 >
-                  <Undo2 className="size-3.5" /> Undo
-                </button>
+                  <Undo2 /> Undo
+                </Button>
               ) : null}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 onClick={() => void write()}
                 disabled={locked || !canWrite}
                 title="Write the instructions from what is in the box and the files"
-                className="flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
+                className="rounded-full"
               >
-                {drafting ? <Loader2 className="size-3.5 animate-spin" /> : <CtMark className="size-3.5" />}
+                {drafting ? <Loader2 className="animate-spin" /> : <CtMark className="size-3.5" />}
                 {drafting ? "Writing…" : "Write it for me"}
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
+          {filing.some((x) => !x.keep) ? (
+            <p className="pt-2 text-xs text-muted-foreground">
+              Left out:{" "}
+              {filing
+                .filter((x) => !x.keep)
+                .map((x) => (
+                  <span key={x.file} title={x.why}>
+                    {x.file.split("/").pop()}
+                  </span>
+                ))
+                .reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), [])}
+            </p>
+          ) : null}
+        </Row>
       )}
-      {filing.some((x) => !x.keep) ? (
-        <p className="text-[10px] text-zinc-500">
-          Left out:{" "}
-          {filing
-            .filter((x) => !x.keep)
-            .map((x) => (
-              <span key={x.file} title={x.why}>
-                {x.file.split("/").pop()}
-              </span>
-            ))
-            .reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), [])}
-        </p>
-      ) : null}
-      {error ? <p className="text-[10px] text-red-400">{error}</p> : null}
       {!setup && (
-        <div className="text-[11px] text-zinc-400">
-          <label htmlFor="project-language">Spoken in its videos</label>
-          <LanguageSelect
-            id="project-language"
-            value={f.languages?.[0] ?? ""}
-            onChange={(code) => setF((cur) => ({ ...cur, languages: code ? [code] : [] }))}
-            disabled={locked}
-            // as wide as its list, not the window
-            className={`${input} mt-1 w-64`}
-          />
-        </div>
+        <Row
+          id="workspace-language"
+          title={<label htmlFor="project-language">Video language</label>}
+          control={
+            <LanguageSelect
+              id="project-language"
+              value={f.languages?.[0] ?? ""}
+              onChange={(code) => setF((cur) => ({ ...cur, languages: code ? [code] : [] }))}
+              disabled={locked}
+              className="h-8 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:w-64"
+            />
+          }
+        />
       )}
       {children}
+    </Card>
+  );
+  const failed = error ? (
+    <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+      {error}
+    </p>
+  ) : null;
+  const save = (
+    <Button type="submit" form={fid} size="sm" disabled={locked || f.name.trim().length === 0 || (settings && !changed)}>
+      {(busy || pending) && <Loader2 className="animate-spin" />}
+      {initial ? "Save" : "Create"}
+    </Button>
+  );
+  // the <form> holds no rows of its own (see `fid`)
+  const form = <form id={fid} className="contents" onSubmit={submit} />;
+  const files = !setup && initial && (
+    <Section id="workspace-files" title="Context files">
+      <KnowledgePanel projectId={initial.id} />
+    </Section>
+  );
+
+  if (settings)
+    return (
+      <>
+        <Section title="Details">
+          {form}
+          {rows}
+          {failed}
+          <div className="flex justify-end">{save}</div>
+        </Section>
+        {files}
+      </>
+    );
+
+  return (
+    <div className="flex flex-col gap-6">
+      {form}
+      <div className="flex flex-col gap-2.5">
+        {rows}
+        {failed}
+      </div>
       {!setup && initial && (
-        <div className="text-[11px] text-zinc-400">
-          <p className="mb-1.5">Context files</p>
-          <KnowledgePanel projectId={initial.id} />
+        // a new workspace adds its accounts in step 2, once it exists (ProjectList's AccountsStep)
+        <ConnectorsSection projectId={initial.id} back={`/projects?edit=${initial.id}`} title="Social accounts" />
+      )}
+      {files}
+      {/* Cancel / Save stay in view at the bottom while the form scrolls. -bottom-4 is the Workspaces window's own bottom
+          padding (py-4): stuck at 0 the bar would stop above it, and the text would scroll by underneath */}
+      {!formId && (
+        <div className="sticky -bottom-4 z-10 flex justify-end gap-2 border-t border-border bg-background/95 py-3 backdrop-blur">
+          {onCancel && (
+            <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          {save}
         </div>
       )}
-      {/* Cancel / Save stay in view at the bottom while the form scrolls. -bottom-4 is the Projects window's own bottom
-          padding (py-4): stuck at 0 the bar would stop above it, and the text would scroll by underneath */}
-      {!formId && <div className="sticky -bottom-4 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
-        {onCancel && (
-          <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
-            Cancel
-          </button>
-        )}
-        <button
-          type="submit"
-          form={fid}
-          disabled={locked || f.name.trim().length === 0}
-          className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-        >
-          {(busy || pending) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {initial ? "Save" : "Create workspace"}
-        </button>
-      </div>}
     </div>
   );
 }

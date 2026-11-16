@@ -69,8 +69,8 @@ connectorsApp.get("/", async (c) => c.json(await view(c)));
  */
 connectorsApp.get("/apps/:kind", async (c) => {
   const kind = c.req.param("kind") as LoginKind;
-  if (nobody(c.get("user"))) return c.json({ error: "Connect accounts from your own account" }, 403);
-  if (!KINDS.includes(kind)) return c.json({ error: "Unknown login" }, 404);
+  if (nobody(c.get("user"))) return c.json({ error: "Sign in to add a social account" }, 403);
+  if (!KINDS.includes(kind)) return c.json({ error: "Unknown sign-in" }, 404);
   return c.json({ on: !!(await issuerFor(kind)) });
 });
 
@@ -85,10 +85,10 @@ export function tiktokVerifyFile(name: string): string | null {
 connectorsApp.get("/login/:kind", async (c) => {
   const user = c.get("user");
   const kind = c.req.param("kind") as LoginKind;
-  if (nobody(user)) return c.json({ error: "Connect accounts from your own account" }, 403);
-  if (!KINDS.includes(kind)) return c.json({ error: "Unknown login" }, 404);
+  if (nobody(user)) return c.json({ error: "Sign in to add a social account" }, 403);
+  if (!KINDS.includes(kind)) return c.json({ error: "Unknown sign-in" }, 404);
   const issuer = await issuerFor(kind);
-  if (!issuer) return c.json({ error: `${LOGINS.find((l) => l.id === kind)!.label} login isn't set up on this server yet` }, 409);
+  if (!issuer) return c.json({ error: `${LOGINS.find((l) => l.id === kind)!.label} sign-in is not set up on this server` }, 409);
   const state = newState();
   // the service's start page, or the platform's own login with this server's app
   const { url, verifier } = issuer === "service" ? serviceStart(kind, redirectFor(c, kind), state) : loginUrl(kind, redirectFor(c, kind), state);
@@ -117,9 +117,9 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
   const back = (q: string) => {
     if (here) return c.redirect(`${to}${to.includes("?") ? "&" : "?"}${q}`);
     const p = new URLSearchParams(q);
-    return p.get("connected") ? c.html(plainPage("Connected", "You can close this tab. Creator Toolset already has the account, in Settings → Social accounts.")) : c.html(plainPage("Not connected", escHtml(p.get("error") ?? "")), 400);
+    return p.get("connected") ? c.html(plainPage("Connected", "The account is in Settings → Social accounts. This tab can be closed.")) : c.html(plainPage("Not connected", escHtml(p.get("error") ?? "")), 400);
   };
-  if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("That login expired: start it again")}`);
+  if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("The sign-in expired")}`);
   const user = st.user;
   states.delete(c.req.query("state")!);
   const denied = c.req.query("error_description") || c.req.query("error");
@@ -142,11 +142,11 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
 /** Add an account by handle, read on the user's own Apify token (public numbers). Instagram handles go to the Analyzer. */
 connectorsApp.post("/handles", async (c) => {
   const user = c.get("user");
-  if (nobody(user)) return c.json({ error: "Connect accounts from your own account" }, 403);
+  if (nobody(user)) return c.json({ error: "Sign in to add a social account" }, 403);
   const body = (await c.req.json().catch(() => null)) as { platform?: unknown; handle?: unknown; projectId?: unknown } | null;
   const platform = PLATFORMS.find((p) => p.id === body?.platform)?.id;
   const handle = typeof body?.handle === "string" ? body.handle.trim().replace(/^@/, "").replace(/^https?:\/\/[^/]+\/@?/, "").replace(/[/?#].*$/, "") : "";
-  if (!platform || !/^[\w.-]{1,100}$/.test(handle)) return c.json({ error: "Pick a platform and a handle" }, 400);
+  if (!platform || !/^[\w.-]{1,100}$/.test(handle)) return c.json({ error: "Needs a platform and a handle" }, 400);
   if (platform === "instagram") return c.json({ error: "Instagram handles go in the Content Analyzer" }, 400);
   const [a] = saveAccounts(user.username, [{ platform, platformId: handle.toLowerCase(), handle, via: "apify", ...(typeof body?.projectId === "string" && body.projectId ? { projectId: body.projectId } : {}) }]);
   void pullOne(user, a!.key);
@@ -191,7 +191,7 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
       if (analyzerId) patchAccount(name, key, { analyzerId });
     }
     if (a.via === "login" && a.expiresAt && a.expiresAt <= Date.now() && !a.refresh) {
-      patchAccount(name, key, { loginStatus: "needs_reconnect", pullError: "The login expired. Connect it again.", pulledAt: Date.now() });
+      patchAccount(name, key, { loginStatus: "needs_reconnect", pullError: "Sign-in expired", pulledAt: Date.now() });
       return;
     }
     const fresh = a.via === "login" ? await freshToken(a, a.issuer === "service" ? serviceRefresh : refreshGrant) : {};

@@ -5,11 +5,12 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { clearLocalCache, putCached } from "@/lib/local-cache";
-import { ConnectorsSection, newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
+import { useWorkspace } from "@/lib/workspace";
+import { ConnectorsSection, everyRow, newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
 import type { ConnectedAccount, ConnectorsView } from "@contracts/connectors";
 
 it("offers only the sign-ins this server has an app for", () => {
-  expect(signInItems({ meta: false, google: true, tiktok: false })).toEqual([{ id: "google", label: "Sign in with YouTube" }]);
+  expect(signInItems({ meta: false, google: true, tiktok: false })).toEqual([{ id: "google", label: "YouTube" }]);
   expect(signInItems({ meta: false, google: false, tiktok: false })).toEqual([]);
 });
 
@@ -35,18 +36,18 @@ it("the platform list: only accounts the person signs in to, in order, each with
   // every sign-in on: one Add each; X has no sign-in, so no row
   const all = platformRows(view({ logins: { meta: true, google: true, tiktok: true } }));
   expect(all.map((r) => [r.platform, r.button, r.summary])).toEqual([
-    ["instagram", "Add", "A Business or Creator account linked to a Facebook Page"],
-    ["facebook", "Add", "Your Pages"],
-    ["youtube", "Add", "Your channel"],
-    ["tiktok", "Add", "Your account"],
+    ["instagram", "Add", "Needs a Business or Creator account linked to a Facebook Page"],
+    ["facebook", "Add", ""],
+    ["youtube", "Add", ""],
+    ["tiktok", "Add", ""],
   ]);
   for (const r of all) expect(JSON.stringify(r)).not.toMatch(/apify|key|handle/i);
 });
 
 it("a platform whose sign-in the service does not offer says so on its row, with nothing to press", () => {
   const rows = platformRows(view({ logins: { meta: true, google: true, tiktok: true } }), undefined, ["tiktok"]);
-  expect(row(rows, "tiktok")).toEqual({ platform: "tiktok", label: "TikTok", summary: "Sign-in is not available right now" });
-  expect(row(rows, "youtube")).toMatchObject({ button: "Add", summary: "Your channel" });
+  expect(row(rows, "tiktok")).toEqual({ platform: "tiktok", label: "TikTok", summary: "Sign-in not available" });
+  expect(row(rows, "youtube")).toMatchObject({ button: "Add", summary: "" });
 });
 
 it("each project shows its own account per platform; an account in no project shows until one is linked", () => {
@@ -80,6 +81,21 @@ it("knows a sign-in finished elsewhere: an account connected by sign-in after th
   expect(signedInSince([login("tinyacrobatics", 300)], 100).map((a) => a.handle)).toEqual(["tinyacrobatics"]);
   // an account added by @handle meanwhile is the dialog's own doing, not a sign-in
   expect(signedInSince([...before, { ...acct("x", "tinyx"), connectedAt: 999 }], 100)).toEqual([]);
+});
+
+it("All workspaces lists every account the person has, and Add only for a platform with none", () => {
+  const accounts = [acct("tiktok", "brand-a", "p1"), acct("tiktok", "brand-b", "p2"), acct("youtube", "old"), { ...acct("instagram", "tinyacrobatics", "p1"), analyzerId: "a1" }];
+  // the Analyzer account a sign-in account fills is that account's row, not a second one
+  const instagram = [{ id: "a1", handle: "tinyacrobatics", mine: true, projectId: "p1" }, { id: "a2", handle: "tinyshop", mine: false, projectId: "p2" }];
+  const rows = everyRow(view({ accounts, instagram, logins: { meta: true, google: true, tiktok: true } }));
+  expect(rows.map((r) => [r.platform, r.account?.handle ?? r.own?.handle ?? r.button])).toEqual([
+    ["instagram", "tinyacrobatics"],
+    ["instagram", "tinyshop"],
+    ["facebook", "Add"],
+    ["youtube", "old"],
+    ["tiktok", "brand-a"],
+    ["tiktok", "brand-b"],
+  ]);
 });
 
 describe("/settings/connectors?add=<platform> (the address of a platform's Add dialog)", () => {
@@ -147,5 +163,98 @@ describe("/settings/connectors?add=<platform> (the address of a platform's Add d
     await follow("1");
     expect(dialog()).toBe("");
     expect(search).toBe("");
+  });
+});
+
+describe("an account's workspace", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  let root: Root | undefined;
+  let sent: Array<[string, unknown]> = [];
+  const two = [
+    { id: "p1", owner: "sam", name: "Tiny Acrobatics", accountId: "a1", createdAt: 1 },
+    { id: "p2", owner: "sam", name: "Tiny Acrobatics shop", createdAt: 2 },
+  ] as ReturnType<typeof useWorkspace.getState>["projects"];
+
+  async function open(o: Parameters<typeof view>[0], projects = two) {
+    const saved = { ...view(o), extras: { sessions: [] } };
+    sent = [];
+    useAuth.setState({ required: true, me: { username: "sam", role: "admin", cloud: false, off: [] } });
+    useWorkspace.setState({ loaded: true, currentProjectId: "p1", projects, load: async () => {} });
+    putCached("sam", "/api/connectors", saved);
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (init?.method) sent.push([`${init.method} ${url}`, JSON.parse(String(init.body ?? "null"))]);
+      return new Response(JSON.stringify(String(url) === "/api/connectors" ? saved : {}), { status: 200 });
+    });
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => {
+      root!.render(<MemoryRouter initialEntries={["/settings/connectors"]}><ConnectorsSection /></MemoryRouter>);
+      await new Promise((done) => setTimeout(done, 0));
+    });
+  }
+  /** Opens the row menu of `handle` and gives its items' words. */
+  const menu = (handle: string) => {
+    act(() => {
+      document.body.querySelector(`button[aria-label="@${handle} actions"]`)!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }));
+    });
+    return [...document.querySelectorAll('[role="menuitem"]')] as HTMLElement[];
+  };
+  const press = async (item: HTMLElement) => {
+    await act(async () => {
+      item.click();
+      await new Promise((done) => setTimeout(done, 0));
+    });
+  };
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    clearLocalCache();
+    useWorkspace.setState({ loaded: false, currentProjectId: null, projects: [] });
+    vi.unstubAllGlobals();
+  });
+
+  it("every workspace's accounts are listed, each with its workspace, and the page never switches the window's workspace", async () => {
+    await open({ accounts: [acct("tiktok", "brand-a", "p1"), acct("tiktok", "brand-b", "p2"), acct("youtube", "old")] });
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("@brand-a");
+    expect(text).toContain("@brand-b");
+    expect(text).toContain("Tiny Acrobatics shop");
+    expect(text).toContain("Every workspace");
+    expect(useWorkspace.getState().currentProjectId).toBe("p1");
+  });
+
+  it("the row menu moves an account to another workspace or to every workspace", async () => {
+    await open({ accounts: [acct("tiktok", "brand-a", "p1")] });
+    const items = menu("brand-a");
+    expect(items.map((i) => i.textContent)).toEqual(["Read again", "Move to Tiny Acrobatics shop", "Use in every workspace", "Disconnect"]);
+    await press(items[2]!);
+    expect(sent).toEqual([["PATCH /api/connectors/accounts/tiktok%3Abrand-a", { projectId: null }]]);
+    expect(useWorkspace.getState().currentProjectId).toBe("p1");
+  });
+
+  it("Disconnect says the account leaves every workspace", async () => {
+    await open({ accounts: [acct("tiktok", "brand-a", "p1")] });
+    // no dialog host in a test: the app's confirm falls back to the browser's, title and body in one text
+    const asked = vi.fn(() => false);
+    vi.stubGlobal("confirm", asked);
+    await press(menu("brand-a").at(-1)!);
+    expect(asked).toHaveBeenCalledWith("Disconnect @brand-a?\n\nThe account is removed from every workspace.");
+    expect(sent).toEqual([]);
+  });
+
+  it("Instagram's own account moves to a workspace of the person's own that links none; with no workspace only the one marked Mine stays listed", async () => {
+    await open({ instagram: [{ id: "a1", handle: "tinyacrobatics", mine: true, projectId: "p1" }] });
+    const items = menu("tinyacrobatics");
+    expect(items.map((i) => i.textContent)).toEqual(["Move to Tiny Acrobatics shop", "Use in every workspace", "Disconnect"]);
+    await press(items[0]!);
+    expect(sent).toEqual([
+      ["PATCH /api/workshop/projects/p2", { accountId: "a1" }],
+      ["PATCH /api/workshop/projects/p1", { accountId: null }],
+    ]);
+  });
+
+  it("one workspace: an account in none can still be put in it", async () => {
+    await open({ accounts: [acct("youtube", "old")] }, two.slice(0, 1));
+    expect(menu("old").map((i) => i.textContent)).toEqual(["Read again", "Move to Tiny Acrobatics", "Disconnect"]);
   });
 });

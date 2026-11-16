@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
+import { PROJECT_NOTES_MAX, type ProjectFields } from "@/lib/workshop";
 import { ProjectForm } from "./ProjectForm";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,4 +65,53 @@ it("a file dropped on the instructions shows at the top of the box; saving keeps
   expect(host.textContent).not.toContain("Can't read");
   act(() => root.unmount());
   host.remove();
+});
+
+// The prompts still read a workspace's old audience, voice and CTA fields. The form moves them into the instructions
+// and empties them only when their text is there whole.
+const old = { id: "p1", owner: "o", name: "Mine", audience: "Home cooks", voice: "Warm", cta: "Join the class", notes: "No medical claims", createdAt: 0, updatedAt: 0 };
+async function saveOf(initial: typeof old, settings = false): Promise<{ sent: ProjectFields; host: HTMLElement; done: () => void }> {
+  const host = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(host);
+  let sent: ProjectFields | undefined;
+  act(() => root.render(<MemoryRouter><ProjectForm initial={initial} settings={settings} busy={false} onSave={(f) => void (sent = f)} /></MemoryRouter>));
+  await act(async () => void host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  return { sent: sent!, host, done: () => (act(() => root.unmount()), host.remove()) };
+}
+
+it("the old audience, voice and CTA fields are saved inside the instructions, then emptied", async () => {
+  const { sent, done } = await saveOf(old);
+  expect(sent.notes).toBe("No medical claims\n\nAudience: Home cooks\n\nVoice: Warm\n\nCTA: Join the class");
+  expect([sent.audience, sent.voice, sent.cta]).toEqual(["", "", ""]);
+  done();
+});
+
+it("an old field the instructions have no room for stays in its field", async () => {
+  const long = { ...old, notes: "x".repeat(PROJECT_NOTES_MAX - 10) };
+  const { sent, done } = await saveOf(long);
+  expect(sent.notes).toBe(long.notes);
+  expect([sent.audience, sent.voice, sent.cta]).toEqual(["Home cooks", "Warm", "Join the class"]);
+  done();
+});
+
+it("Settings → Details: no accounts block, and Save is on only while something changed", async () => {
+  const { host, done } = await saveOf({ ...old, audience: "", voice: "", cta: "" }, true);
+  expect(host.textContent).toContain("Details");
+  expect(host.textContent).toContain("Context files");
+  expect(host.textContent).not.toContain("Social accounts");
+  const save = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  expect(save.textContent).toBe("Save");
+  expect(save.disabled).toBe(true);
+  const name = host.querySelector<HTMLInputElement>("input[required]")!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Tiny");
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(save.disabled).toBe(false);
+  // a dropped file is saved once: after the save it is the workspace's own, and the box is empty again
+  await drop(host.querySelector("#project-notes")!, [new File(["x"], "about.md", { type: "text/markdown" })]);
+  await act(async () => void host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(host.querySelector('[aria-label="Remove about.md"]')).toBeNull();
+  expect(save.disabled).toBe(true);
+  done();
 });

@@ -3,16 +3,17 @@ import { Folder } from "lucide-react";
 import type { Collection, LibrarySummary, WatchFolder, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, ListRow, Section, Status } from "@/components/settings/ui";
+import { Card, ErrorRow, ListRow, Section, SettingsSelect, Status } from "@/components/settings/ui";
 import { folderName, useBigFolder } from "@/components/LibraryProcessing";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac, thisMacBridge } from "@/lib/thisMac";
 
 /**
- * The library's footage folders, for its owner, in the library's settings (api/library/watch.ts): folders on this
- * computer whose videos join the library by themselves, left where they are or copied into the Library's Footage folder
- * there (status.copyTo; a library whose originals are in a bucket copies them in instead). Only when the server runs on
- * the person's computer; the page leaves the section out on a hosted server.
+ * The library's footage folders, for its owner, in the library's own settings sheet (api/library/watch.ts): folders on
+ * this computer whose videos are added to the library as they come, kept in place or copied into the Library's Footage
+ * folder there (status.copyTo; a library whose originals are in a bucket copies them in instead). Only when the server
+ * runs on the person's computer; the sheet leaves the section out on a hosted server, and Settings → Media Library
+ * leaves it to Settings → Folders.
  */
 
 type Change = Pick<WatchFolder, "path" | "mode" | "collectionId" | "copyTo">;
@@ -28,7 +29,8 @@ async function call(libraryId: string, folders?: Change[]): Promise<WatchStatus>
   return body;
 }
 
-const select = "h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm";
+/** The add form's "no folder" (the kit's select takes no empty value). */
+const NONE = "none";
 
 export function LibraryWatchFolders({
   libraryId,
@@ -83,10 +85,10 @@ export function LibraryWatchFolders({
             subtitle={
               <span title={f.path}>
                 {f.imported.toLocaleString()} {f.imported === 1 ? "clip" : "clips"} ·{" "}
-                {f.copyTo ? `copied to ${f.copyTo}/${folderName(f.path)}` : f.mode === "reference" ? "left where they are" : "copied in"} · {f.path}
+                {f.copyTo ? `copied to ${f.copyTo}/${folderName(f.path)}` : f.mode === "reference" ? "kept in place" : "copied into the library"} · {f.path}
               </span>
             }
-            status={!f.found && <Status tone="attention">Not found. Plug its drive back in, or remove it here.</Status>}
+            status={!f.found && <Status tone="attention">Not found</Status>}
             actions={
               <Button size="sm" variant="ghost" onClick={() => void save(current.filter((c) => c.path !== f.path))}>
                 Remove
@@ -94,12 +96,9 @@ export function LibraryWatchFolders({
             }
           />
         ))}
-        {/* clips gone from a folder that is still there (a folder not found says so on its own row) */}
+        {/* clips missing from a folder that is still there (a folder not found says so on its own row) */}
         {!!status?.missing && status.folders.every((f) => f.found) && (
-          <ListRow
-            title={`${status.missing.toLocaleString()} ${status.missing === 1 ? "clip is" : "clips are"} not where they were`}
-            status={<Status tone="attention">Their files were moved or deleted</Status>}
-          />
+          <ListRow title={`${status.missing.toLocaleString()} ${status.missing === 1 ? "clip" : "clips"} missing`} status={<Status tone="attention">Files moved or deleted</Status>} />
         )}
         <form
           className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
@@ -108,34 +107,32 @@ export function LibraryWatchFolders({
             if (path.trim()) void add();
           }}
         >
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Volumes/Footage/Card dumps" aria-label="Folder path" className="min-w-0 flex-1 basis-60" />
+          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="Folder path" aria-label="Folder path" className="h-8 min-w-0 flex-1 basis-60" />
           {thisMacBridge() && (
             <Button type="button" size="sm" variant="outline" onClick={() => void choose()}>
               Choose…
             </Button>
           )}
           {!status?.copyTo && (
-            <select aria-label="Mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className={select}>
-              <option value="reference">Leave files where they are</option>
-              <option value="copy">Copy into the library</option>
-            </select>
+            <SettingsSelect
+              label="Import"
+              value={mode}
+              onValueChange={(v) => setMode(v as typeof mode)}
+              options={[
+                { value: "reference", label: "Keep in place" },
+                { value: "copy", label: "Copy into the library" },
+              ]}
+            />
           )}
           {libraryFolders.length > 0 && (
-            <select aria-label="Into folder" value={into} onChange={(e) => setInto(e.target.value)} className={select}>
-              <option value="">No folder</option>
-              {libraryFolders.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            <SettingsSelect label="Library folder" value={into || NONE} onValueChange={(v) => setInto(v === NONE ? "" : v)} options={[{ value: NONE, label: "No folder" }, ...libraryFolders.map((c) => ({ value: c.id, label: c.name }))]} />
           )}
           <Button type="submit" size="sm" disabled={!path.trim()}>
-            Add folder
+            Add
           </Button>
         </form>
+        {error && <ErrorRow title={error} />}
       </Card>
-      {error && <p className="text-sm text-red-400">{error}</p>}
       {big.dialog}
     </Section>
   );

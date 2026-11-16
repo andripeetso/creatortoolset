@@ -1,54 +1,74 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Collection, LibrarySummary, WatchStatus } from "@contracts/library";
-import { Button } from "@/components/ui/button";
-import { createLibrary, getWatch, isFinals, listCollections, listLibraries } from "@/lib/library";
+import { scopeRequests } from "@/lib/current-workspace";
+import { getWatch, isFinals, listCollections } from "@/lib/library";
 import { holdsClips } from "@/pages/library/folders";
 import { useCachedLoad } from "@/lib/local-cache";
+import { useWorkspace } from "@/lib/workspace";
 import { LibrarySettingsBody } from "@/pages/library/LibrarySettings";
-import { Card, ErrorRow, LoadingRow, Row, Section } from "./ui";
+import { Card, EmptyRow, ErrorRow, LoadingRow, Section, WorkspacePick, inWorkspace, useSettingsWorkspace } from "./ui";
+import { useOwnWorkspaces } from "./WorkspaceDetailsSection";
+
+/** The libraries of one workspace (GET /api/library answers for the workspace the request names). */
+const librariesOf = (workspace: string | null) =>
+  fetch("/api/library", inWorkspace(workspace)).then(async (r) => {
+    const body = (await r.json().catch(() => ({}))) as { libraries?: LibrarySummary[]; error?: string };
+    if (!r.ok || !body.libraries) throw new Error(body.error ?? `Request failed (${r.status})`);
+    return body.libraries;
+  });
 
 /**
- * Settings → Media Library: the current workspace's own library's settings, the same body as the library's own sheet
- * (pages/library/LibrarySettings.tsx). A workspace with no library yet gets Create library, as the Media Library page does.
+ * Settings → Media Library (the Workspace group): the settings of the library of the workspace the selector shows, the
+ * same body as the library's own sheet (pages/library/LibrarySettings.tsx) without what Settings → Folders owns. Each of
+ * the person's own workspaces has a library (the server makes it on the first read); one the team's owner gave them has
+ * the owner's library, which is not theirs to set, so it is not offered.
  */
 export function MediaLibrarySection() {
-  const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries);
+  const own = useOwnWorkspaces();
+  const w = useSettingsWorkspace("one", own);
+  const here = useWorkspace((s) => s.currentProjectId);
+  const libs = useCachedLoad<LibrarySummary[]>("/api/library", () => librariesOf(w.id), { workspace: w.cacheKey });
   const library = libs.data?.find((l) => !l.readOnly) ?? null;
   const id = library?.id;
-  const watch = useCachedLoad<WatchStatus>(id ? `/api/library/${id}/watch` : null, () => getWatch(id!));
-  const folders = useCachedLoad<Collection[]>(id ? `/api/library/${id}/collections` : null, () => listCollections(id!), { own: true });
+  // every request for this library says the workspace shown, whatever the window is in. Set while drawing, before the
+  // rows below fetch in their effects
+  const prefix = id ? `/api/library/${id}` : null;
+  if (prefix) scopeRequests(prefix, w.id && w.id !== here ? w.id : null);
+  useEffect(() => () => void (prefix && scopeRequests(prefix, null)), [prefix]);
+  const watch = useCachedLoad<WatchStatus>(id ? `/api/library/${id}/watch` : null, () => getWatch(id!), { workspace: w.cacheKey });
+  const folders = useCachedLoad<Collection[]>(id ? `/api/library/${id}/collections` : null, () => listCollections(id!), { own: true, workspace: w.cacheKey });
   const [error, setError] = useState<string | null>(null);
   const saved = (l: LibrarySummary) => libs.set((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
 
-  if (libs.data && !library) {
-    return (
-      <Section title="Media Library">
-        <Card>
-          <Row
-            title="No library in this workspace yet"
-            control={
-              <Button size="sm" variant="outline" onClick={() => void createLibrary("Library").then((l) => libs.set((all) => [...(all ?? []), l]), (e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
-                Create library
-              </Button>
-            }
-          />
-          {error && <ErrorRow title={error} />}
-        </Card>
-      </Section>
-    );
-  }
   if (!library || !watch.data) {
     const failed = libs.error || watch.error;
     return (
-      <Section title="Media Library">
-        <Card>{failed ? <ErrorRow title="Could not load the Media Library" detail={failed} retry={() => void libs.refresh().catch(() => {})} /> : <LoadingRow />}</Card>
-      </Section>
+      <>
+        <WorkspacePick mode="one" only={own} />
+        <Section title="Media Library">
+          <Card>
+            {failed ? (
+              <ErrorRow title="Could not load the Media Library" detail={failed} retry={() => void libs.refresh().catch(() => {})} />
+            ) : libs.data && !library ? (
+              <EmptyRow title="No library" />
+            ) : (
+              <LoadingRow />
+            )}
+          </Card>
+        </Section>
+      </>
     );
   }
   return (
-    <div className="flex flex-col gap-6">
-      {error && <ErrorRow title={error} />}
-      <LibrarySettingsBody library={library} watch={watch.data} folders={(folders.data ?? []).filter((c) => holdsClips(c) && !isFinals(c))} onChange={saved} onError={setError} />
-    </div>
+    <>
+      <WorkspacePick mode="one" only={own} />
+      {error && (
+        <Card>
+          <ErrorRow title={error} />
+        </Card>
+      )}
+      {/* keyed by the library: another workspace's starts from its own values */}
+      <LibrarySettingsBody key={library.id} inSettings library={library} watch={watch.data} folders={(folders.data ?? []).filter((c) => holdsClips(c) && !isFinals(c))} onChange={saved} onError={setError} />
+    </>
   );
 }

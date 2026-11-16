@@ -62,12 +62,12 @@ const STATIC_ROWS = [
   // Folders: where each workspace's footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
-  { section: "library", id: "library-adding", title: "How files come in", description: "Use them where they are, or copy them into the library", keywords: ["media library", "import", "copy", "in place", "places", "look for new files", "rescan"] },
-  { section: "library", id: "library-look", title: "Look for new files", keywords: ["media library", "rescan", "scan", "new files", "places", "nas"] },
-  { section: "library", id: "library-upload", title: "Upload to the server", description: "Off, proxies only, or video files and proxies", keywords: ["media library", "upload", "proxies", "cloud", "server"] },
-  { section: "library", id: "library-sorting", title: "Folders", description: "How the Media Library sorts files", keywords: ["media library", "organize", "sort", "folders", "ai"] },
-  { section: "library", id: "library-proxies", title: "Generate proxies", keywords: ["media library", "proxies", "playback", "4k", "storage", "thumbnails"] },
-  { section: "library", id: "library-ai", title: "Media Library AI", description: "Descriptions, shot descriptions and search by meaning", keywords: ["media library", "describe", "shot", "shots", "search", "meaning", "ai"] },
+  { section: "library", id: "library-adding", title: "Import", keywords: ["media library", "import", "copy", "in place", "keep in place", "places", "adding files"] },
+  { section: "library", id: "library-look", title: "New files", keywords: ["media library", "look for new files", "rescan", "scan", "places", "network drive"] },
+  { section: "library", id: "library-sorting", title: "Sorting", keywords: ["media library", "organize", "sort", "folders", "ai"] },
+  { section: "library", id: "library-upload", title: "Upload to the server", keywords: ["media library", "upload", "proxies", "cloud", "server", "bucket", "storage"] },
+  { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
+  { section: "library", id: "library-ai", title: "AI", keywords: ["media library", "descriptions", "describe", "shot", "shots", "search", "meaning"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
@@ -91,12 +91,18 @@ const STATIC_ROWS = [
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
   { section: "usage", id: "your-plan", title: "Plan", description: "On Pro or Plus, big jobs start after a confirmation", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
   { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage", "workspace", "period"] },
-  // Social accounts: the accounts the person signs in to, one row each
-  { section: "connectors", id: "social-platforms", title: "Platforms", description: "Instagram, Facebook, YouTube and TikTok: sign in to your own accounts", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "sign in", "login", "add account"] },
-  { section: "connectors", id: "platform-instagram", title: "Instagram", description: "Your own Instagram account", keywords: ["instagram", "sign in", "login", "reach", "saves"] },
-  { section: "connectors", id: "platform-facebook", title: "Facebook", description: "Your Pages, by sign-in", keywords: ["facebook", "pages", "meta", "sign in", "login"] },
-  { section: "connectors", id: "platform-youtube", title: "YouTube", description: "Your channel, by sign-in", keywords: ["youtube", "channel", "sign in", "login", "google", "subscribers"] },
-  { section: "connectors", id: "platform-tiktok", title: "TikTok", description: "Your account, by sign-in", keywords: ["tiktok", "sign in", "login", "followers", "likes"] },
+  // Details: one workspace's own settings (the workspace form, components/workshop/ProjectForm.tsx)
+  { section: "workspace", id: "workspace-name", title: "Name", keywords: ["workspace", "rename", "brand"] },
+  { section: "workspace", id: "workspace-colour", title: "Colour", keywords: ["workspace", "color", "dot"] },
+  { section: "workspace", id: "workspace-instructions", title: "Instructions", keywords: ["workspace", "prompt", "audience", "voice", "cta", "notes", "write it for me"] },
+  { section: "workspace", id: "workspace-language", title: "Video language", keywords: ["workspace", "language", "spoken", "speech", "transcribe", "estonian", "english"] },
+  { section: "workspace", id: "workspace-files", title: "Context files", keywords: ["workspace", "knowledge", "files", "documents", "pdf", "folder", "context"] },
+  // Social accounts: the accounts the person signs in to, one row each (the section is the page: every workspace's, or one's)
+  { section: "connectors", id: "social-platforms", title: "Social accounts", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "sign in", "login", "add account", "workspace", "move", "disconnect"] },
+  { section: "connectors", id: "platform-instagram", title: "Instagram", keywords: ["instagram", "sign in", "login", "reach", "saves"] },
+  { section: "connectors", id: "platform-facebook", title: "Facebook", keywords: ["facebook", "pages", "meta", "sign in", "login"] },
+  { section: "connectors", id: "platform-youtube", title: "YouTube", keywords: ["youtube", "channel", "sign in", "login", "google", "subscribers"] },
+  { section: "connectors", id: "platform-tiktok", title: "TikTok", keywords: ["tiktok", "sign in", "login", "followers", "likes"] },
   // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
   { section: "keys", id: "apify-key", title: "Apify", description: "Public accounts on TikTok, YouTube, X, Facebook and Instagram", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "facebook", "x", "follow", "handle", "api key"] },
   // Headless access: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you

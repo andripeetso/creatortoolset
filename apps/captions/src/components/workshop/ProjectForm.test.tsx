@@ -22,11 +22,12 @@ describe("ProjectForm variant setup", () => {
   const setupHtml = renderToStaticMarkup(<ProjectForm variant="setup" formId="setup-project" busy={false} onSave={() => {}} />);
   const fullHtml = renderToStaticMarkup(<ProjectForm busy={false} onSave={() => {}} />);
 
-  it("shows the name, colour and where-you-post chips, with the helper line", () => {
-    expect(setupHtml).toContain("Where do you post?");
+  it("shows the name, colour and the platform chips, and promises nothing about what is read", () => {
+    expect(setupHtml).toContain("Platforms");
     expect(setupHtml).toContain("Instagram");
-    expect(setupHtml).toContain("Only the handle is saved. Nothing is fetched.");
-    expect(setupHtml).toContain('placeholder="My workspace"');
+    expect(setupHtml).not.toContain("Nothing is fetched");
+    // no sample name in the box
+    expect(setupHtml).not.toContain("placeholder=");
     expect(setupHtml).toContain('id="setup-project"');
   });
 
@@ -44,7 +45,10 @@ describe("ProjectForm variant setup", () => {
     expect(fullHtml).not.toContain("Accounts");
     expect(fullHtml).toContain("Instructions");
     expect(fullHtml).toContain("Write it for me");
-    expect(fullHtml).not.toContain("Where do you post?");
+    expect(fullHtml).not.toContain("Platforms");
+    // one wording for making a workspace: New workspace opens the form, Create submits it
+    expect(fullHtml).toContain(">Create<");
+    expect(fullHtml).toContain("Video language");
     // no sample name in the box: the label says what goes there
     expect(fullHtml).not.toContain("Tiny Acrobatics");
   });
@@ -64,7 +68,7 @@ describe("ProjectForm variant setup", () => {
   it("the name and the button belong to the form, so Enter submits it and never another row's button", () => {
     const id = /<form id="([^"]+)"/.exec(fullHtml)?.[1];
     expect(id).toBeTruthy();
-    expect(fullHtml).toMatch(new RegExp(`<input form="${id}"[^>]*required`));
+    expect(fullHtml).toMatch(new RegExp(`<input[^>]*form="${id}"[^>]*required`));
     expect(fullHtml).toMatch(new RegExp(`type="submit" form="${id}"`));
   });
 });
