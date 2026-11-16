@@ -24,7 +24,7 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   enhance: ["Audio Enhancer sessions", "session", "sessions"],
   editor: ["AI Editor edits", "edit", "edits"],
   analyzer: ["Content Analyzer posts", "post", "posts"],
-  workshop: ["Content Workshop projects and sources", "item", "items"],
+  workshop: ["Content Workshop sessions and sources", "item", "items"],
   designs: ["Designs", "design", "designs"],
   "captions-trash": ["Deleted Caption Studio projects", "project", "projects"],
   "review-trash": ["Deleted Review videos", "video", "videos"],

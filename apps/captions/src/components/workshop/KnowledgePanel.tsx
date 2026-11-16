@@ -224,7 +224,7 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
       )}
       {(error || (!sources.length && loadError)) && <p className="mb-2 text-xs text-red-400">{error || loadError}</p>}
       {sources.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-600">Nothing yet.</p>
+        <p className="py-8 text-center text-sm text-zinc-600">No files</p>
       ) : (
         <>
           <Progress sources={sources} held={listed.filter((x) => !x.projectId || x.projectId === here).reduce((n, x) => n + x.chars, 0)} />
@@ -311,7 +311,7 @@ function SourceRow({
                 <Loader2 className="h-3 w-3 animate-spin" /> Reading
               </span>
             )}
-            {s.status === "queued" && <span className="text-[10px] text-zinc-500">{s.waitUntil ? `Waits for your AI's limit · ${timeOf(s.waitUntil)}` : "Waiting its turn"}</span>}
+            {s.status === "queued" && <span className="text-[10px] text-zinc-500">{s.waitUntil ? `Waits for the AI provider's limit · ${timeOf(s.waitUntil)}` : "Queued"}</span>}
             {s.status === "new" && <span className="text-[10px] text-amber-300">Not read yet</span>}
             {s.status === "failed" && (
               <span className="text-[10px] text-red-400" title={s.error}>
@@ -393,7 +393,7 @@ function Progress({ sources, held }: { sources: KnowledgeSource[]; held: number 
               {!wait && <Loader2 className="h-3 w-3 animate-spin" />}
               Read {batch - left} of {batch}
             </span>
-            <span className="text-zinc-500">{wait ? `Waits for your AI's limit, goes on at ${timeOf(wait)}` : "You'll get a note in the inbox when it's all read"}</span>
+            <span className="text-zinc-500">{wait ? `Waits for the AI provider's limit, continues at ${timeOf(wait)}` : "A note goes to the inbox when all are read"}</span>
           </div>
           <div className="mt-1 h-1 overflow-hidden rounded-full bg-zinc-800">
             <div className="h-full bg-violet-500 transition-[width]" style={{ width: `${((batch - left) / batch) * 100}%` }} />

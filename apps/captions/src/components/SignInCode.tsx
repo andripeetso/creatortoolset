@@ -196,14 +196,14 @@ export function SignInCodeRow() {
       <Row
         id="sign-in-code"
         title="Sign-in code"
-        description="Ask for a code from an authenticator app when you sign in with your password"
+        description="A password sign-in also needs a code from an authenticator app."
         control={<Switch checked={s.on} disabled={!state.data || (s.on && s.required)} aria-label="Sign-in code" onCheckedChange={(on) => void open(on ? "on" : "off")} />}
       />
       <FormDialog
         open={dialog === "on"}
         onOpenChange={(o) => !o && setDialog(null)}
         title="Sign-in code"
-        submitLabel="Switch on"
+        submitLabel="Turn on"
         submitDisabled={!secret || !code.trim()}
         busy={busy}
         error={error}
@@ -218,8 +218,8 @@ export function SignInCodeRow() {
       <FormDialog
         open={dialog === "off"}
         onOpenChange={(o) => !o && setDialog(null)}
-        title="Switch off the sign-in code"
-        submitLabel="Switch off"
+        title="Turn off sign-in code"
+        submitLabel="Turn off"
         submitDisabled={!s.mac && !code.trim()}
         busy={busy}
         error={error}

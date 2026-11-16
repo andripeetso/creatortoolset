@@ -126,7 +126,7 @@ const STATIC_ROWS = [
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
-  { section: "account", id: "sign-in-code", title: "Sign-in code", description: "Ask for a code from an authenticator app when you sign in with your password", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "recovery codes", "otp"], needs: "sign-in" },
+  { section: "account", id: "sign-in-code", title: "Sign-in code", description: "A password sign-in also needs a code from an authenticator app", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "recovery codes", "otp"], needs: "sign-in" },
   { section: "account", id: "sign-in-with", title: "Sign-ins", keywords: ["google", "apple", "github", "link", "unlink", "sign in", "connect", "connected accounts", "disconnect"], needs: "sign-in" },
   { section: "account", id: "sign-out", title: "This server", description: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
 ] as const satisfies readonly SearchRow[];

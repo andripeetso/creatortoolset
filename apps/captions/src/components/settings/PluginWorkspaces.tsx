@@ -48,7 +48,7 @@ export function PluginWorkspaces({ id, onView }: { id: string; onView?: (v: Plug
   if (failed && !view) rows = <ErrorRow title="Could not load workspaces" retry={() => { setFailed(false); void load(); }} />;
   else if (!view) rows = <LoadingRow />;
   // no switch: the row says why, in words
-  else if (view.fixed) rows = <Row title="All workspaces" description={view.fixed} />;
+  else if (view.fixed) rows = <Row title="All workspaces" description={`${view.fixed}.`} />;
   else if (!view.workspaces.length) rows = <EmptyRow title="No workspaces" />;
   else {
     const on = (w: { on: boolean }) => view.all || w.on;
