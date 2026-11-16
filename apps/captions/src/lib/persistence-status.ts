@@ -1,6 +1,61 @@
+import { canMove, type Moves } from "@contracts/transition";
+
 export type ProjectSaveState = "idle" | "saving" | "saved" | "error";
 export type ClipUploadState =
   "local" | "uploading" | "processing" | "done" | "error";
+
+/*
+ * Caption Studio's three badge states and the moves each makes while one project is open. Every write in store.ts,
+ * persist.ts and local-recovery.ts goes through `badge` below. A start is not a move: the store's first state, a
+ * project opened, restored, imported or closed, and a new clip begin at whatever they are (`from` null). The tables are
+ * built from the writers as they are today; persistence-status.test.ts names the site of every move.
+ */
+
+/** `saveState`, the save to the server. Only a start goes back to idle, and idle is never saved without a save. */
+export const SERVER_SAVE_MOVES: Moves<ProjectSaveState> = {
+  idle: ["saving", "error"],
+  saving: ["saved", "error"],
+  saved: ["saving", "error"],
+  error: ["saving", "saved"],
+};
+
+/**
+ * `localSaveState`, the copy on this browser's disk. Every move happens: the answer of a write is not matched to the
+ * save that asked for it, so it lands on whatever the state has become since.
+ */
+export const LOCAL_SAVE_MOVES: Moves<ProjectSaveState> = {
+  idle: ["saving", "saved", "error"],
+  saving: ["idle", "saved", "error"],
+  saved: ["idle", "saving", "error"],
+  error: ["idle", "saving", "saved"],
+};
+
+/**
+ * `ClipInfo.uploadState`, one clip's source on its way to the server. An upload starts only from local or error, and
+ * nothing writes "processing" (a copy stored by an older version can hold it; a file put back makes it local).
+ */
+export const CLIP_UPLOAD_MOVES: Moves<ClipUploadState> = {
+  local: ["uploading", "done", "error"],
+  uploading: ["done", "error", "local"],
+  processing: ["local"],
+  done: ["local", "error"],
+  error: ["uploading", "local", "done"],
+};
+
+/**
+ * The one writer of the three states. Returns `to`: `saveState: badge(SERVER_SAVE_MOVES, s.saveState, "saving",
+ * "scheduleSave")`. `from` null is a start; `site` names the function that asks. A move its table does not list is
+ * made all the same and reported, because a badge must never stop a save or stay stuck: a warning in the running app,
+ * an error under vitest, so the suites show a table that is short.
+ */
+export function badge<S extends string>(moves: Moves<S>, from: S | null, to: S, site: string): S {
+  if (from !== null && !canMove(moves, from, to)) {
+    const message = `Caption Studio badge (${site}): "${from}" → "${to}" is not in its moves table`;
+    if (import.meta.env.MODE === "test") throw new Error(message);
+    console.warn(message);
+  }
+  return to;
+}
 
 export interface PersistenceClip {
   uploadState: ClipUploadState;
