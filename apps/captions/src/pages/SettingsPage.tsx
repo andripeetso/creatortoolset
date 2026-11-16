@@ -157,7 +157,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   return (
     <Dialog open modal={false} onOpenChange={(open) => !open && onClose()}>
       <DialogPortal>
-        <div aria-hidden className="fixed inset-0 z-50 bg-black/50 motion-safe:animate-in motion-safe:fade-in-0" />
+        <div aria-hidden data-slot="dialog-overlay" className="fixed inset-0 z-50 bg-black/50 motion-safe:animate-in motion-safe:fade-in-0" />
       </DialogPortal>
       <DialogContent
         showCloseButton={false}
