@@ -120,7 +120,7 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       input.shots
         ? `There are no pictures this time. What is seen in the clip, shot by shot, in order:\n${input.shots.join("\n")}`
         : input.was !== undefined
-          ? `There are no pictures this time.${input.was ? ` The description it has now: keep what it says is seen, name it in the workspace's words where that is certain, and add nothing it doesn't say:\n${input.was}` : " Describe it from its title and what is said."}`
+          ? `There are no pictures this time.${input.was ? ` The description it has now: keep what it says is seen. Where the workspace makes it certain what a thing is, name it in the workspace's words as a plain statement; where it doesn't, leave the words as they are. Add nothing it doesn't say:\n${input.was}` : " Describe it from its title and what is said."}`
         : input.frames > 1
           ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`
           : "The picture is the whole clip: a photo, or a clip too short for more.",

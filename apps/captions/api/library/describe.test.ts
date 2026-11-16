@@ -253,7 +253,7 @@ describe("a description written under another workspace context", () => {
     jobsDone();
     vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
     vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, user, _c, parse) => {
-      expect(user).toMatch(/Ember Realm[\s\S]*There are no pictures this time\. The description it has now[^\n]*add nothing it doesn't say:\nA knight walks through a fantasy MMORPG town\./);
+      expect(user).toMatch(/Ember Realm[\s\S]*There are no pictures this time\. The description it has now[^\n]*Add nothing it doesn't say:\nA knight walks through a fantasy MMORPG town\./);
       // nothing is asked of frames that aren't there: no turn, no roll, and the workspace names what its words show
       expect(user).toContain("when its words show it; never add what they don't say");
       expect(user).not.toMatch(/the frames show|turn is how many degrees|"roll"|"turn"/);
