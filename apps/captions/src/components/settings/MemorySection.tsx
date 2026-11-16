@@ -1,12 +1,17 @@
+import { useEffect, useRef, useState } from "react";
 import type { MemoryFact } from "@contracts/memory";
+import { MEMORY_RULE_MAX } from "@contracts/memory";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useCachedLoad } from "@/lib/local-cache";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, RowMenu, Section } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section } from "./ui";
 
 /** This window's own remove reads the list again too. */
 const OWN_TOO = { own: true };
 
-async function call<T>(path = "", method = "GET"): Promise<T> {
-  const r = await fetch(`/api/memory${path}`, { method, credentials: "same-origin" }).catch(() => null);
+async function call<T>(path = "", method = "GET", body?: unknown): Promise<T> {
+  const init: RequestInit = { method, credentials: "same-origin", ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) };
+  const r = await fetch(`/api/memory${path}`, init).catch(() => null);
   if (!r) throw new Error("Can't reach the server");
   const data = (await r.json().catch(() => ({}))) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `Failed (${r.status})`);
@@ -15,12 +20,12 @@ async function call<T>(path = "", method = "GET"): Promise<T> {
 
 /**
  * Settings → Memory: what the assistant keeps from one chat to the next (api/memory.ts): the rule it wrote, what the
- * person said under it, and Remove in the row's menu. Things get in only by being said to the assistant, so there is nothing to add here, and with
- * nothing kept the list says so in one line, as the other Settings lists do (a blank page reads as a broken one). The
- * list follows the chat: a fact kept while the page is open shows at once.
+ * person said under it, and the row's menu: Edit, Rewrite (their AI writes it again, shown in Edit before it is
+ * saved), Remove.
  */
 export function MemorySection() {
   const kept = useCachedLoad<{ facts: MemoryFact[] }>("/api/memory", () => call<{ facts: MemoryFact[] }>(), OWN_TOO);
+  const [editing, setEditing] = useState<{ fact: MemoryFact; rewrite: boolean } | null>(null);
   const facts = kept.data?.facts;
   const refresh = kept.refresh;
   if (!facts) return <Card>{kept.error ? <ErrorRow title="Could not load what is kept" detail={kept.error} retry={() => void refresh().catch(() => {})} /> : <LoadingRow />}</Card>;
@@ -35,10 +40,77 @@ export function MemorySection() {
             title={<span className="whitespace-normal font-normal [overflow-wrap:anywhere]">{f.text}</span>}
             subtitle={f.said && <span title={f.said}>You said “{f.said}”</span>}
             status={f.project?.name}
-            actions={<RowMenu label="Rule" items={[{ label: "Remove", destructive: true, confirm: { title: "Remove this rule?" }, onSelect: () => call(`/${f.id}`, "DELETE").then(refresh) }]} />}
+            actions={
+              <RowMenu
+                label="Rule"
+                items={[
+                  { label: "Edit", onSelect: () => setEditing({ fact: f, rewrite: false }) },
+                  { label: "Rewrite", onSelect: () => setEditing({ fact: f, rewrite: true }) },
+                  { label: "Remove", destructive: true, confirm: { title: "Remove this rule?" }, onSelect: () => call(`/${f.id}`, "DELETE").then(refresh) },
+                ]}
+              />
+            }
           />
         ))}
       </Card>
+      {editing && <EditRule key={editing.fact.id} fact={editing.fact} rewriteFirst={editing.rewrite} onClose={() => setEditing(null)} onSaved={() => void refresh().catch(() => {})} />}
     </Section>
+  );
+}
+
+/** Edit one rule. Rewrite asks their AI for a new wording and puts it in the box; nothing is saved until Save. */
+function EditRule({ fact, rewriteFirst, onClose, onSaved }: { fact: MemoryFact; rewriteFirst: boolean; onClose: () => void; onSaved: () => void }) {
+  const [text, setText] = useState(fact.text);
+  const [busy, setBusy] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rewrite = async () => {
+    setError(null);
+    setWriting(true);
+    try {
+      setText((await call<{ text: string }>(`/${fact.id}/rewrite`, "POST")).text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The rewrite did not work");
+    } finally {
+      setWriting(false);
+    }
+  };
+  // Rewrite from the menu: start at once, in the dialog that shows the result (once, also under StrictMode)
+  const started = useRef(false);
+  useEffect(() => {
+    if (!rewriteFirst || started.current) return;
+    started.current = true;
+    void rewrite();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on open only
+  }, []);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await call(`/${fact.id}`, "PATCH", { text });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save");
+      setBusy(false);
+    }
+  };
+  return (
+    <FormDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title="Edit rule"
+      description={fact.said ? `You said “${fact.said}”` : undefined}
+      submitLabel="Save"
+      onSubmit={save}
+      busy={busy}
+      submitDisabled={writing || !text.trim() || text.trim() === fact.text}
+      error={error}
+    >
+      <Textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={MEMORY_RULE_MAX} rows={3} disabled={writing} aria-label="Rule" />
+      <Button type="button" size="sm" variant="outline" onClick={() => void rewrite()} disabled={writing || busy}>
+        {writing ? "Rewriting…" : "Rewrite"}
+      </Button>
+    </FormDialog>
   );
 }
