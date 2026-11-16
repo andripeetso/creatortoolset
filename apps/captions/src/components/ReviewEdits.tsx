@@ -259,7 +259,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           setCrop(null);
           await reload(); // the next version: the panel starts again on it
           setTheir(null);
-        }, (e: Error) => !ctl.signal.aborted && setTheir({ error: e.message || "Couldn't make the next version" }));
+        }, (e: Error) => !ctl.signal.aborted && setTheir({ error: e.message || "Could not make the next version" }));
       return;
     }
     if (!own) return;
@@ -269,7 +269,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
         ownEdit.set(e);
         setHist(freshHist(EMPTY_PENDING));
         setCrop(null);
-      }, (e: Error) => toast.error(e.message || "Couldn't make the next version"))
+      }, (e: Error) => toast.error(e.message || "Could not make the next version"))
       .finally(() => setMaking(false));
   };
 
@@ -282,7 +282,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     setCam({});
     camera(edit, ctl.signal).then(
       (url) => !ctl.signal.aborted && setCam({ url }),
-      (e: Error) => !ctl.signal.aborted && setCam({ error: e.message || "Couldn't get the camera frame" }),
+      (e: Error) => !ctl.signal.aborted && setCam({ error: e.message || "Could not get the camera frame" }),
     );
   };
 
@@ -428,10 +428,10 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-          {own || theirs ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
+          {own || theirs ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with the next comment" : "Click a clip to comment on it"}
           {originals && voiceFiles.length > 0 && !originalsOn && (
             <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
-              title="Your edits play with the real sound from the original recordings: allow their folder, or the folder they are in now">
+              title="Edits play with the sound of the original recordings: allow their folder, or the folder they are in now">
               {originals.tried || voiceFiles.some((s) => allGranted([originals.paths[s]], originals.folders))
                 ? "Find the original files" : "Play edits from the originals"}
             </button>
@@ -440,34 +440,34 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
         </div>
         {((own && ownEdit.data && !working) || (theirs && !(their && "line" in their))) && planEdits.length > 0 && !crop && (
           <button type="button" disabled={making || !!hole} onClick={makeNext}
-            title={hole ? "A placeholder goes with a comment: send it or drop it first" : "Cut the next version from these timeline edits as you made them, with no AI"}
+            title={hole ? "A placeholder goes with a comment: send it or remove it first" : "Cut the next version from these timeline edits exactly as they are"}
             className="ml-auto rounded-full bg-violet-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-violet-500 disabled:opacity-40">
             {making ? "Starting…" : "Make the next version"}
           </button>
         )}
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}
-            title="Play your timeline edits and placeholders on this cut (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
+            title="Play the timeline edits and placeholders on this version (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
             className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${previewOn ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-300"}`}>
             {previewOn ? "Edits shown" : "Edits hidden"}
           </button>
         )}
       </div>
       {own && working && (
-        <div className="text-[11px] text-violet-300">Making the next version{doing(working.line)} It shows up here when it is ready.</div>
+        <div className="text-[11px] text-violet-300">Making the next version{doing(working.line)}</div>
       )}
       {their && "line" in their && (
-        <div className="text-[11px] text-violet-300">Making the next version{doing(their.line)} It shows up here when it is ready.</div>
+        <div className="text-[11px] text-violet-300">Making the next version{doing(their.line)}</div>
       )}
       {their && "error" in their && (
-        <div role="alert" className="text-[11px] text-rose-400">The next version wasn't made: {their.error}</div>
+        <div role="alert" className="text-[11px] text-rose-400">Could not make the next version: {their.error}</div>
       )}
       {own && failed && (
         <div className="flex items-center gap-2 text-[11px] text-rose-400">
-          <span className="min-w-0 flex-1">The next version wasn't made: {failed.error}</span>
+          <span className="min-w-0 flex-1">Could not make the next version: {failed.error}</span>
           <button type="button" onClick={() => retryJob(own.edit, failed.id).then(ownEdit.set, (e: Error) => toast.error(e.message))}
             className="shrink-0 rounded border border-rose-400/50 px-1.5 py-0.5 text-rose-200 hover:bg-rose-950">
-            Try again
+            Retry
           </button>
         </div>
       )}
@@ -507,7 +507,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       )}
       {crop && !cam.url && (
         <div className={cam.error ? "text-[11px] text-rose-400" : "text-[11px] text-zinc-500"}>
-          {cam.error ?? "Getting the whole camera frame from the Mac…"}
+          {cam.error ?? "Getting the whole camera frame…"}
         </div>
       )}
       {hole && (
@@ -515,7 +515,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           <span className="min-w-0 flex-1 truncate">
             Placeholder on {hole.track} · {secs(hole.rec / fps)} → {secs((hole.rec + hole.len) / fps)}
           </span>
-          <button aria-label="Drop the placeholder" onClick={() => setHole(null)}
+          <button aria-label="Remove the placeholder" onClick={() => setHole(null)}
             className="rounded px-1 text-amber-400 hover:text-zinc-50">×</button>
         </div>
       )}

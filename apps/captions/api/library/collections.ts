@@ -639,7 +639,7 @@ collectionApp.post("/:id/pieces/:pid/merge", async (c) => {
   const both = db()
     .prepare("SELECT 1 FROM piece_items a JOIN piece_items b ON b.version_id = a.version_id WHERE a.piece_id = ? AND b.piece_id = ? AND a.version_id IS NOT NULL")
     .get(from.id, target.id);
-  if (both) return c.json({ error: "A version is in both pieces: take it out of one first", code: "conflict" }, 409);
+  if (both) return c.json({ error: "A version is in both pieces: remove it from one first", code: "conflict" }, 409);
   inTx(() => {
     const top = (db().prepare("SELECT COALESCE(MAX(position), 0) AS p FROM piece_items WHERE piece_id = ?").get(target.id) as { p: number }).p;
     db().prepare("UPDATE piece_items SET piece_id = ?, position = position + ?, winner = 0 WHERE piece_id = ?").run(target.id, top, from.id);
