@@ -63,13 +63,12 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
         />
         {d.on && (
           <>
-            <Row id="dictation-key-talk" title="Talk" description="Tap to start and stop, or hold a key like fn while you talk." control={key("talk")} />
-            <Row id="dictation-key-cancel" title="Cancel" description="Stops a recording, and nothing is pasted." control={key("cancel")} />
+            <Row id="dictation-key-talk" title="Talk" description="Tap, or hold while you talk." control={key("talk")} />
+            <Row id="dictation-key-cancel" title="Cancel" description="Stops without pasting." control={key("cancel")} />
             {d.engine && (
               <Row
                 id="dictation-engine"
                 title="Engine"
-                description={d.engine === "server" ? "Your Deepgram or OpenAI key, as Talking to the assistant uses them." : undefined}
                 status={d.engine === "server" && serverNeeds ? <Status tone="attention">{serverNeeds}</Status> : undefined}
                 control={
                   <SettingsSelect
@@ -85,14 +84,18 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
               <Row
                 id="dictation-server"
                 title="Speech server"
-                description="Your own server's address. Tried first; this Mac's model when it doesn't answer."
+                description="Tried first, then this Mac."
                 control={<ServerField value={d.server} save={(v) => set("server", v)} />}
               />
             )}
             {d.engine !== "server" && <Row
               id="dictation-model"
               title="Speech model"
-              status={model && model.progress !== null ? `Downloading · ${Math.round(model.progress * 100)}%` : undefined}
+              description={d.server ? "Used when the speech server doesn't answer." : undefined}
+              status={!model ? undefined
+                : model.progress !== null ? `Downloading · ${Math.round(model.progress * 100)}%`
+                : model.here ? undefined
+                : <Status tone="attention">Not on this Mac</Status>}
               control={
                 <>
                   {model && !model.here && model.progress === null && <Button size="sm" variant="outline" onClick={() => set("download", model.id)}>Download</Button>}
@@ -100,8 +103,12 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                   <SettingsSelect
                     label="Speech model"
                     value={d.model}
-                    onValueChange={(v) => set("model", v)}
-                    options={d.models.map((m) => ({ value: m.id, label: `${m.name} · ${m.size}` }))}
+                    onValueChange={(v) => {
+                      set("model", v);
+                      // picking a model is asking for it: one not on this Mac starts downloading
+                      if (!d.models.find((m) => m.id === v)?.here) set("download", v);
+                    }}
+                    options={d.models.map((m) => ({ value: m.id, label: `${m.name} · ${m.here ? "on this Mac" : `${m.size} download`}` }))}
                   />
                 </>
               }
@@ -109,7 +116,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
             <Row
               id="dictation-history"
               title="History"
-              description="The last recordings, to copy or transcribe again."
+              description="Recent recordings, to copy or redo."
               control={
                 <>
                   <SettingsSelect
@@ -137,8 +144,8 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
             />
             <Row
               id="dictation-sounds"
-              title="Sounds when it starts and stops"
-              control={<Switch checked={d.sounds} aria-label="Sounds when dictation starts and stops" onCheckedChange={(on) => set("sounds", on ? "1" : "0")} />}
+              title="Sound cues"
+              control={<Switch checked={d.sounds} aria-label="Sound cues" onCheckedChange={(on) => set("sounds", on ? "1" : "0")} />}
             />
           </>
         )}
