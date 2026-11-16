@@ -148,7 +148,7 @@ describe("a Workshop session's Claude session on the Mac", () => {
     const second = await send(id, docId, "Shorter, please.");
     const done = await settled(id, second.body.reply!.id);
     expect(done.status).toBe("done");
-    expect(done.notes).toEqual(["Claude's earlier session for this conversation was gone, so this reply read the whole conversation again."]);
+    expect(done.notes).toEqual(["The earlier session was not found, so this reply read the whole chat again."]);
     expect(calls[1]!.opts.mac!.session!.resume).toBe("c-1");
     expect(calls[2]!.opts.mac!.session!.resume).toBeUndefined();
     expect(calls[2]!.user).toContain("Conversation so far");

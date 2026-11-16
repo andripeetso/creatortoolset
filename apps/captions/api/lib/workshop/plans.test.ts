@@ -6,7 +6,7 @@ describe("jsonObject", () => {
     expect(jsonObject('Here you go:\n```json\n{"a":1}\n```')).toEqual({ a: 1 });
     expect(jsonObject('{"json":"{\\"a\\":2}"}')).toEqual({ a: 2 });
     expect(jsonObject('{"plan":{"a":3}}')).toEqual({ a: 3 });
-    expect(() => jsonObject("no json here")).toThrow(/JSON/);
+    expect(() => jsonObject("no json here")).toThrow(/could not be read/);
   });
 });
 

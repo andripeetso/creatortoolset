@@ -747,7 +747,7 @@ export const inviteApp = new Hono();
 inviteApp.get("/invite/:token", async (c) => {
   const token = c.req.param("token");
   const found = INVITE_TOKEN_RE.test(token) ? inviteByToken(token) : null;
-  if (!found) return c.json({ error: "This invite link doesn't work any more" }, 404);
+  if (!found) return c.json({ error: "This invite link is not valid. Ask for a new one." }, 404);
   const me = signedInAccount(c.req.header("cookie"));
   const server = new URL(originOf(c)).host;
   const info: InviteInfo = {
@@ -770,8 +770,8 @@ inviteApp.post("/invite/:token", async (c) => {
   // so a revoke or expiry can't land in between and leave a new account signed in that never joins
   const b: { username?: unknown; password?: unknown; name?: unknown } = user ? {} : await c.req.json<{ username?: unknown; password?: unknown; name?: unknown }>().catch(() => ({}));
   const found = INVITE_TOKEN_RE.test(token) ? inviteByToken(token) : null;
-  if (!found) return c.json({ error: "This invite link doesn't work any more" }, 404);
-  if (found.invite.expiresAt <= Date.now()) return c.json({ error: "This invite link has expired: ask for a new one" }, 410);
+  if (!found) return c.json({ error: "This invite link is not valid. Ask for a new one." }, 404);
+  if (found.invite.expiresAt <= Date.now()) return c.json({ error: "This invite link has expired. Ask for a new one." }, 410);
   if (!user) {
     const username = typeof b.username === "string" ? b.username.trim().toLowerCase() : "";
     const password = typeof b.password === "string" ? b.password : "";

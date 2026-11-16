@@ -219,8 +219,8 @@ describe("co-writing inputs", () => {
       context: [{ postId: id(2), handle: "coach", field: "slides", text: "SAMPLE", slide: 1 }],
     });
     expect(parseTurnInput({ docId: id(1), text: "x", deep: "yes" })).toMatchObject({ deep: false, comments: false });
-    expect(() => parseTurnInput({ docId: id(1) })).toThrow(/Say something/);
-    expect(() => parseTurnInput({ text: "hi" })).toThrow(/Pick a document/);
+    expect(() => parseTurnInput({ docId: id(1) })).toThrow(/Write a message/);
+    expect(() => parseTurnInput({ text: "hi" })).toThrow(/Pick a piece/);
   });
 });
 
@@ -234,8 +234,8 @@ describe("parseFiles (PDFs with a message)", () => {
   });
 
   it("refuses a type that is not on the list, by name", () => {
-    expect(() => parseFiles([{ name: "clip.mp4", type: "video/mp4", data: pdf() }])).toThrow(/clip\.mp4 can't be read yet/);
-    expect(() => parseFiles([{ name: "x.zip", type: "application/zip", data: pdf() }])).toThrow(/can't be read yet/);
+    expect(() => parseFiles([{ name: "clip.mp4", type: "video/mp4", data: pdf() }])).toThrow(/clip\.mp4 cannot be read/);
+    expect(() => parseFiles([{ name: "x.zip", type: "application/zip", data: pdf() }])).toThrow(/cannot be read/);
   });
 
   it("refuses bad base64 and a body that is not a PDF", () => {

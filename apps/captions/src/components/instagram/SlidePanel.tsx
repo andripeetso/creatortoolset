@@ -175,7 +175,7 @@ export function SlidePanel({
                     ) : null}
                     {empty ? (
                       <span className="block text-xs text-zinc-600">
-                        {s.vision.status === "pending" && processing ? "Reading…" : "No text yet"}
+                        {s.vision.status === "pending" && processing ? "Reading…" : "No text"}
                       </span>
                     ) : null}
                   </span>
@@ -188,7 +188,7 @@ export function SlidePanel({
         <div className="px-4 py-3">
           {slide.caption && (
             <div className="mb-3">
-              <p className={label}>Slide caption</p>
+              <p className={label}>Slide description</p>
               <p data-ctx={ctx("caption", slide.index)} className="whitespace-pre-wrap text-sm text-violet-100">{slide.caption}</p>
             </div>
           )}
@@ -202,12 +202,12 @@ export function SlidePanel({
             <div className="mb-3">
               <p className={label}>
                 On-screen text
-                {v.textKind === "captions" ? <span className="normal-case tracking-normal text-zinc-600">· only subtitles of what's said</span> : null}
+                {v.textKind === "captions" ? <span className="normal-case tracking-normal text-zinc-600">· only captions of what is said</span> : null}
               </p>
               <p data-ctx={ctx("slides", slide.index)} className={`whitespace-pre-wrap leading-relaxed ${v.textKind === "captions" ? "text-xs text-zinc-500" : "text-sm text-zinc-200"}`}>{v.onScreenText}</p>
             </div>
           ) : v.status === "done" ? (
-            <p className="mb-3 text-xs text-zinc-500">No text on screen.</p>
+            <p className="mb-3 text-xs text-zinc-500">No on-screen text</p>
           ) : null}
           {slide.kind === "video" && slide.transcript.status === "done" && (
             <div className="mb-3 scroll-mt-4" id={`transcript-${post.id}-${slide.index}`} data-ctx={ctx("transcript", slide.index)}>
@@ -225,10 +225,10 @@ export function SlidePanel({
           {(v.status === "error" || slide.transcript.status === "error") && (
             <p className="mb-2 flex flex-wrap items-center gap-2 text-xs text-amber-400">
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-              Couldn't read this slide
+              Could not read the slide
               {onRead && !processing ? (
                 <button type="button" onClick={onRead} className="underline underline-offset-2 hover:text-amber-300">
-                  Try again
+                  Retry
                 </button>
               ) : null}
             </p>
@@ -236,15 +236,15 @@ export function SlidePanel({
           {!slideHasText(slide) && v.status !== "error" && (
             <p className="text-xs text-zinc-600">
               {processing && (v.status === "pending" || slide.transcript.status === "pending")
-                ? "Reading this slide…"
+                ? "Reading…"
                 : anyText
-                  ? "Nothing read on this slide."
+                  ? "No text"
                   : onRead ? (
                       <button type="button" onClick={onRead} className="text-violet-300 hover:text-violet-200 hover:underline">
                         Make the transcript and on-screen text
                       </button>
                     ) : (
-                      "No on-screen text yet — run Transcript & on-screen text."
+                      "No text"
                     )}
             </p>
           )}

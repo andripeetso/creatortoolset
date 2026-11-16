@@ -198,12 +198,12 @@ export default function MobileInstagramPage() {
           </div>
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">Content Analyzer</h1>
-            <p className="text-sm text-zinc-500">Paste links from your phone</p>
+            <p className="text-sm text-zinc-500">Add posts by link</p>
           </div>
         </div>
 
         <DesktopHint>
-          Full Analyzer is on your desktop — ranking, stacks, the lot. Drop links here and they crawl in the background.
+          Ranking and stacks are in the Content Analyzer on a computer.
         </DesktopHint>
 
         <div>
@@ -276,14 +276,14 @@ export default function MobileInstagramPage() {
                 className="flex min-h-11 items-center gap-1.5 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white active:bg-violet-500 disabled:opacity-50"
               >
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                {crawlNow ? "Crawl" : "Save for desktop"}
+                {crawlNow ? "Analyze" : "Save"}
               </button>
             </div>
           </div>
           {!crawlNow && avail ? (
             <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-amber-400/90">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Connect Instagram on your desktop so these links can crawl. They'll still save here.
+              Needs an Apify key: the links are saved until then.
             </p>
           ) : null}
           {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
@@ -300,7 +300,7 @@ export default function MobileInstagramPage() {
                 >
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-400" />
                   <span className="min-w-0 truncate text-zinc-200">@{a.username}</span>
-                  <span className="ml-auto text-[11px] text-zinc-500">Pulling catalog</span>
+                  <span className="ml-auto text-[11px] text-zinc-500">Loading posts</span>
                 </li>
               ))}
           </ul>

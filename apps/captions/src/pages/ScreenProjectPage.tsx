@@ -25,7 +25,7 @@ import { useMacRecorder } from "@/components/settings/ThisMacSection";
 const SHARES: { dest: ShareDest; label: string }[] = [
   { dest: "review", label: "Send to Review" },
   { dest: "notes", label: "Send to Video Notes" },
-  { dest: "guide", label: "Make a guide" },
+  { dest: "guide", label: "Send to Guide Builder" },
 ];
 
 /**
@@ -108,7 +108,7 @@ export default function ScreenProjectPage() {
         const file = new File([p.blob], p.name, { type: "video/mp4" });
         const up = await uploadFile(target.libraryId, file, (sent) => setToEditor(Math.round(((done + sent) / total) * 100)), target.collectionId);
         const assetId = up.assetId ?? up.duplicateOf;
-        if (!assetId) throw new Error(`${p.name} was not filed in the library`);
+        if (!assetId) throw new Error(`${p.name} was not added to the Media Library`);
         await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
         const asset = await getAsset(target.libraryId, assetId);
         pick.push({ versionId: asset.versionId, title: asset.title });
@@ -116,7 +116,7 @@ export default function ScreenProjectPage() {
       }
       navigate(`/editor?new=1&name=${encodeURIComponent(rec.name)}`, { state: { pick } });
     } catch (e) {
-      await alertDialog({ title: "Couldn't send it to the AI Editor", body: e instanceof Error ? e.message : String(e) });
+      await alertDialog({ title: "Could not send to the AI Editor", body: e instanceof Error ? e.message : String(e) });
     } finally {
       setToEditor(null);
     }
@@ -146,7 +146,7 @@ export default function ScreenProjectPage() {
       </AppBar>
       {!rec || !source ? (
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">
-          {unreadable ? "This recording's video can't be read." : list === null || rec ? "Opening…" : "This recording isn't on this Mac any more."}
+          {unreadable ? "Could not read this recording's video" : list === null || rec ? "Opening…" : "Not found on this Mac"}
         </div>
       ) : (
         <ScreenRecordingEditor
@@ -177,7 +177,7 @@ export default function ScreenProjectPage() {
                 <Button size="sm" variant="outline" disabled={toEditor !== null}>
                   {toEditor !== null ? (
                     <>
-                      <Loader2 className="animate-spin" /> To the AI Editor {toEditor}%
+                      <Loader2 className="animate-spin" /> Sending to the AI Editor {toEditor}%
                     </>
                   ) : (
                     <>
@@ -187,7 +187,7 @@ export default function ScreenProjectPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel className="text-xs font-normal text-zinc-400">The recording as it was made</DropdownMenuLabel>
+                <DropdownMenuLabel className="text-xs font-normal text-zinc-400">Original recording</DropdownMenuLabel>
                 {SHARES.map((s) => (
                   <DropdownMenuItem key={s.dest} onSelect={() => tellRecorder(`share:${rec.id}:${s.dest}`)}>
                     {s.label}

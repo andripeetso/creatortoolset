@@ -100,7 +100,7 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
         // this server only reads the catalog: the Mac app sends it with its own account, after its own alert
         const mac = await publishFromMac(pack);
         if (mac?.state === "sent") setSent(true);
-        else if (mac?.state === "error") setError(mac.message || "It didn't send. Try again.");
+        else if (mac?.state === "error") setError(mac.message || "Could not send it. Try again.");
         else if (mac?.state !== "cancelled") setSendAt({ pack, href: e.publishAt, signedOut: mac?.state === "signedOut" });
       } else if (e instanceof CatalogError && e.problems.length) setProblems(e.problems);
       else setError(msg(e));
@@ -117,7 +117,7 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
 
         {sent ? (
           <div className="space-y-3">
-            <Notice>Sent for review. Once it&apos;s listed, it shows in Community.</Notice>
+            <Notice>Sent for review; it is listed in Community once approved.</Notice>
             <div className="flex justify-end">
               <Button variant="outline" size="sm" onClick={onClose}>
                 Close
@@ -128,12 +128,12 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
           <div className="space-y-3">
             <Notice>
               {sendAt.signedOut
-                ? "It passed the checks. Sign in to your Creator Toolset account in Settings → Account to publish it from here, or download the file and send it on the community catalog's site."
-                : "It passed the checks. Packs are published on the community catalog's site: download the file, then send it there."}
+                ? "Checks passed: sign in under Settings → Account to publish from here, or download the file and send it on the Community catalog's site."
+                : "Checks passed: download the file and send it on the Community catalog's site."}
             </Notice>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => download(sendAt.pack)}>
-                <Download className="h-3 w-3" /> Download .ctpack.json
+                <Download className="h-3 w-3" /> Download file
               </Button>
               <a
                 href={sendAt.href}
@@ -141,7 +141,7 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
                 rel="noreferrer"
                 className="inline-flex h-8 items-center rounded-md bg-violet-600 px-3 text-xs font-medium text-white hover:bg-violet-500"
               >
-                Open the catalog
+                Open catalog
               </a>
             </div>
           </div>
@@ -160,7 +160,7 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
             <Field label="Description">
               <Textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} rows={2} required />
             </Field>
-            <Field label="Niche" hint="Optional: who it's for, like fitness or B2B.">
+            <Field label="Niche" hint="Optional: who it is for.">
               <Input value={niche} onChange={(e) => setNiche(e.target.value)} maxLength={40} />
             </Field>
             <div className="grid grid-cols-2 gap-3">
@@ -181,7 +181,7 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
 
             {problems.length > 0 && (
               <div className="rounded-md bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-300">
-                <div className="font-medium">Not ready to share yet:</div>
+                <div className="font-medium">Not ready to publish:</div>
                 <ul className="mt-1 list-disc space-y-0.5 pl-4">
                   {problems.map((p) => (
                     <li key={p}>{p}</li>

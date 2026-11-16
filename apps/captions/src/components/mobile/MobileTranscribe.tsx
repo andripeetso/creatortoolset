@@ -89,10 +89,6 @@ export function MobileTranscribe({
             <p className="text-base font-medium text-zinc-100">
               No speech found
             </p>
-            <p className="mt-1.5 max-w-xs text-sm leading-6 text-zinc-500">
-              The transcription came back empty — this video doesn&apos;t seem
-              to have spoken words.
-            </p>
           </div>
           <button
             onClick={onRestart}

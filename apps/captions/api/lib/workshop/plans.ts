@@ -63,7 +63,7 @@ export function jsonObject(text: string): Rec {
   if (fenced) s = fenced[1]!.trim();
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("The model did not return JSON");
+  if (start < 0 || end <= start) throw new Error("The reply could not be read");
   let obj = JSON.parse(s.slice(start, end + 1)) as unknown;
   if (isRec(obj)) {
     const keys = Object.keys(obj);
@@ -81,7 +81,7 @@ export function jsonObject(text: string): Rec {
       }
     }
   }
-  if (!isRec(obj)) throw new Error("The model did not return a JSON object");
+  if (!isRec(obj)) throw new Error("The reply could not be read");
   return obj;
 }
 

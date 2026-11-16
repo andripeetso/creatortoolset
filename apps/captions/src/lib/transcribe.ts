@@ -4,7 +4,7 @@ import type { Word } from "./types";
 export const CLOUD_MODEL_ID = "cloud/deepgram";
 export const CLOUD_MODEL = {
   id: CLOUD_MODEL_ID,
-  label: "Cloud · Deepgram nova-3 (best, instant)",
+  label: "Deepgram Nova-3",
   webgpuOnly: false,
 };
 
@@ -85,7 +85,7 @@ export function pcmToWav(pcm: Float32Array, sampleRate = 16000): Blob {
  * for, so the server can refuse a run for one it is captioning by itself.
  */
 export async function transcribeCloud(pcm: Float32Array, name = "", project = ""): Promise<{ words: Word[]; note?: string }> {
-  const browser = (why = "Your computers did not answer") => new UseBrowser(why);
+  const browser = (why = "Your computers could not be reached") => new UseBrowser(why);
   const res = await fetch(`/api/transcribe${project ? `?project=${encodeURIComponent(project)}` : ""}`, {
     method: "POST",
     headers: { "Content-Type": "audio/wav", "X-File-Name": encodeURIComponent(name) },
@@ -97,7 +97,7 @@ export async function transcribeCloud(pcm: Float32Array, name = "", project = ""
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: "" }));
     if (e.code === "USE_BROWSER" || (onComputers() && e.code !== "CAPTIONING")) throw browser(e.why);
-    throw new Error(e.error || `Cloud transcription failed (${res.status})`);
+    throw new Error(e.error || "Could not transcribe");
   }
   const { words, note } = (await res.json()) as {
     note?: string;
@@ -129,7 +129,7 @@ export async function transcribeCloud(pcm: Float32Array, name = "", project = ""
  */
 const local = (id: string, name: string, mb: number, webgpuOnly = false) => ({
   id,
-  label: `Local · ${name} (${mb} MB)`,
+  label: `This computer · ${name} (${mb} MB)`,
   mb,
   webgpuOnly,
 });
@@ -220,7 +220,7 @@ export function transcribeAudio(
       if (device === "webgpu" && (m.type === "transcribe-start" || m.type === "alive")) {
         quiet = setTimeout(() => {
           worker.terminate();
-          reject(new Error("The graphics card stopped answering"));
+          reject(new Error("The graphics card stopped responding"));
         }, STALL_MS);
       }
       if (m.type === "load-progress") {
@@ -246,7 +246,7 @@ export function transcribeAudio(
     };
     worker.onerror = (e) => {
       worker.terminate();
-      reject(new Error(e.message || "Transcription worker failed"));
+      reject(new Error(e.message || "Could not transcribe on this computer"));
     };
   });
 

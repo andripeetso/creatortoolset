@@ -94,7 +94,7 @@ function Box({ ask, close }: { ask: Ask; close: (v: boolean | string | null) => 
             onClick={yes}
             className={ask.danger ? "bg-rose-600 text-white hover:bg-rose-500" : undefined}
           >
-            {ask.ok ?? "OK"}
+            {ask.ok ?? "Close"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -128,13 +128,13 @@ export function CommentsList({
       case "complete":
         return "";
       case "capped":
-        return `${summary.count} here`;
+        return `${summary.count} loaded`;
       case "failed":
-        return "Couldn't get them";
+        return "Could not load comments";
       case "skipped":
         return "";
       default:
-        return "pending";
+        return "Not loaded";
     }
   })();
   const chipColor = summary.status === "failed" ? "text-amber-400" : "text-zinc-400";
@@ -165,7 +165,7 @@ export function CommentsList({
         {summary.keywords ? (
           <span
             className="text-[11px] text-zinc-500"
-            title="Replies that are just the call-to-action word"
+            title="Replies that are only the call-to-action word"
           >
             {summary.keywords} keyword {summary.keywords === 1 ? "reply" : "replies"}
           </span>
@@ -188,7 +188,7 @@ export function CommentsList({
                 onClick={() => void fetchMore(true)}
                 className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
               >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Get more
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Load more
               </button>
             ) : null}
             <button
@@ -198,7 +198,7 @@ export function CommentsList({
               className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
             >
               <RefreshCw className="h-3 w-3" />
-              {summary.status === "skipped" || summary.status === "pending" ? "Get the comments" : "Get them again"}
+              {summary.status === "skipped" || summary.status === "pending" ? "Load comments" : "Update comments"}
             </button>
           </span>
         )}

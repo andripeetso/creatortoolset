@@ -12,7 +12,7 @@ import { FolderPluginRows, PluginRows } from "./PluginsInstalled";
 /**
  * Installed: the plug-ins (the ones this server is built with, and on the Mac app's own server the ones in the person's
  * plug-ins folder, each with its switch), then the packs the person has
- * switched on. Each pack is one row: its name, who made it, one line, the On switch and `…` (Remove). "What it adds" folds.
+ * switched on. Each pack is one row: its name, who made it, one line, the On switch and `…` (Remove). "Contents" folds.
  */
 export function InstalledView({
   plugins,
@@ -42,10 +42,10 @@ export function InstalledView({
       )}
       <Section title="Packs">
         {!installed ? (
-          <Card>{error ? <ErrorRow title="Your packs did not load" detail={error} retry={reload} /> : <LoadingRow />}</Card>
+          <Card>{error ? <ErrorRow title="Could not load packs" detail={error} retry={reload} /> : <LoadingRow />}</Card>
         ) : installed.length === 0 ? (
           <Card>
-            <EmptyRow title="No packs yet" description="Packs add writing frameworks, caption styles and guides to your tools. Explore has what people have made." />
+            <EmptyRow title="No packs" description="A pack adds writing frameworks, caption styles and guides to the tools." />
           </Card>
         ) : (
           <Card>
@@ -76,22 +76,22 @@ export function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; late
         }
         subtitle={`by ${p.author}`}
         status={
-          p.delisted ? <Status tone="broken">Pulled from the community: {p.delisted}. Its instructions are off.</Status> : firstSentence(p.description)
+          p.delisted ? <Status tone="broken">Off · removed from Community: {p.delisted}</Status> : firstSentence(p.description)
         }
         actions={<InstalledPackActions id={p.id} name={p.name} installed={p} latest={latest} reload={reload} />}
       />
-      <Advanced summary="What it adds">
+      <Advanced summary="Contents">
         {!p.delisted && p.description.trim() !== firstSentence(p.description) && (
           <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">{p.description.trim()}</p>
         )}
         <PackUsedIn id={p.id} installed={p} reload={reload} />
         <PackHereSwitch id={p.id} name={p.name} installed={p} reload={reload} />
         <PackHomeRow installed={p} />
-        {p.default && p.off.includes("*") && <Row title="Off for you: you had your own setup before packs." />}
+        {p.default && p.off.includes("*") && <Row title="Off: this account's setup is older than packs" />}
         {heldDesign && (
           <Row
             title={`${heldDesign.items.length} design ${heldDesign.items.length === 1 ? "system" : "systems"} kept with this pack`}
-            status={<Status tone="attention">{heldDesign.needs === "plug-in" ? "Needs a plug-in on this server to install." : "Needs an admin to install."}</Status>}
+            status={<Status tone="attention">{heldDesign.needs === "plug-in" ? "Needs a plug-in on this server" : "Needs an admin"}</Status>}
           />
         )}
         {hasContents && (
@@ -99,7 +99,7 @@ export function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; late
             <ContentsView pack={p} />
           </div>
         )}
-        <Row title="Where it goes, versions" control={<Link to={`/community/pack/${p.id}`} className="text-xs text-foreground underline-offset-2 hover:underline">Open pack</Link>} />
+        <Row title="Places and versions" control={<Link to={`/community/pack/${p.id}`} className="text-xs text-foreground underline-offset-2 hover:underline">Open pack</Link>} />
       </Advanced>
     </>
   );

@@ -101,7 +101,7 @@ describe("pictures with a message", () => {
     const t = parseTurnInput({ docId, text: "⟦1⟧", quotes });
     expect(t.text).toBe("Look at these.");
     expect(t.quotes).toEqual(quotes);
-    expect(() => parseTurnInput({ docId, text: "⟦1⟧" })).toThrow("Say something first");
+    expect(() => parseTurnInput({ docId, text: "⟦1⟧" })).toThrow("Write a message first");
   });
 
   it("reach the writer in their order, as files on the Mac, and an empty piece is filled from them first", () => {

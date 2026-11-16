@@ -39,7 +39,7 @@ export function PersistenceBadge({ compact = false }: { compact?: boolean }) {
   return (
     <span
       role={status.fullySaved ? "status" : "alert"}
-      title={status.message ?? "This project is fully saved on the server."}
+      title={status.message ?? "Saved on the server"}
       className={`flex shrink-0 items-center gap-1.5 rounded-md border font-medium tracking-normal ${tone} ${compact ? "px-1.5 py-1 text-[9px]" : "px-2 py-1 text-[10px]"}`}
     >
       <Icon

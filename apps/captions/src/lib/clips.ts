@@ -286,7 +286,7 @@ async function settleBlock(
         return s;
       }
       if (Date.now() >= deadline) {
-        throw new Error("The AI took too long to answer — try again");
+        throw new Error("The AI provider timed out");
       }
       await changed;
     } finally {
@@ -309,7 +309,7 @@ async function requestBlock(
   if (res.status === 202 || (res.status === 409 && j?.error === "Already generating")) {
     return settleBlock(id, kind);
   }
-  if (!res.ok) throw new Error(j?.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new Error(j?.error || "Could not make this section");
   return j as ClipSession;
 }
 

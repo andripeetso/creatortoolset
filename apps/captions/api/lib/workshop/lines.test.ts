@@ -35,6 +35,6 @@ describe("other ways to say this", () => {
       "They push up on their arms",
       "four",
     ]);
-    expect(() => parseLines('{"options": []}')).toThrow("No options came back");
+    expect(() => parseLines('{"options": []}')).toThrow("No options were written");
   });
 });

@@ -14,7 +14,7 @@ const iconBtn = "flex size-7 shrink-0 items-center justify-center rounded-md tex
 
 function NewChatButton({ onNew, disabled }: { onNew: () => void; disabled: boolean }) {
   return (
-    <button type="button" className={iconBtn} onClick={onNew} disabled={disabled} aria-label="Start a new chat" title="New chat">
+    <button type="button" className={iconBtn} onClick={onNew} disabled={disabled} aria-label="New chat" title="New chat">
       <SquarePen className="size-4" />
     </button>
   );
@@ -32,7 +32,7 @@ function ListEdge({ most, onDrag }: { most: number; onDrag: (w: number | null) =
       role="separator"
       aria-orientation="vertical"
       aria-label="Make the list of chats wider or narrower"
-      title="Drag to resize · double-click for its usual width"
+      title="Drag to resize · double-click for the default width"
       onPointerDown={(e) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);

@@ -90,7 +90,7 @@ export function AddMyAccount({
             autoFocus
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="@yourhandle"
+            placeholder="@username"
             aria-label="Your Instagram username"
             disabled={busy}
             spellCheck={false}

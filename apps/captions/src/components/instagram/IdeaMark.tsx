@@ -41,7 +41,7 @@ export function IdeaStatusSelect({
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => onChange(e.target.value as IdeaStatus)}
       className={`rounded-md border bg-zinc-950 px-1.5 py-1 text-[11px] ${STATUS_CLASS[current]} disabled:opacity-50`}
-      title={inSession ? "To make: a Workshop project uses it" : "Inbox, to make, done, or skip"}
+      title={inSession ? "To make: in a Content Workshop project" : "Status"}
     >
       {IDEA_STATUSES.map((s) => (
         <option key={s.id} value={s.id}>
@@ -76,7 +76,7 @@ export function SavedForToggle({
   return (
     <div
       role="group"
-      aria-label="Why you kept this"
+      aria-label="Kept for"
       className="flex items-center gap-0.5"
       onClick={(e) => e.stopPropagation()}
     >

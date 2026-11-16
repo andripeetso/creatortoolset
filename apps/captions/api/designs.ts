@@ -554,7 +554,7 @@ designsApp.post("/fonts", (c) =>
         const key = face.family.toLowerCase();
         if (taken.has(key)) notes.push(`${face.family} is one of the app's own fonts`);
         else if (list.some((f) => f.family.toLowerCase() === key)) notes.push(`${face.family} is among your fonts already`);
-        else if (list.length >= DESIGN_LIMITS.fonts) notes.push(`${face.family} was not added: ${DESIGN_LIMITS.fonts} fonts is the most (take one out first)`);
+        else if (list.length >= DESIGN_LIMITS.fonts) notes.push(`${face.family} was not added: ${DESIGN_LIMITS.fonts} fonts is the most (remove one first)`);
         else {
           const kept: KeptFont = { id: randomBytes(8).toString("hex"), family: face.family, ext: face.ext, at: Date.now() };
           await mkdir(fontsDir(owner), { recursive: true });
@@ -703,7 +703,7 @@ designsApp.get("/:id/look", (c) =>
 designsApp.post("/:id/pictures", (c) =>
   answer(c, async () => {
     const d = await mine(c);
-    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
     const b = await body(c);
     let id: string;
     if (typeof b.version === "string" && typeof b.t === "number" && Number.isFinite(b.t) && b.t >= 0) {
@@ -745,7 +745,7 @@ async function keepable(png: Buffer, tmp: string, what: string): Promise<Buffer>
   await writeFile(whole, png);
   await ffmpeg(["-y", "-i", whole, "-frames:v", "1", "-vf", `scale=w='min(${CUT_SIDE},iw)':h='min(${CUT_SIDE},ih)':force_original_aspect_ratio=decrease`, "-f", "image2", "-c:v", "png", tmp], true).finally(() => rm(whole, { force: true }));
   const out = await readFile(tmp);
-  if (out.length > 2 * DESIGN_LIMITS.pictureBytes) throw new DesignError(`${what} is too heavy to keep in a design`);
+  if (out.length > 2 * DESIGN_LIMITS.pictureBytes) throw new DesignError(`${what} is too large to keep in a design`);
   return out;
 }
 
@@ -765,7 +765,7 @@ const fromMac = async <T>(ask: Promise<T>): Promise<T> => {
 designsApp.post("/:id/pictures/:pid/cutout", (c) =>
   answer(c, async () => {
     const d = await mine(c);
-    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
     const tmp = path.join(picturesOf(d.owner, d.id), `.cut-${randomBytes(6).toString("hex")}.png`);
     try {
       const cut = await keepable(await fromMac(cutOut(d.owner, await forMac(d, c.req.param("pid"), tmp))), tmp, "The cut-out");
@@ -789,12 +789,12 @@ designsApp.post("/:id/pictures/:pid/cutout", (c) =>
 designsApp.post("/:id/pictures/:pid/split", (c) =>
   answer(c, async (): Promise<SplitAnswer> => {
     const d = await mine(c);
-    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
     const tmp = path.join(picturesOf(d.owner, d.id), `.split-${randomBytes(6).toString("hex")}.png`);
     try {
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
       const now = (await read(d.owner, d.id)) ?? d;
-      if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+      if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
       const background = await addPicture(now, await keepable(made.background, tmp, "The picture behind"), "png");
       const room = DESIGN_LIMITS.pictures - now.pictures.length;
       const biggest = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, room).sort((a, b) => a.n - b.n);

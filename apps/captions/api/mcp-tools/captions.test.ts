@@ -190,7 +190,7 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     await until(async () => expect(engine.cloud).toHaveLength(1));
     expect((await projectOf(cookie, sent.id)).captioning).toBe("transcribing");
     // opened meanwhile, the page's own Transcribe gets no second transcript: the route refuses it for this project
-    expect(await pageTranscribes(cookie, sent.id)).toEqual([409, "This project's captions are already being made: they show here when they are ready"]);
+    expect(await pageTranscribes(cookie, sent.id)).toEqual([409, "This project's captions are already being made"]);
     expect(engine.cloud).toHaveLength(1);
 
     // the engine got what the browser posts: 16 kHz mono WAV, on her own key

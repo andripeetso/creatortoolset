@@ -74,7 +74,7 @@ describe("FinalsPiece editor", () => {
     const picked = { ...piece, coverUrl: "/api/library/lib_tiny/pieces/pce_tiny/cover?v=5" };
     const html = render(picked);
     expect(html).toContain('src="/api/library/lib_tiny/pieces/pce_tiny/cover?v=5"');
-    expect(html).toContain("Back to the automatic cover");
+    expect(html).toContain("Use the automatic cover");
     expect(html).toContain("Use this frame as cover");
   });
 
@@ -92,8 +92,8 @@ describe("FinalsPiece editor", () => {
     const readOnly = renderToStaticMarkup(
       <PieceEditor libraryId="lib_tiny" piece={piece} cards={cards} readOnly onPiece={() => {}} onGone={() => {}} />,
     );
-    expect(readOnly).toContain("Save all as ZIP");
-    expect(render({ ...piece, items: [] })).not.toContain("Save all as ZIP");
+    expect(readOnly).toContain("Download all as ZIP");
+    expect(render({ ...piece, items: [] })).not.toContain("Download all as ZIP");
   });
 
   it("offers only the library's versions that are not in the piece yet", () => {

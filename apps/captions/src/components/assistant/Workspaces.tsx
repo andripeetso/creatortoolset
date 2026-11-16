@@ -148,7 +148,7 @@ export function NewChatWorkspace() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          title="The workspace this chat is for"
+          title="Workspace for this chat"
           className="flex h-7 max-w-[min(16rem,100%)] items-center gap-1.5 rounded-md border px-2 text-xs text-foreground outline-none transition-colors hover:bg-accent data-[state=open]:bg-accent"
         >
           {current && <WorkspaceBadge ws={current} />}

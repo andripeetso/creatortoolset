@@ -52,7 +52,7 @@ describe("cadence request control", () => {
       }));
       await expect(refineSegments(
         [{ id: 1, text: "Hello", start: 0, end: 0.4 }]
-      )).rejects.toThrow("invalid grouping");
+      )).rejects.toThrow("Could not match cadence");
     }
   );
 
@@ -111,7 +111,7 @@ describe("cadence request control", () => {
     "rejects malformed line splits: %j",
     async (payload) => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => payload }));
-      await expect(refineSplits([["is", "one", "of", "our"]], 26)).rejects.toThrow("invalid line splits");
+      await expect(refineSplits([["is", "one", "of", "our"]], 26)).rejects.toThrow("Could not fit the lines to the caption box");
     },
   );
 

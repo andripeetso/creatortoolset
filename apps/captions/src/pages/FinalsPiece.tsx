@@ -218,7 +218,7 @@ export function PieceEditor({
   };
 
   const trash = async () => {
-    if (!(await confirmDialog({ title: "Move this piece to the Finals trash?", body: "Its versions stay in the library. It is gone for good after 5 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
+    if (!(await confirmDialog({ title: "Move this piece to the Finals trash?", body: "Its versions stay in the Media Library; the piece is deleted after 5 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
     setBusy(true);
     setError(null);
     try {
@@ -273,7 +273,7 @@ export function PieceEditor({
         {piece.items.length > 0 && (
           <Button asChild variant="outline" size="sm">
             <a href={pieceZipUrl(libraryId, piece.id)} download>
-              <Download className="h-4 w-4" /> Save all as ZIP
+              <Download className="h-4 w-4" /> Download all as ZIP
             </a>
           </Button>
         )}
@@ -282,7 +282,7 @@ export function PieceEditor({
         </Button>
       </div>
 
-      {readOnly && <p className="text-sm text-zinc-500">Read only: some versions in this piece are not visible to your account.</p>}
+      {readOnly && <p className="text-sm text-zinc-500">Read only: some versions in this piece are not visible to this account.</p>}
 
       {!readOnly && others.length > 0 && (
         <select
@@ -315,7 +315,7 @@ export function PieceEditor({
           )}
         </div>
         <p className="text-xs text-zinc-500">
-          {piece.coverUrl ? "A frame you picked is the cover on the Finals list." : "The winner's frame is the cover on the Finals list until you pick one."}
+          {piece.coverUrl ? "The cover on the Finals list is the frame picked here." : "The cover on the Finals list is the winner's frame."}
         </p>
         {!readOnly && pickVersion && (
           <div className="flex flex-col gap-2">
@@ -363,7 +363,7 @@ export function PieceEditor({
               )}
               {piece.coverUrl && (
                 <Button size="sm" variant="ghost" disabled={locked} onClick={() => void run([() => clearPieceCover(libraryId, piece.id)])}>
-                  Back to the automatic cover
+                  Use the automatic cover
                 </Button>
               )}
             </div>
@@ -372,7 +372,7 @@ export function PieceEditor({
       </section>
 
       <ol aria-label="Versions" className="flex flex-col gap-3">
-        {piece.items.length === 0 && <li className="text-sm text-zinc-500">No versions yet. Add one below.</li>}
+        {piece.items.length === 0 && <li className="text-sm text-zinc-500">No versions</li>}
         {piece.items.map((item, i) => {
           const card = item.versionId ? byVersion.get(item.versionId) : undefined;
           return (
@@ -416,7 +416,7 @@ export function PieceEditor({
                     disabled={locked}
                     onSave={(text) => void run([itemCall(item, { label: text.trim() || null })])}
                   />
-                  <p className="mt-1 truncate text-xs text-zinc-500">{card ? `${card.title} · v${card.versionN}` : "Not in the library any more"}</p>
+                  <p className="mt-1 truncate text-xs text-zinc-500">{card ? `${card.title} · v${card.versionN}` : "Not in the Media Library"}</p>
                 </div>
               </div>
 
@@ -462,7 +462,6 @@ export function PieceEditor({
                     multiline
                     value={item.postDescription ?? ""}
                     label={`Post description for version ${i + 1}`}
-                    placeholder="The text under the post"
                     disabled={locked}
                     onSave={(text) => void run([itemCall(item, { postDescription: text.trim() })])}
                   />
@@ -470,7 +469,7 @@ export function PieceEditor({
 
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs text-zinc-500">Posted to</span>
-                  {item.postings.length === 0 && <span className="text-xs text-zinc-500">Not posted yet</span>}
+                  {item.postings.length === 0 && <span className="text-xs text-zinc-500">Not posted</span>}
                   {item.postings.map((p) => (
                     <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
                       <span>{platformLabel(p.platform)}</span>
@@ -515,7 +514,7 @@ export function PieceEditor({
           onChange={(e) => setAdding(e.target.value)}
           className="min-w-0 max-w-full flex-1 rounded-md border border-zinc-500/30 bg-transparent px-2 py-1.5 text-sm sm:max-w-md"
         >
-          <option value="">{available.length ? "Add a version from the library" : "Every version in the library is in this piece"}</option>
+          <option value="">{available.length ? "Add a version from the Media Library" : "Every version in the Media Library is in this piece"}</option>
           {available.map((c) => (
             <option key={c.id} value={c.versionId}>
               {c.title} · v{c.versionN}
@@ -565,7 +564,7 @@ function WorkshopLink({
     setNote(null);
     try {
       await linkPieceToSession(sessionId, piece.id);
-      setNote("Linked. Each version of this piece gets a post description in that project.");
+      setNote("Linked");
     } catch (e) {
       setError(message(e));
     }
@@ -583,14 +582,14 @@ function WorkshopLink({
   };
 
   return (
-    <section aria-label="Workshop project" className="flex flex-col gap-2 border-t border-zinc-500/25 pt-4">
-      <h2 className="text-sm font-medium">Workshop project</h2>
+    <section aria-label="Content Workshop project" className="flex flex-col gap-2 border-t border-zinc-500/25 pt-4">
+      <h2 className="text-sm font-medium">Content Workshop project</h2>
       {linked && (
         <Link to={sessionPath(linked.sessionId)} className="text-xs text-zinc-400 hover:text-zinc-200">
-          {linked.status === "toPost" ? "Ready to post · " : ""}Open the linked session →
+          {linked.status === "toPost" ? "Ready to post · " : ""}Open the linked project →
         </Link>
       )}
-      <p className="text-xs text-zinc-500">Link a session, and each version here gets a post description there.</p>
+      <p className="text-xs text-zinc-500">Each version here gets a post description in the linked project.</p>
       <div className="flex flex-wrap gap-2">
         <select
           aria-label="Project to link"
@@ -599,7 +598,7 @@ function WorkshopLink({
           onChange={(e) => setPick(e.target.value)}
           className="min-w-0 max-w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1.5 text-sm sm:max-w-md"
         >
-          <option value="">{sessions ? (sessions.length ? "Choose a project" : "No projects yet") : "Loading projects…"}</option>
+          <option value="">{sessions ? (sessions.length ? "Choose a project" : "No projects") : "Loading projects…"}</option>
           {(sessions ?? []).map((s) => (
             <option key={s.id} value={s.id}>
               {s.title}
@@ -607,10 +606,10 @@ function WorkshopLink({
           ))}
         </select>
         <Button size="sm" variant="outline" disabled={disabled || !pick} onClick={() => void link(pick)}>
-          Link session
+          Link project
         </Button>
         <Button size="sm" variant="ghost" disabled={disabled} onClick={() => void startNew()}>
-          Start a session from this piece
+          New project from this piece
         </Button>
       </div>
       {note && <p className="text-xs text-zinc-500">{note}</p>}
@@ -635,7 +634,7 @@ async function loadPieceView(pieceId: string): Promise<PieceView> {
   const hits = await Promise.all(all.map((library) => getPiece(library.id, pieceId).then((piece) => ({ library, piece }), () => null)));
   const found = hits.find((h): h is { library: LibrarySummary; piece: Piece } => h !== null) ?? null;
   if (!found) return { found, cards: [], others: [], workshop: await workshop };
-  // the cards come with it: the versions would otherwise read "Not in the library any more" until they arrive
+  // the cards come with it: the versions would otherwise read "Not in the Media Library" until they arrive
   const [cards, collections] = await Promise.all([listAllAssets(found.library.id), listCollections(found.library.id)]);
   const finals = collections.find(isFinals);
   const siblings = finals ? await listPieces(found.library.id, finals.id) : [];
@@ -673,7 +672,7 @@ export default function FinalsPiecePage() {
         </Link>
         {error && <p className="text-sm text-red-500">{error}</p>}
         {found === undefined && !error && <div aria-hidden="true" className="h-[420px] rounded-xl bg-zinc-500/5" />}
-        {found === null && <p className="py-16 text-center text-sm text-zinc-500">No such piece in Finals.</p>}
+        {found === null && <p className="py-16 text-center text-sm text-zinc-500">Piece not found</p>}
         {library && piece && (
           <PieceEditor
             onDesign={canUse(me, "design") ? (design) => navigate(`/design/${design}`) : undefined}
