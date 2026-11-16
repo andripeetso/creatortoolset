@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -46,6 +46,9 @@ const { probe } = await import("./media/probe");
 const { soundArgs } = await import("./transcribe");
 const { tick } = await import("./worker");
 const { runLibraryJob } = await import("../work/library");
+const { CLAIM_POLL } = await import("../work/routes");
+
+CLAIM_POLL.holdMs = 0; // a claim with nothing for it answers at once
 
 const TURBO = "whisper-large-v3-turbo";
 const ff = (args: string[]) => execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...args], { stdio: "pipe" });
@@ -84,7 +87,9 @@ beforeAll(async () => {
     "-map", "0:v", "-map", "1:a", "-map", "[st]", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", file]);
   db.exec(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_t', 'tiny', 'Tiny Acrobatics', 'local', '{"embed":false,"describe":false}', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_t', 'lib_t', 'video', 'tiny-flip.mp4', 'tiny', 0);`);
-  await blobs.put("libraries/lib_t/v/ver_t/source", file);
+  const upload = path.join(dir, "upload.mp4");
+  copyFileSync(file, upload); // the store takes the file it is given
+  await blobs.put("libraries/lib_t/v/ver_t/source", upload);
   db.prepare(`INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, probe, created_by, created_at)
     VALUES ('ver_t', 'ast_t', 1, 'libraries/lib_t/v/ver_t/source', ?, 'x', 'ready', ?, 'tiny', 0)`).run(statSync(file).size, JSON.stringify(await probe(file)));
   // Deepgram, standing in: what it hears is named by the sound sent
