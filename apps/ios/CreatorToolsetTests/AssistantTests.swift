@@ -756,6 +756,24 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(stand.turns.count, 3)
     }
 
+    func testAnAnswerThatComesAfterTheConversationWasLeftIsNotShown() async {
+        let stand = Stand()
+        stand.take("Hello")
+        let gate = Gate()
+        let model = AssistantModel()
+        model.server = { AssistantServer(queue: nil, call: { @MainActor _, _, _ in
+            await gate.pass()
+            return stand.view
+        }) }
+        let read = Task { await model.load() }
+        await until("the read is out") { gate.waiting != nil }
+        model.reset()   // signed out, or another computer picked
+        gate.open()
+        await read.value
+        XCTAssertNil(model.view)
+        XCTAssertNil(model.error)
+    }
+
     func testAMessageTheServerAlreadyTookIsNotSentAgain() async {
         // the app was closed while the video went up: the message is in the chat, its reply waits
         let stand = Stand()

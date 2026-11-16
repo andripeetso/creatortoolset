@@ -235,6 +235,7 @@ final class LocalServer: ObservableObject {
         state = .starting
         Task {
             if let problem = await clearPort() {
+                guard !stopping else { return }   // stopped during the check: off, not failed
                 ServerLog.note(problem)
                 state = .failed(problem)
                 return
@@ -249,7 +250,11 @@ final class LocalServer: ObservableObject {
     /// never let it do. A server that is stuck does not end by itself and gets the SIGTERM as before, mark and all.
     func stop() {
         stopping = true
-        guard let p = process else { return }
+        guard let p = process else {
+            // stopped during the port check or the wait after a crash: nothing starts now, so it is off, not starting
+            if state == .starting { state = .off }
+            return
+        }
         try? input?.fileHandleForWriting.close()
         let grace = Date().addingTimeInterval(0.5)
         while p.isRunning && Date() < grace { usleep(20_000) }
