@@ -73,6 +73,10 @@ describe("short videos from a long recording: the AI's moments, checked", () => 
     // no length asked for: 15 to 90 seconds; the style's own notes go after the task, and nothing else does
     expect(momentsPrompt({ sentences, titles: {}, brief: "", count: 3, targetS: 0 }).user).toContain("Brief:\n(none)\n\nMoments: up to 3, the best ones\n\nLength: between 15 and 90 seconds");
     expect(momentsPrompt({ sentences, titles: {}, brief: "", count: 3, targetS: 0, styleText: "STYLE-NOTES-ZQ" }).system).toBe(`${MOMENTS_SYSTEM}\n\nSTYLE-NOTES-ZQ`);
+    // the person's notes go after the length; with none the prompt is what it was
+    const plain = momentsPrompt({ sentences, titles: {}, brief: "", count: 3, targetS: 0 });
+    expect(momentsPrompt({ sentences, titles: {}, brief: "", count: 3, targetS: 0, notes: "" })).toEqual(plain);
+    expect(momentsPrompt({ sentences, titles: {}, brief: "", count: 3, targetS: 0, notes: "NOTES-ZQ" }).user).toBe(plain.user.replace("\n\nSources:", "\n\nNOTES-ZQ\n\nSources:"));
     expect(momentRange(0)).toEqual([15, 90]);
     expect(momentRange(40)).toEqual([20, 80]);
     expect(momentRange(6)).toEqual([5, 12]);
@@ -173,6 +177,18 @@ describe("short videos from a long recording: the step", () => {
     expect(seconds).toBeGreaterThan(20);
     expect(seconds).toBeLessThanOrEqual(29.5);
     expect(tl.markers).toHaveLength(1);
+  });
+
+  it("found again after the person's notes: the AI reads them word for word, as every later version does", async () => {
+    const e = await start({ moments: 2, targetS: 30 });
+    await saveEdit({ ...readEdit(e.id)!, feedback: [{ at: 1, from: "chat", variant: "m1", text: "Drop the one about landings.\nMore on the chin tuck!", by: "mem-a" }] });
+    let user = "";
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, u, _c, parse) => ((user = u), parse(JSON.stringify({ moments: [{ first: 3, last: 7, title: "Tuck the chin", score: 0.7 }] }))));
+    await run(e.id);
+    expect(user).toContain(
+      'What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n- In chat about m1: "Drop the one about landings.\\nMore on the chin tuck!"\n\nSources:',
+    );
   });
 
   it("found again: a name that now means another part lets go of its Review video; one that is the same part keeps it", async () => {

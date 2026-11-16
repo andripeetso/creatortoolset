@@ -237,14 +237,47 @@ describe.skipIf(rootReplaced)("the person's notes", () => {
     expect(await editorTools.handlers.editor_feedback!({ edit: id, text }, ctx)).toMatchObject({ id, kept: 1, queued: true });
     expect(readEdit(id)!.feedback).toEqual([{ at: expect.any(Number), from: "chat", by: "maker", text }]);
     expect(jobsOf(id)).toEqual([{ kind: "analyze", state: "queued" }]);
-    // while it is being made: kept, and the run going reads it
-    expect(await editorTools.handlers.editor_feedback!({ edit: id, text: "Shorter." }, ctx)).toMatchObject({ kept: 2, queued: false });
+    // while it is being made: kept, and the tool says what happens to it (this run's plan, or the next version)
+    expect(await editorTools.handlers.editor_feedback!({ edit: id, text: "Shorter." }, ctx)).toMatchObject({ kept: 2, queued: false, note: expect.stringContaining("else into the next version, made when this run is done") });
+    // a note past the limit is refused with the reason, never cut
+    const long = await call("POST", `/api/editor/${id}/feedback`, { text: "x".repeat(4001) });
+    expect([long.status, (await json(long)).error]).toEqual([400, "A note is 4,000 characters at most"]);
+    expect((await call("POST", `/api/editor/${id}/feedback`, { text: "y".repeat(4000) })).status).toBe(200);
+    expect(readEdit(id)!.feedback!.map((n) => n.text.length)).toEqual([text.length, 8, 4000]);
     await call("POST", `/api/editor/${id}/stop`);
     // past the cap the oldest go, never the newest
     await addFeedback(id, Array.from({ length: EDIT_FEEDBACK_MAX }, (_, k) => ({ at: k, from: "chat" as const, by: "maker", text: `note ${k}` })));
     const kept = readEdit(id)!.feedback!;
     expect(kept).toHaveLength(EDIT_FEEDBACK_MAX);
     expect([kept[0]!.text, kept.at(-1)!.text]).toEqual(["note 0", `note ${EDIT_FEEDBACK_MAX - 1}`]);
+  });
+
+  it("a note sent while the edit is being made, after its script began, makes the next version when the run ends, once", async () => {
+    const id = await create(["ver_1"]);
+    await saveStep(id, "analysis", { sentences: [], notes: [] });
+    const was = { script: STEPS.script!, draft: STEPS.draft! };
+    // the scripts written, each with the notes it was given; the first is still being written when the note comes
+    const given: string[][] = [];
+    let sent: { queued?: boolean } = {};
+    STEPS.script = async ({ edit }) => {
+      given.push((edit.feedback ?? []).map((n) => n.text));
+      if (given.length === 1) sent = await json(call("POST", `/api/editor/${id}/feedback`, { text: "Shorter." }));
+    };
+    STEPS.draft = async () => {};
+    try {
+      await call("POST", `/api/editor/${id}/run`, { from: "script" });
+      while (await tick());
+      // kept and not queued while the run went on; the run's end queued the version that reads it, and that one no other
+      expect(sent.queued).toBe(false);
+      expect(given).toEqual([[], ["Shorter."]]);
+      expect(jobsOf(id)).toEqual([{ kind: "script", state: "done" }, { kind: "draft", state: "done" }]);
+      // a note the script was given (sent before it began) makes no second version
+      await call("POST", `/api/editor/${id}/feedback`, { text: "And louder." });
+      while (await tick());
+      expect(given).toEqual([[], ["Shorter."], ["Shorter.", "And louder."]]);
+    } finally {
+      Object.assign(STEPS, was);
+    }
   });
 
   it("copies the open comments of a Changes video's newest version, each once", async () => {

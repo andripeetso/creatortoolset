@@ -50,7 +50,13 @@ export interface ScriptInput {
   examples?: string;
   /** what the person said about its versions so far (EditMeta.feedback), oldest first, after the examples; none adds nothing */
   notes?: EditFeedback[];
+  /** with notes: each version as it is now, line by line with the take it has (lastOf), so the next one starts from it; read only with notes */
+  last?: { name: string; title: string; lines: { id: string; text: string; take: Pick<Take, "first" | "last"> }[] }[];
 }
+
+/** A revise's ask, as the shot-list revise says it (plan.ts revisePrompt): what the notes don't speak to stays. */
+const REVISE_ASK =
+  "Make the next version from the last one and change what the notes speak to, nothing else: a line the notes don't speak to stays as it is (its id, its words, its place in the order, and the take it has, scored highest of that line's takes), and a new line takes the place of each one that changes. Versions are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another opening), write all of its lines new.";
 
 export function scriptPrompt(i: ScriptInput): { system: string; user: string } {
   const ids = Object.keys(i.titles);
@@ -65,6 +71,12 @@ export function scriptPrompt(i: ScriptInput): { system: string; user: string } {
   parts.push(
     `Sentences (number, source, seconds, text):\n${i.sentences.map((s) => `${s.n} ${tag(s.src)} ${s.s.toFixed(1)}-${s.e.toFixed(1)} ${s.text}`).join("\n")}`,
   );
+  // a revise: the last version line by line, after the sentences its takes are numbered by
+  if (i.notes?.length && i.last?.length)
+    parts.push(
+      `The last version${i.last.length > 1 ? "s" : ""}, line by line (each with the take it has, first..last):\n${i.last.map((v) => `${v.name} ${JSON.stringify(v.title)}:\n${v.lines.map((l) => `  ${l.id}, take ${l.take.first}..${l.take.last}: ${l.text}`).join("\n")}`).join("\n")}`,
+      REVISE_ASK,
+    );
   return { system: i.packText ? `${SYSTEM}\n\n${i.packText}` : SYSTEM, user: parts.join("\n\n") };
 }
 
@@ -175,6 +187,13 @@ export function macAway(e: unknown): MacClaudeError | null {
   return m && (m.kind === "unclaimed" || m.kind === "gone") ? m : null;
 }
 
+/** Each version of the edit's script as it is now (plan.json: the AI's, with what the person changed in the script table since), for a revise. */
+function lastOf(editId: string): NonNullable<ScriptInput["last"]> {
+  const p = readStep(editId, "plan");
+  const text = new Map((p?.lines ?? []).map((l) => [l.id, l.text]));
+  return (p?.plans ?? []).filter((v) => v.lines.length).map((v) => ({ name: v.name, title: v.title, lines: v.lines.map((l) => ({ id: l.line, text: text.get(l.line) ?? "", take: l.take })) }));
+}
+
 function titlesOf(edit: EditMeta, sentences: Sentence[]): Record<string, string> {
   const titles: Record<string, string> = {};
   const q = libraryDb().prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
@@ -193,7 +212,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   const workspace = await workspaceSetup(edit, 12_000);
   // short videos from a long recording: the AI finds the parts that stand alone, and each is a version of one line (moments.ts)
   if (edit.moments) {
-    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: [workspace, styleBlock(edit.style)].filter(Boolean).join("\n\n") });
+    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: [workspace, styleBlock(edit.style)].filter(Boolean).join("\n\n"), ...(edit.feedback?.length ? { notes: notesPrompt(edit.feedback) } : {}) });
     let found: RawMoment[];
     try {
       // ponytail: the whole transcript in one request (measured: 31.5 minutes of talk, 467 sentences, is a request of 16,600 tokens,
@@ -229,8 +248,9 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts), then the one skill
     // the style names (api/lib/skills.ts, cut there); no style adds nothing
     packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style, edit), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
-    examples: finishedBlock(edit),
-    ...(edit.feedback?.length ? { notes: edit.feedback } : {}),
+    examples: await finishedBlock(edit),
+    // a version after the first: the person's notes, and the last version to start from (what they don't speak to stays)
+    ...(edit.feedback?.length ? { notes: edit.feedback, last: lastOf(edit.id) } : {}),
   });
   let raw: RawScript;
   try {

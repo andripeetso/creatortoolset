@@ -31,6 +31,8 @@ export interface MomentsInput {
   targetS: number;
   /** the person's own notes of the edit's editing style (styles.ts styleBlock); no pack or skill text: those are written for matching takes to a script */
   styleText?: string;
+  /** what the person said about the moments found so far, as every later version reads it (plan.ts notesPrompt); none adds nothing */
+  notes?: string;
 }
 
 export function momentsPrompt(i: MomentsInput): { system: string; user: string } {
@@ -43,6 +45,7 @@ export function momentsPrompt(i: MomentsInput): { system: string; user: string }
       `Brief:\n${i.brief.trim() || "(none)"}`,
       `Moments: up to ${i.count}, the best ones`,
       `Length: ${i.targetS > 0 ? `about ${i.targetS} seconds each, ` : ""}between ${Math.round(lo)} and ${Math.round(hi)} seconds`,
+      ...(i.notes ? [i.notes] : []),
       `Sources:\n${ids.map((id) => `${tag(id)} = ${JSON.stringify(i.titles[id])}`).join("\n")}`,
       `Sentences (number, source, seconds, text):\n${i.sentences.map((s) => `${s.n} ${tag(s.src)} ${s.s.toFixed(1)}-${s.e.toFixed(1)} ${s.text}`).join("\n")}`,
     ].join("\n\n"),

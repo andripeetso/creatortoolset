@@ -106,6 +106,18 @@ export async function addFeedback(id: string, notes: EditFeedback[]): Promise<nu
   return add.length;
 }
 
+/** Queues the edit's next version from its notes: the script again (the footage is analyzed first when it never was). */
+export const queueVersion = (e: EditMeta) => enqueueJob(libraryDb(), e.workspaceId, `${e.id}:`, readStep(e.id, "analysis") ? "script" : "analyze", e.createdBy, true, "edit_jobs");
+
+/**
+ * True when the edit holds a note from chat that no script or plan step was given: one sent while the edit was being
+ * made, after that run's script had started. False for an edit whose script never ran with this record (StepFiles.read).
+ */
+export function unreadNote(id: string): boolean {
+  const read = readStep(id, "read");
+  return !!read && (readEdit(id)?.feedback ?? []).some((n) => n.from === "chat" && n.at > read.at);
+}
+
 /** The version made last (its draft written most recently): what a note in chat is about. */
 export function newestDraft(id: string): string | undefined {
   const at = (n: string) => statSync(path.join(editDir(id), "drafts", `${n}.json`)).mtimeMs;
@@ -130,6 +142,8 @@ export interface StepFiles {
   passes: Record<string, string[]>;
   /** each planned version's plan as checked and repaired, and what was changed (plan.ts) */
   shots: Record<string, PlannedVersion>;
+  /** the newest note from chat the last script or plan step was given (its `at`, 0 with none): a later one is unread (worker.ts) */
+  read: { at: number };
 }
 
 /**
@@ -178,6 +192,9 @@ export interface DraftFile {
   due?: 1 | 2;
   /** the look at this cut before Review: the shots that don't hold up */
   critique?: Critique;
+  /** the look, or the fix after it, could not be made (a usage limit, no AI connected, a failure): the cut went to
+   *  Review as it was, and this line says so on its Review version (critique.ts) */
+  unchecked?: string;
 }
 
 /** A draft's name: a version (v1…) or a moment of a long recording (m1…m20, moments.ts). Nothing else is a file name here. */
