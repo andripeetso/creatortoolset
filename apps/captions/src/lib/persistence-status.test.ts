@@ -95,7 +95,7 @@ describe("getProjectPersistenceStatus", () => {
       tone: "warning",
       badge: "Edits saved locally · source video uploading 35%",
     });
-    expect(status.message).toContain("restore");
+    expect(status.message).toContain("in the local copy");
   });
 
   it("keeps an upload failure separate from saved transcript edits", () => {
@@ -111,7 +111,7 @@ describe("getProjectPersistenceStatus", () => {
       fullySaved: false,
       badge: "Saved · source video upload failed",
     });
-    expect(status.message).toContain("transcript and edits are safe");
+    expect(status.message).toContain("transcript and edits are saved");
   });
 
   it("uses a red not-saved state when browser recovery storage fails", () => {
