@@ -18,7 +18,7 @@ import { notifyLibraryChanges } from "../lib/events";
 import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob, prepareFirst } from "./jobs";
-import { ensureDefaultFolders } from "./organize";
+import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
@@ -691,8 +691,8 @@ libraryApp.get("/:id/progress", async (c) => {
 
 // PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
-// organize "default" or "ai" makes the default folders it is missing (organize.ts); "ai" turns the descriptions on, since
-// a video is filed by its description
+// organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
+// (a video is filed by its description) and files what is in no folder yet
 libraryApp.patch("/:id", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -725,10 +725,12 @@ libraryApp.patch("/:id", async (c) => {
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
+    const was = organizeOf(libraryId, db());
     const set = (key: string, value: string) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(value, libraryId);
     set("organize", JSON.stringify(organize));
     if (organize === "ai") set("describe", "true");
-    if (organize !== "own") ensureDefaultFolders(db(), libraryId, user.username);
+    if (organize === "default") ensureDefaultFolders(db(), libraryId, user.username);
+    if (organize === "ai" && was !== "ai") fileUnfiled(db(), libraryId, user.username);
     libraryChanged(libraryId); // the folders: other open pages read them again
   }
   if (b?.settings?.organizeOffered === true) db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.organizeOffered', json('true')) WHERE id = ?`).run(libraryId);

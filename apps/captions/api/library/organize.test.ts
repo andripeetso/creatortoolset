@@ -7,8 +7,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
-// A library's first-run choice (organize.ts): Default folders and AI organizes make the six folders, AI organizes files
-// what comes in: a video by its description's answer, a sound by its length, a picture into Graphics. Through the PATCH
+// A library's first-run choice (organize.ts): Default folders makes the six folders; AI organizes makes none and files
+// what comes in, making a folder with its first file: a video by its description's answer, a sound by its length, a
+// picture into Graphics. Through the PATCH
 // route and the worker, with the AI stubbed.
 
 vi.mock("../ai-complete", async (real) => {
@@ -84,43 +85,62 @@ beforeAll(() => {
 });
 
 describe("organize", () => {
-  it("AI organizes: the six folders once, the descriptions on; a folder deleted later comes back only with the next choice", async () => {
+  it("AI organizes: no folder up front, the descriptions on; what is already there is filed", async () => {
+    const d = libraryDb();
     libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.describe', json('false')) WHERE id = 'lib_ai'`).run();
+    // a described video and a picture from before the choice, in no folder
+    const old = await seed("lib_ai", "vid-old", "video", media("clip.mp4"), JSON.stringify({ duration: 2, vcodec: "h264" }));
+    const pic = await seed("lib_ai", "pic-old", "image", media("still.jpg"), JSON.stringify({ duration: 0 }));
+    d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id IN (?, ?)").run(old, pic);
+    enqueueJob(d, "lib_ai", old, "describe", "local");
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ?").run(old);
     const r = await organize("lib_ai", { organize: "ai" });
     expect(r.status).toBe(200);
     expect(((await r.json()) as { settings: unknown }).settings).toMatchObject({ organize: "ai", describe: true });
-    await organize("lib_ai", { organize: "ai" });
-    expect(folders("lib_ai")).toEqual([
-      { name: "A-roll", kind: "smart", query: '{"roll":"a"}' }, // the AI Editor's A-roll folder (editor/ingest.ts) is this one
-      { name: "B-roll", kind: "smart", query: '{"roll":"b"}' },
-      { name: "Music", kind: "manual", query: null },
-      { name: "Sound effects", kind: "manual", query: null },
-      { name: "Graphics", kind: "manual", query: null },
-      { name: "Examples", kind: "manual", query: null },
-    ]);
+    expect(folders("lib_ai")).toEqual([{ name: "Graphics", kind: "manual", query: null }]); // made with its first file, nothing empty
+    expect(folderOf("pic-old")).toEqual(["Graphics"]);
+    expect(job(old, "describe")?.state).toBe("queued"); // described again: the answer names its folder
+    d.prepare("DELETE FROM jobs WHERE version_id = ?").run(old);
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'vid-old'").run();
+    await organize("lib_ai", { organize: "ai" }); // the same choice again files nothing again
+    expect(job(old, "describe")).toBeUndefined();
     expect(((await (await organize("lib_ai", { organizeOffered: true })).json()) as { settings: unknown }).settings).toMatchObject({ organizeOffered: true });
   });
 
-  it("a video is filed in the folder its description names, if it is one of the library's own; never in Finals", async () => {
+  it("a video is filed by what the footage is: a new folder with its first file, the same one again in any case; never Finals", async () => {
     const d = libraryDb();
     d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at) VALUES ('col_finals', 'lib_ai', NULL, 'Finals', 'manual', 9)").run();
-    const answer = (folder: string) => {
+    const answer = (folder: string, check?: (user: string) => void) => {
       vi.mocked(aiFor).mockReturnValue({ only: ["mac"] } as never);
       vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, user, _i, _c, parse) => {
-        expect(user).toContain('["Music","Sound effects","Graphics","Examples"]');
-        return { value: parse(JSON.stringify({ description: "A person waves at the camera.", tags: [], roll: "b", folder })), provider: "test" } as never;
+        check?.(user as string);
+        return { value: parse(JSON.stringify({ description: "A character fights in a game.", tags: [], roll: "b", folder })), provider: "test" } as never;
       });
     };
-    for (const [id, folder] of [["vid-ex", "Examples"], ["vid-finals", "Finals"], ["vid-none", "Holidays"]] as const) {
+    const run = async (id: string, folder: string, check?: (user: string) => void) => {
       const v = await seed("lib_ai", id, "video", media("clip.mp4"), JSON.stringify({ duration: 2, vcodec: "h264" }));
-      answer(folder);
+      answer(folder, check);
       enqueueJob(d, "lib_ai", v, "describe", "local");
       await tick();
       expect(job(v, "describe")?.state).toBe("done");
-    }
-    expect(folderOf("vid-ex")).toEqual(["Examples"]);
+    };
+    await run("vid-game", "Gameplay", (user) => {
+      expect(user).toContain('["Graphics"]');
+      expect(user).toContain("new folder");
+    });
+    await run("vid-game2", "gameplay");
+    await run("vid-finals", "Finals");
+    expect(folderOf("vid-game")).toEqual(["Gameplay"]);
+    expect(folderOf("vid-game2")).toEqual(["Gameplay"]);
     expect(folderOf("vid-finals")).toEqual([]);
-    expect(folderOf("vid-none")).toEqual([]);
+    expect(folders("lib_ai").map((f) => f.name)).toEqual(["Finals", "Graphics", "Gameplay"]);
+
+    // at MAX_AI_FOLDERS the AI only picks among the folders there are
+    const { MAX_AI_FOLDERS } = await import("./organize");
+    for (let i = folders("lib_ai").length - 1; i < MAX_AI_FOLDERS; i++)
+      d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at) VALUES (?, 'lib_ai', NULL, ?, 'manual', 20)").run(`col_f${i}`, `Folder ${i}`);
+    await run("vid-full", "Holidays", (user) => expect(user).not.toContain("new folder"));
+    expect(folderOf("vid-full")).toEqual([]);
   });
 
   it("a video already in a folder (dropped in one) is not asked about or moved", async () => {
@@ -130,7 +150,7 @@ describe("organize", () => {
     d.prepare("INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES (?, 'vid-kept', 1, 'local')").run(graphics);
     vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, user, _i, _c, parse) => {
       expect(user).not.toContain("folder");
-      return { value: parse('{"description": "A mat.", "tags": [], "folder": "Examples"}'), provider: "test" } as never;
+      return { value: parse('{"description": "A mat.", "tags": [], "folder": "Gameplay"}'), provider: "test" } as never;
     });
     enqueueJob(d, "lib_ai", v, "describe", "local");
     await tick();

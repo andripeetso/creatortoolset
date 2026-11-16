@@ -143,7 +143,7 @@ export interface ImportPlace {
 export const placeOf = (places: readonly ImportPlace[] | undefined, path: string): ImportPlace | undefined =>
   (places ?? []).filter((p) => path === p.path || path.startsWith(p.path.endsWith("/") ? p.path : `${p.path}/`)).sort((a, b) => b.path.length - a.path.length)[0];
 
-/** Default folders: DEFAULT_FOLDERS made. AI organizes: the same, and each file that comes in is filed by the AI. Own: nothing made. */
+/** Default folders: DEFAULT_FOLDERS made. AI organizes: no folder up front; the AI files each file and makes a folder that fits the footage with its first file. Own: nothing made. */
 export type Organize = "default" | "ai" | "own";
 
 /**

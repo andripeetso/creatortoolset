@@ -17,7 +17,7 @@ import { indexAsset } from "./query";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
-import { fileInto, plainFolders, toFile } from "./organize";
+import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile } from "./organize";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a
@@ -41,6 +41,8 @@ export interface DescribeInput {
   workspace?: string;
   /** the library's plain folders, when the AI organizes it (organize.ts): the answer names the one the clip fits */
   folders?: string[];
+  /** with folders: the answer may name a new folder (the library has fewer than MAX_AI_FOLDERS) */
+  newFolder?: boolean;
 }
 
 export interface Described {
@@ -66,10 +68,12 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
       'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
-      ...(input.folders?.length
+      ...(input.folders
         ? [
-            `folder is the one of these folders the clip belongs in, or null when none fits: ${JSON.stringify(input.folders)}`,
-            'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "folder": "a folder name" or null}',
+            input.newFolder
+              ? `folder is where this clip is filed in the library, judged by what the footage is (gameplay, an interview, a product, a place…). ${input.folders.length ? `Use one of these folders when it fits: ${JSON.stringify(input.folders)}. Otherwise name` : "Name"} a new folder: one to three words, by what the footage is (for example "Gameplay", "Interviews", "Product shots", "Travel"), never a vague name like "Misc", "Other", "Clips" or "B-roll".`
+              : `folder is the one of these folders the clip fits best: ${JSON.stringify(input.folders)}`,
+            'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "folder": "a folder name"}',
           ]
         : ['Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b"}']),
     ].join("\n\n"),
@@ -184,18 +188,21 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
     // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
     const filing = toFile(db, versionId);
-    const folders = filing ? plainFolders(db, filing.library_id) : [];
+    const folders = filing ? plainFolders(db, filing.library_id) : undefined;
+    const newFolder = !!folders && folders.length < MAX_AI_FOLDERS;
     const workspace = await workspaceOf(db, versionId);
     const { system, user } = describePrompt({
       title,
       ...(workspace ? { workspace } : {}),
       frames: images.length,
       ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
-      ...(folders.length ? { folders } : {}),
+      ...(folders ? { folders, newFolder } : {}),
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider);
-    if (filing && value.folder && folders.includes(value.folder)) fileInto(db, filing, value.folder);
+    // a new name only while the library may get one; fileInto makes the folder with its first file
+    const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
+    if (filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);
   } finally {
     if (!made) await Promise.all(files.map((f) => rm(f, { force: true })));
   }

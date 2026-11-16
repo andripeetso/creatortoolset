@@ -2,15 +2,21 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_FOLDERS, SOUNDS, type Organize } from "../../contracts/library";
 import { libraryDb } from "./db";
+import { enqueueJob } from "./jobs";
 import { indexAsset } from "./query";
 
 /**
- * How a library is organized (its setting `organize`, chosen on the Media Library's first run): "default" and "ai" make
- * DEFAULT_FOLDERS (missing ones only, when chosen: a folder deleted later is not made again); "ai" also files each file
- * that comes in and is in no folder yet. A video is filed by its description (describe.ts: the AI is given the
- * library's plain top-level folders and names the one that fits, or none); a sound by its length (organizeOnProbe); a
- * picture goes to Graphics. A file only goes into a folder that exists, and never into Finals.
+ * How a library is organized (its setting `organize`, chosen on the Media Library's first run): "default" makes
+ * DEFAULT_FOLDERS (missing ones only, when chosen: a folder deleted later is not made again). "ai" makes no folder up
+ * front and never an empty one: every file that comes in and is in no folder yet is filed, and a folder is made the
+ * first time a file goes into it. A video is filed by its description (describe.ts: the AI sees what the footage is and
+ * names one of the library's plain top-level folders, or a new one while there are fewer than MAX_AI_FOLDERS); a sound
+ * by its length (organizeOnProbe); a picture goes to Graphics. Never into Finals. Choosing "ai" files what is already
+ * there too (fileUnfiled).
  */
+
+/** Past this many plain top-level folders the AI only files into the ones there are. */
+export const MAX_AI_FOLDERS = 12;
 
 const id = () => `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
@@ -87,10 +93,20 @@ export function toFile(d: DatabaseSync, versionId: string): Asset | null {
   return filed ? null : a;
 }
 
-/** Puts the asset in the plain top-level folder `name` when it exists, with the sound tag a sound folder carries. Returns whether it did. */
+/**
+ * Puts the asset in the plain top-level folder `name`, made when the library has none by that name (a name differing only
+ * in case is the same folder), with the sound tag a sound folder carries. Returns whether it did.
+ */
 export function fileInto(d: DatabaseSync, a: Asset, name: string): boolean {
-  const folder = topFolder(d, a.library_id, name);
-  if (!folder || name === "Finals") return false;
+  name = name.replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!name || name.toLowerCase() === "finals") return false;
+  const same = plainFolders(d, a.library_id).find((f) => f.toLowerCase() === name.toLowerCase());
+  if (same) name = same;
+  let folder = topFolder(d, a.library_id, name);
+  if (!folder) {
+    folder = id();
+    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?)").run(folder, a.library_id, name, Date.now(), a.created_by);
+  }
   d.prepare(
     `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
      SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
@@ -109,4 +125,23 @@ export function organizeOnProbe(d: DatabaseSync, versionId: string, duration: nu
   const a = toFile(d, versionId);
   if (a?.kind === "audio") fileInto(d, a, duration < SHORT_SOUND_S ? SOUNDS.effect.folder : SOUNDS.music.folder);
   else if (a?.kind === "image") fileInto(d, a, "Graphics");
+}
+
+/**
+ * A library just set to "ai": what is in no folder yet is filed now. Sounds and pictures at once; videos get their
+ * description again (it names the folder), on the person who chose it. Trashed files are left alone.
+ */
+export function fileUnfiled(d: DatabaseSync, libraryId: string, by: string): void {
+  const rows = d
+    .prepare(
+      `SELECT a.id, a.library_id, a.kind, a.created_by, v.id AS version, json_extract(v.probe, '$.duration') AS duration
+       FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'ready'
+         AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')`,
+    )
+    .all(libraryId) as unknown as (Asset & { version: string; duration: number | null })[];
+  for (const r of rows) {
+    if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
+    else organizeOnProbe(d, r.version, r.duration ?? 0);
+  }
 }
