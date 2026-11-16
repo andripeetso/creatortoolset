@@ -2,13 +2,15 @@ import type { DatabaseSync } from "node:sqlite";
 import { CARDS_DRAW_KIND, type DeviceJob } from "../../contracts/devices";
 import { isLimitLine, limitLine } from "../../contracts/plans";
 import { AiProviderError } from "../ai-complete";
-import { MacClaudeError } from "../lib/mac-claude";
+import { MacClaudeError, usageIn } from "../lib/mac-claude";
 import { isOnline } from "../lib/devices";
+import { projectOf } from "../lib/project-of";
 import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
+import type { SessionUser } from "../users";
 import { Waiting } from "./analyze";
 import { scriptThrew } from "./cards/device";
 import { editStopped, runEnded } from "./ended";
@@ -138,7 +140,9 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
   const beat = setInterval(() => extendLease(db, job.id, LEASE_S, Date.now(), T), BEAT_MS);
   beat.unref();
   try {
-    await step({ edit, job, variant, signal: ctl.signal });
+    // a step runs in no request: its AI calls count under the edit's workspace (Settings → Usage)
+    const workspace = (await projectOf({ username: ownerOf(edit) } as SessionUser).catch(() => null))?.(edit.projectId);
+    await usageIn(workspace, () => step({ edit, job, variant, signal: ctl.signal }));
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     // the notes this script or plan was written with are the ones the edit held when the step began: a note from chat
     // sent since is unread, and makes the next version when the run ends (queueNext)

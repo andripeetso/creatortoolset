@@ -12,7 +12,7 @@ import { env } from "./lib/env";
 import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import { EFFORTS, type Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
-import { adoptKept, adoptMacClaude, dropUnowned, keptOpen, onAdopt, SILENT_MS, streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
+import { adoptKept, adoptMacClaude, dropUnowned, keptOpen, onAdopt, SILENT_MS, streamMacClaude, usageIn, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
 import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
@@ -1124,9 +1124,11 @@ export async function answerWithTools(
   // only where the reply has the tool that opens a skill
   if (token && opts.skills) system += `\n\n${opts.skills}`;
   const asks = claude ? opts.onAsk : undefined;
+  // the reply's usage counts under its chat's workspace, whatever the window that sent the message is in (Settings → Usage)
+  const workspace = await workspaceOfTurn(username, opts.turn);
   return ended(
     opts.turn,
-    streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
+    usageIn(workspace, () => streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
@@ -1136,7 +1138,7 @@ export async function answerWithTools(
       // what the reply needs to go on after a restart of the server (onAdopt below)
       keep: { kind: "assistant", username, turn: opts.turn, asks: !!asks, mac: fromMac.has(opts.turn), place: places.get(opts.turn) ?? 0 },
       ...hooksFor(username, opts.turn, asks),
-    }),
+    })),
   );
 }
 

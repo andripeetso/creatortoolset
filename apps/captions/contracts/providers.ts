@@ -58,7 +58,7 @@ export const DRIVERS: ReadonlyArray<{ id: Driver; label: string; runs: boolean; 
   { id: "musecode", label: "Muse Code", runs: true, featured: true },
   { id: "pi", label: "Pi", runs: true, featured: true },
   { id: "gemini", label: "Gemini", runs: true, featured: false, homeEnv: "GEMINI_CLI_HOME" },
-  { id: "acp", label: "Local ACP command", runs: true, featured: false },
+  { id: "acp", label: "Local command", runs: true, featured: false },
 ];
 
 /** The drivers the Creator Toolset Mac app runs (apps/mac ClaudeRequest.swift `runnableDrivers`). */
@@ -383,8 +383,11 @@ export interface ProvidersView {
   /** by `${scope}:${instanceId}` */
   checks: Record<string, ProviderCheck>;
   models: Record<string, string[]>;
-  /** this account's usage (admins: the workspace's too), 90 days by hour (UTC) */
-  usage: Array<{ hour: string; label: string; scope: Scope; instance?: string; calls: number; tokens: number; costUsd: number }>;
+  /**
+   * this account's usage (admins: the workspace's too), 90 days by hour (UTC). `workspace`: the Workshop workspace the
+   * calls ran in, by its id; absent for calls made in none and for all recorded before 2026-11-16
+   */
+  usage: Array<{ hour: string; label: string; scope: Scope; instance?: string; workspace?: string; calls: number; tokens: number; costUsd: number }>;
   /** the plan limits of the identities this account's visible providers run on (never another person's) */
   limits: LimitsIdentity[];
   /**

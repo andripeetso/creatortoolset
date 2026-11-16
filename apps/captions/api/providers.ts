@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { ProviderCheck, ProviderInstance, ProviderSettings, ProvidersView, Scope } from "../contracts/providers";
 import type { AuthVars } from "./auth";
 import { limitLine } from "../contracts/plans";
-import { MacClaudeError, streamMacClaude, macUsageSince } from "./lib/mac-claude";
+import { MacClaudeError, streamMacClaude, macUsageLines } from "./lib/mac-claude";
 import { forViewer, isOnline, listDevices } from "./lib/devices";
 import { deviceIdOf, driverCatalog, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, runFields, saveSettings } from "./lib/providers";
 import { limitsFor, type LimitRef } from "./lib/limits";
@@ -69,19 +69,15 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
       if (!checks[k] && i.lastCheck) checks[k] = { ok: i.lastCheck.ok, at: i.lastCheck.at, ms: i.lastCheck.ms, ...(i.lastCheck.note ? { note: i.lastCheck.note } : {}) };
     }
 
-  // admins also see the workspace's usage; everyone sees their own scope's
+  // admins also see the workspace's usage; everyone sees their own scope's. Each line names the workspace its calls ran in
   const usage: ProvidersView["usage"] = [];
-  for (const [hour, labels] of Object.entries(await macUsageSince(Date.now() - USAGE_DAYS * DAY))) {
-    for (const [label, t] of Object.entries(labels)) {
-      const by = Object.entries(t.by ?? {});
-      for (const [key, x] of by) {
-        const { scope, instance } = splitKey(key);
-        if (scope === u.username || (admin && scope === "workspace")) usage.push({ hour, label, scope, instance, ...x });
-      }
-      // what the tally kept with no provider (the API path, a stopped run) belongs to the workspace
-      const rest = { calls: t.calls - by.reduce((n, [, x]) => n + x.calls, 0), tokens: t.tokens - by.reduce((n, [, x]) => n + x.tokens, 0), costUsd: t.costUsd - by.reduce((n, [, x]) => n + x.costUsd, 0) };
-      if (admin && rest.calls > 0) usage.push({ hour, label, scope: "workspace", ...rest });
+  for (const { key, ...line } of await macUsageLines(Date.now() - USAGE_DAYS * DAY)) {
+    if (key) {
+      const { scope, instance } = splitKey(key);
+      if (scope === u.username || (admin && scope === "workspace")) usage.push({ ...line, scope, instance });
     }
+    // what the tally kept with no provider (the API path, a stopped run) belongs to the workspace
+    else if (admin) usage.push({ ...line, scope: "workspace" });
   }
 
   const devices = visibleDevices(u).map((d) => ({ ...d, online: isOnline(d.id) }));
@@ -167,7 +163,7 @@ providersApp.post("/:scope/:id/check", async (c) => {
   const scope = c.req.param("scope");
   if (scope !== u.username && u.role !== "admin") return c.json({ error: "Admins only, or your own providers" }, 403);
   const inst = instanceIn(scope, c.req.param("id"));
-  if (!inst) return c.json({ error: "Not found" }, 404);
+  if (!inst) return c.json({ error: "Provider not found" }, 404);
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
   return c.json(await checkInstance(scope, inst, s));
 });
