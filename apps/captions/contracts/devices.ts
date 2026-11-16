@@ -10,7 +10,9 @@
  * A device never asks for a step on a clock. Its long poll for AI requests (POST wait) lists the kinds it would claim
  * right now, `{ blobs, editor: string[] }`: they are kept as the kinds it declares (an empty list: none), and when a
  * claim made now would be handed a step the poll is answered at once with EDITOR_HINT, after any AI request. The device
- * then claims. A poll that lists no `editor` changes nothing and is never answered with the hint.
+ * then claims. A poll that lists no `editor` changes nothing and is never answered with the hint. The answer carries
+ * `work: true` when a core step placed on a computer waits for this one (contracts/work.ts): the app starts its work
+ * package worker, which claims through work/claim. Only a computer that has made a work claim is told it.
  *   GET  editor/job/:id/cards                   → CardsDraw       a cards-draw step: what to draw
  *   POST editor/job/:id/cards/:cardId           multipart: `clip` (H.264 mp4, no sound) and `still` three times (PNG, 540 px
  *                                               wide: first, middle and last frame) → { ok: true }; then done or fail
@@ -190,6 +192,9 @@ export interface CardsDraw {
 /** The whole answer to a long poll that says an editor step waits. It has no `id`: an answer with one is an AI request. */
 export const EDITOR_HINT = { editor: true } as const;
 
+/** A long poll's hint: `editor`, a device step waits (claim it); `work`, a work package step waits (start the worker). */
+export type DeviceHint = { editor?: true; work?: true };
+
 /** The answer to done and fail. `editor: true`: another step this device could claim waits, so it may claim at once. */
 export interface DeviceEnded {
   ok: boolean;
@@ -238,8 +243,9 @@ export interface DeviceJob {
 /**
  * One footage file of a step, as the computer that took it gets at it: `path`, where it is on this computer (already
  * rewritten for it: a shared folder may be /Volumes/Footage on one computer and /mnt/footage or Z:\ on another), or
- * `copy`, the server's copy to download into its own cache and work on there:
- *   GET relay/editor/job/:id/footage/:version   → the file ("original": the video file; "proxy": only its smaller copy)
+ * `copy`, the server's proxy to download into its own cache and work on there (an original is never sent to analyse or
+ * cut; "original" is kept for older apps reading this type):
+ *   GET relay/editor/job/:id/footage/:version   → the proxy; ?original=1 the video file, only where the library uploads originals
  */
 export type DeviceFootage = { id: string } & ({ path: string } | { copy: "original" | "proxy" });
 
