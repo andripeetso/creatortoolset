@@ -144,6 +144,9 @@ export interface StorageView extends StorageState {
   /** The account's computers (device ids) that are the machine this server runs on, where the server may read the
    *  person's folders: a folder added on one joins the Media Library, so the page shows what a big one takes first. */
   here?: string[];
+  /** the workspace's Media Library keeps copies of the files on the server (it uploads them, or their proxies): a computer
+   *  without a folder still works on its files through those */
+  copies?: boolean;
 }
 
 /** A computer's report of the folders it found: good paths and ids only (see parseStorageReport). */

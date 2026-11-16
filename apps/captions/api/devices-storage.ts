@@ -10,6 +10,7 @@ import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
 import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
 import { keptApp } from "./kept";
+import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
@@ -74,10 +75,15 @@ async function scopeOf(c: C): Promise<{ mine: (f: StorageFolder) => boolean; wor
   const workspace = inWs ? await currentWorkspaceId(u) : undefined;
   return { mine: (f) => !inWs || inWs(f.workspace), ...(workspace ? { workspace } : {}) };
 }
-/** The list the page gets: this workspace's folders only. */
-/** The folders this workspace shows, with the account's computers that reach them through a connected share (lib/storage.ts withMounts). */
+/** The list the page gets: this workspace's folders only, with the account's computers that reach them through a connected share (lib/storage.ts withMounts). */
 const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string): StorageState =>
   ({ ...st, folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))) });
+
+/** Whether a workspace's Media Library uploads what is added from a computer (`upload`: true or "all" or "proxies"; false or
+ *  "none" keeps the files where they are), so the server has a copy to work from. */
+const keepsCopies = (workspace: string): boolean =>
+  (libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE workspace_id = ?").all(workspace) as { v: unknown }[])
+    .some((r) => r.v === 1 || r.v === "all" || r.v === "proxies");
 
 export const storageApp = new Hono<{ Variables: AuthVars }>();
 
@@ -100,7 +106,7 @@ storageApp.get("/", async (c) => {
   const local = process.env.CT_LOCAL === "1" && u.role === "admin";
   // which of this account's computers is this machine: a folder added on it goes into the Library (the page asks first when it is big)
   const here = watchAllowed(u.username) ? listDevices((d) => !!mine(c, d.id) && isThisMachine(d.id)).map((d) => d.id) : [];
-  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here };
+  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies((await scopeOf(c)).workspace ?? u.username) };
   return c.json(view);
 });
 

@@ -350,6 +350,10 @@ function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOp
             <LinuxSteps />
           </TabsContent>
         </Tabs>
+        <p className="text-xs text-muted-foreground">
+          Footage on a shared drive: connect the same drive on the new computer too, and it reads those folders by itself.
+          Storage shows which computers can read each folder, with a Connect button for the ones that can't yet.
+        </p>
       </DialogContent>
     </SettingsDialog>
   );
