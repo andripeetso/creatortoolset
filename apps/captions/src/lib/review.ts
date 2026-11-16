@@ -186,7 +186,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
   const j = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(j?.error || "Could not reach the server");
+  if (!res.ok) throw new Error(j?.error || `Request failed (${res.status})`);
   return j as T;
 }
 
@@ -465,7 +465,7 @@ export function reviewApi(base: string) {
         body: file,
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.error || "Could not upload the file");
+      if (!res.ok) throw new Error(j?.error || `Upload failed (${res.status})`);
       return j as ReviewRef;
     },
     /** A reference as uploaded (`file`) or as the AI reads it (`look`, a JPEG). */

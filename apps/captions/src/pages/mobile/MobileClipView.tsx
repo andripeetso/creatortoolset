@@ -18,9 +18,9 @@ import {
   Play,
   Share2,
   Trash2,
-  Wand2,
   X,
 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { ClipAgentDiscovery } from "@/components/ClipAgentDiscovery";
 import {
   ClipCaptions,
@@ -824,7 +824,7 @@ export function MobileClipView({
                     {busy ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      <Wand2 className="h-4 w-4" />
+                      <CtMark className="h-4 w-4" />
                     )}
                     {cleaned ? "Restore original" : "Clean up transcript"}
                   </button>
@@ -908,7 +908,7 @@ export function MobileClipView({
                 onClick={() => void runCleanup(cleaned)}
                 className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-foreground active:bg-accent"
               >
-                <Wand2 className="h-5 w-5 text-muted-foreground" />
+                <CtMark className="h-5 w-5 text-muted-foreground" />
                 {cleaned ? "Restore original transcript" : "Clean up transcript"}
               </button>
             ) : null}

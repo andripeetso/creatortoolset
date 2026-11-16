@@ -61,7 +61,7 @@ export default function SharedFolderPage() {
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-lg font-semibold">{here?.name ?? data.name}</h1>
                 <p className="text-xs text-zinc-500">
-                  {data.items.length} {data.items.length === 1 ? "clip" : "clips"}
+                  {data.items.length} {data.items.length === 1 ? "recording" : "recordings"}
                   {data.folders.length > 0 && <> · {data.folders.length} {data.folders.length === 1 ? "folder" : "folders"}</>}
                 </p>
               </div>
@@ -80,7 +80,7 @@ export default function SharedFolderPage() {
                 <span className="truncate px-1 font-medium text-zinc-200">{here?.name}</span>
               </nav>
             )}
-            {empty && <p className="rounded-lg border border-dashed border-zinc-800 py-16 text-center text-sm text-zinc-500">No clips</p>}
+            {empty && <p className="rounded-lg border border-dashed border-zinc-800 py-16 text-center text-sm text-zinc-500">No recordings</p>}
             {view === "grid" ? (
               <FolderGrid size="small">
                 {data.folders.map((f) => (

@@ -13,9 +13,9 @@ import {
   Square,
   Trash2,
   Video,
-  Wand2,
   Circle,
 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { canChange, useAuth, useMe } from "@/lib/auth";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
@@ -524,7 +524,7 @@ function ClipView({
                   {cleanBusy ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <Wand2 className="h-3 w-3" />
+                    <CtMark className="h-3 w-3" />
                   )}
                   {cleaned ? "Restore original" : "Clean up"}
                 </button>

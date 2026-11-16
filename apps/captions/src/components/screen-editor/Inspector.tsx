@@ -468,7 +468,7 @@ function AimPad({ look, zoom, player, onAim }: { look: ScreenLook; zoom: Zoom; p
 
   return (
     <div className="space-y-2">
-      <div className="text-xs text-zinc-400">Aim</div>
+      <div className="text-xs text-zinc-400">Target</div>
       <div
         onPointerDown={press}
         className="relative cursor-crosshair touch-none overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900"
