@@ -158,6 +158,8 @@ function editorWantsAgain(db: ReturnType<typeof libraryDb>, versionId: string, b
 
 export async function analyzeStep({ edit, job, signal }: StepContext): Promise<void> {
   const db = libraryDb();
+  // transcripts the edit waits for are heard on the keys of whoever asked for this run (a teammate's next version: theirs)
+  const asker = job.actor ?? edit.createdBy;
   const rows = edit.sources.map(
     (id) =>
       db
@@ -193,14 +195,14 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
       continue;
     }
     const languages = edit.languages?.length ? edit.languages : undefined;
-    askVersionIn.set(row.id, { by: edit.createdBy, ...(languages ? { languages } : {}) });
+    askVersionIn.set(row.id, { by: asker, ...(languages ? { languages } : {}) });
     const words = wordsOf(db, row.id);
     // a take heard as silence (asked in another language) is heard once more in the language the edit names
     if (words && languages && !words.length) {
       const again = `${row.id}|${languages.join(",")}`;
       if (!askedAgain.has(again)) {
         askedAgain.add(again);
-        enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
+        enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
         wait = true;
         continue;
       }
@@ -212,11 +214,11 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
     }
     // one made on another engine than the AI Editor row's own choice is heard once more by that engine; it becomes
     // the clip's library transcript too (transcribeVersion)
-    const redo = words ? editorWantsAgain(db, row.id, edit.createdBy, languages) : null;
+    const redo = words ? editorWantsAgain(db, row.id, asker, languages) : null;
     if (redo) {
       if (!heardForEditor.has(redo)) {
         heardForEditor.add(redo);
-        enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
+        enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
         prepareFirst(row.id);
         wait = true;
         continue;
@@ -243,9 +245,9 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
     else if (job?.state === "failed") throw new Error(`Transcribing “${row.title}” failed (${job.error ?? "no reason given"}): retry it in the Media Library`);
     else {
       // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
-      if (job?.state === "needs_key" && job.actor === edit.createdBy) versionRoute(edit.createdBy, row.id);
+      if (job?.state === "needs_key" && job.actor === asker) versionRoute(asker, row.id);
       // none yet, done before word timings were kept, or parked for someone else: transcribe as the edit's creator
-      enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
+      enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
       wait = true;
     }
   }

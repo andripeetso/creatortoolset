@@ -144,7 +144,7 @@ describe("the look at a planned cut before Review", () => {
     expect(critiquePrompt({ brief: "", notes: [], style: "", shots: Array.from({ length: 9 }, (_, k) => `${k + 1}.`), sheets: 2, seconds: 9, song: false }).user).toContain("picture 2 holds shot 9.");
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v.map((x) => x.n)).toEqual([1]);
-    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1" });
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a" });
     expect(readDraft(e.id, "v1")).toMatchObject({ critique: { ok: true, fails: [], round: 1 } });
     expect(readDraft(e.id, "v1")!.due).toBeUndefined();
   }, 120_000);
@@ -170,7 +170,7 @@ describe("the look at a planned cut before Review", () => {
     // one version in Review: the fixed one, which passed
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v).toHaveLength(1);
-    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1" });
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a" });
     expect(readDraft(e.id, "v1")!.critique).toEqual({ ok: true, fails: [], round: 2 });
   }, 180_000);
 
@@ -184,7 +184,7 @@ describe("the look at a planned cut before Review", () => {
     expect(readStep(e.id, "shots")!.v1).toEqual({ plan: PLAN, notes: [], critique: { ok: false, fails: [{ n: 2, why: TOWN }], round: 1 } });
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v).toHaveLength(1);
-    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", fails: [{ n: 2, why: TOWN }] });
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 2, why: TOWN }] });
   }, 240_000);
 
   it("a talking-head cut is never looked at: its preview is filed as before", async () => {
@@ -209,7 +209,7 @@ describe("the look at a planned cut before Review", () => {
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v).toHaveLength(1);
     // the line rides where the failing shots are named, as shot 0: no shot's own
-    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", fails: [{ n: 0, why: line }] });
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 0, why: line }] });
     const d = readDraft(e.id, "v1")!;
     expect([d.due, d.critique, d.unchecked]).toEqual([undefined, undefined, line]);
   }, 120_000);
@@ -221,7 +221,7 @@ describe("the look at a planned cut before Review", () => {
     expect(await run(e, "draft")).toEqual(doneAll(["draft", "broll", "post", "preview", "critique", "file"]));
     expect(looks).toHaveLength(1);
     expect((await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions.map((x) => x.draft)).toEqual([
-      { edit: e.id, name: "v1", fails: [{ n: 2, why: TOWN }, { n: 0, why: "Not fixed before Review: No Mac runs this provider: open Creator Toolset on your Mac" }] },
+      { edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 2, why: TOWN }, { n: 0, why: "Not fixed before Review: No Mac runs this provider: open Creator Toolset on your Mac" }] },
     ]);
     // the plan is the one that was cut: no fix round was started
     expect(readStep(e.id, "shots")!.v1).toEqual({ plan: PLAN, notes: [] });

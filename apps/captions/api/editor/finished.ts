@@ -19,7 +19,7 @@ import { onEvent } from "../lib/events";
 import { workspaceOf } from "../lib/workshop/context";
 import { tfidf } from "../lib/workshop/posted";
 import { typedIn } from "./own-words";
-import { allEdits, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
+import { allEdits, ownerOf, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
 import { change, findStyle } from "./styles";
 
 /**
@@ -111,9 +111,11 @@ export function finishedRecord(e: EditMeta, variant: string, at = Date.now()): F
  */
 export function keepFinished(e: EditMeta, variant: string): void {
   const style = e.style?.id;
-  if (!style || !findStyle(e.createdBy, style) || readStep(e.id, "finished")?.removed) return;
+  // the style is the workspace's (store.ts ownerOf), also on an edit a teammate made
+  const owner = ownerOf(e);
+  if (!style || !findStyle(owner, style) || readStep(e.id, "finished")?.removed) return;
   const rec = finishedRecord(e, variant);
-  if (rec) write(e.createdBy, style, [rec, ...finishedOf(e.createdBy, style).filter((r) => r.editId !== e.id)].slice(0, FINISHED_MAX));
+  if (rec) write(owner, style, [rec, ...finishedOf(owner, style).filter((r) => r.editId !== e.id)].slice(0, FINISHED_MAX));
 }
 
 /**
@@ -166,10 +168,10 @@ export function keepLearned(e: EditMeta, variant: string): void {
     workspaceId: e.projectId ?? "",
     at: Date.now(),
     rounds: Math.max(0, (readStep(e.id, "review")?.[variant]?.n ?? 1) - 1),
-    notes: (e.feedback ?? []).filter((f) => f.by === e.createdBy).map((f) => f.text),
+    notes: (e.feedback ?? []).filter((f) => f.by === ownerOf(e)).map((f) => f.text),
     cut: cutOf(readDraft(e.id, variant)?.timeline),
   };
-  change(e.createdBy, (f) => {
+  change(ownerOf(e), (f) => {
     const s = f.editing.find((x) => x.id === id);
     if (!s) return "gone";
     if (s.unlearned?.includes(e.id)) return;
@@ -186,7 +188,7 @@ onEvent("review.finished", ({ asset, owner, by, key, words, turn }) => {
   const tool = key || !!innerCall.getStore();
   if (tool && !(turn && words && typedIn(owner, turn, words))) return;
   for (const e of allEdits()) {
-    if (e.createdBy !== owner || e.trashedAt) continue;
+    if (ownerOf(e) !== owner || e.trashedAt) continue;
     const variant = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset)?.[0];
     if (!variant) continue;
     if (!tool) keepFinished(e, variant);
@@ -248,13 +250,15 @@ export function closestFinished(brief: string, list: FinishedEdit[], n = FINISHE
  * one way (lib/workshop/context.ts workspaceOf): an example by the workspace kept with it, else its edit's, else (the
  * edit gone) the maker's first brand's.
  */
-export async function finishedBlock(edit: Pick<EditMeta, "id" | "createdBy" | "projectId" | "brief" | "style">): Promise<string> {
+export async function finishedBlock(edit: Pick<EditMeta, "id" | "createdBy" | "projectId" | "brief" | "style"> & { workspaceId?: string }): Promise<string> {
   if (!edit.style) return "";
-  const all = finishedOf(edit.createdBy, edit.style.id).filter((r) => r.editId !== edit.id);
+  // the edit's workspace is its owner's (ownerOf), also for an edit a teammate made there
+  const owner = ownerOf(edit);
+  const all = finishedOf(owner, edit.style.id).filter((r) => r.editId !== edit.id);
   if (!all.length) return "";
   // asked once a workspace: the examples of a style are in a few
   const asked = new Map<string, Promise<string | undefined>>();
-  const ws = (projectId?: string) => asked.get(projectId ?? "") ?? asked.set(projectId ?? "", workspaceOf(edit.createdBy, projectId || undefined)).get(projectId ?? "")!;
+  const ws = (projectId?: string) => asked.get(projectId ?? "") ?? asked.set(projectId ?? "", workspaceOf(owner, projectId || undefined)).get(projectId ?? "")!;
   const here = await ws(edit.projectId);
   const mine: FinishedEdit[] = [];
   for (const r of all) if ((await ws(r.workspaceId ?? readEdit(r.editId)?.projectId)) === here) mine.push(r);

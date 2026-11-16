@@ -192,7 +192,7 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
   const file = async (c: Critique | undefined, skipped?: string) => {
     const kept = { ...looked, ...(c ? { critique: c } : {}), ...(skipped ? { unchecked: skipped } : {}) };
     await markDraft(edit.id, variant, kept);
-    await fileInReview(edit, variant, d.timeline, saidOf(kept));
+    await fileInReview(edit, variant, d.timeline, saidOf(kept), job.actor);
     then("file");
   };
   // Why a look or a fix can't be made, in the person's words, or null while it is to be tried again. A rendered cut
