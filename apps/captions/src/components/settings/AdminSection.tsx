@@ -9,7 +9,7 @@ const MOVED: Record<string, string> = {
   users: "/settings/team",
   access: "/settings/team",
   apps: "/settings/team",
-  projects: "/settings/folders",
+  projects: "/settings/storage",
   "server-keys": "/settings/keys",
   ai: "/settings/keys",
 };

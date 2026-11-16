@@ -9,6 +9,7 @@ import { PAGE_BODIES } from "@/components/settings/pages";
 import { AccountAvatar } from "@/components/settings/AccountSection";
 import { navBlocks, navListFor, resolveSection, sectionsFor, withToolPages, type NavContext, type SettingsPageId } from "@/components/settings/nav";
 import { PageActionContext } from "@/components/settings/page-action";
+import { resetWorkspacePick } from "@/components/settings/workspace-pick";
 import { pluginOfSection, WithPluginWorkspaces } from "@/components/settings/PluginWorkspaces";
 import { webPlugins } from "@/plugins.gen";
 import { searchSettings, type SearchHit } from "@/components/settings/search";
@@ -60,6 +61,9 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     setRailOpen(true);
     requestAnimationFrame(() => searchRef.current?.focus());
   };
+
+  // the workspace selector's choice lasts while Settings is open: the next opening starts from the window's workspace
+  useEffect(() => resetWorkspacePick, []);
 
   // "/" and Ctrl/⌘F focus the search, unless a field already has the keyboard
   useEffect(() => {

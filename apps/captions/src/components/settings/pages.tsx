@@ -12,7 +12,8 @@ import { ProvidersSection } from "./ProvidersSection";
 import { UsageSection } from "./UsageSection";
 import { WorkspaceSection } from "./WorkspaceSection";
 import { ComputersSection } from "./ComputersSection";
-import { FoldersSection } from "./FoldersSection";
+import { FoldersSection, StorageSection } from "./FoldersSection";
+import { WorkspaceDetailsSection } from "./WorkspaceDetailsSection";
 import { MediaLibrarySection } from "./MediaLibrarySection";
 import { ServersSection } from "./ServersSection";
 import { GeneralSection } from "./GeneralSection";
@@ -31,6 +32,8 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   appearance: AppearanceSection,
   tools: ToolsSection,
   folders: FoldersSection,
+  storage: StorageSection,
+  workspace: WorkspaceDetailsSection,
   library: MediaLibrarySection,
   providers: ProvidersSection,
   voice: VoiceSection,

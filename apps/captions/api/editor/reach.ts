@@ -124,7 +124,7 @@ export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">
   const missing = rows.find((r) => runs.some((c) => !fileFor(r, c.x.id, folders, isThisMachine)));
   const at = missing && (missing.mac_path ?? missing.source_path);
   const what = (at && ((folderFor(at, folders, missing.mac_device ?? undefined) ?? folderFor(at, folders))?.folder.name ?? path.basename(at))) || "this footage";
-  return can.length ? `Only ${either(can.map((c) => c.x.name))} can read ${what}` : `No computer can read ${what} yet: connect it on one in Settings → Storage`;
+  return can.length ? `Only ${either(can.map((c) => c.x.name))} can read ${what}` : `No computer can read ${what} yet: connect it on one in Settings → Folders`;
 }
 
 /** The same window as isOnline (lib/devices.ts). */

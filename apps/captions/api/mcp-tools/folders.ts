@@ -9,7 +9,7 @@ export const foldersTools: ToolModule = {
     {
       name: "folder_list",
       description:
-        "Look inside a folder on the user's computer, its subfolders too (up to 6 levels): each entry's path inside it, file or folder, kind (video, audio, image, doc), size and, for media, its length when known. match = words that must all be in an entry's path or kind (\"song\" finds audio files, \"music\" the files in a MUSIC folder). Use it before saying a file is not there or asking what it is called. path = one of this workspace's folders (Settings → Storage), a folder the user dropped or named in this chat, or one inside those; never a whole disk or home folder. Works where the server runs on that computer and through a paired Mac.",
+        "Look inside a folder on the user's computer, its subfolders too (up to 6 levels): each entry's path inside it, file or folder, kind (video, audio, image, doc), size and, for media, its length when known. match = words that must all be in an entry's path or kind (\"song\" finds audio files, \"music\" the files in a MUSIC folder). Use it before saying a file is not there or asking what it is called. path = one of this workspace's folders (Settings → Folders), a folder the user dropped or named in this chat, or one inside those; never a whole disk or home folder. Works where the server runs on that computer and through a paired Mac.",
       inputSchema: { type: "object", properties: { path: str, depth: { type: "integer" }, match: str }, required: ["path"] },
       dockOnly: true,
     },

@@ -141,7 +141,7 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     // the Mac it was indexed on is gone and no folder holds it: named by its file
     libraryDb().exec("UPDATE asset_versions SET mac_device = 'gone' WHERE id = 'ver_r2'");
     writeFileSync(path.join(dir, "storage", "maker.json"), JSON.stringify({ folders: [] }));
-    expect(waitLine("maker", job)).toBe("No computer can read b.mp4 yet: connect it on one in Settings → Storage");
+    expect(waitLine("maker", job)).toBe("No computer can read b.mp4 yet: connect it on one in Settings → Folders");
     expect(waitLine("maker", { kind: "cards-draw", version_id: `${other}:v1` })).toBeUndefined();   // reads no footage
   });
 });

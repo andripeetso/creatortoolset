@@ -1,4 +1,4 @@
-import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Puzzle, Server, Share2, ShieldCheck, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Puzzle, Server, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users } from "lucide-react";
 import { PLUGINS_GROUP, settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,8 +11,8 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "folders", "library", "providers", "voice", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
-  "servers", "team", "admin", "account", "plugin",
+  "general", "appearance", "tools", "folders", "storage", "library", "providers", "voice", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
+  "servers", "team", "admin", "account", "plugin", "workspace",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
 
@@ -34,30 +34,32 @@ interface BuiltinEntry extends SettingsEntry {
 }
 
 /**
- * The built-in sections in sidebar order, grouped by whose setting it is (owner, 2026-11-14: "admin and team are like
- * mixed up and weird"): "You" (the same in every workspace), "AI", "Server" (what is kept on this server and who is on
- * it; an admin sees everyone's, a member their own). A workspace's own settings (its voice, accounts, knowledge) open
- * from the workspace switcher, not here. What is added to one tool is on that tool's page under Tools
- * (/settings/tools/<tile>); a plug-in's own section with no group goes in a "Tool settings" block at the end
- * (lib/plugin.ts PLUGINS_GROUP). There is no Admin page any more: its old addresses go to Team, Storage, API keys and
- * the plug-ins' own pages (AdminSection.tsx).
+ * The built-in sections in sidebar order, grouped by whose setting it is: "You" (the person's, the same in every
+ * workspace), "AI", "Workspace" (what belongs to one workspace: each of these pages carries the workspace selector,
+ * workspace-pick.tsx, and shows every workspace's things or the chosen one's), "Server" (what is kept on this server
+ * and who is on it; an admin sees everyone's, a member their own). A page with no selector is the same in every
+ * workspace. What is added to one tool is on that tool's page (/settings/tools/<tile>); a plug-in's own section with
+ * no group goes in a "Tool settings" block at the end (lib/plugin.ts PLUGINS_GROUP). There is no Admin page: its old
+ * addresses go to Team, Storage, API keys and the plug-ins' own pages (AdminSection.tsx).
  */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal, group: "You" },
   { id: "appearance", title: "Appearance", icon: Palette, group: "You" },
   { id: "tools", title: "Tools", icon: LayoutGrid, group: "You" },
   { id: "voice", title: "Voice", icon: AudioLines, group: "You" },
-  { id: "devices", title: "Devices", icon: Monitor, group: "You" },
+  { id: "devices", title: "Computers", icon: Monitor, group: "You" },
   { id: "servers", title: "Servers", icon: Server, group: "You", macOnly: true },
-  { id: "connectors", title: "Social accounts", icon: Share2, group: "You" },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "You" },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
-  { id: "memory", title: "Memory", icon: Bookmark, group: "AI" },
-  { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
   { id: "usage", title: "Usage", icon: Gauge, group: "AI" },
+  { id: "workspace", title: "Details", icon: Tag, group: "Workspace" },
+  { id: "connectors", title: "Social accounts", icon: Share2, group: "Workspace" },
+  { id: "folders", title: "Folders", icon: FolderOpen, group: "Workspace" },
+  { id: "library", title: "Media Library", icon: Clapperboard, group: "Workspace" },
+  { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "Workspace" },
+  { id: "memory", title: "Memory", icon: Bookmark, group: "Workspace" },
   { id: "team", title: "Team", icon: Users, group: "Server", hostedOnly: true },
-  { id: "folders", title: "Storage", icon: HardDrive, group: "Server" },
-  { id: "library", title: "Media Library", icon: Clapperboard, group: "Server" },
+  { id: "storage", title: "Storage", icon: HardDrive, group: "Server" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Server" },
   { id: "account", title: "Account", icon: UserRound, listed: false },
   { id: "admin", title: "Admin", icon: ShieldCheck, listed: false },
@@ -78,8 +80,10 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */
 export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): SettingsEntry[] {
+  // a plug-in that keeps the server's folders (`replaces.storage`) has only admins edit them: a member has no Folders page
+  const pluginFolders = plugins.some((p) => !!p.replaces?.storage);
   const allowed = BUILTIN.filter(
-    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly),
+    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && (s.id !== "folders" || ctx.admin || !pluginFolders),
   );
   // a plug-in's server-wide page (adminTab, was an Admin tab): admins on a hosted server only, as Admin was
   const shown = settingsWithPlugins(allowed, plugins).filter((s) => (ctx.hosted && ctx.admin) || !("adminTab" in s && s.adminTab));

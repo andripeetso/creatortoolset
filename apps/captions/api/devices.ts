@@ -441,7 +441,7 @@ devicePairApp.post("/", async (c) => {
   const paired = pairWithCode(b.code, name, typeof b.version === "string" ? b.version.slice(0, 40) : undefined);
   if (!paired) {
     wrongTry(PAIR_TRIES, from);
-    return c.json({ error: "That code is used or expired. Get a new one in Settings → Devices." }, 400);
+    return c.json({ error: "That code is used or expired. Get a new one in Settings → Computers." }, 400);
   }
   clearTries(PAIR_TRIES, from);
   if (paired.replaced.length) await moveProviders(paired.device.owner, paired.replaced, paired.device.id);

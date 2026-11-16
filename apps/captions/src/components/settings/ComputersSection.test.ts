@@ -18,7 +18,7 @@ it("a Linux computer's one command fetches the helper from this server and pairs
 
 describe("phone rows are searchable", () => {
   it("finds the phones by the words people type", () => {
-    const sections = new Map([["devices", "Devices"]]);
+    const sections = new Map([["devices", "Computers"]]);
     expect(searchSettings("qr", sections)[0]?.id).toBe("phones");
     expect(searchSettings("iphone", sections).map((h) => h.id)).toContain("add-phone");
   });

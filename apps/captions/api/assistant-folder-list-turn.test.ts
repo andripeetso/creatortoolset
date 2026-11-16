@@ -53,7 +53,7 @@ describe("folder_list in a turn", () => {
     for (const p of [path.join(dir, "Tiny Shoots"), path.join(dir, "Tiny Shoots", "OTHER")]) {
       const r = await call({ path: p });
       expect(r).toMatchObject({ error: true });
-      expect(r.text).toContain("no folders in Settings → Storage yet");
+      expect(r.text).toContain("no folders in Settings → Folders yet");
     }
     await app.request(`/api/devices/relay/${job.id}/done`, json({ text: "Found it." }, { authorization: `Bearer ${mac.token}` }));
   });

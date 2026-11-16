@@ -363,7 +363,7 @@ export function SetupDialog() {
           {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
 
           {step === "helper" && (self && providers?.devices.some((d) => d.id === self) ? <HelperSetup device={self} /> : macApp ? <HelperPair /> : (
-            <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the computer that should help, or add it in Settings → Devices.</p>
+            <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the computer that should help, or add it in Settings → Computers.</p>
           ))}
 
           {step === "job" && (

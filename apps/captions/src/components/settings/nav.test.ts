@@ -5,11 +5,12 @@ const at = (hosted: boolean, admin: boolean, mac = false): NavContext => ({ host
 const listed = (ctx: NavContext) => navListFor(ctx, []).map((s) => s.id);
 
 describe("the sidebar per install and role", () => {
-  it("a local browser: You, AI, then Storage and API keys under Server; no servers or team", () => {
+  it("a local browser: You, AI, the Workspace pages, then Storage and API keys under Server; no servers or team", () => {
     expect(listed(at(false, true))).toEqual([
-      "general", "appearance", "tools", "voice", "devices", "connectors", "own-ai",
-      "providers", "memory", "automations", "usage",
-      "folders", "library", "keys",
+      "general", "appearance", "tools", "voice", "devices", "own-ai",
+      "providers", "usage",
+      "workspace", "connectors", "folders", "library", "automations", "memory",
+      "storage", "keys",
     ]);
   });
 
@@ -32,7 +33,7 @@ describe("the sidebar per install and role", () => {
 
   it("a hosted member and admin both see Team under Server", () => {
     expect(listed(at(true, false))).toContain("team");
-    expect(listed(at(true, true)).slice(-4)).toEqual(["team", "folders", "library", "keys"]);
+    expect(listed(at(true, true)).slice(-3)).toEqual(["team", "storage", "keys"]);
   });
 
   it("a plug-in's server-wide page (was an Admin tab) is in Plug-ins for an admin on a hosted server only", () => {
@@ -42,11 +43,13 @@ describe("the sidebar per install and role", () => {
     expect(navListFor(at(false, true), plugins).map((s) => s.id)).not.toContain("tiny-footage");
   });
 
-  it("on a server whose plug-in keeps the storage, members still get Storage (what they keep on the server)", () => {
+  it("on a server whose plug-in keeps the folders, members still get Storage (what they keep on the server)", () => {
     const owns = [{ replaces: { storage: () => null } }];
-    expect(navListFor(at(true, false), owns).map((s) => s.id)).toContain("folders");
+    expect(navListFor(at(true, false), owns).map((s) => s.id)).toContain("storage");
+    // its folders are the admins' to set: a member there has no Folders page
+    expect(navListFor(at(true, false), owns).map((s) => s.id)).not.toContain("folders");
     expect(navListFor(at(true, true), owns).map((s) => s.id)).toContain("folders");
-    expect(listed(at(true, false))).toContain("folders");
+    expect(listed(at(true, false))).toContain("storage");
   });
 
   it("never lists Account: its entry is the account button", () => {
@@ -55,26 +58,27 @@ describe("the sidebar per install and role", () => {
 });
 
 describe("the sidebar blocks", () => {
-  it("a hosted admin's blocks, by whose setting it is: You, AI, Server", () => {
+  it("a hosted admin's blocks, by whose setting it is: You, AI, Workspace, Server", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
-    expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Server"]);
-    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "devices", "servers", "connectors", "own-ai"]);
-    expect(blocks[2].items.map((s) => s.id)).toEqual(["team", "folders", "library", "keys"]);
+    expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Workspace", "Server"]);
+    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "devices", "servers", "own-ai"]);
+    expect(blocks[2].items.map((s) => s.id)).toEqual(["workspace", "connectors", "folders", "library", "automations", "memory"]);
+    expect(blocks[3].items.map((s) => s.id)).toEqual(["team", "storage", "keys"]);
   });
 
   it("a plug-in's own section with no group heads a Plug-ins block, last", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), [{ settings: [{ id: "tiny", title: "Tiny", body: null } as never] }]));
-    expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Server", "Tool settings"]);
-    expect(blocks[3].items.map((s) => s.id)).toEqual(["tiny"]);
+    expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Workspace", "Server", "Tool settings"]);
+    expect(blocks[4].items.map((s) => s.id)).toEqual(["tiny"]);
   });
 
   it("a tool that has a settings page is an entry in the Tool settings block, before the plug-ins' own sections", () => {
     const tools = [{ id: "editor", title: "AI Editor", icon: null as never }];
     const alone = navBlocks(withToolPages(navListFor(at(true, true, true), []), tools));
-    expect(alone.map((b) => b.heading)).toEqual(["You", "AI", "Server", "Tool settings"]);
-    expect(alone[3].items.map((s) => [s.id, s.title])).toEqual([["tools/editor", "AI Editor"]]);
+    expect(alone.map((b) => b.heading)).toEqual(["You", "AI", "Workspace", "Server", "Tool settings"]);
+    expect(alone[4].items.map((s) => [s.id, s.title])).toEqual([["tools/editor", "AI Editor"]]);
     const withPlugin = navBlocks(withToolPages(navListFor(at(true, true, true), [{ settings: [{ id: "tiny", title: "Tiny", body: null } as never] }]), tools));
-    expect(withPlugin[3].items.map((s) => s.id)).toEqual(["tools/editor", "tiny"]);
+    expect(withPlugin[4].items.map((s) => s.id)).toEqual(["tools/editor", "tiny"]);
   });
 
   it("a plug-in section that names a tool is on that tool's page: no sidebar block, and its address goes there", () => {

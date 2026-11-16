@@ -199,11 +199,19 @@ and answers:
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up, grouped by whose setting it
-    is: You (General, Appearance, Tools, Voice, Devices, Servers, Social accounts, Headless access: the same in every
-    workspace), AI (Providers, Memory, Scheduled tasks, Usage), Server (Team, Storage, API keys: who is on this server
-    and what it keeps; an admin sees everyone's, a member their own), Plug-ins. There is no Admin page: the server's
-    own accounts are in Team, its projects in Storage, its keys in API keys. A workspace's own settings (its voice,
-    accounts, knowledge) open from the workspace switcher, not Settings. **The account button** = you.
+    is: You (General, Appearance, Tools, Voice, Computers, Servers, Headless access: the same in every workspace), AI
+    (Providers, Usage), Workspace (Details, Social accounts, Folders, Media Library, Scheduled tasks, Memory: what
+    belongs to one workspace), Server (Team, Storage, API keys: who is on this server and what it keeps; an admin
+    sees everyone's, a member their own), Tool settings. There is no Admin page: the server's own accounts are in
+    Team, its projects in Storage, its keys in API keys. **The account button** = you.
+  - **Settings covers every workspace** (owner, 2026-11-16). It never follows the workspace the window is in without
+    saying so. A page whose content belongs to a workspace draws the workspace selector in its header
+    (`WorkspacePick`, `src/components/settings/workspace-pick.tsx`): a list page (`mode="list"`) starts on All
+    workspaces and each row carries its `WorkspaceTag`; a page of single values (`mode="one"`) shows the chosen
+    workspace's. A thing moves between workspaces from its row's menu (`moveItems`: "Move to …", "Use in every
+    workspace"). The selector never switches the window's workspace; a request for the shown workspace sends it
+    itself (`inWorkspace`). A page with no selector is the same in every workspace. A plug-in's or a tool's page
+    whose values are per workspace does the same.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **A tool is what you use; plug-ins, packs and skills are what you add to it; Community is where you find more.**
     Settings → Tools lists every tile with its Home switch and nothing else: a row never opens a page. A tool that
@@ -224,6 +232,31 @@ and answers:
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
     in both `plugin.ts` and `web.tsx` (`plugin-examples/hello` shows it). `GET /api/plugins` and Community read these.
   - Settings groups and the sidebar: `src/components/settings/nav.ts`; kit: `src/components/settings/ui.tsx`.
+  - **Settings wording** (owner, 2026-11-16: "standard", not "whimsical"). `settings-wording.test.ts` holds the
+    banned forms.
+    - A title (page, section, row) is a noun of one to three words. Never a sentence, a question, "How …", "Who …"
+      or a verb. The row title names the setting; the control says the value.
+    - A description is optional and is one sentence saying what the setting changes. None when the title and the
+      control already say it. No second sentence, no steps, no example.
+    - Nobody is speaking: no "I", "me", "my". "Your" only to tell the person's thing from the server's ("Your
+      keys"); never "your AI".
+    - Things do not act like people: not "answers", "shows up", "finds it by itself", "comes back", "is gone",
+      "no longer here". Say the state: "Offline", "Not found", "Added".
+    - A full stop ends a description. Never a title, button, menu item, status, badge or option.
+    - A confirm says what is removed in one sentence, and what is kept only when the person would fear losing it.
+      No promise about what is read, collected or sent.
+    - An empty list is "No <things>" and its one button. What is missing is "Needs <the thing as Settings names
+      it>". A state that is fine shows nothing, or the green mark (`InUse`).
+    - Names: computer ("This Mac" and "Mac app" only as the names of those two; never device, machine, worker,
+      helper, pairing), workspace (never project, team or brand for it), team (the people on a server, nothing
+      else), server (never site or cloud, apart from the name Creator Toolset Cloud), AI provider (never your AI,
+      own AI, connected AI), key (an outside service's) and access key (Headless access), Media Library, social
+      account (Instagram …) and sign-in (Google, Apple).
+    - Verbs: Add (bring in something that exists), New … then Create (make one), Save (an edit), Change (replace
+      one value), Remove (off a list; the thing still exists), Delete (the thing is destroyed), Disconnect (end a
+      sign-in to an outside service), Turn on / Turn off, Test, Retry, Clear (a cache), Empty (the trash).
+    - A trade word (MCP, Bearer, PATH, .env) needs its meaning beside it or a plain word instead.
+    - A search row's title (`search.ts`) is the title on the page, word for word.
 - Plug-ins get in two ways. Compiled in: `scripts/plugins.mjs` writes the registries at build time. From a folder,
   on the Mac app's own server only: `scripts/plugin-build.mjs` builds one folder by itself, `api/lib/folder-plugins.ts`
   loads what the Mac app says is on (`apps/mac` `Plugins.swift` keeps the person's Switch on clicks) and

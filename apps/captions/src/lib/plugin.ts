@@ -424,7 +424,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
   if (r.editor || r.editorEdit) out.push({ text: "Replaces the AI Editor page", to: "/editor" });
   if (r.media) out.push({ text: "Replaces the Media Library page", to: "/library" });
   if (r.finals) out.push({ text: "Replaces the Finals page", to: "/finals" });
-  if (r.storage) out.push({ text: "Replaces Settings → Storage", to: "/settings/folders" });
+  if (r.storage) out.push({ text: "Replaces Settings → Folders", to: "/settings/folders" });
   // its own pages: only ones a person can open by themselves (an address with a :part needs something picked first),
   // and not the page a Home tile or a replaced page already named above
   for (const route of p.routes ?? []) {

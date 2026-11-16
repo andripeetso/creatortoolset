@@ -112,7 +112,7 @@ const STATIC_ROWS = [
   // Admin (hosted)
   { section: "team", id: "team-other-accounts", title: "Other accounts", keywords: ["account", "users", "password", "create", "admin", "delete"], needs: "server-admin" },
   { section: "team", id: "admin-sign-in-code", title: "Ask everyone for a sign-in code", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "lock", "unlock"], needs: "server-admin" },
-  { section: "folders", id: "admin-projects", title: "Every project on the server", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
+  { section: "storage", id: "admin-projects", title: "Every project on the server", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
   { section: "keys", id: "server-keys", title: "Keys for everyone on this server", keywords: ["env", "server", "api key", "secret", "fallback", "server keys"], needs: "server-admin" },
   // Account: the person's own profile and sign-in
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },

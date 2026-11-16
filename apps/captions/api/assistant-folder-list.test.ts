@@ -43,11 +43,11 @@ const keep = (folders: { host: string; path: string }[]) => {
 };
 
 describe("folder_list on the person's own computer", () => {
-  it("with no folder in Settings → Storage, does not search the drives and says where to set one", async () => {
+  it("with no folder in Settings → Folders, does not search the drives and says where to set one", async () => {
     keep([]);
     const r = await list({ path: shoot, match: "song" });
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toMatch(/no folders in Settings → Storage yet.*\/settings\/folders/);
+    expect(((await r.json()) as { error: string }).error).toMatch(/no folders in Settings → Folders yet.*\/settings\/folders/);
   });
 
   it("looks inside a workspace folder and its subfolders, and finds the song by match", async () => {

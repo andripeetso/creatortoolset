@@ -44,7 +44,9 @@ const perWorkspace = (url: string) => {
   return !!topic && (PER_WORKSPACE.has(topic) || topic.startsWith("x/")) && !ACROSS_WORKSPACES.has(url);
 };
 /** A per-workspace tool's list: each workspace keeps its own copy (current-workspace.ts), so a switch never paints the last workspace's. */
-const keyOf = (user: string, url: string) => {
+const keyOf = (user: string, url: string, shown?: string) => {
+  // a Settings page showing another workspace than the window's (or all of them, "*") keeps that copy under its own key
+  if (shown) return `${baseOf(user, url)}#ws=${shown}`;
   const ws = currentWorkspace();
   return baseOf(user, url) + (ws && perWorkspace(url) ? `#ws=${ws}` : "");
 };
@@ -215,7 +217,13 @@ function behind(k: string, latest: number): boolean {
  * `topic`: the topic or topics whose changes refetch it (default: the one its key names). `own`: also this window's
  * own writes (by default a window skips them: it already shows what it saved, and a refetch could undo typing).
  */
-export type CacheOpts = { topic?: string | string[]; own?: boolean };
+export type CacheOpts = {
+  topic?: string | string[];
+  own?: boolean;
+  /** the workspace this list is read for when it is not the window's (Settings' workspace selector): an id, or "*" for
+   *  every workspace. The loader sends that workspace itself (settings/workspace-pick.tsx `inWorkspace`). */
+  workspace?: string;
+};
 
 /** The saved value of a list for this account, or null. Synchronous, so a screen can paint on its first frame. */
 export function readCached<T>(user: string | null | undefined, url: string): T | null {
@@ -245,7 +253,7 @@ export async function warmCached<T>(url: string, load: () => Promise<T>): Promis
 export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opts?: CacheOpts) {
   const user = useAuth((s) => s.me?.username ?? null);
   useSyncExternalStore(onWorkspaceChange, currentWorkspace, currentWorkspace); // a switch re-reads under the new workspace's key
-  const k = url && user ? keyOf(user, url) : null;
+  const k = url && user ? keyOf(user, url, opts?.workspace) : null;
   const topics = [opts?.topic ?? (url ? topicOf(url) : null)].flat().filter((t): t is string => !!t);
   const topicKey = topics.join(" ");
   const own = !!opts?.own;

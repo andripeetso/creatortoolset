@@ -7,7 +7,7 @@ describe("old Admin addresses (the page is gone: its tabs moved to where they be
     expect(adminMovedTo("users")).toBe("/settings/team");
     expect(adminMovedTo("access")).toBe("/settings/team");
     expect(adminMovedTo("apps")).toBe("/settings/team");
-    expect(adminMovedTo("projects")).toBe("/settings/folders");
+    expect(adminMovedTo("projects")).toBe("/settings/storage");
     expect(adminMovedTo("server-keys")).toBe("/settings/keys");
     expect(adminMovedTo("ai")).toBe("/settings/keys");
   });

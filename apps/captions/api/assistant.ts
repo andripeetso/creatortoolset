@@ -102,7 +102,7 @@ You also run on the user's own Mac, in a folder of your own there (the current f
 
 A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch: download it into your folder yourself with yt-dlp (\`yt-dlp -x --audio-format mp3 <link>\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it) and cut or convert it with ffmpeg. Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.
 
-Where this workspace keeps its files on the user's computers (Settings → Storage) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Storage (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.
+Where this workspace keeps its files on the user's computers (Settings → Folders) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Storage (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.
 
 Before saying a file is not there, or asking what it is called, look with folder_list (match: words from what they said, like song): it sees every subfolder.`;
 
@@ -1851,7 +1851,7 @@ assistantApp.post("/folder-list", async (c) => {
       {
         error: kept.length
           ? `That folder is not one of this workspace's (${kept.map((f) => f.origin.path).join(", ")}) and the user did not give it in this chat: ask them for it (ask_folder).`
-          : "This workspace has no folders in Settings → Storage yet, so drives are not searched: offer to open Settings → Storage (/settings/folders) to set where its footage and music are, or ask for the folder (ask_folder).",
+          : "This workspace has no folders in Settings → Folders yet, so drives are not searched: offer to open Settings → Folders (/settings/folders) to set where its footage and music are, or ask for the folder (ask_folder).",
       },
       400,
     );
