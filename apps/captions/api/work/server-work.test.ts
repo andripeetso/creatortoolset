@@ -1,0 +1,294 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Hono } from "hono";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { WORK_V } from "../../contracts/work";
+import type { JobRow } from "../library/jobs";
+
+const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "server-work-"));
+process.env.DATA_DIR = dir;
+process.env.APP_SECRET = "server-work-test-secret";
+
+// every ffmpeg this server starts asks for its command first: counted here, and none really runs
+const ffmpegRuns = vi.hoisted(() => ({ n: 0 }));
+vi.mock("../ffmpeg-runtime", () => ({ ffmpegCommand: () => (ffmpegRuns.n++, "/nonexistent/ffmpeg") }));
+// the package itself is item 4A's: here only which step goes where
+vi.mock("./package", () => ({
+  buildPackage: async (job: JobRow) => ({ v: 1, job: { id: job.id, kind: job.kind, editId: "", variant: "", actor: job.actor, workspaceId: "" }, edit: {}, own: [], rows: {}, files: [], caches: {}, ai: { editor: null, analyzer: null } }),
+  ownFile: () => null,
+}));
+
+const sw = await import("./server-work");
+const { createUser, setOff } = await import("../users");
+const app = (await import("../boot")).default;
+const { definePlugin, mountPlugins, pluginReplaces } = await import("../lib/plugin");
+const rootReplaced = pluginReplaces("/api/editor");
+const { libraryDb, blobs } = await import("../library/db");
+const { enqueueJob } = await import("../library/jobs");
+const { devicesSaved, pairDevice, touchDevice } = await import("../lib/devices");
+const { waitLine } = await import("../editor/reach");
+const { STEPS, tick } = await import("../editor/worker");
+const { measurable } = await import("../editor/media");
+const { ffmpeg } = await import("../library/media/run");
+const library = await import("../library/worker");
+const { CLAIM_POLL } = await import("./routes");
+
+CLAIM_POLL.holdMs = 0;
+
+const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
+const post = (token: string, url: string, body: unknown) =>
+  app.request(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+const claim = (token: string) => json<{ pkg: { job: { id: number } } | null }>(post(token, "/api/devices/relay/work/claim", { v: WORK_V, steps: [] }));
+const BIG = { os: "linux", cpus: 32, memGb: 64, freeGb: 48, load: 0.05 };
+const WAITS = "Waits for one of your computers. Open Creator Toolset on your Mac";
+
+const cookies: Record<string, string> = {};
+async function login(user: string, role: "user" | "admin" = "user") {
+  setOff(createUser(user, "password1", { role }), []);
+  const res = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: user, password: "password1" }) });
+  cookies[user] = res.headers.get("set-cookie")!.split(";")[0]!;
+}
+const as = (user: string, url: string, body?: unknown) =>
+  app.request(url, body === undefined ? { headers: { cookie: cookies[user]! } } : { method: "PUT", headers: { cookie: cookies[user]!, "content-type": "application/json" }, body: JSON.stringify(body) });
+
+/** A library of `user`'s (in workspace `ws`) with one uploaded file and its proxy, both on this server's disk. */
+async function file(user: string, id: string, ws?: string) {
+  libraryDb().exec(`
+    INSERT OR IGNORE INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_${id}', '${user}', 'L', 'local', '${ws ? JSON.stringify({ projectId: ws }) : "{}"}', 0);
+    INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_${id}', 'lib_${id}', 'video', '${id}', '${user}', 0, NULL);
+    INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe) VALUES
+      ('${id}', 'ast_${id}', 1, 'k_${id}', 1, 'x', 'ready', '${user}', 0, '{"duration":1,"acodec":"aac","vcodec":"h264"}');
+    INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('${id}', 'proxy', 'p_${id}', 1);
+  `);
+  for (const [key, text] of [[`k_${id}`, "the original"], [`p_${id}`, "the proxy"]] as const) {
+    const f = path.join(dir, `${key}.mp4`);
+    writeFileSync(f, text);
+    await blobs.put(key, f);
+  }
+}
+/** A workspace (Workshop project) of `owner`'s. */
+function workspace(id: string, owner: string, extra: Record<string, unknown> = {}) {
+  mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
+  writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner, name: id, audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt: 1, ...extra }));
+}
+async function newEdit(user: string, sources: string[], ws?: string): Promise<string> {
+  const id = (await json<{ id: string }>(app.request("/api/editor", { method: "POST", headers: { cookie: cookies[user]!, "content-type": "application/json" }, body: JSON.stringify({ name: "Cut", sources }) }))).id;
+  libraryDb().exec("DELETE FROM edit_jobs"); // whatever creating it queued: each test queues its own steps
+  if (ws) {
+    const f = path.join(dir, "editor", id, "edit.json");
+    writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, "utf8")), projectId: ws }));
+  }
+  return id;
+}
+const queue = (user: string, editId: string, variant: string) => enqueueJob(libraryDb(), user, `${editId}:${variant}`, "preview", user, false, "edit_jobs");
+const row = (editId: string, variant: string) => libraryDb().prepare("SELECT * FROM edit_jobs WHERE version_id = ? AND kind = 'preview'").get(`${editId}:${variant}`) as unknown as JobRow;
+const settle = () => libraryDb().exec("UPDATE edit_jobs SET state = 'done', device = NULL WHERE state IN ('queued', 'running')");
+const weight = (user: string, w: number) => {
+  mkdirSync(path.join(dir, "balance"), { recursive: true });
+  writeFileSync(path.join(dir, "balance", `${user}.json`), JSON.stringify({ on: true, weights: { server: w } }));
+};
+
+/** Runs the server's loop once with a preview step that reads its first source the way analysis does, through ffmpeg. */
+async function serverTick(): Promise<{ took: boolean; read: string[] }> {
+  const read: string[] = [];
+  const was = STEPS.preview!;
+  STEPS.preview = async ({ edit }) => {
+    const f = await measurable(edit.sources[0]!, `k_${edit.sources[0]}`);
+    read.push(readFileSync(f, "utf8"));
+    await ffmpeg(["-i", f, "-f", "null", "-"]).catch(() => {});
+  };
+  try {
+    return { took: await tick(), read };
+  } finally {
+    STEPS.preview = was;
+  }
+}
+
+afterAll(async () => {
+  await devicesSaved();
+  delete process.env.CT_LOCAL;
+  delete process.env.CT_MODE;
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe("defaults", () => {
+  it("a new server starts with its video work off; one already in use keeps it on", () => {
+    expect(sw.readServerWork()).toBeNull();
+    expect(sw.serverWorks(null, "anyone")).toBe(true); // no file: as before
+    sw.settleServerWork();
+    expect(sw.readServerWork()).toEqual({ on: false });
+    rmSync(path.join(dir, "server-work.json"));
+    createUser("early", "password1", { role: "admin" });
+    sw.settleServerWork();
+    expect(sw.readServerWork()).toEqual({ on: true });
+    // written once: a later start leaves the admin's choice alone
+    sw.writeServerWork({ on: false });
+    sw.settleServerWork();
+    expect(sw.readServerWork()).toEqual({ on: false });
+    sw.writeServerWork({ on: true });
+  });
+
+  it("This Mac has no switch and always works", () => {
+    sw.writeServerWork({ on: false });
+    process.env.CT_LOCAL = "1";
+    try {
+      expect(sw.serverWorks("ws-any", "early")).toBe(true);
+    } finally {
+      delete process.env.CT_LOCAL;
+    }
+    sw.writeServerWork({ on: true });
+  });
+
+  it("only the workspaces the admin picks, and only where the workspace's owner lets it", () => {
+    workspace("ws-aaa", "early");
+    workspace("ws-bbb", "early", { serverWork: false });
+    sw.writeServerWork({ on: true, projectIds: ["ws-aaa", "ws-bbb"] });
+    expect(sw.serverWorks("ws-aaa", "early")).toBe(true);
+    expect(sw.serverWorks("ws-bbb", "early")).toBe(false); // its owner chose its computers only
+    expect(sw.serverWorks("ws-ccc", "early")).toBe(false);
+    expect(sw.serverWorks(null, "early")).toBe(false);
+    sw.writeServerWork({ on: true });
+  });
+});
+
+describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
+  let mac: ReturnType<typeof pairDevice>;
+  beforeAll(async () => {
+    for (const u of ["maker", "solo", "far"]) await login(u);
+    await login("boss", "admin");
+    mac = pairDevice("maker", "Maker Mac");
+    await post(mac.token, "/api/devices/relay/report", { drivers: [], homes: [], machine: BIG });
+    expect(await claim(mac.token)).toEqual({ pkg: null }); // its worker said it is there
+    await file("maker", "ver_m");
+    await file("solo", "ver_s");
+    await file("far", "ver_f");
+  });
+
+  it("switched on, with no computer online, the server runs the step from the proxy (PRD test 4)", async () => {
+    sw.writeServerWork({ on: true });
+    const e = await newEdit("solo", ["ver_s"]);
+    queue("solo", e, "v1");
+    ffmpegRuns.n = 0;
+    const { took, read } = await serverTick();
+    expect(took).toBe(true);
+    expect(read).toEqual(["the proxy"]);
+    expect(ffmpegRuns.n).toBe(1);
+    settle();
+  });
+
+  it("switched off: no decode on the server; the step waits with its line, and a computer takes it", async () => {
+    sw.writeServerWork({ on: false });
+    const solo = pairDevice("solo", "Solo Mac"); // paired, not online yet
+    const e = await newEdit("solo", ["ver_s"]);
+    queue("solo", e, "v1");
+    ffmpegRuns.n = 0;
+    expect((await serverTick()).took).toBe(false);
+    expect(ffmpegRuns.n).toBe(0);
+    expect(row(e, "v1").state).toBe("queued");
+    expect(waitLine("solo", row(e, "v1"))).toBe(WAITS);
+    expect((await claim(solo.token)).pkg?.job.id).toBe(row(e, "v1").id);
+    expect(ffmpegRuns.n).toBe(0);
+    settle();
+    sw.writeServerWork({ on: true });
+  });
+
+  it("the server set to Off in Load balancing never takes it; Prefer sends it to the server first", async () => {
+    const e = await newEdit("maker", ["ver_m"]);
+    queue("maker", e, "v1");
+    // Normal: the computer that is online goes first, the server leaves it
+    touchDevice(mac.device.id);
+    expect((await serverTick()).took).toBe(false);
+    // Prefer: the computer is not handed it while the server is free, and the server runs it
+    weight("maker", 100);
+    expect((await claim(mac.token)).pkg).toBeNull();
+    expect((await serverTick()).took).toBe(true);
+    settle();
+    // while the server is busy with another step, the computer takes the next
+    const busy = await newEdit("maker", ["ver_m"]);
+    queue("maker", busy, "v1");
+    libraryDb().exec(`UPDATE edit_jobs SET state = 'running', device = NULL, lease_until = ${Date.now() + 60_000} WHERE state = 'queued'`);
+    queue("maker", e, "v2");
+    expect((await claim(mac.token)).pkg?.job.id).toBe(row(e, "v2").id);
+    settle();
+    rmSync(path.join(dir, "balance", "maker.json"));
+    // Off, for someone with no computer online: the step waits for one
+    weight("far", 0);
+    const off = await newEdit("far", ["ver_f"]);
+    queue("far", off, "v1");
+    ffmpegRuns.n = 0;
+    expect((await serverTick()).took).toBe(false);
+    expect(ffmpegRuns.n).toBe(0);
+    expect(waitLine("far", row(off, "v1"))).toBe(WAITS);
+    settle();
+    rmSync(path.join(dir, "balance", "far.json"));
+  });
+
+  it("a workspace whose owner keeps its video work on their computers is never run on the server", async () => {
+    workspace("ws-far", "far", { serverWork: false });
+    const e = await newEdit("far", ["ver_f"], "ws-far");
+    queue("far", e, "v1");
+    expect((await serverTick()).took).toBe(false);
+    expect(await json(as("far", "/api/work/server-work/workspace/ws-far"))).toEqual({ allowed: true, server: false });
+    // its owner lets it use the server again: it runs there
+    expect(await json(as("far", "/api/work/server-work/workspace/ws-far", { server: true }))).toEqual({ allowed: true, server: true });
+    expect((await serverTick()).took).toBe(true);
+    settle();
+  });
+
+  it("Settings: the admin's switch, and the person's server row", async () => {
+    workspace("ws-boss", "boss");
+    const view = await json(as("boss", "/api/work/server-work"));
+    expect(view).toMatchObject({ kind: "server", place: { allowed: true, weight: 50 }, admin: { on: true, all: true } });
+    expect((await as("solo", "/api/work/server-work", { on: false })).status).toBe(403);
+    expect(await json(as("boss", "/api/work/server-work", { only: ["ws-boss"] }))).toMatchObject({ on: true, all: false });
+    // solo's workspaces are not on the list: no server row for them
+    expect(await json(as("solo", "/api/work/server-work"))).toEqual({ kind: "server", place: { allowed: false, weight: 50 } });
+    expect((await as("boss", "/api/work/server-work", { only: ["nope"] })).status).toBe(400);
+    await as("boss", "/api/work/server-work", { all: true });
+    // the server's preference saves with the computers'
+    expect(await json(as("solo", "/api/devices/balance", { weights: { server: 100 } }))).toMatchObject({ weights: { server: 100 } });
+    expect(sw.serverWeight("solo")).toBe(100);
+  });
+});
+
+describe("the Media Library's work", () => {
+  beforeAll(async () => {
+    if (!cookies.lib) await login("lib");
+    await file("lib", "ver_l");
+  });
+  const job = (kind: string) => libraryDb().prepare("SELECT * FROM jobs WHERE version_id = 'ver_l' AND kind = ?").get(kind) as unknown as JobRow;
+
+  it("switched off, nothing that decodes runs here: each waits with its line", async () => {
+    sw.writeServerWork({ on: false });
+    enqueueJob(libraryDb(), "lib_ver_l", "ver_l", "wave", "lib");
+    enqueueJob(libraryDb(), "lib_ver_l", "ver_l", "transcribe", "lib");
+    ffmpegRuns.n = 0;
+    expect(await library.tick(Date.now(), ["wave", "transcribe"])).toBe(false);
+    expect(ffmpegRuns.n).toBe(0);
+    expect(job("wave")).toMatchObject({ state: "queued", error: library.WAITS_FOR_COMPUTER });
+    expect(job("transcribe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_SERVER });
+  });
+
+  it("switched on, the server makes them", async () => {
+    sw.writeServerWork({ on: true });
+    ffmpegRuns.n = 0;
+    expect(await library.tick(Date.now(), ["wave"])).toBe(true);
+    expect(ffmpegRuns.n).toBe(1);
+  });
+});
+
+// last: it replaces the loaded plug-ins
+describe("Creator Toolset Cloud", () => {
+  it("does no video work, but for the accounts a plug-in grants it", () => {
+    process.env.CT_MODE = "hosted";
+    try {
+      expect(sw.serverWorks(null, "early")).toBe(false);
+      mountPlugins(new Hono(), [definePlugin({ id: "grants", serverWork: ({ account }) => (account === "granted" ? true : undefined) })]);
+      expect(sw.serverWorks(null, "granted")).toBe(true);
+      expect(sw.serverWorks(null, "early")).toBe(false);
+    } finally {
+      delete process.env.CT_MODE;
+    }
+  });
+});

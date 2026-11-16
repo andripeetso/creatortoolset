@@ -41,6 +41,8 @@ export interface Project {
   /** The languages spoken in its videos (two-letter codes): they win over the person's Settings → AI → Voice languages
    *  for the transcripts this project asks for. Missing = the person's. */
   languages?: string[];
+  /** false: its video work runs on its owner's and members' computers only, never on this server (api/work/server-work.ts). Missing = also this server, where the server allows it. */
+  serverWork?: boolean;
   createdAt: number;
   updatedAt: number;
 }

@@ -5,7 +5,7 @@
  * job may download the original to make the proxy, and the computer deletes it after. The other kinds read the file
  * where it is on that computer, else the proxy the server has; never the original. A "send" job is a file on one
  * computer that nothing uploaded yet (library/derived.ts sendLater): only a computer that has it takes it, and this
- * server never runs it. Until the server-work switch (phase 7) the server still runs a job no such computer can take.
+ * server never runs it. The server runs a job no such computer can take only where its video work is on (server-work.ts).
  */
 import { Hono, type Context } from "hono";
 import { createWriteStream } from "node:fs";

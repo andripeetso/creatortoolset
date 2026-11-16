@@ -177,3 +177,13 @@ export interface WorkResult {
     review?: { variant: string; fails: unknown[]; thumb: string; wave: string };
   };
 }
+
+/** GET /api/work/server-work (api/work/server-work-routes.ts): where video work may run, for Settings. */
+export interface ServerWorkView {
+  /** local: This Mac (no switch, no server row); hosted: Creator Toolset Cloud; server: a server by address */
+  kind: "local" | "hosted" | "server";
+  /** the server's row in the person's Load balancing; null on This Mac. `allowed`: it may work for one of their workspaces */
+  place: { allowed: boolean; weight: number } | null;
+  /** an admin of a server by address: "This server does video work", and for which workspaces */
+  admin?: { on: boolean; all: boolean; workspaces: { id: string; name: string; owner: string; on: boolean }[] };
+}

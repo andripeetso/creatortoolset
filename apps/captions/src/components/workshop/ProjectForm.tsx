@@ -15,6 +15,7 @@ import {
 } from "@/lib/workshop";
 import { PROJECT_COLORS, projectColor, type ProjectColor } from "@/lib/workspace";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
+import { WorkspaceServerWork } from "@/components/settings/ServerWorkSection";
 import { LanguageSelect } from "../LanguageSelect";
 import { CtMark } from "../CtMark";
 import { droppedFiles } from "../assistant/draft";
@@ -411,6 +412,7 @@ export function ProjectForm({
           />
         </div>
       )}
+      {!setup && initial && <WorkspaceServerWork projectId={initial.id} />}
       {children}
       {!setup && initial && (
         <div className="text-[11px] text-zinc-400">

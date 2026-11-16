@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { HardDrive } from "lucide-react";
+import { ServerWorkSection } from "./ServerWorkSection";
 import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useProviders } from "@/lib/providers";
@@ -29,6 +30,7 @@ export function FoldersSection() {
   return (
     <>
       <Folders />
+      {!hosted && me?.role === "admin" && <ServerWorkSection />}
       <KeptSection />
       {hosted && me?.role === "admin" && <ServerProjects />}
     </>

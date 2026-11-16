@@ -28,6 +28,7 @@ import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
 import { env } from "./lib/env";
 import { workWaits } from "./work/place";
+import { SERVER_PLACE } from "./work/server-work";
 import { workApp } from "./work/routes";
 
 /**
@@ -279,26 +280,24 @@ devicesApp.route("/relay/work", workApp);
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
 devicesApp.route("/storage", storageApp);
 
-/** Load balancing (Settings → Devices, lib/balance.ts readBalance). Admins only. */
+/** Load balancing (Settings → Devices, lib/balance.ts readBalance): each person's own computers, and the server (SERVER_PLACE). */
 const ALLOWED_WEIGHTS = new Set<number>(LOAD_PREFERENCES.map((x) => x.value));
 
 devicesApp.get("/balance", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
-  if (u.role !== "admin") return c.json({ error: "Only an admin sees load balancing" }, 403);
   return c.json(await readBalance(u.username));
 });
 
 devicesApp.put("/balance", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
-  if (u.role !== "admin") return c.json({ error: "Only an admin changes load balancing" }, 403);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const cur = await readBalance(u.username);
   if (typeof b?.on === "boolean") cur.on = b.on;
   if (b?.weights && typeof b.weights === "object") {
     for (const [id, v] of Object.entries(b.weights as Record<string, unknown>)) {
-      if (deviceOf(id)?.owner !== u.username || typeof v !== "number" || !ALLOWED_WEIGHTS.has(v)) return c.json({ error: `Bad weight for ${id}` }, 400);
+      if ((id !== SERVER_PLACE && deviceOf(id)?.owner !== u.username) || typeof v !== "number" || !ALLOWED_WEIGHTS.has(v)) return c.json({ error: `Bad weight for ${id}` }, 400);
       cur.weights[id] = v;
     }
   }

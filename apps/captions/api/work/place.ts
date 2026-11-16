@@ -4,8 +4,9 @@
  * A core step that reads video or sound (engine.ts `place`) goes to one of the asker's own computers first: one that has
  * every file on it (rank 3), else one that can get the rest as the server's proxies (rank 2); among several of the same
  * rank, load balancing (lib/balance.ts: load, Prefer / Normal / Less often / Off) picks. Only the asker's own computers,
- * and only those whose worker reads this server's package (WORK_MIN). Until the server-work switch (phase 7) the server
- * still runs a step no such computer can take, as before; while one can, the server's loop leaves it alone.
+ * and only those whose worker reads this server's package (WORK_MIN). The server (work/server-work.ts) takes such a step
+ * only where its video work is on for the edit's workspace: after the asker's computers (none online can take it), or
+ * first where the person set it to Prefer; set to Off, or switched off, never, and the step waits with its line.
  */
 import type { Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
@@ -19,6 +20,7 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { libraryWaits } from "./library-package";
+import { serverPreferred, serverWeight, serverWorks, stepWorkspace } from "./server-work";
 
 export interface WorkProgress extends WorkBeat {
   /** the computer's name, as Settings → Devices shows it */
@@ -66,9 +68,12 @@ export async function fitsWork(d: Device, now = Date.now()): Promise<(job: JobRo
   const balance = await readBalance(d.owner);
   // the one asking has a free slot, whatever the list says
   const peers = computers(d.owner).filter((c) => c.x.id === d.id || c.free).map((c) => (c.x.id === d.id ? d : c.x)).filter(works);
+  const serverFree = !libraryDb().prepare("SELECT 1 FROM edit_jobs WHERE state = 'running' AND device IS NULL").get();
   return (job) => {
     if (placeOf(job) !== "computer") return false;
+    // the person prefers the server: it goes there first, and to a computer only while the server is busy
     const rows = jobFiles(job);
+    if (serverFree && serverFirst(job, rows)) return false;
     const ranked = peers.map((x) => ({ x, r: rankFor(x, job, rows, folders) }));
     const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
     const top = Math.max(0, ...ranked.map((p) => p.r));
@@ -90,9 +95,24 @@ export function computerCanTake(job: JobRow): boolean {
   return own.some((x) => rankFor(x, job, rows, folders) > 0);
 }
 
-/** What the server's own loop may take: a step that reads no video or sound, or one no computer of the asker can take now. */
+/**
+ * What the server's own loop may take: a step that reads no video or sound; else, where its video work is on for the
+ * step (server-work.ts) and the person did not set the server to Off, one they prefer it for or no computer of theirs
+ * can take now.
+ */
 // ponytail: placed and ranked again per queued step on each idle tick; cache per tick if long queues of waiting steps appear
-export const serverMayTake = (job: JobRow): boolean => placeOf(job) !== "computer" || !computerCanTake(job);
+export function serverMayTake(job: JobRow): boolean {
+  if (placeOf(job) !== "computer") return true;
+  if (!serverOpen(job)) return false;
+  return serverFirst(job, jobFiles(job)) || !computerCanTake(job);
+}
+
+/** The person prefers the server for this step and it has every file (an upload or its proxy): it goes there first. */
+const serverFirst = (job: JobRow, rows: FileRow[]): boolean =>
+  serverPreferred(stepWorkspace(job.version_id), job.actor) && rows.every((r) => !r.source_key.startsWith("mac:") || !!r.proxy);
+
+/** The server may run this video step at all: its video work is on for it, and the asker has not set it to Off. */
+const serverOpen = (job: Pick<JobRow, "version_id" | "actor">): boolean => serverWorks(stepWorkspace(job.version_id), job.actor) && serverWeight(job.actor) > 0;
 
 /** Whether a step waits that computer `d` would be handed by a work claim now: what its device runner's long poll is told. */
 export async function workWaits(d: Device, now = Date.now()): Promise<boolean> {
