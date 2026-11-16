@@ -46,7 +46,7 @@ function saveOffline(user: string, list: OfflineList): void {
 const db = () => libraryDb();
 
 /** The person may see this clip: they read its library, and its source's policies let them (as the media route checks). */
-async function mayRead(user: string, libraryId: string, assetId: string, versionId: string): Promise<boolean> {
+export async function mayRead(user: string, libraryId: string, assetId: string, versionId: string): Promise<boolean> {
   const viewer = await readerOf(user, libraryId);
   return !!viewer && (await canSee(viewer, assetRef(libraryId, assetId, versionId)));
 }

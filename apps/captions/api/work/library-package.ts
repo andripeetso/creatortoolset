@@ -33,6 +33,7 @@ import { sortAfter } from "../library/roll";
 import { serveBlob } from "../library/routes";
 import { fileTranscript, hearSound, keySound } from "../library/transcribe";
 import { leaveToComputers } from "../library/worker";
+import { mayRead } from "./offline";
 
 /** The library jobs a computer runs; "send" only a computer can. */
 export const LIBRARY_ON_COMPUTER: readonly string[] = ["proxy", "wave", "sprite", "fingerprint", "transcribe"];
@@ -49,6 +50,7 @@ const takesLibrary = (d: Pick<Device, "work">): boolean => !!d.work?.library && 
 
 interface LibRow extends FileRow {
   library_id: string;
+  asset_id: string;
   title: string;
   kind: string;
   bytes: number;
@@ -63,7 +65,7 @@ function rowOf(versionId: string | null): LibRow | undefined {
   return libraryDb()
     .prepare(
       `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256, v.quick,
-         a.library_id, a.title, a.kind, d.storage_key AS proxy, d.bytes AS proxy_bytes
+         a.library_id, a.id AS asset_id, a.title, a.kind, d.storage_key AS proxy, d.bytes AS proxy_bytes
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
     )
@@ -107,6 +109,29 @@ export function heldBy(id: number, device: string): JobRow | undefined {
   return job;
 }
 
+/** Why a library job stops: its account may no longer see the clip (a library policy refused them since it was queued). */
+export const UNSEEN = "This account can no longer see this clip";
+
+/** Whether the job's account may still see its clip: the per-source check every library policy runs (offline.ts mayRead). */
+const stillSees = async (job: JobRow, r: LibRow): Promise<boolean> => !!job.actor && (await mayRead(job.actor, r.library_id, r.asset_id, r.id));
+
+/** A job its account may no longer see fails for good, queued or held: retrying would only be refused again. */
+function failUnseen(job: JobRow): void {
+  holders.delete(job.id);
+  libraryDb().prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ? AND state IN ('queued', 'running')").run(UNSEEN, job.id);
+  libraryChanged(job.library_id);
+}
+
+/** The job `device` holds while its account may still see the clip; one it may not see fails here. */
+async function heldSeen(id: number, device: string): Promise<JobRow | undefined> {
+  const job = heldBy(id, device);
+  const r = job && rowOf(job.version_id);
+  if (!job || !r) return undefined;
+  if (await stillSees(job, r)) return job;
+  failUnseen(job);
+  return undefined;
+}
+
 /** The library job computer `d` takes now, with its package, or null. The best-placed of its owner's computers, then load balancing, decide. */
 export async function claimLibraryForComputer(d: Device, now = Date.now()): Promise<LibraryPackage | null> {
   if (!takesLibrary(d)) return null;
@@ -129,6 +154,10 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
       .filter((p) => p.r === top && p.x.report?.machine)
       .map(({ x }) => ({ host: x.id, at: x.id === d.id ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
     if (!mayClaim(job.kind, d.id, workers, balance, now, ONLINE_MS)) continue;
+    if (!(await stillSees(job, r))) {
+      failUnseen(job);
+      continue;
+    }
     const got = claimJob(db, LEASE_S, now, "jobs", undefined, job.id);
     if (!got) continue;
     holders.set(got.id, d.id);
@@ -319,19 +348,19 @@ libWorkApp.post("/:id/beat", (c) => {
 });
 
 /** The server's proxy of the job's file, for a kind that reads it (never the proxy job's or a send's). */
-libWorkApp.get("/:id/light", (c) => {
+libWorkApp.get("/:id/light", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = heldBy(idOf(c), d.id);
+  const job = await heldSeen(idOf(c), d.id);
   const key = job && job.kind !== "proxy" && job.kind !== "send" ? rowOf(job.version_id)?.proxy : null;
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
 /** The original, only to make the proxy of a file only the server has: the computer deletes it once the proxy is made. */
-libWorkApp.get("/:id/original", (c) => {
+libWorkApp.get("/:id/original", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = heldBy(idOf(c), d.id);
+  const job = await heldSeen(idOf(c), d.id);
   const r = job?.kind === "proxy" ? rowOf(job.version_id) : undefined;
   return r && !r.source_key.startsWith("mac:") ? serveBlob(c, r.source_key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
@@ -343,7 +372,7 @@ libWorkApp.get("/:id/original", (c) => {
 libWorkApp.post("/:id/hear", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = heldBy(idOf(c), d.id);
+  const job = await heldSeen(idOf(c), d.id);
   const body = c.req.raw.body;
   if (job?.kind !== "transcribe" || !job.version_id) return c.json({ error: "Not found" }, 404);
   if (!body) return c.json({ error: "Send the sound." }, 400);
