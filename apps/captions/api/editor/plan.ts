@@ -290,7 +290,7 @@ Make exactly the kind of edit the brief asks for, whatever it is: a hard edit cu
 
 Write the edit as shots played one after another from 0, with no gaps. Times are seconds. When a song leads, cut on its beats (given as seconds in the edit) and land the hits (punch, flash, shake, stutter, zoomblur) on its strong beats. An effect's time is inside its shot, from 0.
 
-Never use the same moment of a source twice: each shot is a different stretch of footage. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
+Never use the same moment of a source twice: each shot is a different stretch of footage. Show each action once too: two stretches with the same thing happening (the same character casting the same skill, the same summon, the same view of a place), from one source or two, count as the same moment unless the brief asks for it again. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
 
 Answer with JSON only, in this shape:
 {"plans":[{"kind":"the brief's words for this kind of edit","variation":"what sets this version apart","lead":"song","shots":[{"src":"S1","in":12.5,"dur":1.0,"speed":1,"fx":[{"type":"punch","at":0,"amount":1.2}],"enter":"cut","frame":"fill","sound":"off","why":"a few words"}],"texts":[{"at":0,"dur":1.5,"text":"words on screen","place":"middle"}]}]}
