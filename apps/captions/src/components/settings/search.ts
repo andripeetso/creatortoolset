@@ -64,10 +64,10 @@ const STATIC_ROWS = [
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
   { section: "library", id: "library-adding", title: "Import", keywords: ["media library", "import", "copy", "in place", "keep in place", "places", "adding files"] },
   { section: "library", id: "library-look", title: "New files", keywords: ["media library", "look for new files", "rescan", "scan", "places", "network drive"] },
-  { section: "library", id: "library-sorting", title: "Sorting", keywords: ["media library", "organize", "sort", "folders", "ai"] },
+  { section: "library", id: "library-sorting", title: "Folders", keywords: ["media library", "organize", "sort", "sorting", "by type", "by content", "ai"] },
   { section: "library", id: "library-upload", title: "Upload to the server", keywords: ["media library", "upload", "proxies", "cloud", "server", "bucket", "storage"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
-  { section: "library", id: "library-ai", title: "AI", keywords: ["media library", "descriptions", "describe", "shot", "shots", "search", "meaning"] },
+  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "ai"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
