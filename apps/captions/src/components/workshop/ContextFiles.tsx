@@ -50,7 +50,7 @@ function Details({ s, off }: { s: KnowledgeSource; off?: boolean }) {
   return <span className="text-xs text-muted-foreground">{dayOf(s.createdAt)}</span>;
 }
 
-const COLS = "grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem_1.75rem] items-center gap-x-3 px-3 sm:px-4";
+const COLS = "grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_1.75rem] items-center gap-x-3 px-3 sm:px-4";
 
 function FileName({ name, folder, about }: { name: string; folder?: string; about?: string }) {
   const { dir, base, ext } = nameParts(name, folder);

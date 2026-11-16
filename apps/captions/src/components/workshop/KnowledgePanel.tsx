@@ -1,11 +1,11 @@
 import { useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { FolderUp, Plus, Upload } from "lucide-react";
 import { CONTEXT_CAPACITY_CHARS } from "@contracts/knowledge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, EmptyRow, ErrorRow, FormDialog, LoadingRow, RowMenu, Section, Status, moveItems } from "@/components/settings/ui";
+import { Card, EmptyRow, ErrorRow, LoadingRow, RowMenu, Section, SettingsDialog, SettingsDialogContent, Status, moveItems } from "@/components/settings/ui";
 import { ContextFileList, ContextFileViewer } from "./ContextFiles";
 import { useCachedList } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -109,7 +109,7 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
-  const [dialog, setDialog] = useState<"text" | "link" | null>(null);
+  const [adder, setAdder] = useState(false);
   const [opened, setOpened] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -190,27 +190,9 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
         title="Context files"
         action={
           !readOnly && (
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button size="xs" variant="ghost" disabled={!!adding}>
-                  <Plus className="size-3" /> Add
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-40">
-                {(
-                  [
-                    ["Files", () => inputRef.current?.click()],
-                    ["Folder", () => folderRef.current?.click()],
-                    ["Text", () => setDialog("text")],
-                    ["Link", () => setDialog("link")],
-                  ] as const
-                ).map(([label, run]) => (
-                  <DropdownMenuItem key={label} className="text-sm" onSelect={run}>
-                    {label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button size="xs" variant="ghost" disabled={!!adding} onClick={() => setAdder(true)}>
+              <Plus className="size-3" /> Add
+            </Button>
           )
         }
       >
@@ -226,55 +208,127 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
           <ContextFileList sources={sources} onOpen={(s) => setOpened(s.id)} menu={readOnly ? undefined : menu} isOff={isOff} />
         ) : (
           <Card>
-            <EmptyRow title="No context files" />
+            <EmptyRow title="No context files" description={readOnly ? undefined : "Drop files or a folder here"} />
           </Card>
         )}
         {sources.length > 0 && <Capacity sources={sources} held={held} />}
       </Section>
       {opened && <ContextFileViewer sources={sources} openId={opened} onOpen={setOpened} onClose={() => setOpened(null)} footer={room(sources, held).text} />}
-      {dialog && <AddDialog kind={dialog} projectId={projectId} onAdded={put} onClose={() => setDialog(null)} />}
+      {adder && (
+        <AddDialog
+          projectId={projectId}
+          onFiles={(files) => void add(files)}
+          onPick={(folder) => (folder ? folderRef : inputRef).current?.click()}
+          onAdded={put}
+          onClose={() => setAdder(false)}
+        />
+      )}
     </div>
   );
 }
 
-/** Add text (pasted or typed, with a name) or a link (an article, a video): the server reads it like a file. */
-function AddDialog({ kind, projectId, onAdded, onClose }: { kind: "text" | "link"; projectId?: string; onAdded: (s: KnowledgeSource) => void; onClose: () => void }) {
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
+/**
+ * Adding, in one window: drop files or a folder on it (or choose them), add a link, or paste text. Files close it at once
+ * and their reading shows in the list; a link or text closes it once the server has it.
+ */
+function AddDialog({ projectId, onFiles, onPick, onAdded, onClose }: {
+  projectId?: string;
+  onFiles: (files: File[]) => void;
+  /** opens the panel's own file or folder picker */
+  onPick: (folder: boolean) => void;
+  onAdded: (s: KnowledgeSource) => void;
+  onClose: () => void;
+}) {
+  const [over, setOver] = useState(false);
+  const [link, setLink] = useState("");
+  const [paste, setPaste] = useState<{ name: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submit = async () => {
-    const v = value.trim();
-    if (!v) return setMissing(true);
+  const send = async (p: Promise<KnowledgeSource>) => {
     setBusy(true);
     setError(null);
     try {
-      onAdded(kind === "link" ? await addSourceLink(v, projectId) : await addSource({ name: name.trim() || v.split("\n", 1)[0]!.slice(0, 80), text: value, projectId }));
+      onAdded(await p);
       onClose();
     } catch (e) {
       setError(message(e));
       setBusy(false);
     }
   };
-  const needs = missing && !value.trim();
-  const field = { value, "aria-invalid": needs || undefined, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setValue(e.target.value) };
+  const pick = (folder: boolean) => {
+    onPick(folder);
+    onClose();
+  };
   return (
-    <FormDialog open onOpenChange={(o) => !o && onClose()} title={kind === "link" ? "Add link" : "Add text"} submitLabel="Add" onSubmit={submit} busy={busy} error={error}>
-      {kind === "link" ? (
-        <Input {...field} aria-label="Link" placeholder="https://" autoComplete="off" />
-      ) : (
-        <>
-          <Input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" placeholder="Name" autoComplete="off" />
-          <Textarea {...field} aria-label="Text" placeholder="Text" rows={8} className="max-h-[50vh] text-sm" />
-        </>
-      )}
-      {needs && (
-        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-          {kind === "link" ? "Needs a link" : "Needs text"}
-        </p>
-      )}
-    </FormDialog>
+    <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
+      <SettingsDialogContent aria-describedby={undefined} className="sm:max-w-lg">
+        <DialogTitle className="text-base">Add context files</DialogTitle>
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setOver(false);
+            void droppedFiles(e.dataTransfer).then((d) => (onFiles(Array.from(d.files)), onClose()), (err) => setError(message(err)));
+          }}
+          className={cn("flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-8 text-center", over ? "border-ring bg-accent/50" : "border-border")}
+        >
+          <div>
+            <p className="text-sm text-foreground">Drop files or a folder</p>
+            <p className="text-xs text-muted-foreground">PDF, Word, EPUB, Markdown, text or a video</p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => pick(false)}>
+              <Upload /> Choose files
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => pick(true)}>
+              <FolderUp /> Choose a folder
+            </Button>
+          </div>
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (link.trim()) void send(addSourceLink(link.trim(), projectId));
+          }}
+        >
+          <Input value={link} onChange={(e) => setLink(e.target.value)} aria-label="Link" placeholder="A link: an article, a YouTube video" autoComplete="off" />
+          <Button type="submit" size="sm" variant="outline" disabled={busy}>
+            Add
+          </Button>
+        </form>
+        {paste ? (
+          <form
+            className="flex flex-col gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const text = paste.text.trim();
+              if (text) void send(addSource({ name: paste.name.trim() || text.split("\n", 1)[0]!.slice(0, 80), text: paste.text, projectId }));
+            }}
+          >
+            <Input value={paste.name} onChange={(e) => setPaste({ ...paste, name: e.target.value })} aria-label="Name" placeholder="Name" autoComplete="off" />
+            <Textarea autoFocus value={paste.text} onChange={(e) => setPaste({ ...paste, text: e.target.value })} aria-label="Text" placeholder="Paste or write it here" rows={8} className="max-h-[40vh] text-sm" />
+            <Button type="submit" size="sm" className="self-end" disabled={busy}>
+              Add text
+            </Button>
+          </form>
+        ) : (
+          <Button size="sm" variant="ghost" className="justify-self-start" onClick={() => setPaste({ name: "", text: "" })}>
+            Paste text
+          </Button>
+        )}
+        {error && (
+          <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+            {error}
+          </p>
+        )}
+      </SettingsDialogContent>
+    </SettingsDialog>
   );
 }
 

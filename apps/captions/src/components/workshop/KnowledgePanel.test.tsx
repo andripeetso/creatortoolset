@@ -32,7 +32,12 @@ afterEach(() => document.body.replaceChildren());
 it("no files: the title, Add and one line", () => {
   sources = [];
   const el = draw();
-  expect(el.textContent).toBe("Context files AddNo context files");
+  expect(el.textContent).toBe("Context files AddNo context filesDrop files or a folder here");
+  // Add opens one window: drop or choose files or a folder, a link, or pasted text
+  act(() => [...el.querySelectorAll("button")].find((b) => b.textContent?.includes("Add"))!.click());
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.querySelector("h2")?.textContent).toBe("Add context files");
+  expect(buttons(dialog as HTMLElement).map((b) => b?.trim())).toEqual(["Choose files", "Choose a folder", "Add", "Paste text", "Close"]);
 });
 
 it("a row is a file: name, type, size, and the date or where its reading is; a folder is a row that opens", () => {
