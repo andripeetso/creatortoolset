@@ -10,7 +10,7 @@ import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp, enhancesAtRisk } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
-import { exportsApp, exportsAtRisk } from "./exports";
+import { exportsApp, exportsAtRisk, resumeFinalsSends } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
@@ -510,6 +510,9 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   startTelemetry();
   // assistant messages that waited for their videos when the server stopped
   resumeFromDisk();
+  // a render whose send to Finals the restart cut off goes again, a minute on: in a deploy's reload the process
+  // before this one may still be sending it, and two sends at once could both miss the other's file
+  setTimeout(() => void resumeFinalsSends().catch((e) => console.warn("[exports] Finals after the restart:", e)), 60_000).unref();
   // dropped files: the 7-day ones, and uploads nobody finished (no part for an hour)
   void sweepAll();
   setInterval(() => void sweepAll(), 3600_000).unref();

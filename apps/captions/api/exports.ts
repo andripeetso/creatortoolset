@@ -188,6 +188,10 @@ async function jobPersist(job: Job): Promise<void> {
   announceSoon(job.owner, "exports");
 }
 
+/** Renders read at boot as done with a send to Finals that never ended: the restart cut it off (resumeFinalsSends). */
+const cutOff: Job[] = [];
+const onItsWay = (finals: Job["finals"]) => finals?.status === "waiting" || finals?.status === "sending";
+
 /** Load persisted jobs once at boot; renders killed by a restart → error. */
 const loaded = (async () => {
   await mkdir(EXPORTS_DIR, { recursive: true }).catch(() => {});
@@ -212,7 +216,7 @@ const loaded = (async () => {
         if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
         await persist(job);
         chatHears(job);
-      }
+      } else if (job.status === "done" && onItsWay(job.finals)) cutOff.push(job);
       // jobs persisted before the engine field existed are DOM renders
       if (!job.engine) job.engine = "wysiwyg";
       jobs.set(id, job);
@@ -248,7 +252,7 @@ export async function deleteExportsForProject(
 export const EXPORTS_KEEP_DAYS = KEEP_HOURS / 24;
 // a render on its way to Finals is still being read: it stays until that ends
 const finishedOf = (owner: string) =>
-  [...jobs.values()].filter((j) => j.owner === owner && j.status !== "queued" && j.status !== "running" && j.finals?.status !== "waiting" && j.finals?.status !== "sending");
+  [...jobs.values()].filter((j) => j.owner === owner && j.status !== "queued" && j.status !== "running" && !onItsWay(j.finals));
 /** The folders of an account's finished renders (Settings → Storage counts them). */
 export async function finishedExportDirs(owner: string): Promise<string[]> {
   await loaded;
@@ -787,6 +791,28 @@ async function sendToFinals(job: Job): Promise<void> {
     ? { status: "sent", pieceId: out.pieceId }
     : { status: out.code === "refused" ? "refused" : "error", error: out.error };
   await jobPersist(job);
+}
+
+/**
+ * After a restart (boot.ts, once the plug-ins and their Finals guards are loaded): a finished render whose send to
+ * Finals was cut off is sent again, once, and its chat hears the end it never got. Finals knows a file by its hash
+ * (addToFinals), so one that had arrived is linked again, never filed twice. Not part of the load: nothing waits for it.
+ */
+export async function resumeFinalsSends(): Promise<void> {
+  await loaded;
+  for (const job of cutOff.splice(0)) {
+    if (!jobs.has(job.id)) continue; // deleted since
+    // in a deploy's reload the process before this one may have ended the send itself, after this one read the job
+    const now = await readFile(path.join(jobDir(job.id), "job.json"), "utf-8").then((t) => (JSON.parse(t) as Job).finals, () => job.finals);
+    if (onItsWay(now)) {
+      job.finals = { status: "waiting" };
+      await sendToFinals(job);
+    } else {
+      job.finals = now;
+      announceSoon(job.owner, "exports");
+    }
+    chatHears(job);
+  }
 }
 
 /* ---- routes ---- */

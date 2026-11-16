@@ -196,9 +196,16 @@ async function webResearch(
  *   sessions/<id>/drafts/<id>.md  rendered draft (+ .json plan)
  */
 export const workshopApp = new Hono<{ Variables: AuthVars }>();
-// the restart pass runs before the first request, so no read ever has to tidy a stale state
-workshopApp.use("*", async (_c, next) => {
+// the restart pass runs before the first request, so no read ever has to tidy a stale state; and before an account's
+// first one its sources that waited to be read when the server stopped take their turn again, as its own work
+const readsResumed = new Set<string>();
+workshopApp.use("*", async (c, next) => {
   await reconcileRestart();
+  const user = c.get("user") as SessionUser | undefined;
+  if (user && !readsResumed.has(user.username)) {
+    readsResumed.add(user.username);
+    if (!noKnowledge(user)) void queueWaiting(user).catch((e) => console.warn(`[workshop] waiting reads: ${errorMessage(e)}`));
+  }
   await next();
 });
 
@@ -300,43 +307,46 @@ const inRead = new Set<string>();
 export const knowledgeWork = async (username: string) =>
   (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name, ...(s.projectId ? { projectId: s.projectId } : {}) }] : []));
 
-/**
- * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,
- * kept to that project, so another brand never reads them.
- */
+/** The account's sources, oldest first: a read and nothing else (reconcileRestart puts right what an older version or a restart left). */
 async function listSources(user: SessionUser): Promise<KnowledgeSource[]> {
-  for (const p of await ownedProjects(user.username)) {
-    if (!p.knowledge?.length) continue;
-    for (const k of p.knowledge) {
-      if (!k.text.trim()) continue;
-      const now = Date.now();
-      const id = okId(k.id) ? k.id : randomUUID();
-      if (await readJson(sourcePath(id))) continue; // moved already (a form open since then saved it back)
-      await writeSource({ id, owner: user.username, name: k.name, projectId: p.id, chars: k.text.length, status: "new", createdAt: k.addedAt || now, updatedAt: now }, k.text);
-    }
-    await writeJsonAtomic(projectPath(p.id), { ...p, knowledge: [], updatedAt: Date.now() });
-    console.log(`[workshop] ${user.username}: ${p.knowledge.length} context files of "${p.name}" moved into Knowledge`);
+  return (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** The account's sources that wait to be read take their turn: after a restart, after a usage limit's reset, and when Read is pressed. */
+async function queueWaiting(user: SessionUser): Promise<void> {
+  for (const s of await listRecords<KnowledgeSource>(DIRS.sources, user)) if (s.owner === user.username && s.status === "queued") queueRead(user, s.id);
+}
+
+/**
+ * A project's context files from before (Project.knowledge) move into its owner's sources, kept to that project, so
+ * another brand never reads them. At start, and when a form open since before saves them back.
+ */
+async function moveOldKnowledge(p: Project): Promise<void> {
+  if (!p.knowledge?.length) return;
+  for (const k of p.knowledge) {
+    if (!k.text.trim()) continue;
+    const now = Date.now();
+    const id = okId(k.id) ? k.id : randomUUID();
+    if (await readJson(sourcePath(id))) continue; // moved already (a form open since then saved it back)
+    await writeSource({ id, owner: p.owner, name: k.name, projectId: p.id, chars: k.text.length, status: "new", createdAt: k.addedAt || now, updatedAt: now }, k.text);
   }
-  let list = (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username);
-  let split = false;
-  for (const s of list) {
-    // a folder kept as one source before each file was its own: its files, each its own source
-    if (s.status === "reading" || /\.[a-z0-9]{1,5}$/i.test(s.name) || !(await sourceHead(s.id)).startsWith(`# ${s.name}/`)) continue;
-    const parts = splitBundle(s.name, await readSourceText(s.id));
-    if (!parts) continue;
-    for (const [i, p] of parts.entries()) {
-      const about = p.about || s.sections?.find((x) => x.title === p.path)?.about || "";
-      const now = Date.now();
-      await writeSource({ id: randomUUID(), owner: s.owner, name: p.path.slice(0, SOURCE_LIMITS.name), ...(s.projectId ? { projectId: s.projectId } : {}), chars: p.text.length, status: about ? "read" : "queued", ...(about ? { about, readAt: now } : {}), createdAt: s.createdAt + i, updatedAt: now }, p.text);
-    }
-    await rm(sourcePath(s.id), { force: true });
-    await rm(sourceTextPath(s.id), { force: true });
-    console.log(`[workshop] ${user.username}: "${s.name}" split into its ${parts.length} files`);
-    split = true;
+  await writeJsonAtomic(projectPath(p.id), { ...p, knowledge: [], updatedAt: Date.now() });
+  console.log(`[workshop] ${p.owner}: ${p.knowledge.length} context files of "${p.name}" moved into Knowledge`);
+}
+
+/** At start: a folder kept as one source before each file was its own becomes its files, each its own source. */
+async function splitOldBundle(s: KnowledgeSource): Promise<void> {
+  if (/\.[a-z0-9]{1,5}$/i.test(s.name) || !(await sourceHead(s.id)).startsWith(`# ${s.name}/`)) return;
+  const parts = splitBundle(s.name, await readSourceText(s.id));
+  if (!parts) return;
+  for (const [i, p] of parts.entries()) {
+    const about = p.about || s.sections?.find((x) => x.title === p.path)?.about || "";
+    const now = Date.now();
+    await writeSource({ id: randomUUID(), owner: s.owner, name: p.path.slice(0, SOURCE_LIMITS.name), ...(s.projectId ? { projectId: s.projectId } : {}), chars: p.text.length, status: about ? "read" : "queued", ...(about ? { about, readAt: now } : {}), createdAt: s.createdAt + i, updatedAt: now }, p.text);
   }
-  if (split) list = (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username);
-  for (const s of list) if (s.status === "queued" && !queuedReads.has(s.id)) queueRead(user, s.id);
-  return list.sort((a, b) => a.createdAt - b.createdAt);
+  await rm(sourcePath(s.id), { force: true });
+  await rm(sourceTextPath(s.id), { force: true });
+  console.log(`[workshop] ${s.owner}: "${s.name}" split into its ${parts.length} files`);
 }
 
 /** A source text's first bytes: enough to tell a kept folder, without reading a book. */
@@ -492,7 +502,7 @@ function pauseReads(user: SessionUser, until: number): void {
   setTimeout(() => {
     if (readsPaused.get(user.username) !== until) return;
     readsPaused.delete(user.username);
-    void listSources(user).then((all) => all.filter((s) => s.status === "queued").forEach((s) => queueRead(user, s.id)));
+    void queueWaiting(user);
   }, Math.max(1000, until - Date.now() + 5000)).unref?.();
 }
 
@@ -691,6 +701,8 @@ export async function readSession(id: string): Promise<SessionMeta | null> {
 /**
  * What a restart ended: a draft still generating, a reply still thinking, a source still being read. Nothing runs
  * across a restart, so each is marked failed once, before the first request (the workshop middleware awaits it).
+ * The same pass moves what an older version kept another way to where it is kept now (a list of the sources did
+ * that before, as it read).
  */
 let restarted: Promise<void> | undefined;
 function reconcileRestart(): Promise<void> {
@@ -718,11 +730,16 @@ function reconcileRestart(): Promise<void> {
         }
       });
     }
+    for (const f of await readdir(DIRS.projects).catch(() => [] as string[])) {
+      const p = f.endsWith(".json") ? await readJson<Project>(path.join(DIRS.projects, f)) : null;
+      if (p) await moveOldKnowledge(p);
+    }
     for (const f of await readdir(DIRS.sources).catch(() => [] as string[])) {
       const id = f.endsWith(".json") ? f.slice(0, -".json".length) : "";
       if (!okId(id)) continue;
       const s = await readJson<KnowledgeSource>(sourcePath(id));
-      if (s?.status === "reading") await patchSource(id, (cur) => ({ ...cur, status: "queued" }));
+      const now = s?.status === "reading" ? await patchSource(id, (cur) => ({ ...cur, status: "queued" })) : s;
+      if (now) await splitOldBundle(now);
     }
   })().catch((e) => console.error("[workshop] restart pass", errorMessage(e))));
 }
@@ -2019,6 +2036,7 @@ workshopApp.post("/projects", async (c) => {
       project.color = PROJECT_COLORS.find((c) => !used.has(c)) ?? PROJECT_COLORS[0];
     }
     await writeJsonAtomic(projectPath(project.id), project);
+    await moveOldKnowledge(project); // an older form sent context files: they are sources now
     await scopeOldRecords(user).catch((e: unknown) => console.warn(`[workshop] keeping projects apart: ${errorMessage(e)}`));
     await setCurrentProjectId(user, project.id);
     return c.json(project, 201);
@@ -2145,6 +2163,7 @@ workshopApp.patch("/projects/:id", async (c) => {
     if (accountId === null) delete next.accountId;
     else if (accountId) next.accountId = accountId;
     await writeJsonAtomic(projectPath(next.id), next);
+    await moveOldKnowledge(next); // a form open since before saved its context files back: they are sources now
     return c.json(next);
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
@@ -2329,6 +2348,7 @@ workshopApp.post("/sources/:id/read", async (c) => {
   const queued = await patchSource(s.id, (cur) => ({ ...cur, status: "queued", error: undefined, waitUntil: undefined }));
   readsPaused.delete(user.username); // pressed by hand: try now, a limit pauses them again
   queueRead(user, s.id);
+  void queueWaiting(user); // the ones the limit held go on behind it (the list that follows a press started them before)
   return c.json(queued ?? s);
 });
 
