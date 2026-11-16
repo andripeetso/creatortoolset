@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { ScanFace } from "lucide-react";
+import { Gauge, ScanFace } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
+import { upcoming } from "@/components/assistant/LimitBanner";
 import { dropZoneClass } from "@/components/DropZone";
 import { Card, Row, Section, SettingsSelect, TextField, saveFailed } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
@@ -48,8 +49,25 @@ const EXAMPLES = ["Every child's face", "The people in the background", "Everyon
 async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const r = await fetch(url, body === undefined ? { method } : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!r.ok) throw new Error(j?.error || `Request failed (${r.status})`);
+  if (!r.ok) throw Object.assign(new Error(j?.error || `Request failed (${r.status})`), { limit: (j as { limit?: Problem["limit"] } | null)?.limit });
   return j as T;
+}
+
+/** What went wrong, and when the AI's usage limit resets if that is what stopped it (plugin.ts pickFaces). */
+type Problem = { text: string; limit?: { until: number | null } };
+const problemOf = (e: unknown): Problem => ({ text: (e as Error).message, limit: (e as { limit?: Problem["limit"] }).limit });
+
+/** A usage limit is the chat's quiet amber notice with its reset time; anything else is said in red. */
+function ProblemLine({ problem }: { problem: Problem }) {
+  if (!problem.limit) return <span className="text-xs text-red-500">{problem.text}</span>;
+  const { until } = problem.limit;
+  return (
+    <span role="status" className="inline-flex items-center gap-1.5 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-0.5 text-xs dark:border-amber-400/25 dark:bg-amber-400/10">
+      <Gauge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="font-medium">Usage limit reached</span>
+      <span className="text-muted-foreground">{until && until > Date.now() ? `Try again ${upcoming(until)}` : "Try again later"}</span>
+    </span>
+  );
 }
 
 /** The account's Face Blur settings, read once, and a save that puts the old ones back when it fails. */
@@ -88,7 +106,7 @@ const picks = new Map<string, Promise<{ faces: Face[]; blur: string[] }>>();
 let example: Promise<string> | null = null;
 const examplePicture = () => (example ??= call<{ picture: string }>(`${API}/example`).then((r) => r.picture));
 
-/** Faces and Which faces: on the page and in Settings → Face Blur. */
+/** Faces and Which faces, in Settings → Face Blur (the page only links there). */
 function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
   if (!settings) return null;
   return (
@@ -221,7 +239,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
   const [moment, setMoment] = useState(0);
   const [ratio, setRatio] = useState("760 / 534");
   const [busy, setBusy] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   const seq = useRef(0);
   const some = settings.mode === "some";
   const key = JSON.stringify([style, some && settings.who, mine?.path]);
@@ -233,7 +251,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
       try {
         const source = mine ? { path: mine.path } : { picture: await examplePicture() };
         let blur: string[] | undefined;
-        let failed: string | null = null;
+        let failed: Problem | null = null;
         if (some) {
           const at = `${mine?.path ?? "example"}\n${settings.who}`;
           let pick = picks.get(at);
@@ -249,7 +267,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
             blur = (await pick).blur;
           } catch (e) {
             picks.delete(at);
-            failed = (e as Error).message;
+            failed = problemOf(e);
             blur = [];
           }
         }
@@ -262,7 +280,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
       } catch (e) {
         if (!live()) return;
         setBusy(null);
-        setProblem((e as Error).message);
+        setProblem(problemOf(e));
       }
     }, 200);
     return () => clearTimeout(t);
@@ -306,7 +324,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
         </div>
       )}
       {busy && <p className="text-xs text-muted-foreground">{busy}</p>}
-      {problem && <p className="text-xs text-red-500">{problem}</p>}
+      {problem && <p><ProblemLine problem={problem} /></p>}
       {shown && !busy && (
         <p className="text-xs text-muted-foreground">
           {shown.faces.length ? `${covered} of ${shown.faces.length} ${shown.faces.length === 1 ? "face" : "faces"} covered${some ? ", your AI's pick" : ""}` : "No face found"}
@@ -399,15 +417,14 @@ const STAGE: Record<FaceBlurItem["stage"], string> = {
 };
 
 type Job = { id: string; items: FaceBlurItem[]; settled: boolean };
-const finished = (i: FaceBlurItem, failed: Record<string, string>) => i.stage === "done" || i.stage === "failed" || !!failed[i.path];
+const finished = (i: FaceBlurItem, failed: Record<string, Problem>) => i.stage === "done" || i.stage === "failed" || !!failed[i.path];
 
 function FaceBlurPage() {
-  const shared = useSettings();
-  const { settings } = shared;
+  const { settings } = useSettings();
   const [here, setHere] = useState<"ok" | "old" | "none" | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   // a pick that failed, by file: the Mac wrote nothing, and the page says why
-  const [failed, setFailed] = useState<Record<string, string>>({});
+  const [failed, setFailed] = useState<Record<string, Problem>>({});
   // each file's faces are read once, with their pictures (the state polled twice a second leaves them out)
   const asked = useRef(new Set<string>());
   const [pictures, setPictures] = useState<Record<string, Record<string, string>>>({});
@@ -424,12 +441,12 @@ function FaceBlurPage() {
       setPictures((p) => ({ ...p, [`${job}\n${item.path}`]: Object.fromEntries(faces.map((f) => [f.id, f.picture ?? ""])) }));
       if (choosing) await pick(job, item.path, faces);
     } catch (e) {
-      if (choosing) await pickFailed(job, item.path, (e as Error).message);
+      if (choosing) await pickFailed(job, item.path, problemOf(e));
     }
   };
-  const pickFailed = async (job: string, path: string, why: string) => {
+  const pickFailed = async (job: string, path: string, why: Problem) => {
     setFailed((f) => ({ ...f, [path]: why }));
-    await faceBlurChoose(job, path, [], why).catch(() => undefined);
+    await faceBlurChoose(job, path, [], why.text).catch(() => undefined);
   };
   const pick = async (job: string, path: string, faces: FaceBlurFace[]) => {
     try {
@@ -439,7 +456,7 @@ function FaceBlurPage() {
       });
       await faceBlurChoose(job, path, blur);
     } catch (e) {
-      await pickFailed(job, path, (e as Error).message);
+      await pickFailed(job, path, problemOf(e));
     }
   };
 
@@ -519,16 +536,11 @@ function FaceBlurPage() {
     >
       <AppBar tool="Face Blur" />
       <main className="mx-auto w-full max-w-2xl space-y-6 px-4 pb-10">
-        <ToolIntro icon={ScanFace} title="Face Blur" line="Covers faces in your photos and videos before you share them, on your own computer or phone" className="mb-0" />
-
-        {settings && (
-          <Section title="What to cover">
-            <div className="space-y-4">
-              <SettingsRows {...shared} />
-              <StyleCard {...shared} />
-            </div>
-          </Section>
-        )}
+        <ToolIntro icon={ScanFace} title="Face Blur" line="Covers faces in your photos and videos before you share them, on your own computer or phone" className="mb-0">
+          <Button asChild size="sm" variant="outline">
+            <Link to="/settings/blur-faces">Settings</Link>
+          </Button>
+        </ToolIntro>
 
         {here === "none" && <p className="text-sm text-muted-foreground">Face Blur runs in the Creator Toolset Mac app and iPhone app.</p>}
         {here === "old" && <p className="text-sm text-muted-foreground">This Mac app is older than Face Blur. Update it: Creator Toolset → Check for Updates.</p>}
@@ -553,7 +565,7 @@ function FaceBlurPage() {
   );
 }
 
-function ItemRow({ item, pictures, error, onAgain }: { item: FaceBlurItem; pictures?: Record<string, string>; error?: string; onAgain: (blur: string[]) => void }) {
+function ItemRow({ item, pictures, error, onAgain }: { item: FaceBlurItem; pictures?: Record<string, string>; error?: Problem; onAgain: (blur: string[]) => void }) {
   const faces = item.faces ?? [];
   // the switches start from what the Mac covered, and again each time it writes the file anew
   const from = faces.filter((f) => f.blur).map((f) => f.id).join(",");
@@ -568,14 +580,14 @@ function ItemRow({ item, pictures, error, onAgain }: { item: FaceBlurItem; pictu
   const changed = [...on].sort().join(",") !== [...from.split(",")].filter(Boolean).sort().join(",");
   const status =
     stage === "failed"
-      ? (error ?? item.error ?? STAGE.failed)
+      ? error ? <ProblemLine problem={error} /> : (item.error ?? STAGE.failed)
       : stage === "done"
         ? (item.note ?? `${faces.length === 1 ? "1 face" : `${faces.length} faces`}, ${on.size} covered`)
         : `${STAGE[stage]}${item.progress > 0 ? ` ${Math.round(item.progress * 100)}%` : ""}`;
   return (
     <Row
       title={<span className="block truncate">{item.name}</span>}
-      status={<span className={stage === "failed" ? "text-red-500" : undefined}>{status}</span>}
+      status={<span className={stage === "failed" && !error ? "text-red-500" : undefined}>{status}</span>}
       control={
         stage === "done" && (
           <>
@@ -626,5 +638,5 @@ export default defineWebPlugin({
   about: "Covers every face, or only the ones you name, in your photos and videos, on your Mac and iPhone",
   routes: [{ path: "/blur-faces", element: <FaceBlurPage /> }],
   settings: [{ id: "blur-faces", title: "Face Blur", icon: ScanFace, body: <FaceBlurSettings /> }],
-  tiles: [{ stage: "Make", to: "/blur-faces", icon: ScanFace, name: "Face Blur", desc: "Cover faces in photos and videos before you share them", gate: "blur-faces" }],
+  tiles: [{ stage: "Tools", to: "/blur-faces", icon: ScanFace, name: "Face Blur", desc: "Cover faces in photos and videos before you share them", gate: "blur-faces" }],
 });

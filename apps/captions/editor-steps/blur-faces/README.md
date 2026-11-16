@@ -67,7 +67,7 @@ account's own, with the same settings, and the covered copy is added to the same
 (`picture`: a JPEG as base64, no `data:` prefix, the face at up to three moments side by side, at most 200 KB; `note`: a
 line such as "middle left of the frame; 12% of its width; seen for 4.2 s"; at most 40 faces) → `{ blur: string[] }`,
 the ids to cover. With no AI connected, an AI that fails, or an answer with no `{"blur": [...]}`, the answer is an
-error (409, `{ error }`, one sentence) and the device writes nothing. The prompt: match only what the instruction says
+error (409, `{ error }`, one sentence; at the AI's usage limit also `limit: { until }`, ms or null, shown as the chat's amber notice) and the device writes nothing. The prompt: match only what the instruction says
 from what is visible, never identify anyone (`api/lib/face-pick.ts`, shared with the AI Editor step).
 
 ## The Mac app (page ↔ app)
