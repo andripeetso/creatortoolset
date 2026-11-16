@@ -182,7 +182,7 @@ export function AskEveryone() {
       <Card>
         <Row
           id="admin-sign-in-code"
-          title="Code"
+          title="Sign-in code"
           description="Every password sign-in on this server needs a code from an authenticator app."
           control={<Switch checked={state.data.required} aria-label="Sign-in code" onCheckedChange={(on) => void change(on)} />}
         />

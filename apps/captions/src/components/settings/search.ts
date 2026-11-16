@@ -119,7 +119,7 @@ const STATIC_ROWS = [
   { section: "team", id: "team-sign-in", title: "Sign-in methods", keywords: ["google", "apple", "github", "password", "members", "team"] },
   // Admin (hosted)
   { section: "team", id: "team-accounts", title: "Accounts", keywords: ["account", "users", "password", "reset", "create account", "new account", "admin", "role", "lock", "unlock", "delete"], needs: "server-admin" },
-  { section: "team", id: "admin-sign-in-code", title: "Code", description: "Every password sign-in on this server needs a code from an authenticator app", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "everyone"], needs: "server-admin" },
+  { section: "team", id: "admin-sign-in-code", title: "Sign-in code", description: "Every password sign-in on this server needs a code from an authenticator app", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "everyone"], needs: "server-admin" },
   { section: "storage", id: "admin-projects", title: "All projects", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
   { section: "keys", id: "server-keys", title: "Server keys", keywords: ["env", "server", "api key", "secret", "fallback", "server keys"], needs: "server-admin" },
   // Account: the person's own profile and sign-in
