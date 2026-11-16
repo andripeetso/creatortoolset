@@ -66,11 +66,22 @@ export interface StorageFolder {
   reach: Record<string, { path: string; at: number }>;
   /** the origin computer could not mark it (no such folder, not writable…) */
   error?: string;
-  /** the workspace it belongs to (stamped when added; none = from before workspaces kept their own: the first brand) */
+  /** the workspace it belongs to (stamped when added), or EVERY_WORKSPACE; none = from before workspaces kept their
+   *  own: the first brand's. A list sent to a page names the workspace each folder is in (api/devices-storage.ts) */
   workspace?: string;
   /** the share its drive is, on the computer that added it (api/lib/storage.ts mountOf); none: a disk of that computer's own */
   mount?: FolderMount;
 }
+
+/** A footage or music folder's `workspace` when every workspace uses it (Settings → Folders, "Use in every workspace"). */
+export const EVERY_WORKSPACE = "*";
+
+/**
+ * Whether a folder is one workspace's: `inWs` is that workspace's own test (api/lib/project-of.ts inProjectOf; null =
+ * nothing is kept apart). Every reader of a workspace's folders asks here, so a folder for every workspace is in each.
+ */
+export const folderIn = (f: Pick<StorageFolder, "workspace">, inWs: ((own?: string) => boolean) | null): boolean =>
+  !inWs || f.workspace === EVERY_WORKSPACE || inWs(f.workspace);
 
 /** A share's server and name as they may be reported (contracts/providers.ts parseMachine) and put into a command. */
 export const SAFE_SERVER = /^[\w.-]{1,253}$/;
@@ -137,6 +148,11 @@ export interface AddFolderBody {
   path: string;
 }
 
+/** PATCH /api/devices/storage/folders/:id: the workspace a footage or music folder is in; null = every workspace. */
+export interface MoveFolderBody {
+  workspace: string | null;
+}
+
 /** GET /api/devices/storage: the account's folders, plus the disks of the server's own computer when the server runs on
  *  one (CT_LOCAL=1, the owner's Mac). On a hosted server it is empty, so no one sees another machine's disks. */
 export interface StorageView extends StorageState {
@@ -188,7 +204,7 @@ export interface UploadRelayView {
 }
 
 /**
- * Settings → Storage, "Kept on the server": what one account keeps in the server's data folder, by kind (api/kept.ts).
+ * Settings → Storage, "Your files": what one account keeps in the server's data folder, in every workspace, by kind (api/kept.ts).
  * Each account clears its own: nothing here is deleted for its age (api/retention.ts) except the short-lived kinds, which
  * say so with `keepDays`. The order is the order they are counted in: a file two kinds share (a Review video is the
  * same file in the Media Library) counts once, in the first.

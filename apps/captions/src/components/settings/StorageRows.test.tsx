@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
 import { Storage, type Computer, driveLabel, driveOf, driveStart, shareAddress } from "./StorageRows";
+import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
 const library: StorageFolder = {
@@ -12,20 +13,49 @@ const view = (folders: StorageFolder[]): StorageView => ({ folders, serverDisks:
 const page = (folders: StorageFolder[]) => renderToStaticMarkup(<Storage devices={[mac]} storage={view(folders)} onChanged={() => {}} />);
 
 describe("Storage rows", () => {
-  it("with nothing set, one row says what the folders are for and each row only offers its button", () => {
+  it("with nothing set, each kind's row only offers its button", () => {
     const html = page([]);
-    expect(html).toContain("Where the Media Library and the AI Editor read and save files.");
-    expect(html.match(/>Set folder</g)).toHaveLength(3);
+    expect(html.match(/>Add folder</g)).toHaveLength(3);
     expect(html).not.toContain("Not set");
+    expect(html).not.toContain("No folders");
   });
 
   it("a set row shows its full path on its computer and says Change", () => {
     const html = page([library]);
-    expect(html).not.toContain("Where the Media Library");
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset");
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset/Footage");
     expect(html).toContain(">Change<");
     expect(html).not.toContain("Library/Footage");
+  });
+});
+
+describe("every workspace's folders (Settings on All workspaces)", () => {
+  const workspaces = [{ id: "ws-a", name: "Tiny Acrobatics" }, { id: "ws-b", name: "Tiny Swimmers" }];
+  const songs: StorageFolder = { id: "f_9", role: "music", name: "Songs", origin: { host: "dev_1", path: "/Volumes/Footage SSD/Songs" }, make: false, createdAt: 0, reach: {} };
+  // the workspace tag itself is not asserted: it reads the workspace store, which a static render sees empty
+  const shown = (w: Partial<SettingsWorkspace>, folders: StorageFolder[]) => {
+    const all = { id: null, all: true, workspaces, many: true, cacheKey: "*", name: () => "", ...w } as unknown as SettingsWorkspace;
+    return renderToStaticMarkup(<Storage devices={[mac]} storage={view(folders)} onChanged={() => {}} w={all} />);
+  };
+
+  it("Finished videos has a row per workspace: Change where it has a folder, Add folder where it has none", () => {
+    const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
+    expect(html.match(/>Finished videos</g)).toHaveLength(2);
+    expect(html.match(/>Change</g)).toHaveLength(1);
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // the other workspace's Finished videos, Footage, Music
+    expect(html).toContain("/Volumes/Footage SSD/Songs");
+  });
+
+  it("a Finished videos folder of a workspace that is not listed still has its row", () => {
+    const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...library, id: "lib_2", workspace: "ws-elsewhere", origin: { host: "dev_1", path: "/Volumes/Other/Creator Toolset" } }]);
+    expect(html.match(/>Finished videos</g)).toHaveLength(3);
+    expect(html).toContain("/Volumes/Other/Creator Toolset");
+  });
+
+  it("with one workspace picked, Finished videos is one row", () => {
+    const html = shown({ id: "ws-a", all: false, cacheKey: "ws-a" }, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
+    expect(html.match(/>Finished videos</g)).toHaveLength(1);
+    expect(html).toContain("/Volumes/Footage SSD/Songs");
   });
 });
 
