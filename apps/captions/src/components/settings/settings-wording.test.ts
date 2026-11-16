@@ -31,11 +31,6 @@ const BANNED: Array<[RegExp, string]> = [
   [/\btitle="[^"]*[?.]"|\btitle=\{`[^`]*[?.]`\}/, "a title is a noun: no question, no full stop"],
 ];
 
-/** Screens not yet rewritten to the standard: the list only shrinks, and a new screen never goes on it. */
-const NOT_YET = new Set([
-  "pages/library/LibrarySettings.tsx",
-]);
-
 const offences = (file: string): string[] =>
   readFileSync(path.join(src, file), "utf8")
     .split("\n")
@@ -48,6 +43,6 @@ const offences = (file: string): string[] =>
 
 describe("Settings wording", () => {
   it("no screen uses a banned form", () => {
-    expect(files.filter((f) => !NOT_YET.has(f)).flatMap(offences)).toEqual([]);
+    expect(files.flatMap(offences)).toEqual([]);
   });
 });

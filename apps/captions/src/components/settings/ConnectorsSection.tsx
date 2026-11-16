@@ -63,7 +63,7 @@ export interface PlatformRow {
   summary: string;
   /** "Add" starts the platform's sign-in; none = an account is there (or the sign-in is not available). */
   button?: "Add";
-  /** An account the person connected (its workspace is its `projectId`; none = every workspace). */
+  /** An account the person connected (its workspace is its `projectId`; none = no workspace: listed in each, its numbers used by none). */
   account?: ConnectedAccount;
   /** Instagram: the person's own account in the Analyzer, when no sign-in account is there (its workspace is the one that links it). */
   own?: OwnInstagram;
@@ -255,7 +255,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   const only = w.workspaces.length === 1 ? w.workspaces[0] : undefined;
   const moves = (a: ConnectedAccount): RowMenuItem[] => {
     const move = (to: string | null) => act(linkAccount(a.key, to));
-    return only && !a.projectId ? [{ label: `Move to ${only.name}`, onSelect: () => move(only.id) }] : moveItems(w.workspaces, a.projectId, move);
+    return only && !a.projectId ? [{ label: `Move to ${only.name}`, onSelect: () => move(only.id) }] : moveItems(w.workspaces, a.projectId, move, false);
   };
   // Instagram's link is on the workspace record (its accountId), one account a workspace: it moves to a workspace of the
   // person's own with none, and with no workspace it is shown only while it is the one marked Mine
@@ -265,7 +265,6 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   };
   const ownMoves = (own: OwnInstagram): RowMenuItem[] => [
     ...w.workspaces.filter((p) => (!me || p.owner === me) && !p.accountId).map((p) => ({ label: `Move to ${p.name}`, onSelect: () => act(moveOwn(own, p.id)) })),
-    ...(own.projectId && own.mine ? [{ label: "Use in every workspace", onSelect: () => act(moveOwn(own, null)) }] : []),
   ];
   // an account is the person's, not one workspace's: Disconnect takes it out of them all
   const disconnect = (handle: string, onSelect: () => unknown): RowMenuItem => ({
@@ -285,7 +284,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
             icon={<PlatformLogo platform={r.platform} className="size-4" />}
             title={r.label}
             subtitle={r.summary}
-            status={all && <WorkspaceTag id={r.own.projectId} />}
+            status={all && <WorkspaceTag id={r.own.projectId} none="No workspace" />}
             actions={
               <>
                 <InUse>Connected</InUse>
@@ -347,7 +346,7 @@ function AccountRow({ row, a, back, tag, items }: { row: PlatformRow; a: Connect
       status={
         (tag || status) && (
           <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-            {tag && <WorkspaceTag id={a.projectId} />}
+            {tag && <WorkspaceTag id={a.projectId} none="No workspace" />}
             {status}
           </span>
         )

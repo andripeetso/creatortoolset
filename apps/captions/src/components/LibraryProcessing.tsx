@@ -62,7 +62,7 @@ export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
     openai: `on your OpenAI key, ${aboutUsd(s.usd)}`,
     api: `on your Anthropic key, ${aboutUsd(s.usd)}`,
     budget: `on your team's AI budget, ${aboutUsd(s.usd)}`,
-    provider: `on your connected AI, ${aboutUsd(s.usd)} of usage at API prices (your plan pays; it counts toward its limits)`,
+    provider: `on the AI provider, ${aboutUsd(s.usd)} of usage at API prices (your plan pays; it counts toward its limits)`,
   }[s.route];
   return `${what} ${on}`;
 }

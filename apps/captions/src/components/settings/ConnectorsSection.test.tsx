@@ -219,16 +219,16 @@ describe("an account's workspace", () => {
     expect(text).toContain("@brand-a");
     expect(text).toContain("@brand-b");
     expect(text).toContain("Tiny Acrobatics shop");
-    expect(text).toContain("Every workspace");
+    expect(text).toContain("No workspace");
     expect(useWorkspace.getState().currentProjectId).toBe("p1");
   });
 
-  it("the row menu moves an account to another workspace or to every workspace", async () => {
+  it("the row menu moves an account to another workspace: an account is one workspace's or none's", async () => {
     await open({ accounts: [acct("tiktok", "brand-a", "p1")] });
     const items = menu("brand-a");
-    expect(items.map((i) => i.textContent)).toEqual(["Read again", "Move to Tiny Acrobatics shop", "Use in every workspace", "Disconnect"]);
-    await press(items[2]!);
-    expect(sent).toEqual([["PATCH /api/connectors/accounts/tiktok%3Abrand-a", { projectId: null }]]);
+    expect(items.map((i) => i.textContent)).toEqual(["Read again", "Move to Tiny Acrobatics shop", "Disconnect"]);
+    await press(items[1]!);
+    expect(sent).toEqual([["PATCH /api/connectors/accounts/tiktok%3Abrand-a", { projectId: "p2" }]]);
     expect(useWorkspace.getState().currentProjectId).toBe("p1");
   });
 
@@ -245,7 +245,7 @@ describe("an account's workspace", () => {
   it("Instagram's own account moves to a workspace of the person's own that links none; with no workspace only the one marked Mine stays listed", async () => {
     await open({ instagram: [{ id: "a1", handle: "tinyacrobatics", mine: true, projectId: "p1" }] });
     const items = menu("tinyacrobatics");
-    expect(items.map((i) => i.textContent)).toEqual(["Move to Tiny Acrobatics shop", "Use in every workspace", "Disconnect"]);
+    expect(items.map((i) => i.textContent)).toEqual(["Move to Tiny Acrobatics shop", "Disconnect"]);
     await press(items[0]!);
     expect(sent).toEqual([
       ["PATCH /api/workshop/projects/p2", { accountId: "a1" }],

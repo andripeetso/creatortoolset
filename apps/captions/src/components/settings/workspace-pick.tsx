@@ -105,26 +105,30 @@ export function WorkspacePick({ mode, only }: { mode: "list" | "one"; only?: rea
 }
 
 /**
- * Which workspace a row's thing belongs to: its colour dot and name, "Every workspace" for one with none. Shown on a
- * list page while it shows all workspaces (`w.all`); with one workspace picked, or only one to have, it says nothing.
+ * Which workspace a row's thing belongs to: its colour dot and name, "Every workspace" for one with none (`none`: the
+ * word where a thing with no workspace is used by none, a social account). Shown on a list page while it shows all
+ * workspaces (`w.all`); with one workspace picked, or only one to have, it says nothing.
  */
-export function WorkspaceTag({ id }: { id?: string | null }) {
+export function WorkspaceTag({ id, none = "Every workspace" }: { id?: string | null; none?: string }) {
   const workspaces = useWorkspace((s) => s.projects);
   if (workspaces.length < 2) return null;
   const p = id ? workspaces.find((x) => x.id === id) : null;
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
       {p && <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />}
-      <span className="truncate">{id ? (p?.name ?? "Another workspace") : "Every workspace"}</span>
+      <span className="truncate">{id ? (p?.name ?? "Another workspace") : none}</span>
     </span>
   );
 }
 
-/** A row menu's items for moving a thing between workspaces: every other workspace, then "Use in every workspace". */
-export function moveItems(workspaces: ReadonlyArray<{ id: string; name: string }>, current: string | null | undefined, move: (to: string | null) => unknown): Array<{ label: string; onSelect: () => unknown }> {
+/**
+ * A row menu's items for moving a thing between workspaces: every other workspace, then "Use in every workspace"
+ * (`every: false` leaves that out, for a thing that belongs to one workspace or none).
+ */
+export function moveItems(workspaces: ReadonlyArray<{ id: string; name: string }>, current: string | null | undefined, move: (to: string | null) => unknown, every = true): Array<{ label: string; onSelect: () => unknown }> {
   if (workspaces.length < 2) return [];
   return [
     ...workspaces.filter((p) => p.id !== current).map((p) => ({ label: `Move to ${p.name}`, onSelect: () => move(p.id) })),
-    ...(current ? [{ label: "Use in every workspace", onSelect: () => move(null) }] : []),
+    ...(current && every ? [{ label: "Use in every workspace", onSelect: () => move(null) }] : []),
   ];
 }
