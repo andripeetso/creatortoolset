@@ -50,8 +50,8 @@ describe("POST /api/library/:id/on-mac", () => {
     expect(r.status).toBe(200);
     const { assetId, versionId } = (await r.json()) as { assetId: string; versionId: string };
     const d = libraryDb();
-    const v = d.prepare("SELECT state, source_key, source_path, mac_path, sha256, probe FROM asset_versions WHERE id = ?").get(versionId) as Record<string, string | null>;
-    expect(v).toMatchObject({ state: "ready", source_key: `mac:${versionId}`, source_path: null, mac_path: clip.path, sha256: `mac:${quick}` });
+    const v = d.prepare("SELECT state, source_key, source_path, mac_path, sha256, quick, probe FROM asset_versions WHERE id = ?").get(versionId) as Record<string, string | null>;
+    expect(v).toMatchObject({ state: "ready", source_key: `mac:${versionId}`, source_path: null, mac_path: clip.path, sha256: `mac:${quick}`, quick });
     expect(JSON.parse(v.probe!)).toMatchObject({ duration: 1200, width: 1920, height: 1080 });
     expect((d.prepare("SELECT kind FROM derivatives WHERE version_id = ? ORDER BY kind").all(versionId) as { kind: string }[]).map((x) => x.kind)).toEqual(["sprite", "thumb"]);
     expect((d.prepare("SELECT kind FROM jobs WHERE version_id = ?").all(versionId) as { kind: string }[]).map((x) => x.kind)).toEqual(["describe"]);

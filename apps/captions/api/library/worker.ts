@@ -29,6 +29,7 @@ import { lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, queueLook } from
 import { takeMacSheets } from "./mac-look";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
+import { backfillQuick, fillQuick } from "./locate";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -244,7 +245,7 @@ export function startLibraryWorker(): () => void {
         let busy = false;
         try {
           busy = await tick(Date.now(), lane.kinds);
-          if (!busy && lane.name === "files") busy = await backfillSprite();
+          if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
         } catch (e) {
           console.error("[library] worker:", e);
         }
@@ -387,6 +388,7 @@ async function run(job: JobRow): Promise<void> {
     // a probe again (a rescan) keeps the clip's own turn: the file never says it
     const turn = p?.turn;
     p = { ...(await probe(await src())), ...(turn ? { turn } : {}) };
+    await fillQuick(v.id, await src()); // Locate finds the original by it once it moves (locate.ts)
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
     // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
     // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI

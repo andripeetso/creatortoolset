@@ -102,7 +102,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId });
     // the Mac probed it: no probe here (it would read a file this server does not have)
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
-    d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ? WHERE id = ?").run(x.path, x.device ?? null, JSON.stringify(probe), versionId);
+    d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ?, quick = ? WHERE id = ?").run(x.path, x.device ?? null, JSON.stringify(probe), x.quick, versionId);
     d.exec("COMMIT");
   } catch (e) {
     d.exec("ROLLBACK");

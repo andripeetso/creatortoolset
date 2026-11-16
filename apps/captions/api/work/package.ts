@@ -115,14 +115,14 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
   const folders = foldersOf(device.owner);
   const post = job.kind === "post" && !!edit.steps?.length;
   const q = db.prepare(
-    `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.bytes, v.sha256, v.probe, a.title,
+    `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.bytes, v.quick, v.probe, a.title,
        d.storage_key AS proxy, d.bytes AS proxy_bytes
      FROM asset_versions v JOIN assets a ON a.id = v.asset_id
      LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
   );
   const files: WorkFile[] = readsOf(job.kind, edit, variant, ids).flatMap((id) => {
     const r = q.get(id) as
-      | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; sha256: string; probe: string | null; title: string; proxy: string | null; proxy_bytes: number | null }
+      | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; quick: string | null; probe: string | null; title: string; proxy: string | null; proxy_bytes: number | null }
       | undefined;
     if (!r) return [];
     const at = fileFor(r, device.id, folders, isThisMachine);
@@ -135,7 +135,7 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
         id: r.id,
         title: r.title,
         bytes: r.bytes,
-        ...(r.sha256.startsWith("mac:") ? { quick: r.sha256.slice(4) } : {}),
+        ...(r.quick ? { quick: r.quick } : {}),
         ...(at && "path" in at ? { path: at.path } : {}),
         ...(proxy ? { proxy } : {}),
         ...(post ? { original: true as const } : {}),
