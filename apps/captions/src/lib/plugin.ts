@@ -291,6 +291,8 @@ export interface WebPlugin {
   itemActions?: Partial<Record<ItemKind, PluginItemAction[]>>;
   // Review: panels under the header and toolbar buttons, for the version on screen (ReviewAssetPage).
   review?: { panels?: ReviewPanelSlot[]; actions?: ReviewActionSlot[]; timeline?: ReviewTimelineSlot };
+  // Settings → Team: the plug-in's own access for the team's members, shown under the Access grid (it saves its own).
+  access?: ComponentType<{ people: { username: string; label: string }[] }>;
 }
 
 export const defineWebPlugin = (plugin: WebPlugin): WebPlugin => plugin;

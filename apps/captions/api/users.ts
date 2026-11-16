@@ -56,6 +56,8 @@ export interface UserRecord {
   cloud: boolean; // cloud transcription and AI in Caption Studio (every account)
   /** Apps and plug-in gates switched off for this account (users.json; a new user account starts with the plug-ins' defaults). */
   off: (Tool | PluginGateId)[];
+  /** Apps this account may open but not change (Settings → Team → Access: Read); unset = none. boot.ts WRITE_GATES enforces it. */
+  read?: Tool[];
   /** sha256 of the Review key: a script or AI reads Review and resolves comments as this user. */
   apiKeyHash?: string;
   /** sha256 of the Full key: a script or AI does what this account does on the site, except Admin, AI settings and paired Macs (boot.ts). */
@@ -107,11 +109,17 @@ export interface SessionUser {
   role: Role | "visitor";
   cloud: boolean;
   off: (Tool | PluginGateId)[];
+  /** apps it may open but not change (UserRecord.read) */
+  read?: Tool[];
 }
 
 /** An app or a plug-in gate is on unless the account's `off` list has it; admins are never refused. */
 export const mayUse = (user: SessionUser, tool: Tool | PluginGateId): boolean =>
   user.role === "admin" || !user.off.includes(tool);
+
+/** The app is on and not set to Read for this account: it may change things there. Admins always may. */
+export const mayChange = (user: Pick<SessionUser, "role" | "off" | "read">, tool: Tool): boolean =>
+  user.role === "admin" || (!user.off.includes(tool) && !user.read?.includes(tool));
 
 /** Stand-in identity when auth is disabled (no APP_SECRET, local use). */
 export const LOCAL_USER: SessionUser = {
@@ -321,6 +329,12 @@ export function setRole(user: UserRecord, role: Role): void {
 /** Switches apps and plug-in gates off for an account (Admin → Users, or the team owner for a member). */
 export function setOff(user: UserRecord, off: (Tool | PluginGateId)[]): void {
   user.off = [...new Set(off)].filter((t) => isTool(t) || isPluginGateId(t) || isRetiredAppId(t));
+  persist();
+}
+
+/** Sets which apps an account may only read (Settings → Team → Access). */
+export function setRead(user: UserRecord, read: unknown[]): void {
+  user.read = [...new Set(read.filter(isTool))];
   persist();
 }
 

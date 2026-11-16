@@ -74,10 +74,11 @@ import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { mcpChallenge, oauthApp } from "./oauth";
 import { cardApp } from "./mcp-cards";
 import { activityApp } from "./activity";
-import { VISITOR, mayUse, touchActive, type Tool } from "./users";
+import { VISITOR, mayChange, mayUse, touchActive, type Tool } from "./users";
 import { env, hostedMode } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
 import { randomUUID } from "node:crypto";
+import { TOOL_NAMES } from "../contracts/tools";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
 import path from "node:path";
@@ -222,6 +223,24 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/designs", ["design"]],
 ];
 
+// Apps set to Read for an account (users.ts `read`): it opens them, but nothing but GET and HEAD reaches their routes.
+// ponytail: a route that reads with POST (a search) is refused too; give it a GET or list it as a read when one turns up.
+export const WRITE_GATES: [string, Tool][] = [
+  ["/api/instagram", "instagram"],
+  ["/api/workshop", "workshop"],
+  ["/api/enhance", "enhance"],
+  ["/api/projects", "captions"],
+  ["/api/review", "review"],
+  ["/api/library", "media"],
+  ["/api/editor", "editor"],
+  ["/api/edit-steps", "editor"],
+  ["/api/folders/editor", "editor"],
+  ["/api/stories", "stories"],
+  ["/api/designs", "design"],
+  ["/api/clips", "notes"],
+  ["/api/documents", "guides"],
+];
+
 let environmentId = "";
 /** This data folder's id (DATA_DIR/environment.json), made once: the Mac app tells its own server from another program. */
 export function environmentOf(): string {
@@ -360,6 +379,10 @@ app.use("/api/*", async (c, next) => {
   const gate = TOOL_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
   if (gate && !gate[1].some((t) => mayUse(user, t))) {
     return c.json({ error: "This app isn't switched on for your account", code: "TOOL_ACCESS" }, 403);
+  }
+  const writeGate = c.req.method === "GET" || c.req.method === "HEAD" ? undefined : WRITE_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
+  if (writeGate && !mayChange(user, writeGate[1])) {
+    return c.json({ error: `${TOOL_NAMES[writeGate[1]]} is read-only for your account`, code: "READ_ONLY" }, 403);
   }
   c.set("user", user);
   if (!viewed) touchActive(user.username);

@@ -66,16 +66,18 @@ export interface Invite {
   email?: string;
   /** set before they join, given to the account when they do: apps and plug-in gates off, and reading the owner's scripts */
   off?: (Tool | PluginGateId)[];
+  /** apps they open but don't change (Read in the Access grid) */
+  read?: Tool[];
   scripts?: boolean;
   /** the owner's workspaces they get (Member.workspaces) */
   workspaces?: string[];
 }
 
-export type InvitePatch = Partial<Pick<Invite, "off" | "scripts" | "workspaces">>;
+export type InvitePatch = Partial<Pick<Invite, "off" | "read" | "scripts" | "workspaces">>;
 
 export type InviteInput = Pick<Invite, "ai" | "budgetUsd" | "email" | "workspaces">;
 /** `off`: apps and plug-in gates switched off for the member's account; a platform admin switches a plug-in's gates. */
-export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd" | "scripts" | "workspaces">> & { off?: (Tool | PluginGateId)[] };
+export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd" | "scripts" | "workspaces">> & { off?: (Tool | PluginGateId)[]; read?: Tool[] };
 
 export interface MemberView extends Member {
   /** the account's display name (Settings → Account), read from the account: unset when it has none */
@@ -85,6 +87,8 @@ export interface MemberView extends Member {
   lastActiveAt: number;
   /** apps and plug-in gates switched off for the account */
   off: (Tool | PluginGateId)[];
+  /** apps the account opens but doesn't change */
+  read: Tool[];
 }
 
 export interface WorkspaceView {
