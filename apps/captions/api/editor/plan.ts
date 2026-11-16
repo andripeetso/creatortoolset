@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import path from "node:path";
-import type { Coverage, EditPlan, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
+import type { Coverage, Critique, EditPlan, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
 import type { EditFeedback, Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
@@ -23,7 +23,7 @@ import { macAway } from "./script";
 import { describeShots, indexSources, logged, songBeats, type LeftOut } from "./index";
 import { readable } from "./media";
 import { generateClip, styles } from "./generate";
-import { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta } from "./store";
+import { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta, type PlannedVersion } from "./store";
 import { styleBlock } from "./styles";
 import { emptyTracks, sourceOf } from "./timeline";
 
@@ -323,6 +323,8 @@ export interface PlanInput {
 export interface Revise {
   notes: EditFeedback[];
   last: { name: string; plan: EditPlan; marked: number[] }[];
+  /** the fix round (critique.ts): the shots the look at the last cut found don't hold up, by number from 1. The check's words, never the person's */
+  findings?: Critique["fails"];
 }
 
 /** S1, S2, … for the sources in index order. */
@@ -368,15 +370,25 @@ export function shotLines(index: FootageIndex): Map<string, string[]> {
   return out;
 }
 
-/** The revise's part of the prompt: the person's notes word for word, and the last version shot by shot. */
+/** The person's notes as a prompt quotes them, oldest first: where each was said, then their words as they are. */
+export const noteLines = (notes: EditFeedback[]): string[] =>
+  notes.map((n) => `- ${n.from === "review" ? `In Review${n.variant ? ` on ${n.variant}` : ""}${n.t !== undefined ? ` at ${n.t.toFixed(1)} s` : ""}` : `In chat${n.variant ? ` about ${n.variant}` : ""}`}: ${JSON.stringify(n.text)}`);
+
+/** The fix round's ask: only the shots the check named change. */
+const FIX_ASK =
+  'A check looked at the last version before the person saw it and found the shots marked "the check" don\'t hold up (the check\'s findings, not the person\'s words). Replace those shots and nothing else: in "shots", {"keep": n} for every other shot, and in place of each marked one a new shot from the footage, {"src": "S2", "in": 31.5, "why": "a few words"}, that holds up against the brief, the person\'s notes and the setup and shows a moment the version doesn\'t show yet. A new shot takes the marked shot\'s place, length and effects.';
+
+/** The revise's part of the prompt: the person's notes word for word, the last version shot by shot, and in the fix round what the check found. */
 function revisePrompt(r: Revise, index: FootageIndex): string[] {
-  const said = r.notes.map((n) => `- ${n.from === "review" ? `In Review${n.variant ? ` on ${n.variant}` : ""}${n.t !== undefined ? ` at ${n.t.toFixed(1)} s` : ""}` : `In chat${n.variant ? ` about ${n.variant}` : ""}`}: ${JSON.stringify(n.text)}`);
+  const found = new Map((r.findings ?? []).map((f) => [f.n - 1, f.why]));
   const shot = (s: PlanShot, k: number, marked: number[]) =>
-    `  ${k + 1}. ${"source" in s.src ? `${tagOf(index, s.src.source)} in ${s.src.inS.toFixed(1)}` : `generated ${s.src.generate.style}`}, ${s.dur.toFixed(2)} s${s.fx?.length ? `, ${s.fx.map((f) => f.type).join(" + ")}` : ""}${s.why ? `: ${s.why}` : ""}${marked.includes(k) ? "  ← a note sits on this shot" : ""}`;
+    `  ${k + 1}. ${"source" in s.src ? `${tagOf(index, s.src.source)} in ${s.src.inS.toFixed(1)}` : `generated ${s.src.generate.style}`}, ${s.dur.toFixed(2)} s${s.fx?.length ? `, ${s.fx.map((f) => f.type).join(" + ")}` : ""}${s.why ? `: ${s.why}` : ""}${marked.includes(k) ? "  ← a note sits on this shot" : ""}${found.has(k) ? `  ← the check: ${found.get(k)}` : ""}`;
   return [
-    `What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n${said.join("\n")}`,
+    ...(r.notes.length ? [`What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n${noteLines(r.notes).join("\n")}`] : []),
     `The last version${r.last.length > 1 ? "s" : ""}, shot by shot:\n${r.last.map((l) => `${l.name}:\n${l.plan.shots.map((s, k) => shot(s, k, l.marked)).join("\n")}`).join("\n")}`,
-    'Make the next version from the last one and change what the notes speak to, nothing else: in each plan\'s "shots", {"keep": n} keeps shot n of that version as it is (its source, timing and effects), and a new shot takes the place of each one that changes. Plans are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another song), write all of its shots new.',
+    r.findings
+      ? FIX_ASK
+      : 'Make the next version from the last one and change what the notes speak to, nothing else: in each plan\'s "shots", {"keep": n} keeps shot n of that version as it is (its source, timing and effects), and a new shot takes the place of each one that changes. Plans are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another song), write all of its shots new.',
   ];
 }
 
@@ -1090,7 +1102,44 @@ function frameOf(edit: EditMeta, index: FootageIndex): RepairContext["size"] {
  * planned version by that), and names an unnamed edit after its kind.
  */
 export async function planStep({ edit, job, signal }: StepContext, sentences: Sentence[]): Promise<void> {
-  const route = aiFor(whoFor(job.actor!), "editor", "AI Editor plan");
+  const { route, left, song, input, repair } = await planContext(edit, job.actor!, sentences, signal);
+  if (signal.aborted) return;
+  const revise = reviseOf(edit);
+  const { system, user } = planPrompt({ ...input, ...(revise ? { revise } : {}) });
+  let raws: Record<string, unknown>[];
+  try {
+    raws = await completeWithFallback(system, user, signal, parsePlans, route);
+  } catch (e) {
+    const away = macAway(e);
+    if (away) throw new NeedsKey(away.message);
+    throw e;
+  }
+  if (signal.aborted) return;
+  const notes = [song ? `Cut to “${song.title}” (${song.from})` : "No song: the footage's own sound leads"];
+  if (raws.length < edit.versions) notes.push(`The AI planned ${raws.length} of the ${edit.versions} versions asked for`);
+  const shots: Record<string, PlannedVersion> = {};
+  const plans = raws.slice(0, edit.versions).map((raw, k) => {
+    const name = `v${k + 1}`;
+    const last = revise?.last.find((l) => l.name === name)?.plan;
+    // a revise's answer may leave out what stays: the kind, the variation and the words on screen of the last version
+    const answer = last ? { kind: last.kind, ...(last.variation ? { variation: last.variation } : {}), ...(last.texts ? { texts: last.texts } : {}), ...raw } : raw;
+    shots[name] = repairPlan(answer, { ...repair, ...(last ? { last } : {}) });
+    const p = shots[name]!.plan;
+    return { name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] };
+  });
+  await saveStep(edit.id, "shots", shots);
+  await saveStep(edit.id, "plan", { lines: [], plans, notes, at: Date.now(), coverage: coverageOf(edit, repair.index, left, Object.values(shots).map((x) => x.plan), song?.id) });
+  const kind = shots.v1?.plan.kind;
+  const now = readEdit(edit.id);
+  if (kind && now?.name === UNNAMED) await saveEdit({ ...now, name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`.slice(0, 60), byTool: [...new Set([...(now.byTool ?? []), "name" as const])] });
+}
+
+/**
+ * What a plan is written from: the person's own AI, the footage index with what is seen in it (`story`: and what
+ * happens across it), the song and its beats, and the prompt's and the repair's parts.
+ */
+async function planContext(edit: EditMeta, actor: string, sentences: Sentence[], signal: AbortSignal, story = true) {
+  const route = aiFor(whoFor(actor), "editor", "AI Editor plan");
   if (route.off) throw new NeedsKey(route.off);
   const { left, ...found } = await indexSources(edit, signal);
   let index: FootageIndex = found;
@@ -1105,15 +1154,24 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   // the song is what is heard, not footage to cut
   if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
   // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
-  index = await describeShots(index, { actor: job.actor!, story: true, workspace: await workspaceSetup(edit, 6000) }, signal);
-  if (signal.aborted) return;
-  const size = frameOf(edit, index);
+  index = await describeShots(index, { actor, story, workspace: await workspaceSetup(edit, 6000) }, signal);
   const gen = styles();
-  const genIds = gen.map((g) => g.id);
   const setup = [await workspaceSetup(edit, 24_000), styleBlock(edit.style)].filter(Boolean).join("\n\n");
-  const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
-  const revise = reviseOf(edit);
-  const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText, ...(revise ? { revise } : {}) });
+  const packText = [await packInstructions(actor, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
+  const input: PlanInput = { brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText };
+  const repair: RepairContext = { index, ...(song ? { song } : {}), targetS: edit.targetS, size: frameOf(edit, index), fixedSize: !!edit.size?.w, gen: gen.map((g) => g.id), brief: edit.brief };
+  return { route, left, song, input, repair };
+}
+
+/**
+ * The fix round (tasks/flywheel/PLAN.md 4.2): the shots the look at a version's cut named (critique.ts) go back through
+ * the revise with the check's findings, apart from the person's notes and never among them. Null when the AI's answer
+ * changes no shot.
+ */
+export async function fixPlan(edit: EditMeta, actor: string, variant: string, last: EditPlan, fails: Critique["fails"], signal: AbortSignal): Promise<{ plan: EditPlan; notes: string[] } | null> {
+  const { route, input, repair } = await planContext(edit, actor, readStep(edit.id, "analysis")?.sentences ?? [], signal, false);
+  if (signal.aborted) return null;
+  const { system, user } = planPrompt({ ...input, versions: 1, revise: { notes: edit.feedback ?? [], last: [{ name: variant, plan: last, marked: [] }], findings: fails } });
   let raws: Record<string, unknown>[];
   try {
     raws = await completeWithFallback(system, user, signal, parsePlans, route);
@@ -1122,24 +1180,29 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
     if (away) throw new NeedsKey(away.message);
     throw e;
   }
-  if (signal.aborted) return;
-  const notes = [song ? `Cut to “${song.title}” (${song.from})` : "No song: the footage's own sound leads"];
-  if (raws.length < edit.versions) notes.push(`The AI planned ${raws.length} of the ${edit.versions} versions asked for`);
-  const shots: Record<string, { plan: EditPlan; notes: string[] }> = {};
-  const plans = raws.slice(0, edit.versions).map((raw, k) => {
-    const name = `v${k + 1}`;
-    const last = revise?.last.find((l) => l.name === name)?.plan;
-    // a revise's answer may leave out what stays: the kind, the variation and the words on screen of the last version
-    const answer = last ? { kind: last.kind, ...(last.variation ? { variation: last.variation } : {}), ...(last.texts ? { texts: last.texts } : {}), ...raw } : raw;
-    shots[name] = repairPlan(answer, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen: genIds, brief: edit.brief, ...(last ? { last } : {}) });
-    const p = shots[name]!.plan;
-    return { name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] };
+  return signal.aborted ? null : swapShots(raws[0]!, last, fails.map((f) => f.n), repair);
+}
+
+/**
+ * The fix round's answer laid into the last version: each shot the check named takes the AI's next new shot, checked
+ * like any shot (a source that exists, a moment and a picture not shown yet) and given the slot's place, length, speed
+ * and effects; every other shot stays exactly as it was. Null when no shot changed.
+ */
+export function swapShots(raw: Record<string, unknown>, last: EditPlan, named: number[], c: RepairContext): { plan: EditPlan; notes: string[] } | null {
+  const given = (Array.isArray(raw.shots) ? raw.shots : []).filter(obj);
+  const usable = (s: Record<string, unknown> | undefined) => !!s && s.keep === undefined && typeof srcOf(s, c.index) !== "string";
+  // an answer with every slot is read slot by slot; a shorter one gives its new shots to the named slots in turn
+  const whole = given.length === last.shots.length;
+  const fresh = given.filter(usable);
+  const shots = last.shots.map((s, k) => {
+    const pick = !named.includes(k + 1) ? undefined : whole ? (usable(given[k]) ? given[k] : undefined) : fresh.shift();
+    return pick ? { ...pick, dur: s.dur, speed: s.speed ?? 1, ramp: s.ramp, fx: s.fx ?? [], enter: s.enter, frame: s.frame, scale: s.scale, sound: s.sound } : { keep: k + 1 };
   });
-  await saveStep(edit.id, "shots", shots);
-  await saveStep(edit.id, "plan", { lines: [], plans, notes, at: Date.now(), coverage: coverageOf(edit, index, left, Object.values(shots).map((x) => x.plan), song?.id) });
-  const kind = shots.v1?.plan.kind;
-  const now = readEdit(edit.id);
-  if (kind && now?.name === UNNAMED) await saveEdit({ ...now, name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`.slice(0, 60), byTool: [...new Set([...(now.byTool ?? []), "name" as const])] });
+  if (shots.every((s) => "keep" in s)) return null;
+  // laid with no song, length or opener to fit again (those made the last version's timing): then given that timing, slot for slot
+  const r = repairPlan({ shots }, { ...c, song: undefined, brief: "", targetS: 0, last });
+  if (r.plan.shots.length !== last.shots.length) return null;
+  return { plan: { ...last, shots: r.plan.shots.map((s, k) => ({ ...s, at: last.shots[k]!.at, dur: last.shots[k]!.dur })) }, notes: r.notes };
 }
 
 /**
@@ -1183,7 +1246,7 @@ export function coverageOf(edit: Pick<EditMeta, "sources">, index: FootageIndex,
 }
 
 /** The draft of a planned version: its sources and generated clips, laid as a timeline. */
-export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: EditPlan; notes: string[] }, signal: AbortSignal): Promise<void> {
+export async function draftPlan(edit: EditMeta, variant: string, saved: PlannedVersion, signal: AbortSignal): Promise<void> {
   const { plan } = saved;
   const db = libraryDb();
   const sources: Record<string, TimelineSource> = {};
@@ -1218,6 +1281,7 @@ export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: 
   if (signal.aborted) return;
   const timeline = planTimeline(plan, sources, `${edit.name} ${variant}`);
   if (!timeline.tracks.V1.items.length) throw new Error(`Nothing in ${variant}'s plan can be shown`);
-  await saveDraft(edit.id, variant, { timeline, notes: saved.notes });
+  // the AI's cut waits for its look before Review (critique.ts); a plan whose cut was looked at already carries the look
+  await saveDraft(edit.id, variant, { timeline, notes: saved.notes, ...(saved.critique ? { critique: saved.critique } : { due: saved.fix ? 2 : 1 }) });
   await clearPasses(edit.id, variant);
 }

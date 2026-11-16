@@ -456,6 +456,8 @@ describe("footage where nobody speaks reaches Review", () => {
       { kind: "broll", variant: "v1", state: "done", error: null },
       { kind: "post", variant: "v1", state: "done", error: null },
       { kind: "preview", variant: "v1", state: "done", error: null },
+      // the AI's cut is looked at before Review (critique.ts): this one passes
+      { kind: "critique", variant: "v1", state: "done", error: null },
       { kind: "file", variant: "v1", state: "done", error: null },
     ]);
     // the song is never transcribed; the AI was shown the footage and the song's beats

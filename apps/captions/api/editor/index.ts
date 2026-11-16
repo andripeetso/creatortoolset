@@ -182,6 +182,12 @@ export async function indexSources(
   return { sources, left };
 }
 
+/** What is known of a source's shots without reading it again: the library's shot descriptions, else the AI Editor's own index of it. */
+export async function knownShots(versionId: string): Promise<IndexShot[]> {
+  const lines = stretchesOf(libraryDb(), versionId);
+  return lines.length ? lines.map(lineShot) : ((await cached(versionId))?.src.shots ?? []);
+}
+
 /** One shot description as the plan reads a shot. */
 const lineShot = (s: Stretch): IndexShot => ({ a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}) });
 

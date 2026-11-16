@@ -1,5 +1,6 @@
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Critique } from "../../contracts/edit-plan";
 import type { Item, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
@@ -13,7 +14,7 @@ import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
 import { renderPlanPreview } from "./plan-render";
-import { editDir, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
+import { editDir, type EditMeta, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -180,33 +181,48 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
   return out;
 }
 
-/** The preview step (one version): render, then into Review as the next version of the draft's Review video. */
+/** Where a version's preview is rendered, before Review takes it. */
+export const previewFile = (editId: string, variant: string) => path.join(editDir(editId), "previews", `${variant}.mp4`);
+
+/**
+ * The preview step (one version): render, then into Review as the next version of the draft's Review video. A planned
+ * cut the AI made waits for its look (critique.ts), which files it.
+ */
 export async function previewStep({ edit, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   // a preview from an older run's copies would be filed in Review as this cut (faces unblurred, say)
   if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
-  const out = path.join(editDir(edit.id), "previews", `${variant}.mp4`);
+  const out = previewFile(edit.id, variant);
   await mkdir(path.dirname(out), { recursive: true });
   await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
-  if (signal.aborted) return;
+  if (signal.aborted || d.due) return;
+  await fileInReview(edit, variant, d.timeline, d.critique?.fails);
+}
+
+/**
+ * The rendered preview into Review as the next version of the draft's Review video, with the timeline it was cut from.
+ * `fails`: the shots its look found still don't hold up, named on that Review version.
+ */
+export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = []): Promise<void> {
+  const out = previewFile(edit.id, variant);
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
-  const v = { owner: edit.createdBy, name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant }, workspace: edit.projectId };
+  const v = { owner: edit.createdBy, name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(fails.length ? { fails } : {}) }, workspace: edit.projectId };
   const place = (dest: string) => rename(out, dest);
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
   if (!added) throw new Error("Review did not take the preview");
   // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)
-  await saveFiled(edit.id, added.meta.id, added.n, { variant, timeline: d.timeline });
+  await saveFiled(edit.id, added.meta.id, added.n, { variant, timeline });
   const db = libraryDb();
-  const words = Object.fromEntries(Object.keys(d.timeline.sources).flatMap((id) => {
-    const w = d.timeline.sources[id]!.file ? null : wordsOf(db, id);
+  const words = Object.fromEntries(Object.keys(timeline.sources).flatMap((id) => {
+    const w = timeline.sources[id]!.file ? null : wordsOf(db, id);
     return w ? [[id, w]] : [];
   }));
-  await fileTimelineView(added.meta.id, added.n, `${variant}-${added.n}.view.json`, draftView(d.timeline, words));
+  await fileTimelineView(added.meta.id, added.n, `${variant}-${added.n}.view.json`, draftView(timeline, words));
   await saveStep(edit.id, "review", { ...filed, [variant]: { assetId: added.meta.id, n: added.n } });
 }
 
