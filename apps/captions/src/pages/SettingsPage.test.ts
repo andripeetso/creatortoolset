@@ -19,7 +19,7 @@ describe("Settings sections by server mode", () => {
   });
 
   it("keeps General first and the server's pages last", () => {
-    const all = ids(hostedAdmin).filter((id) => id !== "account" && id !== "admin"); // routable, not in the sidebar
+    const all = ids(hostedAdmin).filter((id) => id !== "account" && id !== "admin" && id !== "plugin"); // routable, not in the sidebar
     expect(all[0]).toBe("general");
     expect(all.at(-1)).toBe("keys");
   });

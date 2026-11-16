@@ -677,7 +677,7 @@ const pathServed = (app: Hono<any, any, any>, base: string): boolean => app.rout
  * Mount each plug-in's routes at /api/x/<id>. Throws when that path is already served, so a boot never answers one path twice,
  * and when a gate is declared badly. The loaded plug-ins are then the ones new accounts get their default-off gates from.
  */
-export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
+export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[], guard?: (plugin: ServerPlugin) => MiddlewareHandler | undefined): void {
   checkGates(plugins);
   checkEditFlags(plugins);
   checkProviders(plugins);
@@ -694,6 +694,9 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
     if (!plugin.routes) continue;
     const base = `/api/x/${plugin.id}`;
     if (pathServed(app, base)) throw new Error(`plug-in ${plugin.id}: ${base} is already served`);
+    // ahead of its routes: a plug-in off in the request's workspace refuses them (boot.ts, lib/plugin-workspaces.ts)
+    const g = guard?.(plugin);
+    if (g) for (const at of [base, `${base}/*`]) app.use(at, g);
     app.route(base, plugin.routes);
   }
 }

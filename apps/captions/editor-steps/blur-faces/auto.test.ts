@@ -1,6 +1,6 @@
 // Face Blur's automatic covers: what is queued when a file comes into the Media Library, a Mac's claim, the AI's answer,
 // the covered copy added beside the original, and each way a file ends. Only the person's AI and the Macs are stood in.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,11 +65,11 @@ beforeEach(async () => {
 describe("what comes into the Media Library", () => {
   it("is queued only with the switch on, and only photos and videos", async () => {
     const off = await added("mp4");
-    expect(queueVersion(event(off))).toBe(false);
+    expect(await queueVersion(event(off))).toBe(false);
     await settings({});
-    expect(queueVersion(event(await added("mp4")))).toBe(true);
-    expect(queueVersion(event(await added("jpg")))).toBe(true);
-    expect(queueVersion(event(await added("m4a")))).toBe(false);
+    expect(await queueVersion(event(await added("mp4")))).toBe(true);
+    expect(await queueVersion(event(await added("jpg")))).toBe(true);
+    expect(await queueVersion(event(await added("m4a")))).toBe(false);
     expect(autoJobs.waits("ana")).toBe(true);
     expect(autoJobs.waits("bo")).toBe(false);
   });
@@ -77,8 +77,8 @@ describe("what comes into the Media Library", () => {
   it("is queued once, even when it is read again", async () => {
     await settings({});
     const v = await added("mp4");
-    expect(queueVersion(event(v))).toBe(true);
-    expect(queueVersion(event(v))).toBe(false);
+    expect(await queueVersion(event(v))).toBe(true);
+    expect(await queueVersion(event(v))).toBe(false);
   });
 });
 
@@ -86,7 +86,7 @@ describe("a Mac's job", () => {
   it("hands out the file with the settings, and a file with no face ends with no copy", async () => {
     await settings({ look: "mosaic", strength: 0.9, size: 1.5 });
     const v = await added("mp4");
-    queueVersion(event(v));
+    await queueVersion(event(v));
     const job = autoJobs.claim(mac)!;
     // the style goes along as text, as a device job's options are
     expect(job).toMatchObject({
@@ -105,7 +105,7 @@ describe("a Mac's job", () => {
   it("adds the covered copy beside the original, linked to it and never covered again", async () => {
     await settings({});
     const v = await added("jpg");
-    queueVersion(event(v));
+    await queueVersion(event(v));
     const job = autoJobs.claim(mac)!;
     const copy = path.join(dir, "covered.jpg");
     writeFileSync(copy, Buffer.from("\0\0\0\x18ftypmp42", "latin1"));
@@ -118,13 +118,13 @@ describe("a Mac's job", () => {
     expect(made.library_id).toBe("lib_a"); // the original's library, so the original's workspace
     expect(made.title).toMatch(/ blurred$/);
     expect(libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ?").get(v)).toBeTruthy(); // the original stays
-    expect(queueVersion(event(made.version_id))).toBe(false); // the copy comes in too: never covered again
+    expect(await queueVersion(event(made.version_id))).toBe(false); // the copy comes in too: never covered again
   });
 
   it("in Only some faces, a failed AI writes nothing and the file says why, until Try again", async () => {
     await settings({ mode: "some" });
     const v = await added("mp4");
-    queueVersion(event(v));
+    await queueVersion(event(v));
     const job = autoJobs.claim(mac)!;
     const faces = { faces: [{ id: "F1", picture: "/9j/AAAA", note: "middle left of the frame; 12% of its width; seen for 4.2 s" }] };
     ai.configured = false;
@@ -143,7 +143,7 @@ describe("a Mac's job", () => {
 
   it("goes back in the queue when its Mac goes quiet, and fails after three times", async () => {
     await settings({});
-    queueVersion(event(await added("mp4")));
+    await queueVersion(event(await added("mp4")));
     for (let i = 0; i < AUTO_LIMITS.tries; i++) {
       macs.online = new Set(["mac-1"]);
       expect(autoJobs.claim(mac)).not.toBeNull();
@@ -163,5 +163,39 @@ describe("the switch", () => {
     const r = (await (await call("GET", "/auto")).json()) as { can: boolean; why: string };
     expect(r.can).toBe(false);
     expect(r.why).toMatch(/Mac app/);
+  });
+});
+
+describe("workspaces", () => {
+  it("covers new files only in a workspace where Face Blur is on: after the update, the one the account works in today", async () => {
+    const { setPluginsForTest } = await import("../../api/lib/plugin-workspaces");
+    // installed before Face Blur could be on per workspace (the first boot's list names it)
+    await setPluginsForTest([plugin], ["blur-faces"]);
+    const projects = path.join(dir, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    for (const [id, name, createdAt] of [["ws-tiny", "Tiny Acrobatics", 1], ["ws-homes", "Tiny Homes", 2]] as const)
+      writeFileSync(path.join(projects, `${id}.json`), JSON.stringify({ id, owner: "ana", name, createdAt, updatedAt: createdAt }));
+    mkdirSync(path.join(dir, "workshop", "users"), { recursive: true });
+    writeFileSync(path.join(dir, "workshop", "users", "ana.json"), JSON.stringify({ currentProjectId: "ws-tiny" }));
+    for (const [lib, ws] of [["lib_tiny", "ws-tiny"], ["lib_homes", "ws-homes"]])
+      libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'ana', ?, 'local', ?, 0)").run(lib, lib, JSON.stringify({ projectId: ws }));
+    await settings({}); // auto on (in the workspace this request works in, the current one)
+    const into = async (lib: string) => {
+      const v = await added("jpg");
+      return queueVersion({ libraryId: lib, versionId: v, owner: "ana" });
+    };
+    expect(await into("lib_homes")).toBe(false);
+    expect(await into("lib_tiny")).toBe(true);
+    // switched on in Tiny Homes too, with the switch there on: covered there as well
+    const { pluginWorkspacesApp } = await import("../../api/lib/plugin-workspaces");
+    const api = new Hono<{ Variables: { user: unknown } }>();
+    api.use(async (c, next) => {
+      c.set("user", { username: "ana", role: "user", off: [] });
+      await next();
+    });
+    api.route("/api/plugins", pluginWorkspacesApp);
+    const put = await api.request("/api/plugins/blur-faces/workspaces", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ only: ["ws-tiny", "ws-homes"] }) });
+    expect(put.status).toBe(200);
+    expect(await into("lib_homes")).toBe(true);
   });
 });

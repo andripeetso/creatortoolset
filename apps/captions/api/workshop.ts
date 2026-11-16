@@ -59,6 +59,7 @@ import {
   sharedHere,
   writeUserMarker,
 } from "./lib/workshop/workspace";
+import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
 import { workspaceKnowledge } from "./lib/workshop/context";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
@@ -1846,17 +1847,20 @@ async function scopeOldRecords(user: SessionUser): Promise<void> {
 workshopApp.get("/workspace", async (c) => {
   const user = c.get("user");
   await scopeOldRecords(user).catch((e: unknown) => console.warn(`[workshop] keeping projects apart: ${errorMessage(e)}`));
-  return c.json(await getWorkspace(user));
+  return c.json(await withPluginsOff(await getWorkspace(user)));
 });
+
+/** The workspaces, with the plug-ins off in each (lib/plugin-workspaces.ts): the app hides them as soon as it switches. */
+const withPluginsOff = async (ws: Awaited<ReturnType<typeof getWorkspace>>) => ({ ...ws, pluginsOff: await pluginsOffIn(ws.projects) });
 
 workshopApp.patch("/workspace", async (c) => {
   const user = c.get("user");
   const body = (await c.req.json().catch(() => null)) as { currentProjectId?: unknown } | null;
   const raw = body?.currentProjectId;
   try {
-    if (raw === null || raw === "") return c.json(await setCurrentProjectId(user, null));
+    if (raw === null || raw === "") return c.json(await withPluginsOff(await setCurrentProjectId(user, null)));
     if (!okId(raw)) return c.json({ error: "Unknown workspace" }, 400);
-    return c.json(await setCurrentProjectId(user, raw));
+    return c.json(await withPluginsOff(await setCurrentProjectId(user, raw)));
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 404);
   }

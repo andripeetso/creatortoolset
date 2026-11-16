@@ -9,6 +9,8 @@ import { PAGE_BODIES } from "@/components/settings/pages";
 import { AccountAvatar } from "@/components/settings/AccountSection";
 import { navBlocks, navListFor, resolveSection, sectionsFor, type NavContext, type SettingsPageId } from "@/components/settings/nav";
 import { PageActionContext } from "@/components/settings/page-action";
+import { pluginOfSection, WithPluginWorkspaces } from "@/components/settings/PluginWorkspaces";
+import { webPlugins } from "@/plugins.gen";
 import { searchSettings, type SearchHit } from "@/components/settings/search";
 import { hasThisMac, useMacRecorder } from "@/components/settings/ThisMacSection";
 import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
@@ -103,7 +105,10 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const current = entries.find((s) => s.id === resolved.id)!;
   // a plug-in section brings its own body; a built-in one is drawn by its page (pages.tsx)
   const Page = (PAGE_BODIES as Partial<Record<string, ComponentType<{ sub?: string }>>>)[current.id as SettingsPageId];
-  const body = current.body ?? (Page ? <Page sub={sub} /> : null);
+  // a plug-in's own section: which workspaces it works in, at the top (PluginWorkspaces.tsx)
+  const ownPlugin = current.body ? pluginOfSection(current.id) : undefined;
+  const body = ownPlugin ? <WithPluginWorkspaces id={ownPlugin}>{current.body}</WithPluginWorkspaces> : (current.body ?? (Page ? <Page sub={sub} /> : null));
+  const title = current.id === "plugin" && sub ? (webPlugins.find((p) => p.id === sub)?.name ?? sub) : current.title;
 
   const navList = navListFor(ctx);
   const needle = query.trim();
@@ -338,7 +343,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                     <span className="font-medium text-foreground">{HOME_TILE_NAMES[sub]}</span>
                   </>
                 ) : (
-                  <span className="font-medium text-foreground">{current.title}</span>
+                  <span className="font-medium text-foreground">{title}</span>
                 )}
               </DialogTitle>
               <div ref={setActionEl} className="flex shrink-0 items-center gap-2 empty:hidden" />

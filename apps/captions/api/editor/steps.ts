@@ -61,8 +61,9 @@ export function stepsView(user: string): StepsView {
   const saved = readSaved(user);
   const loaded = pluginEditorSteps();
   const canAdd = folderPluginsEnabled();
-  const rows: StepRow[] = loaded.map(({ run: _run, pluginId: _p, ...info }) => ({
+  const rows: StepRow[] = loaded.map(({ run: _run, pluginId, ...info }) => ({
     ...info,
+    pluginId,
     state: "on" as const,
     use: saved[info.id]?.use ?? true,
     values: valuesOf(info, saved[info.id]?.values),
@@ -85,11 +86,11 @@ export function stepsView(user: string): StepsView {
   return { steps: rows, canAdd };
 }
 
-/** The steps a new edit of this account uses: loaded, in use, with their values (lowest order first). */
-export function chosenSteps(user: string): EditStepChoice[] {
+/** The steps a new edit of this account uses: loaded, in use, with their values (lowest order first); none from a plug-in in `off` (off in the edit's workspace). */
+export function chosenSteps(user: string, off: ReadonlyArray<string> = []): EditStepChoice[] {
   const saved = readSaved(user);
   return pluginEditorSteps()
-    .filter((s) => saved[s.id]?.use ?? true)
+    .filter((s) => (saved[s.id]?.use ?? true) && !off.includes(s.pluginId))
     .map((s) => ({ id: s.id, values: valuesOf(s, saved[s.id]?.values) }));
 }
 

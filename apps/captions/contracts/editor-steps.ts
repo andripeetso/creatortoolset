@@ -43,6 +43,8 @@ export interface StepRow extends StepInfo {
   folder?: string;
   /** the Home tool it adds to, as its plugin.ts says (add, off and loaded; a HomeTile id, contracts/tools.ts): Community's heading */
   kind?: string;
+  /** the plug-in a loaded step comes from (on); any other row's id is its plug-in's */
+  pluginId?: string;
   /** new edits use it (only a step that is on) */
   use: boolean;
   /** the person's values for its options, the defaults filled in */
