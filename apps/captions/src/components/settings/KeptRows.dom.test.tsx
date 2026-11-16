@@ -49,7 +49,7 @@ it("a computer's proxies: its name, size and clips, and Empty for that computer"
   await act(async () => empty.click());
   expect(vi.mocked(confirmDialog).mock.calls[0]![0]).toMatchObject({
     title: "Delete the proxies of 12 clips on Studio Mac?",
-    body: "3.4 GB. Clips kept offline stay. A step that needs one downloads it again. This cannot be undone.",
+    body: "Clips kept offline are not deleted.",
   });
   expect(urls).toContain("POST /api/devices/storage/kept/proxies/empty?device=dev_mac");
   act(() => root.unmount());

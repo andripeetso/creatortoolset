@@ -68,10 +68,10 @@ function ShareBar({ name, bytes, total }: { name: string; bytes: number; total: 
   );
 }
 
-/** What Empty deletes, for the question asked before it: the thing in one word pair, then the one line on what is kept (none for a trash). */
+/** What Empty deletes, for the question asked before it: the thing in one word pair, then the one line on what is kept (the button says how much). */
 const ASK: Partial<Record<KeptKind, [thing: string, kept: string]>> = {
-  "captions-trash": ["deleted Caption Studio project", ""],
-  "review-trash": ["deleted Review video", ""],
+  "captions-trash": ["deleted Caption Studio project", "This cannot be undone."],
+  "review-trash": ["deleted Review video", "This cannot be undone."],
   "chat-pictures": ["chat picture", "The chats are not deleted."],
   exports: ["exported video", "The projects are not deleted."],
   "chat-videos": ["chat video", "A video sent on to another tool is not deleted."],
@@ -90,7 +90,7 @@ export function emptyQuestion(r: KeptRow): DialogOpts {
         : r.kind === "proxies"
           ? `Delete the proxies of ${r.items} clip${s} on ${r.device?.name ?? "your computers"}?`
           : `Delete ${r.items} ${thing}${s}?`,
-    body: [`${bytesLabel(r.bytes)}.`, kept, "This cannot be undone."].filter(Boolean).join(" "),
+    body: kept,
     ok: `Delete ${bytesLabel(r.bytes)}`,
     danger: true,
   };
