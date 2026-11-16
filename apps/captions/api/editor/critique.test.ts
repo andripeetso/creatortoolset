@@ -205,7 +205,7 @@ describe("the look at a planned cut before Review", () => {
     answers = [Object.assign(new MacClaudeError("Your Claude plan's 5-hour limit is reached; it resets 5pm.", "limit"), { limited: { until } })];
     expect(await run(e, "draft")).toEqual(doneAll(["draft", "broll", "post", "preview", "critique", "file"]));
     expect(looks).toHaveLength(1);
-    const line = "Not looked at before Review: Your Claude plan's 5-hour limit is reached; it resets 5pm";
+    const line = "Not checked before Review: Your Claude plan's 5-hour limit is reached; it resets 5pm";
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v).toHaveLength(1);
     // the line rides where the failing shots are named, as shot 0: no shot's own

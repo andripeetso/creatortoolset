@@ -217,7 +217,7 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
       c = await look(edit, job.actor!, variant, saved.plan, d, round, signal);
     } catch (e) {
       const why = await cant(e);
-      if (why) return file(undefined, `Not looked at before Review: ${why}`);
+      if (why) return file(undefined, `Not checked before Review: ${why}`);
       throw e;
     }
     if (signal.aborted) return;
