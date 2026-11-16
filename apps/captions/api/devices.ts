@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
@@ -27,6 +27,8 @@ import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
 import { env } from "./lib/env";
+import { workWaits } from "./work/place";
+import { workApp } from "./work/routes";
 
 /**
  * The Macs that run AI jobs (lib/devices.ts). Routes (boot.ts mounts them at /api/devices):
@@ -42,8 +44,10 @@ import { env } from "./lib/env";
  *   GET /api/devices/relay/cutout/:id, POST …/cutout/:id | …/cutout/:id/fail   a cut-out (lib/cutouts.ts): the picture, its PNG or why not
  *   GET /api/devices/relay/job/:kind/:id, POST …/:id | …/:id/file | …/:id/fail   a plug-in's job (lib/plugin.ts DeviceJobSlot)
  *   GET /api/devices/relay/transcribe/:id, POST …/transcribe/:id | …/:id/fail   a transcript (lib/computer-transcribe.ts): the audio, the words or why not
+ *   /api/devices/relay/work/…                                    a computer's work package worker (api/work/routes.ts, contracts/work.ts)
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
- *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits: contracts/devices.ts)
+ *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits, { work: true } when a
+ *       work package step waits for it: contracts/devices.ts)
  *       the Mac app's side, Authorization: Bearer ctd_… (boot.ts checks it before the cookie gate); the same bodies
  *       as the relay routes in mac-claude.ts (relayRoutes)
  */
@@ -112,10 +116,14 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
  * as the claim keeps them, and true says a claim made now would be handed a step, so the poll is answered with the hint.
  * A list that is no list of kinds is read as none sent.
  */
-async function editorWaits(device: string, listed: unknown): Promise<boolean> {
+async function editorWaits(device: string, listed: unknown): Promise<DeviceHint | null> {
   const d = deviceOf(device);
   const kinds = parseKinds(listed);
-  return !!d && !!kinds && waits(d, await declared(d, kinds));
+  if (!d || !kinds) return null;
+  const editor = await waits(d, await declared(d, kinds));
+  // a core step placed on a computer: the app starts its worker, which claims it through work/claim
+  const work = await workWaits(d);
+  return editor || work ? { ...(editor ? { editor: true as const } : {}), ...(work ? { work: true as const } : {}) } : null;
 }
 /**
  * Whether a step of one of these kinds waits for this device: an edit's (editor/worker.ts), a cut-out (lib/cutouts.ts),
@@ -152,11 +160,12 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
   return c.json(await ended(d, failForDevice(d.id, jobId(c), why)));
 });
 // a step's file from the server's copy (contracts/devices.ts DeviceFootage `copy`): only to the device that holds the step,
-// and only what the server already keeps (nothing is uploaded for it)
+// and only what the server already keeps (nothing is uploaded for it): its proxy; the original only when asked for and
+// the library uploads originals (editor/reach.ts heldCopy)
 devicesApp.get("/relay/editor/job/:id/footage/:version", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const key = heldCopy(d.id, jobId(c), c.req.param("version"));
+  const key = heldCopy(d.id, jobId(c), c.req.param("version"), c.req.query("original") === "1");
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 // a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
@@ -263,6 +272,7 @@ devicesApp.post("/relay/transcribe/:id/fail", async (c) => {
   return c.json(await ended(d, transcriptFailed(d.id, jobId(c), typeof b?.error === "string" && b.error ? b.error : "Your computer could not transcribe it.")));
 });
 
+devicesApp.route("/relay/work", workApp);
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
 devicesApp.route("/storage", storageApp);
 

@@ -254,6 +254,14 @@ export function setDeviceKinds(id: string, kinds: string[]): void {
   persist();
 }
 
+/** A computer's work package worker, by its last work claim (api/work/routes.ts). Written only when it changes. */
+export function setDeviceWork(id: string, work: NonNullable<Device["work"]>): void {
+  const d = find(id);
+  if (!d || JSON.stringify(d.work ?? null) === JSON.stringify(work)) return;
+  d.work = work;
+  persist();
+}
+
 /** The shot description sheets a Mac keeps for this server (library/mac-look.ts). Written only when they change. */
 export function setDeviceLooks(id: string, looks: NonNullable<Device["looks"]>): void {
   const d = find(id);

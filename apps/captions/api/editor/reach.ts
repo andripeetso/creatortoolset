@@ -7,10 +7,11 @@ import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
 import { folderFor, hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
-import { libraryDb } from "../library/db";
+import { libraryDb, libraryUpload } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
-import { readEdit } from "./store";
+import { readDraft, readEdit } from "./store";
+import { workWaitLine } from "../work/place";
 
 /**
  * Which of a person's computers may take an AI Editor step that reads the edit's footage: one that can get at every
@@ -18,6 +19,7 @@ import { readEdit } from "./store";
  * found, Settings → Storage), else from the copy the server keeps. Among the computers that are online, free and
  * declare the step, the ones that get at the files the best way decide, and load balancing (lib/balance.ts) picks
  * among those, per step: a stronger computer that can't read the files never holds a step back from one that can.
+ * A computer never downloads an original to analyse or cut: it reads a file where it is, else the server's proxy.
  */
 
 /** One footage file as the library keeps it: where it is on a computer (if anywhere), and the server's copy. */
@@ -28,10 +30,11 @@ export interface FileRow {
   mac_path: string | null;
   mac_device: string | null;
   proxy: string | null;
+  library_id?: string;
 }
 
-/** How a computer gets at one file: its own path, or the server's copy (the video file, or only its proxy). */
-export type FileAt = { path: string } | { copy: "original" | "proxy" };
+/** How a computer gets at one file: its own path, or the server's proxy (never the original: PRD 4.2). */
+export type FileAt = { path: string } | { copy: "proxy" };
 
 /** How `host` gets at file `r`; null when it can't. */
 export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here: (host: string) => boolean): FileAt | null {
@@ -41,29 +44,35 @@ export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here
   const from = r.mac_path ? (r.mac_device ?? undefined) : undefined;
   const there = at && ((from && hostPath(at, folders, host, from)) || hostPath(at, folders, host));
   if (there) return { path: there };
-  // "mac:<id>": indexed on a Mac and never uploaded, so the server has no copy of the file itself
-  if (!r.source_key.startsWith("mac:")) return { copy: r.source_key === r.proxy ? "proxy" : "original" };
+  // else the server's proxy; an original the server holds is never downloaded to analyse or cut
   return r.proxy ? { copy: "proxy" } : null;
 }
 
-/** How well a computer gets at all of a step's files: 3 every one on it, 2 some from the server, 1 some only as a proxy, 0 not all. */
+/** How well a computer gets at all of a step's files: 3 every one on it, 2 some as the server's proxy, 0 not all. */
 export function rankOf(files: Array<FileAt | null>): number {
-  return Math.min(3, ...files.map((f) => (!f ? 0 : "path" in f ? 3 : f.copy === "original" ? 2 : 1)));
+  return Math.min(3, ...files.map((f) => (!f ? 0 : "path" in f ? 3 : 2)));
 }
 
-/** The edit's footage and song, as the library keeps them. */
-export function editFiles(editId: string): FileRow[] {
+/** The edit's footage and song, as the library keeps them; `more`: other version ids the step reads too. */
+export function editFiles(editId: string, more: string[] = []): FileRow[] {
   const e = readEdit(editId);
   if (!e) return [];
-  const ids = [...new Set([...e.sources, ...(typeof e.song === "string" ? [e.song] : [])])];
+  const ids = [...new Set([...e.sources, ...(typeof e.song === "string" ? [e.song] : []), ...more])];
   if (!ids.length) return [];
   return libraryDb()
     .prepare(
-      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device,
+      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, a.library_id,
          (SELECT storage_key FROM derivatives WHERE version_id = v.id AND kind = 'proxy') AS proxy
-       FROM asset_versions v WHERE v.id IN (${ids.map(() => "?").join(", ")})`,
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (${ids.map(() => "?").join(", ")})`,
     )
     .all(...ids) as unknown as FileRow[];
+}
+
+/** The files a step reads: the edit's sources and song, and for a version's step its draft's other sources (B-roll). */
+export function jobFiles(job: Pick<JobRow, "version_id">): FileRow[] {
+  const vid = job.version_id ?? "";
+  const variant = vid.slice(vid.indexOf(":") + 1);
+  return editFiles(editOf(job), variant ? Object.keys(readDraft(editOf(job), variant)?.timeline.sources ?? {}) : []);
 }
 
 /** The edit a step belongs to: its version id is "<editId>:<variant>". */
@@ -90,22 +99,27 @@ export async function footageFor(d: Pick<Device, "id" | "owner">, editId: string
   });
 }
 
-/** The key of the server copy of `versionId` that device `device` may fetch for step `jobId` it holds (the copy fileFor
- *  named): the video file when the server has it, else its proxy. Null when the step or the file is not its own. */
-export function heldCopy(device: string, jobId: number, versionId: string): string | null {
+/**
+ * The key of the server copy of `versionId` that device `device` may fetch for step `jobId` it holds: its proxy. The
+ * original only when the step asks for it (`original`) and its library uploads originals ("all"). Null when the step or
+ * the file is not its own, or there is no such copy.
+ */
+export function heldCopy(device: string, jobId: number, versionId: string, original = false): string | null {
   const job = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(jobId, device) as Pick<JobRow, "version_id"> | undefined;
-  const r = job && editFiles(editOf(job)).find((f) => f.id === versionId);
-  return !r ? null : !r.source_key.startsWith("mac:") ? r.source_key : r.proxy;
+  const r = job && jobFiles(job).find((f) => f.id === versionId);
+  if (!r) return null;
+  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && libraryUpload(r.library_id) === "all") return r.source_key;
+  return r.proxy;
 }
 
 /** The account's computers, and whether each is online and free (holds no AI Editor step now). */
-function computers(owner: string): Array<{ x: Device; free: boolean }> {
+export function computers(owner: string): Array<{ x: Device; free: boolean }> {
   const busy = new Set((libraryDb().prepare("SELECT DISTINCT device FROM edit_jobs WHERE state = 'running' AND device IS NOT NULL").all() as { device: string }[]).map((r) => r.device));
   return listDevices((x) => x.owner === owner).map((x) => ({ x, free: isOnline(x.id) && !busy.has(x.id) }));
 }
 
 /** "A", "A or B", "A, B or C". */
-const either = (names: string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`);
+export const either = (names: string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`);
 
 /**
  * Why a queued step that reads footage waits, in one line, when no online, free computer that runs it can read its files
@@ -113,7 +127,7 @@ const either = (names: string[]) => (names.length < 2 ? names.join("") : `${name
  * step at all. Shown beside the step on the edit page (EditJob.line).
  */
 export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">): string | undefined {
-  if (!usesFootage(job.kind)) return undefined;
+  if (!usesFootage(job.kind)) return workWaitLine(owner, job);
   const rows = editFiles(editOf(job));
   const runs = computers(owner).filter((c) => (c.x.kinds ?? []).includes(job.kind));
   if (!rows.length || !runs.length) return undefined;
@@ -128,7 +142,7 @@ export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">
 }
 
 /** The same window as isOnline (lib/devices.ts). */
-const ONLINE_MS = 40_000;
+export const ONLINE_MS = 40_000;
 
 /**
  * Whether device `d` may take each queued step now (claimStep's `fits`). A step that reads no footage: yes (it is balanced

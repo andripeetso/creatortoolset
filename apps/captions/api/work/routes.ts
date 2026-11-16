@@ -1,0 +1,143 @@
+/**
+ * Item 4B: the work package's routes for a computer's worker (contracts/work.ts), mounted at /api/devices/relay/work
+ * before the relay mount (api/devices.ts), with the device's ctd_ token. Every call keeps the computer online.
+ */
+import { Hono, type Context } from "hono";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import type { Device } from "../../contracts/providers";
+import { WORK_MIN, type WorkClaim, type WorkResult } from "../../contracts/work";
+import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
+import { deviceForToken, deviceOf, setDeviceWork, touchDevice } from "../lib/devices";
+import { libraryDb } from "../library/db";
+import { finishJob, type JobRow } from "../library/jobs";
+import { buildPackage, ownFile } from "./package";
+import { noteProgress, parseBeat } from "./place";
+import { acceptUpload, applyResult } from "./result";
+import { serveAi, serveCall } from "./serve";
+
+/** The most one result file may weigh (a preview, a generated clip, a cache file). */
+const FILE_MAX = 8 * 1024 ** 3;
+
+/** How long a claim is held when nothing waits, and how often it looks again meanwhile. Tests shorten it. */
+export const CLAIM_POLL = { holdMs: 25_000, everyMs: 2000 };
+
+/** The device behind the ctd_ token; it is alive. */
+function caller(c: Context): Device | null {
+  const d = deviceForToken(c.req.header("authorization"));
+  if (d) touchDevice(d.id, c.req.header("user-agent"));
+  return d;
+}
+const idOf = (c: Context): number => {
+  const n = Number(c.req.param("id"));
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
+};
+/** The step `device` holds (claimed by it, still running), else undefined. */
+const held = (id: number, device: string): JobRow | undefined =>
+  libraryDb().prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;
+
+const strings = (v: unknown, max: number): string[] | null =>
+  Array.isArray(v) && v.length <= max && v.every((x) => typeof x === "string" && x.length <= 100) ? (v as string[]) : null;
+
+export const workApp = new Hono();
+
+workApp.post("/claim", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const v = b?.v;
+  const steps = strings(b?.steps ?? [], 50);
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || !steps) return c.json({ error: "v: a number, steps: a list of step ids" }, 400);
+  const raw = b?.cache && typeof b.cache === "object" ? (b.cache as Record<string, unknown>) : null;
+  const cache = raw && typeof raw.bytes === "number" && raw.bytes >= 0
+    ? { bytes: raw.bytes, ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}), ...(strings(raw.offline, 10_000) ? { offline: raw.offline as string[] } : {}) }
+    : undefined;
+  // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it
+  setDeviceWork(d.id, { v, steps, ...(cache ? { cache } : {}) });
+  if (v < WORK_MIN) return c.json({ pkg: null, update: true } satisfies WorkClaim);
+  const end = Date.now() + CLAIM_POLL.holdMs;
+  for (;;) {
+    const got = await claimForComputer(deviceOf(d.id)!);
+    if (got) {
+      try {
+        const pkg = await buildPackage(got.job, d);
+        return c.json({ pkg: got.gate === undefined ? pkg : { ...pkg, gate: got.gate } } satisfies WorkClaim);
+      } catch (e) {
+        // a package the server could not build: a failed try (retried after its backoff), never a held step nobody runs
+        libraryDb().prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(got.job.id);
+        finishJob(libraryDb(), got.job.id, false, e instanceof Error ? e.message : String(e), Date.now(), "edit_jobs");
+        continue;
+      }
+    }
+    if (Date.now() >= end || c.req.raw.signal.aborted) return c.json({ pkg: null } satisfies WorkClaim);
+    await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
+    touchDevice(d.id, c.req.header("user-agent"));
+  }
+});
+
+workApp.post("/:id/beat", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const id = idOf(c);
+  const ok = beatForDevice(d.id, id);
+  if (ok) noteProgress(id, d, parseBeat(await c.req.json().catch(() => null)));
+  return c.json({ ok });
+});
+
+/** The AI call and the server reads of a held step: run as the step's account (api/work/serve.ts). */
+workApp.post("/:id/ai", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const job = held(idOf(c), d.id);
+  if (!job) return c.json({ error: "Not found" }, 404);
+  return c.json((await serveAi(job, await c.req.json().catch(() => null))) ?? null);
+});
+workApp.post("/:id/call", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const job = held(idOf(c), d.id);
+  if (!job) return c.json({ error: "Not found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof b?.fn !== "string") return c.json({ error: "fn: a name" }, 400);
+  try {
+    return c.json((await serveCall(job, b.fn, Array.isArray(b.args) ? b.args : [])) ?? null);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+workApp.get("/:id/own", (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const id = idOf(c);
+  const file = held(id, d.id) && ownFile(id, c.req.query("path") ?? "");
+  return file ? new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, { headers: { "content-type": "application/octet-stream" } }) : c.json({ error: "Not found" }, 404);
+});
+
+workApp.put("/:id/file", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const id = idOf(c);
+  if (!held(id, d.id)) return c.json({ error: "Not found" }, 404);
+  if (Number(c.req.header("content-length") ?? NaN) > FILE_MAX) return c.json({ error: "The file is too big." }, 413);
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: "Send the file." }, 400);
+  const ok = await acceptUpload(id, d.id, c.req.query("path") ?? "", Readable.fromWeb(body as never));
+  return ok ? c.json({ ok }) : c.json({ error: "Not a file this step may send" }, 400);
+});
+
+workApp.post("/:id/done", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const r = (await c.req.json().catch(() => null)) as WorkResult | null;
+  if (!r || typeof r !== "object" || !r.outcome || !r.edit) return c.json({ error: "A work result" }, 400);
+  return c.json({ ok: await applyResult(idOf(c), d.id, r) });
+});
+
+/** The step could not run on this computer (a crash too): a counted try, retried after its backoff. */
+workApp.post("/:id/fail", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  return c.json({ ok: failForDevice(d.id, idOf(c), typeof b?.error === "string" && b.error ? b.error : "Your computer could not run this step") });
+});
