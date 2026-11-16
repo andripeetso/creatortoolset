@@ -9,7 +9,7 @@ import { SOURCE_KINDS } from "../../../contracts/knowledge";
 
 const KIND_IDS = new Set<string>(SOURCE_KINDS.map((k) => k.id));
 
-export const SOURCE_LIMITS = { scanPages: 600, chars: 3_000_000, name: 120, title: 200, about: 2000, uses: 12, use: 200, sections: 60, sectionTitle: 160, sectionAbout: 300, perAccount: 300 };
+export const SOURCE_LIMITS = { scanPages: 600, chars: 3_000_000, name: 120, title: 200, about: 2000, uses: 12, use: 200, sections: 60, sectionTitle: 160, sectionAbout: 300, perAccount: 3000 };
 
 /** A read that never came back (the server restarted, the Mac went away) shows as failed after this. */
 export const READ_STALE_MS = 30 * 60_000;
@@ -113,9 +113,22 @@ export const asKnowledge = (s: KnowledgeSource, text: string): KnowledgeFile => 
 
 /** Where a source sits in the Mac folder; INDEX.md is the folder's own. */
 export const knowledgePath = (name: string) => {
-  const base = name.replace(/[/\\]/g, "-").replace(/^\.+/, "") || "untitled";
+  // a file from a dropped folder keeps its folder ("kit/voice.md"), so a path the instructions name is a real file
+  const base = name.split(/[/\\]/).map((x) => x.replace(/^\.+/, "")).filter(Boolean).join("/") || "untitled";
   return `context/${base.toLowerCase() === "index.md" ? `file-${base}` : base}`;
 };
+
+/**
+ * A folder kept before each file was its own source (one text, every file under its "# <folder>/<path>" heading) as
+ * its files again; null when it isn't one.
+ */
+export function splitBundle(name: string, text: string): Array<{ path: string; text: string; about: string }> | null {
+  const lines = text.split("\n");
+  const at = lines.flatMap((l, i) => (l.startsWith(`# ${name}/`) ? [i] : []));
+  if (at.length < 2 || at[0] !== 0) return null;
+  const parts = bundleParts({ text, sections: at.map((i, k) => ({ title: lines[i]!.slice(2), from: i + 1, to: k + 1 < at.length ? at[k + 1]! : lines.length, about: "" })) });
+  return parts?.map((p) => ({ ...p, text: p.text.trimEnd() })) ?? null;
+}
 
 /**
  * A kept folder (bundleFiles: every section a file, starting at its "# path" heading) as its own files again, so a path

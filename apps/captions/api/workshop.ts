@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { stream, streamSSE } from "hono/streaming";
 import { checkDraft } from "./lib/workshop/rule-check";
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -12,6 +12,8 @@ import path from "node:path";
 import { sessionOf, type AuthVars } from "./auth";
 import { AiProviderError, aiFor as route, completeWithFallback, streamWithFallback, type ProviderOpts, type StreamHooks } from "./ai-complete";
 import { DRIVERS, type Selection } from "../contracts/providers";
+import { CONTEXT_CAPACITY_CHARS } from "../contracts/knowledge";
+import { limitResetAt } from "../contracts/plans";
 import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacOpts, type MacSession, type MacUsage } from "./lib/mac-claude";
 import { env } from "./lib/env";
 import type { SessionUser, UserRecord } from "./users";
@@ -69,7 +71,7 @@ import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
 import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext, renderInstructions } from "./lib/workshop/prompt";
-import { DRAFT_SYSTEM, OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, inlineFiles, keptFiles, knowledgeFiles, knowledgeIndex, ocrPrompt, parseDraft, parseReading, parseSourcePatch, readPrompt, type Filing } from "./lib/workshop/sources";
+import { DRAFT_SYSTEM, OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, inlineFiles, keptFiles, knowledgeFiles, splitBundle, knowledgeIndex, ocrPrompt, parseDraft, parseReading, parseSourcePatch, readPrompt, type Filing } from "./lib/workshop/sources";
 import { documentText, webPageText } from "./lib/workshop/source-files";
 import { parseYoutubeUrl } from "./lib/youtube/url";
 import { channelFiles } from "./connectors";
@@ -314,9 +316,39 @@ async function listSources(user: SessionUser): Promise<KnowledgeSource[]> {
     await writeJsonAtomic(projectPath(p.id), { ...p, knowledge: [], updatedAt: Date.now() });
     console.log(`[workshop] ${user.username}: ${p.knowledge.length} context files of "${p.name}" moved into Knowledge`);
   }
-  return (await listRecords<KnowledgeSource>(DIRS.sources, user))
-    .filter((s) => s.owner === user.username)
-    .sort((a, b) => a.createdAt - b.createdAt);
+  let list = (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username);
+  let split = false;
+  for (const s of list) {
+    // a folder kept as one source before each file was its own: its files, each its own source
+    if (s.status === "reading" || /\.[a-z0-9]{1,5}$/i.test(s.name) || !(await sourceHead(s.id)).startsWith(`# ${s.name}/`)) continue;
+    const parts = splitBundle(s.name, await readSourceText(s.id));
+    if (!parts) continue;
+    for (const [i, p] of parts.entries()) {
+      const about = p.about || s.sections?.find((x) => x.title === p.path)?.about || "";
+      const now = Date.now();
+      await writeSource({ id: randomUUID(), owner: s.owner, name: p.path.slice(0, SOURCE_LIMITS.name), ...(s.projectId ? { projectId: s.projectId } : {}), chars: p.text.length, status: about ? "read" : "queued", ...(about ? { about, readAt: now } : {}), createdAt: s.createdAt + i, updatedAt: now }, p.text);
+    }
+    await rm(sourcePath(s.id), { force: true });
+    await rm(sourceTextPath(s.id), { force: true });
+    console.log(`[workshop] ${user.username}: "${s.name}" split into its ${parts.length} files`);
+    split = true;
+  }
+  if (split) list = (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username);
+  for (const s of list) if (s.status === "queued" && !queuedReads.has(s.id)) queueRead(user, s.id);
+  return list.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** A source text's first bytes: enough to tell a kept folder, without reading a book. */
+async function sourceHead(id: string): Promise<string> {
+  const f = await open(sourceTextPath(id), "r").catch(() => null);
+  if (!f) return "";
+  try {
+    const buf = Buffer.alloc(400);
+    const { bytesRead } = await f.read(buf, 0, 400, 0);
+    return buf.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    await f.close();
+  }
 }
 
 /** What a project's AI reads: the account's sources that are not another project's, minus the ones it switched off. */
@@ -333,21 +365,23 @@ async function projectForAi(id: string | undefined, user: SessionUser): Promise<
  * Read a source once and file it (kind, what it is, what it answers, its sections by line), in the background on the
  * account's provider. Edits the author made meanwhile are kept only where the read has nothing.
  */
-async function fileSource(user: SessionUser, id: string): Promise<void> {
-  if (inRead.has(id)) return;
+async function fileSource(user: SessionUser, id: string): Promise<ReadOutcome> {
+  if (inRead.has(id)) return undefined;
   inRead.add(id);
   try {
-    await fileSourceOnce(user, id);
+    return await fileSourceOnce(user, id);
   } finally {
     inRead.delete(id);
   }
 }
 
-async function fileSourceOnce(user: SessionUser, id: string): Promise<void> {
+type ReadOutcome = { ok: boolean; projectId?: string } | undefined;
+
+async function fileSourceOnce(user: SessionUser, id: string): Promise<ReadOutcome> {
   const s = await readSource(id, user);
-  if (!s) return;
+  if (!s) return undefined;
   let text = await readSourceText(id);
-  await patchSource(id, (cur) => ({ ...cur, status: "reading", startedAt: Date.now(), error: undefined }));
+  await patchSource(id, (cur) => ({ ...cur, status: "reading", startedAt: Date.now(), error: undefined, waitUntil: undefined }));
   let usage: MacUsage | undefined;
   try {
     const ai = route(user, "workshop", "Knowledge");
@@ -364,7 +398,7 @@ async function fileSourceOnce(user: SessionUser, id: string): Promise<void> {
       });
       text += `${text ? "\n\n" : ""}${got}`;
       // progress only: a rename made meanwhile is kept, and a deleted source is not written back
-      if (!(await patchSource(id, (cur) => ({ ...cur, chars: text.length, readCost: usage?.costUsd, startedAt: Date.now() }), text))) return;
+      if (!(await patchSource(id, (cur) => ({ ...cur, chars: text.length, readCost: usage?.costUsd, startedAt: Date.now() }), text))) return undefined;
       for (const n of batch) await rm(path.join(sourcePagesDir(id), n), { force: true });
     }
     if (pages.length) await rm(sourcePagesDir(id), { recursive: true, force: true });
@@ -378,9 +412,87 @@ async function fileSourceOnce(user: SessionUser, id: string): Promise<void> {
     });
     // deleted while it was read: patchSource finds nothing and writes nothing
     await patchSource(id, (cur) => ({ ...cur, ...filing, status: "read", error: undefined, readAt: Date.now(), readCost: usage?.costUsd, updatedAt: Date.now() }));
+    return { ok: true, projectId: s.projectId };
   } catch (e) {
+    const limited = limitedOf(e);
+    if (limited !== undefined) {
+      // a usage limit is a wait, not a failure: it stays queued and the reads go on by themselves at the reset
+      const until = limited ?? Date.now() + LIMIT_RETRY_MS;
+      await patchSource(id, (cur) => ({ ...cur, status: "queued", error: undefined, waitUntil: until, readCost: usage?.costUsd }));
+      pauseReads(user, until);
+      return undefined;
+    }
     await patchSource(id, (cur) => ({ ...cur, status: "failed", error: errorMessage(e).slice(0, 300), readCost: usage?.costUsd, updatedAt: Date.now() }));
     console.warn(`[workshop] reading "${s.name}" failed: ${errorMessage(e)}`);
+    return { ok: false, projectId: s.projectId };
+  }
+}
+
+/** A refusal for a usage or rate limit: when it opens again (null = it didn't say); undefined = not a limit. */
+export function limitedOf(e: unknown): number | null | undefined {
+  for (let x: unknown = e, i = 0; x && i < 4; x = (x as { cause?: unknown }).cause, i++) {
+    const l = (x as { limited?: { until: number | null } }).limited;
+    if (l) return l.until;
+    if (x instanceof AiProviderError && x.code === "RATE_LIMIT") return limitResetAt(x.message);
+  }
+  const m = errorMessage(e);
+  return /\b429\b|rate_limit_error|limit is reached/i.test(m) ? limitResetAt(m) : undefined;
+}
+
+/** A limit that didn't say when it resets: try again this much later. */
+const LIMIT_RETRY_MS = 30 * 60_000;
+/**
+ * Reads wait their turn, one at a time per account, so a dropped folder of fifty never asks the AI fifty times at
+ * once. A usage limit pauses the account's reads until it resets; then the waiting ones go on by themselves. When the
+ * last one is done, the inbox says the workspace's context is ready.
+ */
+const queuedReads = new Set<string>();
+const readsPaused = new Map<string, number>();
+const readBatch = new Map<string, Map<string, { ok: number; failed: number }>>();
+
+function queueRead(user: SessionUser, id: string): void {
+  if (queuedReads.has(id)) return;
+  queuedReads.add(id);
+  void chained(`reads:${user.username}`, async () => {
+    try {
+      if ((readsPaused.get(user.username) ?? 0) > Date.now()) return; // waits for the reset (pauseReads)
+      const out = await inJob([user.username], () => fileSource(user, id));
+      if (out) {
+        const batch = readBatch.get(user.username) ?? new Map<string, { ok: number; failed: number }>();
+        const n = batch.get(out.projectId ?? "") ?? { ok: 0, failed: 0 };
+        n[out.ok ? "ok" : "failed"]++;
+        batch.set(out.projectId ?? "", n);
+        readBatch.set(user.username, batch);
+      }
+    } finally {
+      queuedReads.delete(id);
+    }
+    await readsDone(user);
+  }).catch((e) => console.warn(`[workshop] queued read: ${errorMessage(e)}`));
+}
+
+function pauseReads(user: SessionUser, until: number): void {
+  if ((readsPaused.get(user.username) ?? 0) >= until) return;
+  readsPaused.set(user.username, until);
+  setTimeout(() => {
+    if (readsPaused.get(user.username) !== until) return;
+    readsPaused.delete(user.username);
+    void listSources(user).then((all) => all.filter((s) => s.status === "queued").forEach((s) => queueRead(user, s.id)));
+  }, Math.max(1000, until - Date.now() + 5000)).unref?.();
+}
+
+/** Nothing left to read for this account: tell the inbox, a note per workspace, when more than one file was read. */
+async function readsDone(user: SessionUser): Promise<void> {
+  if ([...queuedReads].length && (await listSources(user)).some((s) => queuedReads.has(s.id))) return;
+  if ((readsPaused.get(user.username) ?? 0) > Date.now()) return;
+  const batch = readBatch.get(user.username);
+  readBatch.delete(user.username);
+  for (const [projectId, n] of batch ?? []) {
+    if (n.ok + n.failed < 2) continue;
+    const ws = projectId ? await readProject(projectId, user) : null;
+    const where = ws ? `${ws.name}'s` : "Every workspace's";
+    const text = `${where} context is ready: ${n.ok} file${n.ok === 1 ? "" : "s"} read and filed${n.failed ? `, ${n.failed} couldn't be read` : ""}`;
+    await notifyWorkshopOwner(user.username, { kind: "workshop", by: "Context", name: ws?.name ?? "Context", text, href: ws ? `/projects?edit=${ws.id}` : "/workshop", ref: projectId || "context" }).catch(() => {});
   }
 }
 
@@ -595,7 +707,7 @@ function reconcileRestart(): Promise<void> {
       const id = f.endsWith(".json") ? f.slice(0, -".json".length) : "";
       if (!okId(id)) continue;
       const s = await readJson<KnowledgeSource>(sourcePath(id));
-      if (s?.status === "reading") await patchSource(id, (cur) => ({ ...cur, status: "failed", error: "The read never finished" }));
+      if (s?.status === "reading") await patchSource(id, (cur) => ({ ...cur, status: "queued" }));
     }
   })().catch((e) => console.error("[workshop] restart pass", errorMessage(e))));
 }
@@ -2044,12 +2156,15 @@ async function writePages(id: string, pages: string[]): Promise<number> {
 }
 
 /** A new source with its text (or a scan's first pages: `more` = further batches follow, read after the last). */
-async function newSource(user: SessionUser, name: string, text: string, projectIdRaw: unknown, pages?: string[], more = false, filed?: Filing): Promise<KnowledgeSource> {
-  if ((await listSources(user)).length >= SOURCE_LIMITS.perAccount) throw new Error(`Up to ${SOURCE_LIMITS.perAccount} sources`);
+async function newSource(user: SessionUser, name: string, text: string, projectIdRaw: unknown, pages?: string[], more = false, filed?: Filing, order = 0): Promise<KnowledgeSource> {
+  const all = await listSources(user);
+  if (all.length >= SOURCE_LIMITS.perAccount) throw new Error(`Up to ${SOURCE_LIMITS.perAccount} sources`);
   // a source is the workspace's it was added in (each workspace is its own client); `projectId: null` asks for every workspace
   const projectId =
     okId(projectIdRaw) && (await readProject(projectIdRaw, user)) ? projectIdRaw : projectIdRaw === null ? undefined : await currentWorkspaceId(user);
-  const now = Date.now();
+  const held = all.filter((x) => !projectId || !x.projectId || x.projectId === projectId).reduce((n, x) => n + x.chars, 0);
+  if (held + text.length > CONTEXT_CAPACITY_CHARS) throw new Error(`${name}: the workspace's context is full (about 1M tokens). Delete a file to make room`);
+  const now = Date.now() + order;
   const s: KnowledgeSource = { id: randomUUID(), owner: user.username, name: name.slice(0, SOURCE_LIMITS.name), chars: text.length, status: "new", createdAt: now, updatedAt: now, ...(projectId ? { projectId } : {}) };
   if (pages?.length) await writePages(s.id, pages);
   if (filed) {
@@ -2057,10 +2172,14 @@ async function newSource(user: SessionUser, name: string, text: string, projectI
     await writeSource(done, text.slice(0, SOURCE_LIMITS.chars));
     return done;
   }
-  await writeSource(s, text.slice(0, SOURCE_LIMITS.chars));
-  if (more) return s;
-  void inJob([user.username], () => fileSource(user, s.id));
-  return { ...s, status: "reading", startedAt: now };
+  if (more) {
+    await writeSource(s, text.slice(0, SOURCE_LIMITS.chars));
+    return s;
+  }
+  const queued: KnowledgeSource = { ...s, status: "queued" };
+  await writeSource(queued, text.slice(0, SOURCE_LIMITS.chars));
+  queueRead(user, s.id);
+  return queued;
 }
 
 /**
@@ -2080,8 +2199,13 @@ workshopApp.post("/sources", async (c) => {
       const files = await Promise.all(given.map(async (f) => ({ name: f.name, text: await fileWords(f), about: typeof f.about === "string" ? f.about : undefined, kind: f.kind })));
       const kept = files.filter((f) => f.text.trim());
       if (!kept.length) return c.json({ error: "Nothing in those files could be read" }, 400);
-      const { text, filed } = keptFiles(kept);
-      return c.json(await newSource(user, name, text, body.projectId, undefined, false, filed), 201);
+      // each file its own source, named by its path in the folder, in the folder's order
+      const made: KnowledgeSource[] = [];
+      for (const [i, f] of kept.entries()) {
+        const { text, filed } = keptFiles([f]);
+        made.push(await newSource(user, f.name, text, body.projectId, undefined, false, filed, i));
+      }
+      return c.json(made, 201);
     }
     if (typeof body?.file === "string") return c.json(await newSource(user, name, await documentText(name, Buffer.from(body.file, "base64")), body.projectId), 201);
     if (Array.isArray(body?.pages)) {
@@ -2128,8 +2252,9 @@ workshopApp.post("/sources/:id/pages", async (c) => {
   const pages = Array.isArray(body?.pages) ? body.pages.filter((p): p is string => typeof p === "string" && p.length > 100) : [];
   const total = await writePages(s.id, pages);
   if (body?.more === true) return c.json({ ...s, pages: total });
-  void inJob([user.username], () => fileSource(user, s.id));
-  return c.json({ ...s, status: "reading", startedAt: Date.now() });
+  const queued = await patchSource(s.id, (cur) => ({ ...cur, status: "queued" }));
+  queueRead(user, s.id);
+  return c.json(queued ?? s);
 });
 
 workshopApp.post("/sources/:id/read", async (c) => {
@@ -2138,8 +2263,10 @@ workshopApp.post("/sources/:id/read", async (c) => {
   const s = await readSource(c.req.param("id"), user);
   if (!s) return c.json({ error: "Not found" }, 404);
   if (s.status === "reading") return c.json(s);
-  void inJob([user.username], () => fileSource(user, s.id));
-  return c.json({ ...s, status: "reading", startedAt: Date.now() });
+  const queued = await patchSource(s.id, (cur) => ({ ...cur, status: "queued", error: undefined, waitUntil: undefined }));
+  readsPaused.delete(user.username); // pressed by hand: try now, a limit pauses them again
+  queueRead(user, s.id);
+  return c.json(queued ?? s);
 });
 
 workshopApp.patch("/sources/:id", async (c) => {
