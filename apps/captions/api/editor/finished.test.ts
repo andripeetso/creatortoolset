@@ -80,7 +80,9 @@ const approve = (user: string, asset: string, status = "approved") => call(user,
 
 /** What is spoken in the footage: six sentences, three in each file. */
 const SPOKEN = ["Do puppies need tummy time?", "Um so I wanted to say hi first.", "Yes, a little every day.", "Start with one minute.", "Then add a minute each week.", "See you in class."];
-const sentencesOf = (texts: string[]): Sentence[] => texts.map((text, i) => ({ n: i + 1, src: i < 3 ? "ver_a" : "ver_b", text, s: i, e: i + 0.5, w0: 0, w1: 0 }));
+/** The file sentence `i` is in; a test of another account's footage names its own. */
+let fileAt = (i: number): string => (i < 3 ? "ver_a" : "ver_b");
+const sentencesOf = (texts: string[]): Sentence[] => texts.map((text, i) => ({ n: i + 1, src: fileAt(i), text, s: i, e: i + 0.5, w0: 0, w1: 0 }));
 /** The stand-in AI's plan: one line a sentence (the fifth belongs to no line), every word of its own marked. */
 const planOf = (count: number, skip = [5]) => {
   const ns = Array.from({ length: count }, (_, i) => i + 1).filter((n) => !skip.includes(n));
@@ -478,7 +480,7 @@ describe.skipIf(rootReplaced)("Finished edits: which ones the script step is sho
     expect(next.system).toBe(
       `${inOther.system.replace(`Editing style "Long talks", in the author's own words:\nLong takes.`, `Editing style "Swim reels", in the author's own words:\nShort lines.`)}\n\n${LEARNED_INTRO}\nCuts the author approved in this style here: 41 s, 1 shot, 41 s a shot, 1 source.`,
     );
-    expect(next.user).toBe(plain.user.replace("\n\nSources:\n", `\n\n${finishedBlock({ id: "x", createdBy: "maker", brief: "Floating first.", style: { id: s.id, name: "", notes: "", pace: "tight" } })}\n\nSources:\n`));
+    expect(next.user).toBe(plain.user.replace("\n\nSources:\n", `\n\n${await finishedBlock({ id: "x", createdBy: "maker", brief: "Floating first.", style: { id: s.id, name: "", notes: "", pace: "tight" } })}\n\nSources:\n`));
     expect(next.user).toContain("Finished edit 1\nBrief: Swimming lessons for beginners: floating and kicking.");
     expect(next.user).not.toContain("Finished edit 2");
 
@@ -486,8 +488,50 @@ describe.skipIf(rootReplaced)("Finished edits: which ones the script step is sho
     expect((await script("maker", a.id)).user).not.toContain(FINISHED_INTRO);
     // another account has no such style: nothing of the maker's reaches it
     expect((await call("other", "POST", "/api/editor", { sources: ["ver_a"], style: s.id })).status).toBe(404);
-    expect(finishedBlock({ id: "x", createdBy: "other", brief: "Floating first.", style: { id: s.id, name: "", notes: "", pace: "tight" } })).toBe("");
-    expect(finishedBlock({ id: "x", createdBy: "maker", brief: "Floating first.", style: { id: "../../maker", name: "", notes: "", pace: "tight" } })).toBe("");
+    expect(await finishedBlock({ id: "x", createdBy: "other", brief: "Floating first.", style: { id: s.id, name: "", notes: "", pace: "tight" } })).toBe("");
+    expect(await finishedBlock({ id: "x", createdBy: "maker", brief: "Floating first.", style: { id: "../../maker", name: "", notes: "", pace: "tight" } })).toBe("");
+  });
+
+  it("an example stays in the workspace its edit was made in: one brand's spoken lines never reach another's script", async () => {
+    // one account with two brands, the gym the older (its first)
+    account("brands");
+    await login("brands");
+    mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
+    for (const [id, name, createdAt] of [["brand-gym", "Tiny Acrobatics gym", 1], ["brand-swim", "Tiny Acrobatics pool", 2]] as const)
+      writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "brands", name, audience: "", voice: "", cta: "", notes: "", createdAt, updatedAt: createdAt }));
+    libraryDb().exec(`
+      INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_c', 'brands', 'C', 'local', 0);
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_c', 'lib_c', 'video', 'Take C', 'brands', 0);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_c', 'ast_c', 1, 'k3', 1, 'x3', 'ready', 'brands', 0);
+    `);
+    const s = await style("brands", { name: "Reels", notes: "Short lines." });
+    const was = fileAt;
+    fileAt = () => "ver_c";
+    try {
+      const inGym = { style: s.id, sources: ["ver_c"], projectId: "brand-gym" };
+      const inSwim = { style: s.id, sources: ["ver_c"], projectId: "brand-swim" };
+      const gym = await made("brands", { ...inGym, brief: "Rolls for crawlers on the mat." });
+      await approve("brands", gym.asset);
+      const swim = await made("brands", { ...inSwim, brief: "Floating for beginners in the pool." });
+      await approve("brands", swim.asset);
+      expect((await finished("brands", s.id)).map((r) => [r.editId, r.workspaceId])).toEqual([[swim.id, "brand-swim"], [gym.id, "brand-gym"]]);
+      const briefs = async (body: object) => [...(await sent("brands", { ...body, brief: "A new one." })).user.matchAll(/^Brief: (.+)$/gm)].map((m) => m[1]);
+      expect(await briefs(inGym)).toEqual(["Rolls for crawlers on the mat."]);
+      expect(await briefs(inSwim)).toEqual(["Floating for beginners in the pool."]);
+
+      // kept before examples had a workspace: each is its edit's
+      const file = fileOf("brands", s.id);
+      const old = (JSON.parse(readFileSync(file, "utf8")) as FinishedEdit[]).map(({ workspaceId: _, ...r }) => r);
+      writeFileSync(file, JSON.stringify(old));
+      expect(await briefs(inGym)).toEqual(["Rolls for crawlers on the mat."]);
+      expect(await briefs(inSwim)).toEqual(["Floating for beginners in the pool."]);
+      // and with the edit gone, the first brand's
+      writeFileSync(file, JSON.stringify(old.map((r, k) => ({ ...r, editId: `00000000-0000-4000-8000-00000000000${k}` }))));
+      expect(await briefs(inGym)).toEqual(["Floating for beginners in the pool.", "Rolls for crawlers on the mat."]);
+      expect(await briefs(inSwim)).toEqual([]);
+    } finally {
+      fileAt = was;
+    }
   });
 });
 
