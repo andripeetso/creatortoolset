@@ -293,6 +293,8 @@ export interface WebPlugin {
   review?: { panels?: ReviewPanelSlot[]; actions?: ReviewActionSlot[]; timeline?: ReviewTimelineSlot };
   // Settings → Team: the plug-in's own access for the team's members, shown under the Access grid (it saves its own).
   access?: ComponentType<{ people: { username: string; label: string }[] }>;
+  // Settings → Team → Access: one column per gate, for a platform admin (the server lets only an admin switch a default-off gate).
+  gates?: { id: PluginGateId; name: string }[];
 }
 
 export const defineWebPlugin = (plugin: WebPlugin): WebPlugin => plugin;
