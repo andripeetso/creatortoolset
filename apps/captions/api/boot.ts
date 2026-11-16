@@ -492,8 +492,11 @@ app.route("/api/library", bulkApp);
 mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);
 app.route("/api/edit-steps", editStepsApp);
+// CT_WORKER=<server address>: this process is a computer working for that server (api/work/computer.ts), with the
+// plug-ins' editor steps loaded above and nothing else: no HTTP server, no library or editor loop of its own
+const workerFor = process.env.CT_WORKER;
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== "test" && !workerFor) {
   startLibraryWorker();
   startEditorWorker();
   startTrashPurge();
@@ -554,7 +557,19 @@ export function exitWithParent(stdin: NodeJS.ReadableStream, exit: () => void): 
   stdin.resume();
 }
 
-if (env.isProduction) {
+if (workerFor) {
+  const { cancelStep, startComputerWorker } = await import("./work/computer");
+  // Cancel in the Mac app's menu: the running step stops (a download within a moment, its .part kept) and ends "Stopped"
+  process.on("SIGUSR2", cancelStep); // SIGUSR1 is Node's debugger
+  // exit 3: the server wants a newer app (the Mac app shows its update prompt); 0: ten minutes with nothing to do
+  void startComputerWorker({ server: workerFor, token: process.env.CT_DEVICE_TOKEN ?? "" }).then(
+    (why) => process.exit(why === "update" ? 3 : 0),
+    (e) => {
+      console.error(e);
+      process.exit(1);
+    },
+  );
+} else if (env.isProduction) {
   const problem = startupProblem();
   if (problem) throw new Error(problem);
   const { serve } = await import("@hono/node-server");
