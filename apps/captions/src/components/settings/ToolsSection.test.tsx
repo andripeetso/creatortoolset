@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { useSetup } from "@/lib/setup";
 import { webPlugins } from "@/plugins.gen";
-import { ToolsSection, hasToolPage, skillPlacesOf } from "./ToolsSection";
+import { ToolsSection, addedLine, hasToolPage, skillPlacesOf } from "./ToolsSection";
 
 // Settings → Tools: a tool something can be added to opens its own page, which holds its Home switch, its plug-ins (an
 // AI Editor step with its switch for new edits on the Mac app's own server), its packs, its skills and the way to
@@ -63,13 +63,15 @@ describe("Settings → Tools", () => {
     expect(skillPlacesOf("review")).toEqual([]);
   });
 
-  it("the list links each tool that has a page, and counts what is added to it and on (a pack off everywhere is not)", async () => {
+  it("the list links each tool that has a page, and says what is added to it and on, by kind (a pack off everywhere is not)", async () => {
     await render();
     const links = [...host!.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.textContent]);
-    expect(links).toContainEqual(["/settings/tools/editor", expect.stringContaining("2 added")]);
-    expect(links).toContainEqual(["/settings/tools/enhance", expect.stringContaining("1 added")]);
+    expect(links).toContainEqual(["/settings/tools/editor", expect.stringContaining("1 plug-in · 1 pack")]);
+    expect(links).toContainEqual(["/settings/tools/enhance", expect.stringContaining("1 plug-in")]);
     expect(links.some(([h]) => h === "/settings/tools/review")).toBe(false);
     expect(host!.querySelectorAll("[role=switch]").length).toBeGreaterThan(4);
+    expect(addedLine({ plugins: 0, packs: 2, skills: 1 })).toBe("2 packs · 1 skill");
+    expect(addedLine({ plugins: 0, packs: 0, skills: 0 })).toBe("");
   });
 
   it("the AI Editor's page on the Mac app's own server: Home switch, its step with its switch, its pack, Get more", async () => {

@@ -79,22 +79,27 @@ export const skillPlacesOf = (t: HomeTile): SkillPlace[] => SKILL_PLACES.filter(
 /** `recorder`: the Mac app has the Screen Recorder's settings (useMacRecorder); without them that tool has no page. */
 export const hasToolPage = (t: HomeTile, steps: StepsView | null, recorder = false): boolean => (t === "record" && recorder) || PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
 
+/** What is added to a tool, by kind, in the list's words: "1 plug-in · 2 skills"; "" for nothing. */
+export function addedLine(n: { plugins: number; packs: number; skills: number }): string {
+  const one = (count: number, word: string) => (count ? `${count} ${word}${count === 1 ? "" : "s"}` : "");
+  return [one(n.plugins, "plug-in"), one(n.packs, "pack"), one(n.skills, "skill")].filter(Boolean).join(" · ");
+}
+
 /**
- * What the person has added to each tool and is using: installed packs that reach it and are on (not off everywhere, not
- * pulled), skills at its places that are on (their own and the ones packs and plug-ins bring), plug-ins that are in.
- * Best effort: a list that did not load counts nothing.
+ * What the person has added to each tool and is using, as addedLine words: plug-ins that are in, installed packs that
+ * reach it and are on (not off everywhere, not pulled), skills at its places that are on (their own and the ones packs
+ * and plug-ins bring). Best effort: a list that did not load counts nothing.
  */
 function useAdded(steps: StepsView | null) {
   const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"] });
   const skills = useCachedLoad<{ skills: Skill[]; shared?: SharedSkill[] }>("/api/skills", listSkills, { topic: ["skills", "packs"] });
-  return (t: HomeTile): number => {
+  return (t: HomeTile): string => {
     const places = skillPlacesOf(t) as string[];
-    return (
-      (packs.data ?? []).filter((p) => !p.off.includes("*") && !p.delisted && reachesTool(containsOf(p), t)).length +
-      (skills.data?.skills ?? []).filter((s) => s.on && places.includes(placeOf(s))).length +
-      (skills.data?.shared ?? []).filter((s) => s.on && places.includes(s.place)).length +
-      stepsFor(steps, t).filter((r) => r.state === "on" || r.state === "loaded").length
-    );
+    return addedLine({
+      plugins: stepsFor(steps, t).filter((r) => r.state === "on" || r.state === "loaded").length,
+      packs: (packs.data ?? []).filter((p) => !p.off.includes("*") && !p.delisted && reachesTool(containsOf(p), t)).length,
+      skills: (skills.data?.skills ?? []).filter((s) => s.on && places.includes(placeOf(s))).length + (skills.data?.shared ?? []).filter((s) => s.on && places.includes(s.place)).length,
+    });
   };
 }
 
@@ -125,7 +130,7 @@ function TileRow({ tile: t, have, shown, onChange, head }: { tile: HomeTile; hav
  * Settings → Tools: every tile Home can show, in Home's order (the tools, then the Screen Recorder), each with the
  * switch that shows it on Home. A tool that cannot work yet says why under its name, one amber line per thing it is
  * missing with the button that goes where it is fixed: the reason for its marker on Home. A tool that works shows only
- * its switch. A tool something can be added to opens its own page (ToolPage), and says how many things are added to it.
+ * its switch. A tool something can be added to opens its own page (ToolPage), and says what is added to it, by kind ("1 plug-in · 2 skills").
  * `/settings/tools/<tile>` is that page.
  */
 export function ToolsSection({ sub }: { sub?: string }) {
@@ -161,11 +166,11 @@ function ToolsList({ steps, recorder }: { steps: StepsView | null; recorder: boo
                 <div className="text-xs text-muted-foreground">{HOME_TILE_LINES[t]}</div>
               </div>
             );
-            const n = added(t);
+            const line = added(t);
             const head = hasToolPage(t, steps, recorder) ? (
               <Link to={`/settings/tools/${t}`} replace className="group -my-1 flex min-w-0 flex-1 items-center gap-3 rounded-md py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {text}
-                {n > 0 && <span className="shrink-0 text-xs text-muted-foreground">{n} added</span>}
+                {line && <span className="shrink-0 text-xs text-muted-foreground">{line}</span>}
                 <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
               </Link>
             ) : (
