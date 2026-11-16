@@ -329,10 +329,12 @@ export type FileFiling = { file: string; keep: boolean; kind?: string; about?: s
 /**
  * A project's instructions drafted from what the person gave: text (its links are read), files and folders, Instagram
  * accounts; and each file filed. A folder's read answers with spaces while it runs, so an error comes in the body.
+ * `projectId`: the workspace being edited, whose saved context files are read too. `unsure`: what the material says
+ * two ways, for the person to settle.
  */
-export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }> }) =>
+export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }>; projectId?: string }) =>
   fetch("/api/workshop/projects/draft-notes", jsonInit(input))
-    .then((r) => json<{ notes: string; files?: FileFiling[]; error?: string }>(r))
+    .then((r) => json<{ notes: string; files?: FileFiling[]; unsure?: string[]; error?: string }>(r))
     .then((j) => {
       if (j.error) throw new Error(j.error);
       return j;
