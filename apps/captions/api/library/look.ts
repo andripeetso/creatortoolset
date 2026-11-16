@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import type { IndexShot } from "../../contracts/edit-plan";
+import { STRETCH_TAGS, STRETCH_TEXT_MAX } from "../../contracts/library";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { ffmpegSlot, ffmpegTo } from "./media/run";
@@ -175,6 +176,61 @@ export const COLS = 4;
 export const ROWS = 4;
 
 /**
+ * The shot descriptions' sheet (stretchSheet), as measured to pass on 2026-11-15 (tasks/flywheel stage 1.0, "format D"):
+ * each tile is one stretch as three frames side by side (its start and end STRETCH_INSET_S inside it, so a cut's
+ * neighbour never shows, and its middle), each frame FRAME_W × FRAME_H (turned for a portrait source) on an 8 px white
+ * border; SHEET_STRETCHES tiles a sheet, STRETCH_COLS across (a landscape sheet is 1584 × 1216, which an AI reads at
+ * about its own size). One middle frame a stretch (COLS × ROWS, contactSheet) told fewer dull stretches from action
+ * ones: 81% and 84%, where this scored 97% and 95%.
+ */
+export const STRETCH_FRAMES = 3;
+export const STRETCH_INSET_S = 0.25;
+export const FRAME_W = 256;
+export const FRAME_H = 144;
+export const SHEET_STRETCHES = 16;
+export const STRETCH_COLS = { landscape: 2, portrait: 3 } as const;
+
+/** The frames a stretch's tile shows: its start and end a little inside it, and its middle; inside 0..duration. */
+export function stretchTimes(s: { a: number; b: number }, duration: number): number[] {
+  const inset = Math.min(STRETCH_INSET_S, (s.b - s.a) / 4);
+  const at = (t: number) => Math.max(0, Math.min(duration > 0.1 ? duration - 0.1 : t, t));
+  return [at(s.a + inset), at((s.a + s.b) / 2), at(s.b - inset)];
+}
+
+/**
+ * A sheet of up to SHEET_STRETCHES stretches of `src` (stretchTimes each, STRETCH_FRAMES side by side a tile), tiles in
+ * reading order, written as a JPEG to `out`. Made a row at a time like contactSheet: a few seeks per ffmpeg run, one
+ * thread each, the runs short so other work gets the ffmpeg slot in between.
+ */
+export async function stretchSheet(src: string, stretches: { a: number; b: number }[], duration: number, landscape: boolean, out: string): Promise<void> {
+  const [w, h] = landscape ? [FRAME_W, FRAME_H] : [FRAME_H, FRAME_W];
+  const cols = landscape ? STRETCH_COLS.landscape : STRETCH_COLS.portrait;
+  const cell = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w + 8}:${h + 8}:(ow-iw)/2:(oh-ih)/2:white,setsar=1`;
+  const across = cols * STRETCH_FRAMES;
+  const rows: string[] = [];
+  try {
+    for (let r = 0; r * cols < stretches.length; r++) {
+      const these = stretches.slice(r * cols, (r + 1) * cols).flatMap((s) => stretchTimes(s, duration));
+      const args = these.flatMap((t) => ["-threads", "1", "-ss", t.toFixed(3), "-i", src]);
+      const blanks = across - these.length;
+      const graph =
+        these.map((_, j) => `[${j}:v:0]${cell}[f${j}]`).join(";") +
+        (blanks ? `;color=white:s=${w + 8}x${h + 8}:d=1,split=${blanks}${Array.from({ length: blanks }, (_, k) => `[b${k}]`).join("")}` : "") +
+        ";" +
+        [...these.map((_, j) => `[f${j}]`), ...Array.from({ length: blanks }, (_, k) => `[b${k}]`)].join("") +
+        `hstack=inputs=${across}`;
+      const row = `${out}.${r}.png`;
+      await ffmpegTo(row, [...args, "-filter_complex", graph, "-frames:v", "1"]);
+      rows.push(row);
+    }
+    const stack = rows.length > 1 ? ["-filter_complex", `vstack=inputs=${rows.length}`] : [];
+    await ffmpegTo(out, [...rows.flatMap((p) => ["-i", p]), ...stack, "-frames:v", "1", "-q:v", "4"]);
+  } finally {
+    await Promise.all(rows.map((p) => rm(p, { force: true })));
+  }
+}
+
+/**
  * A contact sheet of `src` at `times`, COLS across in reading order, written as a JPEG to `out`. Frames are taken a
  * row at a time (a few seeks per ffmpeg run, one thread each), so a 4K source never holds many decoders at once.
  */
@@ -225,11 +281,18 @@ export function parseLooked(text: string): Looked {
 
 export const RULE = 'Never say who anyone is: no names, no guessed ages, no identities; "a person" or "people" is enough.';
 
-export function lookPrompt(lines: string[], story: boolean, workspace = ""): { system: string; user: string } {
+/**
+ * The look at contact sheets. `rated` (the Media Library's shot descriptions, shots.ts): each shot also gets how much
+ * happens in it, whether its subject is easy to see and a few tags (RATE_RUBRIC), answered as a list. Unrated, the
+ * prompt is the AI Editor's as it always was.
+ */
+export function lookPrompt(lines: string[], story: boolean, workspace = "", rated = false): { system: string; user: string } {
+  const shape = rated ? '{"shots": [{"n": 1, "text": "a few words", "action": 0, "clear": true, "tags": ["…"]}, …]}' : '{"shots": {"1": "a few words", "2": "…"}}';
   return {
     system:
       "You look at contact sheets of footage for a video editor, so it can pick shots without watching them. For each numbered " +
       "shot say in a few words what is seen: the subject, the action, the setting and the kind of shot (wide, close, screen, text). " +
+      (rated ? `${RATE_RUBRIC} ` : "") +
       `${RULE} Answer with JSON only.`,
     user: [
       ...(workspace
@@ -237,10 +300,64 @@ export function lookPrompt(lines: string[], story: boolean, workspace = ""): { s
         : []),
       ...lines,
       story
-        ? 'Answer as {"shots": {"1": "a few words", "2": "…"}, "story": "what happens across all of the footage, in order, told from the pictures alone, in a few sentences"}'
-        : 'Answer as {"shots": {"1": "a few words", "2": "…"}}',
+        ? `Answer as ${shape.slice(0, -1)}, "story": "what happens across all of the footage, in order, told from the pictures alone, in a few sentences"}`
+        : `Answer as ${shape}`,
     ].join("\n\n"),
   };
+}
+
+/**
+ * How a rated look scores each shot (lookPrompt `rated`), word for word as measured on 2026-11-15 (tasks/flywheel stage
+ * 1.0): with three frames a stretch (stretchSheet) it scored 97% of dull stretches 2 or lower and 95% of action ones 3
+ * or higher. Only 0 and 5 are named: the steps between were not measured, so they are not defined here.
+ */
+export const RATE_RUBRIC =
+  "For each shot also give action from 0 to 5: 0 nothing changes (a menu, loading, standing), 5 a peak; clear: the main subject " +
+  "is easy to see; and up to three tags, free words.";
+
+export interface RatedLine {
+  text: string;
+  action: number;
+  clear: boolean;
+  tags: string[];
+}
+
+/**
+ * A rated look's answer: each numbered shot's line, cut to the caps (STRETCH_TEXT_MAX, STRETCH_TAGS), from the list the
+ * prompt asks for (or an object by number). Throws when no shot has one; `lenient`: none is an empty answer.
+ */
+export function parseRated(text: string, lenient = false): Record<string, RatedLine> {
+  const out: Record<string, RatedLine> = {};
+  let o: Record<string, unknown> = {};
+  try {
+    o = parseJsonObject(text);
+  } catch (e) {
+    if (!lenient) throw e;
+  }
+  const entries: [unknown, unknown][] = Array.isArray(o.shots)
+    ? o.shots.map((v) => [(v as { n?: unknown } | null)?.n, v])
+    : o.shots && typeof o.shots === "object"
+      ? Object.entries(o.shots as Record<string, unknown>)
+      : [];
+  for (const [k, v] of entries) {
+    const n = typeof k === "number" ? k : parseInt(String(k), 10);
+    const line = ratedLine(v);
+    if (line && Number.isSafeInteger(n) && n > 0) out[String(n)] = line;
+  }
+  if (!lenient && !Object.keys(out).length) throw new Error("The AI described no shot");
+  return out;
+}
+
+/** One line checked: text trimmed and capped, action a whole 0..5, tags lowercase and capped; null without text. */
+export function ratedLine(v: unknown): RatedLine | null {
+  const r = (typeof v === "string" ? { text: v } : v) as Record<string, unknown> | null;
+  const text = typeof r?.text === "string" ? r.text.trim().replace(/\s+/g, " ").slice(0, STRETCH_TEXT_MAX) : "";
+  if (!text) return null;
+  const n = Number(r!.action);
+  const tags = Array.isArray(r!.tags)
+    ? [...new Set(r!.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean))].slice(0, STRETCH_TAGS)
+    : [];
+  return { text, action: Number.isFinite(n) ? Math.max(0, Math.min(5, Math.round(n))) : 0, clear: r!.clear === true, tags };
 }
 
 /** Bits two picture hashes may differ in and still show the same picture (64-bit difference hashes). */

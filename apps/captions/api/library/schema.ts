@@ -421,4 +421,20 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE descriptions ADD COLUMN kind TEXT;
   ALTER TABLE descriptions ADD COLUMN stamp TEXT;
   `,
+  // 22: a video's shot descriptions keep their contact sheets ('looksheets', one JSON of JPEGs: stretches.ts), so they
+  // can be written again under a new context without reading the video. SQLite cannot change a CHECK: the table is
+  // rebuilt as in migration 3
+  `
+  CREATE TABLE derivatives_new (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    kind TEXT NOT NULL CHECK (kind IN ('thumb','sprite','proxy','wave','audio','fingerprint','looksheets')),
+    storage_key TEXT,
+    inline TEXT,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (version_id, kind)
+  );
+  INSERT INTO derivatives_new SELECT version_id, kind, storage_key, inline, bytes FROM derivatives;
+  DROP TABLE derivatives;
+  ALTER TABLE derivatives_new RENAME TO derivatives;
+  `,
 ];

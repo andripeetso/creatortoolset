@@ -24,7 +24,8 @@ import { placeUnplaced } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
-import { sortAfter, sortUnsorted } from "./roll";
+import { sortAfter, sortRoll, sortUnsorted } from "./roll";
+import { lookVersion, MAC_WAITS, queueLook } from "./shots";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 
@@ -49,20 +50,29 @@ const LEASE_S = 300;
  * started (its ffmpeg runs in a line of its own, media/run.ts). Files: one, since ffmpeg has its own server-wide limit. Transcripts: a key's
  * service takes many, and on this computer they never overlap anyway (device-transcribe.ts). AI: the Mac relay runs
  * two library calls at once per computer (background slots, mac-claude.ts) and queues the rest; an API key takes all six.
- * ponytail: fixed sizes; per-key rate limits (429s back off and retry) would say how far an API key can go
+ * Shot descriptions: one video at a time, apart from the descriptions, so a long video's calls never hold a clip's
+ * description back. Its picture read takes the one ffmpeg slot in one go, a twentieth of a proxy's time or less: a
+ * 20-minute 720p file in 8 to 48 s (the computer idle to busy; 59 s for 1080p at 60 fps), a real 45-minute one in 41 s
+ * (171 s on one thread). Its sheets are runs of under 2 s each (7.8 s a sheet on a heavy 720p file), so other work
+ * gets the slot in between.
+ * ponytail: fixed sizes; per-key rate limits (429s back off and retry) would say how far an API key can go; a 3-hour
+ * original holds the slot about 9 minutes: read it in pieces if that ever holds a proxy up
  */
 export const LANES = [
   { name: "pictures", kinds: ["probe", "thumb", "wave"], size: 1 },
   { name: "files", kinds: ["proxy", "sprite", "fingerprint"], size: 1 },
   { name: "transcripts", kinds: ["transcribe"], size: 4 },
   { name: "ai", kinds: ["describe", "embed"], size: 6 },
+  { name: "looks", kinds: ["look"], size: 1 },
 ] as const;
 
 /** A card's own steps: they run before anything else, in any library. */
 export const PICTURES: string[] = [...LANES[0].kinds];
 
 /** Extras: a failure leaves the version playable. Only the files it is shown with fail it. */
-const EXTRA = new Set(["transcribe", "describe", "fingerprint", "embed", "sprite"]);
+const EXTRA = new Set(["transcribe", "describe", "look", "fingerprint", "embed", "sprite"]);
+/** The steps that ask the person's AI: a usage limit or a Mac that is off holds them, never fails them. */
+const ON_AI = ["describe", "look"];
 
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
 
@@ -78,7 +88,7 @@ interface VersionRow {
   from_path: string | null;
 }
 
-/** Seconds a describe should wait before it tries again, or 0 when its error is a real failure. */
+/** Seconds a describe or a look should wait before it tries again, or 0 when its error is a real failure. */
 function waitFor(e: unknown): number {
   const under = e instanceof AiProviderError && e.cause ? e.cause : e;
   if (under instanceof MacClaudeError && under.kind === "limit") return 15 * 60;
@@ -99,11 +109,12 @@ const isLimit = (e: unknown) => {
 };
 
 /**
- * The plan's limit is reached: every description queued for the same account waits with it, saying why (the progress
- * bar shows it, estimate.ts), instead of each one asking the closed plan. The first to run after `until` asks again.
+ * The plan's limit is reached: every description and shot description queued for the same account waits with it,
+ * saying why (the progress bar shows it, estimate.ts), instead of each one asking the closed plan. The first to run
+ * after `until` asks again.
  */
 export function holdForLimit(db: ReturnType<typeof libraryDb>, actor: string | null, why: string, until: number): void {
-  db.prepare("UPDATE jobs SET error = ?, run_after = MAX(run_after, ?) WHERE kind = 'describe' AND state = 'queued' AND actor IS ?").run(why, until, actor);
+  db.prepare("UPDATE jobs SET error = ?, run_after = MAX(run_after, ?) WHERE kind IN ('describe', 'look') AND state = 'queued' AND actor IS ?").run(why, until, actor);
 }
 
 const marks = (a: readonly unknown[]) => a.map(() => "?").join(",");
@@ -136,7 +147,7 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
 
 /** A description got through: the plan answers again, so the ones held for its limit are work again (estimate.ts progress). */
 export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | null): void {
-  db.prepare("UPDATE jobs SET error = NULL WHERE kind = 'describe' AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
+  db.prepare("UPDATE jobs SET error = NULL WHERE kind IN ('describe', 'look') AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
 }
 
 // this computer's transcripts and search entries run one at a time (lib/device-transcribe.ts, lib/device-embed.ts: the
@@ -187,7 +198,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   try {
     await run(job);
     finishJob(db, job.id, true, undefined, Math.max(now, Date.now())); // its end, so done_at - started_at is how long it took
-    if (job.kind === "describe") releaseLimit(db, job.actor);
+    if (ON_AI.includes(job.kind)) releaseLimit(db, job.actor);
   } catch (e) {
     if (e instanceof NeedsKey) {
       parkJob(db, job.id, e.message);
@@ -198,7 +209,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
     // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
     // one made on the person's computer waits for one with its model to be on, saying so
-    const wait = job.kind === "describe" ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
+    const wait = ON_AI.includes(job.kind) ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
@@ -308,6 +319,9 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
   return true;
 }
 
+/** Whether the AI described the version before. */
+const described = (versionId: string) => !!libraryDb().prepare("SELECT 1 FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId);
+
 async function run(job: JobRow): Promise<void> {
   const db = libraryDb();
   const v = db
@@ -322,12 +336,16 @@ async function run(job: JobRow): Promise<void> {
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
   if (v.source_key.startsWith("mac:")) {
     if (job.kind === "embed") return embedVersion(db, v.id, job.actor);
+    // its picture is read on that Mac: the look waits for it there, never fails
+    if (job.kind === "look") throw new NeedsKey(MAC_WAITS);
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const frames = await macFrames(v.id);
     if (!frames.length) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
+    const fresh = !described(v.id);
     await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
     await dropMacFrames(v.id);
+    if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     return;
   }
@@ -416,7 +434,13 @@ async function run(job: JobRow): Promise<void> {
     // only when the original is not here); the frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the
     // original took 1 to 5.5 s
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, await orProxy(), job.actor, dir);
-    else await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
+    else {
+      const fresh = !described(v.id);
+      await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
+      // a clip described for the first time gets its shot descriptions; one described before (Describe again, a whole
+      // library sorted into folders) gets them only when an edit or the person asks: never a sweep of a library
+      if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
+    }
     // new words to search by meaning: embed (again) when the library has semantic search on and the actor a route for it
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
   } else if (job.kind === "fingerprint") {
@@ -426,6 +450,9 @@ async function run(job: JobRow): Promise<void> {
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, f, Buffer.byteLength(f));
   } else if (job.kind === "embed") {
     await embedVersion(db, v.id, job.actor);
+  } else if (job.kind === "look") {
+    // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
+    await lookVersion(db, v.id, lighter, p, job.actor, dir);
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }

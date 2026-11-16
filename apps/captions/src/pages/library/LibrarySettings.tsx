@@ -40,8 +40,9 @@ const WHERE: Partial<Record<LibraryStepRoute, string>> = {
 };
 
 /** What each switch gives the person, before where it runs. */
-const WHAT: Record<"describe" | "embed", string> = {
+const WHAT: Record<"describe" | "look" | "embed", string> = {
   describe: "So search finds what happens on screen, not only what is said",
+  look: "A line for each shot of a longer video, so a search opens it at the moment",
   embed: "A search for \"beach\" also finds \"sand and waves\"",
 };
 
@@ -225,7 +226,7 @@ function AddingFiles({ library, watch, onChange, onError }: { library: LibrarySu
 /** The two AI switches (api/library/db.ts SETTING_DEFAULTS): each says where it runs for this account, read from the server's own routes (the estimate). */
 function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const [routes, setRoutes] = useState<LibraryEstimate["steps"] | null>(null);
-  const { describe, embed } = library.settings;
+  const { describe, look, embed } = library.settings;
   useEffect(() => {
     let live = true;
     getEstimate(library.id, { clips: 1, bytes: 1 }).then(
@@ -233,9 +234,9 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
       () => live && setRoutes([]),
     );
     return () => void (live = false);
-  }, [library.id, describe, embed]);
+  }, [library.id, describe, look, embed]);
 
-  const flip = (key: "describe" | "embed", on: boolean) =>
+  const flip = (key: "describe" | "look" | "embed", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
@@ -254,7 +255,7 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
       );
     return WHERE[s.route] ? `Uses ${WHERE[s.route]}` : null;
   };
-  const row = (key: "describe" | "embed", step: LibraryStep, title: string) => (
+  const row = (key: "describe" | "look" | "embed", step: LibraryStep, title: string) => (
     <Row
       title={title}
       // where search by meaning runs: the "meaning" worker's key-free route answers "device" here ("Uses this computer")
@@ -271,6 +272,7 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
     <Section id="library-ai" title="AI">
       <Card>
         {row("describe", "describe", "Write down what is in each video")}
+        {row("look", "look", "Shot descriptions")}
         {row("embed", "embed", "Search by meaning, not exact words")}
       </Card>
     </Section>

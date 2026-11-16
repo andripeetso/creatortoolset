@@ -99,7 +99,9 @@ describe("describe job", () => {
 
   it("the prompt builder has no field for names or ages, and the answer keeps only description, tags and roll", () => {
     const p = describePrompt({ title: "Forward roll", transcript: "[0:00] Tuck the chin.", frames: 4 });
-    expect(p.user).toMatch(/"roll": "a" or "b"\}$/);
+    expect(p.user).toMatch(/"roll": "a" or "b", "kind": "what the footage is, in one to three plain lowercase words[^"]*"\}$/);
+    expect(parseDescribe('{"description": "A game.", "tags": [], "kind": " Screen  Recording "}').kind).toBe("screen recording");
+    expect(parseDescribe('{"description": "A game.", "tags": [], "kind": "a very long kind of footage"}').kind).toBeUndefined();
     expect(p.user).not.toMatch(/creator|who/i); // A-roll is anyone talking to the camera, never a guess at who
     expect(parseDescribe('{"description": "A person talks.", "tags": [], "roll": "a"}').roll).toBe("a");
     expect(parseDescribe('{"description": "A person talks.", "tags": [], "roll": "maybe"}')).toEqual({ description: "A person talks.", tags: [] });

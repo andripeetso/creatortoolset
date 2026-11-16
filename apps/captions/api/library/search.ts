@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "../auth";
-import type { AssetDetail, SearchHit, SearchQuery } from "../../contracts/library";
+import type { AssetDetail, PictureSignal, SearchHit, SearchQuery, StretchLines } from "../../contracts/library";
 import { deviceEmbedStatus } from "../lib/device-embed";
 import { env, hostedMode } from "../lib/env";
 import type { SessionUser } from "../users";
@@ -17,12 +17,14 @@ import { filterClauses } from "./query";
 import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
+import { ratedLine, shotsOf } from "./look";
+import { setUserLine, storeLines, storeStretches, stretchesOf, type StretchLine } from "./stretches";
 
 /**
  * Search, one asset in full, re-running jobs, and opening a clip in Caption Studio (tasks/media-library-plan.md,
  * sections 6, 7 and 10). Mounted at /api/library next to routes.ts. Search reads titles, tags and descriptions
- * (search_assets) and what is said in the clips (search_segments): a segment hit carries its second, so the preview
- * opens there. Only the current version of assets out of the trash is searched. Outsiders get 404 everywhere.
+ * (search_assets), what is said in the clips (search_segments) and their shot descriptions (search_stretches): a
+ * segment or shot hit carries its second, so the preview opens there. Only the current version of assets out of the trash is searched. Outsiders get 404 everywhere.
  */
 
 export const searchApp = new Hono<{ Variables: AuthVars }>();
@@ -44,7 +46,7 @@ export function searchClauses(query: SearchQuery): Clause[] {
   ];
 }
 
-/** Asset hits first (title weighs most), then the lines said in clips, each with the second it starts at. */
+/** Asset hits first (title weighs most), then the lines said in clips, then the shots seen in them, each with the second it starts at. */
 export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: Clause[] = []): SearchHit[] {
   const fts = ftsQuery(q);
   if (!fts) return [];
@@ -70,9 +72,19 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
     if (!segs.has(versionId)) segs.set(versionId, segmentsOf(db(), versionId));
     return segs.get(versionId)![seg]?.start ?? 0;
   };
+  const seen = db()
+    .prepare(
+      `SELECT ${CARD}, (SELECT st.a FROM stretches st WHERE st.version_id = s.version_id AND st.seg = s.seg LIMIT 1) AS at,
+         snippet(search_stretches, 2, '', '', '…', 16) AS snippet
+       FROM search_stretches s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
+       WHERE search_stretches MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       ORDER BY bm25(search_stretches) LIMIT ?`,
+    )
+    .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
   return [
     ...assets.map((r) => ({ asset: toCard(r) })),
     ...said.map((r) => ({ asset: toCard(r), seconds: startOf(r.version_id, r.seg), snippet: r.snippet })),
+    ...seen.map((r) => ({ asset: toCard(r), seconds: r.at ?? 0, snippet: r.snippet })),
   ];
 }
 
@@ -119,12 +131,16 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     return { kind: j.kind, state: j.state, ...(error ? { error } : {}) };
   });
   const t = db().prepare("SELECT provider FROM transcripts WHERE version_id = ?").get(row.version_id) as { provider: string } | undefined;
+  const shots = stretchesOf(db(), row.version_id)
+    .filter((s) => s.text)
+    .map((s) => ({ seg: s.seg, a: s.a, b: s.b, text: s.text, source: s.source }));
   return {
     ...toCard(row),
     versions,
     collections,
     jobs,
     ...(t ? { transcript: { provider: t.provider, segments: segmentsOf(db(), row.version_id) } } : {}),
+    ...(shots.length ? { shots } : {}),
     ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user)),
   };
 }
@@ -192,7 +208,8 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   return c.json(detail);
 });
 
-const RERUN = new Set(["transcribe", "describe", "fingerprint", "embed"]);
+// a look on one clip, asked for by name: never a whole library's (bulk.ts has no look)
+const RERUN = new Set(["transcribe", "describe", "look", "fingerprint", "embed"]);
 
 // POST /api/library/:id/assets/:assetId/jobs { kinds } → queued again, with the caller as the actor (their key)
 searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
@@ -261,6 +278,90 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     throw e;
   }
   return c.json(assetDetail(libraryId, assetId, user));
+});
+
+// PATCH /api/library/:id/assets/:assetId/shots/:seg { text } → AssetDetail: the person's own line for one shot of the
+// current version, which wins over the AI's; empty removes it and the AI's shows again. Who may edit the clip may edit it.
+searchApp.patch("/:id/assets/:assetId/shots/:seg", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const assetId = c.req.param("assetId");
+  const a = libraryRole(user.username, libraryId)
+    ? (db().prepare("SELECT current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(assetId, libraryId) as { current_version_id: string | null } | undefined)
+    : undefined;
+  if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return notFound(c);
+  const seg = Number(c.req.param("seg"));
+  const b = (await c.req.json().catch(() => null)) as { text?: unknown } | null;
+  if (!Number.isSafeInteger(seg) || seg < 0 || typeof b?.text !== "string") return c.json({ error: "Send the line's text", code: "invalid" }, 400);
+  if (!setUserLine(db(), a.current_version_id, seg, b.text)) return notFound(c);
+  return c.json(assetDetail(libraryId, assetId, user));
+});
+
+/**
+ * A version another computer reads (the studio's worker, a Mac with the file), for the two routes below: the caller
+ * must be allowed to change the clip. Null: not found for them.
+ */
+async function writableVersion(c: Ctx): Promise<{ versionId: string; duration: number } | null> {
+  const user = c.get("user");
+  const libraryId = c.req.param("id") ?? "";
+  const versionId = c.req.param("versionId") ?? "";
+  const v = libraryRole(user.username, libraryId)
+    ? (db()
+        .prepare("SELECT a.id AS asset_id, a.kind, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL")
+        .get(versionId, libraryId) as { asset_id: string; kind: string; probe: string | null } | undefined)
+    : undefined;
+  if (!v || v.kind !== "video" || !(await mayWrite(user.username, libraryId, v.asset_id, versionId))) return null;
+  return { versionId, duration: Number((JSON.parse(v.probe ?? "null") as { duration?: number } | null)?.duration) || 0 };
+}
+
+/** Frames read a second, and the most frames a picture may send (six hours at 30 a second). */
+const MAX_SIGNAL_FRAMES = 6 * 3600 * 30;
+const nums = (x: unknown, n: number) => Array.isArray(x) && x.length === n && x.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+
+/** A picture as numbers, checked (contracts PictureSignal): the same count of each, finite and not negative. */
+export function parseSignal(body: unknown): PictureSignal | string {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const fps = Number(b.fps);
+  if (!Number.isFinite(fps) || fps < 1 || fps > 120) return "fps must be between 1 and 120";
+  const n = Array.isArray(b.step) ? b.step.length : -1;
+  if (n < 1 || n > MAX_SIGNAL_FRAMES) return `step must hold 1 to ${MAX_SIGNAL_FRAMES} frames`;
+  if (!nums(b.step, n) || !nums(b.cut, n) || !nums(b.lag, n)) return "step, cut and lag must be as long as each other, of numbers 0 or more";
+  return { fps, step: b.step as number[], cut: b.cut as number[], lag: b.lag as number[] };
+}
+
+// POST /api/library/:id/versions/:versionId/picture PictureSignal → { stretches: [{ seg, a, b, motion }] }: a video's
+// picture read on another computer (look.ts readPicture's numbers). The server finds the stretches the way it does for
+// a file it reads itself (shotsOf), stores them with no line yet (the AI's earlier rows go; the person's own lines
+// stay) and answers with them, so the other computer makes the sheets and the lines (…/stretches).
+searchApp.post("/:id/versions/:versionId/picture", async (c) => {
+  const v = await writableVersion(c);
+  if (!v) return notFound(c);
+  const x = parseSignal(await c.req.json().catch(() => null));
+  if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
+  const read = { fps: x.fps, step: Float32Array.from(x.step), cut: Float32Array.from(x.cut), lag: Float32Array.from(x.lag) };
+  const found = shotsOf(read, v.duration || x.step.length / x.fps);
+  storeStretches(db(), v.versionId, found);
+  return c.json({ stretches: found.map((s, seg) => ({ seg, a: s.a, b: s.b, motion: s.motion })) });
+});
+
+// POST /api/library/:id/versions/:versionId/stretches StretchLines → { saved }: the lines another computer's look wrote
+// for the stretches …/picture answered with, under the context stamp it was given. Each is checked and capped as the
+// server's own (look.ts ratedLine); a line for a stretch the version doesn't have is left out.
+searchApp.post("/:id/versions/:versionId/stretches", async (c) => {
+  const v = await writableVersion(c);
+  if (!v) return notFound(c);
+  const b = (await c.req.json().catch(() => null)) as Partial<StretchLines> | null;
+  if (typeof b?.stamp !== "string" || !/^[\w.-]{1,64}$/.test(b.stamp)) return c.json({ error: "Send the stamp the lines were written under", code: "invalid" }, 400);
+  if (!Array.isArray(b.lines) || b.lines.length > MAX_SIGNAL_FRAMES) return c.json({ error: "Send the lines", code: "invalid" }, 400);
+  const lines: StretchLine[] = [];
+  for (const l of b.lines as unknown[]) {
+    const o = (l ?? {}) as Record<string, unknown>;
+    const line = ratedLine(o);
+    if (!line || !Number.isSafeInteger(o.seg) || (o.seg as number) < 0) continue;
+    const ph = typeof o.ph === "string" && /^[0-9a-f]{16}$/i.test(o.ph) ? o.ph.toLowerCase() : undefined;
+    lines.push({ seg: o.seg as number, ...line, ...(ph ? { ph } : {}) });
+  }
+  return c.json({ saved: storeLines(db(), v.versionId, b.stamp, lines) });
 });
 
 const opening = new Map<string, Promise<string>>();

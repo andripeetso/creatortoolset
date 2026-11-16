@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, useLibraryChanges } from "@/lib/library";
+import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
@@ -171,6 +171,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
         </div>
       )}
       <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={inTrash} onSaved={saved} onError={onError} />
+      <ShotLines key={`shots-${a.versionId}`} libraryId={libraryId} detail={detail} now={now} readOnly={inTrash} onSeek={seek} onSaved={saved} onError={onError} />
       {(facts.length > 0 || inFolders.length > 0) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -537,6 +538,100 @@ export const AiBadge = () => (
     AI
   </span>
 );
+
+/**
+ * The clip's shot descriptions, under its description: one line a shot with its time, a click plays from there, the
+ * shot playing now is marked. The person can rewrite a line; theirs wins over the AI's (shown quieter, as the AI's
+ * description is), and saving it empty brings the AI's back. Nothing while the clip has none.
+ */
+function ShotLines({
+  libraryId,
+  detail,
+  now,
+  readOnly,
+  onSeek,
+  onSaved,
+  onError,
+}: {
+  libraryId: string;
+  detail: AssetDetail | null;
+  now: number;
+  readOnly: boolean;
+  onSeek: (s: number) => void;
+  onSaved: (a: AssetCard) => void;
+  onError: (e: string) => void;
+}) {
+  const [editing, setEditing] = useState<{ seg: number; text: string; was: string } | null>(null);
+  const shots = detail?.shots;
+  if (!detail || !shots?.length) return null;
+  const save = () =>
+    editing &&
+    updateShot(libraryId, detail.id, editing.seg, editing.text.trim())
+      .then((x) => {
+        setEditing(null);
+        onSaved(x);
+      })
+      .catch((e) => onError(message(e)));
+  return (
+    <section aria-label="Shot descriptions" className="flex flex-col gap-1">
+      <span className="text-xs text-zinc-500">Shot descriptions</span>
+      <div className="-mx-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
+        {shots.map((s) =>
+          editing?.seg === s.seg ? (
+            <form
+              key={s.seg}
+              className="flex flex-col gap-1.5 px-1 py-0.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void save();
+              }}
+            >
+              <input
+                autoFocus
+                value={editing.text}
+                maxLength={200}
+                aria-label={`Shot at ${clock(s.a)}`}
+                onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+                className="w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
+              />
+              <div className="flex items-center gap-2">
+                <Button size="sm" type="submit" disabled={editing.text.trim() === editing.was}>
+                  Save
+                </Button>
+                <Button size="sm" type="button" variant="ghost" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div key={s.seg} className={cn("group flex items-start rounded hover:bg-zinc-500/10", now >= s.a && now < s.b && "bg-zinc-500/15")}>
+              <button
+                type="button"
+                onClick={() => onSeek(s.a)}
+                aria-current={now >= s.a && now < s.b ? "true" : undefined}
+                className={cn("flex min-w-0 flex-1 gap-2 px-1 py-0.5 text-left text-sm", s.source === "ai" && "text-zinc-400")}
+              >
+                <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(s.a)}</span>
+                <span>{s.text}</span>
+              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  aria-label={`Edit the shot at ${clock(s.a)}`}
+                  title="Edit"
+                  onClick={() => setEditing({ seg: s.seg, text: s.text, was: s.text })}
+                  className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          ),
+        )}
+      </div>
+    </section>
+  );
+}
 
 /** What is said in the clip, each line a button that plays from there; the line playing now is marked. */
 function Transcript({

@@ -52,7 +52,7 @@ export function aboutUsd(usd: number): string {
 /** One line per step that runs or waits; a step switched off says nothing. `proxies`: the library makes them (its settings). */
 export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
   if (s.route === "off") return null;
-  const what = { files: proxies ? "Thumbnails and proxies" : "Thumbnails", transcript: "Transcripts", describe: "AI descriptions", embed: "Search by meaning" }[s.step];
+  const what = { files: proxies ? "Thumbnails and proxies" : "Thumbnails", transcript: "Transcripts", describe: "AI descriptions", look: "Shot descriptions", embed: "Search by meaning" }[s.step];
   if (s.route === "none") return s.step === "embed" ? null : <Needs step={s.step} what={what} />;
   const on = {
     server: "on this server, free",
@@ -77,6 +77,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   fingerprint: "Duplicate checks",
   transcribe: "Transcripts",
   describe: "AI descriptions",
+  look: "Shot descriptions",
   embed: "Search by meaning",
 };
 
@@ -164,15 +165,25 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
       // a private window keeps it for this page only
     }
   };
-  const needsYou = !!p?.waiting.some((w) => !w.limit);
+  const needsYou = !!p?.waiting.some((w) => !w.limit && !w.computer);
   const waiting = p?.waiting.map((w) => (
     <div
-      key={`${w.step}${w.limit ? "-limit" : ""}`}
+      key={`${w.step}${w.limit ? "-limit" : w.computer ? "-computer" : ""}`}
       // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
       className={w.limit ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" : "flex items-center gap-2 text-xs text-zinc-500"}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-      {w.limit ? <span>{w.count.toLocaleString()} {w.count === 1 ? "AI description waits" : "AI descriptions wait"}: {w.missing}</span> : <Needs step={w.step} count={w.count} />}
+      {w.limit ? (
+        <span>
+          {w.count.toLocaleString()} {w.step === "look" ? (w.count === 1 ? "shot description waits" : "shot descriptions wait") : w.count === 1 ? "AI description waits" : "AI descriptions wait"}: {w.missing}
+        </span>
+      ) : w.computer ? (
+        <span>
+          Shot descriptions of {w.count.toLocaleString()} {w.count === 1 ? "video wait for the Mac it is on" : "videos wait for the Mac they are on"}
+        </span>
+      ) : (
+        <Needs step={w.step} count={w.count} />
+      )}
     </div>
   ));
   return (
@@ -214,6 +225,7 @@ const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = 
   fingerprint: "Checking for duplicates",
   transcribe: "Transcribing",
   describe: "Describing",
+  look: "Describing its shots",
   embed: "Adding to search",
 };
 const FAILED_WORDS: Record<NonNullable<AssetCard["failed"]>["step"], string> = {

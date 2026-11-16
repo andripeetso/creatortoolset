@@ -194,10 +194,10 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
 
 /** A library's on/off setting. describe and embed spend AI on every upload, so they are off until its owner turns them on. */
 /**
- * Both start on: describing runs on the uploader's own AI (or parks until they connect one), and a big upload says
- * first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts).
+ * All start on: describing and shot descriptions run on the uploader's own AI (or park until they connect one), and a
+ * big upload says first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts).
  */
-export const SETTING_DEFAULTS = { describe: true, embed: true, proxy: true } as const;
+export const SETTING_DEFAULTS = { describe: true, look: true, embed: true, proxy: true } as const;
 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
