@@ -41,7 +41,8 @@ export const workAt = (items: WorkItem[], pathname: string): WorkItem | undefine
  * The newest work of the person signed in, in the project they are in (a project keeps its own content apart):
  * Workshop sessions and video edits of that project. A plug-in that has edits of its own (it replaces the editor)
  * gives them through its `work` (lib/plugin.ts), and the app's own list, which is empty there, is left out. Read
- * again when the project changes; null until the first of it is known.
+ * again when the project changes; null until the first of it is known. All of it, newest first: the picker shows the
+ * newest few and finds the rest by name.
  */
 export function useRecentWork(): WorkItem[] | null {
   const me = useMe();
@@ -71,7 +72,7 @@ export function useRecentWork(): WorkItem[] | null {
     const workshop = canUse(me, "workshop")
       ? (sessions ?? []).map((s): WorkItem => ({ key: `session:${s.id}`, kind: "Workshop", icon: NotebookPen, title: s.title, to: `/workshop/sessions/${s.id}`, at: s.updatedAt, ...(s.working ? { busy: true } : {}) }))
       : [];
-    return recentWork([workshop, fetched ?? []]);
+    return recentWork([workshop, fetched ?? []], Infinity);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, sessions, fetched]);
 }
