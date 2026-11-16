@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Copy, Download, FileText, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -148,7 +148,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
   const trash = !inTrash && !a.review && (
-    <Button size="icon" variant="ghost" aria-label="Move to trash" title="Move to trash" className={cn("h-8 w-8 shrink-0", !win && "-mr-2 -mt-1")} onClick={() => onTrash(true)}>
+    <Button size="icon" variant="ghost" aria-label="Move to trash" title="Move to trash" className={cn("h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground", !win && "-mr-2 -mt-1")} onClick={() => onTrash(true)}>
       <Trash2 className="h-4 w-4" />
     </Button>
   );
@@ -156,7 +156,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const more = !inTrash && a.kind === "video" && !a.review && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button size="icon" variant="ghost" aria-label="More" title="More" className="h-8 w-8 shrink-0">
+        <Button size="icon" variant="ghost" aria-label="More" title="More" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
           <MoreHorizontal className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -230,8 +230,10 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     </div>
   );
 
+  // one row: what the clip is shared or made into on the left; the quiet tools as icons on the right
+  const tool = "h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground";
   const actions = (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex items-center gap-2">
       {inTrash ? (
         !a.review && (
           <Button size="sm" variant="outline" onClick={() => onTrash(false)}>
@@ -245,14 +247,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             <Share2 className="h-4 w-4" />
             Share
           </Button>
-          {a.state !== "missing" && (
-            <Button size="sm" variant="outline" asChild>
-              <a href={file.href} download={file.name}>
-                <Download className="h-4 w-4" />
-                Download
-              </a>
-            </Button>
-          )}
           {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
           {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
             <Button size="sm" variant="outline" onClick={newEdit}>
@@ -260,27 +254,36 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               New edit
             </Button>
           )}
-          {moveTo.length > 0 && (
-            <select
-              aria-label="Move to"
-              value=""
-              onChange={(e) => e.target.value && move(e.target.value === "top" ? null : e.target.value)}
-              className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
-            >
-              <option value="">Move to…</option>
-              {moveTo.map((o) => (
-                <option key={o.id ?? "top"} value={o.id ?? "top"}>
-                  {`${"\u00a0".repeat(3 * o.depth)}${o.name}`}
-                </option>
-              ))}
-            </select>
-          )}
+          <div className="ml-auto flex items-center gap-0.5">
+            {a.state !== "missing" && (
+              <Button size="icon" variant="ghost" asChild className={tool}>
+                <a href={file.href} download={file.name} aria-label="Download" title="Download">
+                  <Download className="h-4 w-4" />
+                </a>
+              </Button>
+            )}
+            {moveTo.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon" variant="ghost" aria-label="Move to" title="Move to" className={tool}>
+                    <FolderInput className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-80">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
+                  {moveTo.map((o) => (
+                    <DropdownMenuItem key={o.id ?? "top"} onSelect={() => move(o.id)} style={{ paddingLeft: `${0.5 + o.depth * 0.75}rem` }}>
+                      {o.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {more}
+            {win && trash}
+          </div>
         </>
       )}
-      <span className={cn("flex items-center", win && "ml-auto")}>
-        {more}
-        {win && trash}
-      </span>
     </div>
   );
 
