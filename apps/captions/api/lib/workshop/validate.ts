@@ -398,6 +398,8 @@ export interface DocPatch {
   hooks?: Array<{ id?: string; text: string }>;
   /** The slides the author locked, by block id. */
   locked?: string[];
+  /** What the editor's save was typed on (the piece as it last had it), so what a turn wrote meanwhile stays. */
+  base?: { blocks: Array<{ id?: string; text: string }>; hooks?: Array<{ id?: string; text: string }>; caption?: string; pinned?: string };
 }
 
 export function parseDocPatch(raw: unknown, kind?: DocKind): DocPatch {
@@ -411,15 +413,30 @@ export function parseDocPatch(raw: unknown, kind?: DocKind): DocPatch {
   }
   if ("frameworkIds" in body) out.frameworkIds = Array.isArray(body.frameworkIds) ? [...new Set(body.frameworkIds.filter(okId))].slice(0, LIMITS.frameworks) : [];
   if ("ruleIds" in body) out.ruleIds = body.ruleIds === null ? null : Array.isArray(body.ruleIds) ? [...new Set(body.ruleIds.filter(okId))].slice(0, LIMITS.rules) : null;
-  if ("blocks" in body) {
-    if (!Array.isArray(body.blocks)) throw new Error("Blocks must be a list");
-    // a reel is one script page like notes: a save must not cut it to a slide's length
-    const maxText = kind === "notes" || kind === "reel" ? LIMITS.notes : LIMITS.blockText;
-    const maxBlocks = kind === "notes" ? 1 : LIMITS.blocks;
-    out.blocks = body.blocks
+  // a reel is one script page like notes: a save must not cut it to a slide's length
+  const maxText = kind === "notes" || kind === "reel" ? LIMITS.notes : LIMITS.blockText;
+  const maxBlocks = kind === "notes" ? 1 : LIMITS.blocks;
+  const blockList = (list: unknown[]) =>
+    list
       .filter(isRec)
       .slice(0, maxBlocks)
       .map((b) => ({ ...(typeof b.id === "string" && /^b\d{1,5}$/.test(b.id) ? { id: b.id } : {}), text: typeof b.text === "string" ? b.text.slice(0, maxText) : "" }));
+  const hookList = (list: unknown[]) =>
+    list
+      .filter(isRec)
+      .slice(0, LIMITS.hooks)
+      .map((b) => ({ ...(typeof b.id === "string" && /^h\d{1,5}$/.test(b.id) ? { id: b.id } : {}), text: typeof b.text === "string" ? b.text.slice(0, LIMITS.hookText) : "" }));
+  if ("blocks" in body) {
+    if (!Array.isArray(body.blocks)) throw new Error("Blocks must be a list");
+    out.blocks = blockList(body.blocks);
+  }
+  if (isRec(body.base) && Array.isArray(body.base.blocks)) {
+    out.base = {
+      blocks: blockList(body.base.blocks),
+      ...(Array.isArray(body.base.hooks) ? { hooks: hookList(body.base.hooks) } : {}),
+      ...(typeof body.base.caption === "string" ? { caption: body.base.caption.slice(0, LIMITS.companion) } : {}),
+      ...(typeof body.base.pinned === "string" ? { pinned: body.base.pinned.slice(0, LIMITS.companion) } : {}),
+    };
   }
   if ("locked" in body) out.locked = Array.isArray(body.locked) ? [...new Set(body.locked.filter((x): x is string => typeof x === "string" && /^b\d{1,5}$/.test(x)))].slice(0, LIMITS.blocks) : [];
   if ("caption" in body) out.caption = typeof body.caption === "string" ? body.caption.slice(0, LIMITS.companion) : "";
@@ -434,10 +451,7 @@ export function parseDocPatch(raw: unknown, kind?: DocKind): DocPatch {
   }
   if ("hooks" in body) {
     if (!Array.isArray(body.hooks)) throw new Error("Hooks must be a list");
-    out.hooks = body.hooks
-      .filter(isRec)
-      .slice(0, LIMITS.hooks)
-      .map((b) => ({ ...(typeof b.id === "string" && /^h\d{1,5}$/.test(b.id) ? { id: b.id } : {}), text: typeof b.text === "string" ? b.text.slice(0, LIMITS.hookText) : "" }));
+    out.hooks = hookList(body.hooks);
   }
   if ("carouselType" in body) {
     if (body.carouselType === null || body.carouselType === "") out.carouselType = null;
