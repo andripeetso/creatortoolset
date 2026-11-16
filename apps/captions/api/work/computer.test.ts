@@ -103,6 +103,12 @@ describe("the computer worker", () => {
       );
     expect(await runJob(pkg("preview"), o)).toBe("stopped");
     expect(aborted).toBe(true);
+    // lost before the step starts (the beat came while the files did): it never runs
+    let ran = false;
+    STEPS.preview = async () => void (ran = true);
+    const slow = { ...o, fetch: async (u: string, i?: RequestInit) => (u.includes("/own") && (await new Promise((r) => setTimeout(r, 100))), fake.request(u, i)) };
+    expect(await runJob(pkg("preview"), slow)).toBe("stopped");
+    expect(ran).toBe(false);
     expect(calls.filter((c) => !c.at.startsWith("beat"))).toEqual([]);
     expect(held()).toBe(false);
   });
