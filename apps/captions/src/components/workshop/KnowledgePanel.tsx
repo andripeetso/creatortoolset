@@ -332,7 +332,7 @@ function SourceRow({
             <button type="button" onClick={onToggle} className="truncate text-left">
               {s.title || (folder ? s.name.slice(folder.length + 1) : s.name)}
             </button>
-            {readOnly ? <span className="text-[10px] text-zinc-400">{SOURCE_KINDS.find((k) => k.id === s.kind)?.label ?? "not filed"}</span> : s.status === "read" && <select
+            {readOnly ? s.status === "read" && <span className="text-[10px] text-zinc-400">{SOURCE_KINDS.find((k) => k.id === s.kind)?.label ?? "Other"}</span> : s.status === "read" && <select
               value={s.kind ?? ""}
               onChange={(e) => void onSave({ kind: e.target.value as SourceKind })}
               className="rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-300 outline-none"
