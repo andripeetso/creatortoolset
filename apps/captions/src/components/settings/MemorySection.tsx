@@ -4,61 +4,76 @@ import { MEMORY_RULE_MAX } from "@contracts/memory";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useCachedLoad } from "@/lib/local-cache";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, WorkspacePick, WorkspaceTag, inWorkspace, moveItems, useSettingsWorkspace } from "./ui";
 
-/** This window's own remove reads the list again too. */
+/** This window's own change reads the list again too. */
 const OWN_TOO = { own: true };
 
-async function call<T>(path = "", method = "GET", body?: unknown): Promise<T> {
+/** One call to the rules' routes (api/memory.ts). `workspace`: the one the call works in, when it is not the window's. */
+async function call<T>(path = "", method = "GET", body?: unknown, workspace?: string | null): Promise<T> {
   const init: RequestInit = { method, credentials: "same-origin", ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) };
-  const r = await fetch(`/api/memory${path}`, init).catch(() => null);
-  if (!r) throw new Error("Can't reach the server");
+  const r = await fetch(`/api/memory${path}`, inWorkspace(workspace, init)).catch(() => null);
+  if (!r) throw new Error("Could not reach the server");
   const data = (await r.json().catch(() => ({}))) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `Failed (${r.status})`);
   return data;
 }
 
 /**
- * Settings → Memory: what the assistant keeps from one chat to the next (api/memory.ts): the rule it wrote, what the
- * person said under it, and the row's menu: Edit, Rewrite (their AI writes it again, shown in Edit before it is
- * saved), Remove.
+ * Settings → Memory: the rules the assistant keeps from one chat to the next (api/memory.ts): the rule it wrote, what
+ * the person said under it, and the row's menu: Edit, Rewrite (the AI writes it again, shown in Edit before it is
+ * saved), Move to another workspace or to every workspace, Delete. The workspace selector starts on All workspaces
+ * (every rule, each with its workspace); one picked shows its own rules and the ones for every workspace.
  */
 export function MemorySection() {
-  const kept = useCachedLoad<{ facts: MemoryFact[] }>("/api/memory", () => call<{ facts: MemoryFact[] }>(), OWN_TOO);
+  const w = useSettingsWorkspace("list");
+  const url = w.all ? "/api/memory?all=1" : "/api/memory";
+  const kept = useCachedLoad<{ facts: MemoryFact[] }>(url, () => call<{ facts: MemoryFact[] }>(w.all ? "?all=1" : "", "GET", undefined, w.id), { ...OWN_TOO, workspace: w.cacheKey });
   const [editing, setEditing] = useState<{ fact: MemoryFact; rewrite: boolean } | null>(null);
   const facts = kept.data?.facts;
   const refresh = kept.refresh;
-  if (!facts) return <Card>{kept.error ? <ErrorRow title="Could not load what is kept" detail={kept.error} retry={() => void refresh().catch(() => {})} /> : <LoadingRow />}</Card>;
   return (
-    <Section title="Rules from your chats">
+    <Section id="memory-rules" title="Rules">
+      <WorkspacePick mode="list" />
       <Card>
-        {!facts.length && <EmptyRow title="Nothing kept yet" />}
-        {facts.map((f) => (
-          <ListRow
-            key={f.id}
-            // a rule is one sentence: it wraps rather than being cut
-            title={<span className="whitespace-normal font-normal [overflow-wrap:anywhere]">{f.text}</span>}
-            subtitle={f.said && <span title={f.said}>You said “{f.said}”</span>}
-            status={f.project?.name}
-            actions={
-              <RowMenu
-                label="Rule"
-                items={[
-                  { label: "Edit", onSelect: () => setEditing({ fact: f, rewrite: false }) },
-                  { label: "Rewrite", onSelect: () => setEditing({ fact: f, rewrite: true }) },
-                  { label: "Remove", destructive: true, confirm: { title: "Remove this rule?" }, onSelect: () => call(`/${f.id}`, "DELETE").then(refresh) },
-                ]}
+        {!facts ? (
+          kept.error ? (
+            <ErrorRow title="Could not load rules" detail={kept.error} retry={() => void refresh().catch(() => {})} />
+          ) : (
+            <LoadingRow />
+          )
+        ) : (
+          <>
+            {!facts.length && <EmptyRow title="No rules" />}
+            {facts.map((f) => (
+              <ListRow
+                key={f.id}
+                // a rule is one sentence: it wraps rather than being cut
+                title={<span className="whitespace-normal font-normal [overflow-wrap:anywhere]">{f.text}</span>}
+                subtitle={f.said && <span title={f.said}>You said “{f.said}”</span>}
+                status={w.all ? <WorkspaceTag id={f.project?.id} /> : undefined}
+                actions={
+                  <RowMenu
+                    label="Rule actions"
+                    items={[
+                      { label: "Edit", onSelect: () => setEditing({ fact: f, rewrite: false }) },
+                      { label: "Rewrite", onSelect: () => setEditing({ fact: f, rewrite: true }) },
+                      ...moveItems(w.workspaces, f.project?.id, (to) => call(`/${f.id}/workspace`, "PUT", { workspace: to }).then(refresh)),
+                      { label: "Delete", destructive: true, confirm: { title: "Delete this rule?" }, onSelect: () => call(`/${f.id}`, "DELETE").then(refresh) },
+                    ]}
+                  />
+                }
               />
-            }
-          />
-        ))}
+            ))}
+          </>
+        )}
       </Card>
       {editing && <EditRule key={editing.fact.id} fact={editing.fact} rewriteFirst={editing.rewrite} onClose={() => setEditing(null)} onSaved={() => void refresh().catch(() => {})} />}
     </Section>
   );
 }
 
-/** Edit one rule. Rewrite asks their AI for a new wording and puts it in the box; nothing is saved until Save. */
+/** Edit one rule. Rewrite asks the AI for a new wording and puts it in the box; nothing is saved until Save. */
 function EditRule({ fact, rewriteFirst, onClose, onSaved }: { fact: MemoryFact; rewriteFirst: boolean; onClose: () => void; onSaved: () => void }) {
   const [text, setText] = useState(fact.text);
   const [busy, setBusy] = useState(false);
@@ -70,7 +85,7 @@ function EditRule({ fact, rewriteFirst, onClose, onSaved }: { fact: MemoryFact; 
     try {
       setText((await call<{ text: string }>(`/${fact.id}/rewrite`, "POST")).text);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The rewrite did not work");
+      setError(e instanceof Error ? e.message : "Could not rewrite the rule");
     } finally {
       setWriting(false);
     }

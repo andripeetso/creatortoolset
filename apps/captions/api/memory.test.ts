@@ -336,7 +336,7 @@ describe("the store has a fixed size", () => {
     // a line that fits to the last character: 281 + 3 = 284 = what is left
     const fits = `${"z".repeat(273)} is mine`;
     expect(6 * 286 + fits.length + 3).toBe(MEMORY_CAP);
-    const FULL = "Memory is full, so this was not kept. Tell the user: they can remove something in Settings, Memory, and then say it again.";
+    const FULL = "Memory is full, so this was not kept. Tell the user: they can delete a rule in Settings, Memory, and then say it again.";
     const t = await turn([...all, fits, "I also like the colour green"].join("\n"));
     for (const quote of all.slice(0, 6)) expect((await tool(t.token, "remember", { quote })).error).toBe(false);
     const before = await kept();
@@ -407,6 +407,35 @@ describe("projects are kept apart", () => {
     expect(JSON.parse((await tool(back.token, "forget", { quote: "we never show faces" })).text)).toEqual({ forgot: "we never show faces" });
     await back.end();
     expect((await kept()).map((f) => f.text)).toEqual(["I only film on my phone"]);
+    await removeAll();
+  });
+});
+
+describe("Settings covers every workspace", () => {
+  it("lists every workspace's rules and moves one between workspaces or to every workspace; a reply's token cannot", async () => {
+    const ws = (await (await app.request("/api/workshop/workspace", { headers: { cookie } })).json()) as { projects: { id: string; name: string }[] };
+    const [tumbles, garden] = ["Tiny Acrobatics", "Tiny Gardens"].map((n) => ws.projects.find((p) => p.name === n)!.id) as [string, string];
+    expect((await app.request("/api/workshop/workspace", { method: "PATCH", ...json({ currentProjectId: tumbles }, { cookie }) })).status).toBe(200);
+    await newChat();
+    const t = await turn("Here we never show faces.");
+    await tool(t.token, "remember", { quote: "we never show faces", project_only: true });
+    const [fact] = await kept();
+    const move = (workspace: unknown, headers: Record<string, string>) => app.request(`/api/memory/${fact!.id}/workspace`, { method: "PUT", ...json({ workspace }, headers) });
+    expect((await move(garden, { cookie, authorization: t.token })).status).toBe(403);
+    await t.end();
+    const facts = async (q: string, workspace: string) => ((await (await app.request(`/api/memory${q}`, { headers: { cookie, "x-ct-workspace": workspace } })).json()) as { facts: MemoryFact[] }).facts;
+    // the window is in the garden: its own list has none of it, All workspaces has it with its workspace
+    expect(await facts("", garden)).toEqual([]);
+    expect((await facts("?all=1", garden)).map((f) => [f.text, f.project])).toEqual([["we never show faces", { id: tumbles, name: "Tiny Acrobatics" }]]);
+    expect((await move("no-such-workspace", { cookie })).status).toBe(400);
+    expect((await move(garden, { cookie })).status).toBe(200);
+    expect((await facts("", garden)).map((f) => f.project?.name)).toEqual(["Tiny Gardens"]);
+    expect(await facts("", tumbles)).toEqual([]);
+    // every workspace: in each one's list, with no workspace of its own
+    expect((await move(null, { cookie })).status).toBe(200);
+    expect((await facts("?all=1", garden))[0]!.project).toBeUndefined();
+    expect((await facts("", tumbles)).map((f) => f.text)).toEqual(["we never show faces"]);
+    expect((await app.request("/api/memory/nope/workspace", { method: "PUT", ...json({ workspace: null }, { cookie }) })).status).toBe(404);
     await removeAll();
   });
 });

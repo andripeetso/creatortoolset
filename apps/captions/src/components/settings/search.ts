@@ -59,7 +59,7 @@ const STATIC_ROWS = [
   { section: "appearance", id: "chat-wave", title: "Chat mode transition effect", keywords: ["chat mode", "wave", "animation", "effect", "motion", "transition", "switch"] },
   { section: "appearance", id: "clip-view", title: "Clips open in", keywords: ["media library", "clip", "window", "side panel", "open", "player"] },
   { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
-  // Storage: where footage, music and finished videos live
+  // Folders: where each workspace's footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
   { section: "library", id: "library-adding", title: "How files come in", description: "Use them where they are, or copy them into the library", keywords: ["media library", "import", "copy", "in place", "places", "look for new files", "rescan"] },
@@ -85,6 +85,8 @@ const STATIC_ROWS = [
   { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
+  // Memory: the rules the assistant keeps from one chat to the next
+  { section: "memory", id: "memory-rules", title: "Rules", keywords: ["memory", "remember", "rule", "chat", "assistant", "forget", "workspace"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
   { section: "usage", id: "your-plan", title: "Your AI plan", description: "On Pro or Plus, big jobs ask before they start", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
