@@ -67,12 +67,12 @@ aiApp.delete("/segment/:requestId", (c) => {
 
 aiApp.post("/segment", async (c) => {
   if (!anyAiConfigured(c.get("user"))) {
-    return c.json({ error: "AI caption pass not configured" }, 501);
+    return c.json({ error: "Needs an AI provider" }, 501);
   }
   if (!mayUse(c.get("user"))) {
     return c.json(
       {
-        error: "The AI caption pass is locked for your account",
+        error: "Match cadence is locked for this account",
         code: "CLOUD_LOCKED",
       },
       403
@@ -135,10 +135,10 @@ aiApp.post("/segment", async (c) => {
  */
 aiApp.post("/split", async (c) => {
   if (!anyAiConfigured(c.get("user"))) {
-    return c.json({ error: "AI caption pass not configured" }, 501);
+    return c.json({ error: "Needs an AI provider" }, 501);
   }
   if (!mayUse(c.get("user"))) {
-    return c.json({ error: "The AI caption pass is locked for your account", code: "CLOUD_LOCKED" }, 403);
+    return c.json({ error: "Match cadence is locked for this account", code: "CLOUD_LOCKED" }, 403);
   }
   const body = (await c.req.json().catch(() => null)) as {
     lines?: unknown;
@@ -178,11 +178,11 @@ aiApp.post("/split", async (c) => {
  */
 aiApp.post("/script-check", async (c) => {
   if (!anyAiConfigured(c.get("user"))) {
-    return c.json({ error: "AI caption pass not configured" }, 501);
+    return c.json({ error: "Needs an AI provider" }, 501);
   }
   if (!mayUse(c.get("user"))) {
     return c.json(
-      { error: "The script check is locked for your account — ask the admin", code: "CLOUD_LOCKED" },
+      { error: "The script check is locked for this account", code: "CLOUD_LOCKED" },
       403
     );
   }

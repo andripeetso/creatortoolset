@@ -49,10 +49,10 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
           </p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {FORMAT_LABELS[job.format] ?? job.format}
-            {job.status === "queued" && " — waiting to render…"}
-            {job.status === "running" && (job.note ? ` — ${job.note}` : ` — rendering ${Math.round(job.progress * 100)}%`)}
+            {job.status === "queued" && " · waiting"}
+            {job.status === "running" && (job.note ? ` · ${job.note}` : ` · exporting ${Math.round(job.progress * 100)}%`)}
             {job.status === "done" && (
-              <> — ready{job.bytes ? ` · ${fmtBytes(job.bytes)}` : ""}</>
+              <>{job.bytes ? ` · ${fmtBytes(job.bytes)}` : ""}</>
             )}
           </p>
           {job.status === "error" && (
@@ -83,7 +83,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
                   className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-60"
                 >
                   <Library className="h-3 w-3" />
-                  {saved === "saved" ? "In the library" : saved === "already" ? "Already in the library" : saved === "saving" ? "Saving…" : "Save to library"}
+                  {saved === "saved" ? "In the Media Library" : saved === "already" ? "Already in the Media Library" : saved === "saving" ? "Sending…" : "Send to Media Library"}
                 </button>
               )}
               {saved && !["saving", "saved", "already"].includes(saved) && <span className="text-[11px] text-red-400">{saved}</span>}
@@ -100,9 +100,9 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
             }
             title={
               job.status === "done"
-                ? "Hide (the file stays downloadable for 24 hours)"
+                ? "Hide"
                 : active
-                  ? "Cancel export"
+                  ? "Stop export"
                   : "Dismiss"
             }
             className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-50"
@@ -171,14 +171,14 @@ export function ExportTray() {
         {active.length ? (
           <>
             <Loader2 className="h-3 w-3 animate-spin text-violet-400" />
-            Rendering {Math.round(progress * 100)}%
+            Exporting {Math.round(progress * 100)}%
             {active.length > 1 && ` · ${active.length}`}
           </>
         ) : (
           <>
             <Check className="h-3 w-3 text-emerald-400" />
             {doneCount || visible.length} export
-            {(doneCount || visible.length) > 1 ? "s" : ""} ready
+            {(doneCount || visible.length) > 1 ? "s" : ""}
           </>
         )}
         <ChevronUp className="h-3 w-3 text-zinc-500" />
@@ -192,7 +192,7 @@ export function ExportTray() {
         {doneCount > 1 && (
           <button
             onClick={() => downloadExportsZip(visible.filter((j) => j.status === "done"))}
-            title="Every finished export here, as one ZIP"
+            title="Downloads every finished export as one ZIP"
             className="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-300 shadow-xl transition-colors hover:border-zinc-500 hover:text-zinc-50"
           >
             <Download className="h-3 w-3" /> Download all {doneCount} as ZIP

@@ -33,7 +33,7 @@ async function throwFromAiResponse(
     error?: string;
     code?: string;
   };
-  throw new AiRequestError(e.error || `${fallback} (${res.status})`, e.code);
+  throw new AiRequestError(e.error || fallback, e.code);
 }
 
 let aiCache: AiStatus | null = null;
@@ -221,7 +221,7 @@ export async function refineSegments(
     }),
   });
   if (!res.ok) {
-    await throwFromAiResponse(res, "AI caption pass failed");
+    await throwFromAiResponse(res, "Could not match cadence");
   }
   const { marks } = (await res.json()) as { marks?: unknown };
   if (
@@ -230,7 +230,7 @@ export async function refineSegments(
     !marks.every((m) => m === 0 || m === 1 || m === 2)
   ) {
     throw new AiRequestError(
-      "Cadence matching returned an invalid grouping. Please try again."
+      "Could not match cadence"
     );
   }
   recordCadenceTiming(words.length, (Date.now() - startedAt) / 1000);
@@ -252,7 +252,7 @@ export async function refineSplits(
     signal: options.signal,
     body: JSON.stringify({ lines, maxChars }),
   });
-  if (!res.ok) await throwFromAiResponse(res, "AI caption pass failed");
+  if (!res.ok) await throwFromAiResponse(res, "Could not match cadence");
   const { splits } = (await res.json()) as { splits?: unknown };
   if (
     !Array.isArray(splits) ||
@@ -263,7 +263,7 @@ export async function refineSplits(
         s.every((k) => Number.isInteger(k) && k > 0 && k < lines[i].length)
     )
   ) {
-    throw new AiRequestError("Cadence matching returned invalid line splits. Please try again.");
+    throw new AiRequestError("Could not fit the lines to the caption box");
   }
   return splits as number[][];
 }
@@ -301,7 +301,7 @@ export async function checkAgainstScript(
       })),
     }),
   });
-  if (!res.ok) await throwFromAiResponse(res, "Script check failed");
+  if (!res.ok) await throwFromAiResponse(res, "the check did not finish");
   const { edits } = (await res.json()) as { edits?: unknown };
   if (
     !Array.isArray(edits) ||
@@ -313,7 +313,7 @@ export async function checkAgainstScript(
         typeof e.text === "string"
     )
   ) {
-    throw new AiRequestError("The script check returned an invalid answer. Please try again.");
+    throw new AiRequestError("the answer could not be read");
   }
   return edits as ScriptEdit[];
 }
