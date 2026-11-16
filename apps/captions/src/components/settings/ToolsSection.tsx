@@ -65,7 +65,7 @@ function useHomeSwitches() {
     setMine(next);
     save({ hidden: next }).catch(() => {
       setMine(null);
-      saveFailed("Home tools not saved");
+      saveFailed("Home tools not saved. Try again.");
     });
   };
   return { view, hidden, set };

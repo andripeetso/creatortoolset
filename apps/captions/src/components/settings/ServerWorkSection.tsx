@@ -47,7 +47,7 @@ export function ServerWorkSection() {
     <Section title="Video work">
       <Card>
         <Row
-          title="Video work on this server"
+          title="This server"
           description="Cuts, previews, proxies, waveforms and transcripts can run on this server, after each person's own computers."
           control={<Switch checked={a.on} aria-label="Video work on this server" onCheckedChange={(v) => void save({ on: v })} />}
         />

@@ -137,7 +137,7 @@ export function ThisComputer({ version }: { version?: string }) {
     try {
       clearAccountCache(me?.username);
     } catch {
-      saveFailed("Cache not cleared");
+      saveFailed("Cache not cleared. Try again.");
     }
     measure();
   };
@@ -186,7 +186,7 @@ function Reports() {
       setState(await r.json());
     } catch {
       setState({ ...state, on: !on });
-      saveFailed("Usage and crash reports not saved");
+      saveFailed("Usage and crash reports not saved. Try again.");
     }
   };
   return (
