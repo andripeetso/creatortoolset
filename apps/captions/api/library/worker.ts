@@ -349,7 +349,8 @@ async function run(job: JobRow): Promise<void> {
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const frames = await macFrames(v.id);
-    // its stills went with its first description: described again, it is written from its shot descriptions
+    // its stills went with its first description: described again, it is written from its words (its shot
+    // descriptions, else the description it has and what is said)
     if (!frames.length) {
       if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
     } else {

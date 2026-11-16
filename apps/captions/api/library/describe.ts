@@ -72,6 +72,8 @@ export interface DescribeInput {
   tags?: { clips: number; list: { tag: string; count: number }[] };
   /** in place of pictures: the clip's shot descriptions, in order (a file kept on a Mac described again, describeFromLines) */
   shots?: string[];
+  /** in place of pictures, for a clip with no shot descriptions: the description it has now ("" when it has none) */
+  was?: string;
 }
 
 /** The tags on the library's other clips (not in the trash), most used first, and how many clips it has. */
@@ -115,6 +117,8 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       input.shots
         ? `There are no pictures this time. What is seen in the clip, shot by shot, in order:\n${input.shots.join("\n")}`
+        : input.was !== undefined
+          ? `There are no pictures this time.${input.was ? ` The description it has now: keep what it says is seen, name it in the workspace's words where that is certain, and add nothing it doesn't say:\n${input.was}` : " Describe it from its title and what is said."}`
         : input.frames > 1
           ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`
           : "The picture is the whole clip: a photo, or a clip too short for more.",
@@ -188,13 +192,18 @@ export async function workspaceIdOf(db: DatabaseSync, versionId: string): Promis
 const SHOTS_READ = 80;
 
 /**
- * A version described again from its shot descriptions alone, under the workspace's context as it is now: for a file
- * kept on a Mac, whose stills went with its first description. The clip keeps its turn, its roll and its folder. False
- * when it has no shot descriptions to read.
+ * A version described again with no picture, under the workspace's context as it is now: for a file kept on a Mac,
+ * whose stills went with its first description. It is written from its shot descriptions; one with none (a short clip,
+ * a talking take) from the description it has and what is said, so a clip described before the workspace named its
+ * subject is named as the workspace names it, and nothing is added that its words don't say. The clip keeps its turn,
+ * its roll and its folder. False when it has no words at all to read.
  */
 export async function describeFromLines(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
   const all = stretchesOf(db, versionId).filter((s) => s.text);
-  if (!all.length) return false;
+  const segments = segmentsOf(db, versionId);
+  // what the AI wrote before, and the roll it gave: the roll stays, since nothing is seen this time
+  const was = db.prepare("SELECT text, roll FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId) as { text: string; roll: Roll | null } | undefined;
+  if (!all.length && !segments.length && !was?.text) return false;
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
   // their own Anthropic key first, as the description from frames goes (describeVersion)
   const route = onApiKey(actor, "analyzer", DESCRIBE_LABEL) || aiFor(whoFor(actor), "analyzer", DESCRIBE_LABEL);
@@ -202,21 +211,18 @@ export async function describeFromLines(db: DatabaseSync, versionId: string, act
   const onMac = !!route.only?.includes("mac");
   const lines = all.length <= SHOTS_READ ? all : Array.from({ length: SHOTS_READ }, (_, k) => all[Math.floor((k * all.length) / SHOTS_READ)]!);
   const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
-  const segments = segmentsOf(db, versionId);
   const wsId = await workspaceIdOf(db, versionId);
   const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
   const { system, user } = describePrompt({
     title,
     ...(workspace ? { workspace } : {}),
     frames: 0,
-    shots: lines.map((l) => `${clock(l.a)}–${clock(l.b)} ${l.text}`),
+    ...(lines.length ? { shots: lines.map((l) => `${clock(l.a)}–${clock(l.b)} ${l.text}`) } : { was: was?.text ?? "" }),
     ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
     tags: tagsOf(db, versionId),
   });
   const { turn: _, roll: __, folder: ___, ...value } = await completeWithFallback(system, user, undefined, parseDescribe, onMac ? { ...route, mac: { ...route.mac, background: true } } : route);
-  // the roll it had stays: nothing was seen this time
-  const { roll } = db.prepare("SELECT roll FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId) as { roll: Roll | null };
-  saveDescribed(db, versionId, { ...value, ...(roll ? { roll } : {}) }, route.mac?.provider?.instance ?? (onMac ? "mac" : "anthropic"), stampOf(workspace, DESCRIBE_VERSION));
+  saveDescribed(db, versionId, { ...value, ...(was?.roll ? { roll: was.roll } : {}) }, route.mac?.provider?.instance ?? (onMac ? "mac" : "anthropic"), stampOf(workspace, DESCRIBE_VERSION));
   // its words changed: the library's smart folders judge it again, as after a description from frames
   await fileSmart(db, versionId, whoFor(actor), workspace).catch(() => 0);
   return true;
@@ -230,17 +236,16 @@ const refreshed = new Set<string>();
  * (or by an older describe prompt): the library's describe job, queued as `actor`. Asked when an edit uses the file and
  * when someone who may change the clip opens it, once per context (tasks/flywheel/PLAN.md D12: when used, never a
  * whole library). A description from before stamps counts as written with no context: it is stale once the workspace
- * has some. A file kept on a Mac is described from its shot descriptions (describeFromLines), so one without any keeps
- * its words. True when it queued one.
+ * has some. A file kept on a Mac is described with no picture, from its words (describeFromLines). True when it queued
+ * one.
  */
 export async function refreshDescription(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
   const r = db
     .prepare(
-      `SELECT a.library_id, v.source_key, d.stamp, EXISTS (SELECT 1 FROM stretches s WHERE s.version_id = v.id AND s.text != '') AS lines
-       FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN descriptions d ON d.version_id = v.id AND d.source = 'ai' WHERE v.id = ?`,
+      "SELECT a.library_id, d.stamp FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN descriptions d ON d.version_id = v.id AND d.source = 'ai' WHERE v.id = ?",
     )
-    .get(versionId) as { library_id: string; source_key: string; stamp: string | null; lines: number } | undefined;
-  if (!r || !librarySetting(r.library_id, "describe") || (r.source_key.startsWith("mac:") && !r.lines)) return false;
+    .get(versionId) as { library_id: string; stamp: string | null } | undefined;
+  if (!r || !librarySetting(r.library_id, "describe")) return false;
   const now = stampOf(await workspaceOf(db, versionId), DESCRIBE_VERSION);
   if ((r.stamp ?? stampOf("", DESCRIBE_VERSION)) === now || refreshed.has(`${versionId}:${now}`)) return false;
   refreshed.add(`${versionId}:${now}`);

@@ -242,18 +242,33 @@ describe("a description written under another workspace context", () => {
     libraryDb().prepare("DELETE FROM jobs WHERE version_id = ?").run(v);
   });
 
-  it("a file kept on a Mac is written again from its shot descriptions, keeping its roll; one with none keeps its words", async () => {
+  it("a file kept on a Mac is written again with no picture: from the description it has when it has no shot descriptions, then from those, keeping its roll", async () => {
     const v = await seed("ast-stale-04");
     libraryDb().prepare("UPDATE asset_versions SET source_key = 'mac:dev-1:/Users/t/tiny.mov' WHERE id = ?").run(v);
     saveDescribed(libraryDb(), v, { ...said("A knight walks through a fantasy MMORPG town."), roll: "b" }, "test", "another-context");
-    expect(await refreshDescription(libraryDb(), v, "local")).toBe(false); // no stills here and no shot descriptions
+    const jobsDone = () => libraryDb().prepare("DELETE FROM jobs WHERE version_id != ? AND state = 'queued'").run(v); // what earlier tests left queued
+    const words = () => (libraryDb().prepare("SELECT text, roll, stamp FROM descriptions WHERE version_id = ? AND source = 'ai'").get(v) as { text: string; roll: string; stamp: string });
+    // no stills here and no shot descriptions: its own words, named as the workspace names them
+    expect(await refreshDescription(libraryDb(), v, "local")).toBe(true);
+    jobsDone();
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, user, _c, parse) => {
+      expect(user).toMatch(/Ember Realm[\s\S]*There are no pictures this time\. The description it has now[^\n]*add nothing it doesn't say:\nA knight walks through a fantasy MMORPG town\./);
+      return parse('{"description": "A knight walks through a town in Ember Realm.", "tags": [], "roll": "a"}') as never;
+    });
+    await tick();
+    expect(job(v, "describe")).toEqual({ state: "done", error: null });
+    expect(words()).toEqual({ text: "A knight walks through a town in Ember Realm.", roll: "b", stamp: stampOf(await workspaceOf(libraryDb(), v), DESCRIBE_VERSION) });
+    // later its shots are described and the context changes again: written from the shot descriptions
+    libraryDb().prepare("UPDATE descriptions SET stamp = 'another-context-2' WHERE version_id = ? AND source = 'ai'").run(v);
     storeStretches(libraryDb(), v, [{ a: 0, b: 6, motion: 0.4 }, { a: 6, b: 12, motion: 0.6 }]);
     storeLines(libraryDb(), v, "s", [
       { seg: 0, text: "A knight leaves the town gate.", action: 1, clear: true, tags: [] },
       { seg: 1, text: "Two riders clash on the bridge.", action: 4, clear: true, tags: ["fight"] },
     ]);
-    expect(await refreshDescription(libraryDb(), v, "local")).toBe(true);
-    libraryDb().prepare("DELETE FROM jobs WHERE version_id != ? AND state = 'queued'").run(v); // what earlier tests left queued
+    // asked once a context while the server runs: this one is asked for by name, as Describe again asks
+    enqueueJob(libraryDb(), "lib_a", v, "describe", "local", true);
+    jobsDone();
     vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
     vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, user, _c, parse) => {
       expect(user).toMatch(/Ember Realm[\s\S]*There are no pictures this time[\s\S]*0:00–0:06 A knight leaves the town gate\.\n0:06–0:12 Two riders clash on the bridge\./);
