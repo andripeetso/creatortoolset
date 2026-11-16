@@ -151,4 +151,100 @@ final class ChatWaveTests: XCTestCase {
         XCTAssertEqual(answers.count, 4)
         XCTAssertEqual(answers[3] as? Bool, false)
     }
+
+    /// A page in a window that is never put on screen: a picture can be taken of it, so a press makes a wave.
+    @MainActor
+    private func page() async throws -> (view: WKWebView, window: NSWindow) {
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 240))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = view
+        view.loadHTMLString("<body style='background:#345'>page</body>", baseURL: nil)
+        for _ in 0 ..< 100 where view.isLoading { try await Task.sleep(for: .milliseconds(50)) }
+        return (view, window)
+    }
+
+    /// Two presses, the second before the first one's picture of the screen has come: both pictures made a wave, the
+    /// first to end answered for both, and "stop" reached only one of them.
+    @MainActor
+    func testAPressWhileTheLastOnesPictureIsTakenMakesNoSecondWave() async throws {
+        let page = try await page()
+        let host = ChatWaveHost(page.view)
+        var up: [Bool] = []
+        let answered = expectation(description: "both presses answered")
+        answered.expectedFulfillmentCount = 2
+        for _ in 0 ..< 2 {
+            host.handle(["start": ["x": 20.0, "y": 20.0, "hold": false]]) { v, _ in
+                up.append(v as? Bool ?? false)
+                answered.fulfill()
+            }
+        }
+        await fulfillment(of: [answered], timeout: 10)
+        guard up.contains(true) else { throw XCTSkip("no picture of a page can be taken here") }
+        let waves = { page.view.subviews.filter { $0 is ChatWaveView }.count }
+        XCTAssertEqual(up, [false, true], "the first press's page changes with no wave")
+        XCTAssertEqual(waves(), 1)
+        host.handle("stop") { _, _ in }
+        XCTAssertEqual(waves(), 0, "stop ends the wave that is up")
+    }
+
+    /// "stop" while the press's picture of the screen is still being taken: there was no wave to end, so the stop was
+    /// forgotten, and the wave then started over a page that had moved on and would never say "drawn".
+    @MainActor
+    func testAStopBeforeTheWaveIsUpEndsThePress() async throws {
+        let page = try await page()
+        let host = ChatWaveHost(page.view)
+        let waves = { page.view.subviews.filter { $0 is ChatWaveView }.count }
+        func press(hold: Bool, then: () -> Void = {}) async -> Bool {
+            var up = false
+            let answered = expectation(description: "the press answered")
+            host.handle(["start": ["x": 20.0, "y": 20.0, "hold": hold]]) { v, _ in
+                up = v as? Bool ?? false
+                answered.fulfill()
+            }
+            then()
+            await fulfillment(of: [answered], timeout: 10)
+            return up
+        }
+        // a press by itself makes a wave here: the one below would make one too, were its stop forgotten
+        guard await press(hold: false) else { throw XCTSkip("no picture of a page can be taken here") }
+        host.handle("stop") { _, _ in }
+        XCTAssertEqual(waves(), 0)
+
+        var stopped: Bool?
+        let up = await press(hold: true) {
+            XCTAssertTrue(host.sound.isOn, "a held press has its sound from the start")
+            host.handle("stop") { v, _ in stopped = v as? Bool }
+            XCTAssertEqual(stopped, true, "the stop is answered at once, as before")
+            XCTAssertFalse(host.sound.isOn, "the press's sound ends with it")
+        }
+        XCTAssertFalse(up, "the press's picture came after its stop: the page changes with no wave")
+        XCTAssertEqual(waves(), 0)
+
+        // the next press is a press like any other
+        guard await press(hold: false) else { return XCTFail("a press after a stopped one makes its wave") }
+        XCTAssertEqual(waves(), 1)
+        host.handle("stop") { _, _ in }
+        XCTAssertEqual(waves(), 0)
+    }
+
+    /// "drawn" asked twice while one wave is up: the first answer was dropped for the second.
+    @MainActor
+    func testEveryDrawnIsAnsweredWhenTheWaveIsOver() async throws {
+        let page = try await page()
+        let host = ChatWaveHost(page.view)
+        var up = false
+        let started = expectation(description: "the press answered")
+        host.handle(["start": ["x": 20.0, "y": 20.0, "hold": false]]) { v, _ in
+            up = v as? Bool ?? false
+            started.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 10)
+        guard up else { throw XCTSkip("no picture of a page can be taken here") }
+        var answers = 0
+        host.handle("drawn") { _, _ in answers += 1 }
+        host.handle("drawn") { _, _ in answers += 1 }
+        XCTAssertEqual(answers, 0, "not before the wave is over")
+        host.handle("stop") { _, _ in }
+        XCTAssertEqual(answers, 2)
+    }
 }
