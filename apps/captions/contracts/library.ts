@@ -181,12 +181,12 @@ export interface LibrarySpace {
 export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
   files: { needs: "a look", href: "/library" },
   transcript: { needs: "a transcription key", href: "/settings/keys" },
-  describe: { needs: "an AI", href: "/settings/providers" },
-  look: { needs: "an AI", href: "/settings/providers" },
+  describe: { needs: "an AI provider", href: "/settings/providers" },
+  look: { needs: "an AI provider", href: "/settings/providers" },
   embed: { needs: "an OpenAI key", href: "/settings/keys" },
 };
 
-/** "5 AI descriptions need an AI", and where to add it. */
+/** "5 AI descriptions need an AI provider", and where to add it. */
 export function waitingLine(w: { step: LibraryStep; count: number }): { text: string; href: string } {
   const one = w.count === 1;
   const [thing, things] = {

@@ -318,7 +318,7 @@ describe("Media Library page", () => {
     expect(sheet()).toContain("Footage folders");
     expect(sheet()).toContain("Storage");
     expect(sheet()).toContain("Search by meaning");
-    expect(sheet()).toContain("Uses your connected AI");
+    expect(sheet()).toContain("Uses the AI provider");
     expect(sheet()).not.toContain("OpenAI key");
     act(() => root?.unmount());
     document.body.innerHTML = "";

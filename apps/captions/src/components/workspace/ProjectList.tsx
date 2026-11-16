@@ -183,7 +183,7 @@ function ProjectRow({
   const blurb = foldProjectInstructions(p);
   const handles = Object.entries(p.handles ?? {}).filter((e): e is [string, string] => Boolean(e[1]));
   return (
-    <div className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 sm:px-4 ${current ? "border-[var(--tint)]/40 bg-[var(--tint)]/10" : "border-border/60 bg-card/40"}`}>
+    <div className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 sm:px-4 ${current ? "border-ring/60 bg-accent/40" : "border-border/60 bg-card/40"}`}>
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 text-sm font-medium text-foreground">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />
