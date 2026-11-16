@@ -25,7 +25,7 @@ const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { searchApp, searchLibrary } = await import("./search");
 const { stretchesOf, setUserLine } = await import("./stretches");
-const { LOOK_LABEL, MAC_WAITS, queueLook, redoLook, sheetHashes } = await import("./shots");
+const { LOOK_LABEL, lookStamp, MAC_WAITS, queueLook, redoLook, sheetHashes } = await import("./shots");
 const { lookPrompt, RULE, samePicture, stretchSheet } = await import("./look");
 const { describePrompt } = await import("./describe");
 const { estimate, progress } = await import("./estimate");
@@ -123,6 +123,13 @@ describe("the look job", () => {
     expect(libraryDb().prepare("SELECT kind FROM derivatives WHERE version_id = ? AND kind = 'looksheets'").get(v)).toBeDefined();
     // nothing changed in the context: writing again asks nothing
     expect(await redoLook(libraryDb(), v, "local")).toBe(0);
+    // the AI Editor's gate compares with the same stamp, and asks a done look again as a job: nothing stale, no call
+    expect(rows[0]!.stamp).toBe(await lookStamp(libraryDb(), v));
+    expect(queueLook(libraryDb(), v, "local", true)).toBe(true);
+    expect(job(v)?.state).toBe("queued");
+    await runLooks();
+    expect(job(v)?.state).toBe("done");
+    expect(completeVisionWithFallback).toHaveBeenCalledTimes(1);
   });
 
   it("reads the file the description reads: the proxy when there is one", async () => {
@@ -234,6 +241,7 @@ describe("the prompt", () => {
     const p = lookPrompt(["Picture 1: its tiles are shots 1 (0:00–0:04)"], true, "Tiny Acrobatics");
     expect(p.system).toBe(
       "You look at contact sheets of footage for a video editor, so it can pick shots without watching them. For each numbered shot say in a few words what is seen: the subject, the action, the setting and the kind of shot (wide, close, screen, text). " +
+        'A shot that shows no action, only a map, an inventory, a menu, character select, a loading screen, a chat window, a desktop, a dark or empty frame, or mostly a game\'s buttons and bars, begins with "junk:" and that kind ("junk: map", "junk: menu", "junk: loading", "junk: dark", "junk: ui"). ' +
         `${RULE} Answer with JSON only.`,
     );
     expect(p.user.split("\n\n").at(-1)).toBe(
@@ -337,6 +345,10 @@ describe("footage profile", () => {
     expect(await footageProfile("p-empty")).toBe("");
     expect(await footageProfile("p-first")).toMatch(/^Footage here: .*test pattern recording/);
     expect(await footageProfile("nope")).toBe("");
+    // the chat's note for a turn in the workspace ends with it (assistant.ts workspaceNote); one with no footage, nothing
+    const { workspaceNote } = await import("../assistant");
+    expect(await workspaceNote("local", "p-game")).toMatch(/\n\nFootage here: 2 gameplay recordings \(1 h 41 min\).*\.$/);
+    expect(await workspaceNote("local", "p-empty")).not.toMatch(/Footage here|Finished here/);
   });
 });
 

@@ -9,7 +9,7 @@ import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { renderContext, workspaceKnowledge } from "../lib/workshop/context";
+import { footageProfile, renderContext, workspaceKnowledge } from "../lib/workshop/context";
 import { ownedProjects } from "../lib/workshop/workspace";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
@@ -24,7 +24,7 @@ import { describeShots, focusOf, frameJunk, indexSources, isJunk, logged, songBe
 import { readable } from "./media";
 import { generateClip, styles } from "./generate";
 import { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta } from "./store";
-import { styleBlock } from "./styles";
+import { finishedProfile, styleBlock } from "./styles";
 import { emptyTracks, sourceOf } from "./timeline";
 
 /**
@@ -369,13 +369,19 @@ export function shotLines(index: FootageIndex): Map<string, string[]> {
   return out;
 }
 
+/** The person's notes on an edit's versions, oldest first, word for word: how every later version's prompt reads them
+ * (a shot-list revise here, a talking-head script in script.ts). */
+export function notesPrompt(notes: EditFeedback[]): string {
+  const said = notes.map((n) => `- ${n.from === "review" ? `In Review${n.variant ? ` on ${n.variant}` : ""}${n.t !== undefined ? ` at ${n.t.toFixed(1)} s` : ""}` : `In chat${n.variant ? ` about ${n.variant}` : ""}`}: ${JSON.stringify(n.text)}`);
+  return `What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n${said.join("\n")}`;
+}
+
 /** The revise's part of the prompt: the person's notes word for word, and the last version shot by shot. */
 function revisePrompt(r: Revise, index: FootageIndex): string[] {
-  const said = r.notes.map((n) => `- ${n.from === "review" ? `In Review${n.variant ? ` on ${n.variant}` : ""}${n.t !== undefined ? ` at ${n.t.toFixed(1)} s` : ""}` : `In chat${n.variant ? ` about ${n.variant}` : ""}`}: ${JSON.stringify(n.text)}`);
   const shot = (s: PlanShot, k: number, marked: number[]) =>
     `  ${k + 1}. ${"source" in s.src ? `${tagOf(index, s.src.source)} in ${s.src.inS.toFixed(1)}` : `generated ${s.src.generate.style}`}, ${s.dur.toFixed(2)} s${s.fx?.length ? `, ${s.fx.map((f) => f.type).join(" + ")}` : ""}${s.why ? `: ${s.why}` : ""}${marked.includes(k) ? "  ← a note sits on this shot" : ""}`;
   return [
-    `What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n${said.join("\n")}`,
+    notesPrompt(r.notes),
     `The last version${r.last.length > 1 ? "s" : ""}, shot by shot:\n${r.last.map((l) => `${l.name}:\n${l.plan.shots.map((s, k) => shot(s, k, l.marked)).join("\n")}`).join("\n")}`,
     'Make the next version from the last one and change what the notes speak to, nothing else: in each plan\'s "shots", {"keep": n} keeps shot n of that version as it is (its source, timing and effects), and a new shot takes the place of each one that changes. Plans are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another song), write all of its shots new.',
   ];
@@ -1165,7 +1171,9 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   const size = frameOf(edit, index);
   const gen = styles();
   const genIds = gen.map((g) => g.id);
-  const setup = [await workspaceSetup(edit, 24_000), styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
+  // what footage the workspace holds and what was finished in it (lib/workshop/context.ts, styles.ts); none adds nothing
+  const profile = [await footageProfile(edit.projectId), finishedProfile(edit.createdBy, edit.projectId ?? "")].filter(Boolean).join("\n");
+  const setup = [await workspaceSetup(edit, 24_000), profile, styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
   const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const revise = reviseOf(edit);
   const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText, ...(revise ? { revise } : {}) });
@@ -1266,7 +1274,9 @@ export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: Abo
       const at = byId.get(src.source);
       if (!at?.w) break;
       const shape = cropShape(s, plan.w, plan.h);
-      if (!(await frameJunk(await file(src.source), src.inS + n / 2, at, shape, s.focus ?? (shape ? { x: 0.5, y: 0.5 } : undefined), signal))) break;
+      // a file this server can't read keeps its picture, as an unreadable frame does (frameJunk)
+      const f = await file(src.source).catch(() => "");
+      if (!f || !(await frameJunk(f, src.inS + n / 2, at, shape, s.focus ?? (shape ? { x: 0.5, y: 0.5 } : undefined), signal))) break;
       const other = spare(index, used, n);
       if (!other) break;
       used.set(other.source.id, [...(used.get(other.source.id) ?? []), [other.inS, other.inS + n]]);

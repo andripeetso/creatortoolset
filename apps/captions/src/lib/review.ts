@@ -100,7 +100,7 @@ export type SharePatch = { enabled?: boolean; download?: boolean; reset?: boolea
 /** One line in someone's inbox: "Ada commented on Launch cut". */
 export interface ReviewNote {
   id: string;
-  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed";
+  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "waiting";
   by: string;
   assetId: string;
   name: string;

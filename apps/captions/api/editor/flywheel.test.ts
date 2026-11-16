@@ -34,6 +34,7 @@ const { Waiting } = await import("./analyze");
 const { indexSources, shotLog, STILL_WAITING_MS } = await import("./index");
 const { planStep } = await import("./plan");
 const { addFeedback, readEdit, readStep, saveStep } = await import("./store");
+const { change, createStyle } = await import("./styles");
 const { LIMIT_WAIT_S, limitWait, STEPS, tick } = await import("./worker");
 
 const signal = new AbortController().signal;
@@ -78,7 +79,7 @@ beforeAll(async () => {
   }
   db.exec("UPDATE jobs SET state = 'done' WHERE kind = 'describe' AND version_id IN ('ver_1', 'ver_2', 'ver_3', 'ver_4')");
   projectId = readEdit(await create(["ver_1"]))!.projectId;
-  stamp = await shotLog.stamp(projectId);
+  stamp = await shotLog.stamp("ver_1"); // the library's own (shots.ts lookStamp): every file here is in one workspace
   describe6("ver_1", 60, (k) => k % 5);
   describe6("ver_2", 48, (k) => k % 5);
   describe6("ver_3", 36, (k) => k % 5);
@@ -120,7 +121,7 @@ describe.skipIf(rootReplaced)("the gate waits, and only waits", () => {
     libraryDb().exec("UPDATE stretches SET stamp = 'older' WHERE version_id = 'ver_2'");
     const e = { id: randomUUID(), createdBy: "maker", projectId, sources: ["ver_2"] };
     await expect(indexSources(e, signal)).rejects.toBeInstanceOf(Waiting);
-    expect(shotLog.redo).toHaveBeenCalledWith("ver_2");
+    expect(shotLog.redo).toHaveBeenCalledWith("ver_2", "maker");
     expect((await indexSources(e, signal)).sources.map((s) => s.id)).toEqual(["ver_2"]);
     libraryDb().prepare("UPDATE stretches SET stamp = ? WHERE version_id = 'ver_2'").run(stamp);
   });
@@ -197,6 +198,13 @@ describe.skipIf(rootReplaced)("a cut from six recordings", () => {
     await call("POST", `/api/editor/${id}/run`, { from: "script", now: true });
     expect(readEdit(id)!.now).toBe(true);
     await call("POST", `/api/editor/${id}/stop`);
+    const st = createStyle("maker", { name: "Hard edit" });
+    if (typeof st === "string") throw new Error(st);
+    change("maker", (f) => {
+      f.editing.find((x) => x.id === st.id)!.learned = [
+        { editId: "an-older-edit", workspaceId: readEdit(id)!.projectId ?? "", at: 1, rounds: 1, notes: [], cut: { seconds: 25, shots: 30, avgShotS: 0.83, fxPerShot: 1, sourcesUsed: 4 } },
+      ];
+    });
     let asked = "";
     vi.mocked(completeWithFallback).mockImplementation(async (_s, user, _sig, parse) => {
       asked = user;
@@ -207,6 +215,8 @@ describe.skipIf(rootReplaced)("a cut from six recordings", () => {
     // every line of every described file, none of the others
     for (const [n, f] of FILES.slice(0, 4).entries()) for (let k = 0; k * 6 < f.dur; k++) expect(asked).toContain(`S${n + 1} ${Math.floor((k * 6) / 60)}:${String(((k * 6) % 60).toFixed(1)).padStart(4, "0")}–`);
     expect(asked).not.toContain("Broken file");
+    // what was finished in the workspace rides the plan's setup (styles.ts finishedProfile, with footageProfile)
+    expect(asked).toContain('Finished here: 1 "Hard edit" edit, 25 s.');
     const v1 = readStep(id, "shots")!.v1!;
     // the arena's first picture is the castle run's: the busiest stretch not shown yet takes its place
     expect(v1.plan.shots.map((s) => s.src)).toEqual([

@@ -1980,8 +1980,9 @@ reviewApp.delete("/projects/:pid", async (c) => {
 
 interface Note {
   id: string;
-  /** producing / delivered: a freelancer on a Workshop share link; workshop: a Content Workshop reply finished */
-  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "ready";
+  /** producing / delivered: a freelancer on a Workshop share link; workshop: a Content Workshop reply finished; waiting: an
+   * AI Editor edit still waits for the Media Library (editor/index.ts) */
+  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "ready" | "waiting";
   /** Who did it, as shown. */
   by: string;
   assetId: string;
@@ -2054,7 +2055,7 @@ async function notify(
 }
 
 /** A freelancer on a Content Workshop share link started or delivered, a Workshop reply finished, or a job failed: tell the owner. */
-export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed"; by: string; name: string; text?: string; href: string; ref: string }): Promise<void> {
+export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed" | "waiting"; by: string; name: string; text?: string; href: string; ref: string }): Promise<void> {
   if (!USERNAME_RE.test(owner)) return;
   await updateInbox(owner, (list) => {
     list.unshift({ id: randomUUID(), kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(note.text ? { text: note.text.slice(0, 140) } : {}), href: note.href, at: Date.now() });

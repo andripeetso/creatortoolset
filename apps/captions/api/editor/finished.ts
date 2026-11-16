@@ -153,7 +153,7 @@ export function cutOf(tl: Timeline | undefined): StyleLearned["cut"] {
  * What an approved version of an edit taught its style (StyleLearned), kept on the style, newest first, one entry an
  * edit: the maker's own feedback on it word for word (EditMeta.feedback), the cut's numbers, and the rounds it took (the
  * versions of its Review video after the first). Nothing for an edit with no style or a style that is gone. Silent: no
- * line anywhere says it was kept; the style's page lists it, removable.
+ * line anywhere says it was kept; the style's page lists it, removable for good.
  */
 export function keepLearned(e: EditMeta, variant: string): void {
   const id = e.style?.id;
@@ -169,6 +169,7 @@ export function keepLearned(e: EditMeta, variant: string): void {
   change(e.createdBy, (f) => {
     const s = f.editing.find((x) => x.id === id);
     if (!s) return "gone";
+    if (s.unlearned?.includes(e.id)) return;
     s.learned = [entry, ...(s.learned ?? []).filter((l) => l.editId !== e.id)].slice(0, LEARNED_MAX);
   });
 }

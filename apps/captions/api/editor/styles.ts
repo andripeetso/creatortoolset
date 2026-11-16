@@ -295,12 +295,14 @@ export function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta
 
 /* ---- a style that learns (tasks/flywheel stage 5): its playbook and what finished edits taught ---- */
 
-/** × on one of the style's learned entries. False: no such style or entry. */
+/** × on one of the style's learned entries, for good: the edit is kept on the style's `unlearned`, so approving it again
+ * teaches nothing (finished.ts keepLearned). False: no such style or entry. */
 export const removeLearned = (username: string, styleId: string, editId: string): boolean =>
   change(username, (f) => {
     const s = f.editing.find((x) => x.id === styleId);
     if (!s?.learned?.some((l) => l.editId === editId)) return false;
     s.learned = s.learned.filter((l) => l.editId !== editId);
+    s.unlearned = [...(s.unlearned ?? []), editId];
     return true;
   });
 

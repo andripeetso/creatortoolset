@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { workspaceContext } from "./lib/workshop/context";
+import { footageProfile, workspaceContext } from "./lib/workshop/context";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -132,13 +132,18 @@ const CONTEXT_MAX = 8000;
 
 /**
  * The turn's workspace in its memory: its folders (above), then its context, the instructions and what each file added
- * to it is (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking.
+ * to it is (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking; then
+ * what footage it holds and what was finished in it (footageProfile, finishedProfile), when there is any.
  */
 export async function workspaceNote(username: string, workspace?: string): Promise<string> {
   const context = await workspaceContext(workspace, CONTEXT_MAX);
+  // read when asked, as footageProfile reads the library: the editor's styles load the plug-in registry
+  const { finishedProfile } = await import("./editor/styles");
+  const profile = [await footageProfile(workspace), finishedProfile(username, workspace ?? "")].filter(Boolean).join("\n");
   return (
     (await foldersNote(username, workspace)) +
-    (context ? `\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\n${context}` : "")
+    (context ? `\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\n${context}` : "") +
+    (profile ? `\n\n${profile}` : "")
   );
 }
 

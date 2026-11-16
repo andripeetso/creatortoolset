@@ -145,16 +145,15 @@ export const editorTools: ToolModule = {
       const text = typeof a.text === "string" ? a.text : "";
       if (!text.trim()) throw new ToolError("Give text: what the user said about the cut, word for word.");
       const e = await ctx.json(`${path}/feedback`, "POST", { text });
-      // a cut around what is said reads its brief and script, not these notes
+      // a cut around what is said is written again with the notes (script.ts); a shot list is made from its last version
       const spoken = ((e.lines as unknown[] | undefined) ?? []).length > 0;
       return {
         ...pick(e, ["id", "name"]),
         kept: ((e.feedback as unknown[] | undefined) ?? []).length,
         queued: e.queued === true,
-        note: spoken
-          ? "Kept. This edit is cut around what is said: its next version follows the brief and script, so put the change there too (editor_update), then editor_run from script."
-          : e.queued === true
-            ? "The next version is being made from the last one with these notes; the chat says when it is in Review, so end your reply rather than wait."
+        note:
+          e.queued === true
+            ? `The next version is being ${spoken ? "cut with" : "made from the last one with"} these notes; the chat says when it is in Review, so end your reply rather than wait.`
             : "Kept. The edit is being made now: that run reads it.",
         link: linkOf(ctx, e),
       };

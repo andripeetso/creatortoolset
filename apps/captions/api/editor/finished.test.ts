@@ -343,6 +343,19 @@ describe.skipIf(rootReplaced)("What an approved edit teaches its style", () => {
     expect((await learnedOf(s.id)).map((l) => l.editId)).toEqual([e.id]);
   });
 
+  it("× on a learned entry holds: approving that edit again teaches the style nothing; another edit still does", async () => {
+    const s = await style("maker", { name: "Removed lesson" });
+    const a = await made("maker", { style: s.id, brief: "Taken back." });
+    const b = await made("maker", { style: s.id, brief: "Kept." });
+    for (const e of [a, b]) await saveDraft(e.id, "v1", { timeline: cut(), notes: [] });
+    await approve("maker", a.asset);
+    expect((await call("maker", "DELETE", `/api/editor/styles/${s.id}/learned/${a.id}`)).status).toBe(200);
+    await approve("maker", a.asset, "needs_review");
+    await approve("maker", a.asset);
+    await approve("maker", b.asset);
+    expect((await learnedOf(s.id)).map((l) => l.editId)).toEqual([b.id]);
+  });
+
   it("an AI key, the assistant's tool on a key, and a call after Yes on a card approve it: the style learns nothing", async () => {
     const s = await style("maker", { name: "Only pressed" });
     const e = await made("maker", { style: s.id, brief: "Whose approval teaches." });

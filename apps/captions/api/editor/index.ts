@@ -9,11 +9,10 @@ import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
-import { contextStamp } from "../lib/workshop/context";
 import { libraryDb } from "../library/db";
-import { whoFor, WORKSPACE_MAX } from "../library/describe";
-import { prepareFirst } from "../library/jobs";
+import { whoFor } from "../library/describe";
 import { ffmpegSlot, writeJsonAtomic } from "../library/media/run";
+import { lookFirst, lookStamp, queueLook } from "../library/shots";
 import { stretchesOf } from "../library/stretches";
 import { notifyWorkshopOwner } from "../review";
 import { clock, COLS, contactSheet, CX, CY, HUD_MAX, hudOf, junkOf, looks, lookPrompt, median, parseLooked, readPicture, ROWS, RULE, shotsOf } from "../library/look";
@@ -134,14 +133,14 @@ const rowOf = (id: string) =>
     .get(id) as Row | undefined;
 
 /**
- * The Media Library's side of shot descriptions (its `look` job, api/library): put these files' work first, write one
- * file's lines again, and the stamp a line written now carries. The library exports lookFirst and redoLook; until it
- * does, its files go first the way a transcript's do and a stale line is used as it is. A test swaps these.
+ * The Media Library's side of shot descriptions (its `look` job, library/shots.ts): put these files' work first, write
+ * one file's stale lines again (a look job from its kept sheets, so the gate waits on it like any other), and the stamp
+ * that file's lines are written under. A test swaps these.
  */
 export const shotLog = {
-  first: (ids: string[]): void => ids.forEach((id) => prepareFirst(id)),
-  redo: (_versionId: string): void => {},
-  stamp: (projectId: string | undefined): Promise<string> => contextStamp(projectId, WORKSPACE_MAX),
+  first: (ids: string[]): void => lookFirst(ids),
+  redo: (versionId: string, actor: string | null): void => void queueLook(libraryDb(), versionId, actor, true),
+  stamp: (versionId: string): Promise<string> => lookStamp(libraryDb(), versionId),
 };
 
 /** The library's work on a file the gate waits for, and what failing it means. */
@@ -172,7 +171,6 @@ export async function indexSources(
   now = Date.now(),
 ): Promise<FootageIndex & { left: LeftOut[] }> {
   const db = libraryDb();
-  const stamp = await shotLog.stamp(edit.projectId);
   const ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[] }[] = [];
   const left: LeftOut[] = [];
   const pending: { id: string; title: string; line?: string }[] = [];
@@ -201,10 +199,11 @@ export async function indexSources(
       continue;
     }
     const lines = stretchesOf(db, id);
+    const stamp = lines.some((s) => s.source === "ai") ? await shotLog.stamp(id) : "";
     // written under another context than the workspace's now: written again, then used (asked once per stamp)
     if (lines.some((s) => s.source === "ai" && s.stamp !== stamp) && !redone.has(`${id}:${stamp}`)) {
       redone.add(`${id}:${stamp}`);
-      shotLog.redo(id);
+      shotLog.redo(id, edit.createdBy ?? null);
       pending.push({ id, title: row.title });
       continue;
     }
@@ -217,7 +216,7 @@ export async function indexSources(
     if (!w || w.ready !== ready.length) waits.set(key, { ready: ready.length, since: now });
     else if (!w.told && now - w.since >= STILL_WAITING_MS && edit.createdBy && edit.id) {
       w.told = true;
-      void notifyWorkshopOwner(edit.createdBy, { kind: "workshop", by: "AI Editor", name: edit.name ?? "An edit", text: `Still waiting for the Media Library: ${ready.length} of ${edit.sources.length} files`, href: `/editor/${edit.id}`, ref: edit.id }).catch(() => {});
+      void notifyWorkshopOwner(edit.createdBy, { kind: "waiting", by: "AI Editor", name: edit.name ?? "An edit", text: `Still waiting for the Media Library: ${ready.length} of ${edit.sources.length} files`, href: `/editor/${edit.id}`, ref: edit.id }).catch(() => {});
     }
     const said = pending.find((p) => p.line)?.line;
     throw new Waiting(30, `Waiting for the Media Library: ${ready.length} of ${edit.sources.length} files${said ? `. ${said.replace(/\.$/, "")}` : ""}`);
@@ -238,10 +237,15 @@ export async function indexSources(
     let src = (await cached(id))?.src;
     if (!src) {
       const picture = !!probe.vcodec && !probe.cover;
-      const read = picture ? await readPicture(await readable(id, row.source_key), probe.fps, signal) : null;
+      const reading = picture ? readable(id, row.source_key).then((f) => readPicture(f, probe.fps, signal)) : Promise.resolve(null);
+      // a source with shot descriptions that can't be read here (on a Mac, upload off) is cut from its lines alone
+      const read = await reading.catch((e: unknown) => {
+        if (described && !signal.aborted) return null;
+        throw e;
+      });
       const shots = read ? shotsOf(read, probe.duration) : [];
       src = { id, title: row.title, ...size, shots, ...(read ? { hud: hudOf(read) } : {}) };
-      await keep(src);
+      if (read || !picture) await keep(src);
     }
     if (described) src = { ...src, ...size, shots: lines.map((l) => lineShot(l, src!.shots)) };
     sources.push({ ...src, title: row.title, speech });

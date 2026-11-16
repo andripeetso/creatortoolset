@@ -82,6 +82,8 @@ export interface EditingStyle {
   playbook?: StylePlaybook | null;
   /** what finished edits in the style taught, newest first, at most LEARNED_MAX */
   learned?: StyleLearned[];
+  /** edits whose learned entry the person removed: approving one of them again teaches the style nothing */
+  unlearned?: string[];
   createdAt: number;
   updatedAt: number;
 }

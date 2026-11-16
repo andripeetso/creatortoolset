@@ -48,9 +48,10 @@ interface KeptSheets {
 
 /**
  * Queues a look for `versionId` when it gets one: a video (not a talking take, by the library's roll and the AI's own
- * answer) longer than LOOK_MIN_S, in a library with shot descriptions on. True when queued.
+ * answer) longer than LOOK_MIN_S, in a library with shot descriptions on. True when queued. `again`: a look that is done
+ * runs again (from its kept sheets, only the lines written under another stamp: the AI Editor's gate asks this).
  */
-export function queueLook(db: DatabaseSync, versionId: string, actor: string | null): boolean {
+export function queueLook(db: DatabaseSync, versionId: string, actor: string | null, again = false): boolean {
   const r = db
     .prepare(
       `SELECT a.library_id, a.kind, a.roll, v.probe, (SELECT roll FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS ai
@@ -60,8 +61,16 @@ export function queueLook(db: DatabaseSync, versionId: string, actor: string | n
   if (!r || r.kind !== "video" || r.roll !== "b" || r.ai === "a") return false;
   const duration = Number((JSON.parse(r.probe ?? "null") as ProbeSummary | null)?.duration) || 0;
   if (duration <= LOOK_MIN_S || !librarySetting(r.library_id, "look")) return false;
-  enqueueJob(db, r.library_id, versionId, "look", actor);
+  enqueueJob(db, r.library_id, versionId, "look", actor, again);
   return true;
+}
+
+/**
+ * The stamp a file's shot descriptions are written under: its workspace's context as the look reads it, and the look
+ * prompt's version. A line with another stamp is written again (writeLines); the AI Editor's gate compares with this.
+ */
+export async function lookStamp(db: DatabaseSync, versionId: string): Promise<string> {
+  return contextStamp(await workspaceIdOf(db, versionId), WORKSPACE_MAX, LOOK_VERSION);
 }
 
 /**
@@ -150,7 +159,7 @@ async function writeLines(db: DatabaseSync, versionId: string, actor: string, ke
   if (route.off) throw new NeedsKey(route.off);
   const wsId = await workspaceIdOf(db, versionId);
   const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
-  const stamp = await contextStamp(wsId, WORKSPACE_MAX, LOOK_VERSION);
+  const stamp = await lookStamp(db, versionId);
   const rows = new Map(
     (db.prepare("SELECT seg, a, b, text, stamp FROM stretches WHERE version_id = ? AND source = 'ai'").all(versionId) as { seg: number; a: number; b: number; text: string; stamp: string | null }[]).map(
       (r) => [r.seg, r],
