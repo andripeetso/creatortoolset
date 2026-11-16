@@ -57,7 +57,7 @@ export const SHEET_MAX_BYTES = 600_000;
 /** Cards are drawn at the preview's size, and at the cut's frame rate up to this. */
 const MAX_FPS = 60;
 const LABEL = "AI Editor cards";
-const NO_MAC = "no Mac with Creator Toolset is on";
+const NO_MAC = "no Mac with the Mac app is online";
 
 /** The time, for the two limits above. A test moves it. */
 export const clock = { now: () => Date.now() };
@@ -73,7 +73,7 @@ const macOn = (actor: string) => listDevices((d) => d.owner === actor && !!d.kin
 const reason = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim().slice(0, 200);
 /** Why a draw ended without `done`, in words for the person: the Mac's own sentence, or what the queue recorded. */
 const drawFailure = (error: string | null | undefined) =>
-  !error ? "the draw failed" : error === "Stopped" ? "the draw was stopped" : /^(device went quiet|lease expired)$/.test(error) ? "your Mac went quiet while it drew" : error;
+  !error ? "the draw failed" : error === "Stopped" ? "the draw was stopped" : /^(device went quiet|lease expired)$/.test(error) ? "the Mac went offline while drawing" : error;
 
 /**
  * One answer from the person's AI, and nothing but an answer: the route is the editor's own (aiFor), with no tool, no
@@ -201,15 +201,15 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     withdraw(db, vid);
     await save({ ...st, askedAt: undefined, drawn, threw });
     // the Mac's own words when it said why; else what the wait ran into
-    const why = row?.error ? drawFailure(row.error) : !on ? NO_MAC : untaken ? "your Mac did not take the draw in 10 minutes" : out ? "the draw took over 20 minutes" : "the draw failed";
+    const why = row?.error ? drawFailure(row.error) : !on ? NO_MAC : untaken ? "no Mac took the draw in 10 minutes" : out ? "the draw took over 20 minutes" : "the draw failed";
     if (!whole && !threw) return end(st.looked ? `the corrected cards were not drawn (${why})` : why);
-    if (whole && !drawn.length) return end("your Mac sent no card");
+    if (whole && !drawn.length) return end("the Mac sent no card");
   }
   if (!on) return end(NO_MAC);
   // the animation style is the workspace's (store.ts ownerOf); the AI calls below stay the asker's (actor)
   const owner = ownerOf(edit);
   const style = findAnimation(owner, st.style);
-  if (!style) return end("its animation style is gone");
+  if (!style) return end("its animation style was deleted");
   // only a style the person made reaches an AI call (contracts/editor-styles.ts `from`)
   if (style.from) return end("a style from Community makes no cards");
 

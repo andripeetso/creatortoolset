@@ -185,7 +185,7 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
  */
 export async function critiqueStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
-  if (!d || !existsSync(previewFile(edit.id, variant))) throw new Error(`Render ${variant || "the"} preview first`);
+  if (!d || !existsSync(previewFile(edit.id, variant))) throw new Error(`Make ${variant || "the"} preview first`);
   const then = (kind: "file" | "draft") => enqueueJob(libraryDb(), edit.workspaceId, `${edit.id}:${variant}`, kind, job.actor, true, "edit_jobs");
   const { due, ...looked } = d;
   // `skipped`: the look or the fix that could not be made, said on the Review version and kept with the draft

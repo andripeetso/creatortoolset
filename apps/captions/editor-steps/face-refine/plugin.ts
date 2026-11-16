@@ -89,9 +89,9 @@ async function fetchModel(m: (typeof MODELS)[number], dir: string): Promise<void
   const dest = path.join(dir, m.name);
   if (existsSync(dest)) return;
   const res = await fetch(m.url).catch(() => null);
-  if (!res?.ok) throw new Error(`Face refinement could not download its face model (${m.name}) from Google's MediaPipe storage: ${res ? `HTTP ${res.status}` : "no internet connection?"}`);
+  if (!res?.ok) throw new Error(`Face refinement could not download its face model (${m.name}): check the internet connection`);
   const bytes = Buffer.from(await res.arrayBuffer());
-  if (createHash("sha256").update(bytes).digest("hex") !== m.sha256) throw new Error(`Face refinement's face model (${m.name}) did not match its checksum`);
+  if (createHash("sha256").update(bytes).digest("hex") !== m.sha256) throw new Error(`Face refinement's face model (${m.name}) was damaged in the download: run the edit again`);
   await writeFile(`${dest}.part`, bytes);
   await rename(`${dest}.part`, dest);
 }
@@ -144,7 +144,7 @@ export async function refineFaces({ files, timeline, values, workDir, signal, sa
         else await writeFile(none, "");
       } catch (e) {
         if (signal.aborted) break;
-        throw new Error(`Face refinement failed on ${timeline.sources[id]?.name ?? id}: ${(e as Error).message}`);
+        throw new Error(`Face refinement could not process ${timeline.sources[id]?.name ?? id}: ${(e as Error).message}`);
       } finally {
         await Promise.all([rm(tmp, { force: true }), rm(`${tmp}.json`, { force: true }), rm(track, { recursive: true, force: true })]);
       }
@@ -158,14 +158,14 @@ export async function refineFaces({ files, timeline, values, workDir, signal, sa
 export default definePlugin({
   id: "editor-face-refine",
   name: "Face refinement",
-  about: "Evens out the speaker's skin and lifts dark circles in every edit, on this computer. About 1.4 GB of disk for each minute of video",
+  about: "Evens out the speaker's skin and lifts dark circles in every edit on this computer, with about 1.4 GB of disk for each minute of video",
   kind: "editor",
   editor: {
     steps: [
       {
         id: "face-refine",
         title: "Face refinement",
-        about: "Evens out the skin and lifts the dark circles under the eyes, and leaves beard, brows, eyes and lips alone. The first run sets up its own Python (MediaPipe). About 1.4 GB of disk for each minute of video.",
+        about: "Evens out the skin and lifts the dark circles under the eyes, and leaves beard, brows, eyes and lips as they are.",
         order: 20,
         options: [
           {

@@ -22,8 +22,8 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** What the two kinds of style are called, and what their sheet asks. */
 export const STYLE_WORDS = {
-  animation: { one: "Animation style", new: "New animation style", describe: "Describe the animation style", brief: ANIMATION_BRIEF_MAX, example: "Big white words on deep blue, one idea at a time. Slow moves, nothing bounces. Numbers count up." },
-  carousel: { one: "Carousel style", new: "New carousel style", describe: "Describe the carousel style", brief: CAROUSEL_BRIEF_MAX, example: "Cream paper, one heavy serif headline a slide, a marker stroke behind the word that matters. Lots of empty space, nothing glossy." },
+  animation: { one: "Animation style", new: "New animation style", describe: "Describe the animation style", brief: ANIMATION_BRIEF_MAX },
+  carousel: { one: "Carousel style", new: "New carousel style", describe: "Describe the carousel style", brief: CAROUSEL_BRIEF_MAX },
 } as const;
 
 export type OpenAnimation = AnimationStyle | "new" | null;
@@ -185,7 +185,7 @@ export function AnimationSheet({ style, onClose, onSaved, kind = "animation", ed
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="animation-brief">{words.describe}</Label>
-            <Textarea id="animation-brief" disabled={!editable} value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={words.brief} placeholder={words.example} />
+            <Textarea id="animation-brief" disabled={!editable} value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={words.brief} />
           </div>
           {made.length > 0 && (
             <section aria-label="Made & liked" className="flex flex-col gap-2">
@@ -199,7 +199,7 @@ export function AnimationSheet({ style, onClose, onSaved, kind = "animation", ed
               <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 <Pictures styleId={saved?.id ?? ""} kind={kind} pictures={inspirations} busy={busy} onTake={editable ? take : undefined} bare />
                 {waiting.map((w) => (
-                  <Tile key={w.url} src={w.url} label="Take this picture out" disabled={busy} onTake={() => setWaiting((all) => all.filter((x) => x !== w))} />
+                  <Tile key={w.url} src={w.url} label="Remove this picture" disabled={busy} onTake={() => setWaiting((all) => all.filter((x) => x !== w))} />
                 ))}
               </ul>
             )}
@@ -247,6 +247,6 @@ function Tile({ src, label, disabled, onTake }: { src: string; label: string; di
 
 /** A style's saved pictures as tiles; `bare` leaves the list around them to the caller. */
 function Pictures({ styleId, kind, pictures, busy, onTake, bare }: { styleId: string; kind: StyleKind; pictures: StylePicture[]; busy: boolean; onTake?: (p: StylePicture) => void; bare?: boolean }) {
-  const tiles = pictures.map((p) => <Tile key={p.id} src={stylePictureUrl(styleId, p.id, kind)} label="Take this picture out" disabled={busy} onTake={onTake && (() => onTake(p))} />);
+  const tiles = pictures.map((p) => <Tile key={p.id} src={stylePictureUrl(styleId, p.id, kind)} label="Remove this picture" disabled={busy} onTake={onTake && (() => onTake(p))} />);
   return bare ? <>{tiles}</> : <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">{tiles}</ul>;
 }

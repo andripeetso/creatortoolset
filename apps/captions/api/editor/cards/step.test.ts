@@ -673,7 +673,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     await toCards(id);
     expect(asked).toEqual([]);
     expect(jobs(id).map((j) => [j.kind, j.state])).toEqual([["broll", "done"], ["cards", "done"], ["post", "queued"]]);
-    expect((await view(id, "nomac")).cards).toEqual({ v1: { cards: [], note: "Cards: no Mac with Creator Toolset is on" } });
+    expect((await view(id, "nomac")).cards).toEqual({ v1: { cards: [], note: "Cards: no Mac with the Mac app is online" } });
     expect(readCards(id, "v1")).toMatchObject({ calls: 0, done: false });
     expect(readDraft(id, "v1")!.timeline).toEqual(tl);
     await call("nomac", "POST", `/api/editor/${id}/stop`);
@@ -692,7 +692,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     expect(jobOf(id, "cards")).toMatchObject({ state: "queued" });
     clock.now = () => asked0 + 10 * 60_000 + 1000;
     await step();
-    expect(await ended(id)).toEqual({ cards: [], note: "Cards: your Mac did not take the draw in 10 minutes" });
+    expect(await ended(id)).toEqual({ cards: [], note: "Cards: no Mac took the draw in 10 minutes" });
     expect(await claim()).toEqual({ job: null }); // nothing is left to take
     expect(asked).toHaveLength(2);
     expect(cardsOnCut(id)).toEqual([]);
@@ -762,7 +762,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     } finally {
       later.mockRestore();
     }
-    expect(await ended(quiet)).toEqual({ cards: [], note: "Cards: no Mac with Creator Toolset is on" });
+    expect(await ended(quiet)).toEqual({ cards: [], note: "Cards: no Mac with the Mac app is online" });
     expect(await claim()).toEqual({ job: null }); // the Mac is back, and there is nothing left for it to take
   });
 
@@ -865,7 +865,7 @@ describe.skipIf(rootReplaced)("how the Mac learns that a step waits", () => {
       const id = await newEdit();
       await toCards(id);
       expect(asked).toEqual([]);
-      expect((await view(id)).cards).toEqual({ v1: { cards: [], note: "Cards: no Mac with Creator Toolset is on" } });
+      expect((await view(id)).cards).toEqual({ v1: { cards: [], note: "Cards: no Mac with the Mac app is online" } });
       await call("maker", "POST", `/api/editor/${id}/stop`);
     } finally {
       await held(); // it lists the kind again

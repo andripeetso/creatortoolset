@@ -273,7 +273,7 @@ describe("New edit: a script, nothing filmed", () => {
     await flush();
   };
 
-  it("My footage is as it was; the script start has no clip picker, no optional script box and no versions", async () => {
+  it("Footage is as it was; the script start has no clip picker, no optional script box and no versions", async () => {
     await open(null);
     expect(field("edit-spoken")).toBeNull();
     expect(document.querySelector('[aria-label="Footage"]')).not.toBeNull();
@@ -282,7 +282,7 @@ describe("New edit: a script, nothing filmed", () => {
     expect(document.querySelector('[aria-label="Footage"]')).toBeNull();
     expect(field("edit-script")).toBeNull();
     expect(field("edit-versions")!.closest(".hidden")).not.toBeNull();
-    act(() => button("My footage").click());
+    act(() => button("Footage").click());
     await flush();
     expect(document.querySelector('[aria-label="Footage"]')).not.toBeNull();
     expect(field("edit-versions")!.closest(".hidden")).toBeNull();
@@ -358,14 +358,14 @@ describe("New edit: short videos from a long recording", () => {
     expect([...field<HTMLSelectElement>("edit-moments")!.options].map((o) => o.value)).toEqual(["3", "5", "10", "15", "20"]);
     expect(field<HTMLSelectElement>("edit-moments")!.value).toBe("10");
     expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("Length of each (seconds)");
-    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("Describe the short videos you want (optional)");
+    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("Describe the short videos (optional)");
     // a long recording can be sound only: the picker asks the library for videos and recordings there, videos alone elsewhere
     expect(listed.at(-1)).toContain("kind=video%2Caudio");
     expect(listed.find((u) => u.includes("kind="))).toMatch(/kind=video(&|$)/);
     await choose("edit-moments", "5");
     expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", moments: 5, targetS: 0 });
-    // back to My footage: versions again, and no moments sent
-    act(() => button("My footage").click());
+    // back to Footage: versions again, and no moments sent
+    act(() => button("Footage").click());
     await flush();
     expect(field("edit-moments")).toBeNull();
     act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));

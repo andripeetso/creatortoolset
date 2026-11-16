@@ -182,7 +182,7 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
 export const postFiles = (editId: string, variant: string): Record<string, string> => readStep(editId, "post")?.[variant]?.files ?? {};
 
 /** Said when a version's newest post step did not finish (failed, stopped, or not done yet). */
-export const POST_UNFINISHED = "Post-processing did not finish on this version: run it again before you export";
+export const POST_UNFINISHED = "Post-processing did not finish on this version: run it again before exporting";
 
 /**
  * True when a version's newest post step is not done: its copies (post.json) are an older run's, which may carry faces
@@ -501,7 +501,7 @@ export async function cleanBrief(body: Record<string, unknown>, username: string
   if (moments !== undefined && Math.round(moments) >= 1) out.moments = Math.round(moments);
   if (body.brollCollectionId === null) out.brollCollectionId = null;
   else if (typeof body.brollCollectionId === "string") {
-    if (!(await collectionOk(username, ws, body.brollCollectionId))) throw new NoCollection("No such collection");
+    if (!(await collectionOk(username, ws, body.brollCollectionId))) throw new NoCollection("B-roll folder not found");
     out.brollCollectionId = body.brollCollectionId;
   }
   // null or [] = its workspace's language again (none there: the person's own list); anything not a list of codes is ignored
@@ -544,7 +544,7 @@ export class NoStyle extends Error {}
  */
 export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">, workspace?: string): Promise<Partial<EditMeta>> {
   const s = findStyle(username, id);
-  if (!s) throw new NoStyle("No such style");
+  if (!s) throw new NoStyle("Editing style not found");
   const d = await editorDefaults(username, workspace);
   return {
     versions: s.versions,

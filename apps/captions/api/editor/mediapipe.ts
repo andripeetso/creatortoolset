@@ -53,7 +53,7 @@ async function setUp(title: string, selftest: (python: string) => Promise<unknow
   if (existsSync(ready)) return python;
   onInstall();
   const system = await findPython();
-  if (!system) throw new Error(`${title} needs Python 3.9 to 3.14 on this Mac: install it from python.org (or run xcode-select --install), then run the edit again`);
+  if (!system) throw new Error(`${title} needs Python 3.9 to 3.14 on this computer: install it from python.org (or run xcode-select --install), then run the edit again`);
   await rm(venv, { recursive: true, force: true });
   await mkdir(path.dirname(venv), { recursive: true });
   const step = (what: string) => (e: Error) => {
