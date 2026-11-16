@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Copy, Download, FileText, FolderOpen, Pencil, RotateCcw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Download, FileText, FolderOpen, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
 import { Button } from "@/components/ui/button";
@@ -141,6 +141,8 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const newEdit = () => navigate("/editor?new=1", { state: { pick: [{ versionId: a.versionId, title: a.title }] } });
   // the folders it is in are read again after the move: its Folder line says where it is now
   const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
+  // a quarter turn clockwise each press: the player, the thumbnail and the strip show it so (api/library/turn.ts)
+  const rotate = () => void updateAsset(libraryId, a.id, { turn: ((a.turn ?? 0) + 90) % 360 }).then(saved, (e) => onError(message(e)));
 
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
@@ -227,6 +229,12 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
                 <Download className="h-4 w-4" />
                 Download
               </a>
+            </Button>
+          )}
+          {a.kind === "video" && !a.review && (
+            <Button size="sm" variant="outline" title="Turn a quarter clockwise" onClick={rotate}>
+              <RotateCw className="h-4 w-4" />
+              Rotate
             </Button>
           )}
           {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}

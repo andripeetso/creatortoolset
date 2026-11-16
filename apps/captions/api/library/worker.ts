@@ -361,7 +361,9 @@ async function run(job: JobRow): Promise<void> {
     });
 
   if (job.kind === "probe") {
-    p = await probe(await src());
+    // a probe again (a rescan) keeps the clip's own turn: the file never says it
+    const turn = p?.turn;
+    p = { ...(await probe(await src())), ...(turn ? { turn } : {}) };
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
     // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
     // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
@@ -396,7 +398,7 @@ async function run(job: JobRow): Promise<void> {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
     const file = out("jpg");
-    await makeThumb(await src(), file, p.duration, !!p.cover);
+    await makeThumb(await src(), file, p.duration, !!p.cover, p.turn);
     await keep("thumb", file, `${base}/thumb.jpg`);
   } else if (job.kind === "wave") {
     const file = out("json");
@@ -409,7 +411,7 @@ async function run(job: JobRow): Promise<void> {
   } else if (job.kind === "sprite") {
     // after the proxies in the lane: a 4K original's frames come from its 720p copy
     const file = out("jpg");
-    await makeSprite(await lighter(), file, p.duration);
+    await makeSprite(await lighter(), file, p.duration, p.turn);
     await keep("sprite", file, `${base}/sprite.jpg`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
     // the sound from the original (cut from a 4K clip in 0.2 s at most, and the lighter copy's is re-encoded; the proxy's

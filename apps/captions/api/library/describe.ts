@@ -17,6 +17,7 @@ import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
 import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile } from "./organize";
+import { asTurn, turned, turnVersion } from "./turn";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a
@@ -51,6 +52,8 @@ export interface Described {
   roll?: Roll;
   /** the folder it fits, of the ones it was given (or none) */
   folder?: string;
+  /** clockwise degrees the frames need to stand upright (a phone filmed sideways, a screen recorded on its side); absent = upright */
+  turn?: 90 | 180 | 270;
 }
 
 export function describePrompt(input: DescribeInput): { system: string; user: string } {
@@ -66,15 +69,16 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
+      'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
       'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
       ...(input.folders
         ? [
             input.newFolder
               ? `folder is where this clip is filed in the library, judged by what the footage is (gameplay, an interview, a product, a place…). ${input.folders.length ? `Use one of these folders when it fits: ${JSON.stringify(input.folders)}. Otherwise name` : "Name"} a new folder: one to three words, by what the footage is (for example "Gameplay", "Interviews", "Product shots", "Travel"), never a vague name like "Misc", "Other", "Clips" or "B-roll".`
               : `folder is the one of these folders the clip fits best: ${JSON.stringify(input.folders)}`,
-            'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "folder": "a folder name"}',
+            'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "turn": 0, "folder": "a folder name"}',
           ]
-        : ['Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b"}']),
+        : ['Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "turn": 0}']),
     ].join("\n\n"),
   };
 }
@@ -88,7 +92,8 @@ export function parseDescribe(text: string): Described {
     ? [...new Set(o.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean))].slice(0, MAX_TAGS)
     : [];
   const folder = typeof o.folder === "string" ? o.folder.trim() : "";
-  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}) };
+  const turn = typeof o.turn === "number" ? asTurn(o.turn) : 0;
+  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}), ...(turn ? { turn } : {}) };
 }
 
 /** Most of the workspace's context a description carries: it rides every clip's call. */
@@ -173,13 +178,16 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
   if (route.off) throw new NeedsKey(route.off);
   const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
   const segments = segmentsOf(db, versionId);
+  // the frames are cut turned as the clip is now (stills a Mac made are not), so the AI's turn adds to that
+  const probe = db.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined;
+  const base = made ? 0 : asTurn((JSON.parse(probe?.probe ?? "{}") as { turn?: number }).turn);
   const files: string[] = [];
   try {
     if (made) files.push(...made);
     else for (const t of frameTimes(duration)) {
       const file = path.join(scratch, `describe-${randomUUID()}.jpg`);
       files.push(file);
-      await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", "scale=512:-2", "-q:v", "4"]);
+      await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", turned(base, "scale=512:-2"), "-q:v", "4"]);
     }
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
     // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
@@ -196,6 +204,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider);
+    if (value.turn) await turnVersion(db, versionId, base + value.turn);
     // a new name only while the library may get one; fileInto makes the folder with its first file
     const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
     if (filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);
