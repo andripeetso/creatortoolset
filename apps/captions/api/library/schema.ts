@@ -458,4 +458,9 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE asset_versions ADD COLUMN quick TEXT;
   UPDATE asset_versions SET quick = substr(sha256, 5) WHERE sha256 LIKE 'mac:%';
   `,
+  // 26: what a phone made of a video itself, sent with its upload's start (derived.ts Made: quick fingerprint, card
+  // picture, a 720p copy's original probe), kept until the upload finishes and it is filed
+  `
+  ALTER TABLE uploads ADD COLUMN made TEXT;
+  `,
 ];
