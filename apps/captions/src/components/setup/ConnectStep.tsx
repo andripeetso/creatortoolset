@@ -145,7 +145,7 @@ export function PhoneRowView({
   /** what is above this row in the step is not known yet (a first visit): the row is not drawn until it is */
   wait?: boolean;
   now: number;
-  /** the Mac app is here to turn Access from other devices on */
+  /** the Mac app is here to turn Network access on */
   canTurnOn: boolean;
   turningOn: boolean;
   problem: string | null;
@@ -170,12 +170,12 @@ export function PhoneRowView({
           <p className="text-xs text-muted-foreground">
             Your phone can't reach this computer yet.
             {canTurnOn
-              ? " Turn on Access from other devices, then choose this computer's password once."
-              : " In the Creator Toolset Mac app, turn on Access from other devices and choose this computer's password, then come back here."}
+              ? " Turn on Network access, then choose this computer's password once."
+              : " In the Creator Toolset Mac app, turn on Network access and choose this computer's password, then come back here."}
           </p>
           {canTurnOn && (
             <Button size="sm" variant="outline" disabled={turningOn} onClick={onTurnOn}>
-              Access from other devices
+              Network access
             </Button>
           )}
         </div>

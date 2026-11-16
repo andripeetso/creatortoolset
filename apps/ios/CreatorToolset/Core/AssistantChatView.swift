@@ -70,7 +70,7 @@ struct AssistantChatView: View {
 
     @ViewBuilder private var content: some View {
         if let view = model.view, !view.connected {
-            line("Connect your AI in Creator Toolset on your computer.")
+            line("Add an AI provider in Creator Toolset on a computer.")
         } else if model.view == nil, outbox.items.isEmpty {
             if let error = model.error {
                 line(error)

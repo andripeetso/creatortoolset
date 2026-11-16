@@ -118,15 +118,15 @@ it("tells a person who is not signed in to sign in first, not that the connectio
   expect(html).not.toContain("Check the connection");
 });
 
-it("offers Access from other devices as a button on a Mac app, and the copy to do it by hand without one", () => {
+it("offers Network access as a button on a Mac app, and the copy to do it by hand without one", () => {
   const local = phone("local");
   expect(local).toContain("Your phone can&#x27;t reach this computer yet.");
   expect(local).not.toContain("<button");
-  expect(local).toContain("In the Creator Toolset Mac app, turn on Access from other devices and choose this computer&#x27;s password");
+  expect(local).toContain("In the Creator Toolset Mac app, turn on Network access and choose this computer&#x27;s password");
 
   const withBridge = phone("local", { canTurnOn: true });
   expect(withBridge).toContain("<button");
-  expect(withBridge).toContain("Access from other devices");
+  expect(withBridge).toContain("Network access");
   expect(withBridge).not.toContain("In the Creator Toolset Mac app");
   expect(withBridge).toContain("choose this computer&#x27;s password once");
 });

@@ -399,7 +399,7 @@ struct ServersMenu: View {
         }
         if !shell.listed.isEmpty { Divider() }
         // only with a connect service set: without one the server can't start the link, and the item did nothing
-        if connectService != nil { Button("Add this Mac to my account…") { Task { await shell.connectThisComputer() } } }
+        if connectService != nil { Button("Add this Mac to the account…") { Task { await shell.connectThisComputer() } } }
         Button("Add server…") { open("this-mac") }
         Button("Run your own server…") { open("guide") }
         Button("This Mac…") { open("this-mac") }
