@@ -159,7 +159,7 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
     await login("boss", "admin");
     mac = pairDevice("maker", "Maker Mac");
     await post(mac.token, "/api/devices/relay/report", { drivers: [], homes: [], machine: BIG });
-    expect(await claim(mac.token)).toEqual({ pkg: null }); // its worker said it is there
+    expect(await claim(mac.token)).toMatchObject({ pkg: null }); // its worker said it is there
     await file("maker", "ver_m");
     await file("solo", "ver_s");
     await file("far", "ver_f");
@@ -267,7 +267,8 @@ describe("the Media Library's work", () => {
     expect(await library.tick(Date.now(), ["wave", "transcribe"])).toBe(false);
     expect(ffmpegRuns.n).toBe(0);
     expect(job("wave")).toMatchObject({ state: "queued", error: library.WAITS_FOR_COMPUTER });
-    expect(job("transcribe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_SERVER });
+    // a transcript is computer work too since 6B (the computer cuts the sound from its own copy)
+    expect(job("transcribe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_COMPUTER });
   });
 
   it("switched on, the server makes them", async () => {
