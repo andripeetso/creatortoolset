@@ -334,29 +334,31 @@ describe("pictures, pastes and the page a message comes from", () => {
     });
     expect(r.status).toBe(202);
     const job = await claim();
-    expect(job.files).toEqual({ "attached/01-shot.png": `base64:${png}`, "pasted/01-notes.txt": "Tiny Acrobatics plan" });
-    expect(job.user).toContain("attached/01-shot.png");
+    const folderKey = Object.keys(job.files!).find((k) => k.endsWith("-shot.png"))!;
+    expect(folderKey).toMatch(/^attached\/[0-9a-f]{8}\/01-shot\.png$/);
+    expect(job.files).toEqual({ [folderKey]: `base64:${png}`, "pasted/01-notes.txt": "Tiny Acrobatics plan" });
+    expect(job.user).toContain(folderKey);
     expect(job.user).toContain("pasted/01-notes.txt");
     expect(job.user).toContain("The user is on /review/abc (page title: Review). On screen: Tiny Acrobatics: rolls");
     expect(job.user).toContain("They highlighted this on the page: «the second hook»");
     // Claude's own reads show under the reply; its MCP calls (mcp.ts notes those) and "Thinking" don't
     for (const label of ["Read attached/01-shot.png", "mcp__creator-toolset__list_reviews", "Thinking"])
       await app.request(`/api/devices/relay/${job.id}/step`, { method: "POST", ...json({ label }, { authorization: `Bearer ${mac.token}` }) });
-    const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ images?: Array<{ id: string; name: string }>; pasted?: string[]; quote?: string; steps?: string[] }> };
+    const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ id: string; images?: Array<{ id: string; name: string }>; pasted?: string[]; quote?: string; steps?: string[] }> };
     expect(view.messages.at(-1)?.steps).toEqual(["Read attached/01-shot.png"]);
     const ask = view.messages.at(-2)!;
     expect(ask).toMatchObject({ pasted: ["Notes"], quote: "the second hook" });
     imageId = ask.images![0]!.id;
     expect(ask.images![0]!.name).toBe("Shot.png");
+    expect(folderKey).toBe(`attached/${ask.id.slice(0, 8)}/01-shot.png`);
     expect(statSync(path.join(imagesOf("ana"), `${imageId}.png`)).mode & 0o777).toBe(0o600);
     expect((await finish(job.id)).status).toBe(200);
 
-    // the next turn names the earlier attachments only; their files don't travel again
+    // the next turn still has the earlier picture at its stable path (the pastes go with their turn only), and the history names that path
     expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "And now?" }, { cookie }) })).status).toBe(202);
     const next = await claim();
-    expect(next.files).toBeUndefined();
-    expect(next.user).toContain("User: [1 picture] [pasted: Notes]");
-    expect(next.user).not.toContain("attached/");
+    expect(next.files).toEqual({ [folderKey]: `base64:${png}` });
+    expect(next.user).toContain(`User: [1 picture in attached/${ask.id.slice(0, 8)}/: 01-shot.png] [pasted: Notes]`);
     expect(next.user).not.toContain("highlighted");
     await finish(next.id);
   });
@@ -367,7 +369,8 @@ describe("pictures, pastes and the page a message comes from", () => {
     expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Edit this", paths: [folder] }, { cookie }) })).status).toBe(202);
     const job = await claim();
     expect(job.user).toContain(`The user dropped a folder from their computer: ${JSON.stringify(folder)} (its path there).`);
-    expect(job.files).toBeUndefined();
+    // the chat's earlier picture stays in the folder; a folder itself travels as its path only
+    expect(Object.keys(job.files ?? {})).toEqual([expect.stringMatching(/^attached\/[0-9a-f]{8}\/01-shot\.png$/)]);
     const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ folders?: string[] }> };
     expect(view.messages.at(-2)?.folders).toEqual([folder]);
     await finish(job.id);
