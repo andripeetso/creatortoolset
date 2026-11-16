@@ -26,7 +26,7 @@ const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(
 describe("the team's sign-in rule", () => {
   it("can't be set until the owner has the provider linked, then members link before anything else", async () => {
     const w = workspaceOf("boss")!;
-    expect(() => setSignInWith(w, "boss", ["google"])).toThrow(/Link your own Google/);
+    expect(() => setSignInWith(w, "boss", ["google"])).toThrow(/Add your own Google/);
 
     findUser("boss")!.identities = [{ provider: "google", sub: "g-boss", email: "boss@tinyacrobatics.com", linkedAt: 1 }];
     setSignInWith(w, "boss", ["google"]);

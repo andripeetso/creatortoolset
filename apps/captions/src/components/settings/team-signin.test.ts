@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { signInId, signInOptions } from "./WorkspaceSection";
 
-describe("How the team signs in offers only the sign-ins the server has on", () => {
-  it("none on: only a password too (the page then shows it as plain text)", () => {
-    expect(signInOptions([]).map((o) => o.id)).toEqual(["any"]);
+describe("Sign-in methods offers only the sign-ins the server has on", () => {
+  it("none on: only the password (the page then has no row)", () => {
+    expect(signInOptions([]).map((o) => [o.id, o.label])).toEqual([["any", "Password"]]);
   });
 
   it("one on: a password too, and that one alone", () => {
     expect(signInOptions(["github"]).map((o) => [o.id, o.label])).toEqual([
-      ["any", "Any way (password too)"],
+      ["any", "Password or GitHub"],
       ["github", "GitHub only"],
     ]);
   });
@@ -16,6 +16,7 @@ describe("How the team signs in offers only the sign-ins the server has on", () 
   it("all three on: each alone, then all three together as one choice", () => {
     const opts = signInOptions(["google", "apple", "github"]);
     expect(opts.map((o) => o.id)).toEqual(["any", "google", "apple", "github", "all"]);
+    expect(opts[0]!.label).toBe("Password, Google, Apple or GitHub");
     expect(opts.at(-1)).toMatchObject({ label: "Google, Apple or GitHub", value: ["google", "apple", "github"] });
     expect(signInId(opts, ["github", "google", "apple"])).toBe("all");
     expect(signInId(opts, [])).toBe("any");

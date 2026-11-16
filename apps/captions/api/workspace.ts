@@ -101,8 +101,8 @@ workspaceApp.post("/invites", async (c) => {
   if (m.error) return m.error;
   const b = await body(c);
   const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
-  if (email && !EMAIL_RE.test(email)) return c.json({ error: "That email address doesn't look right" }, 400);
-  if (email && !mailOn()) return c.json({ error: "Email isn't set up on this server: copy the link instead" }, 400);
+  if (email && !EMAIL_RE.test(email)) return c.json({ error: "Enter a valid email address." }, 400);
+  if (email && !mailOn()) return c.json({ error: "Email is not set up on this server" }, 400);
   let made: ReturnType<typeof createInvite>;
   try {
     made = createInvite(m.w, { username: m.u.username, role: m.me.role }, { ...b, email: email || undefined, workspaces: await brandsFrom(b.workspaces, m.u.username) });
@@ -149,7 +149,7 @@ workspaceApp.patch("/invites/:id", async (c) => {
   if (m.error) return m.error;
   const b = await body(c);
   const invite = invitesOf(m.w).find((i) => i.id === c.req.param("id"));
-  if (!invite) return c.json({ error: "No such invite" }, 404);
+  if (!invite) return c.json({ error: "Invite not found" }, 404);
   if (b.scripts !== undefined && typeof b.scripts !== "boolean") return c.json({ error: "Scripts is on or off" }, 400);
   updateInvite(m.w, invite.id, {
     ...(Array.isArray(b.off) ? { off: offFrom(b.off, invite.off ?? [], m.u.role === "admin") } : {}),
@@ -163,7 +163,7 @@ workspaceApp.patch("/invites/:id", async (c) => {
 workspaceApp.delete("/invites/:id", (c) => {
   const m = managed(c);
   if (m.error) return m.error;
-  return revokeInvite(m.w, c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "No such invite" }, 404);
+  return revokeInvite(m.w, c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "Invite not found" }, 404);
 });
 
 workspaceApp.patch("/members/:username", async (c) => {
@@ -175,12 +175,12 @@ workspaceApp.patch("/members/:username", async (c) => {
     updateMember(m.w, name, m.me.role, { ai: b.ai, budgetUsd: b.budgetUsd, scripts: b.scripts, workspaces: await brandsFrom(b.workspaces, m.u.username) });
     if (Array.isArray(b.off)) {
       const acct = findUser(name);
-      if (!acct) throw new Error("No such account");
+      if (!acct) throw new Error("Account not found");
       setOff(acct, offFrom(b.off, acct.off, m.u.role === "admin"));
     }
     if (Array.isArray(b.read)) {
       const acct = findUser(name);
-      if (!acct) throw new Error("No such account");
+      if (!acct) throw new Error("Account not found");
       setRead(acct, b.read);
     }
   } catch (e) {

@@ -105,14 +105,14 @@ const STATIC_ROWS = [
   { section: "servers", id: "sign-in-another", title: "Sign-in link for another computer", description: "Signs another computer into this server as you", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
-  { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team", "account", "password", "reset", "create account", "admin"] },
+  { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "ai", "budget", "workspaces", "remove", "team", "invite"] },
   { section: "team", id: "team-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow", "scripts", "invite"] },
-  { section: "team", id: "team-invite", title: "Invite link", keywords: ["invite", "link", "join", "team", "revoke"] },
-  { section: "team", id: "team-sign-in", title: "Sign-in", keywords: ["google", "apple", "password", "members", "team"] },
+  { section: "team", id: "team-invite", title: "Pending invites", keywords: ["invite", "link", "join", "team", "revoke", "delete"] },
+  { section: "team", id: "team-sign-in", title: "Sign-in methods", keywords: ["google", "apple", "github", "password", "members", "team"] },
   // Admin (hosted)
-  { section: "team", id: "team-other-accounts", title: "Other accounts", keywords: ["account", "users", "password", "create", "admin", "delete"], needs: "server-admin" },
-  { section: "team", id: "admin-sign-in-code", title: "Ask everyone for a sign-in code", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "lock", "unlock"], needs: "server-admin" },
-  { section: "storage", id: "admin-projects", title: "Every project on the server", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
+  { section: "team", id: "team-accounts", title: "Accounts", keywords: ["account", "users", "password", "reset", "create account", "new account", "admin", "role", "lock", "unlock", "delete"], needs: "server-admin" },
+  { section: "team", id: "admin-sign-in-code", title: "Sign-in code", description: "Every password sign-in on this server needs a code from an authenticator app", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "everyone"], needs: "server-admin" },
+  { section: "storage", id: "admin-projects", title: "All projects", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
   { section: "keys", id: "server-keys", title: "Keys for everyone on this server", keywords: ["env", "server", "api key", "secret", "fallback", "server keys"], needs: "server-admin" },
   // Account: the person's own profile and sign-in
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },

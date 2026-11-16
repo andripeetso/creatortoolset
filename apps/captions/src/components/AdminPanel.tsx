@@ -1,20 +1,18 @@
 import { useState, type FormEvent } from "react";
-import { Check, Trash2 } from "lucide-react";
+import { Check } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { confirmDialog } from "@/lib/dialogs";
-import type { Tool } from "@contracts/tools";
-import { Button } from "@/components/ui/button";
+import { TOOL_NAMES, type Tool } from "@contracts/tools";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useCodeState } from "@/components/SignInCode";
-import { Card, EmptyRow, ErrorRow, FormDialog, LoadingRow, Row, Section, saveFailed } from "@/components/settings/ui";
-import type { RowMenuItem } from "@/components/settings/kit-controls";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, saveFailed, type RowMenuItem } from "@/components/settings/ui";
 import { fmtAgo, lastActiveText, msg } from "@/components/settings/helpers";
 
 /**
  * The server's own lists for its admins (api/admin.ts), drawn where each belongs since Admin was taken apart
- * (2026-11-14): every account in Settings → Team (useServerAccounts, AskEveryone), every project in Settings → Storage
+ * (2026-11-14): every account in Settings → Team → Accounts (useServerAccounts, AskEveryone), every project in Settings → Storage
  * (ServerProjects). The lists are read through their saved copies (lib/local-cache.ts): the rows are there on the first
  * frame of a reload and when the server can't be reached, and they are read again behind that and after each change.
  */
@@ -49,9 +47,6 @@ interface AdminProject {
   bytes: number;
 }
 
-// the team and plain roles differ in how long their files are kept: that is in the role's menu, not in the row
-const ROLE_NAME: Record<Role, string> = { admin: "Admin", team: "Member", user: "Member" };
-
 function fmtBytes(n: number): string {
   if (n <= 0) return "—";
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
@@ -68,9 +63,9 @@ const PROJECTS_LIVE = { topic: ["admin", "projects", "enhance"], own: true };
 export type { AdminUser };
 
 /**
- * Every account on the server, for an admin (Settings → Team): the list, each account's menu (password, lock, sign-in
- * code, admin or not, delete) and the dialogs those open. `on` false (not an admin) reads nothing. `changed` runs after
- * each change, so the page around it reads its own list again too.
+ * Every account on the server, for an admin (Settings → Team → Accounts): the list, each account's menu (password,
+ * lock, sign-in code, admin or not, how long its files are kept, delete) and the dialogs those open. `on` false (not an
+ * admin) reads nothing. `changed` runs after each change, so the page around it reads its own list again too.
  */
 export function useServerAccounts(on: boolean, changed: () => void) {
   const accounts = useCachedLoad<AdminUser[]>(on ? "/api/admin/users" : null, read<AdminUser[]>("/api/admin/users"), ACCOUNTS_LIVE);
@@ -82,7 +77,7 @@ export function useServerAccounts(on: boolean, changed: () => void) {
     const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
     if (!res.ok) {
       const d = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(d.error || `Could not save it (${res.status})`);
+      throw new Error(d.error || "That did not save. Try again.");
     }
     await refresh();
     changed();
@@ -94,26 +89,25 @@ export function useServerAccounts(on: boolean, changed: () => void) {
     const admin = u.role === "admin";
     return [
       { label: "Reset password…", onSelect: () => setResetFor(u) },
-      ...(u.locked ? [{ label: "Lift the lock", onSelect: () => patch(u, { unlock: true }) }] : []),
-      ...(u.code ? [{ label: "Switch off sign-in code", confirm: { title: `Switch off ${u.username}'s sign-in code?`, ok: "Switch off" }, onSelect: () => patch(u, { code: false }) }] : []),
+      ...(u.locked ? [{ label: "Unlock account", onSelect: () => patch(u, { unlock: true }) }] : []),
+      ...(u.code ? [{ label: "Turn off sign-in code", confirm: { title: `Turn off ${u.username}'s sign-in code?`, ok: "Turn off" }, onSelect: () => patch(u, { code: false }) }] : []),
       admin
         ? { label: "Remove admin", confirm: { title: `Remove ${u.username} as admin?`, ok: "Remove admin" }, onSelect: () => changeRole(u, "team") }
         : { label: "Make admin", confirm: { title: `Make ${u.username} an admin?`, body: "Admins see every project and manage accounts.", ok: "Make admin" }, onSelect: () => changeRole(u, "admin") },
-      // team or plain only changes how long files stay, so it is offered on a server with an age limit
-      ...(admin || !u.keepDays
-        ? []
-        : [{ label: u.role === "team" ? "Make a plain member (files kept 14 days)" : "Make a team member (files kept 28 days)", onSelect: () => changeRole(u, u.role === "team" ? "user" : "team") }]),
+      // the two roles below admin differ only in how long files are kept, so the item says that; only on a server with an age limit
+      ...(admin || !u.keepDays ? [] : [{ label: u.role === "team" ? "Keep files 14 days" : "Keep files 28 days", onSelect: () => changeRole(u, u.role === "team" ? "user" : "team") }]),
       {
         label: "Delete account",
         destructive: true,
-        confirm: { title: `Delete account "${u.username}"?`, body: "It leaves its team and loses its library grants. Its files stay on the server.", ok: "Delete account" },
+        // api/admin.ts DELETE /users/:name: its projects, videos and designs go with it (retention.ts deleteUserContent)
+        confirm: { title: `Delete account "${u.username}"?`, body: "The account and its files on the server are deleted.", ok: "Delete account" },
         onSelect: () => attempt(call(`/api/admin/users/${u.username}`, { method: "DELETE" })),
       },
     ];
   };
   /** The account's line: Admin, Locked, its projects and what it keeps. */
   const lineOf = (u: AdminUser) =>
-    [ROLE_NAME[u.role], u.locked ? "Locked" : null, lastActiveText(u.usage.lastActiveAt), u.projects ? `${u.projects} projects` : null, fmtBytes(u.storageBytes) !== "—" ? fmtBytes(u.storageBytes) : null]
+    [u.role === "admin" ? "Admin" : null, u.locked ? "Locked" : null, lastActiveText(u.usage.lastActiveAt), u.projects ? `${u.projects} project${u.projects === 1 ? "" : "s"}` : null, u.storageBytes > 0 ? fmtBytes(u.storageBytes) : null]
       .filter(Boolean)
       .join(" · ");
   const dialogs = (
@@ -122,86 +116,65 @@ export function useServerAccounts(on: boolean, changed: () => void) {
       <ResetPassword user={resetFor} onClose={() => setResetFor(null)} call={call} />
     </>
   );
-  return { users: accounts.data, menuItems, lineOf, create: () => setCreating(true), dialogs };
+  return { users: accounts.data, failed: !accounts.data && !!accounts.error, retry: () => void refresh(), menuItems, lineOf, create: () => setCreating(true), dialogs };
 }
 
-/** Every project on the server, newest first, each with its size and Delete (Settings → Storage, admins on a hosted server). */
+/** Every project on the server, newest first, each with its tool, owner, size and Delete (Settings → Storage, admins on a hosted server). */
 export function ServerProjects() {
   const me = useAuth((s) => s.me);
   const made = useCachedLoad<AdminProject[]>("/api/admin/projects", read<AdminProject[]>("/api/admin/projects"), PROJECTS_LIVE);
   const projects = made.data;
   const failed = !projects && !!made.error;
   const refresh = () => made.refresh().catch(() => {});
+  /** A failure throws: the row's menu says it in a toast. */
   const removeProject = async (p: AdminProject) => {
-    const ok = await confirmDialog({
-      title: `Delete project "${p.name}"?`,
-      body: p.owner && p.owner !== me?.username ? `Owner: ${p.owner}.` : undefined,
-      ok: "Delete project",
-      danger: true,
-    });
-    if (!ok) return;
-    const base = p.kind === "captions" ? "/api/projects" : "/api/enhance";
-    const res = await fetch(`${base}/${p.id}`, { method: "DELETE" }).catch(() => null);
-    if (!res?.ok) {
-      saveFailed("The project was not deleted. Try again.");
-      return;
-    }
+    const res = await fetch(`${p.kind === "captions" ? "/api/projects" : "/api/enhance"}/${p.id}`, { method: "DELETE" }).catch(() => null);
+    if (!res?.ok) throw new Error("Could not delete the project. Try again.");
     await refresh();
   };
   return (
-    <Section id="admin-projects" title="Every project on the server">
+    <Section id="admin-projects" title="All projects">
       <Card>
-        {failed && <ErrorRow title="The projects did not load." retry={() => void refresh()} />}
+        {failed && <ErrorRow title="Could not load projects" retry={() => void refresh()} />}
         {!projects && !failed && <LoadingRow />}
-        {projects?.length === 0 && <EmptyRow title="No projects yet" description="Projects made on this server show here, newest first." />}
-        {projects && projects.length > 0 && (
-          <div className="overflow-x-auto p-3 sm:p-4">
-            <table className="w-full min-w-[560px] text-left text-xs">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  <th className="pb-2 pr-3 font-medium">Project</th>
-                  <th className="pb-2 pr-3 font-medium">Owner</th>
-                  <th className="pb-2 pr-3 font-medium">Updated</th>
-                  <th className="pb-2 pr-3 font-medium">Size</th>
-                  <th className="pb-2 font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {[...projects]
-                  .sort((a, b) => b.updatedAt - a.updatedAt)
-                  .map((p) => (
-                    <tr key={`${p.kind}:${p.id}`} className="border-t border-border/50 text-foreground/80">
-                      <td className="py-2 pr-3">
-                        {p.name} <span className="text-muted-foreground">· {p.kind === "captions" ? "Captions" : "Audio"}</span>
-                      </td>
-                      <td className="py-2 pr-3">{p.owner || "—"}</td>
-                      <td className="py-2 pr-3">{fmtAgo(p.updatedAt)}</td>
-                      <td className="py-2 pr-3">{fmtBytes(p.bytes)}</td>
-                      <td className="py-2 text-right">
-                        <Button variant="ghost" size="icon-xs" aria-label={`Delete ${p.name}`} onClick={() => void removeProject(p)}>
-                          <Trash2 />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {projects?.length === 0 && <EmptyRow title="No projects" />}
+        {projects &&
+          [...projects]
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .map((p) => (
+              <ListRow
+                key={`${p.kind}:${p.id}`}
+                title={p.name}
+                subtitle={[TOOL_NAMES[p.kind], p.owner, `updated ${fmtAgo(p.updatedAt)}`, p.bytes > 0 ? fmtBytes(p.bytes) : null].filter(Boolean).join(" · ")}
+                actions={
+                  <RowMenu
+                    label={`More for ${p.name}`}
+                    items={[
+                      {
+                        label: "Delete",
+                        destructive: true,
+                        confirm: { title: `Delete project "${p.name}"?`, body: p.owner && p.owner !== me?.username ? `Owner: ${p.owner}.` : undefined },
+                        onSelect: () => removeProject(p),
+                      },
+                    ]}
+                  />
+                }
+              />
+            ))}
       </Card>
     </Section>
   );
 }
 
-/** Every password sign-in on this server asks for a sign-in code (PUT /api/admin/sign-in-code). */
+/** The sign-in code for everyone: every password sign-in on this server needs one (PUT /api/admin/sign-in-code). */
 export function AskEveryone() {
   const state = useCodeState();
   if (!state.data) return null;
   const change = async (on: boolean) => {
-    if (on && !(await confirmDialog({ title: "Ask everyone for a sign-in code?", body: "Everyone without one is signed out and sets one up at their next sign-in.", ok: "Ask everyone" }))) return;
+    if (on && !(await confirmDialog({ title: "Turn on the sign-in code for everyone?", body: "Everyone without one is signed out and sets one up at their next sign-in.", ok: "Turn on" }))) return;
     const res = await fetch("/api/admin/sign-in-code", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ required: on }) }).catch(() => null);
     const d = ((await res?.json().catch(() => ({}))) ?? {}) as { error?: string; required?: boolean };
-    if (!res?.ok) return saveFailed(d.error || "It didn't save. Try again.");
+    if (!res?.ok) return saveFailed(d.error || "That did not save. Try again.");
     state.set((v) => v && { ...v, required: !!d.required });
   };
   return (
@@ -209,9 +182,9 @@ export function AskEveryone() {
       <Card>
         <Row
           id="admin-sign-in-code"
-          title="Ask everyone for a sign-in code"
-          description="Every password sign-in on this server asks for a code from an authenticator app"
-          control={<Switch checked={state.data.required} aria-label="Ask everyone for a sign-in code" onCheckedChange={(on) => void change(on)} />}
+          title="Sign-in code"
+          description="Every password sign-in on this server needs a code from an authenticator app."
+          control={<Switch checked={state.data.required} aria-label="Sign-in code" onCheckedChange={(on) => void change(on)} />}
         />
       </Card>
     </Section>
@@ -242,9 +215,9 @@ function CreateAccount({ open, onOpenChange, onCreated }: { open: boolean; onOpe
     }
   };
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title="Create account" submitLabel="Create account" busy={busy} error={error} onSubmit={submit}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title="New account" submitLabel="Create" busy={busy} error={error} onSubmit={submit}>
       <Input aria-label="Username" placeholder="Username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} required />
-      <Input aria-label="Password" placeholder="Password (10+ characters)" type="text" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      <Input aria-label="Password" placeholder="Password, 10 characters or more" type="text" value={password} onChange={(e) => setPassword(e.target.value)} required />
     </FormDialog>
   );
 }
@@ -271,8 +244,8 @@ function ResetPassword({ user, onClose, call }: { user: AdminUser | null; onClos
     }
   };
   return (
-    <FormDialog open={user !== null} onOpenChange={(o) => !o && onClose()} title={`New password for ${user?.username ?? ""}`} submitLabel="Set password" busy={busy} error={error} onSubmit={() => submit()}>
-      <Input aria-label="New password" type="text" placeholder="New password (10+ characters)" value={password} onChange={(e) => setPassword(e.target.value)} required />
+    <FormDialog open={user !== null} onOpenChange={(o) => !o && onClose()} title={`New password for ${user?.username ?? ""}`} submitLabel="Save" busy={busy} error={error} onSubmit={() => submit()}>
+      <Input aria-label="New password" type="text" placeholder="New password, 10 characters or more" value={password} onChange={(e) => setPassword(e.target.value)} required />
     </FormDialog>
   );
 }

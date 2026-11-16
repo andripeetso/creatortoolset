@@ -17,8 +17,8 @@ const { ruleFor } = await import("./auth");
 describe("the team's sign-in can be any of Google, Apple and GitHub", () => {
   it("GitHub is accepted once the owner has it linked, and all three save together", () => {
     const w = workspaceOf("boss")!;
-    expect(() => setSignInWith(w, "boss", ["github"])).toThrow(/Link your own GitHub account first/);
-    expect(() => setSignInWith(w, "boss", ["google", "apple", "github"])).toThrow(/Link your own Google, Apple or GitHub account first/);
+    expect(() => setSignInWith(w, "boss", ["github"])).toThrow(/Add your own GitHub sign-in first/);
+    expect(() => setSignInWith(w, "boss", ["google", "apple", "github"])).toThrow(/Add your own Google, Apple or GitHub sign-in first/);
 
     findUser("boss")!.identities = [{ provider: "github", sub: "gh-boss", email: "boss@tinyacrobatics.com", linkedAt: 1 }];
     setSignInWith(w, "boss", ["google", "apple", "github", "nope"]);
