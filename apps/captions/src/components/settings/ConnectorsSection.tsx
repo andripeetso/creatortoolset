@@ -53,7 +53,7 @@ export function signInItems(logins: Record<LoginKind, boolean>, viaService: read
 }
 
 /** Meta lets an app read an Instagram account only when it is a professional one (Business or Creator) linked to a Page. */
-const IG_NEEDS = "A Business or Creator account linked to a Facebook Page";
+const IG_NEEDS = "Needs a Business or Creator account linked to a Facebook Page";
 
 /** One row of the list: a platform's account, or the platform's sign-in on this server. */
 export interface PlatformRow {
@@ -264,7 +264,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
     if (own.projectId) await patchProject(own.projectId, { accountId: null });
   };
   const ownMoves = (own: OwnInstagram): RowMenuItem[] => [
-    ...w.workspaces.filter((p) => p.owner === me && !p.accountId).map((p) => ({ label: `Move to ${p.name}`, onSelect: () => act(moveOwn(own, p.id)) })),
+    ...w.workspaces.filter((p) => (!me || p.owner === me) && !p.accountId).map((p) => ({ label: `Move to ${p.name}`, onSelect: () => act(moveOwn(own, p.id)) })),
     ...(own.projectId && own.mine ? [{ label: "Use in every workspace", onSelect: () => act(moveOwn(own, null)) }] : []),
   ];
   // an account is the person's, not one workspace's: Disconnect takes it out of them all

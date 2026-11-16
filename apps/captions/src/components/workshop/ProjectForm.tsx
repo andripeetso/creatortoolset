@@ -210,8 +210,10 @@ export function ProjectForm({
     const fields = setup ? { ...setupProjectFields(f, where), ...(initial ? { audience: initial.audience, voice: initial.voice, cta: initial.cta, notes: initial.notes } : {}) } : f;
     void Promise.resolve(onSave(fields, setup ? [] : kept))
       .then(() => {
-        if (!alive.current) return;
-        // the files are the workspace's context files now: a second Save must not add them again
+        // Settings → Details stays open after a save (its onSave rejects when it failed): the files are the workspace's
+        // context files now, and a second Save must not add them again. The other windows close the form themselves,
+        // and one that failed keeps the files for the next try
+        if (!alive.current || !settings) return;
         setDropped([]);
         setFiling([]);
         setBefore(null);

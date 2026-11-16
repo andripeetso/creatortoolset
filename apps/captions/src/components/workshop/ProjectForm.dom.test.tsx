@@ -108,5 +108,10 @@ it("Settings → Details: no accounts block, and Save is on only while something
     name.dispatchEvent(new Event("input", { bubbles: true }));
   });
   expect(save.disabled).toBe(false);
+  // a dropped file is saved once: after the save it is the workspace's own, and the box is empty again
+  await drop(host.querySelector("#project-notes")!, [new File(["x"], "about.md", { type: "text/markdown" })]);
+  await act(async () => void host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(host.querySelector('[aria-label="Remove about.md"]')).toBeNull();
+  expect(save.disabled).toBe(true);
   done();
 });

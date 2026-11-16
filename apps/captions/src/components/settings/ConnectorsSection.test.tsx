@@ -36,7 +36,7 @@ it("the platform list: only accounts the person signs in to, in order, each with
   // every sign-in on: one Add each; X has no sign-in, so no row
   const all = platformRows(view({ logins: { meta: true, google: true, tiktok: true } }));
   expect(all.map((r) => [r.platform, r.button, r.summary])).toEqual([
-    ["instagram", "Add", "A Business or Creator account linked to a Facebook Page"],
+    ["instagram", "Add", "Needs a Business or Creator account linked to a Facebook Page"],
     ["facebook", "Add", ""],
     ["youtube", "Add", ""],
     ["tiktok", "Add", ""],
