@@ -53,6 +53,8 @@ export interface ReviewVersion {
   draft?: { edit: string; name: string; fails?: Critique["fails"] };
   /** (managers) a link back to what made it (a plug-in's own page). */
   source?: { kind: string; id: string; label: string; href: string };
+  /** (managers) the same file on the computer that made it: Show in Finder in the Mac app (revealReviewFile). */
+  local?: string;
   /** Its sound in parts (v<n>/stems/): the player's voice controls. */
   stems?: StemSet;
   createdAt: number;

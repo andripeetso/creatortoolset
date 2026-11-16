@@ -141,6 +141,9 @@ interface Version {
   draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
+  /** The same file on the computer that made it (an absolute path there, set by whoever files it): managers only, never
+   *  on a link. The Mac app shows it in Finder when it is on that Mac (apps/mac Reveal.swift), else Review downloads. */
+  local?: string;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
   stems?: StemSet;
   /** When its video files were deleted to save space (a later version went on
@@ -953,6 +956,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(manage && v.edit ? { edit: v.edit } : {}),
       ...(manage && v.draft ? { draft: v.draft } : {}),
       ...(manage && v.source ? { source: v.source } : {}),
+      ...(manage && v.local && !v.removed ? { local: v.local } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
@@ -1079,7 +1083,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1122,6 +1126,7 @@ export async function addVersion(
       ...(v.edit ? { edit: v.edit } : {}),
       ...(v.draft ? { draft: v.draft } : {}),
       ...(v.source ? { source: v.source } : {}),
+      ...(v.local && path.isAbsolute(v.local) ? { local: v.local } : {}),
       createdAt: now,
     });
   });
