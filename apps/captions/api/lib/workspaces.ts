@@ -4,7 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env";
 import { INVITE_DAYS, type AiRoute, type Invite, type InviteInput, type Member, type Workspace, type WorkspaceRole } from "../../contracts/workspaces";
-import { SIGNIN_NAME, findUser, listUsers, setOff } from "../users";
+import { SIGNIN_NAME, findUser, listUsers, setOff, setRead } from "../users";
 import { pluginDefaultOff } from "./plugin";
 import type { PluginGateId, Tool } from "../../contracts/tools";
 
@@ -279,10 +279,11 @@ export function inviteByToken(token: string): { invite: Invite; workspace: Works
 const workspaceById = (id: string): Workspace | null => store().workspaces.find((w) => w.id === id) ?? null;
 
 /** What an invited person gets once they join (the owner sets it on the pending invite; `off` is checked by the route). */
-export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; scripts?: boolean; workspaces?: string[] }): void {
+export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; read?: Tool[]; scripts?: boolean; workspaces?: string[] }): void {
   const i = store().invites.find((x) => x.id === id && x.workspaceId === w.id);
   if (!i) throw new Error("No such invite");
   if (patch.off) i.off = patch.off;
+  if (patch.read) i.read = patch.read;
   if (patch.scripts !== undefined) i.scripts = patch.scripts;
   if (patch.workspaces) i.workspaces = patch.workspaces;
   persist();
@@ -298,6 +299,7 @@ export function acceptInvite(token: string, username: string): Workspace {
     workspace.members.push({ username, role: "member", ai: invite.ai, budgetUsd: invite.budgetUsd, joinedAt: Date.now(), ...(invite.scripts ? { scripts: true } : {}), ...(invite.workspaces?.length ? { workspaces: invite.workspaces } : {}) });
     const acct = findUser(username);
     if (acct && invite.off && acct.role !== "admin") setOff(acct, invite.off);
+    if (acct && invite.read?.length && acct.role !== "admin") setRead(acct, invite.read);
   }
   store().invites = store().invites.filter((i) => i.id !== invite.id);
   persist();

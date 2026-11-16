@@ -111,6 +111,7 @@ export const sessionOf = (user: UserRecord): SessionUser => ({
   role: user.role,
   cloud: user.cloud,
   off: user.role === "admin" ? [] : user.off,
+  read: user.role === "admin" ? [] : (user.read ?? []),
 });
 
 /**

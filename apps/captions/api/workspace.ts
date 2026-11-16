@@ -17,7 +17,7 @@ import {
   updateMember,
   workspaceOf,
 } from "./lib/workspaces";
-import { findUser, setOff, type SessionUser, type UserRecord } from "./users";
+import { findUser, setOff, setRead, type SessionUser, type UserRecord } from "./users";
 import { EMAIL_RE, mailOn, sendMail } from "./lib/mail";
 import { originOf } from "./sign-in";
 import { inviteTarget, ownedProjects } from "./lib/workshop/workspace";
@@ -39,11 +39,11 @@ export const workspaceApp = new Hono<{ Variables: AuthVars }>();
  * One member as a view. The name is read from the member's account (its display name, read-only: nothing is stored
  * here). Someone who may not manage sees the name and the role, not spend, activity or ticks.
  */
-export function memberView(m: Member, acct: Pick<UserRecord, "displayName" | "usage" | "off"> | null, full: boolean, spentUsd: number): MemberView {
+export function memberView(m: Member, acct: Pick<UserRecord, "displayName" | "usage" | "off" | "read"> | null, full: boolean, spentUsd: number): MemberView {
   const name = acct?.displayName || undefined;
   return full
-    ? { ...m, name, spentUsd, lastActiveAt: acct?.usage.lastActiveAt ?? 0, off: acct?.off ?? [] }
-    : { username: m.username, name, role: m.role, ai: "own", budgetUsd: 0, joinedAt: m.joinedAt, spentUsd: 0, lastActiveAt: 0, off: [] };
+    ? { ...m, name, spentUsd, lastActiveAt: acct?.usage.lastActiveAt ?? 0, off: acct?.off ?? [], read: acct?.read ?? [] }
+    : { username: m.username, name, role: m.role, ai: "own", budgetUsd: 0, joinedAt: m.joinedAt, spentUsd: 0, lastActiveAt: 0, off: [], read: [] };
 }
 
 async function viewFor(u: SessionUser): Promise<WorkspaceView | null> {
@@ -153,6 +153,7 @@ workspaceApp.patch("/invites/:id", async (c) => {
   if (b.scripts !== undefined && typeof b.scripts !== "boolean") return c.json({ error: "Scripts is on or off" }, 400);
   updateInvite(m.w, invite.id, {
     ...(Array.isArray(b.off) ? { off: offFrom(b.off, invite.off ?? [], m.u.role === "admin") } : {}),
+    ...(Array.isArray(b.read) ? { read: (b.read as unknown[]).filter(isTool) } : {}),
     ...(typeof b.scripts === "boolean" ? { scripts: b.scripts } : {}),
     workspaces: await brandsFrom(b.workspaces, m.u.username),
   });
@@ -176,6 +177,11 @@ workspaceApp.patch("/members/:username", async (c) => {
       const acct = findUser(name);
       if (!acct) throw new Error("No such account");
       setOff(acct, offFrom(b.off, acct.off, m.u.role === "admin"));
+    }
+    if (Array.isArray(b.read)) {
+      const acct = findUser(name);
+      if (!acct) throw new Error("No such account");
+      setRead(acct, b.read);
     }
   } catch (e) {
     return bad(c, e);

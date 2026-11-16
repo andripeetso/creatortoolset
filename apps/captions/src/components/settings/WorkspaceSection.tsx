@@ -1,5 +1,5 @@
 import { SettingsDialog } from "./kit-dialog";
-import { ChevronDown, Plus } from "lucide-react";
+import { Check, ChevronDown, Eye, Plus } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Input } from "@/components/ui/input";
 import { PROJECT_COLORS, projectColor } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
+import { webPlugins } from "@/plugins.gen";
 import { useCachedLoad } from "@/lib/local-cache";
 import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateInvite, updateMember } from "@/lib/workspaces";
 import { AskEveryone, Tick, useServerAccounts } from "@/components/AdminPanel";
@@ -233,7 +234,7 @@ export function WorkspaceSection() {
             rows={[
               ...view.members
                 .filter((m) => m.role !== "owner")
-                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, scripts: !!m.scripts, save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
+                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, read: m.read ?? [], scripts: !!m.scripts, save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
               ...view.invites.map((i) => ({
                 key: i.id,
                 label: (
@@ -242,6 +243,7 @@ export function WorkspaceSection() {
                   </>
                 ),
                 off: i.off ?? [],
+                read: i.read ?? [],
                 scripts: !!i.scripts,
                 save: (p: AccessPatch) => act(updateInvite(i.id, p as InvitePatch)),
               })),
@@ -249,6 +251,12 @@ export function WorkspaceSection() {
           />
         </Section>
       )}
+
+      {webPlugins.map((p) => {
+        const Access = p.access;
+        const people = view.members.filter((m) => m.role !== "owner").map((m) => ({ username: m.username, label: m.name || m.username }));
+        return Access && people.length > 0 ? <Access key={p.id} people={people} /> : null;
+      })}
 
       {(() => {
         // accounts on the server that are in no team: made by hand, or left one
@@ -401,8 +409,10 @@ function WorkspacePicker({ brands, given, onChange }: { brands: { id: string; na
   );
 }
 
-type AccessPatch = { off?: string[]; scripts?: boolean };
-type Access = { off: string[]; scripts: boolean };
+type AccessPatch = { off?: string[]; read?: Tool[]; scripts?: boolean };
+type Access = { off: string[]; read: Tool[]; scripts: boolean };
+type Level = "write" | "read" | "off";
+const LEVEL_TEXT: Record<Level, string> = { write: "opens and changes", read: "opens, changes nothing", off: "off" };
 interface AccessRow extends Access {
   key: string;
   label: ReactNode;
@@ -416,7 +426,7 @@ interface AccessRow extends Access {
  */
 function AccessGrid({ rows }: { rows: AccessRow[] }) {
   const [draft, setDraft] = useState<Record<string, Access>>({});
-  const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, scripts: r.scripts };
+  const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, read: r.read, scripts: r.scripts };
   const change = (r: AccessRow, next: Access, patch: AccessPatch) => {
     setDraft((d) => ({ ...d, [r.key]: next }));
     void r
@@ -448,9 +458,13 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
                     <span className="block max-w-[14rem] truncate">{r.label}</span>
                   </td>
                   {TOOLS.map((t: Tool) => {
-                    const on = !cur.off.includes(t);
-                    const off = offAfterToggle(cur.off, t, !on);
-                    return <Tick key={t} on={on} title={`${TOOL_NAMES[t]} for ${typeof r.label === "string" ? r.label : "this invite"}`} onClick={() => change(r, { ...cur, off }, { off })} />;
+                    const level: Level = cur.off.includes(t) ? "off" : cur.read.includes(t) ? "read" : "write";
+                    // a click steps down, Read & write → Read → Off, and from Off back to Read & write
+                    const next: Level = level === "write" ? "read" : level === "read" ? "off" : "write";
+                    const off = offAfterToggle(cur.off, t, next !== "off");
+                    const read = [...cur.read.filter((x) => x !== t), ...(next === "read" ? [t] : [])];
+                    const who = typeof r.label === "string" ? r.label : "this invite";
+                    return <LevelTick key={t} level={level} title={`${TOOL_NAMES[t]} for ${who}: ${LEVEL_TEXT[level]}`} onClick={() => change(r, { ...cur, off, read }, { off, read })} />;
                   })}
                   <Tick on={cur.scripts} title="Can read your scripts" onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
                 </tr>
@@ -458,8 +472,41 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
             })}
           </tbody>
         </table>
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-3 text-[11px] text-muted-foreground sm:px-4">
+          <span className="flex items-center gap-1.5"><LevelBox level="write" /> Opens and changes</span>
+          <span className="flex items-center gap-1.5"><LevelBox level="read" /> Opens, changes nothing</span>
+          <span>A click steps to the next</span>
+        </p>
       </div>
     </Card>
+  );
+}
+
+function LevelBox({ level }: { level: Level }) {
+  return (
+    <span
+      className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+        level === "write"
+          ? "border-violet-600 bg-violet-600 text-white group-hover:bg-violet-500"
+          : level === "read"
+            ? "border-violet-500 text-violet-400 group-hover:border-violet-400"
+            : "border-muted-foreground/50 group-hover:border-muted-foreground"
+      }`}
+    >
+      {level === "write" && <Check className="h-3 w-3" strokeWidth={3} />}
+      {level === "read" && <Eye className="h-3 w-3" strokeWidth={2.5} />}
+    </span>
+  );
+}
+
+/** One app's cell in the Access grid: Read & write (a tick), Read (an eye) or Off (empty). */
+function LevelTick({ level, title, onClick }: { level: Level; title: string; onClick: () => void }) {
+  return (
+    <td>
+      <button onClick={onClick} aria-label={title} title={title} className="group flex w-full justify-center py-3">
+        <LevelBox level={level} />
+      </button>
+    </td>
   );
 }
 

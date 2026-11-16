@@ -225,6 +225,18 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect(await json(res)).toMatchObject({ code: "TOOL_ACCESS" });
     findUser("other")!.off = [];
   });
+
+  it("set to Read, the AI Editor opens but refuses every change (READ_ONLY)", async () => {
+    findUser("other")!.read = ["editor"];
+    try {
+      expect((await call("other", "GET", "/api/editor")).status).toBe(200);
+      const res = await call("other", "POST", "/api/editor", { sources: ["ver_a1"] });
+      expect(res.status).toBe(403);
+      expect(await json(res)).toMatchObject({ code: "READ_ONLY" });
+    } finally {
+      findUser("other")!.read = [];
+    }
+  });
 });
 
 describe.skipIf(rootReplaced)("AI Editor: the worker", () => {
