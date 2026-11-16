@@ -279,6 +279,29 @@ func shareServer(_ source: String) -> String? {
     return name.isEmpty ? nil : name
 }
 
+/// A share's kind and name on its server, from its mount source and file system ("//me@nas._smb._tcp.local/Footage" on
+/// smbfs → smb, "Footage"; "nas:/volume1/footage" on nfs → nfs, "volume1/footage"), so another computer can be told how to
+/// connect it. Never the user name in the source. Nil for a disk that is not a share.
+func shareOf(_ source: String, fstype: String) -> (fs: String, share: String)? {
+    let fs: String
+    switch fstype {
+    case "smbfs", "cifs", "smb3": fs = "smb"
+    case "afpfs": fs = "afp"
+    case "nfs", "nfs4": fs = "nfs"
+    default: return nil
+    }
+    let name: Substring
+    if fs == "nfs" {
+        guard let colon = source.firstIndex(of: ":") else { return nil }
+        name = source[source.index(after: colon)...].drop { $0 == "/" }
+    } else {
+        guard source.hasPrefix("//"), let slash = source.dropFirst(2).firstIndex(of: "/") else { return nil }
+        name = source[source.index(after: slash)...]
+    }
+    let share = String(name).removingPercentEncoding ?? String(name)
+    return share.isEmpty ? nil : (fs, share)
+}
+
 /// One disk for the report (`Disk` in apps/captions/contracts/storage.ts), or nil for a volume nobody keeps files on:
 /// an installer image, a hidden volume, a tiny helper volume. The rules are the Python editor's `_mounts` and `_disks`.
 func diskReport(_ v: VolumeFacts) -> [String: Any]? {
@@ -295,7 +318,12 @@ func diskReport(_ v: VolumeFacts) -> [String: Any]? {
     if v.totalBytes >= v.freeBytes { d["totalGb"] = gb(v.totalBytes) }
     if networkFilesystems.contains(v.fstype) {
         d["network"] = true
-        if let server = shareServer(v.source) { d["server"] = server }
+        let server = v.fstype.hasPrefix("nfs") ? v.source.split(separator: ":").first.map { String($0).lowercased() } : shareServer(v.source)
+        if let server { d["server"] = server }
+        if server != nil, let share = shareOf(v.source, fstype: v.fstype) {
+            d["fs"] = share.fs
+            d["share"] = share.share
+        }
     }
     return d
 }

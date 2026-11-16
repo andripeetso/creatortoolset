@@ -163,7 +163,17 @@ export interface DeviceJob {
   soon?: boolean;
   /** a plug-in's job (ServerPlugin.deviceJobs): what it needs to know, as words */
   options?: Record<string, string>;
+  /** a step that reads the edit's footage (api/editor/reach.ts): each file, by its library version id */
+  footage?: DeviceFootage[];
 }
+
+/**
+ * One footage file of a step, as the computer that took it gets at it: `path`, where it is on this computer (already
+ * rewritten for it: a shared folder may be /Volumes/Footage on one computer and /mnt/footage or Z:\ on another), or
+ * `copy`, the server's copy to download into its own cache and work on there:
+ *   GET relay/editor/job/:id/footage/:version   → the file ("original": the video file; "proxy": only its smaller copy)
+ */
+export type DeviceFootage = { id: string } & ({ path: string } | { copy: "original" | "proxy" });
 
 export interface DeviceClaim {
   job: DeviceJob | null;

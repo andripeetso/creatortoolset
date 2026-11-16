@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, connectFor, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBigFolder } from "@/components/LibraryProcessing";
-import { Card, EmptyRow, FormDialog, Row, RowMenu, SettingsSelect, Status } from "./ui";
+import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, EmptyRow, FormDialog, Row, RowMenu, SettingsDialog, SettingsSelect, Status } from "./ui";
 import { msg } from "./helpers";
 
 /** The computers an account owns (the list the Storage rows pick from). */
@@ -184,8 +185,8 @@ export function Storage({ devices, storage, onChanged }: { devices: Computer[]; 
     <Card>
       {folders.length === 0 && <EmptyRow title="No folders set yet" description="Where the Media Library and the AI Editor read and save files." />}
       <LibraryRow library={folders.find((f) => f.role === "library")} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
-      <SourceRow role="footage" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} here={storage.here} onChanged={onChanged} />
-      <SourceRow role="music" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} here={storage.here} onChanged={onChanged} />
+      <SourceRow role="footage" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} here={storage.here} copies={storage.copies} onChanged={onChanged} />
+      <SourceRow role="music" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} here={storage.here} copies={storage.copies} onChanged={onChanged} />
     </Card>
   );
 }
@@ -265,8 +266,8 @@ function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, onCha
 }
 
 /** Footage or music: each folder's full path, "Set folder" when none and "Change" after (the dialog adds one), and a `…` menu to remove one. */
-function SourceRow({ role, sources, folders, devices, serverDisks, here, onChanged }: {
-  role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; serverDisks: Disk[]; here?: string[]; onChanged: () => void;
+function SourceRow({ role, sources, folders, devices, serverDisks, here, copies, onChanged }: {
+  role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; serverDisks: Disk[]; here?: string[]; copies?: boolean; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const mine = sources.filter((f) => f.role === role);
@@ -282,7 +283,12 @@ function SourceRow({ role, sources, folders, devices, serverDisks, here, onChang
       <Row
         id={role === "footage" ? "footage-folder" : "music-folder"}
         title={label}
-        description={mine.length ? mine.map((f) => <span key={f.id} className="block">{whereOf(f, devices)}</span>) : undefined}
+        description={mine.length ? mine.map((f) => (
+          <span key={f.id} className="block">
+            {whereOf(f, devices)}
+            <FolderReach folder={f} devices={devices} copies={copies} />
+          </span>
+        )) : undefined}
         status={
           errors.map((f) => <Status key={f.id} tone="broken">{f.error}</Status>)
         }
@@ -307,6 +313,77 @@ function SourceRow({ role, sources, folders, devices, serverDisks, here, onChang
       />
       <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={here} onChanged={onChanged} />
     </>
+  );
+}
+
+/**
+ * Which of the account's computers can read a folder, and how: on its own disks, through the copy the server keeps
+ * (the Media Library uploads), or not at all yet. One that isn't connected gets Connect when the folder is on a share.
+ * Nothing with one computer.
+ */
+function FolderReach({ folder, devices, copies }: { folder: StorageFolder; devices: Computer[]; copies?: boolean }) {
+  const [connect, setConnect] = useState<Computer | null>(null);
+  if (devices.length < 2) return null;
+  return (
+    <span className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
+      {devices.map((d) => {
+        const has = folder.origin.host === d.id || !!folder.reach[d.id];
+        const os = d.report?.machine?.os;
+        const how = !has && folder.mount && os ? connectFor(folder.mount, os) : null;
+        return (
+          <span key={d.id} className="inline-flex items-center gap-1.5">
+            <Status tone={has ? "ok" : copies ? undefined : "attention"}>
+              {d.name} · {has ? "On this computer" : copies ? "Through the server copy" : "Not connected"}
+            </Status>
+            {how && (
+              <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConnect(d)}>
+                Connect
+              </Button>
+            )}
+          </span>
+        );
+      })}
+      {connect && folder.mount && <ConnectDialog folder={folder} computer={connect} onClose={() => setConnect(null)} />}
+    </span>
+  );
+}
+
+/** How to connect a folder's share on one computer: the Finder link on a Mac, the one line to run on Linux or Windows. */
+function ConnectDialog({ folder, computer, onClose }: { folder: StorageFolder; computer: Computer; onClose: () => void }) {
+  const how = connectFor(folder.mount!, computer.report?.machine?.os ?? "mac");
+  const where = `${folder.mount!.server}/${folder.mount!.share}`;
+  return (
+    <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>Connect {folder.name} on {computer.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          {how && "url" in how ? (
+            <>
+              <p>On {computer.name}, open the shared drive {where}. The Finder asks for its password the first time.</p>
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{how.url}</code>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={how.url}>Open</a>
+                </Button>
+              </div>
+            </>
+          ) : how ? (
+            <>
+              <p>Run this on {computer.name}. It asks for the shared drive's password.</p>
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{how.line}</code>
+                <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(how.line)}>
+                  Copy
+                </Button>
+              </div>
+            </>
+          ) : null}
+          <p className="text-xs text-muted-foreground">Once it is connected, {computer.name} finds the folder by itself and shows it here.</p>
+        </div>
+      </DialogContent>
+    </SettingsDialog>
   );
 }
 

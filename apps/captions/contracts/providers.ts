@@ -9,7 +9,7 @@
  */
 
 import type { PlanId } from "./plans";
-import type { Disk } from "./storage";
+import { SAFE_SERVER, SAFE_SHARE, SHARE_FS, type Disk } from "./storage";
 
 export type BuiltinDriver = "claude" | "codex" | "cursor" | "grok" | "gemini" | "opencode" | "antigravity" | "musecode" | "pi" | "acp";
 
@@ -260,6 +260,8 @@ export function parseMachine(v: unknown): Machine | undefined {
     if (d?.network === true) out.network = true;
     const server = text(d?.server);
     if (server) out.server = server;
+    const fs = SHARE_FS.find((f) => f === d?.fs);
+    if (fs && server && SAFE_SERVER.test(server) && typeof d?.share === "string" && SAFE_SHARE.test(d.share)) Object.assign(out, { fs, share: d.share });
     return [out];
   });
   if (disks.length) m.disks = disks;

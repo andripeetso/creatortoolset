@@ -8,7 +8,9 @@ import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
 import { CUTOUT_KIND, FOLDER_LIST_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
-import { claimableBy } from "./editor/engine";
+import { claimableBy, usesFootage } from "./editor/engine";
+import { fitsFor, footageFor, heldCopy } from "./editor/reach";
+import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
@@ -75,13 +77,18 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
   if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
-  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? claimForDevice(d, k) } satisfies DeviceClaim);
+  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? (await editorStep(d, k)) } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
   declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
-  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k);
+  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? (await editorStep(now, k));
   return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
 });
+/** An AI Editor step for the device, if one waits for it: a step that reads footage carries where its files are for it. */
+async function editorStep(d: Device, kinds: string[]) {
+  const job = claimForDevice(d, kinds, Date.now(), await fitsFor(d));
+  return job && usesFootage(job.kind) ? { ...job, footage: await footageFor(d, job.editId) } : job;
+}
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
 async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing
@@ -107,7 +114,7 @@ async function editorWaits(device: string, listed: unknown): Promise<boolean> {
  * or a transcript it would be handed (lib/computer-transcribe.ts); a computer whose wanted speech models changed is told too.
  */
 const waits = async (d: Device, kinds: string[]) =>
-  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) || deviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner, d.id)) ||
+  waitsForDevice(d.owner, kinds, Date.now(), await fitsFor(d)) || cutoutWaits(d.owner, kinds) || deviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner, d.id)) ||
   (kinds.includes(TRANSCRIBE_KIND) && (modelsOutOfStep(d) || transcriptWaits(d, await readBalance(d.owner))));
 /** A plug-in's job of one of these kinds for this device (ServerPlugin.deviceJobs), now its own; null when none waits. */
 function claimPluginJob(d: { id: string; owner: string }, kinds: string[]): ReturnType<typeof claimCutout> {
@@ -135,6 +142,14 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const why = typeof b?.error === "string" && b.error ? b.error : "The device could not run this step";
   return c.json(await ended(d, failForDevice(d.id, jobId(c), why)));
+});
+// a step's file from the server's copy (contracts/devices.ts DeviceFootage `copy`): only to the device that holds the step,
+// and only what the server already keeps (nothing is uploaded for it)
+devicesApp.get("/relay/editor/job/:id/footage/:version", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const key = heldCopy(d.id, jobId(c), c.req.param("version"));
+  return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 // a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
 devicesApp.get("/relay/editor/job/:id/cards", (c) => {
@@ -293,8 +308,10 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
     }));
   const balance = await readBalance(d.owner);
   // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
-  // and a folder listing goes to the computer that holds the folder
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  // a folder listing goes to the computer that holds the folder, and a step that reads footage is balanced per step among
+  // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
+  // hold it back from every one that has them
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */

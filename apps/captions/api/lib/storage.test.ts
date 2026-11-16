@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { sourcesOf, type StorageFolder } from "../../contracts/storage";
-import { canReach, folderFor, isInside, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+import { connectFor, sourcesOf, type Disk, type StorageFolder } from "../../contracts/storage";
+import { canReach, folderFor, hostPath, isInside, mountOf, withMounts, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
 
 // Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
 vi.mock("node:fs/promises", async (orig) => {
@@ -86,14 +86,31 @@ describe("where the files are: reach", () => {
     expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [f], "studio-mac")).toBe(true);
     expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [f], "pc")).toBe(false);
     expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [team({ pc: { path: "/Volumes/TEAM", at: 1 } })], "pc")).toBe(true);
-    expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [team({ pc: { path: "/Mnt/TEAM", at: 1 } })], "pc")).toBe(false);
+    // the same folder at another path on that computer: reached, by its marker
+    expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [team({ pc: { path: "/mnt/team", at: 1 } })], "pc")).toBe(true);
   });
 
-  it("a computer that found the folder at another path takes the footage there, and only there", () => {
+  it("rewrites a path for the computer it goes to, by the folder it is in", () => {
+    const f = team({ linux: { path: "/mnt/team/", at: 1 }, win: { path: "Z:\\", at: 1 }, unc: { path: "\\\\nas\\Team", at: 1 } });
+    expect(hostPath("/Volumes/TEAM/Shoot 1/a.mp4", [f], "linux")).toBe("/mnt/team/Shoot 1/a.mp4");
+    expect(hostPath("/Volumes/TEAM/Shoot 1/a.mp4", [f], "win")).toBe("Z:\\Shoot 1\\a.mp4");
+    expect(hostPath("/Volumes/TEAM/Shoot 1/a.mp4", [f], "unc")).toBe("\\\\nas\\Team\\Shoot 1\\a.mp4");
+    expect(hostPath("/Volumes/TEAM", [f], "linux")).toBe("/mnt/team/");
+    // back from Windows: either separator, any case
+    expect(hostPath("z:\\Shoot 1\\a.mp4", [f], "studio-mac", "win")).toBe("/Volumes/TEAM/Shoot 1/a.mp4");
+    expect(hostPath("\\\\NAS\\team/Shoot 1/a.mp4", [f], "linux", "unc")).toBe("/mnt/team/Shoot 1/a.mp4");
+    expect(hostPath("/Volumes/TEAM/a.mp4", [f], "pc")).toBeNull();   // never found it
+    expect(hostPath("/Volumes/Other/a.mp4", [f], "linux")).toBeNull();   // in no footage folder
+    // `from`: only that computer's path counts ("/mnt/team" on the Mac is not the folder)
+    expect(hostPath("/mnt/team/a.mp4", [f], "linux", "studio-mac")).toBeNull();
+  });
+
+  it("a computer that found the folder at another path names the same folder: each reaches it at its own path", () => {
     const f = team({ pc: { path: "/Mnt/TEAM/", at: 1 } });
     expect(folderFor("/Mnt/TEAM/Shoot/a.mp4", [f])?.prefix).toBe("/Mnt/TEAM");
     expect(canReach(["/Mnt/TEAM/Shoot/a.mp4"], [f], "pc")).toBe(true);
-    expect(canReach(["/Mnt/TEAM/Shoot/a.mp4"], [f], "studio-mac")).toBe(false);
+    expect(canReach(["/Mnt/TEAM/Shoot/a.mp4"], [f], "studio-mac")).toBe(true);
+    expect(hostPath("/Mnt/TEAM/Shoot/a.mp4", [f], "studio-mac")).toBe("/Volumes/TEAM/Shoot/a.mp4");
   });
 
   it("every footage path of a job must be reachable", () => {
@@ -158,6 +175,43 @@ describe("where the files are: the library and its files", () => {
     const footage = sourcesOf([lib]).find((f) => f.role === "footage");
     expect(footage?.origin.path).toBe("~/Creator Toolset/Footage");
     expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "pc")).toBe(true);
-    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "studio-mac")).toBe(false);
+    expect(hostPath("/Mnt/CT/Footage/a.mp4", [lib], "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
+    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "laptop")).toBe(false);
+  });
+});
+
+describe("a second computer connects the same share", () => {
+  const macDisks: Disk[] = [
+    { path: "/", name: "System disk", freeGb: 50 },
+    { path: "/Volumes/Footage", name: "Footage", freeGb: 900, network: true, server: "nas", fs: "smb", share: "Footage" },
+  ];
+  const folder: StorageFolder = { id: "f", role: "footage", name: "Shoots", origin: { host: "mac", path: "/Volumes/Footage/Shoots" }, make: false, createdAt: 0, reach: {} };
+
+  it("reads the share a folder is on from its computer's disks: nothing for its own disk", () => {
+    expect(mountOf("/Volumes/Footage/Shoots", macDisks)).toEqual({ fs: "smb", server: "nas", share: "Footage", sub: "Shoots" });
+    expect(mountOf("/Users/tiny/Movies", macDisks)).toBeUndefined();
+    expect(mountOf("/Volumes/Footage", [{ ...macDisks[1]!, share: undefined, fs: undefined }])).toBeUndefined();
+  });
+
+  it("a computer with the same share connected reaches the folder at its own path, by itself", () => {
+    const linux: Disk = { path: "/mnt/footage", name: "footage", freeGb: 900, network: true, server: "NAS.local", fs: "smb", share: "footage" };
+    const win: Disk = { path: "Z:\\", name: "Z", freeGb: 900, network: true, server: "nas", fs: "smb", share: "Footage" };
+    const other: Disk = { ...linux, path: "/mnt/other", share: "other" };
+    const [f] = withMounts([folder], [{ id: "mac", disks: macDisks }, { id: "pc", disks: [linux] }, { id: "win", disks: [win] }, { id: "laptop", disks: [other] }]);
+    expect(f!.mount).toEqual({ fs: "smb", server: "nas", share: "Footage", sub: "Shoots" });
+    expect(Object.keys(f!.reach).sort()).toEqual(["pc", "win"]);
+    expect(hostPath("/Volumes/Footage/Shoots/a.mp4", [f!], "pc")).toBe("/mnt/footage/Shoots/a.mp4");
+    expect(hostPath("/Volumes/Footage/Shoots/a.mp4", [f!], "win")).toBe("Z:\\Shoots\\a.mp4");
+    expect(canReach(["/Volumes/Footage/Shoots/a.mp4"], [f!], "laptop")).toBe(false);
+  });
+
+  it("tells each kind of computer how to connect it, with no password", () => {
+    const m = { fs: "smb" as const, server: "nas", share: "Team Footage", sub: "" };
+    expect(connectFor(m, "mac")).toEqual({ url: "smb://nas.local/Team%20Footage" });
+    expect(connectFor(m, "linux")).toEqual({ line: "sudo mkdir -p /mnt/Team-Footage && sudo mount -t cifs '//nas.local/Team Footage' /mnt/Team-Footage -o username=$USER,uid=$(id -u),gid=$(id -g)" });
+    expect(connectFor(m, "windows")).toEqual({ line: 'net use * "\\\\nas\\Team Footage" /persistent:yes' });
+    expect(connectFor({ fs: "nfs", server: "nas", share: "volume1/rushes", sub: "" }, "linux")).toEqual({ line: "sudo mkdir -p /mnt/rushes && sudo mount -t nfs 'nas.local:/volume1/rushes' /mnt/rushes" });
+    expect(connectFor({ fs: "nfs", server: "nas", share: "volume1/rushes", sub: "" }, "windows")).toBeNull();
+    expect(connectFor({ ...m, share: "a'b" }, "linux")).toBeNull();
   });
 });

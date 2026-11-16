@@ -1,7 +1,7 @@
 import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
 export function libraryPath(disk: string): string {
@@ -54,38 +54,105 @@ export async function localDisks(libraryPath?: string): Promise<Disk[]> {
 /** A folder path without trailing slashes ("/" stays "/"). */
 const norm = (p: string) => p.replace(/(.)\/+$/, "$1");
 
-/** p is dir or inside it, on a "/" boundary: "/Volumes/TEAM2" is not inside "/Volumes/TEAM". */
-function within(p: string, dir: string): boolean {
-  const d = norm(dir);
-  return p === d || p.startsWith(d.endsWith("/") ? d : `${d}/`);
+/** A Windows path ("Z:\…", "\\nas\footage\…"): either separator, letters in any case. */
+const isWindows = (p: string) => /^[A-Za-z]:([\\/]|$)/.test(p) || p.startsWith("\\\\");
+
+/** What of `p` is inside folder `dir`, "/"-separated ("" for the folder itself); null when p is not in it. On a "/"
+ *  boundary: "/Volumes/TEAM2" is not inside "/Volumes/TEAM". */
+export function inside(p: string, dir: string): string | null {
+  const win = isWindows(dir);
+  const fold = (x: string) => (win ? x.replace(/\\/g, "/").toLowerCase() : x);
+  const d = fold(win ? dir.replace(/[\\/]+$/, "") : norm(dir));
+  const a = fold(p);
+  if (a === d) return "";
+  const pre = d.endsWith("/") ? d : `${d}/`;
+  return a.startsWith(pre) ? (win ? p.replace(/\\/g, "/") : p).slice(pre.length) : null;
 }
 
-export interface FolderMatch { folder: StorageFolder; prefix: string }
+/** `rest` ("/"-separated) inside folder `dir`, written with dir's own separator. */
+const join = (dir: string, rest: string) => {
+  if (!rest) return dir;
+  const sep = isWindows(dir) ? "\\" : "/";
+  return `${dir.replace(/[\\/]+$/, "")}${sep}${rest.split("/").join(sep)}`;
+};
 
-/** The footage folder a path is inside: the longest of its origin and reach paths that holds it. "~/…" never holds an
- *  absolute path (they are different computers' paths). */
-export function folderFor(p: string, folders: StorageFolder[]): FolderMatch | null {
+/** Where `host` has `folder`: the path it was made at on its own computer, else where that computer found its marker. */
+export const pathOn = (folder: StorageFolder, host: string): string | undefined =>
+  folder.origin.host === host ? folder.origin.path : folder.reach[host]?.path;
+
+export interface FolderMatch { folder: StorageFolder; prefix: string; rest: string }
+
+/** The footage folder a path is inside: the longest of its paths that holds it (only `from`'s, when given: the computer
+ *  the path is on). "~/…" never holds an absolute path (they are different computers' paths). */
+export function folderFor(p: string, folders: StorageFolder[], from?: string): FolderMatch | null {
   let best: FolderMatch | null = null;
   for (const folder of sourcesOf(folders)) {
     if (folder.role !== "footage") continue;
-    for (const prefix of [folder.origin.path, ...Object.values(folder.reach).map((r) => r.path)]) {
-      if (within(p, prefix) && (!best || norm(prefix).length > best.prefix.length)) best = { folder, prefix: norm(prefix) };
+    const prefixes = from ? [pathOn(folder, from)] : [folder.origin.path, ...Object.values(folder.reach).map((r) => r.path)];
+    for (const prefix of prefixes) {
+      const rest = prefix === undefined ? null : inside(p, prefix);
+      if (rest !== null && (!best || prefix!.length > best.prefix.length)) best = { folder, prefix: norm(prefix!), rest };
     }
   }
   return best;
 }
 
-/** The v1 reach rule (paths are not rewritten between computers yet): a footage path inside a known folder may be taken
- *  by a computer only where it found that folder at the same path. The origin computer always reaches the folder it
- *  made, at its own path. A path outside every footage folder: no restriction. */
-export function canReach(paths: string[], folders: StorageFolder[], host: string): boolean {
-  return paths.every((p) => {
-    const m = folderFor(p, folders);
-    if (!m) return true;
-    if (m.folder.origin.host === host && m.prefix === norm(m.folder.origin.path)) return true;
-    const found = m.folder.reach[host]?.path;
-    return found !== undefined && norm(found) === m.prefix;
+/**
+ * The one rewrite of a path for another computer: `p` (on computer `from`, or on any that has the folder) as computer
+ * `to` reaches it, by the folder it is in: "/Volumes/Footage/a.mp4" on a Mac is "/mnt/footage/a.mp4" on a Linux computer
+ * that found the same folder at /mnt/footage, or "Z:\a.mp4" on Windows. Null when `p` is in no footage folder or `to` has
+ * not found that folder. Every path that goes to a device goes through here.
+ */
+export function hostPath(p: string, folders: StorageFolder[], to: string, from?: string): string | null {
+  const m = folderFor(p, folders, from);
+  const dir = m ? pathOn(m.folder, to) : undefined;
+  return m && dir !== undefined ? join(dir, m.rest) : null;
+}
+
+/** The share a path is on, from its computer's reported disks (the deepest network disk that holds it); undefined for a
+ *  disk of that computer's own, or a share it did not say the name of. */
+export function mountOf(p: string, disks: Disk[] = []): FolderMount | undefined {
+  let best: { d: Disk; sub: string } | undefined;
+  for (const d of disks) {
+    const sub = d.network ? inside(p, d.path) : null;
+    if (sub !== null && (!best || d.path.length > best.d.path.length)) best = { d, sub };
+  }
+  const d = best?.d;
+  return d?.fs && d.server && d.share ? { fs: d.fs, server: d.server, share: d.share, sub: best!.sub } : undefined;
+}
+
+/** "nas", "NAS.local" and "nas._smb._tcp.local" are one server; an SMB share's name has no case. */
+const sameShare = (m: FolderMount, d: Disk) => {
+  const host = (x: string) => x.toLowerCase().replace(/(\._smb\._tcp)?\.local\.?$/, "");
+  const name = (x: string) => x.replace(/^\/+|\/+$/g, "");
+  return !!d.network && !!d.server && d.share !== undefined && (!d.fs || d.fs === m.fs) && host(d.server) === host(m.server)
+    && (m.fs === "nfs" ? name(d.share) === name(m.share) : name(d.share).toLowerCase() === name(m.share).toLowerCase());
+};
+
+/**
+ * The folders with what each computer's disks say: the share a folder is on (from the computer that added it, when it was
+ * not stored), and every other computer that has the same share connected reaches the folder inside it, at its own path.
+ * So a second computer needs nothing typed: connecting the share is enough.
+ */
+export function withMounts(folders: StorageFolder[], computers: Array<{ id: string; disks?: Disk[] }>): StorageFolder[] {
+  const disks = new Map(computers.map((c) => [c.id, c.disks ?? []]));
+  return folders.map((f) => {
+    const mount = f.mount ?? mountOf(f.origin.path, disks.get(f.origin.host));
+    if (!mount) return f;
+    const reach = { ...f.reach };
+    for (const [id, list] of disks) {
+      if (id === f.origin.host || reach[id]) continue;
+      const d = list.find((x) => sameShare(mount, x));
+      if (d) reach[id] = { path: join(d.path, mount.sub), at: 0 };
+    }
+    return { ...f, mount, reach };
   });
+}
+
+/** May computer `host` take footage at these paths? A path inside a footage folder: only where that computer has the folder
+ *  (the one that made it, or one that found its marker, at any path). A path outside every footage folder: no restriction. */
+export function canReach(paths: string[], folders: StorageFolder[], host: string): boolean {
+  return paths.every((p) => !folderFor(p, folders) || hostPath(p, folders, host) !== null);
 }
 
 /** A worker's storage report, checked: good paths and ids only, at most 100 of each. Not an object -> null. */

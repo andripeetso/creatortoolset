@@ -25,4 +25,10 @@ describe("parseMachine", () => {
     ]);
     expect(m?.disks?.[2]).not.toHaveProperty("totalGb");
   });
+  it("keeps a share's kind and name only when they are plain names that can go into a command", () => {
+    const disks = (share: string) => parseMachine({ cpus: 8, memGb: 16, disks: [{ path: "/Volumes/F", name: "F", freeGb: 1, network: true, server: "nas", fs: "smb", share }] })?.disks?.[0];
+    expect(disks("Team Footage")).toMatchObject({ fs: "smb", share: "Team Footage" });
+    expect(disks("x'; rm -rf ~ #")).not.toHaveProperty("share");
+    expect(disks("x$(id)")).not.toHaveProperty("share");
+  });
 });
