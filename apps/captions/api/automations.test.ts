@@ -113,7 +113,7 @@ describe("scheduled tasks: REST, per account", () => {
     await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true, device: mac.device.id }], default: { instance: "codex", model: "gpt-x", effort: "high" } }, "erin1");
     const r = await req({ auth: `Bearer ${newApiKey(erin, "full")}` }, "POST", "/automations", { schedule: everyHour, prompt: "p" });
     expect(r.status).toBe(409);
-    expect((await json(r)).error).toContain("Scheduled tasks run on Claude Code");
+    expect((await json(r)).error).toBe("Needs Claude Code");
   });
 
   it("keeps the AI it is given, and switching to a new chat each run forgets its chat", async () => {
@@ -157,6 +157,14 @@ describe("scheduled tasks: per workspace", () => {
     const names = async (ws: string) => ((await json(await as(ws, "GET"))).items as Json[]).map((x) => x.name);
     expect(await names(A)).toEqual(["for A", "everywhere"]);
     expect(await names(B)).toEqual(["for B", "everywhere", "made in B"]);
+    // Settings on All workspaces: every task, each with the workspace it is in (none = every workspace)
+    const every = (await json(await app.request("/api/automations?all=1", { headers: { authorization: keys.dave!, "x-ct-workspace": B } }))).items as Json[];
+    expect(every.map((x) => [x.name, x.project ?? null])).toEqual([["for A", A], ["for B", B], ["everywhere", null], ["made in B", B]]);
+    // one whose workspace was deleted is the first brand's, in the one list as in the other
+    const stray = await json(await as(B, "POST", { name: "stray", schedule: everyHour, prompt: "p", enabled: false, project: "eeeeeeee-0000-4000-8000-00000000dead" }));
+    expect(await names(A)).toContain("stray");
+    const again = (await json(await app.request("/api/automations?all=1", { headers: { authorization: keys.dave! } }))).items as Json[];
+    expect(again.find((x) => x.id === stray.id)?.project).toBe(A);
   });
 
   it("a task made for a workspace runs in it, whatever the app has open: its chat is that workspace's and the run is told its context", async () => {
@@ -237,7 +245,7 @@ describe("the scheduler", () => {
     const due = (await find("bob", fixed.id))!.nextRun as number;
     await tick(due + MISSED_MS + 60_000, run, () => ({ wait: "Mac Studio is offline" }));
     const after = await find("bob", fixed.id);
-    expect(after?.lastResult).toMatchObject({ status: "skipped", text: "Missed the 09:00 run (Mac Studio is offline)." });
+    expect(after?.lastResult).toMatchObject({ status: "skipped", text: "Missed the 09:00 run (Mac Studio is offline)" });
     expect(after?.nextRun).toBeGreaterThan(due + MISSED_MS);
     expect(started).not.toContain(fixed.id);
   });
@@ -247,16 +255,16 @@ describe("the scheduler", () => {
     const t0 = Date.now() + 3_600_000;
     await tick(t0); // the real readiness: bob has no AI
     await tick(t0 + 120_000);
-    expect((await find("bob", a.id))?.lastResult).toMatchObject({ status: "skipped", text: expect.stringContaining("No Claude Code is set up for your AI here") });
+    expect((await find("bob", a.id))?.lastResult).toMatchObject({ status: "skipped", text: "Needs an AI provider" });
     const notes = ((await json(await req("bob", "GET", "/review/notifications"))).items as Array<{ name: string }>).filter((n) => n.name === "Inbox me");
     expect(notes).toHaveLength(1);
     expect(told).toContain("bobby automations"); // the open Settings page shows the skip without a reload
   });
 
-  it("says why no task can run: an admin is sent to Providers, a team member is told the team's AI can't", async () => {
-    expect((await json(await req("bob", "GET", "/automations"))).blocked).toContain("No Claude Code is set up for your AI here");
-    expect(blockOf(null, true)).toContain("Add it on a computer in Providers");
-    expect(blockOf(null, false)).toContain("Your team's AI can't run them");
+  it("says what is missing when no task can run: an AI provider, and for a team member Claude Code on a computer", async () => {
+    expect((await json(await req("bob", "GET", "/automations"))).blocked).toBe("Needs an AI provider");
+    expect(blockOf(null, true)).toBe("Needs an AI provider");
+    expect(blockOf(null, false)).toBe("Needs Claude Code on a computer");
   });
 });
 

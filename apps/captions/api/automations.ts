@@ -25,6 +25,7 @@ import {
 } from "../contracts/automations";
 import type { Selection } from "../contracts/providers";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { projectOf } from "./lib/project-of";
 
 /**
  * Scheduled tasks (contracts/automations.ts): $DATA_DIR/automations/<user>.json, one list per account. A run is a turn
@@ -97,11 +98,12 @@ const view = (a: Automation, now = Date.now()) => {
 
 /* ---- one run ---- */
 
-const NO_AI = "No Claude Code is set up for your AI here. Add it on a computer in Providers.";
+// what is missing, as Settings names it: the page shows it where New task would be, a task's row after "Skipped"
+const NO_AI = "Needs an AI provider";
 // a member's route never includes the team's AI (routeOf), and a member cannot add a computer for the team: say that instead
-const NO_AI_MEMBER = "Scheduled tasks need Claude Code on one of your computers. Your team's AI can't run them.";
-const NOT_CLAUDE = "Scheduled tasks run on Claude Code, and this AI is another tool. Edit the task to pick Claude Code.";
-const AI_GONE = "The AI this task runs on is gone or switched off. Edit the task to pick another.";
+const NO_AI_MEMBER = "Needs Claude Code on a computer";
+const NOT_CLAUDE = "Needs Claude Code";
+const AI_GONE = "AI provider not found or turned off";
 /** True for an admin, and for every account on an install of one's own (no team to be a member of). */
 const isAdminHere = (username: string) => !hostedMode() || findUser(username)?.role === "admin";
 /** Why no task can run for this account, in plain words, or null. The page shows it before a task is built. */
@@ -126,9 +128,9 @@ export function readiness(username: string, a: Automation): Readiness {
   if (!route) return { skip: a.ai ? AI_GONE : admin ? NO_AI : NO_AI_MEMBER };
   if (route.instance.driver !== "claude") return { skip: NOT_CLAUDE };
   const url = toolsUrl();
-  if (!url) return { skip: "This server doesn't know its own address, so the task can't reach the app's tools. Ask whoever runs this server." };
+  if (!url) return { skip: "Needs the server's address (PUBLIC_ORIGIN, set by whoever runs the server)" };
   if (!isOnline(route.device)) return { wait: `${deviceName(route.device)} is offline` };
-  if (a.destination !== "new_chat" && chatBusy(username, a.chat)) return { wait: "its chat is still answering" };
+  if (a.destination !== "new_chat" && chatBusy(username, a.chat)) return { wait: "its chat is busy" };
   return { route, url };
 }
 
@@ -224,7 +226,7 @@ export async function tick(now = Date.now(), run: Runner = runAutomation, ready:
         }
         if ("wait" in r && !late) continue;
         const at = new Intl.DateTimeFormat("en-GB", { timeZone: a.timezone, hour: "2-digit", minute: "2-digit" }).format(new Date(due));
-        const why = "skip" in r ? r.skip : `Missed the ${at} run (${"wait" in r ? r.wait : "the server was off"}).`;
+        const why = "skip" in r ? r.skip : `Missed the ${at} run (${"wait" in r ? r.wait : "the server was off"})`;
         update(u.username, a.id, (x) => (x.lastRun = now));
         starts.push(finish(u.username, a.id, { status: "skipped", text: why }));
       }
@@ -282,7 +284,7 @@ function readFields(b: Input): { fields: Omit<Partial<Automation>, "ai"> & { ai?
   }
   if ("ai" in b) {
     const ai = readAi(b.ai);
-    if (ai === "bad") return { fields, error: "ai: { instance, model, effort } of one of your AIs, or null for the assistant's" };
+    if (ai === "bad") return { fields, error: "ai: { instance, model, effort } of one of the account's AI providers, or null for the assistant's" };
     fields.ai = ai;
   }
   if ("schedule" in b) {
@@ -295,16 +297,22 @@ function readFields(b: Input): { fields: Omit<Partial<Automation>, "ai"> & { ai?
 
 /** An enabled once task whose time has gone would never run: refused on save. */
 const pastOnce = (a: Pick<Automation, "enabled" | "schedule">, now: number) => a.enabled && a.schedule.kind === "once" && a.schedule.runAt <= now;
-const PAST_ONCE = "The run time has passed. Pick a time in the future.";
+const PAST_ONCE = "The run time has passed";
 
-/** The account's tasks, and why none can run for it now (`blocked`, null when one can): the page then builds none. */
+/**
+ * The account's tasks, and why none can run for it now (`blocked`, null when one can): the page then builds none.
+ * ?all=1: every workspace's tasks (Settings → Scheduled tasks on All workspaces), each with the workspace it is in.
+ */
 automationsApp.get("/", async (c) => {
   const username = c.get("user").username;
   const admin = isAdminHere(username);
   // a task for one workspace is listed in it alone; one for no workspace in every one
-  const here = await inCurrentWorkspace(c.get("user"));
+  const all = c.req.query("all") === "1";
+  const [here, of] = await Promise.all([all ? null : inCurrentWorkspace(c.get("user")), all ? projectOf(c.get("user")) : null]);
   const items = readAll(username).filter((a) => !a.project || !here || here(a.project));
-  return c.json({ items: items.map((a) => view(a)), blocked: blockOf(routeOf(username, admin), admin) });
+  // a task whose workspace was deleted is the first brand's (project-of.ts): the list names that one, as the filter does
+  const named = (a: Automation): Automation => (a.project && of ? { ...a, project: of(a.project) } : a);
+  return c.json({ items: items.map((a) => view(named(a))), blocked: blockOf(routeOf(username, admin), admin) });
 });
 
 /**
@@ -398,7 +406,7 @@ automationsApp.post("/:id/run", (c) => {
   if (!a) return c.json({ error: "Not found" }, 404);
   if (running.has(a.id)) return c.json({ error: "This task is already running" }, 409);
   const r = readiness(username, a);
-  if (!("route" in r)) return c.json({ error: "wait" in r ? `Can't run it now: ${r.wait}.` : r.skip }, 409);
+  if (!("route" in r)) return c.json({ error: "wait" in r ? `Could not run it now: ${r.wait}` : r.skip }, 409);
   // a manual run counts as its run for an interval or a fixed time; a once task keeps its date (nextRunAfter counts from
   // lastRun, and a run before that date leaves it ahead)
   void start(username, a, Date.now(), () => runAutomation(username, a, r));
