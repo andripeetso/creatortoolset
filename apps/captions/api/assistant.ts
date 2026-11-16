@@ -104,8 +104,6 @@ A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is your
 
 Where this workspace keeps its files on the user's computers (Settings → Folders) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Folders (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.
 
-Pictures the user sent in this chat stay in attached/<message>/ for the whole chat: when they ask about an earlier one, open it with Read rather than saying it never arrived.
-
 Before saying a file is not there, or asking what it is called, look with folder_list (match: words from what they said, like song): it sees every subfolder.`;
 
 /**
@@ -435,11 +433,12 @@ function folderPictures(username: string, m: AssistantMessage): Array<{ path: st
 
 /**
  * The Mac's files for a turn (the relay writes "base64:" entries as bytes), or undefined with none: every picture the chat
- * holds, at its path, and the newest message's pastes. Grok takes no file as bytes, so on Grok only the newest message's pictures go.
+ * holds, at its path, and the newest message's pastes. Only Claude gets the earlier messages' pictures (`keeps`); any other
+ * AI gets the newest message's, as before.
  */
-function filesFor(username: string, chat: AssistantMessage[], newest: string, input: TurnInput, grok: boolean): Record<string, string> | undefined {
+function filesFor(username: string, chat: AssistantMessage[], newest: string, input: TurnInput, keeps: boolean): Record<string, string> | undefined {
   const files: Record<string, string> = {};
-  for (const m of chat) if (m.role === "user" && (!grok || m.id === newest)) for (const p of folderPictures(username, m)) files[p.path] = `base64:${readFileSync(p.file).toString("base64")}`;
+  for (const m of chat) if (m.role === "user" && (keeps || m.id === newest)) for (const p of folderPictures(username, m)) files[p.path] = `base64:${readFileSync(p.file).toString("base64")}`;
   input.pasted.forEach((p, i) => (files[pastedName(p.name, i, input.dir)] = p.text));
   return Object.keys(files).length ? files : undefined;
 }
@@ -1598,8 +1597,10 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
   const knows = turnKnows(username, reply.id);
   const chat = list.slice(0, i + 1);
-  const grok = route.instance.driver === "grok";
-  void runTurn(username, reply.id, route, h.url, promptFor(username, chat, input, !grok), knows, filesFor(username, chat, asked.id, input, grok)).then(() => {
+  // the chat's earlier pictures go to Claude only, which opens one when it needs it: Grok takes no picture, and Codex is
+  // handed every picture in the folder on every turn
+  const keeps = route.instance.driver === "claude";
+  void runTurn(username, reply.id, route, h.url, promptFor(username, chat, input, keeps), knows, filesFor(username, chat, asked.id, input, keeps)).then(() => {
     // a usage limit stopped it: what it needs to carry on when the limit resets (pump)
     if (!messageOf(username, reply.id)?.limit?.until) return;
     (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, ...(h.ai ? { ai: h.ai } : {}) };

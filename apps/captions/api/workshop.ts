@@ -1392,8 +1392,11 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // On the Mac the turn reads a folder with everything; on the API key, the packed prompt below. A caption turn
     // needs none of it: the Mac answers from the prompt (a folder can be megabytes of tokens per turn).
     let folder: Folder | null = null;
-    // Grok's prompt gets the folder's files whole and it can't be given pictures: no skills, no earlier pictures for it
-    const grok = workshopAi(user, session.ai).mac?.provider?.driver === "grok";
+    // Grok's prompt gets the folder's files whole and it can't be given pictures: no skills for it. The chat's earlier
+    // pictures go to Claude only, which opens one when it needs it (Codex is handed every picture in the folder, each turn)
+    const driver = workshopAi(user, session.ai).mac?.provider?.driver;
+    const grok = driver === "grok";
+    const keepsPictures = !driver || driver === "claude";
     if (onMac(user, session.ai) && !(captionOnly && !approvedWeb)) {
       // the folder is all it reads (no pulls): a source video nobody transcribed yet is transcribed first
       const untranscribed = index.filter((e) => e.kind !== "carousel" && !e.has.transcript).map((e) => e.id);
@@ -1410,7 +1413,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         // the relay writes "base64:" entries as bytes; Claude's Read tool shows them as pictures. Every picture and PDF
         // sent in this chat stays at its message's path for the whole session, so a later turn or a new Claude session
         // can still open it (the Mac keeps them by hash: mac-claude.ts packFor).
-        if (!grok) {
+        if (keepsPictures) {
           for (const m of chat.messages) {
             if (m.role !== "user" || m.id === ask.id || !(m.images?.length || m.files?.length)) continue;
             const kept = await readAttachments(session.id, m, true);
@@ -1513,7 +1516,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
             }))
           : undefined,
         library: askLibrary.length ? askLibrary : undefined,
-        folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)), attached: !grok } : undefined,
+        folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)), attached: keepsPictures } : undefined,
         resumed: resume && folder ? { newSources: index.filter((e) => !resume.sources.includes(e.id)).map((e) => ({ ref: refOf.get(e.id)!, handle: e.handle })) } : undefined,
       });
       return prompt;
