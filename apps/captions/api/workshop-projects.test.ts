@@ -218,6 +218,13 @@ describe("projects kept apart", () => {
         asked = { user, files: (opts as { mac?: { files?: Record<string, string> } }).mac?.files };
         return parse(JSON.stringify(reply));
       });
+    // two lines kept in Memory from earlier chats: one for this workspace, one about the person
+    mkdirSync(path.join(dataDir, "memory"), { recursive: true });
+    writeFileSync(path.join(dataDir, "memory", "alex.json"), JSON.stringify({ facts: [
+      { id: "m1", text: "Never show faces.", said: "we never show faces", at: 1, from: "c1", project: tiny },
+      { id: "m2", text: "Films on a phone.", at: 2, from: "c1" },
+      { id: "m3", text: "Posts at noon.", at: 3, from: "c1", project: "another-workspace" },
+    ] }));
     answer({
       notes: "Sold in shops.\nOpens 1 Dec 2026.",
       files: [{ file: "kit/README.md", keep: false }, { file: "launch.md", keep: true, about: "The launch date." }],
@@ -230,6 +237,10 @@ describe("projects kept apart", () => {
     expect(asked!.files?.["material/launch.md"]).toBe("Opens 1 Dec.");
     expect(asked!.user).toContain("The workspace's instructions as they stand:\nSold in shops.");
     expect(asked!.user).toMatch(/^Today: \d{4}-\d\d-\d\d$/m);
+    // the kept lines: this workspace's with the person's own words, the person's own, never another workspace's
+    expect(asked!.user).toContain('Kept in Memory for this workspace:\n- Never show faces. ("we never show faces")\n\n');
+    expect(asked!.user).toContain("Kept in Memory about the person, in every workspace:\n- Films on a phone.\n\n");
+    expect(asked!.user).not.toContain("Posts at noon.");
     const saved = asked!.user.split("filed already")[1]!;
     expect(saved).toContain("- kit/rules/copy.md");
     expect(saved).not.toContain("- launch.md");
@@ -241,11 +252,16 @@ describe("projects kept apart", () => {
     answer({ notes: "From the files." });
     expect((await call("POST", "/api/workshop/projects/draft-notes", { name: "Tiny", text: "", projectId: tiny })).status).toBe(200);
     expect(asked!.files?.["material/kit/README.md"]).toBe("Read the rules first.");
+    // from a chat: the saved instructions with what was said now, each named as what it is
+    answer({ notes: "Sold in shops. Opens 5 Dec." });
+    expect((await call("POST", "/api/workshop/projects/draft-notes", { name: "Tiny", text: "Sold in shops.", said: "The launch moved to 5 Dec.", projectId: tiny })).status).toBe(200);
+    expect(asked!.user).toContain("The workspace's instructions as they stand:\nSold in shops.\n\nWhat they said about it now:\nThe launch moved to 5 Dec.");
     // a new workspace: the box holds what they wrote, and no other workspace's file is read
     answer({ notes: "A shop." });
     expect((await call("POST", "/api/workshop/projects/draft-notes", { name: "New", text: "A shop." })).status).toBe(200);
     expect(asked!.user).toContain("What they wrote:\nA shop.");
     expect(asked!.files).toBeUndefined();
+    expect(asked!.user).not.toContain("Kept in Memory");
     expect((await call("PATCH", `/api/workshop/projects/${tiny}`, { notes: "" })).status).toBe(200);
   });
 
