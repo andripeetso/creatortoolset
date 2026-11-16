@@ -250,7 +250,8 @@ export function toCard(r: CardRow): AssetCard {
   const split = (s: string | null) => (s ? s.split("\x1f") : []);
   const review = inReview(r.id);
   const turn = asTurn(p.turn);
-  const side = turn === 90 || turn === 270;
+  // the shape as it is watched: the file's own rotation tag (a phone filmed or recorded on its side), then the turn
+  const side = (((p.rotation ?? 0) + turn) / 90) % 2 === 1;
   return {
     id: r.id,
     libraryId: r.library_id,
