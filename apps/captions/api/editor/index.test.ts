@@ -184,6 +184,17 @@ describe("index and descriptions", () => {
     expect(again.sources[0]!.shots[2]!.desc).toBe("shot 3");
   });
 
+  it("looks again at a source it described under another workspace context, once", async () => {
+    const before = calls.length;
+    const index = () => indexSources({ sources: ["ver_cuts"] }, signal);
+    // described above with no workspace context: the workspace has instructions now
+    const looked = await describeShots(await index(), { actor: "mem-a", workspace: "Workspace: Tiny Acrobatics" }, signal);
+    expect(calls.length - before).toBe(1);
+    expect(looked.sources[0]!.shots.every((s) => s.desc)).toBe(true);
+    await describeShots(await index(), { actor: "mem-a", workspace: "Workspace: Tiny Acrobatics" }, signal);
+    expect(calls.length - before).toBe(1);
+  });
+
   it("asks about a source past the sheet cap once, and never again", async () => {
     await seed("ver_long", "Tiny Acrobatics long take", "cuts.mp4", { ...probe, duration: 7.5 });
     const shots = Array.from({ length: 200 }, (_, i) => ({ a: (i * 7.5) / 200, b: ((i + 1) * 7.5) / 200, motion: 0.5 }));

@@ -2,7 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { aiFor, onApiKey } from "../ai-complete";
+import { aiFor, completeWithFallback, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS } from "../lib/mac-claude";
 import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
@@ -11,9 +11,12 @@ import { projectOf } from "../lib/project-of";
 import { stampOf, workspaceContext } from "../lib/workshop/context";
 import { homeOf } from "./access";
 import { transcriptExcerpt } from "./attach";
-import { RULE } from "./look";
+import { librarySetting } from "./db";
+import { enqueueJob } from "./jobs";
+import { clock, RULE } from "./look";
 import { ffmpegTo } from "./media/run";
 import { indexAsset } from "./query";
+import { stretchesOf } from "./stretches";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
@@ -66,6 +69,8 @@ export interface DescribeInput {
   newFolder?: boolean;
   /** the library's tags (tagsOf) so the answer reuses its words */
   tags?: { clips: number; list: { tag: string; count: number }[] };
+  /** in place of pictures: the clip's shot descriptions, in order (a file kept on a Mac described again, describeFromLines) */
+  shots?: string[];
 }
 
 /** The tags on the library's other clips (not in the trash), most used first, and how many clips it has. */
@@ -107,7 +112,11 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
         : []),
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
-      input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
+      input.shots
+        ? `There are no pictures this time. What is seen in the clip, shot by shot, in order:\n${input.shots.join("\n")}`
+        : input.frames > 1
+          ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`
+          : "The picture is the whole clip: a photo, or a clip too short for more.",
       'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
       'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
       ...(input.folders
@@ -172,6 +181,68 @@ export async function workspaceIdOf(db: DatabaseSync, versionId: string): Promis
   const owner = [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === row.home) ?? row.home;
   const of = await projectOf({ username: owner } as SessionUser);
   return of ? of(row.ws ?? undefined) : undefined;
+}
+
+/** Most of a clip's shot descriptions a description written from them reads, spread over the clip. */
+const SHOTS_READ = 80;
+
+/**
+ * A version described again from its shot descriptions alone, under the workspace's context as it is now: for a file
+ * kept on a Mac, whose stills went with its first description. The clip keeps its turn, its roll and its folder. False
+ * when it has no shot descriptions to read.
+ */
+export async function describeFromLines(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
+  const all = stretchesOf(db, versionId).filter((s) => s.text);
+  if (!all.length) return false;
+  if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
+  // their own Anthropic key first, as the description from frames goes (describeVersion)
+  const route = onApiKey(actor, "analyzer", DESCRIBE_LABEL) || aiFor(whoFor(actor), "analyzer", DESCRIBE_LABEL);
+  if (route.off) throw new NeedsKey(route.off);
+  const onMac = !!route.only?.includes("mac");
+  const lines = all.length <= SHOTS_READ ? all : Array.from({ length: SHOTS_READ }, (_, k) => all[Math.floor((k * all.length) / SHOTS_READ)]!);
+  const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
+  const segments = segmentsOf(db, versionId);
+  const wsId = await workspaceIdOf(db, versionId);
+  const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
+  const { system, user } = describePrompt({
+    title,
+    ...(workspace ? { workspace } : {}),
+    frames: 0,
+    shots: lines.map((l) => `${clock(l.a)}–${clock(l.b)} ${l.text}`),
+    ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
+    tags: tagsOf(db, versionId),
+  });
+  const { turn: _, roll: __, folder: ___, ...value } = await completeWithFallback(system, user, undefined, parseDescribe, onMac ? { ...route, mac: { ...route.mac, background: true } } : route);
+  // the roll it had stays: nothing was seen this time
+  const { roll } = db.prepare("SELECT roll FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId) as { roll: Roll | null };
+  saveDescribed(db, versionId, { ...value, ...(roll ? { roll } : {}) }, route.mac?.provider?.instance ?? (onMac ? "mac" : "anthropic"), stampOf(workspace, DESCRIBE_VERSION));
+  return true;
+}
+
+/** "<version>:<stamp>" asked to be described again: once a context, so one that can't be written isn't asked on every look. */
+const refreshed = new Set<string>();
+
+/**
+ * Has the AI's description of a version written again when it was written under another workspace context than now's
+ * (or by an older describe prompt): the library's describe job, queued as `actor`. Asked when an edit uses the file and
+ * when someone who may change the clip opens it, once per context (tasks/flywheel/PLAN.md D12: when used, never a
+ * whole library). A description from before stamps counts as written with no context: it is stale once the workspace
+ * has some. A file kept on a Mac is described from its shot descriptions (describeFromLines), so one without any keeps
+ * its words. True when it queued one.
+ */
+export async function refreshDescription(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
+  const r = db
+    .prepare(
+      `SELECT a.library_id, v.source_key, d.stamp, EXISTS (SELECT 1 FROM stretches s WHERE s.version_id = v.id AND s.text != '') AS lines
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN descriptions d ON d.version_id = v.id AND d.source = 'ai' WHERE v.id = ?`,
+    )
+    .get(versionId) as { library_id: string; source_key: string; stamp: string | null; lines: number } | undefined;
+  if (!r || !librarySetting(r.library_id, "describe") || (r.source_key.startsWith("mac:") && !r.lines)) return false;
+  const now = stampOf(await workspaceOf(db, versionId), DESCRIBE_VERSION);
+  if ((r.stamp ?? stampOf("", DESCRIBE_VERSION)) === now || refreshed.has(`${versionId}:${now}`)) return false;
+  refreshed.add(`${versionId}:${now}`);
+  enqueueJob(db, r.library_id, versionId, "describe", actor, true);
+  return true;
 }
 
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */

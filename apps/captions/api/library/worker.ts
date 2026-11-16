@@ -5,7 +5,7 @@ import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
 import { blobs, libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "./db";
-import { describeSlot, describeVersion } from "./describe";
+import { describeFromLines, describeSlot, describeVersion } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
@@ -349,11 +349,15 @@ async function run(job: JobRow): Promise<void> {
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const frames = await macFrames(v.id);
-    if (!frames.length) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
-    const fresh = !described(v.id);
-    await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
-    await dropMacFrames(v.id);
-    if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
+    // its stills went with its first description: described again, it is written from its shot descriptions
+    if (!frames.length) {
+      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
+    } else {
+      const fresh = !described(v.id);
+      await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
+      await dropMacFrames(v.id);
+      if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
+    }
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     return;
   }

@@ -105,7 +105,7 @@ beforeAll(async () => {
     for (let k = 0; k < 5; k++) q.run(f.v, k, k * 2, k * 2 + 2, f.line(k).action, JSON.stringify(f.line(k).tags), f.line(k).text, ph(`${f.v}:${k}`), stamp);
   }
   shotLog.first = () => {};
-  shotLog.redo = () => {};
+  shotLog.redo = () => false;
 }, 60_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

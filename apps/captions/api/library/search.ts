@@ -11,6 +11,7 @@ import { keyParts } from "./storage/types";
 import { deviceStatus } from "../lib/device-transcribe";
 import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
+import { refreshDescription } from "./describe";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, FINISHED, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
@@ -206,6 +207,8 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   const detail = assetDetail(libraryId, c.req.param("assetId"), c.get("user"));
   if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
   if (detail.state === "processing") prepareFirst(detail.versionId); // opened while it is prepared: it goes first (worker.ts)
+  // opened by someone who may change it: a description written under another workspace context is written again
+  else if (await mayWrite(c.get("user").username, libraryId, detail.id, detail.versionId)) void refreshDescription(db(), detail.versionId, c.get("user").username).catch(() => {});
   return c.json(detail);
 });
 

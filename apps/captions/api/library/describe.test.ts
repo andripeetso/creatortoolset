@@ -9,7 +9,7 @@ import { ffmpegCommand } from "../ffmpeg-runtime";
 
 vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
-  return { ...m, aiFor: vi.fn(m.aiFor) };
+  return { ...m, aiFor: vi.fn(m.aiFor), completeWithFallback: vi.fn(m.completeWithFallback) };
 });
 vi.mock("../ai-vision", () => ({ completeVisionWithFallback: vi.fn() }));
 
@@ -25,9 +25,11 @@ const { searchApp } = await import("./search");
 const { indexAsset, buildAssetQuery, pageOf } = await import("./query");
 const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
-const { describePrompt, describeVersion, parseDescribe, saveDescribed, tagsOf, workspaceOf } = await import("./describe");
+const { DESCRIBE_VERSION, describePrompt, describeVersion, parseDescribe, refreshDescription, saveDescribed, tagsOf, workspaceOf } = await import("./describe");
+const { stampOf } = await import("../lib/workshop/context");
+const { storeLines, storeStretches } = await import("./stretches");
 const { saveTranscript } = await import("./transcribe");
-const { aiFor } = await import("../ai-complete");
+const { aiFor, completeWithFallback } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -208,6 +210,61 @@ describe("describe job", () => {
       expect([job(v, "transcribe"), job(v, "fingerprint"), job(v, "describe")]).toEqual([undefined, undefined, undefined]);
       expect(job(v, "wave")).toBeDefined();
     }
+  });
+});
+
+describe("a description written under another workspace context", () => {
+  const project = { id: "p-ember", owner: "local", name: "Ember Realm", audience: "", voice: "", cta: "", notes: "A free online fantasy RPG server.", createdAt: 1, updatedAt: 1 };
+  const file = path.join(dir, "workshop", "projects", "p-ember.json");
+  const said = (text: string) => ({ description: text, tags: [] });
+
+  it("is written again when asked, once per context; one from before stamps only once the workspace has context", async () => {
+    const v = await seed("ast-stale-01");
+    saveDescribed(libraryDb(), v, said("A knight walks through a fantasy MMORPG town."), "test"); // from before stamps
+    expect(await refreshDescription(libraryDb(), v, "local")).toBe(false); // no workspace context: nothing it could add
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(project));
+    expect(await refreshDescription(libraryDb(), v, "local")).toBe(true);
+    expect(job(v, "describe")?.state).toBe("queued");
+    expect(await refreshDescription(libraryDb(), v, "local")).toBe(false); // asked once for this context
+    // written under today's context: nothing to do, for anyone
+    const fresh = await seed("ast-stale-02");
+    saveDescribed(libraryDb(), fresh, said("A knight walks through Ember Realm's first town."), "test", stampOf(await workspaceOf(libraryDb(), fresh), DESCRIBE_VERSION));
+    expect(await refreshDescription(libraryDb(), fresh, "local")).toBe(false);
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id = ?").run(v);
+  });
+
+  it("opening a clip asks for it when the viewer may change the clip", async () => {
+    const v = await seed("ast-stale-03");
+    saveDescribed(libraryDb(), v, said("A knight walks through a fantasy MMORPG town."), "test", "another-context");
+    expect((await call("local", "/api/library/lib_a/assets/ast-stale-03")).status).toBe(200);
+    await vi.waitFor(() => expect(job(v, "describe")?.state).toBe("queued"));
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id = ?").run(v);
+  });
+
+  it("a file kept on a Mac is written again from its shot descriptions, keeping its roll; one with none keeps its words", async () => {
+    const v = await seed("ast-stale-04");
+    libraryDb().prepare("UPDATE asset_versions SET source_key = 'mac:dev-1:/Users/t/tiny.mov' WHERE id = ?").run(v);
+    saveDescribed(libraryDb(), v, { ...said("A knight walks through a fantasy MMORPG town."), roll: "b" }, "test", "another-context");
+    expect(await refreshDescription(libraryDb(), v, "local")).toBe(false); // no stills here and no shot descriptions
+    storeStretches(libraryDb(), v, [{ a: 0, b: 6, motion: 0.4 }, { a: 6, b: 12, motion: 0.6 }]);
+    storeLines(libraryDb(), v, "s", [
+      { seg: 0, text: "A knight leaves the town gate.", action: 1, clear: true, tags: [] },
+      { seg: 1, text: "Two riders clash on the bridge.", action: 4, clear: true, tags: ["fight"] },
+    ]);
+    expect(await refreshDescription(libraryDb(), v, "local")).toBe(true);
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id != ? AND state = 'queued'").run(v); // what earlier tests left queued
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, user, _c, parse) => {
+      expect(user).toMatch(/Ember Realm[\s\S]*There are no pictures this time[\s\S]*0:00–0:06 A knight leaves the town gate\.\n0:06–0:12 Two riders clash on the bridge\./);
+      return parse('{"description": "A knight rides out of Ember Realm\'s first town and into a fight on the bridge.", "tags": ["bridge fight"], "roll": "a", "turn": 90}') as never;
+    });
+    await tick();
+    expect(job(v, "describe")).toEqual({ state: "done", error: null });
+    const d = libraryDb().prepare("SELECT text, roll, stamp FROM descriptions WHERE version_id = ? AND source = 'ai'").get(v) as { text: string; roll: string; stamp: string };
+    expect(d).toEqual({ text: "A knight rides out of Ember Realm's first town and into a fight on the bridge.", roll: "b", stamp: stampOf(await workspaceOf(libraryDb(), v), DESCRIBE_VERSION) });
+    expect(JSON.parse((libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(v) as { probe: string }).probe).turn).toBeUndefined(); // nothing was seen: no turn
+    rmSync(file);
   });
 });
 
