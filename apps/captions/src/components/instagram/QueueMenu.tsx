@@ -38,8 +38,8 @@ function stepLabel(item: QueueEntry): string {
 
 /** What went wrong, in plain words: the error itself stays on the post's or the account's own page. */
 function failedLabel(item: QueueEntry): string {
-  if (item.kind === "account") return "Couldn’t update the account";
-  return item.jobs?.includes("media") ? "Couldn’t download the video" : "Couldn’t read the post";
+  if (item.kind === "account") return "Could not update the account";
+  return item.jobs?.includes("media") ? "Could not download" : "Could not read the post";
 }
 
 const ACCOUNT_JOBS = new Set<string>(["profile", "catalog", "stats", "tags"]);
@@ -116,7 +116,7 @@ export function QueueMenu({
         }
       }
     } catch (e) {
-      setRetryError(e instanceof Error ? e.message : "Couldn’t try again");
+      setRetryError(e instanceof Error ? e.message : "Could not retry");
     } finally {
       setBusy(null);
       refresh();
@@ -143,7 +143,7 @@ export function QueueMenu({
           <Activity className="h-3.5 w-3.5 text-zinc-500" />
         )}
         <span>Queue</span>
-        {failed.length ? <span role="img" aria-label="Something failed" className="h-1.5 w-1.5 rounded-full bg-amber-500" /> : null}
+        {failed.length ? <span role="img" aria-label="Failed" className="h-1.5 w-1.5 rounded-full bg-amber-500" /> : null}
       </button>
 
       {open && (
@@ -209,7 +209,7 @@ export function QueueMenu({
                     className="flex shrink-0 items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
                   >
                     {busy === key ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                    Try again
+                    Retry
                   </button>}
                 </div>
               );
@@ -224,7 +224,7 @@ export function QueueMenu({
                 className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
               >
                 {busy === "all" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                Try all {failed.length} again
+                Retry all {failed.length}
               </button>}
             </div>
           )}

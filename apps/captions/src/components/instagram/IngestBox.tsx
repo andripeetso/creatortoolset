@@ -189,7 +189,7 @@ export function IngestBox({
             className="flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
           >
             {busy === "now" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Run now
+            Analyze now
           </button>
         </div>
           </div>

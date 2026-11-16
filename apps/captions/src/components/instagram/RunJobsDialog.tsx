@@ -5,7 +5,7 @@ import { RecipePicker } from "./RecipePicker";
 
 export function RunJobsDialog({
   title,
-  confirmLabel = "Run",
+  confirmLabel = "Analyze",
   allowLater = false,
   busy = false,
   onClose,

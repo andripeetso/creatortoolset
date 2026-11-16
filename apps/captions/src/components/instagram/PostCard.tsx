@@ -75,7 +75,7 @@ export function WorkshopUseChip({ s }: { s: PostWorkshopUse }) {
       title={
         s.generating
           ? `Generating in ${s.projectName ? `${s.projectName} · ${s.title}` : s.title}`
-          : `${s.projectName ? `${s.projectName} · ${s.title}` : s.title} — ${mark} in workshop`
+          : `${s.projectName ? `${s.projectName} · ${s.title}` : s.title} — ${mark} in Content Workshop`
       }
       className={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${WORKSHOP_CHIP[status]}`}
     >
@@ -122,7 +122,7 @@ export function mediaMark(post: InstagramPost): ReactNode {
 function failureLabel(p: Pick<InstagramPost, "duplicateOf" | "jobs" | "error">): string {
   if (p.duplicateOf) return "Already saved";
   const media = p.jobs?.some((j) => j.type === "media" && j.status === "error") || p.error?.startsWith("Download failed");
-  return media ? "Couldn’t download" : "Couldn’t read this post";
+  return media ? "Could not download" : "Could not read the post";
 }
 
 const statusLabel = (id: IdeaStatus) => IDEA_STATUSES.find((s) => s.id === id)!.label;
@@ -320,7 +320,7 @@ export function PostCard({
               <span className="truncate font-medium text-zinc-300">{handle}</span>
             )
           ) : (
-            <span className="truncate">Reading post…</span>
+            <span className="truncate">Reading the post…</span>
           )}
           {post.takenAt ? <span className="ml-auto shrink-0 text-zinc-600">{fmtDate(post.takenAt)}</span> : null}
         </div>
@@ -348,12 +348,12 @@ export function PostCard({
                   }}
                   className="shrink-0 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200 hover:bg-zinc-800"
                 >
-                  Try again
+                  Retry
                 </button>
               ) : null}
             </div>
             {/* the page hides Try again while posts can't be read (its amber line says why, once); anything else: */}
-            {refused ? <p className="text-[11px] leading-snug text-zinc-500">Couldn’t try again</p> : null}
+            {refused ? <p className="text-[11px] leading-snug text-zinc-500">Could not retry</p> : null}
           </>
         ) : null}
         {matches?.length ? (

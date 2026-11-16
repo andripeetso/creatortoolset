@@ -17,9 +17,9 @@ export function parseTagsPayload(text: string): Tag[] {
   const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = stripped.indexOf("{");
   const end = stripped.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("no JSON in the answer");
+  if (start < 0 || end <= start) throw new Error("The AI’s answer could not be read");
   const obj = JSON.parse(stripped.slice(start, end + 1)) as { tags?: unknown };
-  if (!Array.isArray(obj.tags)) throw new Error("tags array missing");
+  if (!Array.isArray(obj.tags)) throw new Error("The AI’s answer held no tags");
   const out: Tag[] = [];
   const seen = new Set<string>();
   for (const raw of obj.tags) {
@@ -31,7 +31,7 @@ export function parseTagsPayload(text: string): Tag[] {
     out.push(tag);
     if (out.length >= 12) break;
   }
-  if (!out.length) throw new Error("the model returned no usable tags");
+  if (!out.length) throw new Error("The AI’s answer held no tags");
   return out;
 }
 
