@@ -10,6 +10,7 @@
 
 import type { PlanId } from "./plans";
 import { SAFE_SERVER, SAFE_SHARE, SHARE_FS, type Disk } from "./storage";
+import type { HelperCheck } from "./devices";
 
 export type BuiltinDriver = "claude" | "codex" | "cursor" | "grok" | "gemini" | "opencode" | "antigravity" | "musecode" | "pi" | "acp";
 
@@ -183,6 +184,8 @@ export interface Device {
   /** `ready`: the models a Mac has loaded now, so it can hear a recording someone waits on at once (the mic); absent:
    * not said (another computer, or an older Mac app) */
   stt?: { want: string[]; held: string[]; getting: string[]; claimed?: true; ready?: string[] };
+  /** its last test for helping with heavy work (contracts/devices.ts HELPER_CHECK_KIND) */
+  check?: HelperCheck;
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

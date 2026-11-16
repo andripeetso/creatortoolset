@@ -77,6 +77,53 @@ export const TRANSCRIBE_KIND = "transcribe";
  */
 export const FOLDER_LIST_KIND = "folder-list";
 
+/**
+ * The kind that checks a computer for helping with heavy work (setup's Help screen, Settings → Devices; api/lib/helper-check.ts).
+ * Claimed on the road above, only by the computer it is for. The claim's options: `folders` (JSON, folder id → its path
+ * on this computer) and `test` ("1": read part of one real file in each folder and time a short encode; "": only the
+ * disks). The computer first posts its report again with its disks read now (relay/report), then:
+ *   POST job/helper-check/:id        HelperCheckSent → DeviceEnded
+ *   POST job/helper-check/:id/fail   { error } → DeviceEnded
+ */
+export const HELPER_CHECK_KIND = "helper-check";
+
+/** What the computer found: ffmpeg runs, how fast it encodes, and each folder read or why not. */
+export interface HelperCheckSent {
+  ffmpeg: boolean;
+  /** seconds of 720p video encoded in one second (a test only); absent when the encode failed */
+  encode?: number;
+  folders: Array<{ id: string; ok: boolean; error?: string }>;
+}
+
+/** A computer's last test (Device.check): what it sent, when, and each folder's name. */
+export interface HelperCheck extends HelperCheckSent {
+  at: number;
+  folders: Array<{ id: string; name: string; ok: boolean; error?: string }>;
+}
+
+/** A HelperCheckSent from an untrusted body, only the folders asked about; null when it is not one. */
+export function parseHelperCheck(v: unknown, asked: readonly string[]): HelperCheckSent | null {
+  const b = v as { ffmpeg?: unknown; encode?: unknown; folders?: unknown } | null;
+  if (!b || typeof b.ffmpeg !== "boolean" || !Array.isArray(b.folders)) return null;
+  const folders = (b.folders as Array<Record<string, unknown> | null>).flatMap((f) =>
+    typeof f?.id === "string" && asked.includes(f.id) && typeof f.ok === "boolean"
+      ? [{ id: f.id, ok: f.ok, ...(typeof f.error === "string" && f.error ? { error: f.error.slice(0, 300) } : {}) }]
+      : [],
+  );
+  const encode = typeof b.encode === "number" && Number.isFinite(b.encode) && b.encode > 0 && b.encode < 10_000 ? b.encode : undefined;
+  return { ffmpeg: b.ffmpeg, ...(encode ? { encode } : {}), folders };
+}
+
+/**
+ * The Prefer / Normal / Less often / Off weight (contracts/providers.ts LOAD_PREFERENCES) a test sets: Off when it can't
+ * render or a folder failed to read (a job would fail there), else by how fast it encodes.
+ * ponytail: fixed speeds, not compared with the account's other computers; compare when people ask why.
+ */
+export function weightFor(c: HelperCheckSent): number {
+  if (!c.ffmpeg || !c.encode || c.folders.some((f) => !f.ok)) return 0;
+  return c.encode >= 4 ? 100 : c.encode >= 1.5 ? 50 : 25;
+}
+
 /** What a computer sends back: the words heard, with times in seconds, and the language heard (ISO 639-1) or null. */
 export interface TranscribeResult {
   words: { text: string; start: number; end: number }[];

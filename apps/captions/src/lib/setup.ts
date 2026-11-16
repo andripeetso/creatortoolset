@@ -19,7 +19,7 @@ export type { SetupView };
  */
 export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
 /** Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen (stepsFor). */
-export const SIDE_STEPS = ["connect", "folders", "own"] as const;
+export const SIDE_STEPS = ["connect", "folders", "own", "helper"] as const;
 /** The last screen of the path when the Mac app offers a sign-in (stepsFor): the person's Creator Toolset account, skippable. */
 export const ACCOUNT_STEP = "account";
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS, ACCOUNT_STEP] as const;
@@ -138,6 +138,18 @@ export function endIntro(): void {
   useIntro.setState({ on: false, after: null });
   after?.();
 }
+
+const SIGNED_IN = "ct-signed-in-here";
+const HELPER_OFFERED = "ct-helper-offered";
+/** A sign-in was made in this window (AuthGate): this computer's first visit, when setup may offer the Help screen. */
+export const markSignedInHere = () => write("session", SIGNED_IN, "1");
+/**
+ * Whether the Help screen opens by itself: once per browser, right after a sign-in made in the Mac app on a computer
+ * that is not tested yet, of an account that already has another computer. Never later, never in a browser.
+ */
+export const helperOffers = (a: { macApp: boolean; others: number; tested: boolean }): boolean =>
+  a.macApp && a.others > 0 && !a.tested && read("session", SIGNED_IN) === "1" && read("local", HELPER_OFFERED) !== "1";
+export const markHelperOffered = () => write("local", HELPER_OFFERED, "1");
 
 /** Remembers the step Not now was pressed on, for Finish setting up. */
 export function rememberLater(step: SetupStep): void {

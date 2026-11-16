@@ -372,6 +372,15 @@ final class DiskCache {
         return list
     }
 
+    /// The disks read now, on the caller's thread (a check after a shared drive was connected); kept for the next report.
+    func readNow() -> [[String: Any]] {
+        let fresh = readDisks()
+        lock.lock()
+        disks = fresh
+        lock.unlock()
+        return fresh
+    }
+
     private func refresh() {
         queue.async { [self] in
             let fresh = readDisks()

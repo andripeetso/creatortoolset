@@ -147,6 +147,8 @@ export interface StorageView extends StorageState {
   /** the workspace's Media Library keeps copies of the files on the server (it uploads them, or their proxies): a computer
    *  without a folder still works on its files through those */
   copies?: boolean;
+  /** with ?all=1 (every workspace's folders): the folders whose workspace keeps those copies, by id */
+  copied?: string[];
 }
 
 /** A computer's report of the folders it found: good paths and ids only (see parseStorageReport). */
