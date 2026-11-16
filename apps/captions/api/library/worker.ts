@@ -470,7 +470,8 @@ async function run(job: JobRow): Promise<void> {
     // the lighter copy, as every reader that only measures a clip (editor/media.ts measurable): the proxy keeps every
     // sound track and ffmpeg picks the same one from it as from the original (proxy.ts), at the same times; the original
     // when there is no proxy yet. The frames from it too: the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
-    if (job.kind === "transcribe") await transcribeVersion(db, v.id, await lighter(), job.actor, dir);
+    // a transcript on a computer's model reads nothing here: that computer cuts the sound from its own copy (transcribe.ts ownSound)
+    if (job.kind === "transcribe") await transcribeVersion(db, v.id, lighter, job.actor, dir);
     else {
       const fresh = !described(v.id);
       await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);

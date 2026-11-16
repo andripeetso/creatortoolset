@@ -480,7 +480,7 @@ final class RelayRunner {
             } else if step.kind == splitKind {
                 (end, more) = SplitJob(api: api, id: step.id).run()
             } else if step.kind == transcribeKind, let speech {
-                (end, more) = TranscribeJob(api: api, step: step, speech: speech).run()
+                (end, more) = TranscribeJob(api: api, step: step, speech: speech, proxies: work.appendingPathComponent("work/proxies")).run()
             } else if step.kind == faceBlurAutoKind {
                 (end, more) = FaceBlurAutoJob(api: api, step: step, folder: work.appendingPathComponent("faceblur/\(step.id)")).run()
             } else if step.kind == folderListKind {

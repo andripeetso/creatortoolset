@@ -14,7 +14,7 @@ import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
-import { claimTranscript, declareModels, heldAudio, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
+import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
 import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, setDeviceWork, touchDevice } from "./lib/devices";
@@ -256,11 +256,23 @@ devicesApp.post("/relay/job/:kind/:id/fail", async (c) => {
 });
 
 // a transcript (contracts/devices.ts TRANSCRIBE_KIND): the audio, and the words the computer heard or why it could not
-devicesApp.get("/relay/transcribe/:id", (c) => {
+devicesApp.get("/relay/transcribe/:id", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const file = heldAudio(d.id, jobId(c));
+  let file: string | null;
+  try {
+    file = await heldAudio(d.id, jobId(c));
+  } catch (e) {
+    return c.json({ error: `The sound could not be read: ${e instanceof Error ? e.message : e}`.slice(0, 500) }, 500);
+  }
   return file ? new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, { headers: { "content-type": "audio/wav" } }) : c.json({ error: "Not found" }, 404);
+});
+// a library file's transcript: the server's proxy, for a computer that cuts the sound itself and has no copy of its own
+devicesApp.get("/relay/transcribe/:id/proxy", (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const key = heldProxy(d.id, jobId(c));
+  return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 devicesApp.post("/relay/transcribe/:id", async (c) => {
   const d = deviceCaller(c);

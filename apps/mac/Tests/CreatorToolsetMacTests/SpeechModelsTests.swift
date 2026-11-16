@@ -311,3 +311,71 @@ final class SetupPageWishTests: XCTestCase {
         XCTAssertEqual(p.remove, ["parakeet-tdt-0.6b-v3"])
     }
 }
+
+/// A Media Library file's sound for a transcript, cut on this Mac from its own copy (the server decodes none).
+final class TranscriptSoundTests: XCTestCase {
+    /// A 2 s clip with a picture and two sound tracks, the second with more channels (ffmpeg's own pick).
+    private func clip(_ ffmpeg: URL, in dir: URL) throws -> URL {
+        let out = dir.appendingPathComponent("tiny-flip.mp4")
+        _ = try LookSheets.run(ffmpeg, ["-f", "lavfi", "-i", "testsrc2=duration=2:size=320x240:rate=25", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                                        "-f", "lavfi", "-i", "sine=frequency=880:duration=2", "-filter_complex", "[2:a]pan=stereo|c0=c0|c1=c0[st]",
+                                        "-map", "0:v", "-map", "1:a", "-map", "[st]", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", "-y", out.path])
+        return out
+    }
+
+    func testTheSoundIsCutHereAsTheServerCutsIt() throws {
+        let ffmpeg = try XCTUnwrap(LibraryLookTests.ffmpeg, "no ffmpeg on this Mac")
+        let dir = testFolder("speech-cut")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let src = try clip(ffmpeg, in: dir)
+        // the server's cut (api/library/transcribe.ts soundArgs, a WAV) read as this Mac reads the server's audio
+        let wav = dir.appendingPathComponent("server.wav")
+        _ = try LookSheets.run(ffmpeg, ["-i", src.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", wav.path])
+        let server = try WAVReader.samples(Data(contentsOf: wav))
+        let here = try TranscribeJob.cut(ffmpeg: ffmpeg, src)
+        XCTAssertEqual(here.count, server.count)
+        XCTAssertEqual(here, server)
+        XCTAssertGreaterThan(here.count, 30000)
+    }
+
+    func testALibraryTranscriptReadsThisMacsCopyThenTheCachedProxyNeverTheServersAudio() throws {
+        let ffmpeg = try XCTUnwrap(LibraryLookTests.ffmpeg, "no ffmpeg on this Mac")
+        let dir = testFolder("speech-own")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let src = try clip(ffmpeg, in: dir)
+        let bytes = try XCTUnwrap(TranscribeJob.size(src.path))
+        let proxy = try Data(contentsOf: src)   // the server's proxy, here the same file
+        let site = FakeSite()
+        site.answer = { _ in (200, #"{"ok":true}"#) }
+        site.bytes = { $0.method == "GET" && $0.path == "/api/devices/relay/transcribe/7/proxy" ? proxy : nil }
+        let api = DeviceAPI(base: site.url, token: "ctd_test")
+        let proxies = dir.appendingPathComponent("relay/work/proxies")
+        nonisolated(unsafe) var heard: [Int] = []
+        let speech = SpeechLink(claim: { [:] }, answered: { _, _ in false }, transcribe: { _, _, samples, _ in
+            heard.append(samples.count)
+            return ([HeardWord(text: "Hi", start: 0.1, end: 0.3)], "en")
+        })
+        func run(_ options: [String: String]) -> CardJob.End {
+            TranscribeJob(api: api, step: EditorJob(id: 7, kind: transcribeKind, model: "whisper-base.en", options: options), speech: speech,
+                          proxies: proxies, ffmpeg: ffmpeg, granted: [dir.path]).run().end
+        }
+        // the file itself, where the server says it is on this Mac
+        var end = run(["version": "v_tiny", "path": src.path, "bytes": String(bytes), "proxy": String(proxy.count)])
+        XCTAssertEqual(end, .done)
+        XCTAssertEqual(site.requests.map { "\($0.method) \($0.path)" }, ["POST /api/devices/relay/transcribe/7"])
+        XCTAssertEqual(heard.last, try TranscribeJob.cut(ffmpeg: ffmpeg, src).count)
+        // not here (another size): the server's proxy, downloaded into the worker's cache
+        end = run(["version": "v_tiny", "path": src.path, "bytes": "1", "proxy": String(proxy.count)])
+        XCTAssertEqual(end, .done)
+        XCTAssertEqual(site.requests.dropFirst().map { "\($0.method) \($0.path)" }, ["GET /api/devices/relay/transcribe/7/proxy", "POST /api/devices/relay/transcribe/7"])
+        XCTAssertEqual(TranscribeJob.size(proxies.appendingPathComponent("v_tiny.mp4").path), Int64(proxy.count))
+        // the cached proxy next time: nothing downloaded again
+        end = run(["version": "v_tiny", "proxy": String(proxy.count)])
+        XCTAssertEqual(end, .done)
+        XCTAssertEqual(site.requests.dropFirst(3).map { "\($0.method) \($0.path)" }, ["POST /api/devices/relay/transcribe/7"])
+        XCTAssertFalse(site.requests.contains { $0.method == "GET" && $0.path == "/api/devices/relay/transcribe/7" }, "the server's audio is never asked for")
+        // a file named with no copy here and no proxy on the server: the server's audio, as before
+        XCTAssertNil(try TranscribeJob(api: api, step: EditorJob(id: 7, kind: transcribeKind, options: ["version": "v_gone"]), speech: speech,
+                                       proxies: proxies, ffmpeg: ffmpeg, granted: [dir.path]).ownCopy("/api/devices/relay/transcribe/7"))
+    }
+}
