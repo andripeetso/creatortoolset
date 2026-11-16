@@ -79,7 +79,7 @@ export function parseVisionPayload(text: string): VisionPayload {
   const kind = str(obj.text_kind ?? obj.textKind, 20).toLowerCase();
   const textKind: TextKind | undefined = kind === "none" || kind === "captions" || kind === "text" ? kind : undefined;
   if (!description && !onScreenText) {
-    throw new Error("The AI’s answer held no text and no description");
+    throw new Error("The AI’s answer had no text and no description");
   }
   return { onScreenText, description, ...(hook ? { hook } : {}), ...(textKind ? { textKind } : {}) };
 }

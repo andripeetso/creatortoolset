@@ -44,7 +44,7 @@ export function parseIdeaPayload(text: string, existingTitles: string[] = []): P
   if (start < 0 || end <= start) throw new Error("The AI’s answer could not be read");
   const obj = JSON.parse(stripped.slice(start, end + 1)) as { title?: unknown; folder?: unknown; takeaway?: unknown };
   const idea = coercePostIdea(obj, existingTitles);
-  if (!idea) throw new Error("The AI’s answer held no idea");
+  if (!idea) throw new Error("The AI’s answer had no idea");
   return idea;
 }
 
