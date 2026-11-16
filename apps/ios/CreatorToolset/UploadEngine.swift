@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Photos
 import UIKit
 
@@ -53,8 +54,7 @@ final class UploadEngine: ObservableObject {
 
     /// One clip again from the start of its way: the copy on the phone, then the server's own count.
     func retry(_ id: UUID) {
-        store.update(id) {
-            $0.state = .preparing
+        store.move(id, to: .preparing) {
             $0.attempts = 0
             $0.nextAttemptAt = nil
             $0.note = nil
@@ -88,8 +88,7 @@ final class UploadEngine: ObservableObject {
     /// Then their bytes, through the background session.
     func send(_ ids: [UUID]) {
         for id in ids {
-            store.update(id) {
-                $0.state = .sending
+            store.move(id, to: .sending) {
                 $0.attempts = 0
                 $0.nextAttemptAt = nil
                 $0.note = nil
@@ -102,11 +101,10 @@ final class UploadEngine: ObservableObject {
     func restart(_ ids: [UUID]) async {
         for id in ids {
             await transfers.cancel(itemId: id)
-            store.update(id) {
+            store.move(id, to: .picked) {
                 $0.uploadId = nil
                 $0.direct = nil
                 $0.sent = 0
-                $0.state = .picked
                 $0.duplicate = false
                 $0.attempts = 0
                 $0.nextAttemptAt = nil
@@ -136,6 +134,7 @@ final class UploadEngine: ObservableObject {
         }
         reconciling = true
         defer { reconciling = false }
+        await transfers.recall()
         repeat {
             reconcileAgain = false
             for listed in store.items where listed.isWorking {
@@ -143,7 +142,7 @@ final class UploadEngine: ObservableObject {
                 // clip that started sending meanwhile must not be started twice
                 guard let item = store.item(listed.id), item.isWorking else { continue }
                 if let at = item.nextAttemptAt, at > Date() { continue }
-                if await transfers.activeItemIds().contains(item.id) { continue }
+                if transfers.onTheWay[item.id] != nil { continue }
                 switch item.state {
                 case .preparing: await prepare(item.id)
                 case .confirming: break
@@ -190,10 +189,7 @@ final class UploadEngine: ObservableObject {
             guard let fresh = store.item(id) else { return }
             item = fresh
             if item.route == .catalog { return await catalogPrepare(id, api) }
-            store.update(id) {
-                $0.state = .sending
-                $0.note = nil
-            }
+            guard store.move(id, to: .sending, { $0.note = nil }) else { return }
             await resume(id)
         } catch APIError.signedOut {
             perform(.signedOut, id)
@@ -373,11 +369,7 @@ final class UploadEngine: ObservableObject {
         request.setValue("application/offset+octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(String(offset), forHTTPHeaderField: "Upload-Offset")
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        store.update(id) {
-            $0.state = .sending
-            $0.sent = offset
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
     /// A part straight to the bucket's signed URL: no cookie and no other header goes with it.
@@ -394,11 +386,7 @@ final class UploadEngine: ObservableObject {
         var request = URLRequest(url: direct.urls[n - 1])
         request.httpMethod = "PUT"
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        store.update(id) {
-            $0.state = .sending
-            $0.sent = offset
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
     private func startFinish(_ id: UUID) {
@@ -410,12 +398,24 @@ final class UploadEngine: ObservableObject {
         FileManager.default.createFile(atPath: body.path, contents: json)
         var request = api.request("/api/library/uploads/\(uploadId)/finish", method: "POST")
         if !json.isEmpty { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        store.update(id) {
-            $0.state = .finishing
+        start(request, file: body, step: step, as: .finishing) {
             $0.sent = $0.size
             $0.note = "Finishing…"
         }
-        transfers.start(request, file: body, step: step)
+    }
+
+    /// A request on its way: its upload moves to `state`, then the background session sends it. Nothing is sent for
+    /// an upload that stopped meanwhile (it is in the library, failed, or was sent again from the start), and
+    /// nothing changes for one that has a request on its way already: its state stays, and so does the slice, which
+    /// can be the file being sent.
+    func start(_ request: URLRequest, file: URL, step: TransferStep, as state: UploadItem.State,
+               _ change: (inout UploadItem) -> Void) {
+        if transfers.refuses(step) { return }
+        guard store.move(step.itemId, to: state, change) else {
+            try? FileManager.default.removeItem(at: AppFiles.slice(step))
+            return
+        }
+        transfers.start(request, file: file, step: step)
     }
 
     // MARK: Answers
@@ -467,16 +467,17 @@ final class UploadEngine: ObservableObject {
             if store.item(id)?.edit != nil { return fail(id, why) }
             let attempts = (store.item(id)?.attempts ?? 0) + 1
             if attempts > 5 { return fail(id, why) }
-            store.update(id) {
+            store.move(id, to: .sending) {
                 $0.uploadId = nil
                 $0.direct = nil
                 $0.sent = 0
-                $0.state = .sending
                 $0.attempts = attempts
                 $0.note = why
             }
             kick()
         case .retryLater(let why):
+            // (asked by a step that began before the upload stopped: a failed clip keeps the note that says why)
+            guard store.item(id)?.isWorking == true else { return }
             // a lost connection never gives up: the upload waits, at most 10 minutes between tries
             store.update(id) {
                 $0.attempts += 1
@@ -494,8 +495,7 @@ final class UploadEngine: ObservableObject {
     /// In the library. A New edit's copy stays until its edit has started (Try again sends it once more); any other
     /// copy is deleted, and its camera-roll clip carries the green check from now on.
     func landed(_ id: UUID, duplicate: Bool) {
-        store.update(id) {
-            $0.state = .done
+        let moved = store.move(id, to: .done) {
             $0.duplicate = duplicate
             $0.sent = $0.size
             $0.note = nil
@@ -503,17 +503,15 @@ final class UploadEngine: ObservableObject {
             $0.finishedAt = Date()
             $0.catalog = nil
         }
-        guard let item = store.item(id), item.edit == nil else { return }
+        // (an upload that failed or waits to be sent again keeps its copy on the phone)
+        guard moved, let item = store.item(id), item.edit == nil else { return }
         try? FileManager.default.removeItem(at: AppFiles.upload(id))
         AppFiles.removeSlices(of: id)
         if let asset = item.assetId { LibraryIndex.shared.markInLibrary([asset], server: item.server) }
     }
 
     func fail(_ id: UUID, _ why: String) {
-        store.update(id) {
-            $0.state = .failed
-            $0.note = why
-        }
+        store.move(id, to: .failed) { $0.note = why }
     }
 }
 
@@ -528,34 +526,71 @@ final class Transfers: NSObject, URLSessionDataDelegate {
     var backgroundCompletion: (() -> Void)?
     weak var engine: UploadEngine?
     private var bodies: [Int: Data] = [:]
+    /// The clips with a transfer on its way, each with the task that carries it. The app's own record, changed in
+    /// the same instant a transfer is made, cancelled or ended: iOS answers only after a wait, and a transfer made
+    /// during the wait went unseen, so one clip had two.
+    @MainActor private(set) var onTheWay: [UUID: URLSessionTask] = [:]
+    /// The transfers that outlived the app's last run, which only iOS knows of: read once.
+    @MainActor private lazy var survivors = Task { @MainActor in
+        for task in await self.session.allTasks where task.state == .running || task.state == .suspended {
+            guard let clip = TransferStep(encoded: task.taskDescription)?.itemId else { continue }
+            if self.endedEarly?.contains(task.taskIdentifier) == true || self.onTheWay[clip] != nil { continue }
+            self.onTheWay[clip] = task
+        }
+        self.endedEarly = nil
+    }
+    /// The tasks that ended before that read came back (its list can still name them); nil once it has.
+    @MainActor private var endedEarly: Set<Int>? = []
 
-    override init() {
+    /// The background session; a test gives its own, so nothing leaves the phone.
+    init(configuration: URLSessionConfiguration = Transfers.background) {
         super.init()
-        let config = URLSessionConfiguration.background(withIdentifier: Self.identifier)
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
+    }
+
+    static var background: URLSessionConfiguration {
+        let config = URLSessionConfiguration.background(withIdentifier: identifier)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.timeoutIntervalForRequest = 120
-        session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        return config
     }
 
-    func start(_ request: URLRequest, file: URL, step: TransferStep) {
+    /// Over once the record holds the transfers from before this run: nothing is started or cancelled before.
+    @MainActor func recall() async { await survivors.value }
+
+    /// One clip, one transfer: true, and logged, for a step of a clip that has one on its way.
+    @MainActor func refuses(_ step: TransferStep) -> Bool {
+        guard let task = onTheWay[step.itemId] else { return false }
+        Self.log.error("transfer refused: \(step.kind.rawValue, privacy: .public) for a clip with \(TransferStep(encoded: task.taskDescription)?.kind.rawValue ?? "one", privacy: .public) on its way")
+        return true
+    }
+
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CreatorToolset", category: "uploads")
+
+    /// The one place a transfer is made, and the record with it. False, with nothing made, for a clip that has one.
+    @MainActor @discardableResult
+    func start(_ request: URLRequest, file: URL, step: TransferStep) -> Bool {
+        if refuses(step) { return false }
         let task = session.uploadTask(with: request, fromFile: file)
         task.taskDescription = step.encoded
+        onTheWay[step.itemId] = task
         task.resume()
+        return true
     }
 
-    func activeItemIds() async -> Set<UUID> {
-        let tasks = await session.allTasks
-        return Set(tasks.filter { $0.state == .running || $0.state == .suspended }
-            .compactMap { TransferStep(encoded: $0.taskDescription)?.itemId })
+    /// The clip's transfer is cancelled and off the record at once, so a new one can be started straight after.
+    @MainActor func cancel(itemId: UUID) async {
+        await recall()
+        onTheWay.removeValue(forKey: itemId)?.cancel()
     }
 
-    func cancel(itemId: UUID) async {
-        for task in await session.allTasks where TransferStep(encoded: task.taskDescription)?.itemId == itemId {
-            task.cancel()
-        }
+    /// A task has ended: only its own entry goes. A cancelled task ends after its clip may have a new one.
+    @MainActor private func ended(_ task: URLSessionTask, of clip: UUID) {
+        endedEarly?.insert(task.taskIdentifier)
+        if onTheWay[clip]?.taskIdentifier == task.taskIdentifier { onTheWay[clip] = nil }
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -572,7 +607,11 @@ final class Transfers: NSObject, URLSessionDataDelegate {
         let body = bodies.removeValue(forKey: task.taskIdentifier) ?? Data()
         guard let step = TransferStep(encoded: task.taskDescription) else { return }
         let response = task.response as? HTTPURLResponse
-        MainActor.assumeIsolated { engine?.transferFinished(step, response: response, body: body, error: error) }
+        MainActor.assumeIsolated {
+            // off the record before its answer is read: the answer starts the clip's next request
+            ended(task, of: step.itemId)
+            engine?.transferFinished(step, response: response, body: body, error: error)
+        }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

@@ -321,7 +321,7 @@ and answers:
   by environment variables; keep those limits when you add work to them.
 - Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's
   `as const` array, which the client imports, never retypes), its allowed moves sit next to it as a `Moves` table
-  (`apps/captions/api/lib/transition.ts`), and every write goes through `move()` (`canMove()` in background loops;
+  (`apps/captions/contracts/transition.ts`; `api/lib/transition.ts` hands it on), and every write goes through `move()` (`canMove()` in background loops;
   a route answers 409). Reads never write: a stale `running`/`processing`/`thinking` is reconciled once at startup.
   A table nothing passes to `move()`/`canMove()` fails `transition.test.ts`; a status only its own run writes needs none.
 - Work that answers later (a job, a request, an `await`) checks it is still wanted before it writes:

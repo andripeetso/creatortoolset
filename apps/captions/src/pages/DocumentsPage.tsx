@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import {
   ArrowDown,
@@ -47,7 +47,7 @@ import {
   type DocumentRecord,
   type MediaClip,
 } from "@/lib/documents";
-import { parseDocKind, saveLabel, type DocKind, type GuideDoc } from "@/lib/guide";
+import { guideSaves, parseDocKind, saveLabel, type DocKind, type GuideDoc } from "@/lib/guide";
 import { GuideBody } from "@/components/GuideBody";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { DocumentWysiwyg } from "@/components/DocumentWysiwyg";
@@ -82,6 +82,7 @@ function ComposeForm({
   initial,
   onCreated,
   onUpdated,
+  replace,
   existingId,
   clipId,
 }: {
@@ -91,6 +92,8 @@ function ComposeForm({
   clipId?: string;
   onCreated: (doc: DocumentRecord) => void;
   onUpdated?: (doc: DocumentRecord) => void;
+  /** The open guide's own way to run a Regenerate, in turn with its saves (the Editor's replaceText). */
+  replace?: (run: () => Promise<DocumentRecord>) => Promise<DocumentRecord>;
 }) {
   // the recordings to pick from: saved copy at once, live with Video Notes' changes
   const { data: media } = useCachedLoad<{ clips: MediaClip[] }>("/api/documents/media", listDocumentMedia, { topic: "clips" });
@@ -147,13 +150,16 @@ function ComposeForm({
     setBusy(true);
     try {
       if (existingId) {
-        const patched = await patchDocument(existingId, {
-          prompt,
-          sources: picked,
-          kind,
-        });
-        const next = await generateDocument(existingId);
-        onUpdated?.(next.body || next.guide ? next : patched);
+        const run = async () => {
+          const patched = await patchDocument(existingId, {
+            prompt,
+            sources: picked,
+            kind,
+          });
+          const next = await generateDocument(existingId);
+          return next.body || next.guide ? next : patched;
+        };
+        onUpdated?.(await (replace ? replace(run) : run()));
       } else {
         onCreated(await createDocument(prompt, picked, kind));
       }
@@ -480,6 +486,9 @@ function ShareMenu({
   );
 }
 
+/** A document's text as the box holds it: without its title line. */
+const textOf = (body: string) => splitDocumentTitle(parseDocumentMarkdown(body)).rest;
+
 function Editor({
   doc,
   owns,
@@ -493,14 +502,11 @@ function Editor({
 }) {
   const isGuide = parseDocKind(doc.kind) === "guide";
   const [name, setName] = useState(doc.name);
-  const [body, setBody] = useState(
-    () => splitDocumentTitle(parseDocumentMarkdown(doc.body)).rest,
-  );
+  const [body, setBody] = useState(() => textOf(doc.body));
   const [guide, setGuide] = useState<GuideDoc | null>(doc.guide ?? null);
   const [editing, setEditing] = useState(false);
-  // what was typed against what the server has (saveLabel), and the last answer to a save of this page's own
-  const sync = useRef({ edits: 0, tried: 0, saved: 0, out: 0 });
   const [label, setLabel] = useState("Saved");
+  // the last answer to a save of this page's own
   const own = useRef<DocumentRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -511,7 +517,6 @@ function Editor({
     start?: number;
     end?: number;
   } | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // the owner on an account not set to Read: edit, share, sources, regenerate and delete
   const signedIn = useMe();
   const editable = owns && canChange(signedIn, "guides");
@@ -519,71 +524,56 @@ function Editor({
   useEffect(() => {
     setName(doc.name);
   }, [doc.id, doc.name]);
+  // This guide's saves, one at a time and in order (guideSaves). The Editor is made anew for each guide (its key),
+  // so a save and its answer belong to the guide they were typed in, also after another guide is on screen: the
+  // answer goes to that guide's own saved copy (onChange is the one this guide was shown with).
+  const tell = useRef(onChange);
+  useLayoutEffect(() => {
+    tell.current = onChange;
+  });
+  const [saves] = useState(() =>
+    guideSaves({
+      send: (patch: { name?: string; body?: string; published?: boolean; guide?: GuideDoc }) => {
+        setError(null);
+        return patchDocument(doc.id, patch);
+      },
+      saved: (d: DocumentRecord) => {
+        own.current = d;
+        tell.current(d);
+      },
+      failed: (e) => setError(e instanceof Error ? e.message : String(e)),
+      changed: (counts) => setLabel(saveLabel(counts)),
+    }),
+  );
+  // leaving the guide: what was typed goes now, not on a timer nobody is left to hold
+  useEffect(() => () => void saves.flush(), [saves]);
+
   useEffect(() => {
     // the answer to a save that went out before the last thing typed: the box keeps what was typed, the next save carries it
-    const s = sync.current;
+    const s = saves.counts;
     if (own.current && doc.body === own.current.body && doc.guide === own.current.guide && s.saved < s.edits) return;
-    setBody(splitDocumentTitle(parseDocumentMarkdown(doc.body)).rest);
+    setBody(textOf(doc.body));
     setGuide(doc.guide ?? null);
-  }, [doc.id, doc.body, doc.guide]);
+  }, [doc.id, doc.body, doc.guide, saves]);
 
-  const save = useCallback(
-    async (patch: {
-      name?: string;
-      body?: string;
-      published?: boolean;
-      guide?: GuideDoc;
-    }) => {
-      const s = sync.current;
-      // a save that carries the text takes everything typed so far
-      const at = patch.body !== undefined || patch.guide ? s.edits : 0;
-      s.tried = Math.max(s.tried, at);
-      s.out++;
-      setLabel(saveLabel(s));
-      setError(null);
-      try {
-        const d = await patchDocument(doc.id, patch);
-        s.saved = Math.max(s.saved, at);
-        own.current = d;
-        onChange(d);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        s.out--;
-        setLabel(saveLabel(s));
-      }
-    },
-    [doc.id, onChange],
-  );
-
-  const typed = () => {
-    sync.current.edits++;
-    setLabel(saveLabel(sync.current));
+  // Regenerate, from the menu or from Sources. What was typed is saved before it runs and nothing is sent while it
+  // does; its text is then the box's, whatever was typed meanwhile (guideSaves.replace).
+  const replaceText = async (run: () => Promise<DocumentRecord>) => {
+    const d = await saves.replace(run);
+    setError(null);
+    setBody(textOf(d.body));
+    setGuide(d.guide ?? null);
+    return d;
   };
 
   const scheduleBody = (next: string) => {
     setBody(next);
-    typed();
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(
-      () => void save({ body: withDocumentTitle(next, name) }),
-      700,
-    );
+    saves.type({ body: withDocumentTitle(next, name) });
   };
 
   const scheduleGuide = (next: GuideDoc) => {
     setGuide(next);
-    typed();
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => void save({ guide: next }), 700);
-  };
-
-  const flushSave = () => {
-    if (!saveTimer.current) return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-    if (isGuide && guide) void save({ guide });
-    else void save({ body: withDocumentTitle(body, name) });
+    saves.type({ guide: next });
   };
 
   const commitName = (raw: string) => {
@@ -593,10 +583,12 @@ function Editor({
       return;
     }
     setName(next);
-    if (next !== doc.name) {
-      void save(
-        isGuide ? { name: next } : { name: next, body: withDocumentTitle(body, next) },
-      );
+    if (next === doc.name) return;
+    if (isGuide) void saves.save({ name: next });
+    else {
+      // a document's name is its first line, so this save carries the text: it goes as the text, in place of what waited
+      saves.type({ name: next, body: withDocumentTitle(body, next) });
+      void saves.flush();
     }
   };
 
@@ -612,7 +604,7 @@ function Editor({
             <button
               type="button"
               onClick={() => {
-                flushSave();
+                void saves.flush();
                 setEditing(false);
               }}
               className="flex shrink-0 items-center gap-1.5 rounded-md bg-violet-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-violet-500"
@@ -631,7 +623,7 @@ function Editor({
           )}
           <ShareMenu
             doc={doc}
-            onPublished={(published) => void save({ published })}
+            onPublished={(published) => void saves.save({ published })}
           />
           <button
             type="button"
@@ -665,7 +657,7 @@ function Editor({
                     setBusy(true);
                     setError(null);
                     try {
-                      onChange(await generateDocument(doc.id));
+                      onChange(await replaceText(() => generateDocument(doc.id)));
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));
                     } finally {
@@ -717,6 +709,7 @@ function Editor({
               kind: parseDocKind(doc.kind),
             }}
             onCreated={onChange}
+            replace={replaceText}
             onUpdated={(d) => {
               onChange(d);
               setCompose(false);
@@ -950,6 +943,7 @@ export default function DocumentsPage() {
               </button>
             )}
             <Editor
+              key={current.id}
               doc={current}
               owns={owns}
               onChange={setCurrent}
