@@ -29,7 +29,7 @@ async function render(list: { skills: object[]; shared: object[] }) {
   await flush();
 }
 const section = (title: string) => [...host!.querySelectorAll("section")].find((s) => s.querySelector("h2")?.textContent === title)!;
-const rows = (title: string) => [...section(title).querySelectorAll("[data-slot=switch], [aria-label^='Actions for']")].map((el) => el.getAttribute("aria-label"));
+const rows = (title: string) => [...section(title).querySelectorAll("[data-slot=switch], [aria-label^='More for']")].map((el) => el.getAttribute("aria-label"));
 
 describe("Community → Skills", () => {
   it("with no skill it is the places' headings, each with Add, and nothing else", async () => {
@@ -51,9 +51,9 @@ describe("Community → Skills", () => {
     const lines = section(placeLabel("captions.lines")).textContent!;
     expect(lines).toContain("Own lines");
     expect(lines).toContain("Line breaksCommunity: Tiny Hooks");
-    expect(rows(placeLabel("captions.lines"))).toEqual(["Turn Own lines on or off", "Actions for Own lines", "Turn Line breaks on or off"]);
+    expect(rows(placeLabel("captions.lines"))).toEqual(["Turn Own lines on or off", "More for Own lines", "Turn Line breaks on or off"]);
     expect(section(placeLabel("editor.script")).textContent).toContain("EndingsPlug-in: Tiny Studio");
-    expect(rows(placeLabel("editor.script"))).toEqual(["Actions for Own script"]);
+    expect(rows(placeLabel("editor.script"))).toEqual(["More for Own script"]);
     // the caption lines and the script step have no project to tick
     expect(section(placeLabel("captions.lines")).querySelector('[aria-label="Used in"]')).toBeNull();
     expect(section("Assistant").querySelector('[aria-label="Used in"]')).not.toBeNull();

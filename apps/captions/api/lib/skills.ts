@@ -137,7 +137,7 @@ export function addSkill(username: string, raw: { name?: unknown; when?: unknown
     return Promise.reject(e);
   }
   return change(username, ({ skills }) => {
-    if (skills.length >= SKILL_LIMITS.perAccount) throw new SkillError(`An account keeps up to ${SKILL_LIMITS.perAccount} skills. Remove one first.`);
+    if (skills.length >= SKILL_LIMITS.perAccount) throw new SkillError(`An account keeps up to ${SKILL_LIMITS.perAccount} skills. Delete one first.`);
     if (skills.some((s) => placeOf(s) === place && sameName(s.name, draft.name))) throw new SkillError(`You already have a skill named "${draft.name}".`);
     const now = Date.now();
     // the assistant's skills are kept without a place, as before places, so their file is what it was

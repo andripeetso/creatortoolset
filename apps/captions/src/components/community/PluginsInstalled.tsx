@@ -9,7 +9,7 @@ import type { PluginAdd, PluginInfo } from "@/lib/plugin";
 import { pluginsAuto, resumePlugins, setPluginsAuto, showPluginFolder, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply, type PluginsAuto } from "@/lib/thisMac";
 
 /**
- * The plug-ins this server is built with, one row each (the ones from the person's own folder are FolderPluginRows, below). "What it adds" folds the list, and each line that has a place
+ * The plug-ins this server is built with, one row each (the ones from the person's own folder are FolderPluginRows, below). "Contents" folds the list, and each line that has a place
  * is a link: it closes Community and opens that place (Settings, Home, a page). Nothing here can be removed.
  */
 export function PluginRows({ plugins }: { plugins: PluginInfo[] }) {
@@ -18,7 +18,7 @@ export function PluginRows({ plugins }: { plugins: PluginInfo[] }) {
       {plugins.map((p) => (
         <div key={p.id} className="[&>*+*]:border-t [&>*+*]:border-border/50">
           <ListRow title={p.name} subtitle={p.about} status={<Status>Built into this server</Status>} />
-          {p.adds.length > 0 && <Advanced summary="What it adds">{p.adds.map((a) => <AddLine key={a.text} add={a} />)}</Advanced>}
+          {p.adds.length > 0 && <Advanced summary="Contents">{p.adds.map((a) => <AddLine key={a.text} add={a} />)}</Advanced>}
         </div>
       ))}
     </Card>
@@ -71,7 +71,7 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
           title="Plug-ins are off"
           // only when that is why: Switch All Off in This Mac pauses them too, and then nothing stopped
           status={auto?.crashed && <Status tone="attention">The app's server stopped five times with them on</Status>}
-          actions={mac && <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run("resume", resumePlugins)}>Switch back on</Button>}
+          actions={mac && <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run("resume", resumePlugins)}>Turn on</Button>}
         />
       )}
       {folder.rows.map((row) => {
@@ -114,14 +114,14 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
                 )
               }
             />
-            {adds.length > 0 && <Advanced summary="What it adds">{adds.map((a) => <AddLine key={a.text} add={a} />)}</Advanced>}
+            {adds.length > 0 && <Advanced summary="Contents">{adds.map((a) => <AddLine key={a.text} add={a} />)}</Advanced>}
           </div>
         );
       })}
       {auto && (
         <ListRow
           title="Update automatically"
-          subtitle="A plug-in that is on runs later changes to its folder by itself."
+          subtitle="Changes to a plug-in's folder are loaded while it is on."
           status={said.auto && <Status tone="broken">{said.auto}</Status>}
           actions={
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

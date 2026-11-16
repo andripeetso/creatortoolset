@@ -46,7 +46,7 @@ export function InstallButton({ id, scope = [], reload, size = "xs" }: { id: str
       onClick={() =>
         void run(async () => {
           const r = await installCatalogPack(id, scope);
-          return `Installed.${r.kept ? ` Kept ${r.kept} you edited.` : ""}`;
+          return `Installed${r.kept ? ` · ${r.kept} edited kept` : ""}`;
         })
       }
     >
@@ -67,7 +67,7 @@ export function PackUpdateButton({ id, installed, latest, reload }: { id: string
       onClick={() =>
         void run(async () => {
           const r = await installCatalogPack(id, packProjects(installed));
-          return `Updated to ${latest}.${r.kept ? ` Kept ${r.kept} you edited.` : ""}`;
+          return `Updated to ${latest}${r.kept ? ` · ${r.kept} edited kept` : ""}`;
         })
       }
     >
@@ -186,13 +186,13 @@ export function InstalledPackActions({ id, name, installed, latest, reload }: { 
             destructive: true,
             confirm: {
               title: `Remove ${name}?`,
-              body: "Copies you haven't changed are deleted. Copies you edited stay.",
+              body: "Copies you have not changed are deleted, and copies you edited are kept.",
               ok: "Remove",
             },
             onSelect: () =>
               run(async () => {
                 const r = await removePack(id);
-                return r.kept ? `Removed. Kept ${r.kept} you edited.` : "Removed.";
+                return r.kept ? `Removed · ${r.kept} edited kept` : "Removed";
               }),
           },
         ]}
