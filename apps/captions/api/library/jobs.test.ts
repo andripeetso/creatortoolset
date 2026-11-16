@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openLibraryDb } from "./db";
 import type { DatabaseSync } from "node:sqlite";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, requeueExpired } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired } from "./jobs";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-jobs-"));
 let db: DatabaseSync;
@@ -87,6 +87,19 @@ describe("long jobs and the editor's table", () => {
     expect(state("analyze")).toMatchObject({ state: "queued", attempts: 0 });
     expect(claimJob(db, 300, 1000 + 29_999)).toBeNull();
     expect(claimJob(db, 300, 1000 + 30_000)!.attempts).toBe(1);
+  });
+
+  it("a late answer leaves a stopped job stopped: a failed try, a park and a defer change only a running job", () => {
+    enqueueJob(db, "lib_1", "ver_g", "stopped", "u1");
+    const job = claimJob(db, 300, 2_000_000, "jobs", ["stopped"])!;
+    db.prepare("UPDATE jobs SET state = 'failed', error = 'Stopped' WHERE id = ?").run(job.id);
+    finishJob(db, job.id, false, "boom", 2_000_000);
+    parkJob(db, job.id, "no key");
+    defer(db, job.id, 0, 2_000_000);
+    expect(db.prepare("SELECT state, error FROM jobs WHERE id = ?").get(job.id)).toEqual({ state: "failed", error: "Stopped" });
+    // removed while its step was out: nothing to record, and nothing thrown
+    db.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
+    expect(() => finishJob(db, job.id, false, "boom")).not.toThrow();
   });
 
   it("the library's claim never takes an edit_jobs row, and edit_id comes from version_id", () => {

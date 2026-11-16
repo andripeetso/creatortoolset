@@ -423,7 +423,11 @@ final class ChatsModel: ObservableObject {
             return
         }
         loading = true
-        defer { loading = false }
+        defer {
+            loading = false
+            // another computer was picked during the read: its own read was put off until this one ended, so it goes now
+            if key != nil, api.cacheKey != key { Task { await load() } }
+        }
         await PhoneEdits.shared.refresh()
         repeat {
             again = false
@@ -446,6 +450,7 @@ final class ChatsModel: ObservableObject {
                 DiskCache.write("chats-\(api.cacheKey)", ChatList.merge(videos: seen, others: fresh).map(SavedRow.init))
             } catch {
                 // the list stays as it was
+                guard api.cacheKey == key else { return }   // the computer that was left did not answer: nothing to say about this one
                 let expired = (error as? ToolsetAPI.Failure)?.status == 401
                 offline = !expired
                 if expired { link = .expired }

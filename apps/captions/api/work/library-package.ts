@@ -319,8 +319,8 @@ function failLibrary(job: JobRow, error: string): true {
   const db = libraryDb();
   holders.delete(job.id);
   finishJob(db, job.id, false, error, Date.now());
-  const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
-  if (after.state === "failed" && (job.kind === "send" || job.kind === "proxy")) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+  const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
+  if (after?.state === "failed" && (job.kind === "send" || job.kind === "proxy")) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   libraryChanged(job.library_id);
   return true;
 }

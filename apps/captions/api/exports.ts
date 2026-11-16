@@ -209,6 +209,7 @@ const loaded = (async () => {
         job.status = move(EXPORT_MOVES, job.status, "error", "export job");
         job.error = "Interrupted by a server restart — export again.";
         job.finishedAt = Date.now();
+        if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
         await persist(job);
         chatHears(job);
       }
@@ -750,9 +751,10 @@ async function runJob(job: Job): Promise<void> {
   } catch (e) {
     // cancelled — dir is gone, don't resurrect; a job already done keeps its file
     if (!jobs.has(job.id) || !canMove(EXPORT_MOVES, job.status, "error")) return;
-    job.status = "error";
+    job.status = move(EXPORT_MOVES, job.status, "error", "export job");
     job.error = e instanceof Error ? e.message : String(e);
     job.finishedAt = Date.now();
+    if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
     await jobPersist(job);
     if (job.params.chat) console.warn(`[exports] ${job.id} failed: ${job.error}`);
     chatHears(job);
@@ -761,6 +763,7 @@ async function runJob(job: Job): Promise<void> {
 
 /** One-click Send to Finals: the finished render goes into the owner's library and its Finals piece. Never throws; the outcome is on the job. */
 async function sendToFinals(job: Job): Promise<void> {
+  if (job.finals?.status === "sending") return; // one send at a time: the older Save to Content can ask while the job's own send runs
   job.finals = { status: "sending" };
   let out: FinalsOutcome;
   try {

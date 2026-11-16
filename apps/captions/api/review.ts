@@ -2465,6 +2465,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (!status || (!v.manage && !REVIEWER_APPROVALS.includes(status)) || !by) {
       return c.json({ error: "Invalid status" }, 400);
     }
+    // a person's own choice, so any status from any other: APPROVAL_MOVES holds back only what the app sets by itself (setApproval)
     const meta = await updateMeta(v.meta.id, (m) => {
       m.approval = { status, by, at: Date.now() };
     });

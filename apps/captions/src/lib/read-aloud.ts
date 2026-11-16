@@ -121,6 +121,7 @@ function getWorker(): Worker {
       };
     } else if (m.type === "end") {
       finished = m.id;
+      pendingText = ""; // every sentence is made: the worker dying now leaves nothing to read again
       if (!sources.length) useReadAloud.setState({ speaking: false });
     }
   };
@@ -150,6 +151,7 @@ export function speak(text: string): void {
 
 export function stopSpeaking(): void {
   playing = -1;
+  pendingText = "";
   worker?.postMessage({ type: "stop" });
   for (const s of sources) {
     try {

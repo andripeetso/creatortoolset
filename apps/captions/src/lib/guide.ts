@@ -268,3 +268,11 @@ export function mergeGuideEdits(current: GuideDoc, patch: unknown): GuideDoc {
     }),
   };
 }
+
+/**
+ * The Guide Builder editor's save label. `edits` counts what was typed, `tried` is the count a save has gone out for,
+ * `saved` the count the server has, `out` the saves on their way. Saved only when the server has all of it; nothing
+ * after a save that failed (its error is on the page).
+ */
+export const saveLabel = (s: { edits: number; tried: number; saved: number; out: number }) =>
+  s.out > 0 || s.edits > s.tried ? "Saving…" : s.saved < s.edits ? "" : "Saved";
