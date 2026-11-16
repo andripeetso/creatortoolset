@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { asTurn } from "./turn";
 import type { AssetCard, AssetKind, AssetPage, LibrarySort, SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
@@ -199,6 +200,9 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     // a folder is a plain collection; Finals (finals.ts) and a saved search's old item rows are not
     where.push(`a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
       WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
+    // nor a clip the A-roll or B-roll folder lists: it is filed there, the top level would show it twice
+    where.push(`NOT (a.roll IS NOT NULL AND EXISTS (SELECT 1 FROM collections rc WHERE rc.library_id = a.library_id AND rc.kind = 'smart'
+      AND json_extract(rc.query, '$.roll') = a.roll AND (SELECT COUNT(*) FROM json_each(rc.query)) = 1))`);
   }
   for (const f of facetClauses(query.facets ?? {})) {
     where.push(f.sql);
@@ -245,6 +249,8 @@ export function toCard(r: CardRow): AssetCard {
   const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
   const split = (s: string | null) => (s ? s.split("\x1f") : []);
   const review = inReview(r.id);
+  const turn = asTurn(p.turn);
+  const side = turn === 90 || turn === 270;
   return {
     id: r.id,
     libraryId: r.library_id,
@@ -253,9 +259,11 @@ export function toCard(r: CardRow): AssetCard {
     versionId: r.version_id,
     versionN: r.version_n,
     ...(p.duration ? { durationS: p.duration } : {}),
-    ...(p.width ? { width: p.width, height: p.height } : {}),
-    ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb` } : {}),
-    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite` } : {}),
+    ...(p.width ? (side ? { width: p.height, height: p.width } : { width: p.width, height: p.height }) : {}),
+    ...(turn ? { turn } : {}),
+    // a turned clip's pictures were made again: a new address, so no window shows the one it kept
+    ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${turn ? `?t=${turn}` : ""}` } : {}),
+    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${turn ? `?t=${turn}` : ""}` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),

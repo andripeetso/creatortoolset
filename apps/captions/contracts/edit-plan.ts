@@ -14,7 +14,8 @@ export interface IndexShot {
   b: number;
   /** 0 still … 1 the most movement in this source */
   motion: number;
-  /** what is seen, in a few words, when the AI has looked (contact sheets, or the library's own description) */
+  /** what is seen, in a few words, when the AI has looked (contact sheets, or the library's own description); "junk: …"
+   * when it shows no action (a map, a menu, loading, dark, mostly the game's buttons) */
   desc?: string;
   /** from the library's shot descriptions (contracts/library.ts Stretch), when the source has them */
   action?: number;
@@ -22,6 +23,10 @@ export interface IndexShot {
   tags?: string[];
   /** picture hash of its middle frame: two shots with close hashes show the same picture (shown once in a cut) */
   ph?: string;
+  /** why it is no shot, measured: "dark", "flat" (black, a fade, loading), "ui" (a desktop, page or menu), "still" */
+  junk?: string;
+  /** where its picture changes, across (16 columns) and down (9 rows), as shares of the whole, the HUD left out */
+  moves?: { cols: number[]; rows: number[] };
 }
 
 export interface IndexSource {
@@ -37,6 +42,8 @@ export interface IndexSource {
   /** it has a sound stream at all; a shot of one without never plays its own sound */
   sound?: boolean;
   shots: IndexShot[];
+  /** the HUD: 16×9 cells (row by row, 1 = HUD) that stay put while the rest of the picture moves */
+  hud?: number[];
 }
 
 /** A song or any sound to cut to, from `startS` on. */
@@ -98,6 +105,12 @@ export type PlanEffect =
  */
 export type PlanFrame = "fill" | "fit" | "blur" | "letterbox" | "inset";
 
+/** A crop window's place in the room the picture leaves it: x 0 left … 1 right, y 0 top … 1 bottom (0.5 centred). */
+export interface Focus {
+  x: number;
+  y: number;
+}
+
 export interface PlanShot {
   /** where it starts on the timeline */
   at: number;
@@ -116,7 +129,9 @@ export interface PlanShot {
   /** an inset's share of the frame's width, 0.3-0.9 */
   scale?: number;
   /** 1-2 more pictures stacked in a column with this one (2-3 in all), each from `inS` of its source */
-  split?: Array<{ source: string; inS: number }>;
+  split?: Array<{ source: string; inS: number; focus?: Focus }>;
+  /** where the picture's crop sits, set by code from where it moves (fill, letterbox and split crop it) */
+  focus?: Focus;
   /** the shot's own sound: off, under the lead, or as it is */
   sound?: "off" | "under" | "full";
   /** what made the AI pick it, in a few words (shown in Review) */

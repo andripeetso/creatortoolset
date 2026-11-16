@@ -18,6 +18,7 @@ import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
 import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile } from "./organize";
+import { asTurn, turned, turnVersion } from "./turn";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a
@@ -35,7 +36,22 @@ export const FRAMES = 4;
 export const DESCRIBE_LABEL = "Media Library describe";
 /** The describe prompt's version, in its context stamp: a change to the prompt that should describe clips again bumps it. */
 export const DESCRIBE_VERSION = "describe-2";
-const MAX_TAGS = 8;
+const MAX_TAGS = 6;
+/** Most of the library's tags a description is shown, most used first. */
+const VOCABULARY = 60;
+
+/**
+ * What a tag is for: finding this clip among the library's others. Specific things in the workspace's own names, the
+ * library's spelling reused, nothing every clip shares (owner, 2026-11-15: "smart tags … adapted from the full context
+ * of the media", after a sidebar of "grass field", "cobblestone", "fantasy" and "screen recording 12").
+ */
+const TAG_RULE =
+  "tags are the words someone would search to find this clip among the others in the library: what sets it apart. " +
+  "Name the specific thing it shows in the workspace's own words when it has them (a place, a mode, a feature, an event, a product, a kind of shot). " +
+  "Never tag what nearly every clip here shares or the workspace's general subject (its genre, the medium, \"gameplay\", \"screen recording\"), " +
+  "and never colours, textures, light, mood or words that only describe the look. " +
+  "Use a tag from the library's list, spelled the same, when it means the same thing; add a new one only for what the list lacks. " +
+  "Lowercase, one to three words each. Fewer good tags beat many; none is fine.";
 
 /** Everything the prompt is built from. There is no field for who is in the clip: no names, no ages. */
 export interface DescribeInput {
@@ -48,6 +64,23 @@ export interface DescribeInput {
   folders?: string[];
   /** with folders: the answer may name a new folder (the library has fewer than MAX_AI_FOLDERS) */
   newFolder?: boolean;
+  /** the library's tags (tagsOf) so the answer reuses its words */
+  tags?: { clips: number; list: { tag: string; count: number }[] };
+}
+
+/** The tags on the library's other clips (not in the trash), most used first, and how many clips it has. */
+export function tagsOf(db: DatabaseSync, versionId: string): NonNullable<DescribeInput["tags"]> {
+  const of = "SELECT a.library_id AS lib, a.id AS asset FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?";
+  const at = db.prepare(of).get(versionId) as { lib: string; asset: string } | undefined;
+  if (!at) return { clips: 0, list: [] };
+  const { clips } = db.prepare("SELECT COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NULL").get(at.lib) as { clips: number };
+  const list = db
+    .prepare(
+      `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
+       WHERE a.library_id = ? AND a.id <> ? AND a.trashed_at IS NULL GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT ${VOCABULARY}`,
+    )
+    .all(at.lib, at.asset) as { tag: string; count: number }[];
+  return { clips, list };
 }
 
 export interface Described {
@@ -59,6 +92,8 @@ export interface Described {
   folder?: string;
   /** what the footage is, in one to three plain words ("gameplay", "screen recording", "talking head") */
   kind?: string;
+  /** clockwise degrees the frames need to stand upright (a phone filmed sideways, a screen recorded on its side); absent = upright */
+  turn?: 90 | 180 | 270;
 }
 
 export function describePrompt(input: DescribeInput): { system: string; user: string } {
@@ -73,15 +108,20 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
+      'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
       'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
       ...(input.folders
         ? [
             input.newFolder
               ? `folder is where this clip is filed in the library, judged by what the footage is (gameplay, an interview, a product, a place…). ${input.folders.length ? `Use one of these folders when it fits: ${JSON.stringify(input.folders)}. Otherwise name` : "Name"} a new folder: one to three words, by what the footage is (for example "Gameplay", "Interviews", "Product shots", "Travel"), never a vague name like "Misc", "Other", "Clips" or "B-roll".`
               : `folder is the one of these folders the clip fits best: ${JSON.stringify(input.folders)}`,
-            `Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", ${KIND_ANSWER}, "folder": "a folder name"}`,
           ]
-        : [`Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", ${KIND_ANSWER}}`]),
+        : []),
+      TAG_RULE,
+      ...(input.tags?.list.length
+        ? [`Tags already in this library of ${input.tags.clips} clips (tag: clips it is on): ${input.tags.list.map((t) => `${t.tag}: ${t.count}`).join(", ")}`]
+        : []),
+      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], "roll": "a" or "b", "turn": 0, ${KIND_ANSWER}${input.folders ? ', "folder": "a folder name"' : ""}}`,
     ].join("\n\n"),
   };
 }
@@ -105,7 +145,8 @@ export function parseDescribe(text: string): Described {
     : [];
   const folder = typeof o.folder === "string" ? o.folder.trim() : "";
   const kind = kindOf(o.kind);
-  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}), ...(kind ? { kind } : {}) };
+  const turn = typeof o.turn === "number" ? asTurn(o.turn) : 0;
+  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}), ...(turn ? { turn } : {}), ...(kind ? { kind } : {}) };
 }
 
 /** Most of the workspace's context a description carries: it rides every clip's call. */
@@ -197,13 +238,16 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
   if (route.off) throw new NeedsKey(route.off);
   const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
   const segments = segmentsOf(db, versionId);
+  // the frames are cut turned as the clip is now (stills a Mac made are not), so the AI's turn adds to that
+  const probe = db.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined;
+  const base = made ? 0 : asTurn((JSON.parse(probe?.probe ?? "{}") as { turn?: number }).turn);
   const files: string[] = [];
   try {
     if (made) files.push(...made);
     else for (const t of frameTimes(duration)) {
       const file = path.join(scratch, `describe-${randomUUID()}.jpg`);
       files.push(file);
-      await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", "scale=512:-2", "-q:v", "4"]);
+      await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", turned(base, "scale=512:-2"), "-q:v", "4"]);
     }
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
     // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
@@ -218,9 +262,11 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       frames: images.length,
       ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
       ...(folders ? { folders, newFolder } : {}),
+      tags: tagsOf(db, versionId),
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider, await contextStamp(wsId, WORKSPACE_MAX, DESCRIBE_VERSION));
+    if (value.turn) await turnVersion(db, versionId, base + value.turn);
     // a new name only while the library may get one; fileInto makes the folder with its first file
     const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
     if (filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);

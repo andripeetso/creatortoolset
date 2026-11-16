@@ -55,16 +55,16 @@ export async function duplicateStyle(s: EditingStyle): Promise<EditingStyle> {
   return createStyle(body).catch((e) => (s.brollCollectionId ? createStyle({ ...body, brollCollectionId: null }) : Promise.reject(e)));
 }
 
-export function EditingStyles({ styles, open, onOpen, onChanged, onChat }: { styles: EditingStyle[]; open: OpenStyle; onOpen: (s: OpenStyle) => void; onChanged: () => Promise<unknown>; onChat?: () => void }) {
+export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editable = true }: { editable?: boolean; styles: EditingStyle[]; open: OpenStyle; onOpen: (s: OpenStyle) => void; onChanged: () => Promise<unknown>; onChat?: () => void }) {
   return (
     <>
       {styles.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-16">
-          <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
+          {editable && <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
             <Plus className="h-4 w-4" />
             New editing style
-          </Button>
-          {onChat && (
+          </Button>}
+          {editable && onChat && (
             <Button size="sm" variant="ghost" className="text-zinc-500" onClick={() => onOpen("new")}>
               Use a form
             </Button>
@@ -84,19 +84,19 @@ export function EditingStyles({ styles, open, onOpen, onChanged, onChat }: { sty
                 {s.notes && <span className="line-clamp-2 whitespace-pre-line text-xs text-zinc-500">{s.notes}</span>}
               </button>
               <div className="absolute right-2 top-2.5">
-                <RowMenu
+{editable &&                 <RowMenu
                   label={`More for ${s.name}`}
                   items={[
                     { label: "Duplicate", onSelect: () => duplicateStyle(s).then(onChanged) },
                     { label: "Delete", destructive: true, confirm: { title: `Delete “${s.name}”?` }, onSelect: () => deleteStyle(s.id).then(onChanged) },
                   ]}
-                />
+                />}
               </div>
             </li>
           ))}
         </ul>
       )}
-      {open && <StyleSheet key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
+      {open && <StyleSheet editable={editable} key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
     </>
   );
 }
@@ -118,7 +118,7 @@ export async function brollFolders(): Promise<{ id: string; name: string }[]> {
  * takes it off (both on Save). Under the finished edits, what approved edits taught it ("From finished edits"): the
  * rounds each took, its numbers and the person's own lines, each with an × that takes it off at once.
  */
-export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown> }) {
+export function StyleSheet({ style, onClose, onSaved, editable = true }: { style: EditingStyle | null; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown>; editable?: boolean }) {
   const [name, setName] = useState(style?.name ?? "");
   const [notes, setNotes] = useState(style?.notes ?? "");
   const [versions, setVersions] = useState(style?.versions ?? 1);
@@ -205,6 +205,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" aria-describedby={undefined} className="w-full overflow-y-scroll p-0 sm:max-w-xl">
+        <fieldset disabled={!editable} className="contents">
         <form
           className="flex flex-col gap-4 p-4 pt-12"
           onSubmit={(e) => {
@@ -393,10 +394,10 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
             <Switch id="style-passes" checked={passes} onCheckedChange={setPasses} />
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <Button type="submit" disabled={busy || !name.trim()} className="self-start">
+{editable &&           <Button type="submit" disabled={busy || !name.trim()} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Save
-          </Button>
+          </Button>}
           {style && finished.length > 0 && (
             <section aria-label="Finished with this style" className="flex flex-col gap-2 pt-2">
               <h3 className="text-sm font-medium">Finished with this style</h3>
@@ -408,7 +409,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
                       <span className="min-w-0 truncate text-sm">{f.name || day}</span>
                       <span className="flex shrink-0 items-center gap-1 text-xs text-zinc-500">
                         {[f.seconds ? `${f.seconds} s` : "", f.name ? day : ""].filter(Boolean).join(" · ")}
-                        <Button
+{editable &&                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
@@ -417,7 +418,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
                           onClick={() => void removeFinished(style.id, f.editId).then(() => setFinished((list) => list.filter((x) => x.editId !== f.editId)), (e) => setError(message(e)))}
                         >
                           <X className="h-4 w-4" />
-                        </Button>
+                        </Button>}
                       </span>
                     </li>
                   );
@@ -465,6 +466,7 @@ export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | 
             </section>
           )}
         </form>
+        </fieldset>
         {makingAnimation && (
           <AnimationSheet
             style={null}

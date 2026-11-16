@@ -11,7 +11,7 @@ import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { useMe } from "@/lib/auth";
+import { canChange, useMe } from "@/lib/auth";
 import { downloadBlob } from "@/lib/download";
 import {
   analyse,
@@ -58,6 +58,8 @@ export default function StorySplitterPage() {
   const [params, setParams] = useSearchParams();
   const me = useMe();
   const lists = !!me; // an account keeps its splits
+  // Read: the split opens, plays and downloads, but cuts are not changed and nothing is saved
+  const editable = canChange(me, "stories");
   // the saved splits: the local copy at once, live with changes from elsewhere (lib/local-cache)
   const { items: splits, setItems: setSplits } = useCachedList<Split>(lists ? "/api/stories" : null, () =>
     fetch("/api/stories").then((r) => (r.ok ? (r.json() as Promise<Split[]>) : Promise.reject(new Error(`HTTP ${r.status}`)))),
@@ -180,14 +182,14 @@ export default function StorySplitterPage() {
 
   const addCut = useCallback(
     (t: number) => {
-      if (!analysis) return;
+      if (!analysis || !editable) return;
       const at = snapCut(analysis, t);
       if (at <= 0.3 || at >= analysis.duration - 0.3) return;
       setCuts((cs) =>
         cs.some((c) => Math.abs(c.t - at) < 0.5) ? cs : [...cs, { t: at, mine: true }].sort((a, b) => a.t - b.t),
       );
     },
-    [analysis],
+    [analysis, editable],
   );
 
   useEffect(() => {
@@ -255,7 +257,7 @@ export default function StorySplitterPage() {
       );
       downloadBlob(`${base}-stories.zip`, zip);
       // kept on download: a new split, or the open one's new cuts
-      if (lists) {
+      if (editable) {
         const res = await fetch(saved ? `/api/stories/${saved.id}` : "/api/stories", {
           method: saved ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
@@ -325,7 +327,7 @@ export default function StorySplitterPage() {
       }}
     >
       <AppBar tool="Story Splitter" trail={source && <span className="truncate font-normal text-zinc-500">{source.name}</span>}>
-        {!source && lists && splits.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
+        {!source && editable && splits.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {source && filePicker("Another video", "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")}
       </AppBar>
 
@@ -396,13 +398,15 @@ export default function StorySplitterPage() {
                           icon={Scissors}
                           name={s.name}
                           meta={`${storiesOf(s)} · ${dayOf(s.updatedAt)}`}
-                          drag={folders.drag(s.id)}
+                          drag={editable ? folders.drag(s.id) : undefined}
                           actions={
                             <>
-                            <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />
-                            <button type="button" onClick={() => void remove(s)} title="Delete this split" aria-label={`Delete the split of ${s.name}`} className="rounded p-1 hover:bg-red-600">
-                              <X className="h-3.5 w-3.5" />
-                            </button>
+                            {editable && <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />}
+                            {editable && (
+                              <button type="button" onClick={() => void remove(s)} title="Delete this split" aria-label={`Delete the split of ${s.name}`} className="rounded p-1 hover:bg-red-600">
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             </>
                           }
                         />
@@ -416,7 +420,7 @@ export default function StorySplitterPage() {
                       </li>
                     )}
                     {listed.map((s) => (
-                      <li key={s.id} {...folders.drag(s.id)} className="group flex items-center rounded-lg hover:bg-zinc-900">
+                      <li key={s.id} {...(editable ? folders.drag(s.id) : {})} className="group flex items-center rounded-lg hover:bg-zinc-900">
                         <button
                           type="button"
                           onClick={() => reopen(s)}
@@ -429,8 +433,8 @@ export default function StorySplitterPage() {
                             {new Date(s.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                           </span>
                         </button>
-                        <MoveToMenu state={folders} id={s.id} className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
-                        {lists && (
+                        {editable && <MoveToMenu state={folders} id={s.id} className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />}
+                        {editable && (
                           <button
                             type="button"
                             onClick={() => void remove(s)}
@@ -489,30 +493,34 @@ export default function StorySplitterPage() {
                       s.cut && (
                         <div key={s.cut.t} className="absolute inset-y-0" style={{ left: pct(s.cut.t) }}>
                           <div className={`absolute inset-y-0 -left-px w-0.5 ${s.cut.mine ? "bg-amber-300" : "bg-violet-400"}`} />
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCuts((cs) => cs.filter((c) => c.t !== s.cut!.t));
-                            }}
-                            onDoubleClick={(e) => e.stopPropagation()}
-                            title={`Cut ${i + 1}: ${WHY[s.cut.why]}. Click to remove.`}
-                            aria-label={`Remove cut ${i + 1}`}
-                            className={`absolute -top-2.5 left-0 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full text-zinc-950 ${
-                              s.cut.mine ? "bg-amber-300" : "bg-violet-400"
-                            } hover:bg-red-400`}
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
+                          {editable && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCuts((cs) => cs.filter((c) => c.t !== s.cut!.t));
+                              }}
+                              onDoubleClick={(e) => e.stopPropagation()}
+                              title={`Cut ${i + 1}: ${WHY[s.cut.why]}. Click to remove.`}
+                              aria-label={`Remove cut ${i + 1}`}
+                              className={`absolute -top-2.5 left-0 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full text-zinc-950 ${
+                                s.cut.mine ? "bg-amber-300" : "bg-violet-400"
+                              } hover:bg-red-400`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
                         </div>
                       ),
                   )}
                   <div className="pointer-events-none absolute inset-y-0 w-px bg-white" style={{ left: pct(time) }} />
                 </div>
-                <p className="text-xs text-zinc-500">
-                  Double-click the timeline, or press <kbd className="rounded bg-zinc-800 px-1">C</kbd> at the playhead,
-                  to cut about there: it snaps to the best moment within 2.5 s. Ticks on top are cuts in the edit.
-                </p>
+                {editable && (
+                  <p className="text-xs text-zinc-500">
+                    Double-click the timeline, or press <kbd className="rounded bg-zinc-800 px-1">C</kbd> at the playhead,
+                    to cut about there: it snaps to the best moment within 2.5 s. Ticks on top are cuts in the edit.
+                  </p>
+                )}
               </>
             )}
           </section>
@@ -529,19 +537,22 @@ export default function StorySplitterPage() {
                   <span>Story length</span>
                   <span className="tabular-nums text-zinc-400">about {target} s</span>
                 </div>
-                <Slider
-                  min={8}
-                  max={45}
-                  step={1}
-                  value={[target]}
-                  onValueChange={([v]) => {
-                    setTarget(v);
-                    targetRef.current = v;
-                    replan(v);
-                  }}
-                />
+                {editable && (
+                  <Slider
+                    min={8}
+                    max={45}
+                    step={1}
+                    value={[target]}
+                    onValueChange={([v]) => {
+                      setTarget(v);
+                      targetRef.current = v;
+                      replan(v);
+                    }}
+                  />
+                )}
               </div>
 
+              {editable && (
               <div className="flex gap-2">
                 <Button
                   size="sm"
@@ -562,6 +573,7 @@ export default function StorySplitterPage() {
                   <Eraser /> Clear
                 </Button>
               </div>
+              )}
 
               <ol className="flex flex-col gap-1">
                 {stories.map((s, i) => {

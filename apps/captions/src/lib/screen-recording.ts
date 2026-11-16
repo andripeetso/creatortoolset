@@ -635,7 +635,7 @@ function viewStops(look: ScreenLook, clicks: ScreenEvents["clicks"], g: Geometry
   const key = [look.follow, look.zoomFit, look.fill, look.shape, look.padding, g.srcW / g.srcH, g.camera?.layout === "side" && [g.camera.split, g.camera.gap, g.camera.left].join("/")].join();
   const had = stops.get(look.zooms);
   if (had && had.key === key && had.clicks === clicks) return had.stops;
-  const out = outputSize(look.shape, g.srcW, g.srcH, false);
+  const out = outputSize(look.shape, g.srcW, g.srcH, 1080);
   const fixed = geometry(look, g.srcW, g.srcH, out.width, out.height, g.camera);
   const list: Stop[] = [];
   for (const z of look.zooms) {
@@ -722,9 +722,8 @@ function cameraAt(look: ScreenLook, path: [number, number, number][], t: number,
   return { scale: depth, x: x / depth, y: y / depth, k: 1 - rest };
 }
 
-/** Output pixels for a frame shape: 1080 on the short side (2160 for 4K), the source's shape for "source". */
-export function outputSize(shape: FrameShape, srcW: number, srcH: number, uhd: boolean): { width: number; height: number } {
-  const short = uhd ? 2160 : 1080;
+/** Output pixels for a frame shape with `short` pixels on its short side (1080 for 1080p), the source's shape for "source". */
+export function outputSize(shape: FrameShape, srcW: number, srcH: number, short: number): { width: number; height: number } {
   const ratio: Record<Exclude<FrameShape, "source">, number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1, "4:5": 4 / 5 };
   const r = shape === "source" ? srcW / srcH || 16 / 9 : ratio[shape];
   const even = (v: number) => Math.round(v / 2) * 2;
@@ -898,7 +897,7 @@ function restBox(look: ScreenLook, srcRatio: number, outW: number, outH: number,
  */
 export function zoomFloor(look: ScreenLook, srcRatio: number, camera: CameraLook | null = null): number {
   if (look.zoomFit !== "frame" || !zoomGrows(look) || camera?.layout === "side" || camera?.layout === "split") return 1;
-  const out = outputSize(look.shape, srcRatio * 1000, 1000, false);
+  const out = outputSize(look.shape, srcRatio * 1000, 1000, 1080);
   const { box } = restBox(look, srcRatio, out.width, out.height, camera);
   return Math.max(out.width / box.w, out.height / box.h);
 }

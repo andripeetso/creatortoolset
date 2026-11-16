@@ -52,8 +52,11 @@ const ACCOUNT_JOBS = new Set<string>(["profile", "catalog", "stats", "tags"]);
 export function QueueMenu({
   base,
   onChange,
+  readOnly,
 }: {
   base: string;
+  /** Shows the queue only: no retry. */
+  readOnly?: boolean;
   /** Called after a retry was queued so the page can refresh its lists. */
   onChange?: () => void;
 }) {
@@ -199,7 +202,7 @@ export function QueueMenu({
                       {item.detail ? ` · ${item.detail}` : ""}
                     </span>
                   </Link>
-                  <button
+                  {!readOnly && <button
                     type="button"
                     disabled={busy !== null}
                     onClick={() => void retry([item])}
@@ -207,14 +210,14 @@ export function QueueMenu({
                   >
                     {busy === key ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                     Try again
-                  </button>
+                  </button>}
                 </div>
               );
             })}
           </div>
           {failed.length > 1 && (
             <div className="flex justify-end border-t border-zinc-800 px-3 py-2">
-              <button
+              {!readOnly && <button
                 type="button"
                 disabled={busy !== null}
                 onClick={() => void retry(failed)}
@@ -222,7 +225,7 @@ export function QueueMenu({
               >
                 {busy === "all" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                 Try all {failed.length} again
-              </button>
+              </button>}
             </div>
           )}
         </div>

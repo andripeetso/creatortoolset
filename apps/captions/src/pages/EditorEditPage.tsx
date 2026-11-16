@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { canChange, useMe } from "@/lib/auth";
 import { Link, useNavigate, useParams } from "react-router";
 import { Download, ExternalLink, Loader2, Play, RotateCcw, Scissors, Square, ThumbsUp, Trash2 } from "lucide-react";
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
@@ -29,6 +30,8 @@ const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script"
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
 export default function EditorEditPage() {
+  // Read (Settings → Team → Access): the edit opens to look at; runs, stops, flags, takes, cards, cuts and trash are not shown
+  const editable = canChange(useMe(), "editor");
   const { id = "" } = useParams();
   const navigate = useNavigate();
   // the saved copy paints at once; the server says when a step moved (lib/local-cache), so nothing polls
@@ -106,6 +109,7 @@ export default function EditorEditPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor" to="/editor" trail={edit.name}>
+        {editable && <>
         <Button size="sm" variant="outline" onClick={() => void saveAsStyle()}>
           Save as style
         </Button>
@@ -124,12 +128,13 @@ export default function EditorEditPage() {
         <Button size="sm" variant="ghost" aria-label="Move to the trash" onClick={() => void remove()}>
           <Trash2 className="h-4 w-4" />
         </Button>
+        </>}
       </AppBar>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-400">{error}</p>}
 
-        {edit.flagDefs.length > 0 && (
+        {editable && edit.flagDefs.length > 0 && (
           <section aria-label="Flags" className="flex flex-wrap items-center gap-2">
             {edit.flagDefs.map((f) => {
               const on = !!edit.flags[f.id];
@@ -142,14 +147,14 @@ export default function EditorEditPage() {
           </section>
         )}
 
-        <label className="flex flex-wrap items-center gap-2 text-sm">
+{editable &&         <label className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-zinc-500">Spoken in</span>
           <LanguageSelect
             value={edit.languages?.[0] ?? ""}
             onChange={(code) => void act(patchEdit(id, { languages: code ? [code] : [] }))}
             className="rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
           />
-        </label>
+        </label>}
 
         <section aria-label="Steps" className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Steps</h2>
@@ -175,7 +180,7 @@ export default function EditorEditPage() {
                     )}
                   </span>
                 )}
-                {(j.state === "failed" || j.state === "needs_key") && (
+                {editable && (j.state === "failed" || j.state === "needs_key") && (
                   <Button size="sm" variant="outline" className="ml-auto" onClick={() => void act(retryJob(id, j.id))}>
                     Retry
                   </Button>
@@ -193,11 +198,11 @@ export default function EditorEditPage() {
         </section>
 
         {/* not before anything has run: the first step finds the eyes itself, and there is no cut yet to keep them level in */}
-        <section aria-label="Eye line" className={cn("flex flex-col gap-2", (edit.jobs.length === 0 || edit.sources.every((v) => blind.includes(v))) && "hidden")}>
+        <section aria-label="Eye line" className={cn("flex flex-col gap-2", (!editable || edit.jobs.length === 0 || edit.sources.every((v) => blind.includes(v))) && "hidden")}>
           <h2 className="text-sm font-semibold">Eye line</h2>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. The zoom on cuts keeps the eyes at that height. Change it, then draft again (no AI).</p>
-            {!busy && edit.plans.length > 0 && (
+            {editable && !busy && edit.plans.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => void act(runEdit(id, "draft"))}>
                 Draft again
               </Button>
@@ -260,7 +265,7 @@ export default function EditorEditPage() {
                                     <Play className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
-                                <select
+{editable &&                                 <select
                                   aria-label={`Take for ${line.id} in ${p.title || p.name}`}
                                   disabled={busy || line.takes.length < 2}
                                   value={`${take.first}-${take.last}`}
@@ -275,7 +280,7 @@ export default function EditorEditPage() {
                                       {t.first === t.last ? `Sentence ${t.first}` : `Sentences ${t.first}-${t.last}`} · {Math.round(t.score * 100)}
                                     </option>
                                   ))}
-                                </select>
+                                </select>}
                               </div>
                             ) : (
                               <span className="text-xs text-zinc-500">–</span>
@@ -298,14 +303,14 @@ export default function EditorEditPage() {
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted px-3 py-2">
                 {/* N = 1 + the passes done: the cards come second when there is a B-roll pass before them */}
                 <span className="text-sm">Pass {edit.passes.next === "cards" && edit.brollCollectionId ? 2 : 1} is in Review</span>
-                <Button size="sm" onClick={() => void act(carryOn(id))}>
+{editable &&                 <Button size="sm" onClick={() => void act(carryOn(id))}>
                   Carry on: {edit.passes.next === "broll" ? "B-roll" : "cards"}
-                </Button>
+                </Button>}
               </div>
             )}
             {/* one version at a time, across the page: a timeline needs the width. Keyed on what it is filed as, so the
                 edit's own refreshes keep the edits being made and a newly filed version starts clean */}
-            {cutting && edit.previews[cutting] && (
+            {editable && cutting && edit.previews[cutting] && (
               <EditorCutPanel
                 key={`${edit.previews[cutting].assetId}.${edit.previews[cutting].n}`}
                 kept={cuts.current.get(`${edit.previews[cutting].assetId}.${edit.previews[cutting].n}`)}
@@ -356,7 +361,7 @@ export default function EditorEditPage() {
                             {cards.cards.map((card) => (
                               <li key={card.id} className="relative w-20">
                                 <img src={cardStillUrl(id, n, card.id)} alt={card.text} title={card.text} className="block w-full rounded-md bg-zinc-800" />
-                                <button
+{editable &&                                 <button
                                   type="button"
                                   aria-label={`Like the card “${card.text}”`}
                                   aria-pressed={card.liked}
@@ -365,7 +370,7 @@ export default function EditorEditPage() {
                                   className={cn("absolute bottom-1 right-1 rounded-full p-1.5 text-white", card.liked ? "bg-violet-500" : "bg-black/70 hover:bg-black")}
                                 >
                                   <ThumbsUp className="h-3 w-3" />
-                                </button>
+                                </button>}
                               </li>
                             ))}
                           </ul>
@@ -383,7 +388,7 @@ export default function EditorEditPage() {
                           </a>
                         </Button>
                       ))}
-                      {pv && (
+                      {editable && pv && (
                         <Button size="sm" variant={cutting === n ? "secondary" : "ghost"} aria-pressed={cutting === n} onClick={() => setCutting(n)}
                           title="Trim, cut, move and take out clips on this version's timeline, then make the next version from them with no AI">
                           <Scissors className="h-3.5 w-3.5" />
@@ -398,10 +403,10 @@ export default function EditorEditPage() {
                           </Link>
                         </Button>
                       )}
-                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
+{editable &&                       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
                         Render preview again
-                      </Button>
-                      {edit.style?.animation && (
+                      </Button>}
+                      {editable && edit.style?.animation && (
                         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(makeCardsAgain(id, n))}>
                           Make cards again
                         </Button>

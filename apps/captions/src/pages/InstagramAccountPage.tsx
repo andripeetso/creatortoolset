@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Star,
 } from "lucide-react";
-import { canUse, useMe } from "@/lib/auth";
+import { canChange, canUse, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import {
   ACCOUNT_STEP_LABELS,
@@ -174,7 +174,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   useEffect(() => {
     if (autoSync.current || !account?.id || !account.mine || account.status === "processing") return;
     if (!accountCatalogReady(avail, true) || account.lastCatalogAt) return;
-    if (!me || (me.role !== "admin" && me.username !== account.owner)) return;
+    if (!me || (me.role !== "admin" && me.username !== account.owner) || !canChange(me, "instagram")) return;
     autoSync.current = true;
     void runAccountJobs(account.id, ["profile", "catalog"])
       .then((next) => {
@@ -188,7 +188,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   }, [account, avail, me]);
 
   if (!accountId) return null;
-  const owns = !!me && !!account && (me.role === "admin" || me.username === account.owner);
+  const owns = !!me && !!account && (me.role === "admin" || me.username === account.owner) && canChange(me, "instagram");
   const catalogReady = accountCatalogReady(avail, account?.mine);
   const allCatalog = sortCatalogItems(account?.catalog ?? [], sort);
   const publicCatalog = allCatalog.filter((r) => r.visibility === "public");
@@ -350,7 +350,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
       {!embedded && <AppBar tool="Content Analyzer" to={base} trail={account ? `@${account.username}` : undefined} account={!!me}>
         {me ? (
           <>
-            <QueueMenu base={base} onChange={load} />
+            <QueueMenu base={base} onChange={load} readOnly={!canChange(me, "instagram")} />
             {/* this account belongs to the project being left: the other project opens on its own list */}
             <ProjectSwitcher onSelect={() => navigate(base)} />
           </>
@@ -610,7 +610,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                         key={p.id}
                         post={p}
                         onOpen={() => openPost(p.id, posts.map((x) => x.id))}
-                        onMark={(patch) => void markPost(p.id, patch)}
+                        onMark={owns ? (patch) => void markPost(p.id, patch) : undefined}
                       />
                     ))}
                   </div>
@@ -826,7 +826,7 @@ function SavedPostRow({
 }: {
   post: InstagramPost;
   onOpen: () => void;
-  onMark: (patch: { ideaStatus?: IdeaStatus; rank?: number | null; savedFor?: SavedFor[] }) => void;
+  onMark?: (patch: { ideaStatus?: IdeaStatus; rank?: number | null; savedFor?: SavedFor[] }) => void;
 }) {
   const first = post.slides[0];
   return (
@@ -863,14 +863,14 @@ function SavedPostRow({
           </span>
         ) : null}
       </button>
-      <div className="flex shrink-0 flex-col gap-1">
+      {onMark && <div className="flex shrink-0 flex-col gap-1">
         <IdeaStatusSelect
           value={post.ideaStatus}
           onChange={(ideaStatus) => onMark({ ideaStatus })}
         />
         <SavedForToggle value={post.savedFor} onChange={(savedFor) => onMark({ savedFor })} />
         <RankStars value={post.rank} onChange={(rank) => onMark({ rank })} />
-      </div>
+      </div>}
     </div>
   );
 }

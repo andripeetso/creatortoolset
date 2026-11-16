@@ -19,7 +19,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { canUse, useAuth, useMe } from "@/lib/auth";
+import { canChange, canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import {
@@ -228,7 +228,8 @@ function libraryEmptyCopy(opts: {
 
 function PostView({
   post,
-  owns,
+  owns: ownsProp,
+  readOnly,
   stacks,
   accountHref,
   siblings,
@@ -241,6 +242,8 @@ function PostView({
 }: {
   post: InstagramPost;
   owns: boolean;
+  /** Shows the post only: no marks, runs, tags, refresh, retry or delete. */
+  readOnly?: boolean;
   /** A Workshop session uses it (it is filed under To make). */
   inSession?: boolean;
   stacks: InstagramStack[];
@@ -253,6 +256,7 @@ function PostView({
   onDeleted: () => void;
   onFilterTag?: (label: string) => void;
 }) {
+  const owns = ownsProp && !readOnly;
   const [index, setIndex] = useState(0);
   const [seek, setSeek] = useState<SeekRequest | null>(null);
   const [transcripts, setTranscripts] = useState<Record<number, TranscriptWord[]>>({});
@@ -598,19 +602,19 @@ function PostView({
                   <DropdownMenuItem onClick={() => void copy()}>Copy as Markdown</DropdownMenuItem>
                   {owns && !processing && (
                     <>
-                      <DropdownMenuItem disabled={busy !== null} onClick={() => void refresh()}>
+                      {owns && <DropdownMenuItem disabled={busy !== null} onClick={() => void refresh()}>
                         Refresh the numbers
-                      </DropdownMenuItem>
-                      <DropdownMenuItem disabled={busy !== null} onClick={() => setRunOpen(true)}>
+                      </DropdownMenuItem>}
+                      {owns && <DropdownMenuItem disabled={busy !== null} onClick={() => setRunOpen(true)}>
                         Read it again…
-                      </DropdownMenuItem>
-                      <DropdownMenuItem disabled={busy !== null} onClick={() => void retry(true)}>
+                      </DropdownMenuItem>}
+                      {owns && <DropdownMenuItem disabled={busy !== null} onClick={() => void retry(true)}>
                         Redo everything
-                      </DropdownMenuItem>
+                      </DropdownMenuItem>}
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-red-400" onClick={() => void remove()}>
+                      {owns && <DropdownMenuItem className="text-red-400" onClick={() => void remove()}>
                         Delete
-                      </DropdownMenuItem>
+                      </DropdownMenuItem>}
                     </>
                   )}
                 </DropdownMenuContent>
@@ -635,7 +639,7 @@ function PostView({
             </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          {owns && <div className="mt-3 flex flex-wrap items-center gap-2">
             <IdeaStatusSelect
               value={post.ideaStatus}
               inSession={inSession}
@@ -670,12 +674,13 @@ function PostView({
                 ))}
               </select>
             )}
-          </div>
+          </div>}
 
           {failed.length > 0 && post.status !== "error" && owns && !processing && (
             <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-400">
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
               Couldn't finish: {failed.map((g) => g.label.toLowerCase()).join(", ")}
+              {owns && 
               <button
                 type="button"
                 disabled={busy !== null}
@@ -683,7 +688,7 @@ function PostView({
                 className="underline underline-offset-2 hover:text-amber-300 disabled:opacity-50"
               >
                 Try again
-              </button>
+              </button>}
             </p>
           )}
           {lastDiff && (
@@ -892,6 +897,8 @@ export default function InstagramPage() {
   const me = useMe();
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "instagram");
+  // Read on this app: the page shows the posts and changes nothing (the server refuses those requests too)
+  const editable = canChange(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   // the saved lists show at once and refresh underneath (lib/local-cache); keys carry the project and the filters
   const { items: accounts, known: accountsKnown, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
@@ -1150,7 +1157,7 @@ export default function InstagramPage() {
   }, [postId, setCurrent, setPosts]);
 
   useEffect(() => {
-    if (!allowed || !avail?.ai) return;
+    if (!allowed || !editable || !avail?.ai) return;
     const inFlight = [...distillQueued.current].filter((id) => {
       const p = posts.find((x) => x.id === id);
       return Boolean(p && !p.idea);
@@ -1167,7 +1174,7 @@ export default function InstagramPage() {
           distillQueued.current.delete(p.id);
         });
     }
-  }, [allowed, avail?.ai, posts, applyPost]);
+  }, [allowed, editable, avail?.ai, posts, applyPost]);
 
   const refreshBoard = useCallback(() => {
     getIdeaBoard()
@@ -1446,6 +1453,7 @@ export default function InstagramPage() {
           <>
             <QueueMenu
               base={base}
+              readOnly={!editable}
               onChange={() => {
                 refreshList();
                 refreshAccounts();
@@ -1490,6 +1498,7 @@ export default function InstagramPage() {
             <PostView
               post={viewing}
               owns={ownsCurrent}
+            readOnly={!editable}
               inSession={workshopByPost.has(viewing.id)}
               stacks={stacks}
               accountHref={accountPathFor(base, viewing, accounts)}
@@ -1516,7 +1525,7 @@ export default function InstagramPage() {
           <>
             <div className={fresh ? "" : "flex flex-col gap-3 lg:flex-row lg:items-start"}>
               <div className="min-w-0 flex-1">
-                <IngestBox defaultValue={sharePrefill} nowDisabled={cantRead} onIngest={onIngest} />
+                {editable && <IngestBox defaultValue={sharePrefill} nowDisabled={cantRead} onIngest={onIngest} />}
               </div>
               {fresh ? null : (
                 <div className="flex min-w-0 gap-3">
@@ -1528,7 +1537,7 @@ export default function InstagramPage() {
                         <span className="text-xs text-zinc-500">{fmtCount(myAccount.counts.followers)} followers</span>
                       ) : null}
                     </Link>
-                  ) : hasPosts ? (
+                  ) : hasPosts && editable ? (
                     <AddMyAccount busy={addingMine} error={mineError} onAdd={addMine} className={cn(beside, "text-sm text-zinc-300")} />
                   ) : null}
                   {otherAccounts.length ? (
@@ -1771,7 +1780,7 @@ export default function InstagramPage() {
                         workshopByPost={workshopByPost}
                         making={makingIdea === idea.id}
                         onOpen={(id) => openPost(id)}
-                        onMake={() => void makeIdea(idea)}
+                        onMake={editable ? () => void makeIdea(idea) : undefined}
                       />
                     ))
                   )}
@@ -1841,8 +1850,8 @@ export default function InstagramPage() {
                                 })
                               }
                               onOpen={() => openPost(p.id)}
-                              onMark={(patch) => void markOne(p.id, patch)}
-                              onRetry={cantRead ? undefined : () => retryPost(p.id).then(applyPost)}
+                              onMark={editable ? (patch) => void markOne(p.id, patch) : undefined}
+                              onRetry={cantRead || !editable ? undefined : () => retryPost(p.id).then(applyPost)}
                             />
                           );
                         };
@@ -1924,7 +1933,7 @@ export default function InstagramPage() {
                     <option value="both">Both</option>
                     <option value="knowhow">{KNOWHOW.label}</option>
                   </select>
-                  {selected.size >= 2 && (
+                  {editable && selected.size >= 2 && (
                     <button
                       type="button"
                       onClick={() => setStackOpen(true)}
@@ -1951,28 +1960,28 @@ export default function InstagramPage() {
                       ))}
                     </select>
                   )}
-                  <button
+                  {editable && <button
                     type="button"
                     onClick={() => void unstackSelected()}
                     className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
                   >
                     Unstack
-                  </button>
-                  <button
+                  </button>}
+                  {editable && <button
                     type="button"
                     onClick={() => navigate(`/workshop?add=${[...selected].join(",")}`)}
                     className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
                     title="Open a Content Workshop project with these posts as sources"
                   >
                     Send to Workshop
-                  </button>
-                  <button
+                  </button>}
+                  {editable && <button
                     type="button"
                     onClick={() => setRunOpen(true)}
                     className="rounded-md bg-violet-600 px-2.5 py-1 font-semibold text-white hover:bg-violet-500"
                   >
                     Run {selected.size}
-                  </button>
+                  </button>}
                 </div>
               </div>
             )}

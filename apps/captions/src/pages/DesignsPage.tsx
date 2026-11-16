@@ -22,6 +22,7 @@ import { useToolFolders } from "@/lib/folders";
 import { useCachedLoad } from "@/lib/local-cache";
 import { onTopic } from "@/lib/sync";
 import { useWorkspace } from "@/lib/workspace";
+import { canChange, useMe } from "@/lib/auth";
 import { currentWorkspace } from "@/lib/current-workspace";
 import { AnimationStyles, STYLE_WORDS, type OpenAnimation } from "./editor/AnimationStyles";
 
@@ -58,6 +59,8 @@ const TILE = 1;
 
 export default function DesignsPage() {
   const navigate = useNavigate();
+  // Read (Settings → Team → Access): designs and styles open to look at; no new, move, rename, delete or drop-in
+  const editable = canChange(useMe(), "design");
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") === "styles" ? "styles" : "canvases";
   const styles = useCachedLoad<AnimationStylesView>("/api/designs/styles", () => listAnimationStyles("carousel"), { own: true });
@@ -162,7 +165,7 @@ export default function DesignsPage() {
     if (yes) await deleteDesign(d.id).then(load, (e) => setError(message(e)));
   };
   /** A design's own buttons: move it to a folder, rename it, delete it. `on`: the classes of one button. */
-  const actions = (d: DesignListed, on: string, danger: string) => (
+  const actions = (d: DesignListed, on: string, danger: string) => !editable ? null : (
     <>
       <MoveToMenu state={folders} id={d.id} className={on} />
       <button type="button" title="Rename" aria-label={`Rename ${d.name}`} className={on} onClick={() => void rename(d)}>
@@ -183,19 +186,19 @@ export default function DesignsPage() {
         if (!hasFiles(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
-        if (!dropping) setDropping(true);
+        if (editable && !dropping) setDropping(true);
       }}
       onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
       onDrop={(e) => {
         if (!hasFiles(e)) return;
         e.preventDefault();
         setDropping(false);
-        void fromPictures([...e.dataTransfer.files]);
+        if (editable) void fromPictures([...e.dataTransfer.files]);
       }}
     >
       <AppBar tool="Designer">
         {tab === "styles" ? (
-          !!styles.data?.styles.length && (
+          editable && !!styles.data?.styles.length && (
             <Button size="sm" onClick={() => setOpenStyle("new")}>
               <Plus className="h-4 w-4" />
               {STYLE_WORDS.carousel.new}
@@ -203,11 +206,11 @@ export default function DesignsPage() {
           )
         ) : (
           <>
-            {!!designs?.length && <NewFolderButton onClick={() => void folders.newFolder()} />}
-            <Button size="sm" onClick={() => void start()}>
+            {editable && !!designs?.length && <NewFolderButton onClick={() => void folders.newFolder()} />}
+            {editable && <Button size="sm" onClick={() => void start()}>
               <Plus className="h-4 w-4" />
               New canvas
-            </Button>
+            </Button>}
           </>
         )}
       </AppBar>
@@ -222,7 +225,7 @@ export default function DesignsPage() {
         {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
         {tab === "styles" ? (
           <>
-            {styles.data && <AnimationStyles kind="carousel" styles={styles.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styles.refresh} onChat={chat ? carouselChat : undefined} />}
+            {styles.data && <AnimationStyles kind="carousel" styles={styles.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styles.refresh} onChat={chat ? carouselChat : undefined} editable={editable} />}
             {!styles.data && styles.error && <p className="text-sm text-red-400">{styles.error}</p>}
           </>
         ) : designs?.length === 0 ? (

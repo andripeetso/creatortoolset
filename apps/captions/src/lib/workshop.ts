@@ -339,8 +339,8 @@ export const draftProjectNotes = (input: { name: string; text?: string; accountI
     });
 
 /**
- * Files kept as a project's own Knowledge, after it is saved: a dropped folder as one source (each file a section),
- * a loose file as its own. Filed already when Write it for me said what each is; else read in the background.
+ * Files kept as a project's own Knowledge, after it is saved: each file its own source, named by its path in the folder
+ * (one request per folder). Filed already when Write it for me said what each is; else read in the background, in turn.
  */
 export async function addProjectFiles(projectId: string, kept: Array<{ file: File; about?: string; kind?: string }>): Promise<void> {
   const groups = new Map<string, typeof kept>();

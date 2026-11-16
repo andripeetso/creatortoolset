@@ -39,15 +39,20 @@ export function previewSize(tl: Pick<Timeline, "width" | "height">): { w: number
  * The video filter for one speaker shot: the source fitted into the frame, scaled by its zoom, moved up by its tilt
  * (timeline px), cut to what shows and padded black to the preview's size, at the timeline's rate, then graded (if a grade is set).
  */
-export function shotFilter(tl: Timeline, item: Item, grade?: Cdl): string {
+export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number): string {
   const src = tl.sources[item.src]!;
   const { w: PW, h: PH, k } = previewSize(tl);
   const f = fitted(src, tl.width, tl.height);
   const z = item.zoom ?? 1;
   const sw = even(f.w * k * z);
   const sh = even(f.h * k * z);
-  const x = Math.round((PW - sw) / 2);
-  const y = Math.round((PH - sh) / 2 - (item.tilt ?? 0) * k);
+  // a planned shot's crop where its picture moves (item.focus), in the window it shows through: the frame, or a
+  // letterbox's band of height `band`
+  const wh = band ?? PH;
+  const fx = item.focus && sw > PW ? item.focus.x : 0.5;
+  const fy = item.focus && sh > wh ? item.focus.y : 0.5;
+  const x = Math.round(sw > PW ? -(sw - PW) * fx : (PW - sw) / 2);
+  const y = Math.round((sh > wh ? (PH - wh) / 2 - (sh - wh) * fy : (PH - sh) / 2) - (item.tilt ?? 0) * k);
   const cx = Math.max(0, -x);
   const cy = Math.max(0, -y);
   const cw = Math.min(sw - cx, PW - Math.max(0, x));

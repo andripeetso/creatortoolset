@@ -232,6 +232,7 @@ const toPublic = (u: SessionUser) => ({
   role: u.role,
   cloud: u.cloud || u.role === "admin",
   off: u.off,
+  read: u.read ?? [],
 });
 
 /** Login count for real accounts — lets the client spot a first login. */

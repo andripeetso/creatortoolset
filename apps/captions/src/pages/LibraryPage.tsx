@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { Quote, Search, Trash2, Upload } from "lucide-react";
+import { Music, Quote, Search, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { BrowseBar, NewFolderButton, TrashLink } from "@/components/browse/Bar";
@@ -40,6 +40,7 @@ import {
 import { useCachedLoad } from "@/lib/local-cache";
 import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { checkUpload } from "@/lib/library";
+import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
@@ -128,8 +129,10 @@ export default function LibraryPage() {
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
-  /** a workspace given to this person by its owner: to look at and download from, never change (the server refuses) */
-  const readOnly = !!library?.readOnly;
+  /** a workspace given to this person by its owner, or the Media Library on Read for them: to look at and download from,
+   *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
+  const me = useMe();
+  const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -536,7 +539,7 @@ export default function LibraryPage() {
   const fileAs = (ids: string[], r: Roll): Promise<void> => {
     if (!libId || readOnly) return Promise.resolve();
     const lib = libId;
-    const label = ROLL_LABEL[r];
+    const label = collections.find((c) => rollOfFolder(c) === r)?.name ?? ROLL_LABEL[r];
     const known = ids.map((id) => items.find((a) => a.id === id)).filter((a): a is AssetCard => !!a);
     const fit = known.length === ids.length ? known.filter(takesRoll) : null; // a card not on screen: the server decides
     if (fit && !fit.length) return (toast("Photos and finished videos have no A-roll or B-roll"), Promise.resolve());
@@ -605,8 +608,8 @@ export default function LibraryPage() {
   const folderProps = (c: Collection): FolderProps => ({
     name: c.name,
     to: folderTo(c.id),
-    icon: c.kind === "smart" ? Search : undefined,
-    meta: holdsClips(c) ? (c.count ?? 0) + collections.filter((x) => x.parentId === c.id).length : undefined,
+    icon: rollOfFolder(c) ? undefined : c.kind === "smart" ? Search : c.sounds?.length ? Music : undefined,
+    meta: holdsClips(c) ? (c.count ?? 0) + collections.filter((x) => x.parentId === c.id).length : rollOfFolder(c) ? c.count : undefined,
     drop:
       !readOnly && (holdsClips(c) || rollOfFolder(c))
         ? { type: DRAG, onItems: (ids) => void move(ids, c.id), label: rollOfFolder(c) ? `File as ${c.name}` : "Move into this folder" }
@@ -644,20 +647,23 @@ export default function LibraryPage() {
       ? []
       : [
           { id: "all", label: "All", active: !open && kind === "all" && !roll, onOpen: () => go(null), onItems: into && !readOnly ? (ids) => void move(ids, null) : undefined },
-          ...(["a", "b"] as const)
-            .filter((r) => rollFolderOf(r) || (counts.data?.[r] ?? 0) > 0)
-            .map((r): Tab => {
-              const f = rollFolderOf(r);
-              return {
-                id: r,
-                label: ROLL_LABEL[r],
-                count: counts.data?.[r],
-                active: viewRoll === r && (!open || !!smart),
-                onOpen: () => (f ? go(f.id) : go(null, "all", r)),
-                onItems: readOnly ? undefined : (ids) => void fileAs(ids, r),
-                menu: f && folderMenu(f),
-              };
-            }),
+          // the A-roll and B-roll folders, under the names they were given; a deleted one has no tab
+          ...(["a", "b"] as const).flatMap((r): Tab[] => {
+            const f = rollFolderOf(r);
+            return f
+              ? [
+                  {
+                    id: r,
+                    label: f.name,
+                    count: counts.data?.[r],
+                    active: viewRoll === r && (!open || !!smart),
+                    onOpen: () => go(f.id),
+                    onItems: readOnly ? undefined : (ids) => void fileAs(ids, r),
+                    menu: folderMenu(f),
+                  },
+                ]
+              : [];
+          }),
           ...((counts.data?.image ?? 0) > 0
             ? [{ id: "photos", label: "Photos", count: counts.data?.image, active: !open && kind === "image" && !roll, onOpen: () => go(null, "image") }]
             : []),
@@ -773,6 +779,7 @@ export default function LibraryPage() {
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
   const changing = !!library && !readOnly && !trash;
+  const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
 
   const sidebar = library && (
     <LibrarySidebar
@@ -796,7 +803,8 @@ export default function LibraryPage() {
   );
   // the trail back up, where the tabs don't already say it: the Trash, a folder inside another, a saved search
   const trail = trailOf(collections, open, trash);
-  const tabbed = tabs.some((t) => t.active);
+  // the tabs are the Gallery's way into folders; the folders and list views show the folders themselves
+  const tabbed = view === "gallery" && tabs.some((t) => t.active);
   const tile = (a: AssetCard) => (
     <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
       <AssetTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} ownShape={kind === "image"} />
@@ -804,7 +812,7 @@ export default function LibraryPage() {
   );
 
   return (
-    <div className="flex min-h-dvh flex-col" onContextMenu={noBrowserMenu} {...(readOnly ? {} : drop.props)}>
+    <div className="flex min-h-dvh flex-col" onContextMenu={noBrowserMenu} {...(mayAdd ? drop.props : {})}>
       {drop.dialog}
       {/* where you are and in which workspace; what the page does is on the page itself */}
       <AppBar tool="Media Library" trail={library?.name}>
@@ -908,26 +916,28 @@ export default function LibraryPage() {
                   <>
                     {!firstScreen && <TrashLink to="/library?trash=1" title="Trash" />}
                     {!smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
-                    <Button size="sm" className="h-8" onClick={chooseFiles}>
-                      <Upload className="h-4 w-4" />
-                      Upload
-                    </Button>
                   </>
+                )}
+                {mayAdd && (
+                  <Button size="sm" className="h-8" onClick={chooseFiles}>
+                    <Upload className="h-4 w-4" />
+                    Upload
+                  </Button>
                 )}
               </BrowseBar>
 
               <SpaceMenu
                 className="flex flex-1 flex-col gap-4"
                 items={
-                  changing && (
+                  mayAdd && (
                     <>
-                      {!smart && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
+                      {changing && !smart && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
                       <ContextMenuItem onSelect={chooseFiles}>Upload…</ContextMenuItem>
                     </>
                   )
                 }
               >
-                {tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} />}
+                {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} />}
 
                 <LibraryProgressBar libraryId={library.id} />
 
@@ -986,13 +996,13 @@ export default function LibraryPage() {
                   ) : kind === "image" ? (
                     // photos in their own proportions, folders above them
                     <div className="flex flex-col gap-3">
-                      {shownFolders.length > 0 && <FolderGrid size="small" columns={columns}>{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />)}</FolderGrid>}
+                      {shownFolders.length > 0 && <FolderGrid size="small" columns={columns}>{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />)}</FolderGrid>}
                       <PhotoMasonry assets={shown} tile={tile} />
                     </div>
                   ) : (
                     <FolderGrid size="small" columns={columns}>
                       {shownFolders.map((c) => (
-                        <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />
+                        <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />
                       ))}
                       {shown.map(tile)}
                     </FolderGrid>
@@ -1056,7 +1066,7 @@ export default function LibraryPage() {
       {sharing && libId && (
         <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
       )}
-      {drop.dropping && !readOnly && (
+      {drop.dropping && mayAdd && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center border-4 border-dashed border-violet-500/70 bg-violet-950/30">
           <p className="rounded-xl bg-zinc-950/90 px-5 py-3 text-base font-medium text-zinc-100">Drop to add to {into && openFolder ? openFolder.name : "the library"}</p>
         </div>

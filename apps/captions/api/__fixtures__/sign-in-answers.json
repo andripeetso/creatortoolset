@@ -59,6 +59,7 @@
         "role": "admin",
         "cloud": true,
         "off": [],
+        "read": [],
         "logins": 1,
         "picture": null
       }
@@ -78,6 +79,7 @@
         "role": "admin",
         "cloud": true,
         "off": [],
+        "read": [],
         "logins": 1,
         "picture": null
       },
@@ -145,6 +147,7 @@
         "role": "admin",
         "cloud": true,
         "off": [],
+        "read": [],
         "logins": 2,
         "picture": null
       }
@@ -201,6 +204,7 @@
         "role": "user",
         "cloud": true,
         "off": [],
+        "read": [],
         "logins": 1,
         "picture": null
       }
@@ -228,6 +232,7 @@
         "role": "user",
         "cloud": true,
         "off": [],
+        "read": [],
         "logins": 2,
         "picture": null
       }

@@ -24,8 +24,11 @@ export interface KnowledgeSource {
   /** Only this project reads it; missing = every project. */
   projectId?: string;
   chars: number;
-  status: "new" | "reading" | "read" | "failed";
+  /** queued: waits its turn (one read at a time per account), or for the AI's usage limit to reset (`waitUntil`) */
+  status: "new" | "queued" | "reading" | "read" | "failed";
   error?: string;
+  /** a usage limit stopped the reads: this one goes on by itself then */
+  waitUntil?: number;
   startedAt?: number;
   readAt?: number;
   /** What reading it cost, API-equivalent. */
@@ -51,3 +54,10 @@ export const SOURCE_KINDS: Array<{ id: SourceKind; label: string }> = [
   { id: "notes", label: "Notes" },
   { id: "other", label: "Other" },
 ];
+
+/**
+ * How much text one workspace's context files may hold: about 1M tokens (4 characters a token), the window of the
+ * current Claude models, so everything a workspace knows can still be read in one go. Each file is read once to
+ * file it; a turn carries only one line per file and reads the parts it needs.
+ */
+export const CONTEXT_CAPACITY_CHARS = 4_000_000;

@@ -25,9 +25,9 @@ export function ToolFolderCards({ state, pictureOf, aspect }: { state: ToolFolde
             .map((src) => ({ src }))}
           aspect={aspect}
           meta={<FolderMeta state={state} f={f} />}
-          drop={{ type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" }}
-          onRename={() => void state.rename(f)}
-          onDelete={() => void state.remove(f)}
+          drop={state.editable ? { type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" } : undefined}
+          onRename={state.editable ? () => void state.rename(f) : undefined}
+          onDelete={state.editable ? () => void state.remove(f) : undefined}
           menu={<ShareItems state={state} f={f} />}
         />
       ))}
@@ -45,9 +45,9 @@ export function ToolFolderRows({ state }: { state: ToolFoldersState }) {
           name={f.name}
           to={state.to(f.id)}
           meta={<FolderMeta state={state} f={f} />}
-          drop={{ type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" }}
-          onRename={() => void state.rename(f)}
-          onDelete={() => void state.remove(f)}
+          drop={state.editable ? { type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" } : undefined}
+          onRename={state.editable ? () => void state.rename(f) : undefined}
+          onDelete={state.editable ? () => void state.remove(f) : undefined}
           menu={<ShareItems state={state} f={f} />}
         />
       ))}
@@ -120,7 +120,7 @@ export function FolderTrail({ state, top }: { state: Pick<ToolFoldersState, "ope
 /** "Move to" on an item: the top level and every folder, each under its parent. Nothing when there is nowhere to go. */
 export function MoveToMenu({ state, id, className }: { state: ToolFoldersState; id: string; className?: string }) {
   const options = state.options(state.folderOf(id));
-  if (!options.length) return null;
+  if (!state.editable || !options.length) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

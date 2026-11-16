@@ -313,7 +313,7 @@ export function usePlayer(o: {
       const { look, events, path, width, height } = live.current;
       if (!c || !v || !look || !events || v.readyState < 2) return false;
       // the canvas: the output's shape, as large as the stage allows, in the screen's own pixels
-      const out = outputSize(look.shape, width || v.videoWidth, height || v.videoHeight, false);
+      const out = outputSize(look.shape, width || v.videoWidth, height || v.videoHeight, 1080);
       const k = Math.min(s.box.w / out.width, s.box.h / out.height);
       if (!(k > 0)) return false;
       const cssW = Math.max(1, Math.floor(out.width * k));

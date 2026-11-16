@@ -28,6 +28,7 @@ export function DocumentTabs({
   onKeep,
   onDelete,
   tools,
+  readOnly,
 }: {
   docs: WorkshopDocument[];
   activeId: string | null;
@@ -40,6 +41,8 @@ export function DocumentTabs({
   onKeep: (docId: string, input: { name?: string; versionId?: string; kept?: boolean }) => void;
   onDelete: (docId: string) => void;
   tools?: ReactNode;
+  /** Shows the documents, versions and their text: no new, delete, restore or keep. */
+  readOnly?: boolean;
 }) {
   const kinds = useDocKinds();
   const [menu, setMenu] = useState<"new" | "history" | "kind" | null>(null);
@@ -102,7 +105,7 @@ export function DocumentTabs({
                   <span className="max-w-[10rem] truncate">{docTabLabel(d)}</span>
                   {on && d.kind !== "notes" ? <ChevronDown className={`h-3 w-3 shrink-0 ${menu === "kind" ? "rotate-180" : ""}`} /> : null}
                 </button>
-                {d.kind !== "notes" && (
+                {d.kind !== "notes" && !readOnly && (
                   <ConfirmButton
                     label={<X className="h-3 w-3" />}
                     confirmLabel="Delete?"
@@ -135,7 +138,7 @@ export function DocumentTabs({
             ))}
           </span>
         ) : null}
-        <span className="relative shrink-0">
+        {!readOnly && <span className="relative shrink-0">
           <button
             type="button"
             onClick={() => setMenu((m) => (m === "new" ? null : "new"))}
@@ -165,7 +168,8 @@ export function DocumentTabs({
             </span>
           )}
         </span>
-        {undo ? (
+        }
+        {undo && !readOnly ? (
           <button type="button" onClick={undo.onUndo} disabled={busy} className={`${btn} shrink-0`} title={`Bring back “${undo.label}”`}>
             Undo
           </button>
@@ -183,7 +187,7 @@ export function DocumentTabs({
             </button>
             {menu === "history" && (
               <span className="absolute right-0 top-full z-30 mt-1 flex max-h-80 w-80 flex-col overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
-                <form
+                {!readOnly && <form
                   className="flex gap-1 border-b border-border px-1 pb-1.5 pt-0.5"
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -202,13 +206,13 @@ export function DocumentTabs({
                   <button type="submit" disabled={busy} className="shrink-0 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50">
                     Keep
                   </button>
-                </form>
+                </form>}
                 <span className="px-2 py-1 text-[10px] text-muted-foreground">{active.versions.length ? "Restore a version, or bookmark one to keep it" : "None yet — Keep saves the current text as a named snapshot."}</span>
                 {[...active.versions].reverse().map((v) => {
                   const current = v.id === active.headVersion;
                   return (
                     <span key={v.id} className={`flex items-stretch gap-0.5 rounded ${current ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60"}`}>
-                      <button
+                      {!readOnly && <button
                         type="button"
                         disabled={busy || current}
                         onClick={() => {
@@ -221,8 +225,8 @@ export function DocumentTabs({
                         <span className="shrink-0 font-mono text-muted-foreground">{v.id}</span>
                         <span className="min-w-0 flex-1 truncate">{v.label}</span>
                         {current ? <Check className="mt-0.5 h-3 w-3 shrink-0 text-emerald-400" /> : null}
-                      </button>
-                      <button
+                      </button>}
+                      {!readOnly && <button
                         type="button"
                         disabled={busy}
                         onClick={() => onKeep(active.id, { versionId: v.id, kept: !v.kept })}
@@ -230,7 +234,7 @@ export function DocumentTabs({
                         className={`shrink-0 rounded px-1.5 py-1 ${v.kept ? "text-amber-500 hover:text-amber-400" : "text-muted-foreground/50 hover:text-foreground"}`}
                       >
                         <Bookmark className={`h-3 w-3 ${v.kept ? "fill-current" : ""}`} />
-                      </button>
+                      </button>}
                     </span>
                   );
                 })}

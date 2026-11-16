@@ -12,25 +12,28 @@ export function RuleRow({
   busy,
   onSave,
   onDelete,
+  readOnly,
 }: {
   rule: WorkshopRule;
   busy: boolean;
   onSave: (fields: Partial<RuleFields>) => void;
   onDelete: () => void;
+  /** Shows the rule only: no switch, Edit or Delete. */
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(rule.name);
   const [text, setText] = useState(rule.text);
   return (
     <div className={`flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5 ${rule.on ? "" : "opacity-60"}`}>
-      <input
+      {readOnly ? null : <input
         type="checkbox"
         checked={rule.on}
         disabled={busy}
         onChange={(e) => onSave({ on: e.target.checked })}
         title={rule.on ? "On for every generation" : "Off unless switched on for a run"}
         className="mt-1 accent-violet-500"
-      />
+      />}
       {editing ? (
         <form
           className="flex min-w-0 flex-1 flex-col gap-2"
@@ -60,19 +63,21 @@ export function RuleRow({
           <p className="mt-0.5 text-[11px] leading-snug text-zinc-400">{rule.text}</p>
         </div>
       )}
-      {!editing && (
+      {!editing && !readOnly && (
         <button type="button" onClick={() => setEditing(true)} disabled={busy} className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
           <Pencil className="h-3 w-3" /> Edit
         </button>
       )}
-      <ConfirmButton
-        label="Delete"
-        confirmLabel="Click again"
-        disabled={busy}
-        onConfirm={onDelete}
-        className="rounded-md px-2 py-1.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-50"
-        armedClassName="!bg-red-500/10 !text-red-200"
-      />
+      {!readOnly && (
+        <ConfirmButton
+          label="Delete"
+          confirmLabel="Click again"
+          disabled={busy}
+          onConfirm={onDelete}
+          className="rounded-md px-2 py-1.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-50"
+          armedClassName="!bg-red-500/10 !text-red-200"
+        />
+      )}
     </div>
   );
 }

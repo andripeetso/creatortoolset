@@ -15,8 +15,11 @@ export interface AssetCard {
   versionId: string;
   versionN: number;
   durationS?: number;
+  /** as shown: with `turn` 90 or 270 they are the file's, swapped */
   width?: number;
   height?: number;
+  /** clockwise degrees the player turns the video to show it upright (the AI's or the person's; the file is never changed). Thumb and strip are upright already */
+  turn?: 90 | 180 | 270;
   thumbUrl?: string; // /api/library/media/<versionId>/thumb
   tags: string[]; // user and ai, with `aiTags` marking the AI ones
   aiTags: string[];
@@ -277,6 +280,8 @@ export interface LibrarySummary {
   settings: LibrarySettings;
   /** the team owner's, in a workspace given to this person (Settings → Team): to look at and download, never change */
   readOnly?: true;
+  /** read-only all the same, but it takes this person's uploads: the owner set their Media Library to Read & write */
+  canAdd?: true;
 }
 
 /**
@@ -334,9 +339,11 @@ export interface Collection {
   parentId: string | null;
   kind: "manual" | "smart";
   query?: SearchQuery; // smart only
-  count?: number; // manual only: items in it
-  /** manual only: up to four of its clips' pictures (thumb addresses), for its card */
+  count?: number; // a folder's items; an A-roll or B-roll folder's clips of that roll
+  /** up to four of its clips' pictures (thumb addresses), for its card: a folder's, or an A-roll or B-roll folder's */
   covers?: string[];
+  /** a folder with no pictures: up to three of the songs or sounds in it, for its card */
+  sounds?: string[];
   createdBy: string;
 }
 

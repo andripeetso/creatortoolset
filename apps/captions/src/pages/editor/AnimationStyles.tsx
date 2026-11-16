@@ -28,16 +28,17 @@ export const STYLE_WORDS = {
 
 export type OpenAnimation = AnimationStyle | "new" | null;
 
-export function AnimationStyles({ styles, open, onOpen, onChanged, onChat, kind = "animation" }: { styles: AnimationStyle[]; open: OpenAnimation; onOpen: (s: OpenAnimation) => void; onChanged: () => Promise<unknown>; onChat?: () => void; kind?: StyleKind }) {
+/** `editable` false (the app is set to Read): styles open to look at; no new one, no delete, nothing saved. */
+export function AnimationStyles({ styles, open, onOpen, onChanged, onChat, kind = "animation", editable = true }: { styles: AnimationStyle[]; open: OpenAnimation; onOpen: (s: OpenAnimation) => void; onChanged: () => Promise<unknown>; onChat?: () => void; kind?: StyleKind; editable?: boolean }) {
   return (
     <>
       {styles.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-16">
-          <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
+          {editable && <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
             <Plus className="h-4 w-4" />
             {STYLE_WORDS[kind].new}
-          </Button>
-          {onChat && (
+          </Button>}
+          {editable && onChat && (
             <Button size="sm" variant="ghost" className="text-zinc-500" onClick={() => onOpen("new")}>
               Use a form
             </Button>
@@ -63,16 +64,16 @@ export function AnimationStyles({ styles, open, onOpen, onChanged, onChat, kind 
                 )}
               </button>
               <div className="absolute right-2 top-2.5">
-                <RowMenu
+                {editable && <RowMenu
                   label={`More for ${s.name}`}
                   items={[{ label: "Delete", destructive: true, confirm: { title: `Delete “${s.name}”?` }, onSelect: () => deleteAnimationStyle(s.id, kind).then(onChanged) }]}
-                />
+                />}
               </div>
             </li>
           ))}
         </ul>
       )}
-      {open && <AnimationSheet key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} kind={kind} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
+      {open && <AnimationSheet editable={editable} key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} kind={kind} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
     </>
   );
 }
@@ -87,7 +88,7 @@ interface Waiting {
  * One style's sheet. Pictures dropped anywhere on it are added: on a saved style at once, on a new one when it is
  * saved. A picture added here is an inspiration; "Made & liked" fills from the 👍 on an edit's cards.
  */
-export function AnimationSheet({ style, onClose, onSaved, kind = "animation" }: { style: AnimationStyle | null; onClose: () => void; onSaved: (saved: AnimationStyle) => Promise<unknown>; kind?: StyleKind }) {
+export function AnimationSheet({ style, onClose, onSaved, kind = "animation", editable = true }: { style: AnimationStyle | null; onClose: () => void; onSaved: (saved: AnimationStyle) => Promise<unknown>; kind?: StyleKind; editable?: boolean }) {
   const words = STYLE_WORDS[kind];
   const [saved, setSaved] = useState(style);
   const [name, setName] = useState(style?.name ?? "");
@@ -180,23 +181,23 @@ export function AnimationSheet({ style, onClose, onSaved, kind = "animation" }: 
           <SheetTitle className="text-base">{style ? words.one : words.new}</SheetTitle>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="animation-name">Name</Label>
-            <Input id="animation-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={STYLE_NAME_MAX} autoFocus={!style} />
+            <Input id="animation-name" disabled={!editable} value={name} onChange={(e) => setName(e.target.value)} maxLength={STYLE_NAME_MAX} autoFocus={!style} />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="animation-brief">{words.describe}</Label>
-            <Textarea id="animation-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={words.brief} placeholder={words.example} />
+            <Textarea id="animation-brief" disabled={!editable} value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={words.brief} placeholder={words.example} />
           </div>
           {made.length > 0 && (
             <section aria-label="Made & liked" className="flex flex-col gap-2">
               <h3 className="text-sm font-medium">Made &amp; liked</h3>
-              <Pictures styleId={saved!.id} kind={kind} pictures={made} busy={busy} onTake={take} />
+              <Pictures styleId={saved!.id} kind={kind} pictures={made} busy={busy} onTake={editable ? take : undefined} />
             </section>
           )}
           <section aria-label="Inspirations" className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">Inspirations</h3>
             {(inspirations.length > 0 || waiting.length > 0) && (
               <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                <Pictures styleId={saved?.id ?? ""} kind={kind} pictures={inspirations} busy={busy} onTake={take} bare />
+                <Pictures styleId={saved?.id ?? ""} kind={kind} pictures={inspirations} busy={busy} onTake={editable ? take : undefined} bare />
                 {waiting.map((w) => (
                   <Tile key={w.url} src={w.url} label="Take this picture out" disabled={busy} onTake={() => setWaiting((all) => all.filter((x) => x !== w))} />
                 ))}
@@ -214,18 +215,18 @@ export function AnimationSheet({ style, onClose, onSaved, kind = "animation" }: 
                 e.target.value = "";
               }}
             />
-            <div className={cn("flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-3 py-3", over ? "border-violet-500" : "border-zinc-500/30")}>
+            {editable && <div className={cn("flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-3 py-3", over ? "border-violet-500" : "border-zinc-500/30")}>
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
                 <Plus className="h-3.5 w-3.5" />
                 Add pictures
               </Button>
-            </div>
+            </div>}
           </section>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <Button type="submit" disabled={busy || !name.trim()} className="self-start">
+          {editable && <Button type="submit" disabled={busy || !name.trim()} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Save
-          </Button>
+          </Button>}
         </form>
       </SheetContent>
     </Sheet>
@@ -233,19 +234,19 @@ export function AnimationSheet({ style, onClose, onSaved, kind = "animation" }: 
 }
 
 /** One picture with its ×. */
-function Tile({ src, label, disabled, onTake }: { src: string; label: string; disabled: boolean; onTake: () => void }) {
+function Tile({ src, label, disabled, onTake }: { src: string; label: string; disabled: boolean; onTake?: () => void }) {
   return (
     <li className="relative">
       <img src={src} alt="" className="aspect-square w-full rounded-lg bg-zinc-800 object-cover" />
-      <button type="button" aria-label={label} disabled={disabled} onClick={onTake} className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white hover:bg-black disabled:opacity-50">
+      {onTake && <button type="button" aria-label={label} disabled={disabled} onClick={onTake} className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white hover:bg-black disabled:opacity-50">
         <X className="h-3 w-3" />
-      </button>
+      </button>}
     </li>
   );
 }
 
 /** A style's saved pictures as tiles; `bare` leaves the list around them to the caller. */
-function Pictures({ styleId, kind, pictures, busy, onTake, bare }: { styleId: string; kind: StyleKind; pictures: StylePicture[]; busy: boolean; onTake: (p: StylePicture) => void; bare?: boolean }) {
-  const tiles = pictures.map((p) => <Tile key={p.id} src={stylePictureUrl(styleId, p.id, kind)} label="Take this picture out" disabled={busy} onTake={() => onTake(p)} />);
+function Pictures({ styleId, kind, pictures, busy, onTake, bare }: { styleId: string; kind: StyleKind; pictures: StylePicture[]; busy: boolean; onTake?: (p: StylePicture) => void; bare?: boolean }) {
+  const tiles = pictures.map((p) => <Tile key={p.id} src={stylePictureUrl(styleId, p.id, kind)} label="Take this picture out" disabled={busy} onTake={onTake && (() => onTake(p))} />);
   return bare ? <>{tiles}</> : <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">{tiles}</ul>;
 }

@@ -16,7 +16,7 @@ import { prepareFirst } from "../library/jobs";
 import { ffmpegSlot, writeJsonAtomic } from "../library/media/run";
 import { stretchesOf } from "../library/stretches";
 import { notifyWorkshopOwner } from "../review";
-import { clock, COLS, contactSheet, lookPrompt, median, parseLooked, readPicture, ROWS, RULE, shotsOf } from "../library/look";
+import { clock, COLS, contactSheet, CX, CY, HUD_MAX, hudOf, junkOf, looks, lookPrompt, median, parseLooked, readPicture, ROWS, RULE, shotsOf } from "../library/look";
 import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey, segmentsOf, wordsOf } from "../library/transcribe";
 import { Waiting } from "./analyze";
@@ -33,7 +33,70 @@ import { macAway } from "./script";
 // ── the picture ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Bump when the shots a source gets would change: a cached index of another version is read again. */
-const INDEX_V = 1;
+const INDEX_V = 2;
+/** A phone game's skill buttons sit over a moving world and never stay put: in a very wide picture (a 9:16 window
+ * under WIDE of its width, a phone's 2.2:1) a window at the outer EDGE of either side never fills either. */
+const WIDE = 0.3;
+const EDGE = 0.15;
+/** A crop window off-centre must hold this much more of what moves: a game keeps its hero in the middle */
+const CENTRE = 0.25;
+
+/** A shot is no shot: measured junk, or the AI saw "junk: …" on the contact sheet. */
+export const isJunk = (x: Pick<IndexShot, "junk" | "desc">) => !!x.junk || /^junk\b/i.test(x.desc ?? "");
+
+/** A window `r` of a line of cells wide over shares `e`: the place holding the most, a centred one favoured by CENTRE
+ * -> [place 0..1, share held, first and last edge as fractions]. */
+function place(e: number[], r: number): [number, number, number, number] {
+  if (r >= 0.98) return [0.5, 1, 0, 1];
+  const n = e.length;
+  const cum = [0];
+  for (const v of e) cum.push(cum[cum.length - 1]! + v);
+  const tot = cum[n]!;
+  const at = (u: number) => {
+    const x = Math.min(n, Math.max(0, u));
+    const i = Math.min(n - 1, Math.floor(x));
+    return cum[i]! + (cum[i + 1]! - cum[i]!) * (x - i);
+  };
+  const held = (x: number) => (tot > 0 ? (at((x * (1 - r) + r) * n) - at(x * (1 - r) * n)) / tot : r);
+  let best = 0;
+  let score = -Infinity;
+  for (let k = 0; k <= 40; k++) {
+    const x = k / 40;
+    const v = held(x) + CENTRE * (1 - 2 * Math.abs(x - 0.5));
+    if (v > score + 1e-12) [best, score] = [x, v];
+  }
+  return [Math.round(best * 1000) / 1000, held(best), best * (1 - r), best * (1 - r) + r];
+}
+
+/**
+ * Where a w:h crop window sits in a source's picture for its stretch a..b s, so it shows what moves there, never a HUD
+ * corner or empty floor: the shots' change across and down, weighted by how much of
+ * each the stretch covers, the HUD left out; then the window holding the most (`place`). One window a shot, no drift.
+ * `ok` is false when no window of that shape holds its share of what moves, it is more than HUD_MAX HUD, or it sits at
+ * the edge of a very wide picture (WIDE, EDGE): a fill becomes a blur (the whole picture over a blurred copy).
+ */
+export function focusOf(src: Pick<IndexSource, "w" | "h" | "shots" | "hud">, a: number, b: number, w: number, h: number): { x: number; y: number; ok: boolean } {
+  const cols = new Array<number>(CX).fill(0);
+  const rows = new Array<number>(CY).fill(0);
+  for (const x of src.shots) {
+    const k = Math.max(0, Math.min(b, x.b) - Math.max(a, x.a)) / Math.max(1e-6, x.b - x.a);
+    if (k <= 0 || !x.moves) continue;
+    x.moves.cols.forEach((v, i) => (cols[i] += k * v));
+    x.moves.rows.forEach((v, i) => (rows[i] += k * v));
+  }
+  const rx = Math.min(1, w / h / (src.w / src.h));
+  const ry = Math.min(1, src.w / src.h / (w / h));
+  const [x, hx, x0, x1] = place(cols, rx);
+  const [y, hy, y0, y1] = place(rows, ry);
+  const hud = src.hud ?? [];
+  let n = 0;
+  let on = 0;
+  const c0 = Math.floor(x0 * CX + 1e-6);
+  const r0 = Math.floor(y0 * CY + 1e-6);
+  for (let r = r0; r < Math.max(r0 + 1, Math.ceil(y1 * CY - 1e-6)); r++)
+    for (let c = c0; c < Math.max(c0 + 1, Math.ceil(x1 * CX - 1e-6)); c++) (n++, (on += hud[r * CX + c] ?? 0));
+  return { x, y, ok: on / Math.max(1, n) <= HUD_MAX && hx >= 0.85 * rx && hy >= 0.85 * ry && (rx >= WIDE || (x >= EDGE && x <= 1 - EDGE)) };
+}
 
 /**
  * One version's index as cached: everything but `speech`, which a transcript arriving later changes. `looked`: the AI
@@ -170,25 +233,85 @@ export async function indexSources(
     const size = { dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height };
     // the library's shot descriptions are its shots: the same stretches this file's picture gives (library/look.ts)
     const described = !!probe.vcodec && !probe.cover && lines.length > 0;
-    let src = described ? { id, title: row.title, ...size, shots: lines.map(lineShot) } : (await cached(id))?.src;
+    // its picture is still read once per version (cached): the lines say what happens, the read where it moves and
+    // what is junk
+    let src = (await cached(id))?.src;
     if (!src) {
       const picture = !!probe.vcodec && !probe.cover;
-      const shots = picture ? shotsOf(await readPicture(await readable(id, row.source_key), probe.fps, signal), probe.duration) : [];
-      src = { id, title: row.title, ...size, shots };
+      const read = picture ? await readPicture(await readable(id, row.source_key), probe.fps, signal) : null;
+      const shots = read ? shotsOf(read, probe.duration) : [];
+      src = { id, title: row.title, ...size, shots, ...(read ? { hud: hudOf(read) } : {}) };
       await keep(src);
     }
+    if (described) src = { ...src, ...size, shots: lines.map((l) => lineShot(l, src!.shots)) };
     sources.push({ ...src, title: row.title, speech });
   }
   return { sources, left };
 }
 
-/** One shot description as the plan reads a shot. */
-const lineShot = (s: Stretch): IndexShot => ({ a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}) });
+/** One shot description as the plan reads a shot, with what the picture measured at its middle (`measured`, the same
+ * finder's stretches): whether it is junk and where it moves, so its crop follows the action. */
+const lineShot = (s: Stretch, measured: IndexShot[] = []): IndexShot => {
+  const mid = (s.a + s.b) / 2;
+  const m = measured.find((x) => x.a <= mid && mid < x.b);
+  return { a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}), ...(m?.junk ? { junk: m.junk } : {}), ...(m?.moves ? { moves: m.moves } : {}) };
+};
 
 /** A source whose shots are the library's shot descriptions (each carries its action): the AI doesn't look at it again. */
 export const logged = (s: IndexSource): boolean => s.shots.length > 0 && s.shots.every((x) => x.action !== undefined);
 
-export { contactSheet, cutsOf, lookPrompt, parseLooked, readPicture, shotsOf, type Looked, type PictureRead } from "../library/look";
+export { contactSheet, cutsOf, hudOf, junkOf, looks, lookPrompt, parseLooked, readPicture, shotsOf, type Looked, type PictureRead } from "../library/look";
+
+/**
+ * The last look before a shot is used: its frame at `t` s as the shot shows it (a `shape` window at `focus`, else the
+ * whole picture), at the index's scale -> why it is no shot (`junkOf`, or "ui" when more than UI_BRIGHT of it is bright
+ * and colourless: an app window or a document; snow stays well under), "" when fine or unreadable.
+ */
+export async function frameJunk(file: string, t: number, size: { w: number; h: number }, shape: [number, number] | null, focus?: { x: number; y: number }, signal?: AbortSignal): Promise<string> {
+  const buf = await ffmpegSlot(
+    () =>
+      new Promise<Buffer>((resolve) => {
+        const p = spawn(
+          ffmpegCommand(),
+          ["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", Math.max(0, t).toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale='if(gte(iw,ih),256,-2)':'if(gte(iw,ih),-2,256)'", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+          { signal },
+        );
+        const parts: Buffer[] = [];
+        p.stdout.on("data", (d: Buffer) => parts.push(d));
+        p.on("error", () => resolve(Buffer.alloc(0)));
+        p.on("close", () => resolve(Buffer.concat(parts)));
+      }),
+  );
+  if (!buf.length) return "";
+  // the frame is 256 on its long side
+  const [W, H] = size.w >= size.h ? [256, buf.length / 3 / 256] : [buf.length / 3 / 256, 256];
+  if (!Number.isInteger(W) || !Number.isInteger(H)) return "";
+  let [x0, y0, cw, ch] = [0, 0, W, H];
+  if (shape) {
+    const r = shape[0] / shape[1] / (W / H);
+    [cw, ch] = r < 1 ? [Math.round(W * r), H] : [W, Math.round(H / r)];
+    [x0, y0] = [Math.round((W - cw) * (focus?.x ?? 0.5)), Math.round((H - ch) * (focus?.y ?? 0.5))];
+  }
+  const gw = Math.max(4, Math.floor(cw / 4));
+  const gh = Math.max(4, Math.floor(ch / 4));
+  const g = new Float32Array(gw * gh);
+  const ch2 = new Float32Array(gw * gh);
+  let bright = 0;
+  for (let y = 0; y < gh * 4 && y < ch; y++)
+    for (let x = 0; x < gw * 4 && x < cw; x++) {
+      const i = ((y0 + y) * W + x0 + x) * 3;
+      const [r, gr, b] = [buf[i]!, buf[i + 1]!, buf[i + 2]!];
+      const hi = Math.max(r, gr, b);
+      if (hi > 217 && (hi - Math.min(r, gr, b)) / hi < 31 / 255) bright++;
+      const j = Math.floor(y / 4) * gw + Math.floor(x / 4);
+      g[j] += (0.299 * r + 0.587 * gr + 0.114 * b) / 16;
+      ch2[j] += Math.hypot(-0.1687 * r - 0.3313 * gr + 0.5 * b, 0.5 * r - 0.4187 * gr - 0.0813 * b) / 16;
+    }
+  return junkOf(looks(g, gw, gh, ch2)) || (bright / (Math.min(ch, gh * 4) * Math.min(cw, gw * 4)) > UI_BRIGHT ? "ui" : "");
+}
+
+/** A window more than this share bright and colourless is an app window or a document, not a shot */
+const UI_BRIGHT = 0.2;
 
 // ── contact sheets and the person's AI ──────────────────────────────────────────────────────────────────────────
 

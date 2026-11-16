@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bundleFiles, inlineFiles, keptFiles, knowledgeFiles, knowledgeIndex, knowledgePath, parseDraft, parseReading } from "./sources";
+import { splitBundle, bundleFiles, inlineFiles, keptFiles, knowledgeFiles, knowledgeIndex, knowledgePath, parseDraft, parseReading } from "./sources";
 import { matchKnowledge } from "./prompt";
 
 describe("knowledge filing", () => {
@@ -14,7 +14,8 @@ describe("knowledge filing", () => {
     expect(matchKnowledge(files, "K1#2")).toBeUndefined();
     expect(matchKnowledge(files, "K1")?.text).toBe("one\ntwo\nthree");
     expect(knowledgePath("INDEX.md")).toBe("context/file-INDEX.md");
-    expect(knowledgePath("a/b.md")).toBe("context/a-b.md");
+    expect(knowledgePath("a/b.md")).toBe("context/a/b.md");
+    expect(knowledgePath("../a//.b.md")).toBe("context/a/b.md");
   });
 });
 
@@ -66,5 +67,17 @@ describe("a project's material (Write it for me, and the files it keeps)", () =>
     // b's unused share goes to a
     expect(out).toContain(`=== a ===\n${"x".repeat(3_997)}\n…[shortened]`);
     expect(inlineFiles([{ name: "a", text: "whole" }], 4_000)).toBe("=== a ===\nwhole");
+  });
+});
+
+describe("splitBundle", () => {
+  it("gives a folder kept as one source its files back", () => {
+    const { text } = bundleFiles([{ name: "kit/a.md", text: "# A\nalpha" }, { name: "kit/sub/b.md", text: "beta" }]);
+    expect(splitBundle("kit", text)).toEqual([
+      { path: "kit/a.md", text: "# A\nalpha", about: "" },
+      { path: "kit/sub/b.md", text: "beta", about: "" },
+    ]);
+    expect(splitBundle("kit", "# kit/a.md\n\nonly one")).toBeNull();
+    expect(splitBundle("other", text)).toBeNull();
   });
 });

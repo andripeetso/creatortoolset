@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { useSetup } from "@/lib/setup";
 import { webPlugins } from "@/plugins.gen";
-import { ToolsSection, addedLine, hasToolPage, skillPlacesOf } from "./ToolsSection";
+import { ToolsSection, canAddTo, skillPlacesOf } from "./ToolsSection";
 
 // Settings → Tools: a tool something can be added to opens its own page, which holds its Home switch, its plug-ins (an
 // AI Editor step with its switch for new edits on the Mac app's own server), its packs, its skills and the way to
@@ -51,27 +51,22 @@ async function render(sub?: string) {
 }
 
 describe("Settings → Tools", () => {
-  it("a tool has a page when packs reach it or a plug-in names it", () => {
-    for (const t of ["workshop", "instagram", "captions", "editor"] as const) expect(hasToolPage(t, null)).toBe(true);
-    expect(hasToolPage("enhance", null)).toBe(false);
-    expect(hasToolPage("enhance", { steps: [engine as never], canAdd: true })).toBe(true);
-    // the Screen Recorder has a page only in a Mac app that has its settings (one that reports `recorder`)
-    expect(hasToolPage("record", null)).toBe(false);
-    expect(hasToolPage("record", null, true)).toBe(true);
+  it("Community has something to add to a tool when packs reach it or a plug-in adds a step to it", () => {
+    for (const t of ["workshop", "instagram", "captions", "editor"] as const) expect(canAddTo(t, null)).toBe(true);
+    expect(canAddTo("enhance", null)).toBe(false);
+    expect(canAddTo("enhance", { steps: [engine as never], canAdd: true })).toBe(true);
+    expect(canAddTo("record", null)).toBe(false);
     expect(skillPlacesOf("editor")).toEqual(["editor.script"]);
     expect(skillPlacesOf("workshop")).toEqual(["workshop.write", "workshop.review"]);
     expect(skillPlacesOf("review")).toEqual([]);
   });
 
-  it("the list links each tool that has a page, and says what is added to it and on, by kind (a pack off everywhere is not)", async () => {
+  it("the list opens every tool's page, and says nothing about what is on it", async () => {
     await render();
     const links = [...host!.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.textContent]);
-    expect(links).toContainEqual(["/settings/tools/editor", expect.stringContaining("1 plug-in · 1 pack")]);
-    expect(links).toContainEqual(["/settings/tools/enhance", expect.stringContaining("1 plug-in")]);
-    expect(links.some(([h]) => h === "/settings/tools/review")).toBe(false);
+    for (const t of ["editor", "enhance", "review"]) expect(links).toContainEqual([`/settings/tools/${t}`, expect.any(String)]);
+    expect(host!.textContent).not.toMatch(/added|plug-in ·/);
     expect(host!.querySelectorAll("[role=switch]").length).toBeGreaterThan(4);
-    expect(addedLine({ plugins: 0, packs: 2, skills: 1 })).toBe("2 packs · 1 skill");
-    expect(addedLine({ plugins: 0, packs: 0, skills: 0 })).toBe("");
   });
 
   it("the AI Editor's page on the Mac app's own server: Home switch, its step with its switch, its pack, Get more", async () => {
@@ -84,13 +79,18 @@ describe("Settings → Tools", () => {
     expect(host!.querySelector('[aria-label="Blur faces in new edits"]')).not.toBeNull();
     expect(host!.querySelector('[aria-label="Show AI Editor on Home"]')).not.toBeNull();
     expect(host!.querySelector('a[href="/community/tool/editor"]')?.textContent).toBe("Get more for AI Editor");
+    // folded: the page is the Home switch and closed folds until one is opened
+    const fold = [...host!.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((b) => b.textContent === "Plug-ins, packs and skills")!;
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    act(() => fold.click());
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("a plug-in's section that names the tool is drawn on its page, under its title", async () => {
+  it("a plug-in's section that names the tool is drawn on its page, in a fold under its title", async () => {
     webPlugins.push({ id: "tiny-enhance", settings: [{ id: "tiny-picks", title: "Tiny picks", body: <p>Tiny picks body</p>, tool: "enhance" }] } as never);
     await render("enhance");
     expect(host!.textContent).toContain("Tiny picks body");
-    expect([...host!.querySelectorAll("h2")].map((h) => h.textContent)).toContain("Tiny picks");
+    expect([...host!.querySelectorAll("button[aria-expanded]")].map((b) => b.textContent)).toContain("Tiny picks");
     // the plug-in's row on its own page links nowhere: its settings are right here
     expect(host!.querySelector('a[href="/settings/tools/enhance"]')).toBeNull();
   });

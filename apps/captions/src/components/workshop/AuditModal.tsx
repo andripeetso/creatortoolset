@@ -39,12 +39,15 @@ export function AuditModal({
   busy,
   onClose,
   onProcess,
+  readOnly,
 }: {
   audit: AuditMeta & { result: AuditResult };
   doc?: WorkshopDocument;
   busy: boolean;
   onClose: () => void;
   onProcess: (claimIds: string[]) => Promise<void>;
+  /** Reads the audit only: no accepting or skipping, no applying. */
+  readOnly?: boolean;
 }) {
   const r = audit.result;
   const applied = useMemo(() => new Set(audit.applied ?? []), [audit.applied]);
@@ -123,7 +126,7 @@ export function AuditModal({
                 claim={c}
                 place={claimPlaceLabel(doc, c.where)}
                 applied={applied.has(c.id)}
-                canApply={canApply}
+                canApply={canApply && !readOnly}
                 decision={decisions[c.id]}
                 locked={locked}
                 onDecision={(d) => setDecisions((prev) => ({ ...prev, [c.id]: d }))}
@@ -154,7 +157,7 @@ export function AuditModal({
                   ? `${accepted.length} accepted${skipped ? ` · ${skipped} skipped` : ""}`
                   : `${pending.length} rewording${pending.length === 1 ? "" : "s"} for claims that would be false as posted. Accept the ones you want.`}
             </p>
-            <button
+            {!readOnly && <button
               type="button"
               disabled={locked || accepted.length === 0}
               onClick={() => void process()}
@@ -162,7 +165,7 @@ export function AuditModal({
             >
               {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Process{accepted.length ? ` ${accepted.length}` : ""}
-            </button>
+            </button>}
           </div>
         ) : null}
       </div>

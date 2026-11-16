@@ -95,7 +95,7 @@ export const clearLibrarySpace = (libraryId: string, what: "proxies" | "models")
 export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput) => send<LibraryStorage>(`/api/library/${libraryId}/storage`, "PUT", input);
 
 /** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
-export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; aiTags?: string[]; description?: string }) =>
+export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; aiTags?: string[]; description?: string; turn?: number }) =>
   send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "PATCH", patch);
 
 /** The person's own line for one shot of a clip (empty: the AI's shows again). */
