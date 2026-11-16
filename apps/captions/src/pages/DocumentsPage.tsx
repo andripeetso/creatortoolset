@@ -489,7 +489,7 @@ function ShareMenu({
 /** A document's text as the box holds it: without its title line. */
 const textOf = (body: string) => splitDocumentTitle(parseDocumentMarkdown(body)).rest;
 
-function Editor({
+export function Editor({
   doc,
   owns,
   onChange,
@@ -501,13 +501,14 @@ function Editor({
   onDeleted: () => void;
 }) {
   const isGuide = parseDocKind(doc.kind) === "guide";
-  const [name, setName] = useState(doc.name);
+  // the name box: what is typed in it until the server has it (so a change from elsewhere never takes its place, and
+  // a save that failed keeps it), else the guide's name
+  const [typedName, setName] = useState<string | null>(null);
+  const name = typedName ?? doc.name;
   const [body, setBody] = useState(() => textOf(doc.body));
   const [guide, setGuide] = useState<GuideDoc | null>(doc.guide ?? null);
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState("Saved");
-  // the last answer to a save of this page's own
-  const own = useRef<DocumentRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compose, setCompose] = useState(false);
@@ -521,9 +522,6 @@ function Editor({
   const signedIn = useMe();
   const editable = owns && canChange(signedIn, "guides");
 
-  useEffect(() => {
-    setName(doc.name);
-  }, [doc.id, doc.name]);
   // This guide's saves, one at a time and in order (guideSaves). The Editor is made anew for each guide (its key),
   // so a save and its answer belong to the guide they were typed in, also after another guide is on screen: the
   // answer goes to that guide's own saved copy (onChange is the one this guide was shown with).
@@ -538,23 +536,24 @@ function Editor({
         return patchDocument(doc.id, patch);
       },
       saved: (d: DocumentRecord) => {
-        own.current = d;
         tell.current(d);
+        setName((typed) => (typed === d.name ? null : typed));
       },
       failed: (e) => setError(e instanceof Error ? e.message : String(e)),
       changed: (counts) => setLabel(saveLabel(counts)),
+      show: (d: DocumentRecord) => {
+        setBody(textOf(d.body));
+        setGuide(d.guide ?? null);
+      },
     }),
   );
   // leaving the guide: what was typed goes now, not on a timer nobody is left to hold
   useEffect(() => () => void saves.flush(), [saves]);
 
-  useEffect(() => {
-    // the answer to a save that went out before the last thing typed: the box keeps what was typed, the next save carries it
-    const s = saves.counts;
-    if (own.current && doc.body === own.current.body && doc.guide === own.current.guide && s.saved < s.edits) return;
-    setBody(textOf(doc.body));
-    setGuide(doc.guide ?? null);
-  }, [doc.id, doc.body, doc.guide, saves]);
+  // each copy of the guide that comes in, a save's answer or a change from elsewhere: the boxes take it unless
+  // something typed here is not saved yet, or it is the answer to this page's own save while editing; that one is
+  // shown when editing ends (guideSaves.arrived)
+  useEffect(() => saves.arrived(doc, editing), [doc, saves, editing]);
 
   // Regenerate, from the menu or from Sources. What was typed is saved before it runs and nothing is sent while it
   // does; its text is then the box's, whatever was typed meanwhile (guideSaves.replace).
@@ -578,12 +577,11 @@ function Editor({
 
   const commitName = (raw: string) => {
     const next = raw.trim().slice(0, 120);
-    if (!next) {
-      setName(doc.name);
+    if (!next || next === doc.name) {
+      setName(null);
       return;
     }
     setName(next);
-    if (next === doc.name) return;
     if (isGuide) void saves.save({ name: next });
     else {
       // a document's name is its first line, so this save carries the text: it goes as the text, in place of what waited
@@ -732,7 +730,7 @@ function Editor({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") e.currentTarget.blur();
                   else if (e.key === "Escape") {
-                    setName(doc.name);
+                    setName(null);
                     e.currentTarget.blur();
                   }
                 }}

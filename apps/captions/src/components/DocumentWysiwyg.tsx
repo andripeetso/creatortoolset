@@ -25,10 +25,15 @@ export function DocumentWysiwyg({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const focused = useRef(false);
+  // the text the box holds: the one it was drawn from, or the one last typed in it
+  const held = useRef<string | null>(null);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el || focused.current) return;
+    // with the caret in the box, its own text coming back is left alone (drawing it again would move the caret);
+    // another text (a change from another tab or computer, Regenerate) is taken
+    if (!el || (focused.current && source === held.current)) return;
+    held.current = source;
     el.innerHTML = markdownToHtml(source) || "<p></p>";
     const rate = loadClipSpeed();
     for (const v of el.querySelectorAll("video")) {
@@ -58,7 +63,7 @@ export function DocumentWysiwyg({
 
   const emit = () => {
     if (!ref.current) return;
-    onChange(htmlToMarkdown(ref.current));
+    onChange((held.current = htmlToMarkdown(ref.current)));
   };
 
   return (

@@ -159,16 +159,27 @@ describe("a guide's saves (guideSaves)", () => {
 
   // a guide whose text is one string; the server answers a save when the test says so, with the text it was sent
   const guide = () => {
-    const sent: { text: string; answer: (ok?: boolean) => void }[] = [];
+    const sent: { text: string; answer: (ok?: boolean, stored?: string) => void }[] = [];
     const shown: string[] = [];
     const labels: string[] = [];
+    // the box, as the page keeps it: what is typed goes in at once, a copy that comes in goes through `arrived`
+    let box = "";
     const saves = guideSaves<string, string>({
-      send: (text) => new Promise((ok, no) => sent.push({ text, answer: (fine = true) => (fine ? ok(text) : no(new Error("offline"))) })),
-      saved: (text) => shown.push(text),
+      send: (text) => new Promise((ok, no) => sent.push({ text, answer: (fine = true, stored = text) => (fine ? ok(stored) : no(new Error("offline"))) })),
+      saved: (text) => {
+        shown.push(text);
+        saves.arrived(text, state.editing);
+      },
       failed: () => {},
       changed: (counts) => labels.push(saveLabel(counts)),
+      show: (text) => (box = text),
     });
-    return { saves, sent, shown, texts: () => sent.map((s) => s.text), label: () => labels.at(-1) };
+    const type = (text: string) => {
+      box = text;
+      saves.type(text);
+    };
+    const state = { editing: false };
+    return { saves, sent, shown, type, state, box: () => box, texts: () => sent.map((s) => s.text), label: () => labels.at(-1) };
   };
 
   it("sends one save at a time, and the text typed last is the text sent last", async () => {
@@ -248,6 +259,64 @@ describe("a guide's saves (guideSaves)", () => {
     await expect(regenerated).rejects.toThrow("no AI");
     await turn();
     expect(g.texts()).toEqual(["typed while it runs"]);
+  });
+
+  it("what is typed and not saved yet wins over a change from elsewhere; with nothing unsaved the change is shown", async () => {
+    const g = guide();
+    g.type("typed here");
+    // changed from another tab before the save goes out, and again while it is on its way
+    g.saves.arrived("from elsewhere");
+    expect(g.box()).toBe("typed here");
+    await turn(700);
+    g.saves.arrived("from elsewhere, again");
+    expect(g.box()).toBe("typed here");
+    // the save went out as planned, with what was typed; after its answer the box and the server agree
+    expect(g.texts()).toEqual(["typed here"]);
+    g.sent[0]!.answer();
+    await turn();
+    expect(g.box()).toBe("typed here");
+    expect(g.label()).toBe("Saved");
+    g.saves.arrived("from elsewhere, later");
+    expect(g.box()).toBe("from elsewhere, later");
+  });
+
+  it("a text whose save failed stays in the box when a change comes from elsewhere, until it is saved", async () => {
+    const g = guide();
+    g.type("typed here");
+    await turn(700);
+    g.sent[0]!.answer(false);
+    await turn();
+    g.saves.arrived("from elsewhere");
+    expect(g.box()).toBe("typed here");
+    void g.saves.flush();
+    await turn();
+    g.sent[1]!.answer();
+    await turn();
+    expect(g.texts()).toEqual(["typed here", "typed here"]);
+    expect(g.box()).toBe("typed here");
+  });
+
+  it("while editing, the answer to its own save is not put back in the box; a change from elsewhere is, and so is that answer when editing ends", async () => {
+    const g = guide();
+    g.state.editing = true;
+    g.type("hello ");
+    await turn(700);
+    // the server trims what it stores: put back in the box, the space just typed would be gone
+    g.sent[0]!.answer(true, "hello");
+    await turn();
+    expect(g.box()).toBe("hello ");
+    expect(g.label()).toBe("Saved");
+    g.saves.arrived("hello, from elsewhere", true);
+    expect(g.box()).toBe("hello, from elsewhere");
+    // Save ends the editing: the box takes the server's copy
+    g.type("hello again ");
+    void g.saves.flush();
+    await turn();
+    g.sent[1]!.answer(true, "hello again");
+    await turn();
+    expect(g.box()).toBe("hello again ");
+    g.saves.arrived("hello again", false);
+    expect(g.box()).toBe("hello again");
   });
 
   it("a save that is not the text (the name, sharing) waits its turn and marks no typed text as saved", async () => {
