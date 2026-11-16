@@ -11,10 +11,10 @@ import {
 } from "@/lib/instagram";
 
 const PRESETS: { id: RecipePreset; label: string; hint: string }[] = [
-  { id: "stats", label: "Stats", hint: "Caption, numbers, and the media itself" },
+  { id: "stats", label: "Stats", hint: "Post description, numbers and the media" },
   { id: "watch", label: "Watch", hint: "Stats plus transcript & on-screen text" },
   { id: "full", label: "Full", hint: "Watch plus comments, tags, and the idea" },
-  { id: "custom", label: "Custom", hint: "Your mix of jobs" },
+  { id: "custom", label: "Custom", hint: "Any mix" },
 ];
 
 function shortcutOf(jobs: JobType[]): RecipePreset {
@@ -103,7 +103,7 @@ export function RecipePicker({
         </div>
       )}
       {heavy && (
-        <p className="mt-2 text-[11px] text-amber-400/80">This recipe scrapes comments.</p>
+        <p className="mt-2 text-[11px] text-amber-400/80">Includes comments</p>
       )}
     </div>
   );

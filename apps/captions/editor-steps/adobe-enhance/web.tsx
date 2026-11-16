@@ -69,7 +69,7 @@ function AdobeSection() {
   return (
     <Card>
       <Row
-        title="Adobe account"
+        title="Account"
         status={problem ? <Status tone="broken">{problem}</Status> : status}
         control={control}
       />

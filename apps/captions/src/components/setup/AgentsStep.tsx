@@ -64,8 +64,8 @@ export function AgentsStepView({
   if (!showHere && !shownOthers.length)
     return hosted ? (
       <p className="text-sm text-muted-foreground">
-        No computer is connected yet. Download the{" "}
-        <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> on the computer you work on, and its AI shows up here.
+        No computers. Download the{" "}
+        <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> on the computer you work on to add its AI.
       </p>
     ) : (
       <p className="text-sm text-muted-foreground">No computer is picked. Go back and pick one to set up its AI.</p>

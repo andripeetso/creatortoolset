@@ -78,7 +78,7 @@ describe("captions on the person's computers, from the page", () => {
     seed();
     enqueueTranscription([ID]);
     await landed();
-    expect(useStudio.getState().transcribeNote).toEqual({ text: "Your computers did not answer: written in this browser" });
+    expect(useStudio.getState().transcribeNote).toEqual({ text: "Your computers could not be reached: written in this browser" });
   });
 
   it("a phone never downloads a model: it says why", async () => {

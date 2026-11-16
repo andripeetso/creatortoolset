@@ -38,6 +38,6 @@ export function parseLines(text: string): string[] {
   const o = jsonObject(text);
   const list = Array.isArray(o.options) ? o.options : [];
   const out = list.filter((x): x is string => typeof x === "string").map((x) => x.trim().replace(/^[«"“]|[»"”]$/g, "").trim()).filter(Boolean);
-  if (!out.length) throw new Error("No options came back");
+  if (!out.length) throw new Error("No options were written");
   return [...new Set(out)].slice(0, 3);
 }

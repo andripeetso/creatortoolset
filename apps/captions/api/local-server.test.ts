@@ -50,7 +50,7 @@ describe("one-time sign-in links", () => {
       ).then((r: Response) => r.json() as Promise<{ url: string | null }>);
     expect((await mint("http://studio.example.com/api/auth/link", { "x-forwarded-proto": "https" })).url).toBe("https://studio.example.com");
     expect((await mint(`http://${LAN}:3000/api/auth/link`)).url).toBe(`http://${LAN}:3000`);
-    vi.stubEnv("HOST", "127.0.0.1"); // the Mac app with Access from other devices off
+    vi.stubEnv("HOST", "127.0.0.1"); // the Mac app with Network access off
     expect((await mint("http://127.0.0.1:3000/api/auth/link")).url).toBeNull();
     vi.stubEnv("HOST", "0.0.0.0");
     expect((await mint("http://localhost:3000/api/auth/link")).url ?? "none").not.toMatch(/localhost|127\./);

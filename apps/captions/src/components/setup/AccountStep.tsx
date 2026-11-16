@@ -54,7 +54,7 @@ export const accountDone = (s: AccountState) => s.state === "signedIn" || s.stat
 export function AccountStepView({ account, busy, providers = [], onSignIn, onDone }: { account: AccountState; busy: boolean; providers?: Provider[]; onSignIn: (provider: Provider) => void; onDone?: () => void }) {
   return (
     <div className="max-w-xl space-y-4 text-sm text-muted-foreground">
-      {account.state === "checking" && <p>Checking your account…</p>}
+      {account.state === "checking" && <p>Checking account…</p>}
       {account.state === "signedIn" && (
         <p className="text-foreground">
           Signed in as {account.name || account.email}
@@ -62,17 +62,17 @@ export function AccountStepView({ account, busy, providers = [], onSignIn, onDon
         </p>
       )}
       {account.state === "notSetUp" && (
-        <p>Sign-in isn't set up on {account.server || "the account server"} yet, so you can go on without an account. This step will ask again once it is.</p>
+        <p>Sign-in is not set up on {account.server || "the account server"}.</p>
       )}
       {account.state === "unreachable" && (
-        <p>Can't reach {account.server || "the account server"} right now, so you can go on without an account. This step will ask again next time.</p>
+        <p>Could not reach {account.server || "the account server"}.</p>
       )}
       {account.state === "off" && <p>No account is needed here.</p>}
       {(account.state === "signedOut" || account.state === "cancelled" || account.state === "error") && (
         <>
-          <p className="text-foreground">Sign in to set up your Creator Toolset account.</p>
+          <p className="text-foreground">Sign in to set up a Creator Toolset account.</p>
           {account.state === "cancelled" && <p>The sign-in was closed before it finished.</p>}
-          {account.state === "error" && <p className="text-destructive">{account.message || "The sign-in didn't work."}</p>}
+          {account.state === "error" && <p className="text-destructive">{account.message || "Could not sign in."}</p>}
           <div className="flex flex-col gap-2 sm:w-72">
             {providers.map((p, i) => (
               <Button key={p} variant={i === 0 ? "default" : "outline"} disabled={busy} onClick={() => onSignIn(p)}>
@@ -139,7 +139,7 @@ export function useMacAccount({ on = true, first = "status" }: { on?: boolean; f
     try {
       const reply = await bridge()?.postMessage(m);
       if (reply?.state === "signedIn") setAccount(reply);
-      else if (reply && reply.state !== "cancelled") setProblem(("message" in reply && reply.message) || "That didn't go through. Try again.");
+      else if (reply && reply.state !== "cancelled") setProblem(("message" in reply && reply.message) || "Could not sign in");
     } catch (e) {
       setProblem(e instanceof Error ? e.message : String(e));
     }
@@ -183,17 +183,17 @@ export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<Ma
   const signedIn = account.state === "signedIn";
   const who = signedIn ? account.name || account.email || "" : "";
   const failed =
-    account.state === "error" ? account.message || "The sign-in didn't work. Try again."
-    : account.state === "notSetUp" ? "Sign-in is not available right now."
-    : account.state === "unreachable" ? "Couldn't reach the account server. Check the internet connection, then try again."
+    account.state === "error" ? account.message || "Could not sign in"
+    : account.state === "notSetUp" ? "Sign-in not available"
+    : account.state === "unreachable" ? "Could not reach the account server: check the internet connection"
     : null;
   return (
     <div className="flex h-full items-center justify-center">
       <section aria-label="Sign in" className="w-full max-w-[400px] overflow-hidden rounded-2xl border border-border bg-card shadow-lg shadow-black/10">
         <div className="space-y-6 p-8">
           <div className="space-y-1">
-            <h3 className="text-xl font-semibold tracking-tight text-foreground">{signedIn ? "You're signed in" : "Sign in to Creator Toolset"}</h3>
-            {!signedIn && <p className="text-sm text-muted-foreground">Optional. One account for this app and creatortoolset.com.</p>}
+            <h3 className="text-xl font-semibold tracking-tight text-foreground">{signedIn ? "Signed in" : "Sign in to Creator Toolset"}</h3>
+            {!signedIn && <p className="text-sm text-muted-foreground">An optional account for this app and creatortoolset.com.</p>}
           </div>
           {signedIn ? (
             <div className="flex items-center gap-3">
@@ -208,7 +208,7 @@ export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<Ma
             </div>
           ) : providers.length === 0 ? (
             // opened with nothing to offer (an old link to this screen): said in one line, and Done closes it
-            <p className="text-sm text-muted-foreground">Sign-in is not available right now.</p>
+            <p className="text-sm text-muted-foreground">Sign-in is not available.</p>
           ) : (
             <div className="flex flex-col gap-2">
               {providers.map((p) => (

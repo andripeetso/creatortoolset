@@ -9,9 +9,12 @@ import { MEMORY_CAP, MEMORY_QUOTE_MAX, MEMORY_RULE_MAX, MEMORY_QUOTE_MIN, even, 
 /**
  * What the assistant keeps from one chat to the next: one file per account, $DATA_DIR/memory/<user>.json (0600).
  *
- * ONLY THE ASSISTANT'S DOCK READS THIS. memoryBlock() is for api/assistant.ts's turn and nothing else: never the
- * Workshop's writer, the AI Editor, captions, a scheduled run or any other job (memory.test.ts checks who imports
- * this file). Those jobs' prompts are not this feature's to change.
+ * NO JOB'S PROMPT READS THIS BUT THE ASSISTANT'S DOCK. memoryBlock() is for api/assistant.ts's turn and nothing else:
+ * never the Workshop's writer, the AI Editor, captions, a scheduled run or any other job (memory.test.ts checks who
+ * imports this file). Those jobs' prompts are not this feature's to change. One other reader, on the person's own
+ * press: Write it for me on a workspace's form (memoryFor, api/workshop.ts) writes the kept lines into a draft of the
+ * instructions, which the person sees before saving. That is how a kept line reaches the other jobs: as part of
+ * instructions the person chose to save.
  *
  * A fact gets in one way, keep(): its quote must stand in something the person typed themselves in that chat. What
  * is kept is the rule the assistant writes from it (one plain sentence: what the prompt and Settings show), with
@@ -188,6 +191,12 @@ export async function listMemory(user: SessionUser, scope?: "here" | "all"): Pro
     .filter((f) => !f.project || (scope === "here" ? f.project === ws?.currentProjectId : !inWs || inWs(f.project)))
     .map(({ id, text, said, at, project }) => ({ id, text, ...(said ? { said } : {}), at, ...(project ? { project: named(project) } : {}) }))
     .reverse();
+}
+
+/** What Write it for me on a workspace's form reads: the lines kept for that workspace, and the ones about the person. */
+export function memoryFor(username: string, projectId: string): Record<"here" | "mine", Array<Pick<Kept, "text" | "said">>> {
+  const { facts } = read(username);
+  return { here: facts.filter((f) => f.project === projectId), mine: facts.filter((f) => !f.project) };
 }
 
 /** The project the app is in for this account, or none. */

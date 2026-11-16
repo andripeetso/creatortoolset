@@ -9,7 +9,7 @@ export const isPickClick = (e: { shiftKey: boolean; metaKey: boolean; ctrlKey: b
 
 /** The one way a folder is named, everywhere: New folder asks for a name; null when it was left empty. */
 export async function askFolderName(title = "New folder"): Promise<string | null> {
-  return (await promptDialog({ title, ok: "Make folder" }))?.trim() || null;
+  return (await promptDialog({ title, ok: "Create" }))?.trim() || null;
 }
 
 /** Rename…: the new name, or null when it was left empty or not changed. */

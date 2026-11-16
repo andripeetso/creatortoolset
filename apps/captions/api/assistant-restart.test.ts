@@ -203,7 +203,7 @@ describe("a restart of the server while the Mac writes a reply", () => {
     await tick(); // sent, waiting for its Mac: nothing runs anywhere yet
 
     const after = await boot();
-    expect(await cy(after).reply()).toMatchObject({ status: "error", text: "The server restarted while this was being written. Send your message again." });
+    expect(await cy(after).reply()).toMatchObject({ status: "error", text: "The server restarted during the reply. Send the message again." });
   });
 
   it("an answer whose caller can't take it up again is dropped: the Mac is told to stop", async () => {

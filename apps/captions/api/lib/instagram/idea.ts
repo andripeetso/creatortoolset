@@ -41,10 +41,10 @@ export function parseIdeaPayload(text: string, existingTitles: string[] = []): P
   const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = stripped.indexOf("{");
   const end = stripped.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("no JSON in the answer");
+  if (start < 0 || end <= start) throw new Error("The AI’s answer could not be read");
   const obj = JSON.parse(stripped.slice(start, end + 1)) as { title?: unknown; folder?: unknown; takeaway?: unknown };
   const idea = coercePostIdea(obj, existingTitles);
-  if (!idea) throw new Error("the model returned no usable idea");
+  if (!idea) throw new Error("The AI’s answer had no idea");
   return idea;
 }
 

@@ -59,7 +59,7 @@ export function JoinPage({ token }: { token: string }) {
         {info?.expired && <p className="text-sm text-zinc-400">This invite link has expired. Ask {info.invitedBy} for a new one.</p>}
         {info && !info.expired && info.member && (
           <a href="/" className={`${button} text-center`}>
-            You're already in it: open Creator Toolset
+            Already a member: open Creator Toolset
           </a>
         )}
         {info && !info.expired && !info.member && info.signedInAs && (
@@ -67,15 +67,15 @@ export function JoinPage({ token }: { token: string }) {
             <button className={button} disabled={busy} onClick={() => void join()}>
               Join as {info.signedInAs}
             </button>
-            <p className="text-xs text-zinc-500">Not you? Sign out first, then open the link again.</p>
+            <p className="text-xs text-zinc-500">To join with another account, sign out and open the link again.</p>
           </>
         )}
         {info && !info.expired && !info.member && !info.signedInAs && (
           <form onSubmit={join} className="flex flex-col gap-2">
-            <p className="text-xs text-zinc-500">Make your account: your name, a username and a password (10 characters or more).</p>
+            <p className="text-xs text-zinc-500">The password needs 10 characters or more.</p>
             <div className={field}>
               <UserRound className="h-4 w-4 shrink-0 text-zinc-500" />
-              <input autoFocus autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" aria-label="Your name" className={input} />
+              <input autoFocus autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" className={input} />
             </div>
             <div className={field}>
               <AtSign className="h-4 w-4 shrink-0 text-zinc-500" />
@@ -89,20 +89,20 @@ export function JoinPage({ token }: { token: string }) {
               {busy ? "Joining…" : "Create account and join"}
             </button>
             <a href={`/?next=${encodeURIComponent(`/join/${token}`)}`} className="text-center text-xs text-zinc-500 hover:text-zinc-300">
-              I already have an account: sign in first
+              Sign in with an existing account
             </a>
           </form>
         )}
         {error && <p className="text-xs text-red-400">{error}</p>}
         {info && !info.expired && !info.member && !inMacApp && (
           <p className="mt-2 text-center text-xs text-zinc-500">
-            Use the Mac app?{" "}
+            Mac app:{" "}
             <a href={`creatortoolset://join?link=${encodeURIComponent(window.location.href)}`} className="text-zinc-300 hover:text-white">
               Open in the app
             </a>
             {" · "}
             <a href={DOWNLOAD_URL} className="text-zinc-300 hover:text-white">
-              Get it
+              Download
             </a>
           </p>
         )}

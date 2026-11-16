@@ -13,9 +13,9 @@ import {
   Square,
   Trash2,
   Video,
-  Wand2,
   Circle,
 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { canChange, useAuth, useMe } from "@/lib/auth";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
@@ -78,10 +78,10 @@ function fmtMmSs(t: number): string {
 }
 
 const PROCESS_STEPS = [
-  { id: "thumbnail", label: "Grabbing a thumbnail" },
+  { id: "thumbnail", label: "Making the thumbnail" },
   { id: "audio", label: "Extracting audio" },
   { id: "transcribe", label: "Transcribing speech" },
-  { id: "title", label: "Titling and summarizing" },
+  { id: "title", label: "Writing the title and summary" },
 ] as const;
 
 type ProcessStep = (typeof PROCESS_STEPS)[number]["id"];
@@ -99,7 +99,7 @@ function ProcessPanel({ session }: { session: ClipSession }) {
       <div className="mb-4 flex items-center justify-between gap-3">
         <p className="flex items-center gap-2 text-sm font-medium text-foreground">
           <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
-          Processing this clip
+          Processing
         </p>
         <span className="text-sm tabular-nums text-muted-foreground">{pct}%</span>
       </div>
@@ -352,7 +352,7 @@ function ClipView({
                 }
               }}
               maxLength={120}
-              aria-label="Clip name"
+              aria-label="Recording name"
               className="w-full rounded-md border border-violet-500 bg-background px-1.5 py-0.5 text-sm text-foreground outline-none"
             />
           ) : (
@@ -405,7 +405,7 @@ function ClipView({
             {editable && (
               <button
                 onClick={remove}
-                title="Delete this clip"
+                title="Delete recording"
                 className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-red-400"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -495,7 +495,7 @@ function ClipView({
                 disabled={retrying}
                 className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-accent disabled:opacity-50"
               >
-                <RotateCcw className="h-3 w-3" /> Try again
+                <RotateCcw className="h-3 w-3" /> Retry
               </button>
             )}
           </div>
@@ -529,7 +529,7 @@ function ClipView({
                   {cleanBusy ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <Wand2 className="h-3 w-3" />
+                    <CtMark className="h-3 w-3" />
                   )}
                   {cleaned ? "Restore original" : "Clean up"}
                 </button>
@@ -703,8 +703,8 @@ export default function ClipsPage() {
       <MobileClipSplash
         message={
           opening
-            ? "Opening clip…"
-            : pageError || "This clip could not be opened."
+            ? "Opening…"
+            : pageError || "Could not open the recording"
         }
       />
     );
@@ -736,7 +736,7 @@ export default function ClipsPage() {
       {phone && !clipId ? (
         <div className="mb-5 w-[720px] max-w-[92%]">
           <DesktopHint>
-            Full Video Notes is on your desktop. You can still watch recordings here.
+            On a phone, recordings can only be watched.
           </DesktopHint>
         </div>
       ) : null}
@@ -755,7 +755,7 @@ export default function ClipsPage() {
         ) : null}
         {opening ? (
           // the clip's final frame, empty: the player's own size, so the page doesn't move when it arrives
-          <div aria-busy="true" aria-label="Opening clip" className="w-full">
+          <div aria-busy="true" aria-label="Opening recording" className="w-full">
             <div className="aspect-video w-full rounded-xl bg-muted" />
             <div className="mt-4 h-5 w-1/3 rounded bg-muted" />
           </div>
@@ -865,7 +865,7 @@ export default function ClipsPage() {
                       : "Saving…"}
                   </>
                 ) : (
-                  "Save clip"
+                  "Save recording"
                 )}
               </button>
             </div>
@@ -900,7 +900,7 @@ export default function ClipsPage() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     {uploadPct < 100
                       ? `Uploading… ${uploadPct}%`
-                      : "Saving clip…"}
+                      : "Saving…"}
                   </p>
                   <div className="h-2 overflow-hidden rounded-full bg-zinc-800">
                     <div
@@ -932,7 +932,7 @@ export default function ClipsPage() {
                 onClick={openRecorder}
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-800 py-3 text-sm text-zinc-200 hover:bg-zinc-900"
               >
-                <Circle className="h-3.5 w-3.5 fill-red-500 text-red-500" /> Record your screen
+                <Circle className="h-3.5 w-3.5 fill-red-500 text-red-500" /> Record screen
               </button>
             )}
             {rec.error && (
@@ -947,21 +947,21 @@ export default function ClipsPage() {
                 {folders.open ? (
                   // inside a folder: the way back up, and sharing the whole folder
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2 [&>nav]:mb-0">
-                    <FolderTrail state={folders} top="Your clips" />
+                    <FolderTrail state={folders} top="Recordings" />
                     {editable && <FolderShareButton state={folders} />}
                   </div>
                 ) : (
-                  <h2 className={label}>Your clips</h2>
+                  <h2 className={label}>Recordings</h2>
                 )}
                 <BrowseBar
-                  search={{ value: find, onChange: setFind, placeholder: "Search clips (⌘K)" }}
+                  search={{ value: find, onChange: setFind, placeholder: "Search recordings (⌘K)" }}
                   sort={{
                     value: sort,
                     onChange: (v) => {
                       setSort(v);
                       persistSort(NOTES_SORT_KEY, v);
                     },
-                    label: "Sort clips",
+                    label: "Sort recordings",
                     options: [
                       { id: "recent", label: "Recent" },
                       { id: "name", label: "Name" },
@@ -969,9 +969,9 @@ export default function ClipsPage() {
                   }}
                   view={{ value: view, onChange: setView }}
                 />
-                {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+                {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches</p>}
                 {!find.trim() && folders.open && listed.length === 0 && folders.folders.length === 0 && (
-                  <p className="rounded-lg border border-dashed border-zinc-800 py-10 text-center text-sm text-zinc-500">Empty folder. A video you upload or record here goes in it, or use Move to on a clip.</p>
+                  <p className="rounded-lg border border-dashed border-zinc-800 py-10 text-center text-sm text-zinc-500">No recordings</p>
                 )}
                 {view === "grid" ? (
                   <FolderGrid ref={clipsBox} size="column">
@@ -997,7 +997,7 @@ export default function ClipsPage() {
                           editable ? (
                             <>
                               <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />
-                              <button type="button" title="Rename" aria-label={`Rename ${s.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename clip", s.name).then((name) => name && renameTo(s, name))}>
+                              <button type="button" title="Rename" aria-label={`Rename ${s.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename recording", s.name).then((name) => name && renameTo(s, name))}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
                               <button type="button" title="Delete" aria-label={`Delete ${s.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void removeClip(s)}>

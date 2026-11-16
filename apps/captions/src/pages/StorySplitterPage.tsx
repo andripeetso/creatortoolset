@@ -109,7 +109,7 @@ export default function StorySplitterPage() {
       if (split) {
         // not the video it was made on: a new split
         setSaved(null);
-        setError(`That's not this split's video (${a.duration.toFixed(1)} s, it was ${split.duration.toFixed(1)} s), so it's split afresh.`);
+        setError(`Not the video of this split (${a.duration.toFixed(1)} s, the split's was ${split.duration.toFixed(1)} s), so it was split again`);
       }
       setCuts(plan(a, targetRef.current, []));
     } catch (e) {
@@ -127,7 +127,7 @@ export default function StorySplitterPage() {
     if (!clip) return;
     let stop = false;
     void (async () => {
-      const label = "Loading from the library";
+      const label = "Loading from the Media Library";
       setBusy({ label, p: 0 });
       try {
         const split = splitId
@@ -135,7 +135,7 @@ export default function StorySplitterPage() {
           : undefined;
         const res = await fetch(`/api/library/media/${encodeURIComponent(clip)}/source`);
         if (!res.ok || !res.body)
-          throw new Error((await res.json().catch(() => null))?.error || `Couldn't load it from the library (${res.status})`);
+          throw new Error((await res.json().catch(() => null))?.error || "Could not load the video from the Media Library");
         const total = Number(res.headers.get("content-length")) || 0;
         const reader = res.body.getReader();
         const parts: BlobPart[] = [];
@@ -297,7 +297,7 @@ export default function StorySplitterPage() {
   const remove = async (s: Split) => {
     const res = await fetch(`/api/stories/${s.id}`, { method: "DELETE" }).catch(() => null);
     if (res?.ok) setSplits((ss) => ss.filter((x) => x.id !== s.id));
-    else setError("Couldn't delete that split");
+    else setError("Could not delete the split");
   };
 
   const pick = (files: FileList | null) => {
@@ -348,8 +348,7 @@ export default function StorySplitterPage() {
                     <p className="text-base text-zinc-300">
                       Drop <span className="font-medium text-zinc-50">{waiting.name}</span> again to open its split.
                     </p>
-                    <p className="text-sm text-zinc-500">Only the cuts were kept, the video stays on your computer.</p>
-                    {filePicker("Choose it", "flex cursor-pointer items-center gap-2 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500")}
+                    {filePicker("Choose video", "flex cursor-pointer items-center gap-2 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500")}
                     <button type="button" className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => setWaiting(null)}>
                       Cancel
                     </button>
@@ -357,18 +356,15 @@ export default function StorySplitterPage() {
                 ) : (
                   <>
                     <UploadCloud className="h-10 w-10 text-zinc-500" />
-                    <p className="text-base font-semibold">Drop a video to split it into stories of about 20 seconds.</p>
-                    <p className="text-sm text-zinc-500">
-                      It cuts on the edit's own cuts, in pauses and on the beat. Nothing is uploaded.
-                    </p>
-                    {filePicker("Choose a video", "flex cursor-pointer items-center gap-2 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500")}
+                    <p className="text-base font-semibold">Drop a video</p>
+                    {filePicker("Choose video", "flex cursor-pointer items-center gap-2 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500")}
                   </>
                 )}
               </div>
               {lists && !waiting && splits.length > 0 && (
                 <section className="w-full max-w-lg">
-                  <h2 className="mb-1.5 px-2.5 text-sm font-medium text-zinc-400">Previous splits</h2>
-                  <FolderTrail state={folders} top="Previous splits" />
+                  <h2 className="mb-1.5 px-2.5 text-sm font-medium text-zinc-400">Splits</h2>
+                  <FolderTrail state={folders} top="Splits" />
                   <BrowseBar
                     search={{ value: find, onChange: setFind, placeholder: "Search splits (⌘K)" }}
                     sort={{
@@ -385,7 +381,7 @@ export default function StorySplitterPage() {
                     }}
                     view={{ value: view, onChange: setView }}
                   />
-                  {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-8 text-center text-sm text-zinc-500">No matches.</p>}
+                  {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-8 text-center text-sm text-zinc-500">No matches</p>}
                   {view === "grid" ? (
                     <FolderGrid size="column">
                       <ToolFolderCards state={folders} pictureOf={splitPicture} />
@@ -393,7 +389,7 @@ export default function StorySplitterPage() {
                         <ItemCard
                           key={s.id}
                           onClick={() => reopen(s)}
-                          title={s.clip ? "Open it again from the library" : "Drop the video again to open it"}
+                          title={s.clip ? "Open from the Media Library" : "Drop the video again to open it"}
                           picture={s.clip ? `/api/library/media/${encodeURIComponent(s.clip)}/thumb` : undefined}
                           icon={Scissors}
                           name={s.name}
@@ -403,7 +399,7 @@ export default function StorySplitterPage() {
                             <>
                             {editable && <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />}
                             {editable && (
-                              <button type="button" onClick={() => void remove(s)} title="Delete this split" aria-label={`Delete the split of ${s.name}`} className="rounded p-1 hover:bg-red-600">
+                              <button type="button" onClick={() => void remove(s)} title="Delete split" aria-label={`Delete the split of ${s.name}`} className="rounded p-1 hover:bg-red-600">
                                 <X className="h-3.5 w-3.5" />
                               </button>
                             )}
@@ -425,7 +421,7 @@ export default function StorySplitterPage() {
                           type="button"
                           onClick={() => reopen(s)}
                           className="flex min-w-0 flex-1 items-baseline gap-3 px-2.5 py-2 text-left"
-                          title={s.clip ? "Open it again from the library" : "Drop the video again to open it"}
+                          title={s.clip ? "Open from the Media Library" : "Drop the video again to open it"}
                         >
                           <span className="min-w-0 flex-1 truncate text-sm">{s.name}</span>
                           <span className="shrink-0 text-xs tabular-nums text-zinc-500">
@@ -438,7 +434,7 @@ export default function StorySplitterPage() {
                           <button
                             type="button"
                             onClick={() => void remove(s)}
-                            title="Delete this split"
+                            title="Delete split"
                             aria-label={`Delete the split of ${s.name}`}
                             className="mr-1 rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-red-400"
                           >
@@ -518,7 +514,7 @@ export default function StorySplitterPage() {
                 {editable && (
                   <p className="text-xs text-zinc-500">
                     Double-click the timeline, or press <kbd className="rounded bg-zinc-800 px-1">C</kbd> at the playhead,
-                    to cut about there: it snaps to the best moment within 2.5 s. Ticks on top are cuts in the edit.
+                    to cut near there.
                   </p>
                 )}
               </>
@@ -616,7 +612,7 @@ export default function StorySplitterPage() {
               <div className="mt-auto flex flex-col gap-2">
                 {exporting && (
                   <Progress
-                    label={`Story ${exporting.story + 1} of ${stories.length}`}
+                    label={`Exporting story ${exporting.story + 1} of ${stories.length}`}
                     p={(exporting.story + exporting.p) / stories.length}
                   />
                 )}

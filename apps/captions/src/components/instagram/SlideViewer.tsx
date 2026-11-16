@@ -72,8 +72,8 @@ export function SlideViewer({
     return (
       <div className="flex aspect-[4/5] items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-950 px-6 text-center text-sm text-zinc-500">
         {post.status === "processing"
-          ? "Media is still downloading…"
-          : "No media yet — run a media job to download slides."}
+          ? "Downloading…"
+          : "Not downloaded"}
       </div>
     );
   }
@@ -151,7 +151,7 @@ export function SlideViewer({
           download={`${post.shortcode || post.id}${count > 1 ? `-${index + 1}` : ""}.${(slide.mime || (slide.kind === "video" ? "video/mp4" : "image/jpeg")).split("/")[1]?.replace("jpeg", "jpg") ?? "mp4"}`}
           className="mt-2 inline-block text-xs text-zinc-400 hover:text-zinc-200"
         >
-          Save original
+          Download original
         </a>
       )}
 

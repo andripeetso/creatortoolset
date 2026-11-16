@@ -305,12 +305,12 @@ describe("an open project and the captions the server makes for it", () => {
     serverMakesCaptions();
     expect(await takeServerCopy(ID)).toBe(true);
     const s = useStudio.getState();
-    expect(s).toMatchObject({ serverRevision: 1, serverConflict: false, style: { fontFamily: "Poppins" }, texts: [{ text: "Your text" }] });
+    expect(s).toMatchObject({ serverRevision: 1, serverConflict: false, style: { fontFamily: "Poppins" }, texts: [{ text: "Text" }] });
     expect(s.cues.map((c) => c.words.map((w) => w.text).join(" "))).toEqual(["Tiny Acrobatics", "starts with a roll."]);
     await debounce();
     // one save, on top of the server's: her look, her text, the captions and the first transcript the server kept
     expect(server.puts.map((p) => p.baseRevision)).toEqual([1]);
-    expect(server.clip).toMatchObject({ style: { fontFamily: "Poppins" }, texts: [{ text: "Your text" }], cues: lines, originalWords: said });
+    expect(server.clip).toMatchObject({ style: { fontFamily: "Poppins" }, texts: [{ text: "Text" }], cues: lines, originalWords: said });
     expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false });
     // undo cannot bring back the project without its captions
     useStudio.getState().undoEdit();
@@ -322,8 +322,8 @@ describe("an open project and the captions the server makes for it", () => {
     serverMakesCaptions();
     await debounce(); // no notice was heard: the page's own save is what finds out
     expect(server.puts.map((p) => p.baseRevision)).toEqual([0, 1]);
-    expect(server.clip).toMatchObject({ texts: [{ text: "Your text" }], cues: lines, originalWords: said });
-    expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false, saveError: null, texts: [{ text: "Your text" }] });
+    expect(server.clip).toMatchObject({ texts: [{ text: "Text" }], cues: lines, originalWords: said });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false, saveError: null, texts: [{ text: "Text" }] });
     expect(useStudio.getState().cues).toHaveLength(2);
   });
 
@@ -342,7 +342,7 @@ describe("an open project and the captions the server makes for it", () => {
     expect(await takeServerCopy(ID)).toBe(false);
     await debounce();
     expect(server.puts.map((p) => p.baseRevision)).toEqual([0]);
-    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", cues: [], texts: [{ text: "Your text" }] });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", cues: [], texts: [{ text: "Text" }] });
     expect(server.clip.cues).toEqual(lines);
   });
 
@@ -352,7 +352,7 @@ describe("an open project and the captions the server makes for it", () => {
     server.clip.style = { ...DEFAULT_STYLE, fontFamily: "Anton" };
     expect(await takeServerCopy(ID)).toBe(false);
     await debounce();
-    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", texts: [{ text: "Your text" }] });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", texts: [{ text: "Text" }] });
     expect(server.clip.style).toMatchObject({ fontFamily: "Anton" });
   });
 
@@ -362,7 +362,7 @@ describe("an open project and the captions the server makes for it", () => {
     expect(await takeServerCopy(ID)).toBe(true);
     await debounce();
     expect(server.puts.map((p) => p.baseRevision)).toEqual([1]);
-    expect(server.clip).toMatchObject({ texts: [{ text: "Your text" }], cues: [], originalWords: [] });
+    expect(server.clip).toMatchObject({ texts: [{ text: "Text" }], cues: [], originalWords: [] });
     // the page now holds that record itself: one more save elsewhere brought no transcript
     useStudio.getState().addTextAt(1);
     server.revision++;
@@ -378,7 +378,7 @@ describe("an open project and the captions the server makes for it", () => {
     serverMakesCaptions();
     expect(await takeServerCopy(ID)).toBe(false);
     expect(server.reads).toBe(0);
-    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, cues: [], texts: [{ text: "Your text" }] });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, cues: [], texts: [{ text: "Text" }] });
   });
 
   it("as before: a transcription the person started on the page is theirs and stays on the page; when the server's captions land first, the page's save of it is refused", async () => {

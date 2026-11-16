@@ -79,7 +79,7 @@ function Approval({ a }: { a: AssistantApproval }) {
                 </>
               ) : (
                 <>
-                  <Clock className="size-3.5" /> Not answered, so not done
+                  <Clock className="size-3.5" /> Not answered
                 </>
               )}
             </p>

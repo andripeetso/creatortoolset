@@ -31,7 +31,7 @@ export function RuleRow({
         checked={rule.on}
         disabled={busy}
         onChange={(e) => onSave({ on: e.target.checked })}
-        title={rule.on ? "On for every generation" : "Off unless switched on for a run"}
+        title={rule.on ? "On for every piece" : "Off unless turned on for a piece"}
         className="mt-1 accent-violet-500"
       />}
       {editing ? (
@@ -43,8 +43,8 @@ export function RuleRow({
             setEditing(false);
           }}
         >
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Short name" className={input} />
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="The rule, as an instruction to the writer" className={input} />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className={input} />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Rule" className={input} />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setEditing(false)} className="rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
               Cancel

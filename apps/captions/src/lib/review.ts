@@ -272,7 +272,7 @@ async function tusRelayUpload<T>(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...fields, size: file.size }),
     }).then((r) => json<{ id: string; tus?: UploadRelayTus }>(r));
-    if (!init.tus) throw new Error("The upload relay changed while this started: try again");
+    if (!init.tus) throw new Error("The upload changed while it started. Upload the file again.");
     const made = await fetch(init.tus.createUrl, {
       method: "POST",
       headers: { ...init.tus.headers, "Upload-Length": String(file.size), "Upload-Metadata": init.tus.metadata },
@@ -326,7 +326,7 @@ async function tusRelayUpload<T>(
     }
     if ((res && res.status < 500) || attempt >= 5) {
       const j = (await res?.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(j?.error || "Couldn't finish the upload");
+      throw new Error(j?.error || "Could not finish the upload");
     }
     await tusPause(2000 * (attempt + 1)); // this server restarting
   }
@@ -344,7 +344,7 @@ async function directUpload<T>(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...fields, size: file.size }),
   }).then((r) => json<{ id: string; partSize: number; urls?: string[] }>(r));
-  if (!init.urls) throw new Error("The upload relay changed while this started: try again");
+  if (!init.urls) throw new Error("The upload changed while it started. Upload the file again.");
   const parts = await putDirect(file, { partSize: init.partSize, urls: init.urls }, (sent) =>
     onProgress(Math.min(99, Math.round((sent / file.size) * 100))),
   );

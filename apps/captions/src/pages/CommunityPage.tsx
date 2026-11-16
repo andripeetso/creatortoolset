@@ -72,7 +72,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
       <Link key={id} to={`/community/${id}`} replace aria-current={on ? "page" : undefined} className={itemCls(on)}>
         <Icon className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        {dot && <span aria-label="Updates waiting" className="size-1.5 shrink-0 rounded-full bg-amber-500" />}
+        {dot && <span aria-label="Updates available" className="size-1.5 shrink-0 rounded-full bg-amber-500" />}
         {count !== undefined && <span className="text-xs text-sidebar-foreground/60">{count}</span>}
       </Link>
     );
@@ -80,7 +80,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const catalogWaiting = data.catalog === null;
   const waitingCard = (
     <Card>
-      {data.catalogError ? <ErrorRow title="The Community catalog did not load" detail={data.catalogError} retry={data.reload} /> : <LoadingRow />}
+      {data.catalogError ? <ErrorRow title="Could not load the Community catalog" detail={data.catalogError} retry={data.reload} /> : <LoadingRow />}
     </Card>
   );
   const body =

@@ -39,7 +39,7 @@ export function SourceSearch({
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Narrow the library by topic, or paste an Instagram or YouTube link to add it"
+          placeholder="Search posts, or paste an Instagram or YouTube link"
           className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
       </label>
@@ -87,7 +87,7 @@ export function SourceSearch({
             type="button"
             aria-pressed={elsewhere.on}
             onClick={elsewhere.onToggle}
-            title={elsewhere.on ? "Showing posts other projects already use. Click to hide them." : "Posts other projects already use are hidden. Click to show them too."}
+            title={elsewhere.on ? "Hide posts other projects use" : "Show posts other projects use"}
             className={`rounded-md border px-2 py-1 ${elsewhere.on ? "border-amber-500/50 bg-amber-500/15 text-amber-950 dark:text-amber-100" : "border-border text-muted-foreground hover:text-foreground"}`}
           >
             In other projects · {elsewhere.count}
@@ -98,8 +98,8 @@ export function SourceSearch({
             value={order.value}
             onChange={(e) => order.onChange(e.target.value as BrowseOrder)}
             className="ml-auto rounded-md border border-border bg-transparent px-1.5 py-1 text-muted-foreground outline-none hover:text-foreground"
-            aria-label="Sort the library"
-            title="The library's order (a search shows the best matches first)"
+            aria-label="Sort posts"
+            title="Sort posts"
           >
             <option value="recent">Recently added</option>
             <option value="newest">Newest posted first</option>

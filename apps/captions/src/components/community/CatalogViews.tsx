@@ -30,12 +30,12 @@ export function ExploreView({ entries, installed, updates, q, reload }: CatalogP
   return (
     <>
       {official.length > 0 && (
-        <Section title="From the Creator Toolset team">
+        <Section title="Official packs">
           <PackList entries={official} installed={installed} updates={updates} reload={reload} empty="" />
         </Section>
       )}
-      <Section title="From the community">
-        <PackList entries={community} installed={installed} updates={updates} reload={reload} empty={q ? "Nothing matches your search." : "Nobody has published anything yet."} />
+      <Section title="Community packs">
+        <PackList entries={community} installed={installed} updates={updates} reload={reload} empty={q ? "No packs found" : "No packs"} />
       </Section>
     </>
   );
@@ -46,7 +46,7 @@ export function KindView({ kind, entries, installed, updates, q, reload }: Catal
   const shown = matching(entries, q).filter((e) => packKinds(e.contains).some((k) => k.id === kind));
   return (
     <Section title={PACK_KINDS[kind]}>
-      <PackList entries={shown} installed={installed} updates={updates} reload={reload} empty={q ? "Nothing matches your search." : "Nothing here yet."} />
+      <PackList entries={shown} installed={installed} updates={updates} reload={reload} empty={q ? "No packs found" : "No packs"} />
     </Section>
   );
 }
@@ -56,7 +56,7 @@ export function ToolView({ tool, entries, installed, updates, q, reload }: Catal
   const shown = matching(entries, q).filter((e) => reachesTool(e.contains, tool));
   return (
     <Section title="Packs">
-      <PackList entries={shown} installed={installed} updates={updates} reload={reload} tool={tool} empty={q ? "Nothing matches your search." : "Nothing here yet."} />
+      <PackList entries={shown} installed={installed} updates={updates} reload={reload} tool={tool} empty={q ? "No packs found" : "No packs"} />
     </Section>
   );
 }

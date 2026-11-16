@@ -160,7 +160,7 @@ describe("ReviewEdits panel", () => {
   it("an imported timeline (XML, OTIO, EDL) gets the panel too, with its sent edits playing", async () => {
     const removeFirst = { id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } };
     const { bridge } = await mount([removeFirst], { n: 1, fps: 25, timeline: true });
-    expect(host.textContent).toContain("Timeline edits: sent with your next comment");
+    expect(host.textContent).toContain("Timeline edits: sent with the next comment");
     expect((bridge.plan() as ReviewPlayPlan).skips).toEqual([[0, 100]]);
   });
 
@@ -173,7 +173,7 @@ describe("ReviewEdits panel", () => {
     const shown = bridge.plan() as ReviewPlayPlan;
     expect(shown.skips).toEqual([[0, 100]]);
     expect(setPlan).toHaveBeenCalled();
-    expect(host.textContent).toContain("Timeline edits: sent with your next comment");
+    expect(host.textContent).toContain("Timeline edits: sent with the next comment");
 
     // the toggle is shown because the plan plays something; hiding it clears the player's plan
     await act(async () => button("Edits shown")!.click());
@@ -251,7 +251,7 @@ describe("ReviewEdits panel", () => {
     const shown = bridge.plan() as ReviewPlayPlan;
     expect(shown.looks).toEqual([{ from: 0, to: 100, filter: "url(#review-grade-0)" }]);
     expect(host.querySelector('filter[id="review-grade-0"]')).not.toBeNull();
-    expect(host.textContent).toContain("Timeline edits: sent with your next comment");
+    expect(host.textContent).toContain("Timeline edits: sent with the next comment");
   });
 
   it("Color opens the grade panel, and the shot plays the panel's grade live until the panel closes", async () => {
@@ -449,17 +449,17 @@ describe("a cut the app's own AI Editor made", () => {
     expect(bridge.pendingLabels().length).toBeGreaterThan(0);
   });
 
-  it("a step that failed shows with its reason and Try again", async () => {
+  it("a step that failed shows with its reason and Retry", async () => {
     const calls = server([job({ id: 9, kind: "preview", state: "failed", error: "Some footage is gone from the library" })],
       () => new Response(JSON.stringify({ id: "e1", jobs: [job({ id: 9, kind: "preview" })] }), { status: 200 }));
     await mount([], own);
     await settle();
-    expect(host.textContent).toContain("The next version wasn't made: Some footage is gone from the library");
-    await act(async () => button("Try again")!.click());
+    expect(host.textContent).toContain("Could not make the next version: Some footage is gone from the library");
+    await act(async () => button("Retry")!.click());
     await settle();
     expect(calls).toEqual([{ url: "/api/editor/e1/jobs/9/retry", body: undefined }]);
     expect(host.textContent).toContain("Making the next version");
-    expect(host.textContent).not.toContain("wasn't made");
+    expect(host.textContent).not.toContain("Could not make");
   });
 
   it("the page takes the next version in when its steps end", async () => {
@@ -521,7 +521,7 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     expect(host.textContent).toContain("Making the next version…");
     expect(button("Make the next version")).toBeUndefined(); // one at a time
     await act(async () => say("Rendering a preview"));
-    expect(host.textContent).toContain("Making the next version: Rendering a preview. It shows up here when it is ready.");
+    expect(host.textContent).toContain("Making the next version: Rendering a preview.");
     done();
     await turn();
     expect(ctx.reload).toHaveBeenCalledTimes(1);
@@ -537,7 +537,7 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     await act(async () => button("stub remove")!.click());
     await act(async () => button("Make the next version")!.click());
     await turn();
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe("The next version wasn't made: “Shot one” (V1:0) is not on this draft's timeline");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Could not make the next version: “Shot one” (V1:0) is not on this draft's timeline");
     expect(ctx.reload).not.toHaveBeenCalled();
     expect(bridge.pendingLabels()).toHaveLength(1);
     expect(button("Make the next version")).toBeDefined();
@@ -577,7 +577,7 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     await mount([], { n: 1, fps: 25, timeline: true }, undefined, { next }); // an imported timeline: no AI edit behind it
     await act(async () => button("stub remove")!.click());
     expect(button("Make the next version")).toBeUndefined();
-    expect(host.textContent).toContain("sent with your next comment");
+    expect(host.textContent).toContain("sent with the next comment");
   });
 });
 

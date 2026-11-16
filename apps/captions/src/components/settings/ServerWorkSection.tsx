@@ -47,7 +47,7 @@ export function ServerWorkSection() {
     <Section title="Video work">
       <Card>
         <Row
-          title="Video work on this server"
+          title="This server"
           description="Cuts, previews, proxies, waveforms and transcripts can run on this server, after each person's own computers."
           control={<Switch checked={a.on} aria-label="Video work on this server" onCheckedChange={(v) => void save({ on: v })} />}
         />
@@ -141,7 +141,7 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
   );
 }
 
-/** A workspace's form: where its video work runs, offered only where this server allows video work for it. */
+/** Under a workspace's form, a card of its own (it saves when picked): where its video work runs, offered only where this server allows video work for it. */
 export function WorkspaceServerWork({ projectId }: { projectId: string }) {
   const [state, setState] = useState<{ allowed: boolean; server: boolean } | null>(null);
   useEffect(() => void call<{ allowed: boolean; server: boolean }>(`/api/work/server-work/workspace/${encodeURIComponent(projectId)}`).then(setState, () => {}), [projectId]);
@@ -154,9 +154,11 @@ export function WorkspaceServerWork({ projectId }: { projectId: string }) {
     { value: "server", label: "Your computers, then this server" },
   ];
   return (
-    <Row
-      title="Video work"
-      control={<SettingsSelect label="Video work" value={state.server ? "server" : "computers"} onValueChange={(v) => pick(v === "server")} options={options} />}
-    />
+    <Card>
+      <Row
+        title="Video work"
+        control={<SettingsSelect label="Video work" value={state.server ? "server" : "computers"} onValueChange={(v) => pick(v === "server")} options={options} />}
+      />
+    </Card>
   );
 }

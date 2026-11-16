@@ -27,10 +27,10 @@ function CloudLocked() {
     <div className="pt-safe pb-safe flex h-dvh flex-col items-center justify-center bg-zinc-950 px-8 text-zinc-200">
       <CloudOff className="h-10 w-10 text-zinc-500" />
       <h1 className="mt-4 text-center text-xl font-semibold tracking-tight">
-        Cloud transcription is off for this account
+        Transcription is locked for this account
       </h1>
       <p className="mt-2 max-w-xs text-center text-sm leading-6 text-zinc-400">
-        Mobile captioning needs the cloud engine — ask an admin to enable it.
+        An admin can unlock it.
       </p>
       <Link
         to="/m"

@@ -52,20 +52,19 @@ export default function InstagramAnalysisPage() {
         </div>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Analysis</h1>
-          <p className="text-sm text-zinc-500">Hooks, velocity, cadence, mix, and caption reposts.</p>
         </div>
       </div>
 
       <div className="mx-auto w-[960px] max-w-[96%]">
         <Link to={base} className="mb-4 flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
-          <ArrowLeft className="h-3.5 w-3.5" /> Library
+          <ArrowLeft className="h-3.5 w-3.5" /> All posts
         </Link>
 
         {error ? (
           <p className="text-sm text-red-400">{error}</p>
         ) : !data ? (
           // the panels' frame, empty, while the library is read
-          <div aria-busy="true" aria-label="Reading your library" className="grid gap-4 lg:grid-cols-2">
+          <div aria-busy="true" aria-label="Reading saved posts" className="grid gap-4 lg:grid-cols-2">
             {[0, 1, 2, 3].map((i) => (
               <div key={i} className="h-64 rounded-xl border border-zinc-800 bg-zinc-900/30" />
             ))}
@@ -74,7 +73,7 @@ export default function InstagramAnalysisPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Opening hooks">
               {data.hooks.length === 0 ? (
-                <Empty>Run On-screen text on posts to group first-slide hooks.</Empty>
+                <Empty>No hooks</Empty>
               ) : (
                 data.hooks.map((h) => (
                   <div key={h.hook} className="flex items-start justify-between gap-3 border-t border-zinc-800/80 py-2 first:border-0 first:pt-0">
@@ -96,9 +95,9 @@ export default function InstagramAnalysisPage() {
               )}
             </Panel>
 
-            <Panel title="Count velocity">
+            <Panel title="Plays per day">
               {data.velocity.length === 0 ? (
-                <Empty>Refresh numbers on a post twice to see plays per day.</Empty>
+                <Empty>No posts updated twice</Empty>
               ) : (
                 data.velocity.map((v) => (
                   <Link
@@ -123,9 +122,9 @@ export default function InstagramAnalysisPage() {
               )}
             </Panel>
 
-            <Panel title="Posting cadence">
+            <Panel title="Posting">
               {data.cadence.length === 0 ? (
-                <Empty>Run Catalog on an account to measure how often they post.</Empty>
+                <Empty>No accounts with listed posts</Empty>
               ) : (
                 data.cadence.map((c) => (
                   <Link
@@ -136,7 +135,7 @@ export default function InstagramAnalysisPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm text-zinc-200">@{c.username}</p>
                       <p className="text-[11px] text-zinc-500">
-                        {c.count} in catalog
+                        {c.count} listed
                         {c.medianGapDays !== undefined ? ` · median ${c.medianGapDays}d apart` : ""}
                         {c.lastPostedAt ? ` · last ${fmtDate(c.lastPostedAt)}` : ""}
                       </p>
@@ -149,9 +148,9 @@ export default function InstagramAnalysisPage() {
               )}
             </Panel>
 
-            <Panel title="Mix and performance">
+            <Panel title="Format mix">
               {(data.mix ?? []).length === 0 ? (
-                <Empty>Run Catalog on an account to see reels vs carousels vs statics.</Empty>
+                <Empty>No accounts with listed posts</Empty>
               ) : (
                 data.mix.map((m) => (
                   <Link
@@ -178,9 +177,9 @@ export default function InstagramAnalysisPage() {
               )}
             </Panel>
 
-            <Panel title="Reposts / variations">
+            <Panel title="Reposts and variations">
               {(data.duplicates ?? []).length === 0 ? (
-                <Empty>Similar captions in a catalog show up here after you run Catalog.</Empty>
+                <Empty>No reposts</Empty>
               ) : (
                 data.duplicates.map((d, i) => (
                   <Link
@@ -204,7 +203,7 @@ export default function InstagramAnalysisPage() {
             </Panel>
 
             {data.commentKinds && Object.keys(data.commentKinds).length > 0 && (
-              <Panel title="What commenters say">
+              <Panel title="Comments">
                 <div className="mb-3 flex flex-wrap gap-1.5">
                   {(
                     [
@@ -235,14 +234,14 @@ export default function InstagramAnalysisPage() {
                     ))}
                   </ul>
                 ) : (
-                  <Empty>No open questions in the comments pulled so far.</Empty>
+                  <Empty>No questions</Empty>
                 )}
               </Panel>
             )}
 
             <Panel title="Comment themes">
               {data.commentThemes.length === 0 ? (
-                <Empty>Pull comments on a few posts to see repeating words.</Empty>
+                <Empty>No comment themes</Empty>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {data.commentThemes.map((t) => (

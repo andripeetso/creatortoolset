@@ -109,7 +109,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
               {d.engine && (
                 <Row
                   id="dictation-engine"
-                  title="Dictation engine"
+                  title="Engine"
                   status={d.engine === "server" && serverNeeds ? <Status tone="attention">{serverNeeds}</Status> : undefined}
                   control={
                     <SettingsSelect

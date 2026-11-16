@@ -199,7 +199,7 @@ On your Mac:
    sign-in; ⌥⌘1…⌥⌘9 switch between them. **Servers → Run your own server…** has the short form of this guide,
    with a check for HTTPS, the health call and the sign-in.
 3. Sign in to your server in the app's window.
-4. Turn on **Use this Mac for my AI**. This pairs the Mac with your account once.
+4. Turn on **AI on this Mac**. This adds the Mac to your account once.
 5. In the site: **Settings → Providers → Add provider** shows the install and sign-in commands for Claude
    Code and Codex when that Mac doesn't have them yet. Run them once in Terminal on that Mac, then pick
    **Test now** in the provider's menu.

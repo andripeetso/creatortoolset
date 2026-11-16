@@ -80,12 +80,18 @@ const detail = (inst: ProviderInstance, extra: Partial<Parameters<typeof Provide
 };
 
 describe("ProviderDetail", () => {
-  it("shows only the Advanced fields the Mac reads for the tool: Codex has a folder, not a program or variable names", () => {
+  it("shows only the rare fields the Mac reads for the tool: Codex has a folder, not a program or variable names", () => {
     const html = detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" });
-    expect(html).toContain("Advanced");
     expect(html).toContain('aria-label="Account folder"');
     expect(html).not.toContain('aria-label="Program"');
     expect(html).not.toContain('aria-label="Variable names"');
+  });
+
+  it("folds the rare fields under Advanced only when there are three or more: one or two are drawn open", () => {
+    expect(detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" })).not.toContain("Advanced");
+    const three = detail({ id: "acp", driver: "acp", name: "Agent", enabled: true, device: "mac1" });
+    expect(three).toContain("Advanced");
+    expect(three).toContain('aria-label="Program"');
   });
 
   it("gives a tool with no folder, program or variables no Advanced section at all", () => {

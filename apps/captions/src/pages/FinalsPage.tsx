@@ -95,7 +95,7 @@ export function FinalsView({
   const [view, setView] = useBrowseView("finals");
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
-  if (!hasFinals) return <p className="py-16 text-center text-sm text-zinc-500">Nothing in Finals yet.</p>;
+  if (!hasFinals) return <p className="py-16 text-center text-sm text-zinc-500">No pieces</p>;
 
   // Only the facets Finals shows narrow it: a Media Library facet (scope "library") never filters these pieces.
   const own = pickedFor(picked, "finals");
@@ -161,7 +161,7 @@ export function FinalsView({
       )}
 
       {shown.length === 0 ? (
-        <p className="py-16 text-center text-sm text-zinc-500">{faceted || kind || find.trim() ? "No pieces match." : "Nothing in Finals yet."}</p>
+        <p className="py-16 text-center text-sm text-zinc-500">{faceted || kind || find.trim() ? "No matches" : "No pieces"}</p>
       ) : view === "list" ? (
         <div className="flex flex-col gap-1.5">
           {shown.map((t) => (
@@ -203,7 +203,7 @@ function PieceRow({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{piece.label}</span>
         <span className="mt-0.5 block truncate text-xs text-zinc-500">
-          {versions} {versions === 1 ? noun : `${noun}s`} · {posted ? "Posted" : "Not posted yet"}
+          {versions} {versions === 1 ? noun : `${noun}s`} · {posted ? "Posted" : "Not posted"}
         </span>
       </span>
       {work?.status === "toPost" && <span className="shrink-0 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">Ready to post</span>}
@@ -255,7 +255,7 @@ function PieceCard({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
       </div>
       <div className="px-2 py-1.5 sm:px-3 sm:py-2.5">
         <p className="truncate text-xs font-medium sm:text-sm">{piece.label}</p>
-        <p className="mt-0.5 truncate text-[10px] text-zinc-500 sm:text-xs">{posted ? "Posted" : "Not posted yet"}</p>
+        <p className="mt-0.5 truncate text-[10px] text-zinc-500 sm:text-xs">{posted ? "Posted" : "Not posted"}</p>
         {description && <p className="mt-1 line-clamp-2 text-[10px] text-zinc-400 sm:text-xs">{description}</p>}
       </div>
     </Link>
@@ -301,7 +301,7 @@ export default function FinalsPage() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-500">{error}</p>}
-        {libraries?.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No library yet. The team owner creates one.</p>}
+        {libraries?.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">Needs a Media Library</p>}
         {(libraries === null || (library && finals === undefined)) && !error && <FinalsFrame />}
         {library && finals !== undefined && (
           <>
@@ -351,7 +351,7 @@ function FinalsFrame() {
 
 /** The Finals trash: each piece with its restore button. Gone for good 5 days after it went here. */
 function TrashList({ pieces, onRestore }: { pieces: Piece[]; onRestore: (piece: Piece) => void }) {
-  if (!pieces.length) return <p className="py-16 text-center text-sm text-zinc-500">The Finals trash is empty.</p>;
+  if (!pieces.length) return <p className="py-16 text-center text-sm text-zinc-500">No pieces in the trash</p>;
   return (
     <ul aria-label="Finals trash" className="flex flex-col divide-y divide-zinc-500/25 rounded-xl border border-zinc-500/25">
       {pieces.map((p) => (

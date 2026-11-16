@@ -76,7 +76,7 @@ async function call<T>(url: string, body?: unknown): Promise<T> {
   if (!r.ok)
     throw new Error(
       ((await r.json().catch(() => ({}))) as { error?: string }).error ??
-        `HTTP ${r.status}`,
+        "Server error",
     );
   return (await r.json()) as T;
 }
@@ -147,7 +147,7 @@ function CommentRow({
         <span>{when(c.at)}</span>
         {c.likes ? <span>· {c.likes} likes</span> : null}
         {c.answered ? (
-          <span className="ml-auto text-emerald-400">you replied</span>
+          <span className="ml-auto text-emerald-400">replied</span>
         ) : null}
       </div>
       <p className="whitespace-pre-wrap text-[13px] text-zinc-100">{c.text}</p>
@@ -160,7 +160,7 @@ function CommentRow({
             onKeyDown={(e) =>
               e.key === "Enter" && !busy && (onReply(note), setNote(""))
             }
-            placeholder="Change it… (optional)"
+            placeholder="Changes (optional)"
             className="min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
           />
         ) : null}
@@ -171,7 +171,7 @@ function CommentRow({
           className="flex shrink-0 items-center gap-1 rounded-md bg-violet-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-violet-500 disabled:opacity-50"
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}{" "}
-          {reply ? "Redo" : "Reply"}
+          {reply ? "Rewrite" : "Reply"}
         </button>
       </div>
     </li>
@@ -249,7 +249,7 @@ export function ShareAnswers({
         className="px-1 text-[11px] text-violet-300"
         title="Only people signed in with access to the project see these"
       >
-        Only you see these · not the freelancer
+        Not shown on the share link
       </p>
       <section className={PANEL}>
         <div className={PANEL_HEAD}>
@@ -285,7 +285,7 @@ export function ShareAnswers({
                 title={
                   read
                     ? `Read ${when(data.fetchedAt!)}`
-                    : "Reads the post's comments now"
+                    : "Read the post's comments"
                 }
               >
                 <RefreshCw
@@ -299,20 +299,19 @@ export function ShareAnswers({
         <div className="flex flex-col gap-3 p-3">
           {!data.post ? (
             <p className="text-[12px] text-zinc-500">
-              This project isn't linked to its Instagram post yet. Once it is,
-              its comments can be read here.
+              Needs a linked Instagram post
             </p>
           ) : !read ? (
             <p className="text-[12px] text-zinc-500">
-              Nothing read yet. Read comments fetches them from the post.
+              No comments read
             </p>
           ) : open.length ? (
             <ul className="flex flex-col gap-2">{open.map(row)}</ul>
           ) : (
             <p className="text-[12px] text-zinc-500">
               {data.comments.length
-                ? "No open questions on the post."
-                : "No comments on the post."}
+                ? "No open questions"
+                : "No comments"}
             </p>
           )}
           {rest.length ? (
@@ -326,8 +325,7 @@ export function ShareAnswers({
           ) : null}
           {busy && busy !== "ask" && busy !== "refresh" ? (
             <p className="text-[11px] text-zinc-500">
-              Writing a reply from the post, its chat and the comments… this can
-              take a minute.
+              Writing a reply… about a minute
             </p>
           ) : null}
           {commentsError ? (
@@ -339,10 +337,7 @@ export function ShareAnswers({
       <section className={PANEL}>
         <div className={PANEL_HEAD}>
           <CtMark className="h-4 w-4 text-violet-300" />
-          <p className={`${PANEL_TITLE} text-violet-200`}>Ask AI</p>
-          <span className="text-zinc-500">
-            knows the post and how it was made
-          </span>
+          <p className={`${PANEL_TITLE} text-violet-200`}>Ask</p>
         </div>
         <div className="flex flex-col gap-2 p-3">
           {chat.map((m) =>
@@ -373,7 +368,7 @@ export function ShareAnswers({
                 }
               }}
               rows={2}
-              placeholder="Ask about the post, or paste a comment to answer"
+              placeholder="Question, or a comment to answer"
               className="min-w-0 flex-1 resize-y rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
             />
             <button
@@ -392,8 +387,7 @@ export function ShareAnswers({
           </div>
           {busy === "ask" ? (
             <p className="text-[11px] text-zinc-500">
-              Reading the post, its chat and the comments… this can take a
-              minute.
+              Writing an answer… about a minute
             </p>
           ) : null}
           {error?.key === "ask" ? (

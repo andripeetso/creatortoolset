@@ -382,7 +382,6 @@ function TaskDialog({ initial, providers, w, onClose, onSaved }: { initial: Auto
             />
           }
         />
-        <Row title="Enabled" control={<Switch checked={d.enabled} onCheckedChange={(on) => set({ enabled: on })} aria-label="Enabled" />} />
       </Card>
     </FormDialog>
   );

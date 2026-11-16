@@ -104,15 +104,15 @@ function OwnRow({ skill: s, onEdit, onPublish, onChanged }: { skill: Skill; onEd
         <>
           {!pickedByStyle(place) && <Switch checked={s.on} onCheckedChange={(on) => void save({ on })} aria-label={`Turn ${s.name} on or off`} />}
           <RowMenu
-            label={`Actions for ${s.name}`}
+            label={`More for ${s.name}`}
             items={[
               { label: "Edit", icon: <Pencil />, onSelect: onEdit },
               ...(isPackSkillSlot(place) ? [{ label: "Publish to Community", icon: <Globe />, onSelect: onPublish }] : []),
               {
-                label: "Remove",
+                label: "Delete",
                 icon: <Trash2 />,
                 destructive: true,
-                confirm: { title: `Remove "${s.name}"?` },
+                confirm: { title: `Delete "${s.name}"?` },
                 onSelect: () => removeSkill(s.id).then(onChanged),
               },
             ]}
@@ -161,7 +161,7 @@ function SkillDialog({ place, initial, onClose, onSaved }: { place: SkillPlace; 
 
   /** Only the file's text is read: its name, the line that says when to use it, and its body (parseSkillFile). */
   const take = async (file: File | null) => {
-    if (!file) return setError("No skill file there: drop a text file, or a folder with a SKILL.md in it.");
+    if (!file) return setError("No skill file found: drop a text file, or a folder with a SKILL.md in it.");
     if (file.size > SKILL_LIMITS.file * 4) return setError("That file is too long to be a skill.");
     const read = parseSkillFile(await file.text(), file.name);
     if ("error" in read) return setError(read.error);
@@ -172,7 +172,7 @@ function SkillDialog({ place, initial, onClose, onSaved }: { place: SkillPlace; 
     e.preventDefault();
     e.stopPropagation();
     setOver(false);
-    void droppedSkillFile(e.dataTransfer, pickSkillFile).then(take, () => setError("That could not be read."));
+    void droppedSkillFile(e.dataTransfer, pickSkillFile).then(take, () => setError("Could not read the file."));
   };
 
   const submit = async () => {
@@ -181,7 +181,7 @@ function SkillDialog({ place, initial, onClose, onSaved }: { place: SkillPlace; 
     setBusy(true);
     try {
       if (initial) await updateSkill(initial.id, checked.skill);
-      else if (!(await addSkill({ ...checked.skill, place })).on) toast(`Saved switched off: ${SKILL_LIMITS.perTurn} skills are on here already.`);
+      else if (!(await addSkill({ ...checked.skill, place })).on) toast(`Saved and turned off: ${SKILL_LIMITS.perTurn} skills are already on here`);
       onSaved();
     } catch (e) {
       setError(msg(e));
@@ -203,11 +203,11 @@ function SkillDialog({ place, initial, onClose, onSaved }: { place: SkillPlace; 
         className={cn("space-y-3 rounded-lg", over && "outline-dashed outline-2 outline-offset-4 outline-ring")}
       >
         <Field label="Name">
-          <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Hook rules" maxLength={SKILL_LIMITS.name} aria-label="Name" className="h-8" />
+          <Input value={d.name} onChange={(e) => set({ name: e.target.value })} maxLength={SKILL_LIMITS.name} aria-label="Name" className="h-8" />
         </Field>
         {byLine && (
           <Field label="When to use it">
-            <Input value={d.when} onChange={(e) => set({ when: e.target.value })} placeholder="e.g. When writing the first line of a reel" maxLength={SKILL_LIMITS.when} aria-label="When to use it" className="h-8" />
+            <Input value={d.when} onChange={(e) => set({ when: e.target.value })} maxLength={SKILL_LIMITS.when} aria-label="When to use it" className="h-8" />
           </Field>
         )}
         <Field label="Skill">
@@ -224,7 +224,7 @@ function SkillDialog({ place, initial, onClose, onSaved }: { place: SkillPlace; 
           }}
         />
         <Button type="button" size="sm" variant="outline" onClick={() => picker.current?.click()}>
-          Choose a file
+          Choose file
         </Button>
       </div>
     </FormDialog>

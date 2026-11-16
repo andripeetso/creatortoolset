@@ -277,7 +277,7 @@ describe("instagram_save", () => {
   it("without an Apify key the route's own words come back", async () => {
     expect(await tool(nicoKey, "instagram_save", { links: ["https://www.instagram.com/reel/TinyNew01/"] })).toEqual({
       error: true,
-      value: "Reading other creators' posts needs your own Apify key: add it in Settings → API keys",
+      value: "Needs an Apify key: add it in Settings → API keys",
     });
     expect(await tool(anaKey, "instagram_save", { links: ["not a link"] })).toEqual({ error: true, value: "Paste a link to an Instagram post, reel or carousel, or a YouTube video or Short" });
     expect((await tool(anaKey, "instagram_save")).error).toBe(true);

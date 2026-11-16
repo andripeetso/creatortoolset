@@ -42,11 +42,11 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
 
   const canCheck = !!ai?.available && !!ai.allowed;
   const checkBlocked = !text.trim()
-    ? "Paste the script first"
+    ? "Needs a script"
     : !hasWords
-      ? "Transcribe the clip first"
+      ? "Needs a transcript"
       : busy
-        ? "Wait for the current processing to finish"
+        ? "Locked while captions are processing"
         : null;
 
   return (
@@ -70,10 +70,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <p className="mb-3 text-xs leading-5 text-zinc-400">
-          Paste the script you filmed from. After transcription, AI reads the
-          transcript against it and fixes words the engine mis-heard: names,
-          brand words, uncommon terms. The video doesn&apos;t have to match
-          the script. Anything you said differently stays as you said it.
+          The script the video was filmed from: mis-heard words in the transcript are corrected from it.
         </p>
         <textarea
           autoFocus
@@ -82,7 +79,6 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
           maxLength={MAX_SCRIPT_CHARS}
           rows={14}
           spellCheck={false}
-          placeholder="Paste your script here…"
           className="min-h-[10rem] w-full flex-1 resize-y rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-[13px] leading-5 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
         />
         <p className="mt-1 text-right text-[10px] tabular-nums text-zinc-600">
@@ -91,8 +87,8 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
         {ai && !canCheck && (
           <p className="mt-1 text-[11px] leading-4 text-amber-400/80">
             {ai.available
-              ? "The script check is locked for your account — ask the admin. The script is still saved with the project."
-              : "The script check needs an AI key on the server. The script is still saved with the project."}
+              ? "The script check is locked for this account; an admin can unlock it."
+              : "Needs an AI provider"}
           </p>
         )}
         <div className="mt-3 flex items-center gap-2">
@@ -100,7 +96,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
             <button
               onClick={() => save(true)}
               disabled={!!checkBlocked}
-              title={checkBlocked ?? "Save, then fix mis-heard words in this clip's transcript"}
+              title={checkBlocked ?? "Corrects mis-heard words in this clip's transcript"}
               className="flex items-center gap-2 h-9 rounded-md bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600"
             >
               <SpellCheck className="h-4 w-4" /> Save &amp; check transcript

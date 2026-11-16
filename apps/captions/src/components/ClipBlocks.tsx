@@ -82,7 +82,7 @@ export function ChapterRail({
       {chapters.length ? null : pending ? (
         <p className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Generating…
+          Making chapters…
         </p>
       ) : failed ? (
         <p className="px-3 py-3 text-sm text-muted-foreground">{failed}</p>
@@ -127,7 +127,7 @@ export const wantsChapters = (session: ClipSession, owns: boolean, ai = true): b
 /**
  * Generate the chapter rail as soon as a transcript exists. `pending` while that runs, from the first frame the clip is
  * drawn (the line that says so is there at once, not added a frame later) until the request ends. `failed`: this
- * visit's request ended with no chapters, with what the server said; the row that said "Generating…" stays to say so,
+ * visit's request ended with no chapters, with what the server said; the row that said "Making chapters…" stays to say so,
  * so nothing under it moves, and `retry` asks again.
  */
 export function useChapters(session: ClipSession, owns: boolean, onChange: (s: ClipSession) => void) {
@@ -168,7 +168,7 @@ export function useChapters(session: ClipSession, owns: boolean, onChange: (s: C
     },
   };
 }
-const NO_CHAPTERS = "Couldn't make chapters.";
+const NO_CHAPTERS = "Could not make chapters";
 
 /** True while the chapters are being made (useChapters, for a page that only shows that). */
 export const useAutoChapters = (session: ClipSession, owns: boolean, onChange: (s: ClipSession) => void): boolean =>
@@ -489,8 +489,7 @@ export function ClipBlocks({
 
       {owns && hasTranscript && !canAi && (
         <p className="mb-3 text-[11px] text-muted-foreground">
-          Takeaways, action plan, and quotes need AI keys. Summary from
-          processing can still be added.
+          Takeaways, action plan and quotes need an AI provider.
         </p>
       )}
       {error && <p className="mb-3 text-[11px] text-red-400">{error}</p>}

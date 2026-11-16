@@ -19,7 +19,7 @@ export default function ReviewSharedProjectPage() {
     return (
       <div className="flex h-dvh items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400">
         <p>
-          This review link is off or doesn't exist.
+          This review link is turned off or not found. Ask the person who shared it for a new link.
           <br />
           <Link to="/" className="mt-3 inline-block text-violet-400 hover:underline">
             Creator Toolset
@@ -38,7 +38,7 @@ export default function ReviewSharedProjectPage() {
         <p className="hidden text-sm text-zinc-500 sm:block">Open a video to comment on the exact frame.</p>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {data?.assets.length === 0 && <p className="mt-16 text-center text-sm text-zinc-500">No videos here yet.</p>}
+        {data?.assets.length === 0 && <p className="mt-16 text-center text-sm text-zinc-500">No videos</p>}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {!data &&
             [0, 1, 2].map((i) => (

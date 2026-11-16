@@ -19,13 +19,16 @@ const DETAIL: Record<LibraryUpload, string> = {
   all: "Each video file is uploaded, with a smaller copy for playback.",
 };
 
-/** The row itself. `off`: values that cannot be picked here (a library that holds files keeps where they are). */
-export function UploadRow({ value, onChange, disabled, off = [] }: { value: LibraryUpload; onChange: (v: LibraryUpload) => void; disabled?: boolean; off?: readonly LibraryUpload[] }) {
+/**
+ * The row itself. `off`: values that cannot be picked here (a library that holds files keeps where they are).
+ * `description`: said in place of the value's own sentence (how many video files are where, ./LibrarySettings.tsx).
+ */
+export function UploadRow({ value, onChange, disabled, off = [], description }: { value: LibraryUpload; onChange: (v: LibraryUpload) => void; disabled?: boolean; off?: readonly LibraryUpload[]; description?: string }) {
   return (
     <Row
       id="library-upload"
       title={UPLOAD_LABEL}
-      description={DETAIL[value]}
+      description={description ?? DETAIL[value]}
       control={
         <SettingsSelect
           label={UPLOAD_LABEL}
@@ -39,10 +42,11 @@ export function UploadRow({ value, onChange, disabled, off = [] }: { value: Libr
   );
 }
 
-export function UploadSelect({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+export function UploadSelect({ library, onChange, onError, description }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void; description?: string }) {
   return (
     <UploadRow
       value={library.settings.upload}
+      description={description}
       disabled={!!library.readOnly}
       onChange={(upload) =>
         void updateLibrary(library.id, { settings: { upload } })

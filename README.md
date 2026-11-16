@@ -98,7 +98,7 @@ changes, all without an account. Each new version stacks on the same video, so y
 timeline file too (OTIO, FCP 7 XML, FCPXML or EDL) and its tracks show under the player.
 
 Reviewers have to be able to reach the server the link came from. A link from the Mac app opens on that Mac, and on
-your own network once **Access from other devices** is on and you put the Mac's address in the link in place of
+your own network once **Network access** is on and you put the Mac's address in the link in place of
 `127.0.0.1`. For a reviewer on the internet you need [your own server](SELF_HOSTING.md).
 
 ### Content Workshop
@@ -178,7 +178,7 @@ there's nothing else to install.
    make?** (turns on the tools that fit and makes your first workspace); **What do you want to do first?**; and **How do
    you work best?** (talk to your AI in the app, in your own AI, or both). For your own AI, a last screen adds Creator
    Toolset to Claude Code or Codex with one click. Sign-in, the Instagram login and other keys are optional.
-4. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Servers → This Mac… in
+4. **Use it from other devices (optional).** Turn on **This Mac → Network access** (Servers → This Mac… in
    the app's menu bar) and choose a password. Phones and other computers sign in with it.
 
 Your data lives in `~/Library/Application Support/Creator Toolset/data`. You can move it to an external disk in

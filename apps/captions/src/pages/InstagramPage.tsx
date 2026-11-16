@@ -207,8 +207,8 @@ function libraryEmptyCopy(opts: {
 }) {
   if (opts.knowhow) {
     return opts.q || opts.tagFilter || opts.accountFilter || opts.kindFilter
-      ? "Nothing matches that search."
-      : "Nothing in Know-how yet. Pick Know-how when you paste a link or share one from your phone.";
+      ? "No matching posts"
+      : "No posts in Know-how";
   }
   if (
     opts.q ||
@@ -217,13 +217,13 @@ function libraryEmptyCopy(opts: {
     (opts.savedForFilter && opts.savedForFilter !== "content") ||
     opts.kindFilter
   ) {
-    return "Nothing matches that search.";
+    return "No matching posts";
   }
-  if (opts.ideaFilter === "inbox") return "Inbox is empty.";
-  if (opts.ideaFilter === "idea") return "Nothing to make yet.";
-  if (opts.ideaFilter === "done") return "Nothing marked done.";
-  if (opts.ideaFilter === "skip") return "Nothing skipped.";
-  return "No posts yet — paste links above.";
+  if (opts.ideaFilter === "inbox") return "No posts in Inbox";
+  if (opts.ideaFilter === "idea") return "No posts in To make";
+  if (opts.ideaFilter === "done") return "No posts in Done";
+  if (opts.ideaFilter === "skip") return "No posts in Skip";
+  return "No posts";
 }
 
 function PostView({
@@ -368,7 +368,7 @@ function PostView({
   }, [post.id, wanted]);
 
   const retry = async (force: boolean) => {
-    if (force && !(await confirmDialog({ title: "Download this post again and redo every transcript and slide text?", ok: "Redo everything" }))) return;
+    if (force && !(await confirmDialog({ title: "Redo everything?", body: "The post is downloaded again and every transcript and on-screen text is made again.", ok: "Redo" }))) return;
     setBusy("retry");
     setError(null);
     try {
@@ -446,7 +446,7 @@ function PostView({
   };
 
   const remove = async () => {
-    if (!(await confirmDialog({ title: "Delete this post from your library?", ok: "Delete", danger: true, deleting: true }))) return;
+    if (!(await confirmDialog({ title: "Delete this post?", ok: "Delete", danger: true, deleting: true }))) return;
     await deletePost(post.id).catch(() => {});
     onDeleted();
   };
@@ -483,13 +483,13 @@ function PostView({
       {post.status === "error" && (
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
           <TriangleAlert className="h-4 w-4 shrink-0" />
-          <span className="min-w-0 flex-1">{post.error || "Ingest failed"}</span>
+          <span className="min-w-0 flex-1">{post.error || "Could not read the post"}</span>
           {post.duplicateOf ? (
             <Link
               to={`/instagram/${post.duplicateOf}`}
               className="rounded-md border border-red-400/40 px-2.5 py-1 text-xs hover:bg-red-500/20"
             >
-              Open the existing post
+              Open saved post
             </Link>
           ) : owns ? (
             <button
@@ -508,13 +508,13 @@ function PostView({
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
           <Copy className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1">
-            Same media as a post already in your library — transcript, slide text, comments and tags were skipped.
+            Same media as a saved post: transcript, on-screen text, comments and tags skipped.
           </span>
           <Link
             to={`/instagram/${post.duplicateOf}`}
             className="rounded-md border border-amber-400/40 px-2.5 py-1 text-xs hover:bg-amber-500/20"
           >
-            Open the original
+            Open original
           </Link>
           {owns && !isProcessing(post) ? (
             <button
@@ -523,7 +523,7 @@ function PostView({
               onClick={() => void runGroups(JOB_GROUPS.map((g) => g.id))}
               className="rounded-md border border-amber-400/40 px-2.5 py-1 text-xs hover:bg-amber-500/20 disabled:opacity-50"
             >
-              Run anyway
+              Analyze anyway
             </button>
           ) : null}
         </div>
@@ -603,17 +603,17 @@ function PostView({
                   {owns && !processing && (
                     <>
                       {owns && <DropdownMenuItem disabled={busy !== null} onClick={() => void refresh()}>
-                        Refresh the numbers
+                        Update numbers
                       </DropdownMenuItem>}
                       {owns && <DropdownMenuItem disabled={busy !== null} onClick={() => setRunOpen(true)}>
-                        Read it again…
+                        Analyze again…
                       </DropdownMenuItem>}
                       {owns && <DropdownMenuItem disabled={busy !== null} onClick={() => void retry(true)}>
                         Redo everything
                       </DropdownMenuItem>}
                       <DropdownMenuSeparator />
                       {owns && <DropdownMenuItem className="text-red-400" onClick={() => void remove()}>
-                        Delete
+                        Delete post
                       </DropdownMenuItem>}
                     </>
                   )}
@@ -663,10 +663,10 @@ function PostView({
               <select
                 value={post.stackId ?? ""}
                 onChange={(e) => void mark({ stackId: e.target.value || null })}
-                aria-label="Stack"
+                aria-label="Topic"
                 className="rounded-md border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-300"
               >
-                <option value="">No stack</option>
+                <option value="">No topic</option>
                 {stacks.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.title}
@@ -679,7 +679,7 @@ function PostView({
           {failed.length > 0 && post.status !== "error" && owns && !processing && (
             <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-400">
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-              Couldn't finish: {failed.map((g) => g.label.toLowerCase()).join(", ")}
+              Could not finish: {failed.map((g) => g.label.toLowerCase()).join(", ")}
               {owns && 
               <button
                 type="button"
@@ -687,13 +687,13 @@ function PostView({
                 onClick={() => void retry(false)}
                 className="underline underline-offset-2 hover:text-amber-300 disabled:opacity-50"
               >
-                Try again
+                Retry
               </button>}
             </p>
           )}
           {lastDiff && (
             <p className="mt-1 text-[11px] text-zinc-500">
-              Since last refresh: plays {fmtDelta(lastDiff.plays)} · likes {fmtDelta(lastDiff.likes)} ·
+              Since last update: plays {fmtDelta(lastDiff.plays)} · likes {fmtDelta(lastDiff.likes)} ·
               comments {fmtDelta(lastDiff.comments)}
             </p>
           )}
@@ -741,7 +741,7 @@ function PostView({
 
           {caption && (
             <div className="mt-4">
-              <p className={label}>Description</p>
+              <p className={label}>Post description</p>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
                 {shownCaption}
                 {captionLong && (
@@ -784,7 +784,7 @@ function PostView({
 
           {similar.length > 0 && (
             <div className="mt-4">
-              <p className={label}>Likely the same content</p>
+              <p className={label}>Similar posts</p>
               <div className="flex flex-col gap-1">
                 {similar.map(({ post: p, reason, score }) => (
                   <Link
@@ -840,7 +840,7 @@ function PostView({
               {(snap.vsFirst || snap.vsPrevious) && (
                 <p className="mt-1 text-[11px] text-zinc-600">
                   {snap.vsPrevious ? `Δ vs previous: plays ${fmtDelta(snap.vsPrevious.plays)}` : ""}
-                  {snap.vsFirst ? ` · vs first pull: plays ${fmtDelta(snap.vsFirst.plays)}` : ""}
+                  {snap.vsFirst ? ` · vs first: plays ${fmtDelta(snap.vsFirst.plays)}` : ""}
                 </p>
               )}
             </div>
@@ -864,7 +864,7 @@ function PostView({
       </div>
       {runOpen && (
         <RunJobsDialog
-          title="Run this post"
+          title="Analyze post"
           busy={busy !== null}
           onClose={() => setRunOpen(false)}
           onRun={async (recipe, opts) => {
@@ -1256,9 +1256,9 @@ export default function InstagramPage() {
     } else {
       navigate(base);
     }
-    if (!posts.length) throw new Error(errors[0]?.error || notes[0] || "Couldn’t save these posts");
+    if (!posts.length) throw new Error(errors[0]?.error || notes[0] || "Could not save the posts");
     if (errors.length || notes.length) {
-      return `${posts.length} saved. ${errors.length + notes.length} couldn’t be saved: ${errors[0]?.error || notes[0]}`;
+      return `${posts.length} saved, ${errors.length + notes.length} not saved: ${errors[0]?.error || notes[0]}`;
     }
   };
 
@@ -1358,7 +1358,7 @@ export default function InstagramPage() {
   const cantRead = !!avail && !avail.available;
   // a fault the person has to fix stays on the page; what is simply not set up yet is said by the card that opens over
   // the tool (FirstOpen), not by a line here
-  const needs = avail?.apify?.valid === false ? "Your Apify key isn’t working" : null;
+  const needs = avail?.apify?.valid === false ? "Needs a new Apify key" : null;
 
   const searchingLibrary = q.trim().length >= 2;
   const ideasView = libraryView === "ideas";
@@ -1422,7 +1422,7 @@ export default function InstagramPage() {
     }
     refreshAccounts();
     setPullingAll(false);
-    if (errors.length) setPullAllError(`${errors.length} not started. ${errors[0]}`);
+    if (errors.length) setPullAllError(`${errors.length} not started: ${errors[0]}`);
   };
   const grouped: LibraryGroup[] = ideasView
     ? []
@@ -1443,7 +1443,7 @@ export default function InstagramPage() {
       });
       navigate(sessionPath(s.id));
     } catch (e) {
-      setBoardError(e instanceof Error ? e.message : "Could not open workshop");
+      setBoardError(e instanceof Error ? e.message : "Could not open Content Workshop");
     } finally {
       setMakingIdea(null);
     }
@@ -1476,7 +1476,7 @@ export default function InstagramPage() {
         <ToolIntro
           icon={ScanSearch}
           title="Content Analyzer"
-          line="Collect posts you like. The AI works out the idea in each one. You rank them."
+          line="Collect posts you like, rank them, find what works."
         />
       )}
 
@@ -1494,7 +1494,7 @@ export default function InstagramPage() {
             >
               <ArrowLeft className="h-3.5 w-3.5" /> All posts
             </button>
-            <p className="text-sm text-red-400">{routeError || "This post could not be opened."}</p>
+            <p className="text-sm text-red-400">{routeError || "Could not open the post"}</p>
           </div>
         ) : viewing ? (
           <>
@@ -1732,7 +1732,7 @@ export default function InstagramPage() {
                       className={cn(pick, "bg-zinc-950 px-2.5 text-[12px] text-zinc-300 hover:border-zinc-700 disabled:opacity-50")}
                     >
                       {boardBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                      {ideaBoard?.ideas.length ? "Regenerate" : "Find ideas"}
+                      {ideaBoard?.ideas.length ? "Update ideas" : "Find ideas"}
                     </button>
                   ) : (
                     <PickMenu
@@ -1766,12 +1766,12 @@ export default function InstagramPage() {
                   ) : ideaRows.length === 0 ? (
                     <p className={libraryEmptyClass}>
                       {searchingLibrary || kindFilter
-                        ? "Nothing matches that search."
+                        ? "No matching ideas"
                         : (ideaBoard?.ideas.length ?? 0) > 0
-                          ? "These remakes are already in Workshop. Regenerate to look for new ones."
+                          ? "No new ideas"
                           : posts.length
-                            ? "Find ideas to get a short list of strong remakes from your saved posts."
-                            : "Paste links above, then find ideas."}
+                            ? "No ideas"
+                            : "No ideas"}
                     </p>
                   ) : (
                     ideaRows.map((idea) => (
@@ -1942,7 +1942,7 @@ export default function InstagramPage() {
                       onClick={() => setStackOpen(true)}
                       className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
                     >
-                      Stack as topic
+                      New topic
                     </button>
                   )}
                   {stacks.length > 0 && (
@@ -1968,7 +1968,7 @@ export default function InstagramPage() {
                     onClick={() => void unstackSelected()}
                     className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
                   >
-                    Unstack
+                    Remove from topic
                   </button>}
                   {editable && <button
                     type="button"
@@ -1976,21 +1976,21 @@ export default function InstagramPage() {
                     className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
                     title="Open a Content Workshop project with these posts as sources"
                   >
-                    Send to Workshop
+                    Send to Content Workshop
                   </button>}
                   {editable && <button
                     type="button"
                     onClick={() => setRunOpen(true)}
                     className="rounded-md bg-violet-600 px-2.5 py-1 font-semibold text-white hover:bg-violet-500"
                   >
-                    Run {selected.size}
+                    Analyze {selected.size}
                   </button>}
                 </div>
               </div>
             )}
             {runOpen && (
               <RunJobsDialog
-                title={`Run ${selected.size} ${selected.size === 1 ? "post" : "posts"}`}
+                title={`Analyze ${selected.size} ${selected.size === 1 ? "post" : "posts"}`}
                 busy={runBusy}
                 onClose={() => setRunOpen(false)}
                 onRun={runSelected}
@@ -1999,9 +1999,9 @@ export default function InstagramPage() {
             {stackOpen && (
               <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
                 <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-925 p-4">
-                  <h3 className="text-sm font-medium text-zinc-100">Stack as one topic</h3>
+                  <h3 className="text-sm font-medium text-zinc-100">New topic</h3>
                   <p className="mt-1 text-[11px] text-zinc-500">
-                    Same idea from different posts — the stack shows the average rank.
+                    The same idea from different posts.
                   </p>
                   <input
                     autoFocus
@@ -2010,7 +2010,7 @@ export default function InstagramPage() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void stackSelected();
                     }}
-                    placeholder="Topic name — first 3 seconds hook, talking-head story…"
+                    placeholder="Topic name"
                     className="mt-3 w-full rounded-md border border-zinc-800 bg-transparent px-2 py-1.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
                   />
                   <div className="mt-3 flex justify-end gap-2">
@@ -2027,7 +2027,7 @@ export default function InstagramPage() {
                       onClick={() => void stackSelected()}
                       className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
                     >
-                      Stack {selected.size}
+                      Create
                     </button>
                   </div>
                 </div>
@@ -2085,9 +2085,9 @@ function StackChrome({
           if (e.key === "Enter") e.currentTarget.blur();
         }}
         className="min-w-[8rem] max-w-[16rem] rounded-md border border-transparent bg-transparent px-1 py-0.5 text-[11px] font-medium uppercase tracking-wider text-violet-300 outline-none hover:border-zinc-800 focus:border-violet-500"
-        title="Rename this topic"
+        title="Rename topic"
       />
-      <span className="text-[11px] text-zinc-500">{count} stacked</span>
+      <span className="text-[11px] text-zinc-500">{count} posts</span>
       <IdeaStatusSelect
         value={stack.ideaStatus}
         onChange={(ideaStatus) => onPatch({ ideaStatus })}
@@ -2095,7 +2095,7 @@ function StackChrome({
       <span className="text-[11px] text-zinc-400">avg rank {stackAvgRank ?? "—"}</span>
       <span className="text-[11px] text-zinc-500">avg virality {fmtCount(avgVirality)}</span>
       <span className="text-[11px] text-zinc-500">
-        {done}/{count} made
+        {done}/{count} done
       </span>
     </div>
   );
@@ -2125,7 +2125,7 @@ function IdeaFields({
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
-        placeholder="Growing tall sunflowers"
+        placeholder="Title"
         className="w-full rounded-md border border-zinc-800 bg-transparent px-2 py-1 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
       />
       <textarea
@@ -2133,7 +2133,7 @@ function IdeaFields({
         onChange={(e) => setTakeaway(e.target.value)}
         onBlur={commit}
         rows={2}
-        placeholder="The one-liner takeaway — what the viewer walks away with"
+        placeholder="Takeaway"
         className="w-full resize-none rounded-md border border-zinc-800 bg-transparent px-2 py-1 text-[13px] leading-snug text-zinc-300 outline-none placeholder:text-zinc-600 focus:border-violet-500"
       />
     </div>

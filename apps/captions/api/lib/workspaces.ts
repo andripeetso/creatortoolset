@@ -292,9 +292,9 @@ export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | Pl
 /** Use an invite: the account joins with the invite's AI route, apps and scripts. The link works once. */
 export function acceptInvite(token: string, username: string): Workspace {
   const found = inviteByToken(token);
-  if (!found) throw new Error("This invite link doesn't work any more");
+  if (!found) throw new Error("This invite link is not valid. Ask for a new one.");
   const { invite, workspace } = found;
-  if (invite.expiresAt <= Date.now()) throw new Error("This invite link has expired: ask for a new one");
+  if (invite.expiresAt <= Date.now()) throw new Error("This invite link has expired. Ask for a new one.");
   if (!memberIn(workspace, username)) {
     workspace.members.push({ username, role: "member", ai: invite.ai, budgetUsd: invite.budgetUsd, joinedAt: Date.now(), ...(invite.scripts ? { scripts: true } : {}), ...(invite.workspaces?.length ? { workspaces: invite.workspaces } : {}) });
     const acct = findUser(username);

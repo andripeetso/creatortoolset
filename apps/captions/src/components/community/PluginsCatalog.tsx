@@ -86,7 +86,7 @@ function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
     run(async () => {
       if (row.state === "add") await addEditStep(row.folder!);
       return switchPluginOn(row.folder!);
-    }, `${row.title} could not be downloaded. Try again.`);
+    }, `Could not download ${row.title}. Try again.`);
   const on = row.state === "on" || row.state === "loaded";
   // every installed plug-in has a page of its own: which workspaces it works in, then its settings (PluginWorkspaces.tsx)
   const to = `/settings/plugin/${encodeURIComponent(row.pluginId ?? row.id)}`;

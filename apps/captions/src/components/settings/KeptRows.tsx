@@ -117,12 +117,15 @@ function EmptyButton({ row, onEmpty }: { row: KeptRow; onEmpty: () => Promise<vo
 
 export function KeptSection() {
   const kept = useCachedLoad<KeptView>(KEPT_API, () => call<KeptView>(KEPT_API), { own: true });
-  const [error, setError] = useState("");
+  // a failed Empty: what went wrong, and the same Empty again for Retry
+  const [error, setError] = useState<{ detail: string; retry: () => void } | null>(null);
   const rows = kept.data && keptRows(kept.data.rows);
   const total = rows?.reduce((n, r) => n + r.bytes, 0) ?? 0;
   const empty = async (kind: KeptKind, device?: string) => {
-    setError("");
-    await call<KeptView>(`${KEPT_API}/${kind}/empty${device ? `?device=${encodeURIComponent(device)}` : ""}`, "POST").catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    setError(null);
+    await call<KeptView>(`${KEPT_API}/${kind}/empty${device ? `?device=${encodeURIComponent(device)}` : ""}`, "POST").catch((e: unknown) =>
+      setError({ detail: e instanceof Error ? e.message : String(e), retry: () => void empty(kind, device) }),
+    );
     await kept.refresh().catch(() => {});
   };
   return (
@@ -153,7 +156,7 @@ export function KeptSection() {
             </Row>
           ))
         )}
-        {error && <ErrorRow title="Could not empty" detail={error} />}
+        {error && <ErrorRow title="Could not empty" detail={error.detail} retry={error.retry} />}
       </Card>
     </Section>
   );

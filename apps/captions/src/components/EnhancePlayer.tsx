@@ -328,11 +328,6 @@ export function EnhancePlayer({ session, mix, onMix }: {
           {fmtTime(time)}{" "}
           <span className="text-zinc-600">/ {fmtTime(duration)}</span>
         </span>
-        {session.hasEnhanced && (
-          <span className="ml-auto text-[11px] text-zinc-500">
-            Flip Before/After while playing to compare
-          </span>
-        )}
       </div>
 
       {session.hasEnhanced && (
@@ -349,7 +344,7 @@ export function EnhancePlayer({ session, mix, onMix }: {
                 onMix(Number(e.target.value) / 100);
                 setTrack("enhanced");
               }}
-              aria-label="Strength: how much of the enhanced voice against the original"
+              aria-label="Strength"
               className="h-1.5 flex-1 cursor-pointer accent-violet-500"
             />
           ) : (

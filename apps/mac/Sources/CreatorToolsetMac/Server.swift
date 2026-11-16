@@ -193,7 +193,7 @@ final class LocalServer: ObservableObject {
         return nil
     }
 
-    /// "Access from other devices" (This Mac): on = the server listens on every interface (phones, the LAN);
+    /// "Network access" (This Mac): on = the server listens on every interface (phones, the LAN);
     /// off = this Mac only. The server lets another device sign in only once the owner has a password of their own.
     var otherDevices: Bool {
         get { UserDefaults.standard.bool(forKey: "serverOtherDevices") }
@@ -333,7 +333,7 @@ final class LocalServer: ObservableObject {
         env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
         env["CT_APP_FOLDER"] = appSupport.path
-        // the connect service, when this Mac has one set: the server starts "Add this Mac to my account" with it
+        // the connect service, when this Mac has one set: the server starts "Add this Mac to the account" with it
         if let service = connectService { env["CT_CONNECT_URL"] = service.absoluteString }
         env["CT_EXIT_WITH_PARENT"] = "1"
         env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })

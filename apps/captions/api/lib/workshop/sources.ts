@@ -180,23 +180,25 @@ export function knowledgeIndex(files: KnowledgeFile[]): string {
 
 const DRAFT_NOTES = 8_000;
 /** Write it for me on the project form: the instructions from the material, and each file filed. */
-export const DRAFT_SYSTEM = `A creator is setting up one of their workspaces (one brand) and gave you their material: what they typed, pages its links lead to, files (a dropped folder keeps its paths) and Instagram bios and posts. Read all of it. Two jobs.
+export const DRAFT_SYSTEM = `A creator is setting up one of their workspaces (one brand) and gave you their material: what they typed or said about it, the workspace's instructions as they stand, lines kept in Memory from their earlier chats, pages its links lead to, files (a dropped folder keeps its paths), the context files the workspace already keeps, and Instagram bios and posts. Read all of it. Two jobs.
 
-1. Write the workspace's instructions, which every writer turn reads first. The facts a writer needs: what it is, who it is for, what it offers, where people are sent (exact links, names, dates, prices), what is true now and what isn't yet, the topics it keeps coming back to. Where files disagree, follow what the material itself says is right (a README or summary that says which docs are out of date). If the material holds its own rules for public text (an owner's feedback, copy rules, words to use or never use, hard don'ts), they stay whole in their files, which the writer is given: name each such file by its path, say in a few words what it is, that it is read before writing anything public, and which one wins. Don't restate, summarise or list its rules here; state the facts plainly instead (where the server is, what the currency is called) and leave the don'ts in their files. Only what the material says, in its own terms; don't add rules or describe a voice it doesn't give. Plain lines, as long as the facts need, under ${DRAFT_NOTES.toLocaleString("en-US")} characters.
+1. Write the workspace's instructions, which every writer turn reads first. The facts a writer needs: what it is, who it is for, what it offers, where people are sent (exact links, names, dates, prices), what is true now and what isn't yet, the topics it keeps coming back to. Lay them out in short groups, each under a plain heading of a word or two on its own line (no # or other marks), one fact to a line, so a writer finds the line it needs. A fact that will stop being true (a beta, a launch, a price, something not open yet) carries its date: the day it changes when the material gives one, else "as of" today's date, which you are given. The lines you write say what is true or what to do, in sentence case, with nothing in capitals for weight. When the material gives the reason for something, the reason stays beside it (a writer who knows why handles the cases nobody listed); never supply a reason of your own. When you are given the workspace's instructions as they stand, they are the person's own: every fact, link and rule in them is in what you write, a rule in its own words, unless the material shows it is no longer true (then the line says what is true now, and the old one goes). You may regroup them. Lines kept in Memory are things the person said in earlier chats: each is the rule kept from it, with their own words after it in brackets for you to read, not to copy. The ones kept for this workspace are theirs in the same way: each rule is in what you write. The ones about the person in every workspace go in only when they bear on what is written or made for this workspace. Where files disagree, follow what the material itself says is right (a README or summary that says which docs are out of date). Where it doesn't say, don't pick: keep the person's own line when it is one of the two, else leave the fact out, and name the disagreement in "unsure". If the material holds its own rules for public text (an owner's feedback, copy rules, words to use or never use, hard don'ts), they stay whole in their files, which the writer is given: name each such file by its path, say in a few words what it is, that it is read before writing anything public, and which one wins. Don't restate, summarise or list its rules here; state the facts plainly instead (where the server is, what the currency is called) and leave the don'ts in their files. Only what the material says, in its own terms; don't add rules or describe a voice it doesn't give. Plain lines, as long as the facts need, under ${DRAFT_NOTES.toLocaleString("en-US")} characters.
 
-2. File every file: keep it (a writer may need to look something up in it later) or leave it out (a writer would never need it: a privacy policy, a duplicate of another file, notes about code or tools), with one sentence on what is in it. When unsure, keep it.
+2. File every file they gave now: keep it (a writer may need to look something up in it later) or leave it out (a writer would never need it: a privacy policy, a duplicate of another file, notes about code or tools), with one sentence on what is in it. When unsure, keep it. The workspace's saved context files are filed already: read them like the rest and leave them out of "files".
 
 Answer with one JSON object and nothing else:
 {"notes": the instructions,
- "files": [{"file": its path exactly as given, "keep": true or false, "kind": one of ${SOURCE_KINDS.map((k) => `"${k.id}"`).join(", ")}, "about": one sentence on what is in it, "why": a few words on why it is left out, only when keep is false}]}`;
+ "files": [{"file": its path exactly as given, "keep": true or false, "kind": one of ${SOURCE_KINDS.map((k) => `"${k.id}"`).join(", ")}, "about": one sentence on what is in it, "why": a few words on why it is left out, only when keep is false}],
+ "unsure": [one sentence for each thing the material says two ways without saying which is right, naming both places; empty when there is none]}`;
 
 /** What the drafter says of each file; one it skipped is kept. */
 export type FileFiling = { file: string; keep: boolean; kind?: SourceKind; about?: string; why?: string };
-export function parseDraft(text: string, names: string[], notesMax = 20_000): { notes: string; files: FileFiling[] } {
+/** `names`: the files given now, the only ones filed. `unsure`: what the material says two ways, for the person to settle. */
+export function parseDraft(text: string, names: string[], notesMax = 20_000): { notes: string; files: FileFiling[]; unsure: string[] } {
   const m = /\{[\s\S]*\}/.exec(text);
-  const j = ((): { notes?: unknown; files?: unknown } | null => {
+  const j = ((): { notes?: unknown; files?: unknown; unsure?: unknown } | null => {
     try {
-      return m ? (JSON.parse(m[0]) as { notes?: unknown; files?: unknown }) : null;
+      return m ? (JSON.parse(m[0]) as { notes?: unknown; files?: unknown; unsure?: unknown }) : null;
     } catch {
       return null;
     }
@@ -219,7 +221,8 @@ export function parseDraft(text: string, names: string[], notesMax = 20_000): { 
       ...(!keep && typeof f?.why === "string" ? { why: f.why.trim().slice(0, 200) } : {}),
     };
   });
-  return { notes: notes.slice(0, notesMax), files };
+  const unsure = (Array.isArray(j?.unsure) ? j.unsure : []).filter((u): u is string => typeof u === "string" && !!u.trim()).slice(0, 10).map((u) => u.trim().slice(0, 300));
+  return { notes: notes.slice(0, notesMax), files, unsure };
 }
 
 /** The file part of the draft's prompt off the Mac: every file whole while they fit, else the room shared out, a short file's unused share going to the long ones. */

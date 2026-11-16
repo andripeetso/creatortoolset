@@ -238,7 +238,7 @@ export default function WorkshopSessionPage() {
   const usageHint = useMemo(() => {
     const here = usageTally(messages);
     const elsewhere = session?.projectUsageElsewhere;
-    if (!here.turns && !elsewhere?.turns) return "thinking, questions, research";
+    if (!here.turns && !elsewhere?.turns) return "";
     const session$ = `Project $${here.costUsd.toFixed(2)} (${tokensLabel(here.tokens)} tokens)`;
     if (!elsewhere?.turns) return `${session$} API-equivalent`;
     return `${session$} · Workspace $${(here.costUsd + elsewhere.costUsd).toFixed(2)} (${tokensLabel(here.tokens + elsewhere.tokens)}, ${elsewhere.sessions + 1} projects) API-equivalent`;
@@ -704,7 +704,7 @@ export default function WorkshopSessionPage() {
     if (!session || !activeDoc) return false;
     setError(null);
     if (!(await flushBlocks())) {
-      setError("Your last edits did not save, so nothing was sent");
+      setError("Could not save the last edits, so nothing was sent");
       return false;
     }
     const reading = readerPost ? { postId: readerPost.id, slide: readerSlide?.postId === readerPost.id ? readerSlide.index : 0 } : undefined;
@@ -1260,7 +1260,7 @@ export default function WorkshopSessionPage() {
                     />
                   </div>
                 ) : session && docsKnown ? (
-                  <p className="p-4 text-sm text-muted-foreground">No document yet — add one with “+ New”.</p>
+                  <p className="p-4 text-sm text-muted-foreground">No pieces</p>
                 ) : (
                   // not loaded yet: the page's shape in quiet blocks (a title line, the piece's lines)
                   <div aria-hidden className="flex flex-col gap-3 p-4">
@@ -1342,7 +1342,7 @@ export default function WorkshopSessionPage() {
                             type="button"
                             onClick={() => void review()}
                             disabled={thinking}
-                            title="A reader reads only the piece, as one of your followers would: where they'd stop, what they'd take away, whether they'd save or send it. Its read lands here and the writer sees it next turn."
+                            title="A read of the piece alone, as a follower: where they would stop, what they would take away, whether they would save or send it."
                             className="flex items-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                           >
                             <Eye className="h-3.5 w-3.5" /> Read as a follower
@@ -1395,7 +1395,7 @@ export default function WorkshopSessionPage() {
                           searching={searching}
                           mine={
                             mine
-                              ? { on: mineOnly, label: `My account · @${mine.username}`, onToggle: () => setMineOnly((v) => !v) }
+                              ? { on: mineOnly, label: `Your account · @${mine.username}`, onToggle: () => setMineOnly((v) => !v) }
                               : null
                           }
                           format={{ on: formatOnly, onToggle: () => setFormatOnly((v) => !v) }}
@@ -1405,11 +1405,11 @@ export default function WorkshopSessionPage() {
                         {pastedLinks.length && !readOnly ? (
                           <div className="flex flex-col gap-2 rounded-lg border border-violet-400/30 bg-violet-500/[0.06] p-3 text-[12px]">
                             <p className="text-foreground">
-                              {pastedLinks.length === 1 ? "A post or video" : `${pastedLinks.length} posts or videos`}: add {pastedLinks.length === 1 ? "it" : "them"} to your library and this project. The transcript and on-screen text start at once.
+                              {pastedLinks.length === 1 ? "1 post or video" : `${pastedLinks.length} posts or videos`}
                             </p>
                             <div className="flex items-center gap-2">
                               <button type="button" disabled={adding?.busy || posts.length >= MAX_SESSION_SOURCES} onClick={() => void addFromLinks()} className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-                                {adding?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Add to the library and this project
+                                {adding?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Add to Content Analyzer and this project
                               </button>
                               <button type="button" onClick={() => setQuery("")} className="rounded-md px-2 py-1.5 text-muted-foreground hover:text-foreground">
                                 Clear
@@ -1418,7 +1418,7 @@ export default function WorkshopSessionPage() {
                             {adding?.error ? <p className="text-red-300">{adding.error}</p> : null}
                           </div>
                         ) : activeResults && hits.length === 0 ? (
-                          <p className="py-8 text-center text-sm text-muted-foreground">Nothing in the library talks about that yet.</p>
+                          <p className="py-8 text-center text-sm text-muted-foreground">No posts found</p>
                         ) : !activeResults ? (
                           library === null ? (
                             <div aria-hidden className="grid gap-2 md:grid-cols-2">
@@ -1428,11 +1428,10 @@ export default function WorkshopSessionPage() {
                             </div>
                           ) : library.length === 0 ? (
                             <p className="py-8 text-center text-sm text-muted-foreground">
-                              Nothing in the library yet —{" "}
+                              No posts ·{" "}
                               <Link to="/instagram" className="text-violet-700 hover:underline dark:text-violet-300">
-                                ingest posts in the Instagram Analyzer
-                              </Link>{" "}
-                              and they show up here.
+                                Add posts in Content Analyzer
+                              </Link>
                             </p>
                           ) : (
                             <div className="grid gap-2 md:grid-cols-2">

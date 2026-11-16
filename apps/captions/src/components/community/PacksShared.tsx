@@ -7,7 +7,7 @@ type Contents = Parameters<typeof packContents>[0];
 /** The full list of what a pack adds: instruction text per slot (with its label), frameworks and caption styles. */
 export function ContentsView({ pack }: { pack: Contents }) {
   const c = packContents(pack);
-  if (!c.slots.length && !c.skills.length && !c.frameworks.length && !c.captionStyles.length && !c.home) return <p className="text-xs text-muted-foreground">Nothing this app uses.</p>;
+  if (!c.slots.length && !c.skills.length && !c.frameworks.length && !c.captionStyles.length && !c.home) return <p className="text-xs text-muted-foreground">No contents</p>;
   return (
     <div className="space-y-3 text-sm">
       {c.slots.map((s) => (
@@ -24,7 +24,7 @@ export function ContentsView({ pack }: { pack: Contents }) {
       ))}
       {(pack.frameworks?.length ?? 0) > 0 && (
         <div>
-          <div className="text-xs font-medium text-foreground">Frameworks ({pack.frameworks!.length}): open one to read it</div>
+          <div className="text-xs font-medium text-foreground">Frameworks ({pack.frameworks!.length})</div>
           <div className="mt-1 divide-y divide-border rounded-md border border-border">
             {pack.frameworks!.map((f) => <FrameworkRow key={f.name} f={f} />)}
           </div>
@@ -65,7 +65,7 @@ export function WhereItGoes({ pack }: { pack: Contents }) {
   const c = containsOf(pack);
   const rows = destinations(c);
   const notes = [
-    ...(c.instructions.some((s) => USED_SLOTS.includes(s)) ? ["Instructions go after the app's own and before your own rules and notes. Where they disagree, yours win. Switch them off, or keep them to some workspaces, under Installed."] : []),
+    ...(c.instructions.some((s) => USED_SLOTS.includes(s)) ? ["Instructions go after the app's own and before your own rules and notes, so yours win where they disagree."] : []),
     "Removing it deletes the copies you haven't changed and keeps the ones you have.",
   ];
   return (

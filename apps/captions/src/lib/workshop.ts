@@ -71,9 +71,9 @@ export function knowledgeSizeLabel(n: number): string {
 export type FrameworkRole = "narrative" | "persuasion" | "argument";
 
 export const FRAMEWORK_ROLES: { id: FrameworkRole; label: string; hint: string }[] = [
-  { id: "narrative", label: "Shape", hint: "Sets the order of the whole piece — pick one" },
-  { id: "persuasion", label: "Persuasion", hint: "Shapes how the piece asks — pick one, optional" },
-  { id: "argument", label: "Argument", hint: "Shapes the reasoning — optional" },
+  { id: "narrative", label: "Shape", hint: "Sets the order of the whole piece" },
+  { id: "persuasion", label: "Persuasion", hint: "Sets how the piece asks" },
+  { id: "argument", label: "Argument", hint: "Sets the reasoning" },
 ];
 
 export interface WorkshopFramework {
@@ -269,7 +269,7 @@ export interface GenerateInput {
 }
 
 export const DRAFT_KINDS: { id: DraftKind; label: string; hint: string }[] = [
-  { id: "reel", label: "Reel script", hint: "Hook variations and a spoken script, caption" },
+  { id: "reel", label: "Reel script", hint: "Hook variations and a spoken script, post description" },
   { id: "carousel", label: "Carousel", hint: "Slide-by-slide headline and body, hook slide, CTA slide" },
   { id: "ad", label: "Ad copy", hint: "Three angles: primary text, headline, description, CTA" },
   { id: "free", label: "Anything else", hint: "Whatever the brief asks for" },
@@ -329,10 +329,12 @@ export type FileFiling = { file: string; keep: boolean; kind?: string; about?: s
 /**
  * A project's instructions drafted from what the person gave: text (its links are read), files and folders, Instagram
  * accounts; and each file filed. A folder's read answers with spaces while it runs, so an error comes in the body.
+ * `projectId`: the workspace being edited, whose saved context files are read too. `unsure`: what the material says
+ * two ways, for the person to settle.
  */
-export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }> }) =>
+export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }>; projectId?: string }) =>
   fetch("/api/workshop/projects/draft-notes", jsonInit(input))
-    .then((r) => json<{ notes: string; files?: FileFiling[]; error?: string }>(r))
+    .then((r) => json<{ notes: string; files?: FileFiling[]; unsure?: string[]; error?: string }>(r))
     .then((j) => {
       if (j.error) throw new Error(j.error);
       return j;
@@ -528,7 +530,7 @@ export interface WorkshopDocument {
 
 /** The parts of a source the AI can pull, in value order. */
 export type SourcePart = "slides" | "transcript" | "caption" | "comments";
-export const PART_LABELS: Record<SourcePart, string> = { slides: "on-screen text", transcript: "transcript", caption: "caption", comments: "comments" };
+export const PART_LABELS: Record<SourcePart, string> = { slides: "on-screen text", transcript: "transcript", caption: "post description", comments: "comments" };
 export interface LoadedSource {
   postId: string;
   parts: SourcePart[];
@@ -694,8 +696,8 @@ export const VERDICTS: Record<AuditVerdict, { label: string; className: string; 
 };
 
 export const AUDIT_DEPTHS: { id: AuditDepth; label: string; hint: string }[] = [
-  { id: "quick", label: "Quick check", hint: "About a minute — the main claims against the first sources found" },
-  { id: "deep", label: "Deep research", hint: "5–15 minutes — reads dozens of pages, finds primary sources" },
+  { id: "quick", label: "Quick check", hint: "About a minute: the main claims against the first sources found" },
+  { id: "deep", label: "Deep research", hint: "5–15 minutes: dozens of pages and primary sources" },
 ];
 
 export const startAudit = (sessionId: string, input: { docId: string; postId?: string; depth: AuditDepth }) =>
@@ -744,7 +746,7 @@ export function fileBase64(file: File): Promise<string> {
   return new Promise((ok, no) => {
     const r = new FileReader();
     r.onload = () => ok(String(r.result).split(",", 2)[1] ?? "");
-    r.onerror = () => no(new Error(`Couldn't read ${file.name}`));
+    r.onerror = () => no(new Error(`Could not read ${file.name}`));
     r.readAsDataURL(file);
   });
 }
@@ -760,7 +762,7 @@ export interface PendingImage {
 export const imageUrl = (sessionId: string, iid: string) => `/api/workshop/sessions/${sessionId}/images/${iid}`;
 /** A picture for a piece's text: shrunk here like a chat picture, stored by the session; returns its id. */
 export async function uploadPicture(sessionId: string, file: File): Promise<ImageRef> {
-  if (!file.type.startsWith("image/")) throw new Error("That isn't a picture");
+  if (!file.type.startsWith("image/")) throw new Error("Not a picture");
   const pic = await shrinkImage(file);
   return fetch(`/api/workshop/sessions/${sessionId}/media`, jsonInit({ name: pic.name, type: pic.type, data: pic.data })).then((r) => json<ImageRef>(r));
 }
@@ -786,7 +788,7 @@ export async function shrinkImage(file: File, max = 1568): Promise<PendingImage>
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  const blob = await new Promise<Blob>((ok, no) => canvas.toBlob((b) => (b ? ok(b) : no(new Error(`Couldn't read ${file.name}`))), "image/jpeg", 0.9));
+  const blob = await new Promise<Blob>((ok, no) => canvas.toBlob((b) => (b ? ok(b) : no(new Error(`Could not read ${file.name}`))), "image/jpeg", 0.9));
   const data = await new Promise<string>((ok) => {
     const r = new FileReader();
     r.onload = () => ok(String(r.result).split(",", 2)[1] ?? "");
@@ -1036,11 +1038,11 @@ export function moveId(ids: string[], id: string, dir: -1 | 1): string[] {
 }
 
 export const STAGE_LABELS: Record<NonNullable<ChatMessage["stage"]>, string> = {
-  packing: "Packing the sources",
-  thinking: "Reading and thinking",
+  packing: "Loading the sources",
+  thinking: "Reading",
   writing: "Writing",
   applying: "Applying the edits",
-  searching: "Searching the library",
+  searching: "Searching posts",
   researching: "Reading sources on the web",
 };
 

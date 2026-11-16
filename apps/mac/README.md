@@ -217,14 +217,14 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 - **This Mac:** a Plug-ins row, shown only while one is on: `N on`, or `Off` when paused, with Switch All Off or
   Switch Back On.
 
-### Access from other devices
+### Network access
 
-Off by default: the server listens on `127.0.0.1` only. The switch **Let phones and other computers sign in**
-under **This Mac → Access from other devices** asks for a
+Off by default: the server listens on `127.0.0.1` only. The switch **This Mac → Network access** asks for a
 password of your own first (twice, 10 characters or more): the app changes the owner's password with
 `POST /api/auth/password` (the window gets its new cookie in the same answer), keeps it in the Keychain
 (`owner-password`), and restarts the server on every interface (`HOST=0.0.0.0`). Phones and other computers
-then sign in as `admin` with that password. The server refuses a sign-in or a sign-in link from any address
+then sign in as `admin` with that password, at the address the section shows while it is on (macOS may ask to allow
+incoming connections for node: allow it, or phones can't connect). The server refuses a sign-in or a sign-in link from any address
 but loopback while the owner's password is still `APP_SECRET` (`CT_LOCAL=1`, `api/auth.ts`), so turning the
 listener on by hand can't open the account. The pairing QR for phones comes in a later change.
 
@@ -307,19 +307,18 @@ one at most once a minute). A crash of the app itself is macOS's report in
   page's `account` messages are answered only for the window's own page, never a frame inside it. The account
   server is in This Mac → Account (default `https://creatortoolset.com`, the only place the app names it; empty = no
   account step, for your own server). `Account.swift`.
-- **Add this Mac to my account…** (Servers menu): makes the server on this Mac reachable from your other devices
+- **Add this Mac to the account…** (Servers menu): makes the server on this Mac reachable from your other devices
   through the connect service (default `https://connect.creatortoolset.com`, UserDefaults `connectBroker`; empty =
   off). The browser opens the site's page with the code filled in; you sign in and say yes, the page hands back to the
   app (`creatortoolset://connect`) and the tunnel starts. Nothing is sent to the service before that press, or before
   you sign in to an account (then the Servers list shows the account's other computers). `Connect.swift`.
 - **Settings…** (⌘,, the one Settings item) opens the server's Settings in the window; with no server picked it opens
   This Mac. The Servers menu and the menu bar item (**This Mac…**) open the native **This Mac** window: Servers,
-  **Use this Mac for my AI**, the server here (on or off, port, log, Data location, Access from other devices) and
+  **AI on this Mac**, the server here (on or off, port, log, Data location, Network access) and
   the account server; the page's Settings has no entry for it. A page that posts `this-mac` to the `window` message
   handler opens it too. `ThisMac.swift`.
 - The page learns this Mac's device id on the open server as `<html data-mac-device>` (a user script, renewed on
-  each switch and pairing), so Settings → Providers can say "This Mac (*name*) answers your AI" rather than
-  another Mac's name.
+  each switch and pairing), so the page can tell this Mac from the account's other computers.
 - File inputs open the Mac's own open panel. Downloads land in `~/Downloads` (a name taken
   gets ` (2)`). One download is not kept as it is: the screen recording editor's export with no background
   (`….ctalpha.mp4`: every frame's colours and its matte in one H.264 picture) is made into a see-through
@@ -352,7 +351,7 @@ the dot says how many things wait for you. A click opens a panel (`Activity.swif
 - the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
 - menu rows (`PanelMenuRow`: a title, its key in grey on the right): **Open Creator Toolset**, **Record Screen**
   (**Stop Recording** while it records) and **Settings & More**, which holds "AI on this Mac: …", "Server on this
-  Mac: …", **Use this Mac for my AI**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings,
+  Mac: …", **AI on this Mac**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings,
   **Open at login**, **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
 
 `PANEL_SHOTS=<folder> swift test --filter PanelShotsTests` draws the panel with sample rows, light and dark, to PNGs.
@@ -363,11 +362,11 @@ Closing the last window takes the app out of the Dock and the app switcher; it s
 ## Runs your AI
 
 Any signed-in account can use this Mac for its AI. With the server on this Mac it is on by itself (see "First
-run"); for another server, turn **Use this Mac for my AI** on (menu bar or This Mac). The first time, the app
+run"); for another server, turn **AI on this Mac** on (menu bar or This Mac). The first time, the app
 pairs this Mac with the account: `POST /api/devices` with the window's cookies, body `{name, version}`.
 The site returns a device token once. The token goes to the Keychain (service
 `com.creatortoolset.mac.device`, account = the site's host); the device id goes to
-UserDefaults. Turning it off stops the runner and keeps the pairing. **Remove this Mac from my account** also
+UserDefaults. Turning it off stops the runner and keeps the pairing. **Remove this Mac from the account** also
 calls `DELETE /api/devices/:id`. If the site answers 401 to the runner, the token was revoked: the app
 drops it and turns the setting off, with a note in the menu.
 
@@ -403,7 +402,7 @@ written there.
 
 ## Draws an edit's cards
 
-While **Use this Mac for my AI** is on, the same runner also draws the AI Editor's cards for the account's own edits
+While **AI on this Mac** is on, the same runner also draws the AI Editor's cards for the account's own edits
 (`CardJobs.swift`, `KitRunner.swift`, `CardClip.swift`). It makes no request of its own to find out whether one
 waits. The long poll it already holds says which editor kinds this Mac would take now (`"editor": ["cards-draw"]`
 beside `blobs` in the body of `relay/wait`), and a server with such a step queued answers that poll with
@@ -536,7 +535,7 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
 between launches; Sign out on the site clears it. The one secret the app keeps is the device token of
-**Use this Mac for my AI**, in the Keychain (see "Runs your AI").
+**AI on this Mac**, in the Keychain (see "Runs your AI").
 
 ## Layout
 
@@ -590,7 +589,7 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
 
 ## Not checked yet
 
-The first run, Access from other devices and Data location (Local server 4–6) are unit-tested
+The first run, Network access and Data location (Local server 4–6) are unit-tested
 (the server's sign-in rules in `apps/captions/api/local-server.test.ts`, the Mac's checks in `ServerTests.swift`)
 but not yet launched: the window's cookie landing in WebKit's store before the page loads, the setup inside the
 window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-password` on a signed build, a real

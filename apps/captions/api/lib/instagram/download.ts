@@ -41,11 +41,11 @@ export function assertCdnUrl(raw: string): URL {
   try {
     url = new URL(raw);
   } catch {
-    throw new DownloadError("Media URL is not valid", "BAD_URL");
+    throw new DownloadError("Media link is not valid", "BAD_URL");
   }
   if (url.protocol !== "https:" || !CDN_HOST.test(url.hostname)) {
     throw new DownloadError(
-      `Refusing to download from ${url.hostname}`,
+      `Download address not allowed: ${url.hostname}`,
       "BAD_URL",
     );
   }
@@ -161,14 +161,14 @@ async function downloadOnce(
       signal: opts.signal,
     });
   } catch (e) {
-    if (opts.signal?.aborted) throw new DownloadError("Cancelled", "CANCELLED");
+    if (opts.signal?.aborted) throw new DownloadError("Stopped", "CANCELLED");
     throw new DownloadError(`Download failed: ${describeFetchError(e)}`, "FAILED");
   }
   if (!res.ok || !res.body) {
     await res.body?.cancel().catch(() => {});
     throw new DownloadError(
       res.status === 403 || res.status === 410
-        ? "The media link expired — retry the post to fetch fresh links"
+        ? "The media link expired: retry the post"
         : `Media download failed (HTTP ${res.status})`,
       res.status >= 500 || res.status === 429 ? "HTTP" : "HTTP_FINAL",
     );
@@ -216,7 +216,7 @@ async function downloadOnce(
   } catch (e) {
     await rm(part, { force: true }).catch(() => {});
     if (e instanceof DownloadError) throw e;
-    if (opts.signal?.aborted) throw new DownloadError("Cancelled", "CANCELLED");
+    if (opts.signal?.aborted) throw new DownloadError("Stopped", "CANCELLED");
     throw new DownloadError(`Download failed: ${describeFetchError(e)}`, "FAILED");
   }
   if (!bytes) {

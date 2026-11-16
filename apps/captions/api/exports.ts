@@ -308,7 +308,7 @@ async function runRenderedFfmpeg(
   args: string[],
 ): Promise<void> {
   const renderer = await createCaptionFrameRenderer(spec, () => {
-    job.note = "Downloading the export browser (196 MB)…";
+    job.note = "Preparing the Exact export (196 MB download)…";
     void jobPersist(job);
   });
   if (job.note) {
@@ -1112,7 +1112,7 @@ exportsApp.post("/:id/library", async (c) => {
   if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
   if (job.status !== "done") return c.json({ error: "Not ready" }, 409);
   if (user.role !== "admin" && user.off.includes("media")) return c.json({ error: "Not found" }, 404); // as boot.ts TOOL_GATES
-  if (job.ext === "zip") return c.json({ error: "A PNG sequence can't go in the library" }, 400);
+  if (job.ext === "zip") return c.json({ error: "A PNG sequence cannot be sent to the Media Library" }, 400);
   const p = outPath(job);
   if (!existsSync(p)) return c.json({ error: "File expired" }, 410);
   const body = (await c.req.json().catch(() => null)) as { libraryId?: unknown } | null;
@@ -1124,7 +1124,7 @@ exportsApp.post("/:id/library", async (c) => {
     clip?.libraryVersionId ? [clip.libraryVersionId] : [],
     typeof body?.libraryId === "string" ? body.libraryId : undefined,
   );
-  if (!saved) return c.json({ error: "There is no Media Library to save into", code: "not_found" }, 404);
+  if (!saved) return c.json({ error: "Needs a Media Library", code: "not_found" }, 404);
   if ("error" in saved) return c.json(saved, 507);
   return c.json(saved);
 });
@@ -1136,8 +1136,8 @@ exportsApp.post("/:id/content", async (c) => {
   const user = c.get("user");
   const job = jobs.get(c.req.param("id"));
   if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
-  if (user.role !== "admin") return c.json({ error: "Only admins can save to Content" }, 403);
-  if (job.kind !== "burn" || job.status !== "done" || !job.owner) return c.json({ error: "Only a finished captioned export can be saved" }, 409);
+  if (user.role !== "admin") return c.json({ error: "Only an admin can send an export to Finals" }, 403);
+  if (job.kind !== "burn" || job.status !== "done" || !job.owner) return c.json({ error: "Only a finished export with captions can be sent to Finals" }, 409);
   if (!existsSync(outPath(job))) return c.json({ error: "File expired" }, 410);
   const small = belowHd(job.params.width, job.params.height);
   if (small) return c.json({ error: small }, 409);

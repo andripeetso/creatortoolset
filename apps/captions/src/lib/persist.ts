@@ -835,10 +835,10 @@ function putObjectPart(
     xhr.upload.onprogress = (event) => onProgress(event.loaded);
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(`Object upload failed (${xhr.status})`));
+      else reject(new Error("The upload did not finish"));
     };
-    xhr.onerror = () => reject(new Error("Network error during object upload"));
-    xhr.onabort = () => reject(new Error("Object upload aborted"));
+    xhr.onerror = () => reject(new Error("The connection dropped during the upload"));
+    xhr.onabort = () => reject(new Error("The upload was stopped"));
     xhr.send(chunk);
   });
 }
@@ -859,7 +859,7 @@ async function uploadOriginalToObjectStorage(
   const init = (await initRes.json().catch(() => null)) as MultipartInit | null;
   if (!initRes.ok || !init) {
     throw new Error(
-      init?.error || `Object upload setup failed (${initRes.status})`,
+      init?.error || "Could not start the upload",
     );
   }
   if (init.mode === "legacy") return null;
@@ -872,7 +872,7 @@ async function uploadOriginalToObjectStorage(
     };
   }
   if (!init.uploadId || !init.partSize) {
-    throw new Error("Object upload setup was incomplete");
+    throw new Error("Could not start the upload");
   }
 
   const uploaded = new Map(
@@ -914,7 +914,7 @@ async function uploadOriginalToObjectStorage(
           const signed = await signRes.json().catch(() => null);
           if (!signRes.ok || typeof signed?.url !== "string") {
             throw new Error(
-              signed?.error || `Upload signing failed (${signRes.status})`,
+              signed?.error || "Could not start the upload",
             );
           }
           await putObjectPart(signed.url, chunk, (loaded) => {
@@ -950,7 +950,7 @@ async function uploadOriginalToObjectStorage(
   const complete = await completeRes.json().catch(() => null);
   if (!completeRes.ok) {
     throw new Error(
-      complete?.error || `Upload completion failed (${completeRes.status})`,
+      complete?.error || "The upload did not finish",
     );
   }
   return complete as UploadResp;
@@ -999,17 +999,17 @@ function postVideoChunk(
       } else if (xhr.status === 409 && typeof resp?.offset === "number") {
         resolve(resp);
       } else {
-        reject(new Error(resp?.error || `Upload failed (${xhr.status})`));
+        reject(new Error(resp?.error || "The upload did not finish"));
       }
     };
     xhr.onerror = () => {
       clearStallWatchdog();
-      reject(new Error("Network error during upload"));
+      reject(new Error("The connection dropped during the upload"));
     };
     xhr.onabort = () => {
       clearStallWatchdog();
       reject(
-        new Error("Upload stalled — resuming from the last saved position"),
+        new Error("The upload stalled"),
       );
     };
     xhr.send(chunk);
@@ -1023,7 +1023,7 @@ async function sourceStatus(
   const res = await fetch(
     `/api/projects/${projectId}/clips/${clipId}/original/status`,
   );
-  if (!res.ok) throw new Error(`Source status failed (${res.status})`);
+  if (!res.ok) throw new Error("Could not check the upload");
   return res.json();
 }
 
@@ -1054,7 +1054,7 @@ async function originalPartsStatus(
     `/api/projects/${projectId}/clips/${clipId}/original/parts`,
   );
   if (res.status === 404) throw new ParallelUnavailable();
-  if (!res.ok) throw new Error(`Parts status failed (${res.status})`);
+  if (!res.ok) throw new Error("Could not check the upload");
   return res.json();
 }
 
@@ -1089,16 +1089,16 @@ function postOriginalPart(
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else {
         const resp = xhr.response as { error?: string } | null;
-        reject(new Error(resp?.error || `Part upload failed (${xhr.status})`));
+        reject(new Error(resp?.error || "The upload did not finish"));
       }
     };
     xhr.onerror = () => {
       window.clearTimeout(stallTimer);
-      reject(new Error("Network error during part upload"));
+      reject(new Error("The connection dropped during the upload"));
     };
     xhr.onabort = () => {
       window.clearTimeout(stallTimer);
-      reject(new Error("Part upload stalled — retrying"));
+      reject(new Error("The upload stalled"));
     };
     xhr.send(chunk);
   });
@@ -1129,7 +1129,7 @@ async function uploadOriginalParallel(
   }
   if (status.total && status.total !== file.size) {
     throw new Error(
-      "The source changed since the upload started — re-attach it to restart.",
+      "The source video changed since the upload started; upload it again",
     );
   }
   const totalParts = Math.ceil(file.size / partSize);
@@ -1196,7 +1196,7 @@ async function uploadOriginalParallel(
   const complete = await completeRes.json().catch(() => null);
   if (!completeRes.ok) {
     throw new Error(
-      complete?.error || `Upload completion failed (${completeRes.status})`,
+      complete?.error || "The upload did not finish",
     );
   }
   log(`parallel complete bytes=${file.size}`);
@@ -1269,7 +1269,7 @@ async function uploadOriginalResumable(
     }
     const next = status.offset ?? offset;
     if (next <= offset && !status.complete) {
-      throw new Error("Upload did not advance");
+      throw new Error("The upload stalled");
     }
     offset = next;
     patchClip(clipId, {
@@ -1302,7 +1302,7 @@ async function ensureRemoteClip(
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(body?.error || `Clip creation failed (${res.status})`);
+    throw new Error(body?.error || "Could not add the clip to the project");
   }
 }
 
@@ -1343,7 +1343,7 @@ async function ensureServerProject(): Promise<void> {
         !Number.isSafeInteger(body?.revision)
       ) {
         throw new Error(
-          body?.error || `Project creation failed (${res.status})`,
+          body?.error || "Could not create the project",
         );
       }
       const current = useStudio.getState();

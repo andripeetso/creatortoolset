@@ -1297,7 +1297,7 @@ async function transcribeClip(id: string): Promise<boolean> {
       setStatus({
         phase: "extracting",
         progress: 0,
-        detail: "Preparing audio on this device",
+        detail: "Preparing audio",
       });
       const blob: Blob =
         audioBlob ?? (await fetch(clip.videoUrl).then((r) => r.blob()));
@@ -2333,7 +2333,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       if (get().activeClipId === targetId) {
         set({
           refineError:
-            e instanceof Error ? e.message : "AI caption pass failed",
+            e instanceof Error ? e.message : "Could not match cadence",
           ...cadenceOutcomePatch(targetId, "failed"),
         });
       } else {
@@ -2414,7 +2414,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       // the thought lines already landed; only the split points are
       // missing — say so only when the user asked (no clipId: the button)
       if (get().activeClipId === targetId && clipId === undefined) {
-        set({ refineError: e instanceof Error ? e.message : "AI caption pass failed" });
+        set({ refineError: e instanceof Error ? e.message : "Could not match cadence" });
       }
     } finally {
       splitsInFlight.delete(targetId);
@@ -2580,7 +2580,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       if (get().activeClipId === targetId) {
         set({
           scriptCheckError:
-            e instanceof Error ? e.message : "Script check failed",
+            e instanceof Error ? e.message : "the check did not finish",
         });
       }
     } finally {
@@ -2904,7 +2904,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
     const st = get().style;
     const tx: TextOverlay = {
       id: textId++,
-      text: "Your text",
+      text: "Text",
       start,
       end: Math.min(dur, start + 2.5),
       x: 50,

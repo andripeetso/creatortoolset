@@ -463,7 +463,7 @@ function VersionCaption({
           <CopyButton
             text={() => markdownToPlain(shown)}
             label="Copy"
-            title="Copy this version's post description as Instagram takes it"
+            title="Copy this version's post description"
             className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
           />
         ) : null}
@@ -475,9 +475,9 @@ function VersionCaption({
             onWrite(!!text.trim());
           }}
           className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40"
-          title={text.trim() ? "Another take of this version's description" : "Write this version's description"}
+          title={text.trim() ? "Rewrite this version's post description" : "Write this version's post description"}
         >
-          {text.trim() ? "Another" : "Write"}
+          {text.trim() ? "Rewrite" : "Write"}
         </button>
       </div>
       <AutoTextarea
@@ -485,7 +485,7 @@ function VersionCaption({
         disabled={disabled}
         onChange={change}
         sessionId={doc.sessionId}
-        placeholder={doc.caption?.text ? "Uses the main description until this version has its own" : "This version's post description"}
+        placeholder={doc.caption?.text ? "Uses the main post description" : "This version's post description"}
       />
     </>
   );
@@ -526,7 +526,7 @@ function NotesEditor({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-transparent">
       {(locked && !quiet) || saving ? (
-        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "AI is editing…" : "saving…"}</span>
+        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "Writing…" : "Saving…"}</span>
       ) : null}
       {/* the text box and the preview keep their bar's 8px at all times, out of this right padding (index.css) */}
       <div className="min-h-0 flex-1 overflow-hidden px-5 pb-8 pt-8 bars:pr-3">
@@ -541,7 +541,7 @@ function NotesEditor({
             onChange={(e) => emit(e.target.value)}
             spellCheck
             aria-label="Notes"
-            placeholder="Write anything — scraps, quotes, a list. This isn't the piece."
+            placeholder="Notes"
             className="h-full w-full resize-none overflow-y-scroll bg-transparent text-[15px] leading-[1.7] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
           />
         )}
@@ -670,7 +670,7 @@ function PieceEditor({
   };
   const pickLine = (b: EditorBlock, option: string) => {
     if (!lines || b.text.slice(lines.start, lines.end) !== lines.was) {
-      setLines(lines ? { ...lines, list: [], error: "The text changed since you asked. Select it again." } : null);
+      setLines(lines ? { ...lines, list: [], error: "The text changed: select it again" } : null);
       return;
     }
     setText(b.key, b.text.slice(0, lines.start) + option + b.text.slice(lines.end));
@@ -726,7 +726,7 @@ function PieceEditor({
   const captionAuthor = caption ? companionAuthor("caption", caption) : null;
   const showCaptionGenerate = !!onGenerateCaption && (!caption.trim() || caption === (doc.caption?.text ?? ""));
   const captionAnother = !!caption.trim();
-  const captionGenerateWhy = !aiAvailable ? "AI is not available" : !hasPiece ? `Write the ${unit.many} first` : captionAnother ? "One different extra finding, still one caption" : "One caption: extra finding plus search terms, not a recap";
+  const captionGenerateWhy = !aiAvailable ? "Needs an AI provider" : !hasPiece ? `Write the ${unit.many} first` : captionAnother ? "Rewrite the post description" : "Write the post description";
   const setText = (key: string, text: string) => emit(blocks.map((b) => (b.key === key ? { ...b, text, author: "user" } : b)));
   const insertAfter = (key: string | null) => {
     const at = key ? blocks.findIndex((b) => b.key === key) + 1 : blocks.length;
@@ -774,7 +774,7 @@ function PieceEditor({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-transparent">
       {(locked && !quiet) || saving ? (
-        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "AI is editing…" : "saving…"}</span>
+        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "Writing…" : "Saving…"}</span>
       ) : null}
       {/* the bar's 8px at all times, out of the right padding (index.css): the text does not move when the piece outgrows its card */}
       <div className="min-h-0 flex-1 overflow-y-scroll px-5 pb-10 pt-8 bars:pr-3">
@@ -902,7 +902,7 @@ function PieceEditor({
                         type="button"
                         onClick={() => toggleLock(b.id!)}
                         className={`rounded p-0.5 hover:bg-muted ${lockedIds.includes(b.id) ? "text-amber-300" : "text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}
-                        title={lockedIds.includes(b.id) ? `Locked: the AI can't change ${unit.one} ${i + 1}. Click to unlock.` : `Lock ${unit.one} ${i + 1} so the AI can't change it`}
+                        title={lockedIds.includes(b.id) ? `Locked: the AI can't change ${unit.one} ${i + 1}` : `Lock ${unit.one} ${i + 1} so the AI can't change it`}
                         aria-pressed={lockedIds.includes(b.id)}
                         aria-label={lockedIds.includes(b.id) ? `Unlock ${unit.one} ${i + 1}` : `Lock ${unit.one} ${i + 1}`}
                       >
@@ -911,7 +911,7 @@ function PieceEditor({
                     ) : null}
                     <div className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                       {onAsk ? (
-                        <button type="button" disabled={!aiAvailable || !b.text.trim()} onClick={() => startAsk(b)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-violet-300 disabled:opacity-40" title={`Ask about ${unit.one} ${i + 1} in a side chat (it only answers, nothing changes)`}>
+                        <button type="button" disabled={!aiAvailable || !b.text.trim()} onClick={() => startAsk(b)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-violet-300 disabled:opacity-40" title={`Ask about ${unit.one} ${i + 1} in a side chat`}>
                           <MessageCircleQuestion className="h-3 w-3" />
                         </button>
                       ) : null}
@@ -946,12 +946,12 @@ function PieceEditor({
                         <CiteButton onClick={() => cite(b, i)} />
                       ) : null}
                       {onAsk ? (
-                        <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-violet-300`} title="Ask about the selected words in a side chat. It only answers: nothing on the piece changes.">
+                        <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-violet-300`} title="Ask about the selected words in a side chat">
                           <MessageCircleQuestion className="h-3.5 w-3.5" /> Ask
                         </button>
                       ) : null}
                       {onLines ? (
-                        <button type="button" disabled={locked || !aiAvailable} onClick={() => void askLines(b)} className={`${PILL_BUTTON} text-violet-300`} title="Three other ways to say the selected words. Nothing else on the piece changes.">
+                        <button type="button" disabled={locked || !aiAvailable} onClick={() => void askLines(b)} className={`${PILL_BUTTON} text-violet-300`} title="Three other ways to say the selected words">
                           <Shuffle className="h-3.5 w-3.5" /> Other ways
                         </button>
                       ) : null}
@@ -972,7 +972,7 @@ function PieceEditor({
                     <div className="mt-2 flex flex-col gap-1 border-t border-border/60 pt-2">
                       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                         {lines.list === null ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        {lines.list === null ? `Other ways to say “${lines.was}”…` : lines.error ? lines.error : `Instead of “${lines.was}”, click one:`}
+                        {lines.list === null ? `Other ways to say “${lines.was}”…` : lines.error ? lines.error : `Instead of “${lines.was}”`}
                         <button type="button" onClick={() => setLines(null)} className="ml-auto rounded p-0.5 hover:bg-muted hover:text-foreground" aria-label="Close the options">
                           <X className="h-3 w-3" />
                         </button>
@@ -991,7 +991,7 @@ function PieceEditor({
             </div>
             <div className="mt-2 flex items-center gap-3">
               <button type="button" disabled={locked} onClick={() => insertAfter(null)} className="text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-50">
-                + {blocks.length ? `Add a ${unit.one}` : "Start writing, or ask the AI to draft it"}
+                + {`Add a ${unit.one}`}
               </button>
               {hasPiece ? (
                 <CopyButton
@@ -1038,22 +1038,22 @@ function PieceEditor({
                   <>
                   <div className="mb-1.5 flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tick(captionAuthor)}`} title={captionAuthor === "user" ? "Yours" : captionAuthor === "ai" ? "Written by the AI" : undefined} />
-                    <p className="text-[11px] text-muted-foreground" title="Shown under the Instagram post — an extra finding or context the slides don't carry, plus search terms. Not a recap.">
+                    <p className="text-[11px] text-muted-foreground" title="The text under the Instagram post">
                       Post description
                     </p>
                     {caption.trim() ? (
                       <CopyButton
                         text={() => markdownToPlain(caption)}
                         label="Copy"
-                        title="Copy the post description as Instagram takes it: plain text, every line break kept"
+                        title="Copy the post description as plain text"
                         className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
                       />
                     ) : null}
                     {showCaptionGenerate &&
                       (captionAnother ? (
                         <ConfirmButton
-                          label="Another"
-                          confirmLabel="Replace?"
+                          label="Rewrite"
+                          confirmLabel="Replace"
                           disabled={locked || !aiAvailable || !hasPiece}
                           onConfirm={() => onGenerateCaption?.(true)}
                           title={captionGenerateWhy}
@@ -1066,10 +1066,10 @@ function PieceEditor({
                           disabled={locked || !aiAvailable || !hasPiece}
                           onClick={() => onGenerateCaption?.(false)}
                           title={captionGenerateWhy}
-                          aria-label="Generate post description"
+                          aria-label="Write post description"
                           className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
                         >
-                          Generate
+                          Write
                         </button>
                       ))}
                   </div>
@@ -1085,7 +1085,7 @@ function PieceEditor({
                   />
                   {citePill("caption", caption, { field: "caption" })}
                   {caption.length > 1800 ? (
-                    <p className={`mt-1 text-right text-[10px] tabular-nums ${caption.length > 2200 ? "text-red-400" : "text-muted-foreground"}`} title="Instagram cuts a caption at 2,200 characters">
+                    <p className={`mt-1 text-right text-[10px] tabular-nums ${caption.length > 2200 ? "text-red-400" : "text-muted-foreground"}`} title="Instagram cuts a post description at 2,200 characters">
                       {caption.length.toLocaleString("en-US")} / 2,200{caption.length > 2200 ? " · too long for Instagram" : ""}
                     </p>
                   ) : null}
@@ -1105,7 +1105,6 @@ function PieceEditor({
                     changesOn={changesOn}
                     onSelectRange={onQuote ? (start, end, at) => select("pinned", start, end, at) : undefined}
                     className="w-full resize-none bg-transparent text-sm leading-relaxed text-muted-foreground outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
-                    placeholder="Usually empty"
                   />
                   {citePill("pinned", pinned, { field: "pinned" })}
                 </div>

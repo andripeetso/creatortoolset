@@ -25,7 +25,7 @@ describe("getProjectPersistenceStatus", () => {
     });
 
     expect(status.fullySaved).toBe(false);
-    expect(status.badge).toContain("NOT SAVED");
+    expect(status.badge).toContain("Not saved");
   });
 
   it("reports first-project upload progress as not saved", () => {
@@ -35,7 +35,7 @@ describe("getProjectPersistenceStatus", () => {
       clips: [clip("uploading", 63)],
     });
 
-    expect(status.badge).toBe("NOT SAVED — UPLOADING 63%");
+    expect(status.badge).toBe("Not saved · uploading 63%");
   });
 
   it("does not mistake a client-generated id for a confirmed cloud project", () => {
@@ -50,7 +50,7 @@ describe("getProjectPersistenceStatus", () => {
     expect(status).toMatchObject({
       workSafe: true,
       fullySaved: false,
-      badge: "SAVED LOCALLY — WAITING TO UPLOAD",
+      badge: "Saved locally · waiting to upload",
     });
   });
 
@@ -66,7 +66,7 @@ describe("getProjectPersistenceStatus", () => {
     expect(status).toMatchObject({
       workSafe: false,
       tone: "danger",
-      badge: "NOT SAVED — LOCAL BACKUP FAILED",
+      badge: "Not saved · local copy failed",
     });
   });
 
@@ -78,7 +78,7 @@ describe("getProjectPersistenceStatus", () => {
     });
 
     expect(status.fullySaved).toBe(false);
-    expect(status.badge).toContain("PARTIALLY SAVED");
+    expect(status.badge).toContain("Partly saved");
   });
 
   it("only reports saved when the project and all clips are persisted", () => {
@@ -88,7 +88,7 @@ describe("getProjectPersistenceStatus", () => {
       clips: [clip("done")],
     });
 
-    expect(status).toMatchObject({ fullySaved: true, badge: "SAVED" });
+    expect(status).toMatchObject({ fullySaved: true, badge: "Saved" });
   });
 
   it("says edits are recoverable while a source upload is still running", () => {
@@ -103,9 +103,9 @@ describe("getProjectPersistenceStatus", () => {
       workSafe: true,
       fullySaved: false,
       tone: "warning",
-      badge: "EDITS SAVED LOCALLY — VIDEO UPLOADING 35%",
+      badge: "Edits saved locally · source video uploading 35%",
     });
-    expect(status.message).toContain("restore");
+    expect(status.message).toContain("in the local copy");
   });
 
   it("keeps an upload failure separate from saved transcript edits", () => {
@@ -119,9 +119,9 @@ describe("getProjectPersistenceStatus", () => {
     expect(status).toMatchObject({
       workSafe: true,
       fullySaved: false,
-      badge: "PROJECT SAVED — SOURCE UPLOAD FAILED",
+      badge: "Saved · source video upload failed",
     });
-    expect(status.message).toContain("transcript and edits are safe");
+    expect(status.message).toContain("transcript and edits are saved");
   });
 
   it("uses a red not-saved state when browser recovery storage fails", () => {
@@ -136,7 +136,7 @@ describe("getProjectPersistenceStatus", () => {
       workSafe: false,
       fullySaved: false,
       tone: "danger",
-      badge: "NOT SAVED — LOCAL BACKUP FAILED",
+      badge: "Not saved · local copy failed",
     });
   });
 
@@ -152,7 +152,7 @@ describe("getProjectPersistenceStatus", () => {
       workSafe: true,
       fullySaved: false,
       tone: "warning",
-      badge: "PROJECT SAVED — SOURCE UPLOAD FAILED",
+      badge: "Saved · source video upload failed",
     });
   });
 });

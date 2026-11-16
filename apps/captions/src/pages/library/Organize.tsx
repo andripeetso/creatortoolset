@@ -6,13 +6,16 @@ import { listCollections, updateLibrary } from "@/lib/library";
  * folder (BigUploadDialog), and kept in Library settings. The folders are the library's own: files on disk never move.
  */
 
-/** The default folders' names, in their order: what the usual folders are. */
+/** The default folders' names, in their order: the folders "Standard" makes. */
 export const FOLDER_NAMES = DEFAULT_FOLDERS.map((f) => f.name).join(", ");
 
+/** The three choices by name, the same wherever they are offered (this dialog, Library settings). A name says what the choice does. */
+export const ORGANIZE_NAME: Record<Organize, string> = { default: "Standard", ai: "Automatic", own: "None" };
+
 export const ORGANIZE: { value: Organize; label: string; detail: string }[] = [
-  { value: "default", label: "Make the usual folders", detail: `${FOLDER_NAMES}. You sort files into them` },
-  { value: "ai", label: "AI sorts them into folders", detail: "The AI makes folders that fit your footage as files come in and files each one. Only in the library: your files stay where they are" },
-  { value: "own", label: "No folders", detail: "Everything stays in one list until you make folders" },
+  { value: "default", label: ORGANIZE_NAME.default, detail: `${FOLDER_NAMES}. You sort files into them` },
+  { value: "ai", label: ORGANIZE_NAME.ai, detail: "Folders are made to fit your footage as files come in, and each file is filed in one. Only in the library: your files stay where they are" },
+  { value: "own", label: ORGANIZE_NAME.own, detail: "Everything stays in one list until you make folders" },
 ];
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));

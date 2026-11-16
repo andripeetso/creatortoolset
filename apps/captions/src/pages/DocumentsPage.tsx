@@ -192,7 +192,7 @@ function ComposeForm({
       {ai === false && (
         <p className="flex items-center gap-1.5 text-xs text-amber-400/80">
           <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-          AI keys are missing — documents can’t be generated until they’re set.
+          Needs an AI provider
         </p>
       )}
 
@@ -253,7 +253,7 @@ function ComposeForm({
             ))}
           </div>
         ) : media.clips.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No clips yet.</p>
+          <p className="text-sm text-muted-foreground">No recordings</p>
         ) : (
           <div className="flex flex-col gap-1">
             {media.clips.map((c) => (
@@ -302,7 +302,7 @@ function ComposeForm({
       {picked.length > 0 && (
         <section>
           <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Order and how to use each
+            Order and notes
           </h2>
           <div className="flex flex-col gap-2">
             {picked.map((s, i) => (
@@ -359,7 +359,7 @@ function ComposeForm({
                 <input
                   value={s.note ?? ""}
                   onChange={(e) => setNote(i, e.target.value)}
-                  placeholder="How to use this source (optional)"
+                  placeholder="Note for this source (optional)"
                   className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-violet-500"
                 />
               </div>
@@ -370,17 +370,12 @@ function ComposeForm({
 
       <section>
         <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          {kind === "guide" ? "What to cover" : "Brief"}
+          {kind === "guide" ? "Brief (optional)" : "Brief"}
         </h2>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={4}
-          placeholder={
-            kind === "guide"
-              ? "Optional: who this is for, or which part of the recording to skip…"
-              : "These are three sequential reviews. Use clip 1 first, then…"
-          }
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-violet-500"
         />
       </section>
@@ -398,7 +393,7 @@ function ComposeForm({
             <Loader2 className="h-4 w-4 animate-spin" /> Writing…
           </>
         ) : existingId ? (
-          kind === "guide" ? "Regenerate this guide" : "Regenerate with these sources"
+          kind === "guide" ? "Regenerate guide" : "Regenerate document"
         ) : kind === "guide" ? (
           "Create guide"
         ) : (
@@ -452,7 +447,7 @@ function ShareMenu({
       >
         <p className="text-sm font-medium text-foreground">Share this document</p>
         <label className="mt-3 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          Who can open
+          Access
         </label>
         <div className="relative mt-1.5">
           <select
@@ -465,11 +460,6 @@ function ShareMenu({
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>
-        <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
-          {doc.published
-            ? "Anyone with this link can view."
-            : "Only you can open this document."}
-        </p>
         <div className="mt-3 flex gap-1.5">
           <input
             readOnly
@@ -779,8 +769,7 @@ function Editor({
               />
             ) : isGuide ? (
               <p className="text-sm text-muted-foreground">
-                This guide has no steps yet. Use Sources or Regenerate to build
-                it from the recording.
+                No steps
               </p>
             ) : (
               <MarkdownBody
@@ -902,7 +891,7 @@ export default function DocumentsPage() {
       {!docId && phone ? (
         <div className="mb-5 w-full max-w-[720px]">
           <DesktopHint>
-            Full Guide Builder is on your desktop. You can still read guides here.
+            Guides can be read here; building one needs a computer.
           </DesktopHint>
         </div>
       ) : null}
@@ -922,7 +911,7 @@ export default function DocumentsPage() {
             </h1>
             {phone ? (
               <DesktopHint>
-                Building a guide needs the desktop editor. Open this on a computer.
+                Building a guide needs a computer.
               </DesktopHint>
             ) : (
               <ComposeForm
@@ -967,7 +956,7 @@ export default function DocumentsPage() {
         ) : docs.length === 0 ? (
           <div className="flex flex-col gap-1.5">
               <p className="py-10 text-center text-sm text-zinc-500">
-                No documents yet. Pick a clip to start.
+                No guides
               </p>
           </div>
         ) : (
@@ -989,7 +978,7 @@ export default function DocumentsPage() {
               }}
               view={{ value: view, onChange: setView }}
             />
-            {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+            {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No guides found</p>}
             {view === "grid" ? (
               <FolderGrid size="small">
                 <ToolFolderCards state={folders} pictureOf={guidePicture} />

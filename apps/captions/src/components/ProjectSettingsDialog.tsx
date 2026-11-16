@@ -73,7 +73,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
         `/api/projects/${projectId}/clips/${activeClipId}/original`,
         { method: "POST", body: f }
       );
-      if (!res.ok) throw new Error("Upload failed");
+      if (!res.ok) throw new Error("Could not upload the video");
       const j = await res.json();
       const bytes = j.originalBytes ?? f.size;
       setOriginal({ has: true, bytes });
@@ -95,15 +95,15 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
   const removeOriginal = async () => {
     if (!projectId || !activeClipId) return;
     const ok = await confirmDialog({
-      title: "Free up space?",
-      body: "Captions stay. Full-quality export needs the video again.",
-      ok: "Free up space",
+      title: "Delete the source video from the server?",
+      body: "The captions are kept; export needs the video uploaded again.",
+      ok: "Delete",
       danger: true,
     });
     if (!ok) return;
     const r = await fetch(`/api/projects/${projectId}/clips/${activeClipId}/original`, { method: "DELETE" }).catch(() => null);
     if (!r?.ok) {
-      toast.error("The source file was not removed. Try again.");
+      toast.error("Could not delete the source video");
       return;
     }
     setOriginal({ has: false, bytes: 0 });
@@ -120,7 +120,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
     const r = await fetch(`/api/projects/${projectId}`, { method: "DELETE" }).catch(() => null);
     if (!r?.ok) {
       setDeleting(false);
-      toast.error("The project was not deleted. Try again.");
+      toast.error("Could not delete the project");
       return;
     }
     await deleteLocalRecoveryProject(projectId).catch(() => {});
@@ -180,8 +180,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
           <EnginePicker className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500" />
         </div>
         <p className="mb-3 mt-1 text-[11px] text-zinc-600">
-          Used for new transcriptions. To redo a clip, use Re-transcribe in
-          the transcript panel.
+          Used for the next transcription.
         </p>
         {status.phase === "error" && (
           <p className="mb-3 mt-1 text-[11px] text-red-400">{status.message}</p>
@@ -189,30 +188,30 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
 
         {projectId && (
           <>
-            <label className={`${label} mt-4`}>Source file on server</label>
+            <label className={`${label} mt-4`}>Source video</label>
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-xs">
               {original === null ? (
                 <span className="text-zinc-500">Checking…</span>
               ) : original.has ? (
                 <span className="flex items-center justify-between gap-2">
                   <span className="text-zinc-400">
-                    Stored for full-quality export{" "}
+                    On the server{" "}
                     <span className="text-zinc-500">
                       ({(original.bytes / 1e6).toFixed(original.bytes < 10e6 ? 1 : 0)} MB)
                     </span>
                   </span>
                   <button
                     onClick={removeOriginal}
-                    title="Delete the source from the server — captions stay editable, re-attach anytime"
+                    title="Delete the source video from the server"
                     className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
                   >
-                    <Trash2 className="h-3 w-3" /> Free up space
+                    <Trash2 className="h-3 w-3" /> Delete
                   </button>
                 </span>
               ) : (
                 <span className="flex items-center justify-between gap-2">
                   <span className="text-zinc-400">
-                    Not on the server — attach it to enable burned-in export.
+                    Not on the server
                   </span>
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-800">
                     {attaching ? (
@@ -221,7 +220,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
                       </>
                     ) : (
                       <>
-                        <Upload className="h-3 w-3" /> Attach video
+                        <Upload className="h-3 w-3" /> Upload video
                       </>
                     )}
                     <input
@@ -244,8 +243,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
               {confirmDelete ? (
                 <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs text-red-300">
                   <p className="mb-2">
-                    Delete this project? The video, transcript and captions are
-                    removed from the server. This can't be undone.
+                    The project is moved to the trash.
                   </p>
                   <div className="flex gap-2">
                     <button

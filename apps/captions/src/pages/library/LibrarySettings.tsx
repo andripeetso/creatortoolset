@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, ListRow, Row, Section, SettingsSelect, Status } from "@/components/settings/ui";
 import type { Organize } from "@contracts/library";
 import { CopyTo, folderName } from "@/components/LibraryProcessing";
-import { FOLDER_NAMES } from "./Organize";
+import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
 import { redoKinds } from "./Selection";
@@ -23,8 +23,8 @@ import { LibraryWatchFolders } from "../LibraryWatchFolders";
  * button beside its search and as Settings → Media Library (the same body, LibrarySettingsBody). Files: how files are
  * imported and the places they came from (./Import.tsx) with Look for new files, and how the library is sorted
  * (./Organize.tsx). The footage folders on the server's own computer (the library's own sheet only: in Settings they
- * are the Folders page's). Storage: where the files are, what uploads to the server, and the space the library's own
- * made files take. The AI switches, each saying where it runs, and Redo for all clips. The button carries an amber dot
+ * are the Folders page's). Storage: what uploads to the server (the row that says where the video files are), and
+ * the space the library's own made files take. Search: the switches for what it reads, each saying where it runs. Redo for all clips. The button carries an amber dot
  * while a folder or clip is not found.
  */
 
@@ -53,11 +53,15 @@ const IMPORT: { value: ImportMode; label: string; detail: string; was: string }[
   { value: "copy", label: "Copy into the library", detail: "Files are copied into the library's Footage, Audio and Pictures folders.", was: "Copied into the library" },
 ];
 
-/** How the library is sorted into folders, in the words of these settings (the first upload asks the same, ./Organize.tsx). */
+/**
+ * The library's folders, in the words of these settings: the three choices by the names the first add offers them under
+ * (./Organize.tsx), and what the chosen one means. Standard makes the folders and files nothing itself (A-roll and
+ * B-roll fill from the roll the app sorts; api/library/organize.ts), so its line names the folders and no more.
+ */
 const SORTING: { value: Organize; label: string; detail: string }[] = [
-  { value: "default", label: "Usual folders", detail: `The library has the folders ${FOLDER_NAMES}.` },
-  { value: "ai", label: "Folders by AI", detail: "Folders are made to fit the footage, and each new file is filed in one." },
-  { value: "own", label: "No folders", detail: "Files stay in one list." },
+  { value: "default", label: ORGANIZE_NAME.default, detail: `The library has the folders ${FOLDER_NAMES}.` },
+  { value: "ai", label: ORGANIZE_NAME.ai, detail: "Folders are made to fit the footage, and each new file is filed in one." },
+  { value: "own", label: ORGANIZE_NAME.own, detail: "Files stay in one list." },
 ];
 
 /** A footage folder or a clip the library cannot find: the page's More button carries a dot. */
@@ -101,15 +105,7 @@ export function LibrarySettingsBody({ library, watch, folders, onChange, onError
         </Card>
       </Section>
       {watch.allowed && !inSettings && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
-      {/* Upload to the server: with the server elsewhere the library's own setting; on its own computer the cloud copy */}
-      <LibraryStorageSettings
-        libraryId={library.id}
-        onThisComputer={watch.allowed}
-        onSaved={(storage) => onChange({ ...library, storage })}
-        upload={<UploadSelect library={library} onChange={onChange} onError={onError} />}
-      >
-        {(saved) => <SpaceRows library={library} saved={saved} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />}
-      </LibraryStorageSettings>
+      <Storage library={library} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />
       <AiSwitches library={library} onChange={onChange} onError={onError} />
       <RedoAll library={library} onError={onError} />
     </>
@@ -216,7 +212,7 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
   );
 }
 
-/** The AI switches (api/library/db.ts SETTING_DEFAULTS): each says where it runs for this account, read from the server's own routes (the estimate). */
+/** What search reads, a switch each (api/library/db.ts SETTING_DEFAULTS): each says where it runs for this account, read from the server's own routes (the estimate). */
 function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError">) {
   const [routes, setRoutes] = useState<LibraryEstimate["steps"] | null>(null);
   const { describe, look, embed } = library.settings;
@@ -257,7 +253,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
     />
   );
   return (
-    <Section id="library-ai" title="AI">
+    <Section id="library-ai" title="Search">
       <Card>
         {row("describe", "describe", "Descriptions")}
         {row("look", "look", "Shot descriptions")}
@@ -267,17 +263,17 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
   );
 }
 
-/** How the library sorts files into folders (the first upload's question, ./Organize.tsx); a library never asked shows No folders. */
+/** The library's folders (the first add's question, ./Organize.tsx); a library never asked shows None. */
 function SortingRow({ library, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError">) {
   const value = library.settings.organize ?? "own";
   return (
     <Row
       id="library-sorting"
-      title="Sorting"
+      title="Folders"
       description={SORTING.find((o) => o.value === value)?.detail}
       control={
         <SettingsSelect
-          label="Sorting"
+          label="Folders"
           value={value}
           options={SORTING}
           onValueChange={(v) =>
@@ -318,14 +314,47 @@ export function videoPlace(v: LibrarySpace["videos"], o: { saved: LibraryStorage
 }
 
 /**
- * Where the files are, and what the library makes (api/library/space.ts): the videos, the proxies switch, the proxy
- * files with what they take and Clear, and the downloaded speech and search models with Clear. The person's own files are
- * never cleared. Proxies kept in the cloud (one for every video) have no switch and no Clear: both would do nothing there.
+ * What the Upload to the server row says of the video files in place of its own sentence: how many are where, or the
+ * bucket new ones go to by its name. Nothing while that sentence says it all (an empty library with no bucket).
  */
-function SpaceRows({ library, saved, onThisComputer, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; onThisComputer: boolean }) {
+export function videoFacts(v: LibrarySpace["videos"], o: Parameters<typeof videoPlace>[1]): string | undefined {
+  const bucket = !!o.saved && o.saved.kind !== "local" && !o.saved.proxies;
+  return v.onMac || v.inPlace || v.stored.files || bucket ? videoPlace(v, o) : undefined;
+}
+
+/**
+ * The Storage section (../LibraryStorage.tsx). Upload to the server: with the server elsewhere the library's own
+ * setting, on its own computer the cloud copy. Where the video files are is said by that row (videoFacts); a row of
+ * its own says it only where that row is not drawn.
+ */
+function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { onThisComputer: boolean }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
-  const cloud = saved?.proxies ?? null;
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
+  const onMac = thisMacBridge() && !onThisComputer ? { upload: library.settings.upload !== "none" } : null;
+  const place = (saved: LibraryStorage | null) => ({ saved, onThisComputer, onMac });
+  return (
+    <LibraryStorageSettings
+      libraryId={library.id}
+      onThisComputer={onThisComputer}
+      onSaved={(storage) => onChange({ ...library, storage })}
+      videos={(saved) => (space ? videoFacts(space.videos, place(saved)) : undefined)}
+      upload={(description) => <UploadSelect library={library} onChange={onChange} onError={onError} description={description} />}
+    >
+      {(saved, uploadRow) => (
+        <SpaceRows library={library} saved={saved} space={space} read={read} videos={space && saved && !uploadRow ? videoPlace(space.videos, place(saved)) : null} onChange={onChange} onError={onError} />
+      )}
+    </LibraryStorageSettings>
+  );
+}
+
+/**
+ * What the library makes (api/library/space.ts): the proxies switch, the proxy files with what they take and Clear,
+ * and the downloaded speech and search models with Clear. The person's own files are never cleared. Proxies kept in the
+ * cloud (one for every video) have no switch and no Clear: both would do nothing there. `videos`: where the video files
+ * are, as a row of its own (no Upload row says it).
+ */
+function SpaceRows({ library, saved, space, read, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; videos: string | null }) {
+  const cloud = saved?.proxies ?? null;
   useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
@@ -341,10 +370,9 @@ function SpaceRows({ library, saved, onThisComputer, onChange, onError }: Pick<B
     updateLibrary(library.id, { settings: { proxy: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
-  const onMac = thisMacBridge() && !onThisComputer ? { upload: library.settings.upload !== "none" } : null;
   return (
     <>
-      {space && <Row title="Video files" description={videoPlace(space.videos, { saved, onThisComputer, onMac })} />}
+      {videos && <Row title="Video files" description={videos} />}
       {!cloud && (
         <Row
           id="library-proxies"

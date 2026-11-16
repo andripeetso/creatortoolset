@@ -17,11 +17,11 @@ export function QueuedRow({ text, extra, held, thinking, sending, onSteer, onEdi
         type="button"
         onClick={onSteer}
         className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--tint)] hover:bg-[color-mix(in_srgb,var(--tint)_15%,transparent)]"
-        title={thinking ? "Steer: stop the reply and send this now" : "Send this now"}
+        title={thinking ? "Steer: stop the reply and send this now" : "Send now"}
       >
         <CornerDownLeft className="size-3" /> {thinking ? "Steer" : "Send"}
       </button>
-      <button type="button" onClick={onEdit} disabled={sending} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-50" title="Edit: back into the message box" aria-label="Edit queued message">
+      <button type="button" onClick={onEdit} disabled={sending} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-50" title="Edit" aria-label="Edit queued message">
         <Pencil className="size-3" />
       </button>
       <button type="button" onClick={onRemove} disabled={sending} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-50" title="Remove from the queue" aria-label="Remove queued message">

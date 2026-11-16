@@ -105,7 +105,7 @@ function toUrl(raw: string): URL {
   try {
     url = new URL(text);
   } catch {
-    throw new InstagramUrlError("That is not a valid link");
+    throw new InstagramUrlError("Not a valid link");
   }
   if (!PAGE_HOSTS.has(url.hostname.toLowerCase())) {
     throw new InstagramUrlError("Only instagram.com links are supported");
