@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,7 +20,7 @@ const { fileFor, rankOf } = await import("./reach");
 const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
 const post = (token: string, url: string, body: unknown) =>
   app.request(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
-const claim = (token: string, kinds: string[]) => json<{ job: { kind: string; editId: string } | null }>(post(token, "/api/devices/relay/editor/claim", { kinds }));
+const claim = (token: string, kinds: string[]) => json<{ job: { kind: string; editId: string; footage?: unknown } | null }>(post(token, "/api/devices/relay/editor/claim", { kinds }));
 
 const row = (r: Partial<FileRow>): FileRow => ({ id: "v", source_key: "k", source_path: null, mac_path: null, mac_device: null, proxy: null, ...r });
 
@@ -48,12 +48,13 @@ describe("how a computer gets at a file", () => {
 let strong: { device: { id: string }; token: string };
 let weak: { device: { id: string }; token: string };
 let editId: string;
+let cookie: string;
 
 beforeAll(async () => {
   registerDeviceKinds(["reach-render"]);
   setOff(createUser("maker", "password1", { role: "user" }), []);
   const res = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "maker", password: "password1" }) });
-  const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+  cookie = res.headers.get("set-cookie")!.split(";")[0]!;
   strong = pairDevice("maker", "Big PC");
   weak = pairDevice("maker", "Laptop");
   // the file is on the laptop only, and the server has no copy (indexed where it is, never uploaded)
@@ -94,5 +95,20 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     enqueueJob(libraryDb(), "maker", `${editId}:v3`, "reach-render", "maker", false, "edit_jobs");
     expect((await claim(strong.token, ["reach-render"])).job).toBeNull();
     expect((await claim(weak.token, ["reach-render"])).job).toMatchObject({ kind: "reach-render", editId });
+  });
+  it("hands the computer that takes it the paths on its own disks: a shared folder found at another path", async () => {
+    // the folder was added on the laptop (a Mac) and the PC found its marker at /mnt/footage
+    mkdirSync(path.join(dir, "storage"), { recursive: true });
+    const folder = { id: "fold1", role: "footage", name: "Footage", origin: { host: weak.device.id, path: "/Volumes/Footage" }, make: false, createdAt: 0, reach: { [strong.device.id]: { path: "/mnt/footage", at: 1 } } };
+    writeFileSync(path.join(dir, "storage", "maker.json"), JSON.stringify({ folders: [folder] }));
+    libraryDb().exec(`
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_r2', 'lib_r', 'video', 'Take 2', 'maker', 0, NULL);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, mac_path, mac_device) VALUES
+        ('ver_r2', 'ast_r2', 1, 'mac:ver_r2', 1, 'x2', 'ready', 'maker', 0, '/Volumes/Footage/Shoot 1/b.mp4', '${weak.device.id}');
+    `);
+    const other = (await json<{ id: string }>(app.request("/api/editor", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Shared", sources: ["ver_r2"] }) }))).id;
+    enqueueJob(libraryDb(), "maker", `${other}:v1`, "reach-render", "maker", false, "edit_jobs");
+    // the laptop is busy with v3, so the PC takes it, reading the file where it is on its own disk
+    expect((await claim(strong.token, ["reach-render"])).job).toMatchObject({ editId: other, footage: [{ id: "ver_r2", path: "/mnt/footage/Shoot 1/b.mp4" }] });
   });
 });

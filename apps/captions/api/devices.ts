@@ -9,7 +9,7 @@ import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
 import { CUTOUT_KIND, FOLDER_LIST_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
-import { fitsFor } from "./editor/reach";
+import { fitsFor, footageFor } from "./editor/reach";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
@@ -76,13 +76,18 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
   if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
-  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? claimForDevice(d, k, Date.now(), await fitsFor(d)) } satisfies DeviceClaim);
+  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? (await editorStep(d, k)) } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
   declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
-  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k, Date.now(), await fitsFor(now));
+  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? (await editorStep(now, k));
   return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
 });
+/** An AI Editor step for the device, if one waits for it: a step that reads footage carries where its files are for it. */
+async function editorStep(d: Device, kinds: string[]) {
+  const job = claimForDevice(d, kinds, Date.now(), await fitsFor(d));
+  return job && usesFootage(job.kind) ? { ...job, footage: await footageFor(d, job.editId) } : job;
+}
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
 async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing

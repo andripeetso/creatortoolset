@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
+import type { DeviceFootage } from "../../contracts/devices";
 import type { Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
 import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
-import { canReach, folderFor, parseStorageFile, storageFilePath } from "../lib/storage";
+import { hostPath, parseStorageFile, storageFilePath } from "../lib/storage";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
@@ -33,10 +34,12 @@ export type FileAt = { path: string } | { copy: "original" | "proxy" };
 
 /** How `host` gets at file `r`; null when it can't. */
 export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here: (host: string) => boolean): FileAt | null {
-  // a file on a computer: that computer, or another that found the shared folder it is in
+  // a file on a computer: that computer, or another that found the shared folder it is in, at its own path there
   const at = r.mac_path ?? r.source_path;
-  const holder = r.mac_path ? r.mac_device === host : r.source_path ? here(host) : false;
-  if (at && (holder || (folderFor(at, folders) && canReach([at], folders, host)))) return { path: at };
+  if (at && (r.mac_path ? r.mac_device === host : here(host))) return { path: at };
+  const from = r.mac_path ? (r.mac_device ?? undefined) : undefined;
+  const there = at && ((from && hostPath(at, folders, host, from)) || hostPath(at, folders, host));
+  if (there) return { path: there };
   // "mac:<id>": indexed on a Mac and never uploaded, so the server has no copy of the file itself
   if (!r.source_key.startsWith("mac:")) return { copy: r.source_key === r.proxy ? "proxy" : "original" };
   return r.proxy ? { copy: "proxy" } : null;
@@ -68,6 +71,15 @@ export const editOf = (job: Pick<JobRow, "version_id">): string => (job.version_
 /** The account's storage folders (Settings → Storage). */
 export async function foldersOf(owner: string): Promise<StorageFolder[]> {
   return parseStorageFile(await readFile(storageFilePath(env.dataDir, owner), "utf-8").catch(() => "{}")).folders;
+}
+
+/** What a device that took a step of `editId` is told of its files: each one's path on it, or which server copy to fetch. */
+export async function footageFor(d: Pick<Device, "id" | "owner">, editId: string): Promise<DeviceFootage[]> {
+  const folders = await foldersOf(d.owner);
+  return editFiles(editId).flatMap((r) => {
+    const at = fileFor(r, d.id, folders, isThisMachine);
+    return at ? [{ id: r.id, ...at }] : [];
+  });
 }
 
 /** The same window as isOnline (lib/devices.ts). */

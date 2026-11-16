@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sourcesOf, type StorageFolder } from "../../contracts/storage";
-import { canReach, folderFor, isInside, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+import { canReach, folderFor, hostPath, isInside, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
 
 // Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
 vi.mock("node:fs/promises", async (orig) => {
@@ -86,14 +86,31 @@ describe("where the files are: reach", () => {
     expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [f], "studio-mac")).toBe(true);
     expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [f], "pc")).toBe(false);
     expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [team({ pc: { path: "/Volumes/TEAM", at: 1 } })], "pc")).toBe(true);
-    expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [team({ pc: { path: "/Mnt/TEAM", at: 1 } })], "pc")).toBe(false);
+    // the same folder at another path on that computer: reached, by its marker
+    expect(canReach(["/Volumes/TEAM/Shoot/a.mp4"], [team({ pc: { path: "/mnt/team", at: 1 } })], "pc")).toBe(true);
   });
 
-  it("a computer that found the folder at another path takes the footage there, and only there", () => {
+  it("rewrites a path for the computer it goes to, by the folder it is in", () => {
+    const f = team({ linux: { path: "/mnt/team/", at: 1 }, win: { path: "Z:\\", at: 1 }, unc: { path: "\\\\nas\\Team", at: 1 } });
+    expect(hostPath("/Volumes/TEAM/Shoot 1/a.mp4", [f], "linux")).toBe("/mnt/team/Shoot 1/a.mp4");
+    expect(hostPath("/Volumes/TEAM/Shoot 1/a.mp4", [f], "win")).toBe("Z:\\Shoot 1\\a.mp4");
+    expect(hostPath("/Volumes/TEAM/Shoot 1/a.mp4", [f], "unc")).toBe("\\\\nas\\Team\\Shoot 1\\a.mp4");
+    expect(hostPath("/Volumes/TEAM", [f], "linux")).toBe("/mnt/team/");
+    // back from Windows: either separator, any case
+    expect(hostPath("z:\\Shoot 1\\a.mp4", [f], "studio-mac", "win")).toBe("/Volumes/TEAM/Shoot 1/a.mp4");
+    expect(hostPath("\\\\NAS\\team/Shoot 1/a.mp4", [f], "linux", "unc")).toBe("/mnt/team/Shoot 1/a.mp4");
+    expect(hostPath("/Volumes/TEAM/a.mp4", [f], "pc")).toBeNull();   // never found it
+    expect(hostPath("/Volumes/Other/a.mp4", [f], "linux")).toBeNull();   // in no footage folder
+    // `from`: only that computer's path counts ("/mnt/team" on the Mac is not the folder)
+    expect(hostPath("/mnt/team/a.mp4", [f], "linux", "studio-mac")).toBeNull();
+  });
+
+  it("a computer that found the folder at another path names the same folder: each reaches it at its own path", () => {
     const f = team({ pc: { path: "/Mnt/TEAM/", at: 1 } });
     expect(folderFor("/Mnt/TEAM/Shoot/a.mp4", [f])?.prefix).toBe("/Mnt/TEAM");
     expect(canReach(["/Mnt/TEAM/Shoot/a.mp4"], [f], "pc")).toBe(true);
-    expect(canReach(["/Mnt/TEAM/Shoot/a.mp4"], [f], "studio-mac")).toBe(false);
+    expect(canReach(["/Mnt/TEAM/Shoot/a.mp4"], [f], "studio-mac")).toBe(true);
+    expect(hostPath("/Mnt/TEAM/Shoot/a.mp4", [f], "studio-mac")).toBe("/Volumes/TEAM/Shoot/a.mp4");
   });
 
   it("every footage path of a job must be reachable", () => {
@@ -158,6 +175,7 @@ describe("where the files are: the library and its files", () => {
     const footage = sourcesOf([lib]).find((f) => f.role === "footage");
     expect(footage?.origin.path).toBe("~/Creator Toolset/Footage");
     expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "pc")).toBe(true);
-    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "studio-mac")).toBe(false);
+    expect(hostPath("/Mnt/CT/Footage/a.mp4", [lib], "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
+    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "laptop")).toBe(false);
   });
 });
