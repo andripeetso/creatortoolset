@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -147,13 +147,11 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
 
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
-  const trash = !inTrash && !a.review && (
-    <Button size="icon" variant="ghost" aria-label="Move to trash" title="Move to trash" className={cn("h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground", !win && "-mr-2 -mt-1")} onClick={() => onTrash(true)}>
-      <Trash2 className="h-4 w-4" />
-    </Button>
-  );
-  // the clip's less used tools, out of the way: the menu stays open, so a clip upside down is two presses
-  const more = !inTrash && a.kind === "video" && !a.review && (
+  // editing the description, shot lines and tags is rare: their controls show only after Edit details, for this clip
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const fixed = inTrash || editingId !== a.id;
+  // the clip's rare tools in one menu: editing, turning, the trash. It stays open on a turn, so upside down is two presses
+  const more = !inTrash && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button size="icon" variant="ghost" aria-label="More" title="More" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
@@ -161,14 +159,31 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(270); }}>
-          <RotateCcw className="h-4 w-4" />
-          Rotate left
+        <DropdownMenuItem onSelect={() => setEditingId(a.id)}>
+          <Pencil className="h-4 w-4" />
+          Edit details
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(90); }}>
-          <RotateCw className="h-4 w-4" />
-          Rotate right
-        </DropdownMenuItem>
+        {a.kind === "video" && !a.review && (
+          <>
+            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(270); }}>
+              <RotateCcw className="h-4 w-4" />
+              Rotate left
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(90); }}>
+              <RotateCw className="h-4 w-4" />
+              Rotate right
+            </DropdownMenuItem>
+          </>
+        )}
+        {!a.review && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onTrash(true)}>
+              <Trash2 className="h-4 w-4" />
+              Move to trash
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -188,13 +203,18 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const head = (
     <div className="flex flex-col gap-3">
       {!win && (
-        <div className="flex items-start gap-2">
-          {title}
-          {trash}
+        <div className="flex items-start gap-2">{title}</div>
+      )}
+      {!fixed && (
+        <div className="flex items-center justify-between rounded-md bg-zinc-500/10 px-2 py-1 text-xs text-zinc-500">
+          Editing details
+          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setEditingId(null)}>
+            Done
+          </Button>
         </div>
       )}
-      <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={inTrash} onSaved={saved} onError={onError} />
-      <ShotLines key={`shots-${a.versionId}`} libraryId={libraryId} detail={detail} now={now} readOnly={inTrash} onSeek={seek} onSaved={saved} onError={onError} />
+      <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
+      <ShotLines key={`shots-${a.versionId}`} libraryId={libraryId} detail={detail} now={now} readOnly={fixed} onSeek={seek} onSaved={saved} onError={onError} />
       {(facts.length > 0 || inFolders.length > 0) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -220,7 +240,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
           </Button>
         </div>
       )}
-      <TagEditor libraryId={libraryId} asset={a} readOnly={inTrash} onSaved={saved} onError={onError} />
+      <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       {a.state === "missing" && (
         <p className="text-sm text-zinc-400">
           The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back
@@ -280,7 +300,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               </DropdownMenu>
             )}
             {more}
-            {win && trash}
           </div>
         </>
       )}
