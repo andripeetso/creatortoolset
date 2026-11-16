@@ -411,7 +411,7 @@ export function ScreenRecordingEditor({
     const kept = trimOf(look, duration);
     try {
       setError("");
-      setMaking({ step: "Making", pct: 0 });
+      setMaking({ step: "Exporting", pct: 0 });
       const blob = await renderScreenVideo({
         url: sourceRef.current.url,
         cameraUrl: sourceRef.current.cameraUrl ?? undefined,
@@ -426,7 +426,7 @@ export function ScreenRecordingEditor({
         ...(a ? { fps: settings.fps, bitrate: exportBitrate(out.width, out.height, settings.fps, settings.quality, settings.mbps) } : {}),
         alpha: !a,
         signal: ctl.signal,
-        onProgress: (p) => setMaking({ step: "Making", pct: Math.round(p * 100) }),
+        onProgress: (p) => setMaking({ step: "Exporting", pct: Math.round(p * 100) }),
       });
       if (ctl.signal.aborted) return;
       if (!a) {
@@ -564,7 +564,7 @@ export function ScreenRecordingEditor({
             {(!player.ready || !look) && (
               <div className="absolute inset-0 flex items-center justify-center">
                 {error || player.failed ? (
-                  <p className="text-sm text-red-400">{error || "This recording can't be played here"}</p>
+                  <p className="text-sm text-red-400">{error || "Could not play this recording"}</p>
                 ) : (
                   <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />
                 )}

@@ -66,10 +66,10 @@ function fmtMmSs(t: number): string {
 }
 
 const STEPS = [
-  { id: "thumbnail", label: "Grabbing a thumbnail" },
+  { id: "thumbnail", label: "Making the thumbnail" },
   { id: "audio", label: "Extracting audio" },
   { id: "transcribe", label: "Transcribing speech" },
-  { id: "title", label: "Titling and summarizing" },
+  { id: "title", label: "Writing the title and summary" },
 ] as const;
 
 function useLocalChecks(clipId: string, stamp: string) {
@@ -343,7 +343,7 @@ function MobilePlayer({
   );
 }
 
-/** The chapters' row under the player is one height whatever it holds (the chapters, "Generating chapters…", or that
+/** The chapters' row under the player is one height whatever it holds (the chapters, "Making chapters…", or that
  *  it failed), so the page under it never moves when one becomes the other. */
 const CHAPTER_ROW_H = "h-14";
 const CHAPTER_ROW = `${CHAPTER_ROW_H} box-content flex shrink-0 items-center gap-2 border-b border-border bg-background px-4 text-[13px] text-muted-foreground`;
@@ -652,7 +652,7 @@ export function MobileClipView({
 
   const pct = Math.round(Math.max(0, Math.min(1, session.progress)) * 100);
   const stepLabel =
-    STEPS.find((s) => s.id === session.step)?.label ?? "Processing this clip";
+    STEPS.find((s) => s.id === session.step)?.label ?? "Processing";
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
@@ -690,7 +690,7 @@ export function MobileClipView({
                 }
               }}
               maxLength={120}
-              aria-label="Clip name"
+              aria-label="Recording name"
               className="min-w-0 flex-1 rounded-md border border-violet-500 bg-background px-2 py-1 text-[15px] font-semibold text-foreground outline-none"
             />
           ) : (
@@ -759,14 +759,14 @@ export function MobileClipView({
           ) : making.pending ? (
             <div className={CHAPTER_ROW}>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Generating chapters…
+              Making chapters…
             </div>
           ) : making.failed ? (
-            // the row stays where "Generating chapters…" was, so the page under it does not move
+            // the row stays where "Making chapters…" was, so the page under it does not move
             <div className={CHAPTER_ROW}>
               <span className="min-w-0 flex-1 truncate">{making.failed}</span>
               <button type="button" onClick={making.retry} className="shrink-0 font-medium text-foreground">
-                Try again
+                Retry
               </button>
             </div>
           ) : null}
@@ -783,7 +783,7 @@ export function MobileClipView({
                   onClick={() => void retry()}
                   className="shrink-0 font-medium text-red-800 dark:text-red-100"
                 >
-                  Try again
+                  Retry
                 </button>
               )}
             </div>
@@ -864,8 +864,7 @@ export function MobileClipView({
               })()
             ) : (
               <p className="text-sm text-muted-foreground">
-                Play the video — chapters and notes appear here when they are
-                ready.
+                No notes
               </p>
             )}
           </div>
@@ -920,7 +919,7 @@ export function MobileClipView({
                 className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-red-500 active:bg-accent"
               >
                 <Trash2 className="h-5 w-5" />
-                Delete clip
+                Delete recording
               </button>
             )}
             <button

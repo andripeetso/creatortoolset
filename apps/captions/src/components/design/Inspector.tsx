@@ -531,7 +531,7 @@ export function Inspector({
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger aria-label="Frame size" className={cn(FIELD, "w-full justify-between outline-none")}>
-                <span className="truncate">{DESIGN_FORMATS.find((f) => f.w === frame.w && f.h === frame.h)?.name ?? "Own size"}</span>
+                <span className="truncate">{DESIGN_FORMATS.find((f) => f.w === frame.w && f.h === frame.h)?.name ?? "Custom size"}</span>
                 <ChevronDown className="h-3 w-3 shrink-0" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
@@ -725,7 +725,7 @@ export function Inspector({
               {lined && hasLine && (
                 <>
                   <Choice
-                    label="The side of the edge the line lies on"
+                    label="Stroke side"
                     value={same((l) => (strokeOf(l) ? (strokeOf(l)!.side ?? "center") : undefined))}
                     options={[["center", "Centre"], ["inside", "Inside"], ["outside", "Outside"]] as const}
                     onPick={(v) => onPatch(setStroke({ side: v === "center" ? undefined : v }))}
@@ -775,7 +775,7 @@ export function Inspector({
                             // the row itself picks the font: this takes it away
                             e.preventDefault();
                             e.stopPropagation();
-                            void confirmDialog({ title: `Remove ${f.family} from your fonts?`, body: "Texts set in it keep its name and are drawn in the app's own face until you add it again.", ok: "Remove", danger: true }).then(
+                            void confirmDialog({ title: `Remove ${f.family} from your fonts?`, body: "Texts set in it keep its name and are drawn in the default font until it is added again.", ok: "Remove", danger: true }).then(
                               (yes) => void (yes && removeOwnFont(f.id).then(() => setFontSaid(""), (err: unknown) => setFontSaid(err instanceof Error ? err.message : String(err)))),
                             );
                           }}
@@ -826,7 +826,7 @@ export function Inspector({
                 {num("↔", "Letter spacing in pixels", same((l) => (l.type === "text" ? (l.spacing ?? 0) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, spacing: n || undefined } : l), { min: -20, max: 200 })}
               </div>
               <Choice
-                label="How the words fit their box"
+                label="Text fit"
                 value={same((l) => (l.type === "text" ? (l.fit ?? "fixed") : undefined))}
                 options={[["fixed", "Fixed size"], ["shrink", "Shrink to fit"]] as const}
                 onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, fit: v === "shrink" ? "shrink" : undefined } : l))}
@@ -879,7 +879,7 @@ export function Inspector({
                   <div className="flex">{colour("The highlighter's colour", one.marks[0].color, (c) => (l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, color: c }, ...l.marks.slice(1)] } : l))}</div>
                   <input
                     key={`${one.id}:${one.marks[0].words ?? ""}`}
-                    aria-label="The words it goes behind"
+                    aria-label="Highlighted words"
                     placeholder="Every line"
                     defaultValue={one.marks[0].words ?? ""}
                     maxLength={200}
@@ -891,7 +891,7 @@ export function Inspector({
                     className={cn(FIELD, "w-full text-[11px] outline-none placeholder:text-zinc-400")}
                   />
                   <Choice
-                    label="Where the stroke lies"
+                    label="Highlight position"
                     value={one.marks[0].low ? "low" : "full"}
                     options={[["full", "Behind the letters"], ["low", "Sitting low"]] as const}
                     onPick={(v) => onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, low: v === "low" ? true : undefined }, ...l.marks.slice(1)] } : l))}
@@ -932,7 +932,7 @@ export function Inspector({
                 )
               }
             >
-              <Choice label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined))} options={[["cover", "Fill"], ["contain", "Fit"]] as const} onPick={(fit) => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))} />
+              <Choice label="Picture fit" value={same((l) => (l.type === "image" ? l.fit : undefined))} options={[["cover", "Fill"], ["contain", "Fit"]] as const} onPick={(fit) => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))} />
               <div className="grid grid-cols-3 gap-2">
                 {num("⊕", "Zoom in percent", (() => {
                   const z = same((l) => (l.type === "image" ? (l.zoom ?? 1) : undefined));
@@ -950,12 +950,12 @@ export function Inspector({
               {one?.type === "image" &&
                 (one.uncut ? (
                   <button type="button" onClick={() => onPatch((l) => (l.type === "image" && l.uncut ? { ...l, picture: l.uncut, uncut: undefined } : l))} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
-                    Put the background back
+                    Restore background
                   </button>
                 ) : (
                   <button type="button" disabled={cutting} onClick={onCutOut} className="flex h-7 items-center justify-center gap-1.5 rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
                     <CtMark className="size-3.5" />
-                    {cutting ? "Your Mac is on it" : "Remove background"}
+                    {cutting ? "Working…" : "Remove background"}
                   </button>
                 ))}
               {one?.type === "image" && (
@@ -971,7 +971,7 @@ export function Inspector({
               title="Adjust"
               action={
                 picked.some((l) => l.type === "image" && (l.adjust || l.duotone || l.vignette || l.grain || l.blur)) && (
-                  <Tap label="Put the picture's colours back as they were" onClick={() => onPatch((l) => (l.type === "image" ? { ...l, adjust: undefined, duotone: undefined, vignette: undefined, grain: undefined, blur: undefined } : l))}>
+                  <Tap label="Reset colours" onClick={() => onPatch((l) => (l.type === "image" ? { ...l, adjust: undefined, duotone: undefined, vignette: undefined, grain: undefined, blur: undefined } : l))}>
                     <RotateCcw className="h-3.5 w-3.5" />
                   </Tap>
                 )
