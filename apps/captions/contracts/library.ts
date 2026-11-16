@@ -323,9 +323,11 @@ export interface Collection {
   parentId: string | null;
   kind: "manual" | "smart";
   query?: SearchQuery; // smart only
-  count?: number; // manual only: items in it
-  /** manual only: up to four of its clips' pictures (thumb addresses), for its card */
+  count?: number; // a folder's items; an A-roll or B-roll folder's clips of that roll
+  /** up to four of its clips' pictures (thumb addresses), for its card: a folder's, or an A-roll or B-roll folder's */
   covers?: string[];
+  /** a folder with no pictures: up to three of the songs or sounds in it, for its card */
+  sounds?: string[];
   createdBy: string;
 }
 
