@@ -66,7 +66,7 @@ const TIKTOK_SCOPES = ["user.info.basic", "user.info.profile", "user.info.stats"
 /** The login page to send the user to, and the PKCE verifier to keep with the state (TikTok). */
 export function loginUrl(kind: LoginKind, redirect: string, state: string): { url: string; verifier?: string } {
   const app = appFor(kind);
-  if (!app) throw new Error("This login isn't set up on the server yet");
+  if (!app) throw new Error("This sign-in is not set up on the server");
   if (kind === "meta") {
     const u = new URL(`https://www.facebook.com/${META_VERSION}/dialog/oauth`);
     // a Business-type app's "Facebook Login for Business" names its permissions in a configuration (config_id), not scope
@@ -113,7 +113,7 @@ const grantOf = (t: Rec): Grant => ({
 /** The login's code for its tokens, with this server's own app. */
 export async function exchangeCode(kind: LoginKind, code: string, redirect: string, verifier?: string): Promise<Grant> {
   const app = appFor(kind);
-  if (!app) throw new Error("This login isn't set up on the server yet");
+  if (!app) throw new Error("This sign-in is not set up on the server");
   if (kind === "meta") {
     const short = await getJson(`${META}/oauth/access_token?${new URLSearchParams({ client_id: app.id, client_secret: app.secret, redirect_uri: redirect, code })}`);
     return grantOf(await getJson(`${META}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: app.id, client_secret: app.secret, fb_exchange_token: str(short.access_token) })}`));
@@ -125,7 +125,7 @@ export async function exchangeCode(kind: LoginKind, code: string, redirect: stri
 /** New tokens for a login's refresh token, with this server's own app (Google: an hour; TikTok: two hours and a new refresh token every time). */
 export async function refreshGrant(kind: "google" | "tiktok", refresh: string): Promise<Grant> {
   const app = appFor(kind);
-  if (!app) throw new Error("This login's app isn't on this server any more: connect the account again");
+  if (!app) throw new Error("The sign-in's app is not on this server");
   if (kind === "google") return grantOf(await getJson("https://oauth2.googleapis.com/token", form({ client_id: app.id, client_secret: app.secret, refresh_token: refresh, grant_type: "refresh_token" })));
   return grantOf(await getJson("https://open.tiktokapis.com/v2/oauth/token/", form({ client_key: app.id, client_secret: app.secret, grant_type: "refresh_token", refresh_token: refresh })));
 }
@@ -149,14 +149,14 @@ export async function accountsFromGrant(kind: LoginKind, t: Grant): Promise<NewA
       const ig = isRec(p.instagram_business_account) ? p.instagram_business_account : null;
       if (ig) out.push({ platform: "instagram", platformId: str(ig.id), handle: str(ig.username), name: str(ig.name), avatar: str(ig.profile_picture_url) || undefined, via: "login", token, stats: { followers: num(ig.followers_count), posts: num(ig.media_count) } });
     }
-    if (!out.length) throw new Error("That Facebook login manages no Pages. Instagram needs a Business or Creator account linked to a Facebook Page you manage");
+    if (!out.length) throw new Error("The Facebook sign-in manages no Pages");
     return out;
   }
   if (kind === "google") {
     const token = t.access_token;
     const ch = await getJson("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&mine=true", { headers: { Authorization: `Bearer ${token}` } });
     const items = Array.isArray(ch.items) ? ch.items.filter(isRec) : [];
-    if (!items.length) throw new Error("That Google account has no YouTube channel");
+    if (!items.length) throw new Error("The Google account has no YouTube channel");
     return items.map((c) => {
       const sn = isRec(c.snippet) ? c.snippet : {};
       return {
@@ -481,7 +481,7 @@ async function pullYoutubePublic(a: StoredAccount, username: string): Promise<Pu
   if (!key) return pullApify(a, username);
   const handle = a.handle.replace(/^@+/, "");
   const { c, st, posts } = await ytChannel(/^UC[\w-]{22}$/.test(handle) ? `id=${handle}` : `forHandle=${encodeURIComponent(`@${handle}`)}`, { key });
-  if (!str(c.id)) throw new Error(`YouTube has no channel @${handle}`);
+  if (!str(c.id)) throw new Error(`YouTube channel @${handle} not found`);
   const sn = isRec(c.snippet) ? c.snippet : {};
   const avatar = isRec(sn.thumbnails) && isRec(sn.thumbnails.default) ? str(sn.thumbnails.default.url) : "";
   return { stats: { followers: num(st.subscriberCount), views: num(st.viewCount), posts: num(st.videoCount) }, posts, name: str(sn.title) || undefined, avatar: avatar || undefined };
@@ -490,11 +490,11 @@ async function pullYoutubePublic(a: StoredAccount, username: string): Promise<Pu
 async function pullApify(a: StoredAccount, username: string): Promise<Pulled> {
   const platform = a.platform as Exclude<SocialPlatform, "instagram">;
   const items = (await apifyRun(APIFY_ACTORS[platform], apifyInput(platform, a.handle), { username })).filter(isRec).filter((i) => !i.error);
-  if (!items.length) throw new Error(`Apify found nothing for @${a.handle} on ${platform}`);
+  if (!items.length) throw new Error(`Nothing found for @${a.handle} on ${platform}`);
   return { ...apifyStats(platform, items), posts: items.map((i) => apifyPost(platform, i)).filter((p): p is SocialPost => !!p && !!p.id) };
 }
 
-const IG_LOGIN_MSG = "Connect this Instagram account with its login to read it";
+const IG_LOGIN_MSG = "Needs the Instagram account's sign-in";
 
 /**
  * An Instagram professional account through its Facebook login: recent posts with their insights, the account's numbers
@@ -558,7 +558,7 @@ async function pullInstagramDiscovery(a: StoredAccount): Promise<Pulled> {
 export async function pullAccount(a: StoredAccount, username: string): Promise<Pulled> {
   const reader = readerFor(a);
   if (reader) return reader.pull(a, username);
-  throw new Error(a.platform === "instagram" ? IG_LOGIN_MSG : `Nothing can read ${a.platform} for this account`);
+  throw new Error(a.platform === "instagram" ? IG_LOGIN_MSG : `Cannot read ${a.platform} for this account`);
 }
 
 /* The built-in readers: each login platform through its own login, and every other platform by handle on Apify. */

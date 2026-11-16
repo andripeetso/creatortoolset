@@ -48,6 +48,6 @@ describe("reader registry", () => {
   });
 
   it("an account no reader can read is refused, not read", async () => {
-    await expect(pullAccount(account("x", "login"), "tinyacrobatics")).rejects.toThrow("Nothing can read x for this account");
+    await expect(pullAccount(account("x", "login"), "tinyacrobatics")).rejects.toThrow("Cannot read x for this account");
   });
 });

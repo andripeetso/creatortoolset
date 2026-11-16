@@ -85,7 +85,7 @@ async function post(path: string, body: unknown): Promise<Grant> {
     signal: AbortSignal.timeout(TIMEOUT),
   });
   const j = (await res.json().catch(() => ({}))) as Partial<Grant> & { error?: string };
-  if (!res.ok || typeof j.access_token !== "string") throw new Error(j.error || `The sign-in service answered ${res.status}`);
+  if (!res.ok || typeof j.access_token !== "string") throw new Error(j.error || `Sign-in service error (${res.status})`);
   return j as Grant;
 }
 

@@ -17,9 +17,9 @@ export const PLATFORMS: Array<{ id: SocialPlatform; label: string; login?: Login
 ];
 
 export const LOGINS: Array<{ id: LoginKind; label: string; gives: string }> = [
-  { id: "meta", label: "Instagram & Facebook", gives: "Instagram professional accounts and Facebook Pages: insights, reach, saves, shares, comments" },
-  { id: "google", label: "YouTube", gives: "your channels: subscribers, views, watch time per day, every upload's numbers" },
-  { id: "tiktok", label: "TikTok", gives: "your profile: followers, likes, every video's views, likes, comments, shares" },
+  { id: "meta", label: "Instagram and Facebook", gives: "Insights, reach, saves, shares and comments of Instagram professional accounts and Facebook Pages" },
+  { id: "google", label: "YouTube", gives: "Subscribers, views, watch time per day and each upload's numbers" },
+  { id: "tiktok", label: "TikTok", gives: "Followers, likes and each video's views, likes, comments and shares" },
 ];
 
 export interface SocialPost {
