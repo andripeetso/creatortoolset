@@ -242,3 +242,27 @@ export function lookPrompt(lines: string[], story: boolean, workspace = ""): { s
     ].join("\n\n"),
   };
 }
+
+/** Bits two picture hashes may differ in and still show the same picture (64-bit difference hashes). */
+export const SAME_PICTURE_BITS = 10;
+
+/**
+ * Whether two 64-bit picture hashes (16 hex digits, the difference hash of a frame's 9×8 grey: each bit says whether a
+ * pixel is brighter than its right-hand neighbour) show the same picture: the one check a cut gets mechanically, that
+ * a picture is shown once (tasks/flywheel/PLAN.md D9). An empty or malformed hash is never the same as anything.
+ */
+export function samePicture(a: string, b: string, maxBits = SAME_PICTURE_BITS): boolean {
+  if (!/^[0-9a-f]{16}$/i.test(a) || !/^[0-9a-f]{16}$/i.test(b)) return false;
+  let x = BigInt(`0x${a}`) ^ BigInt(`0x${b}`);
+  let bits = 0;
+  while (x) (bits += Number(x & 1n)), (x >>= 1n);
+  return bits <= maxBits;
+}
+
+/** The difference hash of one 9×8 grey frame (72 bytes, row by row), as 16 hex digits: what samePicture compares. */
+export function pictureHash(gray9x8: Uint8Array): string {
+  if (gray9x8.length < 72) throw new Error("A picture hash needs a 9×8 grey frame");
+  let h = 0n;
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) h = (h << 1n) | (gray9x8[y * 9 + x]! > gray9x8[y * 9 + x + 1]! ? 1n : 0n);
+  return h.toString(16).padStart(16, "0");
+}
