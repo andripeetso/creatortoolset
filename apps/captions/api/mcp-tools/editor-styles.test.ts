@@ -25,6 +25,7 @@ const { editorStyleTools } = await import("./editor-styles");
 const { pairDevice } = await import("../lib/devices");
 const { addVersion, reviewJobsDone } = await import("../review");
 const { saveDraft, saveStep } = await import("../editor/store");
+const { change } = await import("../editor/styles");
 const { saveSettings } = await import("../lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
 
@@ -354,7 +355,8 @@ describe.skipIf(rootReplaced)("a style that learns, from the chat", () => {
     // a message shorter than a quote is taken only whole
     const ok = await turn("Ship it");
     await tool(ok.token, "review_set_approval", { link: added!.meta.id, status: "needs_review" });
-    await site(`/api/editor/styles/${s.id}/learned/${edit}`, "DELETE");
+    // the entry taken off by hand (× on the style's page would keep the edit from teaching it again)
+    change("ana", (f) => void (f.editing.find((x) => x.id === s.id)!.learned = []));
     await tool(ok.token, "review_set_approval", { link: added!.meta.id, status: "approved", words: "ship" });
     expect(await learned()).toEqual([]);
     await tool(ok.token, "review_set_approval", { link: added!.meta.id, status: "approved", words: "ship it" });
