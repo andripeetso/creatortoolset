@@ -25,7 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCachedLoad } from "@/lib/local-cache";
 import { addSkill, droppedSkillFile, listSkills, removeSkill, setSharedOn, updateSkill } from "@/lib/skills";
 import { cn } from "@/lib/utils";
-import { Card, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, saveFailed } from "@/components/settings/ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, saveFailed } from "@/components/settings/ui";
 import { msg } from "@/components/settings/helpers";
 import { ProjectsPicker } from "./ProjectsPicker";
 import { PublishDialog } from "./PublishDialog";
@@ -43,7 +43,7 @@ export function SkillsView({ places = SKILL_PLACES, title = placeLabel }: { plac
   const [publishing, setPublishing] = useState<Skill | null>(null);
   const reload = () => data.refresh().catch(() => {});
   if (!data.data)
-    return <Card>{data.error ? <ErrorRow title="Your skills did not load" detail={data.error} retry={() => void reload()} /> : <LoadingRow />}</Card>;
+    return <Card>{data.error ? <ErrorRow title="Could not load skills" detail={data.error} retry={() => void reload()} /> : <LoadingRow />}</Card>;
   const own = data.data.skills;
   const shared = data.data.shared ?? [];
   return (
@@ -61,16 +61,16 @@ export function SkillsView({ places = SKILL_PLACES, title = placeLabel }: { plac
               </Button>
             }
           >
-            {(mine.length > 0 || theirs.length > 0) && (
-              <Card>
-                {mine.map((s) => (
-                  <OwnRow key={s.id} skill={s} onEdit={() => setEditing({ place, skill: s })} onPublish={() => setPublishing(s)} onChanged={reload} />
-                ))}
-                {theirs.map((s) => (
-                  <SharedRow key={s.id} skill={s} onChanged={reload} />
-                ))}
-              </Card>
-            )}
+            {/* an empty place is a row too: a title with nothing under it reads as a page that did not load */}
+            <Card>
+              {mine.length === 0 && theirs.length === 0 && <EmptyRow title="No skills" />}
+              {mine.map((s) => (
+                <OwnRow key={s.id} skill={s} onEdit={() => setEditing({ place, skill: s })} onPublish={() => setPublishing(s)} onChanged={reload} />
+              ))}
+              {theirs.map((s) => (
+                <SharedRow key={s.id} skill={s} onChanged={reload} />
+              ))}
+            </Card>
           </Section>
         );
       })}

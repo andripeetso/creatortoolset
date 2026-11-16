@@ -4,9 +4,9 @@ import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBigFolder } from "@/components/LibraryProcessing";
-import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
-import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsSelect, Status, WorkspaceTag, inWorkspace, moveItems, type SettingsWorkspace } from "./ui";
+import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, inWorkspace, moveItems, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
 /** The computers an account owns (the list the Storage rows pick from). */
@@ -397,7 +397,7 @@ export function ConnectDialog({ folder, computer, onClose, onUsed }: { folder: S
   const where = `${folder.mount!.server}/${folder.mount!.share}`;
   return (
     <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+      <SettingsDialogContent className="sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Connect {folder.name} on {computer.name}</DialogTitle>
         </DialogHeader>
@@ -424,7 +424,7 @@ export function ConnectDialog({ folder, computer, onClose, onUsed }: { folder: S
             </>
           ) : null}
         </div>
-      </DialogContent>
+      </SettingsDialogContent>
     </SettingsDialog>
   );
 }

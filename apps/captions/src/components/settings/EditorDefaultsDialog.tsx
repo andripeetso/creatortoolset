@@ -1,8 +1,8 @@
-import { SettingsDialog } from "./kit-dialog";
+import { SettingsDialog, SettingsDialogContent } from "./kit-dialog";
 import { useEffect, useState } from "react";
 import { EDIT_SLOT_NAME, EDIT_SLOTS, type EditorDefaults, type EditSlot } from "@contracts/editor";
 import { Button } from "@/components/ui/button";
-import { DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { DialogTitle } from "@/components/ui/dialog";
 import { getEditorDefaults, setEditorDefault } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { Card, Row, RowMenu, Section, SettingsSelect, WorkspacePick, saveFailed, useSettingsWorkspace } from "./ui";
@@ -79,10 +79,10 @@ export function EditorDefaultsButton({ slots }: { slots?: readonly EditSlot[] })
         Defaults
       </Button>
       <SettingsDialog open={open} onOpenChange={setOpen}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
+        <SettingsDialogContent aria-describedby={undefined} className="sm:max-w-lg">
           <DialogTitle>{TITLE}</DialogTitle>
           <DefaultRows data={data} slots={choosable} busy={busy} change={change} />
-        </DialogContent>
+        </SettingsDialogContent>
       </SettingsDialog>
     </>
   );

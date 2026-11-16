@@ -1,14 +1,14 @@
-import { SettingsDialog } from "./kit-dialog";
+import { SettingsDialog, SettingsDialogContent } from "./kit-dialog";
 import { Check, Eye, Plus } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
-import { DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { PROJECT_COLORS, projectColor } from "@/lib/workspace";
+import { PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
 import { webPlugins } from "@/plugins.gen";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -372,6 +372,8 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
 
 /** One switch per workspace of the owner's (Member.workspaces, Invite.workspaces), as a plug-in's Workspaces section has them. */
 function WorkspaceSwitches({ brands, given, who, onChange }: { brands: Brand[]; given: string[]; who: string; onChange: (ids: string[]) => void }) {
+  // the dot is the workspace's own colour, as the switcher and the row tags draw it: the team's list carries no colour
+  const own = useWorkspace((s) => s.projects);
   return (
     <Card>
       {brands.map((b) => (
@@ -379,7 +381,7 @@ function WorkspaceSwitches({ brands, given, who, onChange }: { brands: Brand[]; 
           key={b.id}
           title={
             <span className="flex items-center gap-2">
-              <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(b)].dot}`} />
+              <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(own.find((p) => p.id === b.id) ?? b)].dot}`} />
               <span className="truncate">{b.name}</span>
             </span>
           }
@@ -583,7 +585,7 @@ function InviteDialog({
   };
   return (
     <SettingsDialog open={open} onOpenChange={close}>
-      <DialogContent className="sm:max-w-md">
+      <SettingsDialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New invite</DialogTitle>
           <DialogDescription>{!link ? "The link works for 7 days." : sentTo ? `Emailed to ${sentTo}.` : "The link is shown only once."}</DialogDescription>
@@ -628,7 +630,7 @@ function InviteDialog({
             </>
           )}
         </DialogFooter>
-      </DialogContent>
+      </SettingsDialogContent>
     </SettingsDialog>
   );
 }

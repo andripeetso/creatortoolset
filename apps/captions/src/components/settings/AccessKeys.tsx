@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useCachedLoad } from "@/lib/local-cache";
 import type { AiKeyInfo } from "./OwnAiSection";
-import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsDialog, saveFailed } from "./ui";
+import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsDialog, SettingsDialogContent, saveFailed } from "./ui";
 import { CopyBox } from "./copy-box";
 import { fmtAgo, msg } from "./helpers";
 
@@ -103,7 +103,7 @@ export function AccessKeysSection() {
       </Card>
       {made && (
         <SettingsDialog open onOpenChange={(o) => !o && setMade(null)}>
-          <DialogContent className="sm:max-w-md" onOpenAutoFocus={(e) => e.preventDefault()}>
+          <SettingsDialogContent className="sm:max-w-md" onOpenAutoFocus={(e) => e.preventDefault()}>
             <DialogHeader>
               <DialogTitle>{LEVELS[made.level].name} key</DialogTitle>
               <DialogDescription>The key is shown once.</DialogDescription>
@@ -112,7 +112,7 @@ export function AccessKeysSection() {
             <p className="text-xs text-muted-foreground">
               Add it as a connector in the AI app, or send it from a script in the header <code>Authorization: Bearer KEY</code>.
             </p>
-          </DialogContent>
+          </SettingsDialogContent>
         </SettingsDialog>
       )}
     </Section>

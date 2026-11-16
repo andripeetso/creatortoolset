@@ -28,7 +28,7 @@ import { activeSet, effectiveSelection, effortLabel, modelName, modelsOf, usePro
 import { useCachedLoad } from "@/lib/local-cache";
 import { claudeLimitReset } from "@/lib/limits";
 import { useWorkspace } from "@/lib/workspace";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, WorkspacePick, WorkspaceTag, saveFailed, useSettingsWorkspace, type SettingsWorkspace } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
 /** This window's own saves read the list again too: the read after a save is never one that started before it. */
@@ -139,7 +139,7 @@ export function AutomationsSection() {
             <>
               {items.length === 0 && <EmptyRow title="No scheduled tasks" />}
               {items.map((a) => (
-                <TaskRow key={a.id} a={a} tagged={w.all} limits={providers?.limits ?? []} now={now} onEdit={() => setEditing(a)} onChanged={reload} />
+                <TaskRow key={a.id} a={a} tagged={w.all} workspaces={w.workspaces} limits={providers?.limits ?? []} now={now} onEdit={() => setEditing(a)} onChanged={reload} />
               ))}
             </>
           )}
@@ -163,7 +163,7 @@ export function AutomationsSection() {
 }
 
 /** One task: its workspace while every workspace is shown, its schedule and next run, a failed or skipped last run. One action, the switch; the rest is in its menu. */
-function TaskRow({ a, tagged, limits, now, onEdit, onChanged }: { a: AutomationView; tagged: boolean; limits: LimitsIdentity[]; now: number; onEdit: () => void; onChanged: () => Promise<void> }) {
+function TaskRow({ a, tagged, workspaces, limits, now, onEdit, onChanged }: { a: AutomationView; tagged: boolean; workspaces: ReadonlyArray<{ id: string; name: string }>; limits: LimitsIdentity[]; now: number; onEdit: () => void; onChanged: () => Promise<void> }) {
   const navigate = useNavigate();
   const runNow = () => runAutomationNow(a.id).then(onChanged).catch((e) => saveFailed(msg(e)));
   // the chat its runs post in, or for a new-chat task the last run's
@@ -193,6 +193,7 @@ function TaskRow({ a, tagged, limits, now, onEdit, onChanged }: { a: AutomationV
               { label: "Edit", icon: <Pencil />, onSelect: onEdit },
               ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
               ...(chat ? [{ label: a.destination === "new_chat" ? "Open last run's chat" : "Open chat", icon: <MessageSquare />, onSelect: () => navigate(`/?chat=${encodeURIComponent(chat)}`) }] : []),
+              ...moveItems(workspaces, a.project, (to) => updateAutomation(a.id, { project: to }).then(onChanged)),
               {
                 label: "Delete",
                 destructive: true,
@@ -299,7 +300,7 @@ function TaskDialog({ initial, providers, w, onClose, onSaved }: { initial: Auto
         />
         {d.mode === "fixed" && (
           <>
-            <Row title="Time" control={<Input type="time" value={d.at} onChange={(e) => set({ at: e.target.value })} aria-label="Time" className="h-8 w-28" />} />
+            <Row title="Time" control={<Input type="time" value={d.at} onChange={(e) => set({ at: e.target.value })} aria-label="Time" className="h-8 w-32" />} />
             <Row
               title="Days"
               control={

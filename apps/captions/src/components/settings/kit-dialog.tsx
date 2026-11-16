@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogPortal, DialogTitle } from "@/components/ui/dialog";
 
@@ -19,6 +19,15 @@ export function SettingsDialog({ open, onOpenChange, children }: { open: boolean
       {children}
     </Dialog>
   );
+}
+
+/**
+ * The content of a SettingsDialog. The focus moving out never closes it: a row menu gives the focus back to its `…`
+ * button as it closes, after the dialog its item opened is up, and a dialog that is not modal would close on that. A
+ * click outside still closes it.
+ */
+export function SettingsDialogContent(props: ComponentProps<typeof DialogContent>) {
+  return <DialogContent onFocusOutside={(e) => e.preventDefault()} {...props} />;
 }
 
 /**
@@ -45,7 +54,7 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
   return (
     <SettingsDialog open={open} onOpenChange={onOpenChange}>
       {/* no description: say so to Radix, or it logs a warning on every open */}
-      <DialogContent {...(description ? {} : { "aria-describedby": undefined })} className={wide ? "max-h-[90vh] overflow-y-auto sm:max-w-2xl" : "sm:max-w-md"}>
+      <SettingsDialogContent {...(description ? {} : { "aria-describedby": undefined })} className={wide ? "max-h-[90vh] overflow-y-auto pb-0 sm:max-w-2xl" : "sm:max-w-md"}>
         <form
           className="space-y-4"
           onSubmit={(e) => {
@@ -59,7 +68,8 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
           </DialogHeader>
           <div className="space-y-3">{children}</div>
           {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-          <DialogFooter>
+          {/* a long form scrolls under its buttons: they stay at the bottom of the dialog, never half under its edge */}
+          <DialogFooter className={wide ? "sticky bottom-0 z-10 bg-background pt-2 pb-6" : undefined}>
             <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
               {cancelLabel}
             </Button>
@@ -68,7 +78,7 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
+      </SettingsDialogContent>
     </SettingsDialog>
   );
 }

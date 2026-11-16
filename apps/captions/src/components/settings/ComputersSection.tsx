@@ -1,4 +1,4 @@
-import { SettingsDialog } from "./kit-dialog";
+import { SettingsDialog, SettingsDialogContent } from "./kit-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Laptop, Monitor, Plus } from "lucide-react";
@@ -10,7 +10,7 @@ import { devicesSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
 import { Button } from "@/components/ui/button";
-import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
@@ -305,12 +305,12 @@ export const linuxCommand = (url: string, code: string) => `curl -fsSL ${url}/he
 function HelperDialog({ device, name, onClose }: { device: string; name: string; onClose: () => void }) {
   return (
     <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-xl" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
+      <SettingsDialogContent className="sm:max-w-xl" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Set up {name}</DialogTitle>
         </DialogHeader>
         <HelperSetup device={device} />
-      </DialogContent>
+      </SettingsDialogContent>
     </SettingsDialog>
   );
 }
@@ -327,18 +327,18 @@ function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: bo
   if (fresh) {
     return (
       <SettingsDialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-xl" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
+        <SettingsDialogContent className="sm:max-w-xl" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Set up {fresh.name}</DialogTitle>
           </DialogHeader>
           <HelperSetup device={fresh.id} />
-        </DialogContent>
+        </SettingsDialogContent>
       </SettingsDialog>
     );
   }
   return (
     <SettingsDialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
+      <SettingsDialogContent className="sm:max-w-md" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Add computer</DialogTitle>
         </DialogHeader>
@@ -378,7 +378,7 @@ function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: bo
           </TabsContent>
         </Tabs>
         <p className="text-xs text-muted-foreground">Setup continues here once the computer is added.</p>
-      </DialogContent>
+      </SettingsDialogContent>
     </SettingsDialog>
   );
 }
