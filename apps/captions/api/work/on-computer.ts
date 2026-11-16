@@ -10,6 +10,8 @@ export interface WorkServer {
   ai(body: unknown): Promise<unknown>;
   call(fn: string, args: unknown[]): Promise<unknown>;
   say(line: string): void;
+  /** the rendered preview, for the server to file in Review (thumb and wave: paths relative to the data folder) */
+  review(r: NonNullable<WorkResult["effects"]["review"]>): void;
 }
 
 export const onComputer: {
@@ -17,28 +19,31 @@ export const onComputer: {
   pkg: WorkPackage | null;
   paths: Record<string, string>;
   server: WorkServer | null;
-  /** what the step left for the server to do (Review's filing): read by the worker after the step, reset by turnOn */
-  effects: WorkResult["effects"];
 } = {
   on: false,
   pkg: null,
   paths: {},
   server: null,
-  effects: {},
 };
 
 /** Turns the seams on for one step: `paths` is version id → the resolved local file. */
 export function turnOn(pkg: WorkPackage, paths: Record<string, string>, server: WorkServer): void {
-  Object.assign(onComputer, { on: true, pkg, paths, server, effects: {} });
+  Object.assign(onComputer, { on: true, pkg, paths, server });
 }
 
-/** Turns them off; the step's `effects` stay readable until the next turnOn. */
 export function turnOff(): void {
   Object.assign(onComputer, { on: false, pkg: null, paths: {}, server: null });
 }
 
-/** A server read (work/serve.ts serveCall), as the held job's account and edit: only the plain extra arguments go. */
-export const ask = <T = string>(fn: string, ...args: unknown[]): Promise<T> => onComputer.server!.call(fn, args) as Promise<T>;
+/**
+ * A server read (work/serve.ts serveCall), as the held job's account and edit: only the plain extra arguments go. The
+ * route's body comes back as is: the answer, or `{ error }` when it refused.
+ */
+export async function ask<T = string>(fn: string, ...args: unknown[]): Promise<T> {
+  const r = await onComputer.server!.call(fn, args);
+  if (r && typeof r === "object" && typeof (r as { error?: unknown }).error === "string") throw new Error((r as { error: string }).error);
+  return r as T;
+}
 
 /** The gate's output the server ran at claim (analyze.ts analyzeGate, index.ts indexGate). */
 export const gateOf = <T>(): T => onComputer.pkg!.gate as T;

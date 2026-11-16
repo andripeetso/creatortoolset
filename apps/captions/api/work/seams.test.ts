@@ -59,6 +59,7 @@ const load = async () => ({
   ...(await import("../editor/worker")),
   ...(await import("./on-computer")),
   ...(await import("./serve")),
+  ...(await import("./place")),
 });
 const srv = await load();
 
@@ -104,7 +105,9 @@ const pkgOf = (job: JobRow, editId: string, gate?: unknown, original = false): W
 const wire = <T>(x: T): T => (x === undefined ? x : (JSON.parse(JSON.stringify(x)) as T));
 const asked: string[] = [];
 let aiAsked = 0;
+let filed: unknown[] = [];
 const serverFor = (job: JobRow) => ({
+  review: (r: unknown) => void filed.push(r),
   ai: async (b: unknown) => (aiAsked++, wire(await srv.serveAi(job, wire(b)))),
   call: async (fn: string, args: unknown[]) => (asked.push(fn), wire(await srv.serveCall(job, fn, wire(args)))),
   say: () => {},
@@ -198,7 +201,7 @@ async function both(editId: string, kind: string, variant: string, gate?: (job: 
 describe("the seams: a step on a computer leaves what it leaves on the server", () => {
   it("analyze (cut around speech): the analysis and the loudness caches, footage only from the resolved paths", async () => {
     const e = (await srv.createEdit("maker", { name: "Tiny Acrobatics talk", sources: ["ver_a", "ver_b"] }))!;
-    const { s, c } = await both(e.id, "analyze", "", (job) => srv.analyzeGate({ edit: srv.readEdit(e.id)!, job }));
+    const { s, c } = await both(e.id, "analyze", "", (job) => srv.gates.analyze!({ edit: srv.readEdit(e.id)!, job, variant: "", signal }));
     expect(tree(c.edit)).toEqual(tree(s.edit));
     expect(tree(c.cache)).toEqual(tree(s.cache));
     expect(Object.keys(tree(c.cache)).filter((f) => f.endsWith(".energy.f32"))).toHaveLength(2);
@@ -214,7 +217,7 @@ describe("the seams: a step on a computer leaves what it leaves on the server", 
     answers.plan = JSON.stringify({ plans: [{ kind: "hard edit", lead: "sources", shots: [{ src: "S1", in: 0, dur: 1 }, { src: "S2", in: 1, dur: 1 }, { src: "S1", in: 2.5, dur: 1 }] }] });
     asked.length = 0;
     aiAsked = 0;
-    let r = await both(e.id, "script", "", () => srv.indexGate(srv.readEdit(e.id)!, signal));
+    let r = await both(e.id, "script", "", (job) => srv.gates.script!({ edit: srv.readEdit(e.id)!, job, variant: "", signal }));
     expect(tree(r.c.edit)).toEqual(tree(r.s.edit));
     expect(tree(r.c.cache)).toEqual(tree(r.s.cache));
     expect(readFileSync(path.join(r.c.edit, "shots.json"), "utf8")).toContain('"kind":"hard edit"');
@@ -231,14 +234,16 @@ describe("the seams: a step on a computer leaves what it leaves on the server", 
     expect(tree(r.c.edit)).toEqual(tree(r.s.edit));
 
     answers.look = JSON.stringify({ ok: true, fails: [] });
-    r = await both(e.id, "critique", "v1");
+    filed = [];
+    r = await both(e.id, "critique", "v1", () => srv.gates.critique!({ edit: srv.readEdit(e.id)!, job: jobOf(e.id, "v1", "critique"), variant: "v1", signal }));
     expect(aiAsked).toBe(2); // the look, its pictures read on the server
     // the server filed it in Review; the computer left that to the server, with the thumbnail and waveform made here
     const notFiled = (rel: string) => rel === "review.json" || rel.startsWith("filed") || rel.startsWith("previews");
     expect(tree(r.c.edit, notFiled)).toEqual(tree(r.s.edit, notFiled));
     expect(existsSync(path.join(r.s.edit, "review.json"))).toBe(true);
     expect(existsSync(path.join(r.c.edit, "review.json"))).toBe(false);
-    const review = cmp.onComputer.effects.review!;
+    expect(filed).toHaveLength(1);
+    const review = filed[0] as { thumb: string; wave: string };
     expect(review).toEqual({ variant: "v1", fails: [], thumb: path.join("editor", e.id, "previews", "v1.jpg"), wave: path.join("editor", e.id, "previews", "v1.wave.json") });
     expect(existsSync(path.join(C, review.thumb))).toBe(true);
     expect(JSON.parse(readFileSync(path.join(C, review.wave), "utf8")).peaks.length).toBeGreaterThan(0);
@@ -321,7 +326,17 @@ describe("the seams' rules", () => {
     await expect(srv.serveCall(mine, "packInstructions", ["workshop.write"])).rejects.toBeInstanceOf(srv.Refused);
     const theirs = { ...mine, actor: "someone-else" };
     await expect(srv.serveCall(theirs, "workspaceSetup", [6000])).rejects.toBeInstanceOf(srv.Refused);
-    await expect(srv.serveAi(theirs, { system: "s", user: "u" })).rejects.toBeInstanceOf(srv.Refused);
+    // the AI route sends its body as is: the refusal is an error, and no AI was asked
+    const calls = answers.calls;
+    expect(await srv.serveAi(theirs, { system: "s", user: "u" })).toEqual({ error: { name: "Error", message: "Not this account's edit" } });
+    expect(answers.calls).toBe(calls);
+    // a refused read comes back as the route's body, { error }, and the seam throws it
+    cmp.turnOn(pkgOf(mine, e.id), paths, { ...serverFor(mine), call: async () => ({ error: "No such read: x" }) });
+    try {
+      await expect(cmp.ask("x")).rejects.toThrow("No such read: x");
+    } finally {
+      cmp.turnOff();
+    }
   });
 
   it("post's files on a computer: an original already there, never a proxy in its place", async () => {

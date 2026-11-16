@@ -554,10 +554,13 @@ export function aiErrorFrom(j: AiErrorJson): Error {
   return e;
 }
 
-/** The server's answer to a computer's AI call (work/serve.ts serveAi): its text, or the error it threw, rebuilt. */
+/**
+ * The server's answer to a computer's AI call (work/serve.ts serveAi), the route's body as is: its text, or the error
+ * it threw, rebuilt (a route's own refusal is a plain line).
+ */
 export async function serverAnswer(body: Record<string, unknown>): Promise<{ text: string; provider: string; mac: boolean }> {
-  const r = (await onComputer.server!.ai(body)) as { text: string; provider: string; mac: boolean } | { error: AiErrorJson };
-  if ("error" in r) throw aiErrorFrom(r.error);
+  const r = (await onComputer.server!.ai(body)) as { text: string; provider: string; mac: boolean } | { error: AiErrorJson | string };
+  if ("error" in r) throw typeof r.error === "string" ? new Error(r.error) : aiErrorFrom(r.error);
   return r;
 }
 

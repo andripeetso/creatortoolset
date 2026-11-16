@@ -220,7 +220,7 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
   if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = previewFile(edit.id, variant);
   await mkdir(path.dirname(out), { recursive: true });
-  const grade = onComputer.on ? ((await ask<Cdl | null>("grade")) ?? undefined) : await gradeOf(ownerOf(edit), edit.bundle);
+  const grade = onComputer.on ? (await ask<{ cdl?: Cdl }>("grade")).cdl : await gradeOf(ownerOf(edit), edit.bundle);
   await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, grade);
   if (signal.aborted || d.due) return;
   await fileInReview(edit, variant, d.timeline, d.critique?.fails, job.actor);
@@ -242,7 +242,7 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
     await makeThumb(out, thumb, p.duration);
     await makeWave(out, wave, !!p.acodec);
     // paths relative to the data folder, as the result's uploads are (work/result.ts)
-    onComputer.effects.review = { variant, fails, thumb: path.relative(env.dataDir, thumb), wave: path.relative(env.dataDir, wave) };
+    onComputer.server!.review({ variant, fails, thumb: path.relative(env.dataDir, thumb), wave: path.relative(env.dataDir, wave) });
     return;
   }
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart

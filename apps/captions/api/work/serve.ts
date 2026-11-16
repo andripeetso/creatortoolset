@@ -14,8 +14,17 @@ import type { JobRow } from "../library/jobs";
 import { workspaceSetup } from "../editor/plan";
 import { editRole, gradeOf, ownerOf, readEdit, type EditMeta } from "../editor/store";
 import { finishedProfile, styleBlock } from "../editor/styles";
+import { analyzeGate } from "../editor/analyze";
+import { indexGate } from "../editor/index";
+import { gates } from "./place";
 
-/** A call the job may not make: not its account's edit, or a read that isn't on the list. The route answers 403. */
+// the gates a claim runs on the server for a computer's step; their output is its pkg.gate (on-computer.ts gateOf)
+gates.analyze = (ctx) => analyzeGate(ctx);
+gates.script = (ctx) => indexGate(ctx.edit, ctx.signal);
+// critique's fix round plans again (plan.ts fixPlan) and reads the index the same way
+gates.critique = (ctx) => indexGate(ctx.edit, ctx.signal);
+
+/** A call the job may not make: not its account's edit, or a read that isn't on the list. */
 export class Refused extends Error {}
 
 /** The job's edit, while its account still sees it (store.ts editRole), and whose job it is. */
@@ -35,15 +44,15 @@ const routeFor = (actor: string, label = "AI Editor") => aiFor(whoFor(actor), "e
 /**
  * One AI call of a computer's step: `{ system, user, job?, label?, retries?, images?, background?, preferKey? }`. The
  * text comes back unparsed (`{ text, provider, mac }`, the computer parses), or the error it threw (`{ error }`,
- * ai-complete.ts aiErrorJson). Refused (thrown) when the job's account no longer sees the edit.
+ * ai-complete.ts aiErrorJson), a refusal too (the job's account no longer sees the edit): the route sends it as is.
  */
 export async function serveAi(job: JobRow, body: unknown): Promise<unknown> {
-  const { actor } = await heldEdit(job);
-  const b = (body ?? {}) as Record<string, unknown>;
-  if (typeof b.system !== "string" || typeof b.user !== "string") throw new Refused("An AI call needs its text");
-  const use = useOf(b.job);
-  const label = labelOf(b.label);
   try {
+    const { actor } = await heldEdit(job);
+    const b = (body ?? {}) as Record<string, unknown>;
+    if (typeof b.system !== "string" || typeof b.user !== "string") throw new Refused("An AI call needs its text");
+    const use = useOf(b.job);
+    const label = labelOf(b.label);
     if (b.images !== undefined) {
       const images = Array.isArray(b.images) ? b.images.filter((i): i is VisionImage => typeof (i as VisionImage)?.jpegBase64 === "string") : [];
       const r = await completeVisionWithFallback(b.system, b.user, images, undefined, (t) => t, whoFor(actor), {
@@ -82,7 +91,8 @@ const CALLS: Record<string, (h: { edit: EditMeta; actor: string }, args: unknown
     const names = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
     return skillText(ownerOf(edit), names, str(projectId) === edit.projectId ? edit.projectId : null, tools === null ? undefined : { ai: routeFor(actor), ...(tools === true ? { tools: true } : {}) });
   },
-  grade: async ({ edit }) => (await gradeOf(ownerOf(edit), edit.bundle)) ?? null,
+  // an object, never null: the route's body is the answer
+  grade: async ({ edit }) => ({ cdl: await gradeOf(ownerOf(edit), edit.bundle) }),
 };
 
 /** A named server read (an allow-list: workspace context, styles, packs, skills, grade); unknown names are refused. */
