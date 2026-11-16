@@ -12,7 +12,7 @@ import { footageProfile } from "../lib/workshop/context";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { workspaceSetup } from "../editor/plan";
-import { editRole, gradeOf, ownerOf, readEdit, type EditMeta } from "../editor/store";
+import { editRole, gradeOf, ownerOf, readEdit, seesEdit, type EditMeta } from "../editor/store";
 import { finishedProfile, styleBlock } from "../editor/styles";
 import { analyzeGate } from "../editor/analyze";
 import { indexGate } from "../editor/index";
@@ -28,12 +28,15 @@ gates.critique = (ctx) => indexGate(ctx.edit, ctx.signal);
 /** A call the job may not make: not its account's edit, or a read that isn't on the list. */
 export class Refused extends Error {}
 
-/** The job's edit, while its account still sees it (store.ts editRole), and whose job it is. */
+/**
+ * The job's edit, while its account still sees it (store.ts editRole) and every clip it uses (seesEdit: a teammate a
+ * library policy refuses one clip mid-step is stopped here, AI calls and reads alike), and whose job it is.
+ */
 async function heldEdit(job: JobRow): Promise<{ edit: EditMeta; actor: string }> {
   const vid = job.version_id ?? "";
   const cut = vid.indexOf(":");
   const edit = cut > 0 ? readEdit(vid.slice(0, cut)) : null;
-  if (!job.actor || !edit || !(await editRole(job.actor, edit))) throw new Refused("Not this account's edit");
+  if (!job.actor || !edit || !(await editRole(job.actor, edit)) || !(await seesEdit(job.actor, edit))) throw new Refused("Not this account's edit");
   return { edit, actor: job.actor };
 }
 

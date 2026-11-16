@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Edit } from "../../contracts/editor";
+import type { JobRow } from "../library/jobs";
 
 // A teammate's edits ask the library's own policies (store.ts seesClip): a plug-in policy that refuses a viewer a clip
 // (one that shows members only blurred footage, say) keeps that clip out of every edit they make, run or watch. ana
@@ -126,6 +127,22 @@ describe.skipIf(rootReplaced)("AI Editor: a teammate's edits ask the library's p
       expect((await json<Edit>(call("ana", "GET", `/api/editor/${fays}`))).id).toBe(fays);
     } finally {
       STEPS.analyze = real!;
+    }
+  });
+
+  it("a teammate's step on their computer stops mid-step when the edit takes in a clip refused to them: its AI calls and reads too", async () => {
+    const { serveAi, serveCall, Refused } = await import("../work/serve");
+    const step = { version_id: `${fays}:`, actor: "bo" } as JobRow;
+    await call("ana", "PATCH", `/api/editor/${fays}`, { song: null }); // the step before left the raw take in
+    expect(await serveCall(step, "grade", [])).toHaveProperty("cdl");
+    // the owner puts the raw take in as the song while bo's computer runs the step
+    expect((await call("ana", "PATCH", `/api/editor/${fays}`, { song: "ver_raw" })).status).toBe(200);
+    try {
+      await expect(serveCall(step, "grade", [])).rejects.toBeInstanceOf(Refused);
+      expect(await serveAi(step, { system: "s", user: "u" })).toEqual({ error: { name: "Error", message: "Not this account's edit" } });
+      expect(await serveCall({ ...step, actor: "fay" }, "grade", [])).toHaveProperty("cdl");
+    } finally {
+      await call("ana", "PATCH", `/api/editor/${fays}`, { song: null });
     }
   });
 
