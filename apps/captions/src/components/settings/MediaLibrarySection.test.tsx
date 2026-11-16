@@ -83,7 +83,7 @@ async function render(el: ReactNode) {
   for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
 }
 
-const SECTIONS = ["Files", "Footage folders", "Storage", "AI", "All clips"];
+const SECTIONS = ["Files", "Footage folders", "Storage", "Search", "All clips"];
 const WITHOUT_FOLDERS = SECTIONS.filter((s) => s !== "Footage folders");
 const headings = (text: string) => SECTIONS.filter((s) => text.includes(s));
 
@@ -91,6 +91,8 @@ describe("the Media Library's settings", () => {
   it("Settings → Media Library shows the sheet's sections", async () => {
     await render(<MediaLibrarySection />);
     expect(headings(document.body.textContent ?? "")).toEqual(WITHOUT_FOLDERS);
+    // the folder choices by the names the first add offers them under: a name says what the choice does
+    expect([...document.querySelector<HTMLSelectElement>('select[aria-label="Folders"]')!.options].map((o) => o.textContent)).toEqual(["By type", "By content", "None"]);
   });
 
   it("on the server's own computer the sheet has the footage folders and the folder copies go into; Settings leaves both to its Folders page", async () => {
