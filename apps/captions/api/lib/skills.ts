@@ -8,7 +8,7 @@ import { env } from "./env";
 import { pluginSkills } from "./plugin";
 import { slug } from "./workshop/folder";
 import { INSTRUCTIONS_MAX } from "./workshop/prompt";
-import { readUserMarker } from "./workshop/workspace";
+import { readUserMarker, workspaceScope } from "./workshop/workspace";
 
 /**
  * Skills (contracts/skills.ts), each for one place. A person's own are kept per account; the ones from installed
@@ -230,12 +230,16 @@ export async function skillsFor(username: string, projectId?: string | null): Pr
   return (await listSkills(username)).filter((s) => placeOf(s) === "workshop.write" && skillOn(s, projectId)).slice(0, SKILL_LIMITS.perTurn);
 }
 
-/** The assistant's: the person's own assistant skills on in the project the app is in. An account with none costs one missed file read. */
+/**
+ * The assistant's: the person's own assistant skills on in the workspace the call works in: a chat's own for its reply
+ * and its tools (workspaceScope), whatever the app has open, else the one the app is in. An account with none costs
+ * one missed file read.
+ */
 export async function dockSkills(username: string): Promise<Skill[]> {
   const all = (await listSkills(username)).filter((s) => s.on && placeOf(s) === "assistant");
   if (!all.length) return [];
-  const marker = await readUserMarker(username).catch(() => null);
-  return all.filter((s) => skillOn(s, marker?.currentProjectId)).slice(0, SKILL_LIMITS.perTurn);
+  const here = workspaceScope.getStore()?.id ?? (await readUserMarker(username).catch(() => null))?.currentProjectId;
+  return all.filter((s) => skillOn(s, here)).slice(0, SKILL_LIMITS.perTurn);
 }
 
 const nameOf = (s: Skill) => oneLine(s.name).slice(0, SKILL_LIMITS.name);

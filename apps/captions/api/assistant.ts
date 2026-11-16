@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { footageProfile, workspaceContext } from "./lib/workshop/context";
+import { footageProfile, workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -108,9 +108,9 @@ Before saying a file is not there, or asking what it is called, look with folder
 
 /**
  * The dock's line on this workspace's folders (Settings → Storage, devices-storage.ts), a folder a line with the
- * computer it is on; "" with none, which MAC_NOTE covers. It goes with the turn's memory (made before the turn, as
- * streamMacClaude must queue the job at once). `workspace`: the chat's (one from before workspaces kept their
- * own folders is the first brand's, project-of.ts).
+ * computer it is on; "" with none, which MAC_NOTE covers. It goes with the turn's memory (read as the turn starts,
+ * turnKnows). `workspace`: the chat's (one from before workspaces kept their own folders is the first brand's,
+ * project-of.ts).
  */
 export async function foldersNote(username: string, workspace?: string): Promise<string> {
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
@@ -170,8 +170,8 @@ interface Chat {
   /** Put away until a time (POST /chats/:id/snooze), `at` when that was done. It is back when the time comes, or
    *  sooner when it asks something or a reply in it fails (isSnoozed); it is kept until the person has looked. */
   snooze?: { until: number; at: number };
-  /** The workspace (a Workshop project's id) it works in: set by its first message, kept for good. Its tools work there,
-   *  whatever the app has open meanwhile (workspaceOfTurn, mcp.ts). */
+  /** The workspace (a Workshop project's id) it works in: set by its first message and kept while its account can open
+   *  it (workspaceNow). Its tools work there, whatever the app has open meanwhile (workspaceOfTurn, mcp.ts). */
   workspace?: string;
   /** The AI it is sent to, picked in its message box (the turn's `ai`); none = the person's default for the assistant. */
   ai?: Selection;
@@ -209,7 +209,7 @@ interface Conv {
   resume?: Record<string, Resume>;
 }
 
-type Resume = Pick<Held, "url" | "admin" | "memory" | "skills" | "ai">;
+type Resume = Pick<Held, "url" | "admin" | "ai">;
 
 /** What a chat says by itself when a usage limit that stopped its reply has reset. */
 export const CONTINUE = "Continue where you left off.";
@@ -222,9 +222,6 @@ interface Held {
   files: string[];
   pasted: AssistantPaste[];
   context?: AssistantContext;
-  /** Read when the message was sent (memoryBlock, skillLines), as the turn would have read them then. */
-  memory: string;
-  skills: string;
   /** This server's MCP address, as the request that sent it saw it. */
   url: string;
   admin: boolean;
@@ -912,7 +909,8 @@ async function chatsOf(u: SessionUser): Promise<AssistantChat[]> {
     for (const c of old) c.workspace = of();
     if (old.length) save(u.username);
   }
-  return chatList(u.username).map((c) => (of ? { ...c, workspace: of(c.workspace) } : c));
+  // an account with no workspace left (a member whose team's were taken away) has chats in none
+  return chatList(u.username).map((c) => ({ ...c, workspace: of?.(c.workspace) }));
 }
 
 const chatWithTurn = (username: string, turn: string): Chat | undefined => {
@@ -920,10 +918,29 @@ const chatWithTurn = (username: string, turn: string): Chat | undefined => {
   return [conv as Chat, ...(conv.past ?? [])].find((c) => c.messages.some((m) => m.id === turn));
 };
 
-/** The workspace of the chat a reply is written in, for its tools (mcp.ts); none for a reply that is not in a chat. */
-export function workspaceOfTurn(username: string, turn: string | null): string | undefined {
-  return turn ? chatWithTurn(username, turn)?.workspace : undefined;
+/**
+ * The workspace a chat works in now: the one it keeps, while its account owns it or is given it. One taken away since
+ * (a member's, by the team's owner) is not the chat's any more: it works in what workspaceOf gives instead (their own
+ * first brand, or none), written down, so the chat's mark, its tools and what its replies are told agree. Whatever
+ * runs a reply's tools or tells it of its workspace reads it here. None for a chat that keeps none.
+ */
+async function workspaceNow(username: string, find: () => Chat | null | undefined): Promise<string | undefined> {
+  const stored = find()?.workspace;
+  if (!stored) return undefined;
+  const ws = await workspaceOf(username, stored);
+  // found again: a New chat meanwhile swaps what the open chat is
+  const chat = find();
+  if (ws !== stored && chat?.workspace === stored) {
+    chat.workspace = ws;
+    save(username);
+    tell(username);
+  }
+  return ws;
 }
+
+/** The workspace of the chat a reply is written in, as it is now (above), for its tools (mcp.ts) and what it is told; none for a reply that is not in a chat. */
+export const workspaceOfTurn = async (username: string, turn: string | null): Promise<string | undefined> =>
+  turn ? workspaceNow(username, () => chatWithTurn(username, turn)) : undefined;
 
 // a reply that switches workspace (workshop_set_project) takes its chat along: its next tools work there
 onChatMoves((username, turn, id) => {
@@ -1109,9 +1126,28 @@ function placeOf(username: string, reply: string): string {
   return n ? `place-${n}/` : "";
 }
 
-/** One turn of the dock. */
-const runTurn = (username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> =>
-  runReply(username, replyId, (run) => answerWithTools(username, route, url, prompt, { label: "Assistant", turn: replyId, files, memory, skills, ...run }));
+/**
+ * What a reply knows as it starts: what the person told the assistant to keep, its chat's workspace (workspaceNote) and
+ * the skills on there, all read inside that workspace. Read when the reply starts, never when its message was sent: one
+ * that waited (behind another reply, for a video, for a usage limit to reset) is told the instructions as they are by then.
+ */
+async function turnKnows(username: string, reply: string): Promise<{ memory: string; skills: string }> {
+  const ws = await workspaceOfTurn(username, reply);
+  const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
+  return {
+    memory: (await inWs(() => memoryBlock({ username } as SessionUser))) + (await workspaceNote(username, ws)),
+    skills: skillLines(await inWs(() => dockSkills(username)), "tool"),
+  };
+}
+
+/** One turn of the dock, told what it knows (above) once that is read. */
+const runTurn = (username: string, replyId: string, route: Route, url: string, prompt: string, knows: ReturnType<typeof turnKnows>, files?: Record<string, string>): Promise<void> =>
+  runReply(username, replyId, async (run) => {
+    const known = await knows;
+    // stopped while that was read: nothing is asked of the Mac
+    if (run.cancel.aborted) throw new Error("Stopped");
+    return answerWithTools(username, route, url, prompt, { label: "Assistant", turn: replyId, files, ...known, ...run });
+  });
 
 /** The server restarted under a reply and it could not go on (nothing was running on the Mac yet, or the Mac is gone too). */
 const RESTARTED = "The server restarted while this was being written. Send your message again.";
@@ -1362,6 +1398,7 @@ async function pumpOnce(username: string): Promise<void> {
     changed = true;
   }
   const held = conv.held ?? {};
+  const starting: Promise<unknown>[] = [];
   // replies being written now, in every chat: up to MAX_RUNNING at once
   let busy = runsOf(username).size;
   // a chat with a reply that waits (for its videos, the reply before it, or a free place) holds the messages after it there: another chat goes on
@@ -1416,7 +1453,11 @@ async function pumpOnce(username: string): Promise<void> {
       continue;
     }
     // one that can't start ends there, and the next may start in its place
-    if (startHeld(username, conv, list, i, h, h.files.flatMap((id) => inNow(id) ?? []))) busy++;
+    const started = startHeld(username, conv, list, i, h, h.files.flatMap((id) => inNow(id) ?? []));
+    if (started) {
+      busy++;
+      starting.push(started);
+    }
     changed = true;
   }
   if (changed) {
@@ -1426,10 +1467,15 @@ async function pumpOnce(username: string): Promise<void> {
   clearTimeout(wakes.get(username));
   wakes.delete(username);
   if (soonest < Infinity) wakes.set(username, setTimeout(() => void pump(username), Math.min(soonest - t + 1000, 2 ** 31 - 1)).unref());
+  // a reply that started is with its computer once what it knows is read: whoever sent it gets their answer after that
+  await Promise.allSettled(starting);
 }
 
-/** A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. false: it ended instead. */
-function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: number, h: Held, files: AssistantFile[]): boolean {
+/**
+ * A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. What it knows of its
+ * workspace is read now (turnKnows), and that read is what it returns. false: it ended instead.
+ */
+function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: number, h: Held, files: AssistantFile[]): Promise<unknown> | false {
   const reply = list[i]!;
   const asked = list.find((x) => x.id === h.ask);
   delete conv.held![reply.id];
@@ -1451,14 +1497,15 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
-  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills).then(() => {
+  const knows = turnKnows(username, reply.id);
+  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), knows, filesFor(input)).then(() => {
     // a usage limit stopped it: what it needs to carry on when the limit resets (pump)
     if (!messageOf(username, reply.id)?.limit?.until) return;
-    (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, memory: h.memory, skills: h.skills, ...(h.ai ? { ai: h.ai } : {}) };
+    (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, ...(h.ai ? { ai: h.ai } : {}) };
     save(username);
     void pump(username);
   });
-  return true;
+  return knows;
 }
 
 /**
@@ -1483,8 +1530,6 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
     ask: asked.id,
     files: [],
     pasted: [],
-    memory: (await memoryBlock(user)) + (await workspaceNote(user.username, workspaceOfTurn(user.username, turn))),
-    skills: skillLines(await dockSkills(user.username), "tool"),
     url,
     admin: user.role === "admin",
     at: reply.at,
@@ -1711,7 +1756,7 @@ assistantApp.post("/folder-list", async (c) => {
   if (!/^(\/|~\/)/.test(asked) || asked.split("/").includes("..")) return c.json({ error: "Give the folder's full path on the computer it is on." }, 400);
 
   const turn = jobTurn(c.req.header("authorization"));
-  const ws = turn ? workspaceOfTurn(u.username, turn) : undefined;
+  const ws = await workspaceOfTurn(u.username, turn);
   const inWs = ws ? await inProjectOf(u, ws) : await inCurrentWorkspace(u);
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, u.username), "utf-8").catch(() => "{}"));
   const kept = [...st.folders.filter((f) => !inWs || inWs(f.workspace)), ...(await pluginStorageFolders(u.username))];
@@ -1766,12 +1811,12 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
-  // the chat's workspace: its own once it has one (a chat from before is given the first brand's when the list is
-  // read, chatsOf); a new chat's is the one picked for it, else the app's current
-  const was = target();
-  const ws = was?.workspace ?? (await resolveProjectId(u, was?.messages.length ? undefined : input.workspace));
+  // the chat's workspace: its own once it has one, while the account can still open it (workspaceNow); a chat from
+  // before chats had one is the first brand's, whichever window sends to it, as its list says (chatsOf); a new chat's
+  // is the one picked for it, else the app's current
+  const old = !!target()?.messages.length;
+  const ws = (await workspaceNow(u.username, target)) ?? (old ? await workspaceOf(u.username) : await resolveProjectId(u, input.workspace));
   const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
-  const memory = (await inWs(() => memoryBlock(u))) + (await workspaceNote(u.username, ws));
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
@@ -1780,7 +1825,6 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const footage = files.length || input.paths.length || input.local.length;
   // the project is named once: by the question whether dropped footage belongs there, else by its own line
   const fit = fitOff ? FIT_OFF_SAID : !project ? undefined : footage && readWorkPrefs(u.username).askFit !== false ? fitLine(project.name) : projectLine(project);
-  const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
   if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
@@ -1819,8 +1863,6 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     files: input.fileIds,
     pasted: input.pasted,
     ...(input.context ? { context: input.context } : {}),
-    memory,
-    skills,
     url: `${publicOrigin(c)}/api/mcp`,
     admin: u.role === "admin",
     at: now,
@@ -1949,7 +1991,8 @@ assistantApp.post("/chats/:id/limit", async (c) => {
   };
   if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
-  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: (await memoryBlock(u)) + (await workspaceNote(u.username, chatOf(load(u.username), c.req.param("id"))?.workspace)), skills: skillLines(await dockSkills(u.username), "tool"), ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
+  // (what the reply knows of its workspace is read when it carries on, turnKnows)
+  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
   const m = found();
   if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   if (r) (load(u.username).resume ??= {})[m.id] = r;
@@ -2170,8 +2213,11 @@ assistantApp.post("/confirms/:id", async (c) => {
   else {
     answering.add(id);
     try {
-      // in the workspace of the chat it was asked in, as the reply's own calls were
-      const ws = [conv as Chat, ...(conv.past ?? [])].find((x) => x.messages.some((m) => m.confirms?.some((y) => y.id === id)))?.workspace;
+      // in the workspace of the chat it was asked in, as the reply's own calls were, while the account can still open it
+      const ws = await workspaceNow(u.username, () => {
+        const v = load(u.username);
+        return [v as Chat, ...(v.past ?? [])].find((x) => x.messages.some((m) => m.confirms?.some((y) => y.id === id)));
+      });
       const run = () => confirmRunner!(u, c.req.raw.headers, publicOrigin(c), call.tool, call.args);
       const r = await (ws ? workspaceScope.run({ id: ws }, run) : run());
       Object.assign(q, { status: r.ok ? "done" : "failed", result: r.text.replace(/\s+/g, " ").trim().slice(0, 300) });

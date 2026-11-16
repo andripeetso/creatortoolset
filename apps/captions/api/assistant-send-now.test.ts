@@ -668,8 +668,16 @@ describe("which project a message is for", () => {
     const first = await made("Tiny Acrobatics");
     await made("Tiny   Acrobatics\nshop");
     await p.send({ text: "What next?" });
+    const old = await p.claim();
+    // a chat from before the account had a workspace is the first brand's, as the list files it, not the one the
+    // window that sends to it has open (the newest, picked when it was made)
+    expect(old.user).toContain(`The user's current workspace is "Tiny Acrobatics" (id ${first})`);
+    await p.answer(old.id, "A plan.");
+    await settled(p);
+    await p.newChat();
+    await p.send({ text: "What next?" });
     const shop = await p.claim();
-    // a new project is the one picked; its name is told on one line
+    // a new chat's is the one picked in the app; its name is told on one line
     expect(shop.user).toContain(`The user's current workspace is "Tiny Acrobatics shop"`);
     await p.answer(shop.id, "A reel.");
     await settled(p);
@@ -680,6 +688,26 @@ describe("which project a message is for", () => {
     expect(back.user).toContain(`The user's current workspace is "Tiny Acrobatics shop"`);
     expect(back.user).not.toContain(`(id ${first})`);
     await p.answer(back.id, "A carousel.");
+  });
+
+  it("a reply that waited is told the workspace's instructions as they are when it starts, not as they were when its message was sent", async () => {
+    const p = await person("cora");
+    const { id } = (await (await app.request("/api/workshop/projects", { method: "POST", ...json({ name: "Tiny Acrobatics" }, { cookie: p.cookie }) })).json()) as { id: string };
+    const systemOf = (job: { id: string }) => (job as unknown as { system: string }).system;
+    await p.send({ text: "One" });
+    const one = await p.claim();
+    expect(systemOf(one)).toContain("Workspace: Tiny Acrobatics");
+    expect(systemOf(one)).not.toContain("Never show faces");
+    // sent while the first reply is being written, so it waits; the instructions change before it starts
+    await p.send({ text: "Two" });
+    expect((await app.request(`/api/workshop/projects/${id}`, { method: "PATCH", ...json({ notes: "Never show faces." }, { cookie: p.cookie }) })).status).toBe(200);
+    await p.answer(one.id, "Done.");
+    const two = await p.claim();
+    expect(systemOf(two)).toContain("Instructions:\nNever show faces.");
+    await p.answer(two.id, "Done.");
+    await settled(p);
+    // nothing of it is kept with the chat: the next reply reads it again
+    expect(readFileSync(path.join(process.env.DATA_DIR!, "assistant", "cora.json"), "utf-8")).not.toContain("Never show faces");
   });
 });
 

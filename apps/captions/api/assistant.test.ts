@@ -7,6 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "assistant-"));
 process.env.APP_SECRET = "assistant-test-secret";
+// a team for "a chat's workspace": owen owns it and mia is a member (their accounts are made there)
+const member = (username: string, role: string) => ({ username, role, ai: "own", budgetUsd: 0, joinedAt: 0 });
+writeFileSync(
+  path.join(process.env.DATA_DIR, "workspaces.json"),
+  JSON.stringify({ workspaces: [{ id: "team-1", name: "Team", plan: "team", comped: false, createdAt: 0, members: [member("owen", "owner"), member("mia", "member")] }], invites: [], spend: {} }),
+);
 
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
@@ -719,6 +725,43 @@ describe("a chat's workspace", () => {
     expect((await chats()).find((c) => c.id === id)?.workspace).toBe(tiny);
     expect(await current()).toBe(tiny);
     revokeJobTokens(chat.messages.at(-1)!.id);
+  });
+
+  it("a workspace taken away from a member is not their chat's any more: its context is not told, and the chat is kept and works in what is theirs", async () => {
+    const { workspaceOf: teamOf, updateMember } = await import("./lib/workspaces");
+    createUser("owen", "password1");
+    createUser("mia", "password1");
+    const miaMac = pairDevice("mia", "Mia's Mac");
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: miaMac.device.id }] }, "mia");
+    const [owner, cookie] = [await cookieOf("owen"), await cookieOf("mia")];
+    const make = async (who: string, body: Record<string, unknown>) => ((await (await app.request("/api/workshop/projects", { method: "POST", ...json(body, { cookie: who }) })).json()) as { id: string }).id;
+    const given = await make(owner, { name: "Tiny Acrobatics", notes: "Owner's rule: never show faces." });
+    const own = await make(cookie, { name: "Tiny Gardens" });
+    // the team's owner gives her the workspace (Settings → Team → Access), and later takes it away
+    const give = (ids: string[]) => updateMember(teamOf("owen")!, "mia", "owner", { workspaces: ids });
+    give([given]);
+    const { id } = (await (await app.request("/api/assistant/chats", { method: "POST", headers: { cookie } })).json()) as { id: string };
+    const device = { authorization: `Bearer ${miaMac.token}` };
+    /** A message in her chat, up to her Mac taking its reply: what the AI is sent. */
+    const send = async (body: Record<string, unknown>) => {
+      expect((await app.request(`/api/assistant/chats/${id}/turn`, { method: "POST", ...json(body, { cookie }) })).status).toBe(202);
+      return (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; system: string; mcp: { token: string } };
+    };
+    const done = (job: { id: string }) => app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Done." }, device) });
+    const kept = async () => ((await (await app.request(`/api/assistant/chats/${id}`, { headers: { cookie } })).json()) as { workspace?: string }).workspace;
+    // while it is given, her chat there is told the owner's instructions
+    const one = await send({ text: "Make a reel", workspace: given });
+    expect(one.system).toContain("Owner's rule: never show faces.");
+    expect(await kept()).toBe(given);
+    await done(one);
+    // taken away: the next reply in that chat is told nothing of it; the chat is her own first brand's, and its tools work there
+    give([]);
+    const two = await send({ text: "And another" });
+    expect(two.system).not.toContain("Owner's rule");
+    expect(two.system).toContain("Workspace: Tiny Gardens");
+    expect(await kept()).toBe(own);
+    expect((JSON.parse((await toolOf(two.mcp.token, "workshop_projects")).text) as { current: string }).current).toBe(own);
+    await done(two);
   });
 });
 
