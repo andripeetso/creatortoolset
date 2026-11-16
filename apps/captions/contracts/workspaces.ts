@@ -88,7 +88,7 @@ export interface MemberView extends Member {
   /** apps and plug-in gates switched off for the account */
   off: (Tool | PluginGateId)[];
   /** apps the account opens but doesn't change */
-  read: Tool[];
+  read?: Tool[];
 }
 
 export interface WorkspaceView {
