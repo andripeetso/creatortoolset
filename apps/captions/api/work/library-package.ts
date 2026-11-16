@@ -5,7 +5,7 @@
  * job may download the original to make the proxy, and the computer deletes it after. The other kinds read the file
  * where it is on that computer, else the proxy the server has; never the original. A "send" job is a file on one
  * computer that nothing uploaded yet (library/derived.ts sendLater): only a computer that has it takes it, and this
- * server never runs it. Until the server-work switch (phase 7) the server still runs a job no such computer can take.
+ * server never runs it. The server runs a job no such computer can take only where its video work is on (server-work.ts).
  * A transcript on the person's key (6B) is one of them too: the computer cuts the sound from its copy, the server hears
  * it on the key (/hear, nothing decoded here), and the words come back in the result. A transcript on a computer's own
  * speech model goes the speech road instead (lib/computer-transcribe.ts), where that computer cuts the sound itself.

@@ -30,6 +30,7 @@ import { takeMacSheets } from "./mac-look";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
+import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -184,15 +185,41 @@ const running = new Set<number>();
  */
 export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean } = { kinds: [] };
 
-/** The queued jobs of `kinds` this server leaves to a computer now. */
+/**
+ * The jobs that decode video or sound (design 2.1): this server runs them only where its video work is on
+ * (work/server-work.ts). A probe reads the file's header and a card picture one frame: those always run here. A file
+ * indexed on a Mac decodes nothing here (its description and shot descriptions read what the Mac sent).
+ */
+export const DECODES: readonly string[] = ["wave", "proxy", "sprite", "fingerprint", "transcribe", "describe", "look"];
+
+/** What a job left by the switch says while it waits: one a computer takes, or one only a server with video work on runs. */
+export const WAITS_FOR_COMPUTER = "Waits for one of your computers. Open Creator Toolset on your Mac";
+export const WAITS_FOR_SERVER = "Video work is off on this server";
+
+/** The queued jobs of `kinds` this server leaves to a computer now, or leaves waiting while its video work is off. */
 function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number[] {
   const test = leaveToComputers.test;
-  const on = kinds.filter((k) => leaveToComputers.kinds.includes(k));
-  if (!test || !on.length) return [];
+  const on = test ? kinds.filter((k) => leaveToComputers.kinds.includes(k)) : [];
+  const decodes = kinds.filter((k) => DECODES.includes(k));
+  const all = [...new Set([...on, ...decodes])];
+  if (!all.length) return [];
   // ponytail: each waiting job placed again per tick; fine to hundreds queued, cache per tick past that
-  return (db.prepare(`SELECT * FROM jobs WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(on)}) ORDER BY id LIMIT 500`).all(now, ...on) as unknown as JobRow[])
-    .filter(test)
-    .map((j) => j.id);
+  const queued = db
+    .prepare(
+      `SELECT j.*, v.source_key FROM jobs j LEFT JOIN asset_versions v ON v.id = j.version_id
+       WHERE j.state = 'queued' AND j.run_after <= ? AND j.kind IN (${marks(all)}) ORDER BY j.id LIMIT 500`,
+    )
+    .all(now, ...all) as unknown as (JobRow & { source_key: string | null })[];
+  const out: number[] = [];
+  for (const j of queued) {
+    if (on.includes(j.kind) && test!(j)) out.push(j.id);
+    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor)) {
+      out.push(j.id);
+      const line = leaveToComputers.kinds.includes(j.kind) ? WAITS_FOR_COMPUTER : WAITS_FOR_SERVER;
+      if (j.error !== line) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(line, j.id);
+    }
+  }
+  return out;
 }
 
 /** The app is stopping (an update, Quit): the jobs this server runs go back in the queue at once, the try not counted. */

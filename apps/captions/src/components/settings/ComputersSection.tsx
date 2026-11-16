@@ -18,6 +18,7 @@ import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
+import { LoadBalancing } from "./ServerWorkSection";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
 const hardware = (d: Listed): string | null => {
@@ -140,6 +141,9 @@ export function ComputersSection() {
           ))}
           {unlisted && <ThisMacRow names={names} bridge={bridge} />}
         </Card>
+        <div className="pt-5 empty:hidden">
+          <LoadBalancing computers={computers.filter((d) => d.owner === me.username)} />
+        </div>
         {/* the plug-ins' cards sit under the list, with no heading of their own (the AI Editor's Load balancing) */}
         {devicesSectionsFor(me, webPlugins, "computers").map((s) => (
           <div key={s.id} className="pt-5 empty:hidden">{s.body}</div>

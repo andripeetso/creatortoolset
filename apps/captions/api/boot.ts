@@ -28,6 +28,8 @@ import { editorApp } from "./editor/routes";
 import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
 import { releaseRunningSteps, startEditorWorker } from "./editor/worker";
+import { serverWorkApp } from "./work/server-work-routes";
+import { settleServerWork } from "./work/server-work";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
@@ -427,6 +429,7 @@ app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
 });
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
+app.route("/api/work/server-work", serverWorkApp);
 // Settings → Connect: link this computer to the account on the connect broker (api/connect/routes.ts)
 app.route("/api/connect", connectApp);
 // the menu bar panel's rows from plug-ins (activity.ts)
@@ -497,6 +500,7 @@ app.route("/api/edit-steps", editStepsApp);
 const workerFor = process.env.CT_WORKER;
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test" && !workerFor) {
+  settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   startLibraryWorker();
   startEditorWorker();
   startTrashPurge();
