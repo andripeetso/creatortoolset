@@ -515,9 +515,9 @@ extension UploadEngine {
 
     // MARK: Background steps
 
-    private func startRelayPatch(_ id: UUID, from offset: Int64) {
+    func startRelayPatch(_ id: UUID, from offset: Int64) {
+        guard let step = newStep(id, .relayPatch, offset: offset) else { return }
         guard let item = store.item(id), let relay = item.catalog?.relay else { return catalogStartOver(id) }
-        let step = TransferStep(itemId: id, kind: .relayPatch, offset: offset)
         // the whole rest in one request: iOS sends it without waking the app in between
         var body = AppFiles.upload(id)
         if offset > 0 {
@@ -537,9 +537,9 @@ extension UploadEngine {
         start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
-    private func startRelayComplete(_ id: UUID) {
+    func startRelayComplete(_ id: UUID) {
+        guard let step = newStep(id, .relayComplete) else { return }
         guard let item = store.item(id), let api = api(for: item), let relay = item.catalog?.relay else { return catalogStartOver(id) }
-        let step = TransferStep(itemId: id, kind: .relayComplete)
         let body = AppFiles.slice(step)
         FileManager.default.createFile(atPath: body.path,
                                        contents: try? JSONSerialization.data(withJSONObject: ["video_id": relay.videoId]))
@@ -548,9 +548,9 @@ extension UploadEngine {
         start(request, file: body, step: step, as: .finishing) { $0.sent = $0.size }
     }
 
-    private func startCatalogPatch(_ id: UUID, from offset: Int64) {
+    func startCatalogPatch(_ id: UUID, from offset: Int64) {
+        guard let step = newStep(id, .catalogPatch, offset: offset) else { return }
         guard let item = store.item(id), let api = api(for: item), let ingest = item.catalog?.ingestId else { return catalogStartOver(id) }
-        let step = TransferStep(itemId: id, kind: .catalogPatch, offset: offset)
         let body = AppFiles.slice(step)
         let length = min(item.size - offset, min(item.catalog?.chunkSize ?? CatalogRules.maxPiece, CatalogRules.maxPiece))
         do {
@@ -565,9 +565,9 @@ extension UploadEngine {
         start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
-    private func startCatalogComplete(_ id: UUID) {
+    func startCatalogComplete(_ id: UUID) {
+        guard let step = newStep(id, .catalogComplete) else { return }
         guard let item = store.item(id), let api = api(for: item), let ingest = item.catalog?.ingestId else { return catalogStartOver(id) }
-        let step = TransferStep(itemId: id, kind: .catalogComplete)
         let body = AppFiles.slice(step)
         FileManager.default.createFile(atPath: body.path, contents: Data())
         start(CatalogAPI(api: api).request("api/uploads/\(ingest)/complete", method: "POST"), file: body, step: step, as: .finishing) {

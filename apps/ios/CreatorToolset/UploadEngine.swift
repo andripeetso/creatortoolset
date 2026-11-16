@@ -16,14 +16,16 @@ final class UploadEngine: ObservableObject {
     static let shared = UploadEngine()
 
     let store = UploadStore()
-    let transfers = Transfers.shared
+    let transfers: Transfers
     private var reconciling = false
     private var reconcileAgain = false
     private var timer: Timer?
     /// The server's chunks are 32 MB; never send more in one request.
     private let maxChunk: Int64 = 32 << 20
 
-    init() {
+    /// (a test gives its own transfers, so nothing leaves the phone)
+    init(transfers: Transfers = .shared) {
+        self.transfers = transfers
         transfers.engine = self
         // a piece saved into Photos from a server is never offered back as footage
         SaveToPhotos.added = { ids in LibraryIndex.shared.markInLibrary(ids, server: Servers.shared.currentId) }
@@ -355,9 +357,17 @@ final class UploadEngine: ObservableObject {
         return (try? FileManager.default.linkItem(at: AppFiles.upload(id), to: link)) == nil ? nil : link
     }
 
-    private func startPatch(_ id: UUID, from offset: Int64) {
+    /// The step a `start…` begins with, asked before anything else: nil, and logged, for a clip that has a transfer
+    /// on its way. Its body file is written only after, as the file of a step can be the one being sent (a patch's
+    /// has one name at every offset): a refused start writes nothing and changes nothing.
+    func newStep(_ id: UUID, _ kind: TransferStep.Kind, offset: Int64 = 0, part: Int = 0) -> TransferStep? {
+        let step = TransferStep(itemId: id, kind: kind, offset: offset, part: part)
+        return transfers.refuses(step) ? nil : step
+    }
+
+    func startPatch(_ id: UUID, from offset: Int64) {
+        guard let step = newStep(id, .patch, offset: offset) else { return }
         guard let item = store.item(id), let uploadId = item.uploadId, let api = api(for: item) else { return }
-        let step = TransferStep(itemId: id, kind: .patch, offset: offset)
         let length = min(item.size - offset, min(item.chunkSize ?? maxChunk, maxChunk))
         let body = AppFiles.slice(step)
         do {
@@ -373,9 +383,9 @@ final class UploadEngine: ObservableObject {
     }
 
     /// A part straight to the bucket's signed URL: no cookie and no other header goes with it.
-    private func startPart(_ id: UUID, _ n: Int) {
+    func startPart(_ id: UUID, _ n: Int) {
+        guard let step = newStep(id, .part, part: n) else { return }
         guard let item = store.item(id), let direct = item.direct, n >= 1, n <= direct.urls.count else { return }
-        let step = TransferStep(itemId: id, kind: .part, part: n)
         let offset = Int64(n - 1) * direct.partSize
         let body = AppFiles.slice(step)
         do {
@@ -389,9 +399,9 @@ final class UploadEngine: ObservableObject {
         start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
-    private func startFinish(_ id: UUID) {
+    func startFinish(_ id: UUID) {
+        guard let step = newStep(id, .finish) else { return }
         guard let item = store.item(id), let uploadId = item.uploadId, let api = api(for: item) else { return }
-        let step = TransferStep(itemId: id, kind: .finish)
         let body = AppFiles.slice(step)
         let parts = (item.direct?.etags ?? [:]).sorted { $0.key < $1.key }.map { ["number": $0.key, "etag": $0.value] as [String: Any] }
         let json = item.direct == nil ? Data() : (try? JSONSerialization.data(withJSONObject: ["parts": parts])) ?? Data()
@@ -405,12 +415,10 @@ final class UploadEngine: ObservableObject {
     }
 
     /// A request on its way: its upload moves to `state`, then the background session sends it. Nothing is sent for
-    /// an upload that stopped meanwhile (it is in the library, failed, or was sent again from the start), and
-    /// nothing changes for one that has a request on its way already: its state stays, and so does the slice, which
-    /// can be the file being sent.
+    /// an upload that stopped meanwhile (it is in the library, failed, or was sent again from the start). `step` is
+    /// from `newStep`, so its upload has no request on its way.
     func start(_ request: URLRequest, file: URL, step: TransferStep, as state: UploadItem.State,
                _ change: (inout UploadItem) -> Void) {
-        if transfers.refuses(step) { return }
         guard store.move(step.itemId, to: state, change) else {
             try? FileManager.default.removeItem(at: AppFiles.slice(step))
             return
