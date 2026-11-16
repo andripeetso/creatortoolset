@@ -121,12 +121,12 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
 /**
  * A device's claim (POST /api/devices/relay/editor/claim): the oldest queued step of the kinds it can run, for an edit
  * its own account made, and only while that account can still read the footage. A step whose edit is gone or no longer
- * readable fails here, as tick fails it. Null when there is nothing for this device.
+ * readable fails here, as tick fails it. Null when there is nothing for this device. `fits`: the steps it may take (reach.ts fitsFor).
  */
-export function claimForDevice(device: { id: string; owner: string }, kinds: string[], now = Date.now()): DeviceJob | null {
+export function claimForDevice(device: { id: string; owner: string }, kinds: string[], now = Date.now(), fits?: (job: JobRow) => boolean): DeviceJob | null {
   const db = libraryDb();
   releaseQuietDevices(db, isOnline);
-  const job = claimStep(db, claimableBy(kinds), LEASE_S, now, T, { actor: device.owner, device: device.id });
+  const job = claimStep(db, claimableBy(kinds), LEASE_S, now, T, { actor: device.owner, device: device.id }, fits);
   if (!job) return null;
   moved(job);
   const { editId, variant } = splitVersion(job);
@@ -137,9 +137,9 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
 }
 
 /** Whether a claim by a device of `owner` with these kinds would be handed a step right now: what its long poll is told (devices.ts). */
-export function waitsForDevice(owner: string, kinds: string[], now = Date.now()): boolean {
+export function waitsForDevice(owner: string, kinds: string[], now = Date.now(), fits: (job: JobRow) => boolean = () => true): boolean {
   const k = claimableBy(kinds);
-  return !!k.length && !!libraryDb().prepare(`SELECT 1 FROM ${T} WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${k.map(() => "?").join(", ")})`).get(now, owner, ...k);
+  return !!k.length && (libraryDb().prepare(`SELECT * FROM ${T} WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${k.map(() => "?").join(", ")}) ORDER BY id LIMIT 200`).all(now, owner, ...k) as unknown as JobRow[]).some(fits);
 }
 
 /** The job row this device holds (claimed by it and still running), or undefined. */

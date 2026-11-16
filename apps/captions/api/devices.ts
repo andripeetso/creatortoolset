@@ -8,7 +8,8 @@ import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
 import { CUTOUT_KIND, FOLDER_LIST_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
-import { claimableBy } from "./editor/engine";
+import { claimableBy, usesFootage } from "./editor/engine";
+import { fitsFor } from "./editor/reach";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
@@ -75,11 +76,11 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
   if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
-  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? claimForDevice(d, k) } satisfies DeviceClaim);
+  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? claimForDevice(d, k, Date.now(), await fitsFor(d)) } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
   declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
-  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k);
+  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k, Date.now(), await fitsFor(now));
   return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
 });
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
@@ -107,7 +108,7 @@ async function editorWaits(device: string, listed: unknown): Promise<boolean> {
  * or a transcript it would be handed (lib/computer-transcribe.ts); a computer whose wanted speech models changed is told too.
  */
 const waits = async (d: Device, kinds: string[]) =>
-  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) || deviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner, d.id)) ||
+  waitsForDevice(d.owner, kinds, Date.now(), await fitsFor(d)) || cutoutWaits(d.owner, kinds) || deviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner, d.id)) ||
   (kinds.includes(TRANSCRIBE_KIND) && (modelsOutOfStep(d) || transcriptWaits(d, await readBalance(d.owner))));
 /** A plug-in's job of one of these kinds for this device (ServerPlugin.deviceJobs), now its own; null when none waits. */
 function claimPluginJob(d: { id: string; owner: string }, kinds: string[]): ReturnType<typeof claimCutout> {
@@ -293,8 +294,10 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
     }));
   const balance = await readBalance(d.owner);
   // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
-  // and a folder listing goes to the computer that holds the folder
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  // a folder listing goes to the computer that holds the folder, and a step that reads footage is balanced per step among
+  // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
+  // hold it back from every one that has them
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */
