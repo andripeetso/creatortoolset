@@ -30,6 +30,9 @@ final class ImportTests: XCTestCase {
     func testAsksParsed() {
         XCTAssertEqual(importAsk(#"import:copy:{"id":"c1","files":[{"from":"/a/b.mov","to":"/c/b.mov"}]}"#),
                        .copy(id: "c1", files: [ImportPair(from: "/a/b.mov", to: "/c/b.mov")]))
+        // the page names the default folder from the home folder, which only this app knows
+        XCTAssertEqual(importAsk(#"import:copy:{"id":"c2","files":[{"from":"/a/b.mov","to":"~/Movies/Creator Toolset/Lib/b.mov"}]}"#),
+                       .copy(id: "c2", files: [ImportPair(from: "/a/b.mov", to: NSHomeDirectory() + "/Movies/Creator Toolset/Lib/b.mov")]))
         XCTAssertEqual(importAsk("import:progress:c1"), .progress("c1"))
         XCTAssertEqual(importAsk("import:cancel:c1"), .cancel("c1"))
         XCTAssertEqual(importAsk(#"import:scan:{"path":"/Volumes/Footage"}"#), .scan("/Volumes/Footage"))

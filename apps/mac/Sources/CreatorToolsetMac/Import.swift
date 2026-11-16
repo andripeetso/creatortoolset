@@ -44,7 +44,7 @@ func importAsk(_ ask: String) -> ImportAsk? {
     switch rest[..<colon] {
     case "copy":
         guard let id = json["id"] as? String, isID(Substring(id)), let list = json["files"] as? [[String: Any]] else { return nil }
-        let files = list.compactMap { f in (f["from"] as? String).flatMap { from in (f["to"] as? String).map { ImportPair(from: from, to: $0) } } }
+        let files = list.compactMap { f in (f["from"] as? String).flatMap { from in (f["to"] as? String).map { ImportPair(from: from, to: ($0 as NSString).expandingTildeInPath) } } }
         return files.count == list.count ? .copy(id: id, files: files) : nil
     case "scan": return (json["path"] as? String).map(ImportAsk.scan)
     case "print": return (json["paths"] as? [String]).map { ImportAsk.print(Array($0.prefix(5000))) }
@@ -233,15 +233,21 @@ final class Imports: @unchecked Sendable {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isPackageKey, .fileSizeKey, .contentModificationDateKey]
         guard let walk = FileManager.default.enumerator(at: URL(fileURLWithPath: path, isDirectory: true), includingPropertiesForKeys: keys,
                                                         options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return ["files": []] }
+        // each file named under `path` as given: the walk answers real paths (/private/var for /var), and the page
+        // matches what it already has by the path it gave
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        let given = path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path
         var files: [[String: Any]] = []
         for case let url as URL in walk {
             guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isSymbolicLink != true else { continue }
             if v.isPackage == true { walk.skipDescendants(); continue }
             guard v.isRegularFile == true, MediaFiles.isMedia(url.path), let size = v.fileSize else { continue }
-            files.append(["path": url.path, "size": size, "mtime": ((v.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000).rounded()])
+            let found = url.resolvingSymlinksInPath().path
+            let named = found.hasPrefix(real + "/") ? given + found.dropFirst(real.count) : url.path
+            files.append(["path": named, "size": size, "mtime": ((v.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000).rounded()])
             if files.count >= max { break }
         }
-        return ["files": files]
+        return ["files": files.sorted { ($0["path"] as? String ?? "") < ($1["path"] as? String ?? "") }]
     }
 
     /// SHA-256 over the size as decimal text, the first MiB, and the last MiB when the file is over 2 MiB: the page's
