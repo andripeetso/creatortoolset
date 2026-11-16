@@ -358,7 +358,7 @@
   },
   {
    "name": "review_set_approval",
-   "description": "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none.",
+   "description": "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none. words: with approved, the user's message saying it is good, word for word.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -375,6 +375,9 @@
        "rejected",
        "approved"
       ]
+     },
+     "words": {
+      "type": "string"
      }
     },
     "required": [

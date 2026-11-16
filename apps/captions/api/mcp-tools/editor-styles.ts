@@ -27,7 +27,7 @@ export const hasStyle = (username: string): boolean => stylesView(username).styl
 const FIELDS = { name: "name", versions: "versions", target_s: "targetS", pace: "pace", punch: "punch", passes: "passes" } as const;
 
 const styles = async (ctx: ToolContext) => (await ctx.json<EditingStylesView>("/api/editor/styles")).styles;
-const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions, target_s: s.targetS, pace: s.pace, punch: s.punch, size: s.size ? `${s.size.w}x${s.size.h}` : "footage", has_notes: !!s.notes });
+const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions, target_s: s.targetS, pace: s.pace, punch: s.punch, size: s.size ? `${s.size.w}x${s.size.h}` : "footage", has_notes: !!s.notes, has_playbook: !!s.playbook });
 /** The tool's size, "1080x1920" or "footage" (the footage's own) → the route's. */
 const sizeOf = (v: unknown) => (v === "footage" ? null : { w: Number(String(v).split("x")[0]), h: Number(String(v).split("x")[1]) });
 const sheet = (ctx: ToolContext) => `${ctx.origin}/editor?tab=styles`;
@@ -103,10 +103,22 @@ export const editorStyleTools: ToolModule = {
   defs: [
     {
       name: "editor_style_save",
-      description: "Make or change an AI Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat.",
+      description: "Make or change an AI Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat. playbook: what you researched about this kind of edit.",
       inputSchema: {
         type: "object",
-        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { enum: ["tight", "natural"] }, punch: { enum: [1, 1.15, 1.3] }, size: { enum: ["1080x1920", "2160x3840", "footage"] }, passes: { type: "boolean" }, from_edit: str },
+        properties: {
+          id: str,
+          name: str,
+          notes: str,
+          versions: { type: "integer" },
+          target_s: { type: "integer" },
+          pace: { enum: ["tight", "natural"] },
+          punch: { enum: [1, 1.15, 1.3] },
+          size: { enum: ["1080x1920", "2160x3840", "footage"] },
+          passes: { type: "boolean" },
+          from_edit: str,
+          playbook: { type: "object", properties: { text: str, sources: { type: "array", items: { type: "object", properties: { title: str, url: str } } } } },
+        },
       },
     },
     {
@@ -125,6 +137,9 @@ export const editorStyleTools: ToolModule = {
       const body: Args = Object.fromEntries((Object.keys(FIELDS) as (keyof typeof FIELDS)[]).filter((k) => a[k] != null).map((k) => [FIELDS[k], a[k]]));
       if (a.size != null) body.size = sizeOf(a.size);
       const notes = typeof a.notes === "string" ? a.notes.trim() : "";
+      // the researched playbook: kept apart from the notes and marked as the AI's by the route. Saved alone, it opens nothing: the edit goes on
+      if (a.playbook != null) body.playbook = a.playbook;
+      const quiet = a.id != null && Object.keys(body).length === 1 && body.playbook !== undefined && !notes;
       if (a.id == null) {
         if (!body.name) throw new ToolError("Give the new style a name.");
         const { style: made, pasted } = await saved<EditingStyle>(ctx, "/api/editor/styles", "POST", { ...body, ...(notes ? { notes } : {}), ...(a.from_edit != null ? { fromEdit: String(a.from_edit) } : {}) });
@@ -132,10 +147,10 @@ export const editorStyleTools: ToolModule = {
         return { ...out(made), made: true, ...(pasted ? { note: FROM_PASTE("The notes were") } : {}), link: `${ctx.origin}${sheetOf("styles", made.id)}` };
       }
       if (a.from_edit != null) throw new ToolError("from_edit makes a new style: leave id out.");
-      if (!Object.keys(body).length && !notes) throw new ToolError(`Nothing to change: give ${Object.keys(FIELDS).join(", ")}, size or notes.`);
+      if (!Object.keys(body).length && !notes) throw new ToolError(`Nothing to change: give ${Object.keys(FIELDS).join(", ")}, size, notes or playbook.`);
       const s = one(await styles(ctx), a.id);
       const { style: now, pasted } = await saved<EditingStyle>(ctx, `/api/editor/styles/${s.id}`, "PUT", { ...body, ...(notes ? { addNotes: notes } : {}) });
-      await ctx.open?.(sheetOf("styles", now.id));
+      if (!quiet) await ctx.open?.(sheetOf("styles", now.id));
       const note = [notes ? "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." : "", pasted ? FROM_PASTE("They were") : ""].filter(Boolean).join(" ");
       return { ...out(now), ...(note ? { note } : {}), link: `${ctx.origin}${sheetOf("styles", now.id)}` };
     },

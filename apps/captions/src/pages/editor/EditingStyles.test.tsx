@@ -295,3 +295,60 @@ describe("The style sheet: a skill, and the edits finished with the style", () =
     expect(section()).toBeNull();
   });
 });
+
+describe("The style sheet: what the style learned", () => {
+  const learnedSection = () => document.querySelector('[aria-label="From finished edits"]');
+  const pb = { text: "Fast cuts, a flash on every drop.", sources: [{ title: "How hard edits are cut", url: "https://example.com/hard" }], at: 1, by: "ai" as const };
+  async function write(id: string, value: string) {
+    const el = field<HTMLTextAreaElement>(id)!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+  }
+
+  it("a researched playbook is under the notes as Researched with its sources; sent on Save only when changed here, and Delete takes it off", async () => {
+    const withPb: EditingStyle = { ...style, playbook: pb };
+    await render([withPb], withPb);
+    expect(labels()).toContain("Researched");
+    expect(field<HTMLTextAreaElement>("style-playbook")!.value).toBe(pb.text);
+    expect(document.querySelector('a[href="https://example.com/hard"]')!.textContent).toBe("How hard edits are cut");
+    await save();
+    expect("playbook" in sent.at(-1)!.body).toBe(false);
+    await write("style-playbook", "Mine: half a second a shot.");
+    await save();
+    expect(sent.at(-1)!.body.playbook).toEqual({ ...pb, text: "Mine: half a second a shot." });
+    act(() => ([...document.querySelectorAll("form button")].find((b) => b.textContent?.trim() === "Delete") as HTMLElement).click());
+    await flush();
+    expect(field("style-playbook")).toBeNull();
+    await save();
+    expect(sent.at(-1)!.body.playbook).toBeNull();
+  });
+
+  it("From finished edits: the rounds, each one's numbers and the person's lines, and an × that takes one off at once", async () => {
+    const at = Date.UTC(2026, 10, 14, 12);
+    const cut = { seconds: 25, shots: 38, avgShotS: 0.66, fxPerShot: 0, sourcesUsed: 9 };
+    const withLearned: EditingStyle = {
+      ...style,
+      learned: [
+        { editId: "e3", workspaceId: "w", at, rounds: 1, notes: ["No walking around."], cut },
+        { editId: "e2", workspaceId: "w", at, rounds: 2, notes: [], cut },
+        { editId: "e1", workspaceId: "w", at, rounds: 4, notes: ["Start on the fight.", "Too slow here"], cut },
+      ],
+    };
+    await render([withLearned], withLearned);
+    expect(learnedSection()!.querySelector("p")!.textContent).toBe("Rounds to approval: 1 · 2 · 4");
+    const day = new Date(at).toLocaleDateString();
+    expect([...learnedSection()!.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      `${day} · 25 s, 38 shots, 0.66 s a shot, 9 sourcesNo walking around.`,
+      `${day} · 25 s, 38 shots, 0.66 s a shot, 9 sources`,
+      `${day} · 25 s, 38 shots, 0.66 s a shot, 9 sourcesStart on the fight.Too slow here`,
+    ]);
+    act(() => (learnedSection()!.querySelectorAll("li button")[1] as HTMLElement).click());
+    await flush();
+    expect(sent.at(-1)).toMatchObject({ method: "DELETE", url: "/api/editor/styles/s_a/learned/e2" });
+    expect(learnedSection()!.querySelectorAll("li")).toHaveLength(2);
+    expect(learnedSection()!.querySelector("p")!.textContent).toBe("Rounds to approval: 1 · 4");
+  });
+});

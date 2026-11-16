@@ -524,6 +524,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 17374 -> 17872: editor_create cuts any footage into the kind of edit asked for, with plan (shots, not speech) and song
     // 17872 -> 17928: review_set_approval takes rejected (a cut turned down, not one to fix), said in its description
     // 17928 -> 18121: editor_create's brief can give a length, what to open with and a look (sizes): the plan reads each
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(18121);
+    // 18121 -> 18222: review_set_approval takes words, the person's own message approving a video (a style learns from it only then)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(18222);
   });
 });

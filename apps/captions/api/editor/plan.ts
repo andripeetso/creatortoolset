@@ -962,7 +962,7 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   const size = frameOf(edit, index);
   const gen = styles();
   const genIds = gen.map((g) => g.id);
-  const setup = [await workspaceSetup(edit, 24_000), styleBlock(edit.style)].filter(Boolean).join("\n\n");
+  const setup = [await workspaceSetup(edit, 24_000), styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
   const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText });
   let raws: Record<string, unknown>[];
