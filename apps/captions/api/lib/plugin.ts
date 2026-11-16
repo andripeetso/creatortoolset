@@ -9,7 +9,7 @@ import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { StorageFolder, UploadRelayTus } from "../../contracts/storage";
-import { CARDS_DRAW_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
+import { CARDS_DRAW_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
 import type { SessionUser } from "../users";
 import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, SLOT_TOOL, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
 
@@ -354,7 +354,7 @@ export const pluginStorageFolders = async (username: string): Promise<StorageFol
 
 /** Refuses a device job kind that is not lowercase words, is one of the app's own, or that two plug-ins both declare. */
 function checkDeviceJobs(plugins: ServerPlugin[]): void {
-  const seen = new Set<string>([CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND, FOLDER_LIST_KIND]);
+  const seen = new Set<string>([CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND]);
   for (const plugin of plugins) {
     for (const j of plugin.deviceJobs ?? []) {
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(j.kind)) throw new Error(`plug-in ${plugin.id}: device job "${j.kind}" is not lowercase words and dashes`);
@@ -677,7 +677,7 @@ const pathServed = (app: Hono<any, any, any>, base: string): boolean => app.rout
  * Mount each plug-in's routes at /api/x/<id>. Throws when that path is already served, so a boot never answers one path twice,
  * and when a gate is declared badly. The loaded plug-ins are then the ones new accounts get their default-off gates from.
  */
-export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
+export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[], guard?: (plugin: ServerPlugin) => MiddlewareHandler | undefined): void {
   checkGates(plugins);
   checkEditFlags(plugins);
   checkProviders(plugins);
@@ -694,6 +694,9 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
     if (!plugin.routes) continue;
     const base = `/api/x/${plugin.id}`;
     if (pathServed(app, base)) throw new Error(`plug-in ${plugin.id}: ${base} is already served`);
+    // ahead of its routes: a plug-in off in the request's workspace refuses them (boot.ts, lib/plugin-workspaces.ts)
+    const g = guard?.(plugin);
+    if (g) for (const at of [base, `${base}/*`]) app.use(at, g);
     app.route(base, plugin.routes);
   }
 }

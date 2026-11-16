@@ -7,7 +7,6 @@ import { Card, InUse, ListRow, LoadingRow, saveFailed, Section } from "@/compone
 import { StepRowView } from "@/components/settings/EditorStepsSection";
 import { addEditStep, getEditSteps, setEditStep } from "@/lib/editor";
 import { switchPluginOn } from "@/lib/thisMac";
-import { webPlugins } from "@/plugins.gen";
 
 /**
  * The plug-ins the Creator Toolset team makes, each one a download, listed under the tool it adds to (its own plugin.ts
@@ -41,11 +40,11 @@ export function stepsFor(view: StepsView | null, tool: HomeTile | null | "all", 
 }
 
 /**
- * A tool's "Plug-ins" section; nothing when it has none. `inSettings`: on the tool's own page, where a loaded AI Editor
- * step needs no Settings link, and, with `switches` (the Mac app's own server, where that Mac app runs the steps), shows
- * its switch for new edits and its options instead of Installed.
+ * A tool's "Plug-ins" section; nothing when it has none. With `switches` (on the tool's own page, on the Mac app's own
+ * server, where that Mac app runs the steps) a loaded AI Editor step shows its switch for new edits and its options
+ * instead of Installed.
  */
-export function ToolPlugins({ steps, tool, q, inSettings = false, switches = false }: { steps: Steps; tool: HomeTile | null | "all"; q?: string; inSettings?: boolean; switches?: boolean }) {
+export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps; tool: HomeTile | null | "all"; q?: string; switches?: boolean }) {
   // best effort: a list that could not be read (a guest, the demo) leaves the section out, as for a tool with none
   if (steps.error) return null;
   if (!steps.view) return <Section title="Plug-ins"><Card><LoadingRow /></Card></Section>;
@@ -60,7 +59,7 @@ export function ToolPlugins({ steps, tool, q, inSettings = false, switches = fal
           switches && r.state === "on" ? (
             <StepRowView key={r.id} step={r} onChange={(c) => change(r.id, c)} />
           ) : (
-            <PluginRow key={r.folder ?? r.id} row={r} canAdd={steps.view!.canAdd} inSettings={inSettings} />
+            <PluginRow key={r.folder ?? r.id} row={r} canAdd={steps.view!.canAdd} />
           ),
         )}
       </Card>
@@ -68,7 +67,7 @@ export function ToolPlugins({ steps, tool, q, inSettings = false, switches = fal
   );
 }
 
-function PluginRow({ row, canAdd, inSettings }: { row: StepRow; canAdd: boolean; inSettings: boolean }) {
+function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
   const [busy, setBusy] = useState(false);
   const download = async () => {
     setBusy(true);
@@ -82,20 +81,15 @@ function PluginRow({ row, canAdd, inSettings }: { row: StepRow; canAdd: boolean;
       setBusy(false);
     }
   };
-  // a step's settings are on the AI Editor's page; another plug-in's, on its tool's page or in its own section (from its
-  // page half, read now)
-  const own = webPlugins.find((p) => p.id === row.id)?.settings?.find((x) => !x.adminTab);
-  const page = row.state === "on" ? "/settings/tools/editor" : own?.tool ? `/settings/tools/${own.tool}` : own ? `/settings/${own.id}` : null;
-  const to = inSettings && page?.startsWith("/settings/tools/") ? null : page;
+  // every installed plug-in has a page of its own: which workspaces it works in, then its settings (PluginWorkspaces.tsx)
+  const to = `/settings/plugin/${encodeURIComponent(row.pluginId ?? row.id)}`;
   const actions =
     row.state === "on" || row.state === "loaded" ? (
       <>
         <InUse>Installed</InUse>
-        {to && (
-          <Button asChild size="sm" variant="outline">
-            <Link to={to}>Settings</Link>
-          </Button>
-        )}
+        <Button asChild size="sm" variant="outline">
+          <Link to={to}>Settings</Link>
+        </Button>
       </>
     ) : canAdd ? (
       <Button size="sm" disabled={busy} onClick={() => void download()}>

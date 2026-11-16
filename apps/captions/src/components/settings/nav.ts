@@ -1,4 +1,4 @@
-import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, Share2, ShieldCheck, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Puzzle, Server, Share2, ShieldCheck, SlidersHorizontal, UserRound, Users } from "lucide-react";
 import { settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -12,7 +12,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
   "general", "appearance", "tools", "folders", "library", "providers", "voice", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
-  "servers", "team", "admin", "account",
+  "servers", "team", "admin", "account", "plugin",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
 
@@ -61,6 +61,8 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "keys", title: "API keys", icon: KeyRound, group: "Server" },
   { id: "account", title: "Account", icon: UserRound, listed: false },
   { id: "admin", title: "Admin", icon: ShieldCheck, listed: false },
+  // one installed plug-in's page (/settings/plugin/<id>): its workspaces and settings, opened from Community
+  { id: "plugin", title: "Plug-in", icon: Puzzle, listed: false },
 ];
 
 /** Old ids and where they go, as full paths. */

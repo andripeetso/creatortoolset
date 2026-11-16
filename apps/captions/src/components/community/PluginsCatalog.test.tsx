@@ -100,14 +100,14 @@ describe("a tool's plug-ins", () => {
     expect(asks).toEqual(["plugin:on:tiny-enhance"]);
   });
 
-  it("installed: a step's Settings is the AI Editor's page, the engine's its own section", async () => {
+  it("installed: every plug-in's Settings is its own page (its workspaces, then its settings)", async () => {
     webPlugins.push({ id: "tiny-enhance", settings: [{ id: "tiny-enhance", title: "Tiny Enhance", body: null }] } as never);
-    const steps = [{ ...voice, state: "on", use: true }, { ...engine, state: "loaded" }];
+    const steps = [{ ...voice, pluginId: "voice", state: "on", use: true }, { ...engine, state: "loaded" }];
     await render(steps, "", "editor");
-    expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([["Voice", "/settings/tools/editor", true]]);
+    expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([["Voice", "/settings/plugin/voice", true]]);
     again();
     await render(steps, "", "enhance");
-    expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([["Tiny Enhance", "/settings/tiny-enhance", true]]);
+    expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([["Tiny Enhance", "/settings/plugin/tiny-enhance", true]]);
   });
 
   it("Explore lists every row: the ones to download and the ones this server is built with (no folder), Installed with their Settings", async () => {
@@ -117,12 +117,12 @@ describe("a tool's plug-ins", () => {
     expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([
       ["Tiny Cutout", null, false],
       ["Tiny Enhance", null, false],
-      ["Tiny Studio", "/settings/tiny-studio", true],
+      ["Tiny Studio", "/settings/plugin/tiny-studio", true],
     ]);
   });
 
-  it("installed with no page half loaded: Installed, and no Settings link to a section that isn't there", async () => {
+  it("installed with no page half loaded: Installed, with Settings for its workspaces all the same", async () => {
     await render([{ ...engine, state: "loaded" }], "", "enhance");
-    expect(groups()).toEqual([{ heading: "Plug-ins", rows: [{ title: "Tiny Enhance", lines: ["Cleans voices with your own Tiny account."], buttons: [], link: null, installed: true }] }]);
+    expect(groups()).toEqual([{ heading: "Plug-ins", rows: [{ title: "Tiny Enhance", lines: ["Cleans voices with your own Tiny account."], buttons: [], link: "/settings/plugin/tiny-enhance", installed: true }] }]);
   });
 });

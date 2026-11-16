@@ -153,6 +153,14 @@ both before you decide a slot is missing.
   example. Without it the person has no way back to Home from your page.
 - **Where its pieces go:** where the built-in ones are. A choice about how the app is set up is a Settings section,
   a tool is a Home tile and a page. Settings sections use the kit in `src/components/settings/ui.tsx`.
+- **Workspaces:** each person chooses which of their workspaces a plug-in works in: all of them, or only the ones
+  switched on (its page in Settings, opened from Community's Settings button; `api/lib/plugin-workspaces.ts`). Where
+  it is off, its tiles and the things gated by its `gates` are hidden, its routes (`/api/x/<id>`, `gatedRoutes`)
+  answer 403 with why, its tools say it is off there, and its AI Editor steps are left out of new edits. A plug-in that
+  works by itself (a `start` hook or a device job) starts off in every workspace when newly installed; check
+  `pluginOnIn` before working on a file, by the workspace the file is in. One that changes the app for the whole
+  server (it replaces a page, route or tool, adds a library source, AI providers, hooks into Finals or the Workshop)
+  is on in every workspace and can't be turned off in one.
 - **Names that are taken:** a page path of a built-in page, a tool name the app already serves, and a gate id that
   is a built-in app are refused, by the build or when the server starts, with a message naming the plug-in.
 

@@ -20,6 +20,7 @@ import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
+import { offHere } from "./lib/plugin-workspaces";
 import { editorTools, hasStyle } from "./mcp-tools/editor";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
@@ -357,6 +358,8 @@ export type PluginToolHandler = ToolHandler;
 export type PluginTools = {
   defs: PluginToolDef[];
   handlers: Map<string, PluginToolHandler>;
+  /** The plug-in each tool comes from: a call in a workspace where it is off answers so (lib/plugin-workspaces.ts). */
+  from: Map<string, ServerPlugin>;
   replaced: Set<string>;
   /** What a plug-in tool's call looks like to the person watching, by tool name. */
   steps: Record<string, string>;
@@ -395,7 +398,7 @@ const notHere = (name: string) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("
 export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
   const builtIn = new Set([...TOOLS.map((t) => t.name), ...MODULE_DEFS.filter((d) => !d.dockOnly).map((d) => d.name)]);
   const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name), ...DOCK_ONLY]);
-  const out: PluginTools = { defs: [], handlers: new Map(), replaced: new Set(), steps: {}, work: [], guide: "" };
+  const out: PluginTools = { defs: [], handlers: new Map(), from: new Map(), replaced: new Set(), steps: {}, work: [], guide: "" };
   for (const plugin of plugins) {
     const { defs = [], handlers = {}, replaces = [], steps = {}, work, guide } = (plugin.tools ?? {}) as {
       defs?: PluginToolDef[];
@@ -421,6 +424,7 @@ export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
       taken.add(def.name);
       out.defs.push(def);
       out.handlers.set(def.name, handlers[def.name]!);
+      out.from.set(def.name, plugin);
     }
   }
   return out;
@@ -1352,6 +1356,8 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
   if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}, plugged.steps));
   try {
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
+    const off = plug ? await offHere(user, plugged.from.get(name)!) : null;
+    if (off) throw new ToolError(off);
     if ((ASSISTANT_TOOLS.has(name) || DOCK_ONLY.has(name)) && !isJob(auth) && !confirmed) throw new ToolError(`${name} is for the assistant only.`);
     const result = await handler(args ?? {});
     if (turn && result && typeof result === "object" && !Array.isArray(result)) {

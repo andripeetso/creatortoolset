@@ -27,9 +27,21 @@ export interface Me {
 /** Cloud transcription and AI in Caption Studio. */
 export const canUseCloud = (me: Me | null): boolean => !!me;
 /** An app or a plug-in gate is on unless switched off for this account; admins have every one. The server enforces
- *  the same for the apps boot.ts gates and for a plug-in's requireGate routes. */
+ *  the same for the apps boot.ts gates and for a plug-in's requireGate routes. A plug-in off in the workspace this window
+ *  is in (setOffHere) is off for everyone, admins too: its server routes refuse there (api/lib/plugin-workspaces.ts). */
 export const canUse = (me: Me | null, tool: Tool | PluginGateId): boolean =>
-  !!me && (me.role === "admin" || !me.off.includes(tool));
+  !!me && !offHere.includes(tool) && (me.role === "admin" || !me.off.includes(tool));
+
+let offHere: string[] = [];
+/** The plug-ins (by id and gate) off in the workspace this window is in; set on each switch (workspace.ts). */
+export function setOffHere(ids: string[]): void {
+  if (ids.join() === offHere.join()) return;
+  offHere = ids;
+  // a new `me` draws again whatever reads canUse
+  const me = useAuth.getState().me;
+  if (me) useAuth.setState({ me: { ...me } });
+}
+export const pluginOffHere = (id: string): boolean => offHere.includes(id);
 /** The app is on and not set to Read: this account may change things there, so its edit controls show. */
 export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool) && (me!.role === "admin" || !me!.read?.includes(tool));
 

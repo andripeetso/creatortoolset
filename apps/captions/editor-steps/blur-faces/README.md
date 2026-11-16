@@ -7,7 +7,9 @@ see small pictures of the faces it chooses between, and it is told never to iden
 
 It is a download in Community (Explore and Other) on the Mac app's own server; a hosted server offers it by naming it
 in `CT_PLUGINS` (`…,blur-faces`). Once on, it is a tile on Home, a page at `/blur-faces` and a section in Settings
-(Settings → Face Blur: the same Faces, Which faces and Look as the page). The work runs:
+(Settings → Face Blur: the same Faces, Which faces and Look as the page). It works only in the workspaces it is
+switched on for (Settings → Face Blur, Workspaces, at the top; a new install starts off in every workspace, and one
+installed before this stayed on only in the workspace its account worked in then). The work runs:
 
 - **in the Mac app**, on any server the window shows: the page picks files on this Mac, the Mac app finds and covers the faces and writes the covered
   copy beside the original;
@@ -17,10 +19,11 @@ in `CT_PLUGINS` (`…,blur-faces`). Once on, it is a tile on Home, a page at `/b
 In a plain browser the page says where it runs. The AI Editor's own step "Blur faces" (`editor-steps/face-blur`) is a
 different plug-in: it blurs faces inside an edit with MediaPipe.
 
-## Settings (per account)
+## Settings (per workspace)
 
-`GET /api/x/blur-faces/settings` → `PUT` the same shape back. A PUT changes only the fields it sends, so an app from
-before a field existed never resets it.
+`GET /api/x/blur-faces/settings` → `PUT` the same shape back, for the workspace the request works in (`X-CT-Workspace`).
+A PUT changes only the fields it sends, so an app from before a field existed never resets it. The file keeps the
+account's settings from before they were per workspace, which each workspace starts from, and each workspace's own.
 
 ```ts
 { mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid";
@@ -44,8 +47,8 @@ and written nowhere. With "Only some faces" the person's AI picks from the faces
 
 ## New Media Library files (`auto`)
 
-With `auto` on, each photo and video that comes into the account's built-in Media Library is covered by a Mac of the
-account's own, with the same settings, and the covered copy is added to the same library (so the same workspace) as
+With `auto` on in a workspace where Face Blur is on, each photo and video that comes into one of that workspace's
+built-in Media Libraries (the library's `settings.projectId`) is covered by a Mac of the account's own, with the same settings, and the covered copy is added to the same library (so the same workspace) as
 "<title> blurred", linked to the original (`derived_from`). The original is never changed, hidden or deleted.
 
 - **Trigger:** the core event `library.version.probed` (the library's worker, after a file is read; not for music).

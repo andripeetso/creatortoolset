@@ -17,6 +17,7 @@ import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Ro
 import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
+import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
 const hardware = (d: Listed): string | null => {
@@ -157,7 +158,7 @@ export function ComputersSection() {
         </Card>
       )}
 
-      <AddComputerDialog open={adding} onOpenChange={setAdding} macApp={inMac} />
+      <AddComputerDialog open={adding} onOpenChange={setAdding} macApp={inMac} computers={computers} />
       <AddPhoneDialog open={phoning} onOpenChange={setPhoning} />
     </>
   );
@@ -176,8 +177,14 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
   const hw = admin ? hardware(primary) : null;
   // what it is, then its state, then the hardware (shown from `sm` up): name → what it is → state
   const kind = mine ? (worker ? kindOf(worker) : null) : kindOf(primary);
+  const [setUp, setSetUp] = useState(false);
+  // its last test for helping with heavy work: a folder it could not read or a failed encode needs fixing; fine is quiet
+  const check = primary.check;
+  const failedRead = check?.folders.find((f) => !f.ok);
   const state = offline ? (
     <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
+  ) : check && !readyLine(primary, check) ? (
+    <Status tone="attention">{failedRead ? `Can't read ${failedRead.name}` : "Test failed"}</Status>
   ) : mine && worker ? (
     "running"
   ) : null;
@@ -219,6 +226,7 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
           <RowMenu
             label={`${primary.name} actions`}
             items={[
+              { label: "Set up", onSelect: () => setSetUp(true) },
               { label: "Rename", onSelect: rename },
               {
                 label: "Remove",
@@ -235,6 +243,7 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
         }
       />
       {mine && <ThisMacSwitch bridge={bridge} />}
+      {setUp && <HelperDialog device={primary.id} name={primary.name} onClose={() => setSetUp(false)} />}
     </>
   );
 }
@@ -305,8 +314,41 @@ function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: 
 /** The one command a Linux computer runs: the server hands out the helper (public/helper) and the computer swaps the code for its token. */
 export const linuxCommand = (url: string, code: string) => `curl -fsSL ${url}/helper/install.sh | sh -s -- ${url} ${code}`;
 
-function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOpenChange: (o: boolean) => void; macApp: boolean }) {
+/** A computer's Help screen (setup/HelperStep.tsx) in a dialog: its row's Set up. */
+function HelperDialog({ device, name, onClose }: { device: string; name: string; onClose: () => void }) {
+  return (
+    <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-xl" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle>Set up {name}</DialogTitle>
+        </DialogHeader>
+        <HelperSetup device={device} />
+      </DialogContent>
+    </SettingsDialog>
+  );
+}
+
+function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: boolean; onOpenChange: (o: boolean) => void; macApp: boolean; computers: Listed[] }) {
   const navigate = useNavigate();
+  // the computers there when it opened: one that shows up after is the new one, and its Help screen follows here
+  const known = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    known.current = open ? new Set(computers.map((c) => c.id)) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the list at the moment it opens
+  }, [open]);
+  const fresh = open && known.current ? computers.find((c) => !known.current!.has(c.id)) : undefined;
+  if (fresh) {
+    return (
+      <SettingsDialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-xl" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>Set up {fresh.name}</DialogTitle>
+          </DialogHeader>
+          <HelperSetup device={fresh.id} />
+        </DialogContent>
+      </SettingsDialog>
+    );
+  }
   return (
     <SettingsDialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
@@ -351,8 +393,7 @@ function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOp
           </TabsContent>
         </Tabs>
         <p className="text-xs text-muted-foreground">
-          Footage on a shared drive: connect the same drive on the new computer too, and it reads those folders by itself.
-          Storage shows which computers can read each folder, with a Connect button for the ones that can't yet.
+          Once it shows up, its setup continues here: the shared drives it needs and a test run.
         </p>
       </DialogContent>
     </SettingsDialog>

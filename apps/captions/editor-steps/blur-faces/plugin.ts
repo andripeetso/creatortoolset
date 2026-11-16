@@ -12,6 +12,10 @@ import { isOnline, listDevices } from "../../api/lib/devices";
 import { onEvent } from "../../api/lib/events";
 import { wakeEditorPolls } from "../../api/lib/mac-claude";
 import { definePlugin, requireGate } from "../../api/lib/plugin";
+import { pluginOnIn } from "../../api/lib/plugin-workspaces";
+import { projectOf } from "../../api/lib/project-of";
+import { currentWorkspaceId } from "../../api/lib/workspace-scope";
+import type { SessionUser } from "../../api/users";
 import { blobs, libraryDb } from "../../api/library/db";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { saveToLibrary } from "../../api/library/routes";
@@ -52,17 +56,28 @@ const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const fileOf = (user: string) => path.join(env.dataDir, "plugins", "blur-faces", `${user}.json`);
-
-/** Read whole each time (a few bytes): a device's claim reads it too, and that can't wait. */
-export function settingsOf(user: string): Settings {
-  let saved: Partial<Settings> = {};
+/** The file: the account's settings from before they were per workspace (each workspace starts from them), and each workspace's own. */
+type Saved = Partial<Settings> & { workspaces?: Record<string, Partial<Settings>> };
+const readSaved = (user: string): Saved => {
   try {
-    saved = JSON.parse(readFileSync(fileOf(user), "utf8")) as Partial<Settings>;
+    return JSON.parse(readFileSync(fileOf(user), "utf8")) as Saved;
   } catch {
-    // none saved yet
+    return {}; // none saved yet
   }
+};
+
+/** One workspace's settings (none: the account's own). Read whole each time (a few bytes): a device's claim reads it too, and that can't wait. */
+export function settingsOf(user: string, workspace?: string): Settings {
+  const { workspaces, ...base } = readSaved(user);
+  const saved = { ...base, ...(workspace ? workspaces?.[workspace] : {}) };
   const merged = { ...DEFAULTS, ...saved };
   return { ...merged, softness: saved.softness ?? softnessOf(merged.look) };
+}
+
+/** The workspace a Media Library is in (by its settings.projectId; one from before workspaces is the first brand's). */
+async function workspaceOfLibrary(owner: string, libraryId: string): Promise<string | undefined> {
+  const row = libraryDb().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined;
+  return (await projectOf({ username: owner } as SessionUser))?.(row?.ws ?? undefined);
 }
 
 const within = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
@@ -114,17 +129,20 @@ const NOTHING = "Nothing was blurred.";
 const routes = new Hono<{ Variables: AuthVars }>();
 routes.use("*", requireGate("blur-faces"));
 
-routes.get("/settings", (c) => c.json(settingsOf(c.get("user").username)));
+// each workspace has its own: the one this request works in
+routes.get("/settings", async (c) => c.json(settingsOf(c.get("user").username, await currentWorkspaceId(c.get("user")))));
 
 routes.get("/example", (c) => c.json({ picture: EXAMPLE_JPEG }));
 
 routes.put("/settings", async (c) => {
   const user = c.get("user").username;
-  const s = checkSettings(await c.req.json().catch(() => null), settingsOf(user));
+  const ws = await currentWorkspaceId(c.get("user"));
+  const s = checkSettings(await c.req.json().catch(() => null), settingsOf(user, ws));
   if (typeof s === "string") return c.json({ error: s }, 400);
   const file = fileOf(user);
+  const saved = readSaved(user);
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  await writeJsonAtomic(file, s);
+  await writeJsonAtomic(file, ws ? { ...saved, workspaces: { ...saved.workspaces, [ws]: s } } : { ...saved, ...s });
   return c.json(s);
 });
 
@@ -173,6 +191,8 @@ export interface AutoJob {
   n: number;
   owner: string;
   libraryId: string;
+  /** the library's workspace, whose settings cover it (none: nothing kept apart) */
+  workspace?: string;
   versionId: string;
   title: string;
   kind: "video" | "image";
@@ -209,9 +229,15 @@ export const resetAuto = async () => {
   auto = null;
 };
 
-/** A file of `owner`'s came into a built-in Media Library: queued for their Mac when they asked for it. Never a copy this made, or a finished file made from a clip. */
-export function queueVersion(e: { libraryId: string; versionId: string; owner: string }): boolean {
-  if (!settingsOf(e.owner).auto || mainSource() || jobs().jobs.some((j) => j.versionId === e.versionId)) return false;
+/**
+ * A file of `owner`'s came into a built-in Media Library: queued for their Mac when they asked for it in that library's
+ * workspace, and Face Blur is on there. Never a copy this made, or a finished file made from a clip.
+ */
+export async function queueVersion(e: { libraryId: string; versionId: string; owner: string }): Promise<boolean> {
+  if (mainSource()) return false;
+  const workspace = await workspaceOfLibrary(e.owner, e.libraryId);
+  if (!settingsOf(e.owner, workspace).auto || !(await pluginOnIn(faceBlur, e.owner, workspace))) return false;
+  if (jobs().jobs.some((j) => j.versionId === e.versionId)) return false;
   const db = libraryDb();
   const a = db.prepare("SELECT a.kind, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(e.versionId) as
     | { kind: string; title: string }
@@ -219,7 +245,7 @@ export function queueVersion(e: { libraryId: string; versionId: string; owner: s
   if (!a || (a.kind !== "video" && a.kind !== "image")) return false;
   if (db.prepare("SELECT 1 FROM derived_from WHERE version_id = ?").get(e.versionId)) return false;
   const list = jobs();
-  list.jobs.push({ n: list.next++, ...e, title: a.title, kind: a.kind, state: "queued", since: Date.now(), tries: 0 });
+  list.jobs.push({ n: list.next++, ...e, ...(workspace ? { workspace } : {}), title: a.title, kind: a.kind, state: "queued", since: Date.now(), tries: 0 });
   saveJobs();
   void wakeEditorPolls();
   return true;
@@ -274,7 +300,7 @@ export const autoJobs = {
       }
       Object.assign(j, { state: "running", device: device.id, since: Date.now() });
       saveJobs();
-      const s = settingsOf(j.owner);
+      const s = settingsOf(j.owner, j.workspace);
       const style = { look: s.look, strength: String(s.strength), softness: String(s.softness), size: String(s.size), color: s.color };
       return { id: j.n, kind: AUTO_KIND, editId: "", variant: "", options: { mode: s.mode, ...style, media: j.kind === "video" ? "video" : "photo" } };
     }
@@ -294,7 +320,7 @@ export const autoJobs = {
       end(j, "done");
       return { reply: { ok: true } };
     }
-    const p = checkPick({ who: settingsOf(j.owner).who, faces: b?.faces });
+    const p = checkPick({ who: settingsOf(j.owner, j.workspace).who, faces: b?.faces });
     if (typeof p === "string") return { error: p, status: 400 };
     const r = await pickFaces(j.owner, p.who, p.faces);
     if ("error" in r) {
@@ -348,7 +374,7 @@ routes.post("/auto/retry", async (c) => {
 });
 
 // `kind` is read as text by Community's list of the team's plug-ins: a tool of its own, not a Home tool's, so it is listed under Other
-export default definePlugin({
+const faceBlur = definePlugin({
   id: "blur-faces",
   name: "Face Blur",
   about: "Covers every face, or only the ones you name, in your photos and videos, on your Mac and iPhone",
@@ -356,5 +382,6 @@ export default definePlugin({
   gates: { ids: ["blur-faces"] },
   routes,
   deviceJobs: [autoJobs],
-  start: () => void onEvent("library.version.probed", queueVersion),
+  start: () => void onEvent("library.version.probed", (e) => void queueVersion(e).catch((err: unknown) => console.warn(`[blur-faces] ${(err as Error).message}`))),
 });
+export default faceBlur;

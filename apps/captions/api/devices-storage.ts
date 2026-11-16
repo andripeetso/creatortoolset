@@ -12,6 +12,7 @@ import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, wi
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { inProjectOf } from "./lib/project-of";
 
 /**
  * Settings → Storage (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
@@ -85,6 +86,19 @@ const keepsCopies = (workspace: string): boolean =>
   (libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE workspace_id = ?").all(workspace) as { v: unknown }[])
     .some((r) => r.v === 1 || r.v === "all" || r.v === "proxies");
 
+/** The folders whose workspace keeps copies on the server (keepsCopies), by id: a folder from before workspaces is the first brand's. */
+async function copiedFolders(u: AuthVars["user"], folders: StorageFolder[]): Promise<string[]> {
+  const rows = libraryDb().prepare("SELECT DISTINCT workspace_id AS id FROM libraries").all() as { id: string }[];
+  const out = new Set<string>();
+  for (const { id } of rows) {
+    // a person with no workspace keeps their library under their own name; any other id must be one of their workspaces
+    const inWs = id === u.username ? () => true : await inProjectOf(u, id);
+    if (!inWs || !keepsCopies(id)) continue;
+    for (const f of folders) if (inWs(f.workspace)) out.add(f.id);
+  }
+  return [...out];
+}
+
 export const storageApp = new Hono<{ Variables: AuthVars }>();
 
 storageApp.use("*", async (c, next) => {
@@ -99,14 +113,16 @@ storageApp.route("/kept", keptApp);
  *  no drives (the row then has nothing else to show). */
 storageApp.get("/", async (c) => {
   const u = c.get("user");
-  const st = shown(await readStorage(u.username), (await scopeOf(c)).mine, u.username);
+  // ?all=1: every workspace's folders (setting up another computer: it helps with all of them), with `copied`
+  const all = c.req.query("all") === "1";
+  const st = shown(await readStorage(u.username), all ? () => true : (await scopeOf(c)).mine, u.username);
   const lib = st.folders.find((f) => f.role === "library");
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
   const local = process.env.CT_LOCAL === "1" && u.role === "admin";
   // which of this account's computers is this machine: a folder added on it goes into the Library (the page asks first when it is big)
   const here = watchAllowed(u.username) ? listDevices((d) => !!mine(c, d.id) && isThisMachine(d.id)).map((d) => d.id) : [];
-  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies((await scopeOf(c)).workspace ?? u.username) };
+  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies((await scopeOf(c)).workspace ?? u.username), ...(all ? { copied: await copiedFolders(u, st.folders) } : {}) };
   return c.json(view);
 });
 

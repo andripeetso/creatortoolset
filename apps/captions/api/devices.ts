@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, FOLDER_LIST_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
@@ -24,6 +24,7 @@ import { resolveGranted } from "./lib/packs";
 import { storageApp } from "./devices-storage";
 import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
+import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { env } from "./lib/env";
 
 /**
@@ -48,8 +49,8 @@ import { env } from "./lib/env";
 
 export const devicesApp = new Hono<{ Variables: AuthVars }>();
 
-/** The jobs on the device job road: the app's own folder listing (lib/folder-list.ts), then each plug-in's. */
-const deviceJobs = () => [folderListJob, ...pluginDeviceJobs()];
+/** The jobs on the device job road: the app's own folder listing (lib/folder-list.ts) and computer check (lib/helper-check.ts), then each plug-in's. */
+const deviceJobs = () => [folderListJob, helperCheckJob, ...pluginDeviceJobs()];
 
 /** The device behind a ctd_ token on an editor route; a 401 when there is none. Keeps the device here (it is alive). */
 function deviceCaller(c: Context): Device | null {
@@ -281,11 +282,41 @@ devicesApp.put("/balance", async (c) => {
       cur.weights[id] = v;
     }
   }
-  await mkdir(path.dirname(balanceFile(u.username)), { recursive: true });
-  const tmp = `${balanceFile(u.username)}.tmp-${process.pid}`;
-  await writeFile(tmp, JSON.stringify(cur, null, 2));
-  await rename(tmp, balanceFile(u.username));
+  await writeBalance(u.username, cur);
   return c.json(cur);
+});
+
+async function writeBalance(user: string, cur: Awaited<ReturnType<typeof readBalance>>): Promise<void> {
+  await mkdir(path.dirname(balanceFile(user)), { recursive: true });
+  const tmp = `${balanceFile(user)}.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(cur, null, 2));
+  await rename(tmp, balanceFile(user));
+}
+
+/**
+ * POST /api/devices/:id/check {test?} → { check?, weight? }: the computer reads its disks again now (a shared drive
+ * connected a moment ago counts at once); a test also reads a file in each folder it reaches and times an encode
+ * (lib/helper-check.ts). For an admin a test sets the computer's load balancing weight from the result and turns load
+ * balancing on, so the weight counts.
+ */
+devicesApp.post("/:id/check", async (c) => {
+  const u = c.get("user");
+  if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
+  const d = manageable(u, c.req.param("id"));
+  if (!d) return c.json({ error: "Not found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  try {
+    const out = await checkComputer(d.owner, d.id, b?.test === true);
+    if (out.weight !== undefined && u.role === "admin" && d.owner === u.username) {
+      const cur = await readBalance(u.username);
+      cur.on = true;
+      cur.weights[d.id] = out.weight;
+      await writeBalance(u.username, cur);
+    }
+    return c.json(out);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 409);
+  }
 });
 
 /** The same window as isOnline (lib/devices.ts): a computer that has not been heard from in 40 s is not a candidate. */
@@ -308,10 +339,10 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
     }));
   const balance = await readBalance(d.owner);
   // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
-  // a folder listing goes to the computer that holds the folder, and a step that reads footage is balanced per step among
+  // a folder listing goes to the computer that holds the folder, a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
   // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
   // hold it back from every one that has them
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */
