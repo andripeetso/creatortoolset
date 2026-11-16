@@ -43,7 +43,7 @@ const STATIC_ROWS = [
   { section: "voice", id: "dictation", title: "Dictation", description: "Types what is said at the cursor (Mac app)", keywords: ["dictate", "dictation", "speech", "voice", "talk", "transcribe", "whisper", "set up", "setup", "guide", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation-key-talk", title: "Talk key", description: "Starts dictation on a tap, or while it is held", keywords: ["dictation", "fn", "globe", "option", "hold", "key", "shortcut", "push to talk", "f13", "mac app"], needs: "mac" },
     { section: "voice", id: "dictation-key-cancel", title: "Cancel key", keywords: ["dictation", "cancel", "key", "shortcut", "f16", "mac app"], needs: "mac" },
-  { section: "voice", id: "dictation-engine", title: "Dictation engine", description: "This Mac, or your server's Deepgram or OpenAI", keywords: ["dictation", "engine", "transcribed by", "deepgram", "openai", "server", "cloud", "mac app"], needs: "mac" },
+  { section: "voice", id: "dictation-engine", title: "Engine", description: "This Mac, or your server's Deepgram or OpenAI", keywords: ["dictation", "engine", "transcribed by", "deepgram", "openai", "server", "cloud", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation-server", title: "Speech server", description: "Tried before this Mac", keywords: ["dictation", "server", "address", "url", "parakeet", "whisper", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation-model", title: "Dictation model", keywords: ["dictation", "whisper", "parakeet", "model", "download", "remove", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation-history", title: "History", description: "Recent recordings, to copy or redo", keywords: ["dictation", "history", "recordings", "transcript", "key", "shortcut", "f14", "mac app"], needs: "mac" },
@@ -112,7 +112,7 @@ const STATIC_ROWS = [
   { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address", "cloud", "own server", "self-host", "vps"] },
   { section: "servers", id: "sign-in-another", title: "Sign-in link", description: "Signs another computer in to this server", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
-  { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
+  { section: "team", id: "team-name", title: "Name", keywords: ["team", "rename", "name"] },
   { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "ai", "budget", "workspaces", "remove", "team", "invite"] },
   { section: "team", id: "team-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow", "scripts", "invite"] },
   { section: "team", id: "team-invite", title: "Pending invites", keywords: ["invite", "link", "join", "team", "revoke", "delete"] },

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { confirmDialog } from "@/lib/dialogs";
 import { cn } from "@/lib/utils";
 
-/** The one place a failed save is said: a toast with a plain sentence. The control shows its old value again. */
+/** The one place a failed save is said: a toast with a plain sentence. A switch or a choice shows its old value again; typed text stays. */
 export function saveFailed(message: string): void {
   toast.error(message);
 }
@@ -16,7 +16,8 @@ const field = "h-8 w-full rounded-md border border-input bg-transparent px-3 tex
 
 /**
  * A text setting. Saves on blur or Enter (no Save button); a value that did not change is not sent. If the save throws,
- * the field goes back to the saved value and a toast says why. `label` is required (it is the field's accessible name).
+ * the field keeps what was typed, marked as not saved, and a toast says why. `label` is required (it is the field's
+ * accessible name).
  */
 export function TextField({ label, value, onCommit, placeholder, type = "text", maxLength, disabled, className }: {
   label: string;
@@ -29,13 +30,15 @@ export function TextField({ label, value, onCommit, placeholder, type = "text", 
   className?: string;
 }) {
   const [draft, setDraft] = useState(value);
+  const [unsaved, setUnsaved] = useState(false);
   useEffect(() => setDraft(value), [value]);
   const commit = async () => {
-    if (draft === value) return;
+    if (draft === value) return setUnsaved(false);
     try {
       await onCommit(draft);
+      setUnsaved(false);
     } catch (e) {
-      setDraft(value);
+      setUnsaved(true);
       saveFailed(e instanceof Error && e.message ? e.message : "That did not save. Try again.");
     }
   };
@@ -47,12 +50,13 @@ export function TextField({ label, value, onCommit, placeholder, type = "text", 
       placeholder={placeholder}
       maxLength={maxLength}
       disabled={disabled}
+      aria-invalid={unsaved}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => void commit()}
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
       }}
-      className={cn(field, "sm:w-72", className)}
+      className={cn(field, "aria-invalid:border-destructive sm:w-72", className)}
     />
   );
 }

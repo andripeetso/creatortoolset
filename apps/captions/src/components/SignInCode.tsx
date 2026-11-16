@@ -204,7 +204,7 @@ export function SignInCodeRow() {
         onOpenChange={(o) => !o && setDialog(null)}
         title="Sign-in code"
         submitLabel="Turn on"
-        submitDisabled={!secret || !code.trim()}
+        submitDisabled={!secret}
         busy={busy}
         error={error}
         onSubmit={submit}
@@ -213,19 +213,18 @@ export function SignInCodeRow() {
           {secret ? <Qr uri={secret.uri} /> : <div className="size-44" />}
           <p className="select-text text-center font-mono text-xs text-muted-foreground">{secret ? grouped(secret.secret) : " "}</p>
         </div>
-        <Input aria-label="Code" placeholder="6-digit code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+        <Input aria-label="Code" placeholder="6-digit code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus required />
       </FormDialog>
       <FormDialog
         open={dialog === "off"}
         onOpenChange={(o) => !o && setDialog(null)}
         title="Turn off sign-in code"
         submitLabel="Turn off"
-        submitDisabled={!s.mac && !code.trim()}
         busy={busy}
         error={error}
         onSubmit={submit}
       >
-        {!s.mac && <Input aria-label="Code" placeholder="Code or recovery code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />}
+        {!s.mac && <Input aria-label="Code" placeholder="Code or recovery code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus required />}
       </FormDialog>
       <Dialog open={!!recovery} onOpenChange={(o) => !o && setRecovery(null)}>
         <DialogContent aria-describedby={undefined} className="sm:max-w-md">
