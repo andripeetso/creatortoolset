@@ -1431,7 +1431,7 @@ function Header({
           {version.timelineFile && <span className="truncate text-xs text-zinc-500">Timeline from {version.timelineFile}</span>}
           <button
             onClick={() => timelineInput.current?.click()}
-            title="OTIO, FCP 7 XML, FCPXML or EDL from Resolve, Premiere or Final Cut"
+            title="OTIO, FCP 7 XML, FCPXML or EDL. Resolve: File → Export → Timeline. Premiere: File → Export → Final Cut Pro XML. Final Cut: File → Export XML (pick Info.fcpxml inside the .fcpxmld)."
             className="rounded px-1 text-xs text-violet-300 hover:bg-zinc-900 hover:text-violet-200"
           >
             {version.timelineFile ? "Change timeline file" : "Add timeline file"}

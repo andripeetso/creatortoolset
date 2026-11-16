@@ -438,7 +438,7 @@ export default function ReviewPage() {
                   </span>
                   {u.error ? (
                     <button className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))}>
-                      Clear
+                      Remove
                     </button>
                   ) : (
                     <span className="tabular-nums text-zinc-500">{u.waiting ? "Waiting" : `${u.pct}%`}</span>
