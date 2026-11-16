@@ -11,6 +11,7 @@ import { asKnowledge } from "./sources";
 import type { KnowledgeFile, Project } from "./types";
 import { okId } from "./validate";
 import { onFor } from "./workspace";
+import { ask, onComputer } from "../../work/on-computer";
 
 /**
  * A workspace's context, carried to every AI that works in it (the chat, the Media Library, the AI Editor, a connected
@@ -148,6 +149,7 @@ const PROFILE_KINDS = 8;
  * work and the trash are left out. "" when the workspace has no footage.
  */
 export async function footageProfile(projectId: string | undefined): Promise<string> {
+  if (onComputer.on) return ask("footageProfile");
   const p = await readWorkspace(projectId);
   if (!p) return "";
   const inP = await inProjectOf({ username: p.owner } as SessionUser, p.id);

@@ -4,13 +4,15 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
-import { MIC_LIMITS, needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
+import { MIC_LIMITS, needComputerOn, transcribeOnComputer, type OwnSound } from "../lib/computer-transcribe";
+import { isThisMachine } from "../lib/devices";
 import { readVoicePrefs, speechFor } from "../lib/speech";
 import { videoLanguages } from "../lib/video-languages";
 import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
 import { accountOf } from "./access";
+import { libraryDb } from "./db";
 import { ffmpegTo } from "./media/run";
 
 /**
@@ -154,12 +156,20 @@ async function device(file: string, status: string): Promise<Transcribed> {
   return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
 }
 
-/** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches; `soon`: the mic's limits. */
-async function computer(file: string, actor: string, model: string, languages: string[], soon: boolean, editor: boolean): Promise<Transcribed> {
+/** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches, or the library file it cuts the sound from itself; `soon`: the mic's limits. */
+async function computer(file: string | OwnSound, actor: string, model: string, languages: string[], soon: boolean, editor: boolean): Promise<Transcribed> {
   // the editor's never go to a Mac (computer-transcribe.ts isMac)
   const { words, language } = await transcribeOnComputer(actor, model, languages, file, soon ? MIC_LIMITS : { noMac: editor });
   return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
 }
+
+/**
+ * The sound every transcript is heard from, after `-i <file>`: 16 kHz mono, as a WAV (Deepgram, a computer's model) or
+ * 32 kbps AAC in an .m4a (OpenAI's endpoint). No -map: ffmpeg's own pick of the sound tracks, the same from a proxy (it
+ * keeps every track) as from the original. A computer that cuts the sound itself runs the same (work/library.ts, the
+ * Mac app's TranscribeJob.swift).
+ */
+export const soundArgs = (wav: boolean): string[] => ["-vn", "-ac", "1", "-ar", "16000", ...(wav ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])];
 
 /**
  * A file's transcript as its actor's key gives it, or this computer: the route first (no audio is cut without one),
@@ -167,32 +177,75 @@ async function computer(file: string, actor: string, model: string, languages: s
  * `use` picks the engine (Settings → AI → Voice); `fillers` keeps "um" and "uh" (the AI Editor cuts at them); `soon`: a
  * person is waiting for it (the mic), so its audio is cut before the queued long runs and a computer must take it at
  * once (MIC_LIMITS). `route`: this engine instead of the one `use` picks (the mic's fallback when its computers can't).
+ * `own`: a library file a computer cuts the sound from itself (ownSound): on a computer's model nothing is cut here,
+ * and `src` is read only if that computer asks for the audio after all (an older app).
  */
 export async function transcribeFile(
-  src: string,
+  src: string | (() => Promise<string>),
   actor: string | null,
   scratch: string,
-  status: string = src,
-  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use, languages) }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route } = {},
+  status: string = typeof src === "string" ? src : "",
+  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use, languages), own }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route; own?: Omit<OwnSound, "cut"> } = {}
 ): Promise<Transcribed & { provider: Route["provider"]; model?: string }> {
   // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
   if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
   await mkdir(scratch, { recursive: true });
   const wav = route.provider === "deepgram" || route.provider === "computer";
   const out = path.join(scratch, `transcribe-${randomUUID()}.${wav ? "wav" : route.provider === "openai" ? "m4a" : "f32"}`);
+  const file = async () => (typeof src === "string" ? src : src());
+  let cutting: Promise<unknown> | undefined;
+  const cut = async () => {
+    await (cutting = (async () => ffmpegTo(out, ["-i", await file(), ...(route.provider === "device" ? DEVICE_AUDIO : soundArgs(wav))], soon))());
+    return out;
+  };
   try {
-    if (route.provider === "device") await ffmpegTo(out, ["-i", src, ...DEVICE_AUDIO], soon);
-    else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(wav ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])], soon);
+    if (!(route.provider === "computer" && own)) await cut();
     const t =
       route.provider === "device" ? await device(out, status)
-      : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
+      : route.provider === "computer" ? await computer(own ? { ...own, cut } : out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
       : await openai(out, route.key, languages);
     return { ...t, provider: route.provider, ...(route.provider === "computer" ? { model: route.model } : {}) };
   } finally {
+    await cutting?.catch(() => {}); // a cut a computer asked for that is still running writes nothing after this
     await rm(out, { force: true });
   }
 }
+
+/**
+ * What a computer of `actor`'s needs to cut a library version's sound from its own copy (design 6.1): where the file is
+ * on it (the index's path for it, or a storage folder it reaches; with the size to check), else the server's proxy to
+ * download into its proxy cache. Never the original: a file it has neither of is cut here, when it asks for the audio.
+ */
+export function ownSound(versionId: string, actor: string | null): Omit<OwnSound, "cut"> | undefined {
+  const r = libraryDb()
+    .prepare(
+      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes,
+         d.storage_key AS proxy, d.bytes AS proxy_bytes
+       FROM asset_versions v LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
+    )
+    .get(versionId) as
+    | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; from_path: string | null; from_device: string | null; probe: string | null; bytes: number; proxy: string | null; proxy_bytes: number | null }
+    | undefined;
+  if (!r || !actor) return undefined;
+  // an original uploaded from a computer is still on that computer, where it was sent from (work/library-package.ts)
+  const row = r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device };
+  const seconds = Number((JSON.parse(r.probe ?? "{}") as { duration?: number }).duration) || 0;
+  return {
+    seconds,
+    proxy: r.proxy,
+    options: (device) => {
+      const at = reach?.fileFor(row, device, reach.foldersOf(actor), isThisMachine);
+      return {
+        version: r.id,
+        ...(at && "path" in at ? { path: at.path, bytes: String(r.bytes) } : {}),
+        ...(r.proxy ? { proxy: String(r.proxy_bytes ?? 0) } : {}),
+      };
+    },
+  };
+}
+// editor/reach.ts, loaded once a transcript asks (a static import would close a loop: reach → work → library worker → here)
+let reach: typeof import("../editor/reach") | undefined;
 
 /**
  * An AI Editor edit's ask for a version's transcript, set by analyze before it queues the transcript and cleared once
@@ -245,11 +298,13 @@ export const editorKey = (versionId: string, r: Route) => `${versionId}|${r.prov
  * and the transcript is made all the same, unless the clip already has one with words: that one is kept. The library keeps one transcript a clip (Finals, search): the one the
  * editor's choice made is that clip's library transcript too, with the provider and model that made it.
  */
-export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
+export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string | (() => Promise<string>), actor: string | null, scratch: string): Promise<void> {
   const ask = askVersionIn.get(versionId);
   const languages = ask?.languages ?? (await libraryLanguages(db, versionId, actor));
   const editor = ask?.by === actor ? editorRoute(actor, languages) : null;
-  const make = (route?: Route) => transcribeFile(src, actor, scratch, versionId, { languages, ...(route ? { use: "editor" as const, route } : {}) });
+  reach ??= await import("../editor/reach");
+  const own = ownSound(versionId, actor);
+  const make = (route?: Route) => transcribeFile(src, actor, scratch, versionId, { languages, own, ...(route ? { use: "editor" as const, route } : {}) });
   let t: Awaited<ReturnType<typeof make>>;
   try {
     t = await make(editor ?? undefined);
@@ -266,6 +321,38 @@ export async function transcribeVersion(db: DatabaseSync, versionId: string, src
     t = await make();
   }
   if (editor) heardForEditor.add(editorKey(versionId, editor));
+  saveTranscript(db, versionId, t.provider, t.language, t.segments, t.words, t.model);
+  if (askVersionIn.get(versionId) === ask) askVersionIn.delete(versionId);
+}
+
+/**
+ * The sound a computer cuts for a library version's transcript on its actor's key (work/library-package.ts): a WAV for
+ * Deepgram, an .m4a for OpenAI's endpoint. Null for every other route: a computer's model takes the file itself
+ * (ownSound), this computer's model runs here, and a route that needs a key parks the job as before.
+ */
+export function keySound(actor: string | null, versionId: string): "wav" | "m4a" | null {
+  try {
+    const p = versionRoute(actor, versionId).provider;
+    return p === "deepgram" ? "wav" : p === "openai" ? "m4a" : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The words of `file`, the sound a computer cut from its own copy of a library version (soundArgs), on the actor's key. */
+export async function hearSound(versionId: string, actor: string | null, file: string): Promise<Transcribed & { provider: Route["provider"] }> {
+  const route = versionRoute(actor, versionId);
+  const languages = askVersionIn.get(versionId)?.languages;
+  if (route.provider === "deepgram") return { ...(await deepgram(file, actor ?? "", true, languages)), provider: "deepgram" };
+  if (route.provider === "openai") return { ...(await openai(file, route.key, languages)), provider: "openai" };
+  throw new Error("This transcript is not made on a key");
+}
+
+/** A transcript a computer's library job brought back (work/library-package.ts), filed as transcribeVersion files its own. */
+export function fileTranscript(db: DatabaseSync, versionId: string, actor: string | null, t: Transcribed & { provider: string; model?: string }): void {
+  const ask = askVersionIn.get(versionId);
+  const editor = ask?.by === actor ? editorRoute(actor, ask.languages) : null;
+  if (editor && editor.provider === t.provider) heardForEditor.add(editorKey(versionId, editor));
   saveTranscript(db, versionId, t.provider, t.language, t.segments, t.words, t.model);
   if (askVersionIn.get(versionId) === ask) askVersionIn.delete(versionId);
 }

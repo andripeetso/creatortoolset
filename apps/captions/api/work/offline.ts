@@ -1,0 +1,143 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { Hono } from "hono";
+import type { Device } from "../../contracts/providers";
+import type { WorkOffline } from "../../contracts/work";
+import type { AuthVars } from "../auth";
+import { env } from "../lib/env";
+import { deviceOf, listDevices, setDeviceWork } from "../lib/devices";
+import { libraryDb } from "../library/db";
+import { readerOf } from "../library/reader";
+import { assetRef, canSee } from "../library/sources";
+
+/**
+ * The proxies a person keeps on their computers (design 6.3, PRD 4.4).
+ *
+ * Available offline, per person: `$DATA_DIR/offline/<user>.json { versions, collections }`, a clip's version or a whole
+ * folder. Each of their computers is sent the list on its claim (offlineFor) and keeps those proxies, never removed by its
+ * size limit; it downloads them while nothing else runs (the offline route in routes.ts). Mounted at /api/library/offline:
+ *   GET  /   → OfflineList
+ *   POST /   { version | collection, on } → OfflineList    only what the person can see
+ *
+ * Settings → Storage counts each computer's cache from its last claim (api/kept.ts) and Empty tells it on the next one.
+ */
+
+export interface OfflineList {
+  versions: string[];
+  collections: string[];
+}
+
+const fileOf = (user: string) => path.join(env.dataDir, "offline", `${encodeURIComponent(user)}.json`);
+
+export function offlineOf(user: string): OfflineList {
+  try {
+    const v = JSON.parse(readFileSync(fileOf(user), "utf8")) as Partial<OfflineList>;
+    return { versions: Array.isArray(v.versions) ? v.versions : [], collections: Array.isArray(v.collections) ? v.collections : [] };
+  } catch {
+    return { versions: [], collections: [] };
+  }
+}
+
+function saveOffline(user: string, list: OfflineList): void {
+  mkdirSync(path.dirname(fileOf(user)), { recursive: true });
+  writeFileSync(fileOf(user), JSON.stringify(list));
+}
+
+const db = () => libraryDb();
+
+/** The person may see this clip: they read its library, and its source's policies let them (as the media route checks). */
+export async function mayRead(user: string, libraryId: string, assetId: string, versionId: string): Promise<boolean> {
+  const viewer = await readerOf(user, libraryId);
+  return !!viewer && (await canSee(viewer, assetRef(libraryId, assetId, versionId)));
+}
+
+/**
+ * The proxies `d` keeps for its owner: the clips set offline and the current clips of the folders set offline, in
+ * libraries the owner can still read, that have a proxy and whose file is not already on that computer.
+ * ponytail: a folder's own clips, not its subfolders' or a smart folder's query; read on every claim
+ */
+export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkOffline[]> {
+  const list = offlineOf(d.owner);
+  if (!list.versions.length && !list.collections.length) return [];
+  const rows = db()
+    .prepare(
+      `SELECT v.id, a.id AS asset_id, a.title, a.library_id, p.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       JOIN derivatives p ON p.version_id = v.id AND p.kind = 'proxy'
+       WHERE a.trashed_at IS NULL AND v.mac_device IS NOT ? AND (v.id IN (SELECT value FROM json_each(?))
+         OR (v.id = a.current_version_id AND a.id IN (SELECT asset_id FROM collection_items WHERE collection_id IN (SELECT value FROM json_each(?)))))`,
+    )
+    .all(d.id, JSON.stringify(list.versions), JSON.stringify(list.collections)) as { id: string; asset_id: string; title: string; library_id: string; bytes: number }[];
+  const out: WorkOffline[] = [];
+  for (const r of rows) if (await mayRead(d.owner, r.library_id, r.asset_id, r.id)) out.push({ id: r.id, title: r.title, bytes: r.bytes });
+  return out;
+}
+
+/** Settings → Storage → Empty: `owner`'s computer (or every one of theirs) empties its proxy cache on its next claim. */
+export function emptyProxies(owner: string, device?: string): void {
+  for (const d of listDevices((x) => x.owner === owner && (!device || x.id === device) && !!x.work?.cache)) {
+    const w = d.work!;
+    setDeviceWork(d.id, { ...w, cache: { ...w.cache!, bytes: 0, versions: [] }, empty: true });
+  }
+}
+
+/**
+ * Of the versions `owner`'s computer caches, the ones it must delete: gone, in the trash, or no longer theirs to see (a
+ * library policy refused them since it downloaded, say). Asked again on every claim, as the media route would.
+ * ponytail: one policy check per cached version per claim; remember the answers per claim window if a cache grows huge
+ */
+export async function dropFor(owner: string, cached: string[]): Promise<string[]> {
+  if (!cached.length) return [];
+  const rows = db()
+    .prepare(
+      `SELECT v.id, a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.trashed_at IS NULL AND v.id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify(cached)) as { id: string; asset_id: string; library_id: string }[];
+  const keep = new Set<string>();
+  for (const r of rows) if (await mayRead(owner, r.library_id, r.asset_id, r.id)) keep.add(r.id);
+  return cached.filter((v) => !keep.has(v));
+}
+
+/**
+ * The claim's answer, read once per claim: Empty (then forgotten), the offline list, sent when there is one or when the
+ * computer still keeps one (`kept`, its claim's report), so it lets go of what was switched off, and the cached
+ * versions (`cached`) it must delete.
+ */
+export async function claimExtras(deviceId: string, kept?: string[], cached?: string[]): Promise<{ empty?: true; offline?: WorkOffline[]; drop?: string[] }> {
+  const d = deviceOf(deviceId);
+  if (!d) return {};
+  const list = await offlineFor(d);
+  const gone = await dropFor(d.owner, cached ?? []);
+  const extras = { ...(list.length || kept?.length ? { offline: list } : {}), ...(gone.length ? { drop: gone } : {}) };
+  if (!d.work?.empty) return extras;
+  const { empty: _, ...work } = d.work;
+  setDeviceWork(d.id, work);
+  return { empty: true, ...extras };
+}
+
+export const offlineApp = new Hono<{ Variables: AuthVars }>();
+
+offlineApp.get("/", (c) => c.json(offlineOf(c.get("user").username)));
+
+offlineApp.post("/", async (c) => {
+  const user = c.get("user").username;
+  const b = (await c.req.json().catch(() => null)) as { version?: unknown; collection?: unknown; on?: unknown } | null;
+  const id = typeof b?.version === "string" ? b.version : typeof b?.collection === "string" ? b.collection : null;
+  if (!id || typeof b?.on !== "boolean") return c.json({ error: "version or collection: an id, on: true or false" }, 400);
+  const key = typeof b.version === "string" ? "versions" : "collections";
+  const ok =
+    key === "versions"
+      ? await (async () => {
+          const v = db().prepare("SELECT a.library_id, a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { library_id: string; id: string } | undefined;
+          return !!v && (await mayRead(user, v.library_id, v.id, id));
+        })()
+      : await (async () => {
+          const f = db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined;
+          return !!f && !!(await readerOf(user, f.library_id));
+        })();
+  if (!ok) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const list = offlineOf(user);
+  list[key] = [...list[key].filter((x) => x !== id), ...(b.on ? [id] : [])];
+  saveOffline(user, list);
+  return c.json(list);
+});

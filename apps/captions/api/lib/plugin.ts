@@ -124,6 +124,9 @@ export interface ServerPlugin {
   // to an AI that designs after the account's own animation styles. Each is its name, a short brief in the person's own
   // words and its pictures as files the server can read (png, jpg or webp), the ones made and liked first.
   design?: { looks?: (user: SessionUser) => PluginLook[] | Promise<PluginLook[]> };
+  // Whether this server does video work for an account's work in a workspace (api/work/server-work.ts): true or false
+  // decides, undefined leaves it to the server's own setting. On Creator Toolset Cloud only a true answer turns it on.
+  serverWork?: (q: { account: string | null; workspace: string | null }) => boolean | undefined;
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
@@ -348,6 +351,15 @@ export interface DeviceJobSlot {
 }
 
 /** Every loaded plug-in's device jobs, in load order. */
+/** The first plug-in answer on whether this server does video work for `q` (ServerPlugin.serverWork), else undefined. */
+export function pluginServerWork(q: { account: string | null; workspace: string | null }): boolean | undefined {
+  for (const p of loaded) {
+    const a = p.serverWork?.(q);
+    if (a !== undefined) return a;
+  }
+  return undefined;
+}
+
 export const pluginDeviceJobs = (): DeviceJobSlot[] => loaded.flatMap((p) => p.deviceJobs ?? []);
 export const pluginStorageFolders = async (username: string): Promise<StorageFolder[]> =>
   (await Promise.all(loaded.map((p) => p.storageFolders?.(username).catch(() => []) ?? []))).flat();

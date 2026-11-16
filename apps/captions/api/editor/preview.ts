@@ -9,6 +9,11 @@ import { blobs, libraryDb } from "../library/db";
 import { readable } from "./media";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
+import { probe } from "../library/media/probe";
+import { makeThumb } from "../library/media/thumb";
+import { makeWave } from "../library/media/wave";
+import { ask, onComputer, pathOf } from "../work/on-computer";
+import { env } from "../lib/env";
 import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
@@ -186,6 +191,13 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       if (editId) out[id] = path.join(editDir(editId), own);
       continue;
     }
+    // on a computer: the file the worker resolved; post takes only an original already on it (WorkFile.original)
+    if (onComputer.on) {
+      const f = onComputer.pkg!.files.find((x) => x.id === id);
+      if (!proxies && !f?.original) throw new Error(onlyProxy(f?.title ?? id));
+      out[id] = pathOf(id);
+      continue;
+    }
     const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
     if (!row) throw new Error("Some footage is gone from the library");
     if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
@@ -208,7 +220,8 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
   if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = previewFile(edit.id, variant);
   await mkdir(path.dirname(out), { recursive: true });
-  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(ownerOf(edit), edit.bundle));
+  const grade = onComputer.on ? (await ask<{ cdl?: Cdl }>("grade")).cdl : await gradeOf(ownerOf(edit), edit.bundle);
+  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, grade);
   if (signal.aborted || d.due) return;
   await fileInReview(edit, variant, d.timeline, saidOf(d), job.actor);
 }
@@ -225,13 +238,30 @@ export const saidOf = (d: Pick<DraftFile, "critique" | "unchecked">): Critique["
  * made). It is filed in the Review of the edit's workspace (ownerOf), so its owner sees and comments on a teammate's
  * edit as on their own; `by`: who asked for this version, kept on it.
  */
-export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = [], by?: string | null): Promise<void> {
+export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = [], by?: string | null, given: { thumb?: string; wave?: string } = {}): Promise<void> {
   const out = previewFile(edit.id, variant);
+  // on a computer: the server files it (work/result.ts), with Review's thumbnail and the library's waveform made here
+  if (onComputer.on) {
+    const p = await probe(out);
+    const thumb = out.replace(/\.mp4$/, ".jpg");
+    const wave = out.replace(/\.mp4$/, ".wave.json");
+    await makeThumb(out, thumb, p.duration);
+    await makeWave(out, wave, !!p.acodec);
+    // paths relative to the data folder, as the result's uploads are (work/result.ts)
+    onComputer.server!.review({ variant, fails, thumb: path.relative(env.dataDir, thumb), wave: path.relative(env.dataDir, wave) });
+    return;
+  }
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
   const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId };
-  const place = (dest: string) => rename(out, dest);
+  // `given`: the thumbnail and waveform made where the preview was rendered (a computer, api/work/result.ts), so Review
+  // and the library take them instead of decoding the preview again
+  const place = async (dest: string) => {
+    await rename(out, dest);
+    if (given.thumb) await rename(given.thumb, path.join(path.dirname(dest), "thumb.jpg"));
+    if (given.wave) await rename(given.wave, path.join(path.dirname(dest), "wave.json"));
+  };
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));

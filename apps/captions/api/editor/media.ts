@@ -4,6 +4,7 @@ import { link, mkdir, rename, symlink } from "node:fs/promises";
 import path from "node:path";
 import type { TimelineSource } from "../../contracts/editor";
 import { blobs, libraryDb } from "../library/db";
+import { onComputer, pathOf } from "../work/on-computer";
 import { editDir, type EditMeta } from "./store";
 
 /**
@@ -77,6 +78,7 @@ async function place(to: string, at: string): Promise<void> {
  * from the original's probe, and the exports still name the original (mediaPaths).
  */
 export async function readable(versionId: string, sourceKey: string): Promise<string> {
+  if (onComputer.on) return pathOf(versionId);
   try {
     return await blobs.localCopy(sourceKey);
   } catch (e) {
@@ -98,6 +100,7 @@ export async function readable(versionId: string, sourceKey: string): Promise<st
  * preview and the plug-in steps read the best file instead (readable, preview.ts localFiles).
  */
 export async function measurable(versionId: string, sourceKey: string): Promise<string> {
+  if (onComputer.on) return pathOf(versionId);
   const proxy = libraryDb().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as { storage_key: string | null } | undefined;
   return proxy?.storage_key ? blobs.localCopy(proxy.storage_key) : readable(versionId, sourceKey);
 }

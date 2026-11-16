@@ -1,16 +1,20 @@
+import { existsSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { libraryDb } from "../library/db";
 import { MAX_ATTEMPTS, type JobRow, type JobTable } from "../library/jobs";
 import { CARDS_DRAW_KIND, RESOLVE_KIND } from "../../contracts/devices";
 import { announce } from "../lib/sync";
-import { analyzeStep } from "./analyze";
+import { analyzeStep, energyFile } from "./analyze";
 import { brollStep } from "./broll";
 import { cardsStep } from "./cards/step";
 import { critiqueStep } from "./critique";
+import { eyelineFile } from "./eyeline";
+import { allBroll, isPlanned } from "./plan";
 import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
 import { scriptStep } from "./script";
 import { draftStep } from "./timeline";
-import type { EditMeta } from "./store";
+import { readEdit, readStep, type EditMeta } from "./store";
 
 /**
  * The AI Editor's step registry: one entry per step kind, with where it runs. A `core` kind runs on the server's
@@ -36,20 +40,56 @@ export interface EditKind {
   run?: StepRun;
   /** Device kinds: false when the step never reads the edit's footage (it goes to any computer, api/editor/reach.ts) */
   footage?: false;
+  /**
+   * Core kinds: "computer" when this run reads video or sound, so it goes to one of the asker's own computers first
+   * (api/work/place.ts); absent or "server": it reads none and stays on the server. A step whose decodes are all cached
+   * stays on the server, so no download is made for a step that reads nothing.
+   */
+  place?: (edit: EditMeta, variant: string) => Place;
+}
+
+export type Place = "server" | "computer";
+
+/** Probe of a library version, or null. */
+const probeOf = (id: string): { vcodec?: string } | null => {
+  const r = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(id) as { probe: string | null } | undefined;
+  return r?.probe ? (JSON.parse(r.probe) as { vcodec?: string }) : null;
+};
+/** A source whose loudness (and, with a picture, eye line) analyze has not measured yet. */
+const unmeasured = (id: string, eyes: boolean) => !existsSync(energyFile(id)) || (eyes && !!probeOf(id)?.vcodec && !existsSync(eyelineFile(id)));
+const computerIf = (yes: boolean): Place => (yes ? "computer" : "server");
+
+/** analyze reads the footage only for an edit cut around speech, and only for a source not measured yet (analyze.ts). */
+const analyzePlace = (edit: EditMeta): Place => computerIf(!edit.plan && !allBroll(edit) && edit.sources.some((id) => unmeasured(id, true)));
+
+/** One version's draft: a planned one with a generated shot, or one cut around speech from a source not measured yet (timeline.ts). */
+function draftPlace(edit: EditMeta, variant: string): Place {
+  if (!variant) return "server";
+  const plan = readStep(edit.id, "plan");
+  const version = plan?.plans.find((p) => p.name === variant);
+  if (!version) return "server";
+  if (!version.lines.length) return computerIf(!!readStep(edit.id, "shots")?.[variant]?.plan.shots.some((s) => "generate" in s.src));
+  const sentences = readStep(edit.id, "analysis")?.sentences ?? [];
+  return computerIf(version.lines.some((l) => {
+    const src = sentences.find((s) => s.n === l.take.first)?.src;
+    return !!src && unmeasured(src, false);
+  }));
 }
 
 const KINDS: Record<string, EditKind> = {
-  analyze: { source: "core", next: ["script"], run: analyzeStep },
-  script: { source: "core", next: ["draft"], run: scriptStep },
-  draft: { source: "core", next: ["broll"], run: draftStep },
+  analyze: { source: "core", next: ["script"], run: analyzeStep, place: analyzePlace },
+  // a planned edit's script indexes its footage, looks at sheets and the song's beats (plan.ts)
+  script: { source: "core", next: ["draft"], run: scriptStep, place: (e) => computerIf(isPlanned(e, readStep(e.id, "analysis")?.sentences ?? [])) },
+  draft: { source: "core", next: ["broll"], run: draftStep, place: draftPlace },
   broll: { source: "core", next: ["post"], run: brollStep },
   // the cards of an edit whose style names an animation style: queued after its B-roll by nextFor, and for no other edit
   cards: { source: "core", next: ["post"], run: cardsStep },
   // the post-processing steps the edit uses (plug-ins, Settings → AI Editor); with none it only clears its notes
-  post: { source: "core", next: ["preview"], run: postStep },
-  preview: { source: "core", next: ["file"], run: previewStep },
+  // with plug-in steps it rewrites the originals, on the computer that has them
+  post: { source: "core", next: ["preview"], run: postStep, place: (e) => computerIf(!!e.steps?.length) },
+  preview: { source: "core", next: ["file"], run: previewStep, place: () => "computer" },
   // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, or queues the fix round's draft
-  critique: { source: "core", next: [], run: critiqueStep },
+  critique: { source: "core", next: [], run: critiqueStep, place: () => "computer" },
   file: { source: "core", next: [], run: fileStep },
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)
   [RESOLVE_KIND]: { source: "device", next: [] },
@@ -59,6 +99,19 @@ const KINDS: Record<string, EditKind> = {
 
 /** A device kind that reads the edit's footage: it goes only to a computer that can get at the files (api/editor/reach.ts). */
 export const usesFootage = (kind: string): boolean => KINDS[kind]?.source === "device" && KINDS[kind]!.footage !== false;
+
+/** Where a queued core step goes: "computer" when it reads video or sound (KINDS place). A gone edit: the server, which fails it. */
+export function placeOf(job: Pick<JobRow, "kind" | "version_id">): Place {
+  const k = KINDS[job.kind];
+  if (k?.source !== "core" || !k.place) return "server";
+  const vid = job.version_id ?? "";
+  const cut = vid.indexOf(":");
+  const edit = readEdit(vid.slice(0, cut));
+  return edit && !edit.trashedAt ? k.place(edit, vid.slice(cut + 1)) : "server";
+}
+
+/** The kinds the server runs (a computer may run them too, through the work package: api/work/routes.ts). */
+export const coreKinds = (): string[] => Object.keys(KINDS).filter((k) => KINDS[k]!.source === "core");
 
 /** Registers kinds that a device runs. Called once per kind (at boot, or by tests). */
 export function registerDeviceKinds(kinds: string[]): void {
@@ -151,8 +204,9 @@ export function claimStep(
 
 /**
  * A device that has gone quiet (not online) loses the steps it holds: they go back in the queue at once, not after the
- * lease runs out, and an attempt that was already used is kept (failed after MAX_ATTEMPTS, as requeueExpired does).
- * Returns how many steps were released.
+ * lease runs out. A device kind's attempt that was already used is kept (failed after MAX_ATTEMPTS, as requeueExpired
+ * does); a core step a computer ran (the work package) goes back with its try not counted: a laptop that sleeps did not
+ * fail it (a crash is reported with fail, which counts). Returns how many steps were released.
  */
 export function releaseQuietDevices(db: DatabaseSync, isOnline: (device: string) => boolean): number {
   const held = db.prepare("SELECT DISTINCT device FROM edit_jobs WHERE state = 'running' AND device IS NOT NULL").all() as { device: string }[];
@@ -162,6 +216,15 @@ export function releaseQuietDevices(db: DatabaseSync, isOnline: (device: string)
     // whose steps these are: their edit lists change (a step back in the queue, or failed)
     const actors = db.prepare("SELECT DISTINCT actor FROM edit_jobs WHERE state = 'running' AND device = ?").all(device) as { actor: string | null }[];
     for (const { actor } of actors) if (actor) announce(actor, "editor");
+    const core = coreKinds();
+    released += Number(
+      db
+        .prepare(
+          `UPDATE edit_jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), lease_until = NULL, device = NULL
+           WHERE state = 'running' AND device = ? AND kind IN (${core.map(() => "?").join(", ")})`,
+        )
+        .run(device, ...core).changes,
+    );
     released += Number(
       db
         .prepare(

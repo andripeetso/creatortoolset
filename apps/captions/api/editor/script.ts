@@ -212,7 +212,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   const workspace = await workspaceSetup(edit, 12_000);
   // short videos from a long recording: the AI finds the parts that stand alone, and each is a version of one line (moments.ts)
   if (edit.moments) {
-    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: [workspace, styleBlock(edit.style)].filter(Boolean).join("\n\n"), ...(edit.feedback?.length ? { notes: notesPrompt(edit.feedback) } : {}) });
+    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: [workspace, await styleBlock(edit.style)].filter(Boolean).join("\n\n"), ...(edit.feedback?.length ? { notes: notesPrompt(edit.feedback) } : {}) });
     let found: RawMoment[];
     try {
       // ponytail: the whole transcript in one request (measured: 31.5 minutes of talk, 467 sentences, is a request of 16,600 tokens,
@@ -247,7 +247,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     targetS: edit.targetS,
     // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts), then the one skill
     // the style names (api/lib/skills.ts, cut there); no style adds nothing
-    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style, edit), edit.style?.skill ? await skillText(ownerOf(edit), [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
+    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), await styleBlock(edit.style, edit), edit.style?.skill ? await skillText(ownerOf(edit), [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
     examples: await finishedBlock(edit),
     // a version after the first: the person's notes, and the last version to start from (what they don't speak to stays)
     ...(edit.feedback?.length ? { notes: edit.feedback, last: lastOf(edit.id) } : {}),

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
@@ -14,10 +14,10 @@ import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
-import { claimTranscript, declareModels, heldAudio, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
+import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
-import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
+import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, setDeviceWork, touchDevice } from "./lib/devices";
 import { clearTries, waitFor, wrongTry } from "./lib/sign-in-code";
 import { findUser } from "./users";
 import { resolveGranted } from "./lib/packs";
@@ -27,6 +27,9 @@ import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
 import { env } from "./lib/env";
+import { workWaits } from "./work/place";
+import { SERVER_PLACE } from "./work/server-work";
+import { workApp } from "./work/routes";
 
 /**
  * The Macs that run AI jobs (lib/devices.ts). Routes (boot.ts mounts them at /api/devices):
@@ -42,8 +45,10 @@ import { env } from "./lib/env";
  *   GET /api/devices/relay/cutout/:id, POST …/cutout/:id | …/cutout/:id/fail   a cut-out (lib/cutouts.ts): the picture, its PNG or why not
  *   GET /api/devices/relay/job/:kind/:id, POST …/:id | …/:id/file | …/:id/fail   a plug-in's job (lib/plugin.ts DeviceJobSlot)
  *   GET /api/devices/relay/transcribe/:id, POST …/transcribe/:id | …/:id/fail   a transcript (lib/computer-transcribe.ts): the audio, the words or why not
+ *   /api/devices/relay/work/…                                    a computer's work package worker (api/work/routes.ts, contracts/work.ts)
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
- *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits: contracts/devices.ts)
+ *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits, { work: true } when a
+ *       work package step waits for it: contracts/devices.ts)
  *       the Mac app's side, Authorization: Bearer ctd_… (boot.ts checks it before the cookie gate); the same bodies
  *       as the relay routes in mac-claude.ts (relayRoutes)
  */
@@ -112,10 +117,17 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
  * as the claim keeps them, and true says a claim made now would be handed a step, so the poll is answered with the hint.
  * A list that is no list of kinds is read as none sent.
  */
-async function editorWaits(device: string, listed: unknown): Promise<boolean> {
+async function editorWaits(device: string, listed: unknown, workV?: unknown): Promise<DeviceHint | null> {
   const d = deviceOf(device);
+  if (!d) return null;
+  // `work`: the package version this computer's worker runs (contracts/work.ts WORK_V). Kept with the device before its
+  // worker ever claimed, so a computer that never ran one is told when a step waits for it and starts it
+  if (typeof workV === "number" && workV > (d.work?.v ?? 0)) setDeviceWork(d.id, { ...(d.work ?? { steps: [] }), v: workV });
   const kinds = parseKinds(listed);
-  return !!d && !!kinds && waits(d, await declared(d, kinds));
+  const editor = kinds ? await waits(d, await declared(d, kinds)) : false;
+  // a core step placed on a computer: the app starts its worker, which claims it through work/claim
+  const work = await workWaits(deviceOf(device) ?? d);
+  return editor || work ? { ...(editor ? { editor: true as const } : {}), ...(work ? { work: true as const } : {}) } : null;
 }
 /**
  * Whether a step of one of these kinds waits for this device: an edit's (editor/worker.ts), a cut-out (lib/cutouts.ts),
@@ -152,11 +164,12 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
   return c.json(await ended(d, failForDevice(d.id, jobId(c), why)));
 });
 // a step's file from the server's copy (contracts/devices.ts DeviceFootage `copy`): only to the device that holds the step,
-// and only what the server already keeps (nothing is uploaded for it)
+// and only what the server already keeps (nothing is uploaded for it): its proxy; the original only when asked for and
+// the library uploads originals (editor/reach.ts heldCopy)
 devicesApp.get("/relay/editor/job/:id/footage/:version", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const key = heldCopy(d.id, jobId(c), c.req.param("version"));
+  const key = heldCopy(d.id, jobId(c), c.req.param("version"), c.req.query("original") === "1");
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 // a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
@@ -244,11 +257,23 @@ devicesApp.post("/relay/job/:kind/:id/fail", async (c) => {
 });
 
 // a transcript (contracts/devices.ts TRANSCRIBE_KIND): the audio, and the words the computer heard or why it could not
-devicesApp.get("/relay/transcribe/:id", (c) => {
+devicesApp.get("/relay/transcribe/:id", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const file = heldAudio(d.id, jobId(c));
+  let file: string | null;
+  try {
+    file = await heldAudio(d.id, jobId(c));
+  } catch (e) {
+    return c.json({ error: `The sound could not be read: ${e instanceof Error ? e.message : e}`.slice(0, 500) }, 500);
+  }
   return file ? new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, { headers: { "content-type": "audio/wav" } }) : c.json({ error: "Not found" }, 404);
+});
+// a library file's transcript: the server's proxy, for a computer that cuts the sound itself and has no copy of its own
+devicesApp.get("/relay/transcribe/:id/proxy", (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const key = heldProxy(d.id, jobId(c));
+  return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 devicesApp.post("/relay/transcribe/:id", async (c) => {
   const d = deviceCaller(c);
@@ -263,29 +288,28 @@ devicesApp.post("/relay/transcribe/:id/fail", async (c) => {
   return c.json(await ended(d, transcriptFailed(d.id, jobId(c), typeof b?.error === "string" && b.error ? b.error : "Your computer could not transcribe it.")));
 });
 
+devicesApp.route("/relay/work", workApp);
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
 devicesApp.route("/storage", storageApp);
 
-/** Load balancing (Settings → Devices, lib/balance.ts readBalance). Admins only. */
+/** Load balancing (Settings → Devices, lib/balance.ts readBalance): each person's own computers, and the server (SERVER_PLACE). */
 const ALLOWED_WEIGHTS = new Set<number>(LOAD_PREFERENCES.map((x) => x.value));
 
 devicesApp.get("/balance", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
-  if (u.role !== "admin") return c.json({ error: "Only an admin sees load balancing" }, 403);
   return c.json(await readBalance(u.username));
 });
 
 devicesApp.put("/balance", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
-  if (u.role !== "admin") return c.json({ error: "Only an admin changes load balancing" }, 403);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const cur = await readBalance(u.username);
   if (typeof b?.on === "boolean") cur.on = b.on;
   if (b?.weights && typeof b.weights === "object") {
     for (const [id, v] of Object.entries(b.weights as Record<string, unknown>)) {
-      if (deviceOf(id)?.owner !== u.username || typeof v !== "number" || !ALLOWED_WEIGHTS.has(v)) return c.json({ error: `Bad weight for ${id}` }, 400);
+      if ((id !== SERVER_PLACE && deviceOf(id)?.owner !== u.username) || typeof v !== "number" || !ALLOWED_WEIGHTS.has(v)) return c.json({ error: `Bad weight for ${id}` }, 400);
       cur.weights[id] = v;
     }
   }

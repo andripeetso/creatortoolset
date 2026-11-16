@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { Card, Row, Section } from "@/components/settings/ui";
 import { cn } from "@/lib/utils";
+import { WorkspaceServerWork } from "@/components/settings/ServerWorkSection";
 import { LanguageSelect } from "../LanguageSelect";
 import { CtMark } from "../CtMark";
 import { droppedFiles } from "../assistant/draft";
@@ -420,6 +421,7 @@ export function ProjectForm({
           }
         />
       )}
+      {!setup && initial && <WorkspaceServerWork projectId={initial.id} />}
       {children}
     </Card>
   );

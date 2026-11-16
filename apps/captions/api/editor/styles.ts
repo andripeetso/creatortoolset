@@ -28,6 +28,7 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
 import { ownerOf, type EditMeta } from "./store";
+import { ask, onComputer } from "../work/on-computer";
 
 /**
  * Editing styles (contracts/editor-styles.ts): one file per account, $DATA_DIR/editor-styles/<username>.json, holding
@@ -287,7 +288,9 @@ export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: 
  * a file changed by hand can never send more. With the edit (`now`: the plan and script steps), what the style as it
  * is now adds after the notes too (styleLayers); a style with no playbook and nothing learned adds nothing more.
  */
-export function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { workspaceId?: string }): string {
+export async function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { workspaceId?: string }): Promise<string> {
+  // on a computer the style as it is now is the server's (work/serve.ts): the held job's edit and its style
+  if (now && onComputer.on) return ask("styleBlock");
   return now ? styleLayers({ ...now, style }) : notesBlock(style);
 }
 
@@ -378,7 +381,8 @@ export function layersOf(
  * The footage profile's second line: what was finished in a workspace, from the learned entries of all the person's
  * styles: `Finished here: 3 "Hard edit" edits, 22 to 25 s.` Empty with none.
  */
-export function finishedProfile(username: string, workspaceId: string): string {
+export async function finishedProfile(username: string, workspaceId: string): Promise<string> {
+  if (onComputer.on) return ask("finishedProfile");
   const parts = read(username)
     .editing.map((s) => {
       const here = (s.learned ?? []).filter((l) => l.workspaceId === workspaceId);

@@ -10,10 +10,11 @@ import type { SessionUser } from "./users";
  * Settings → Storage, "Your files" (contracts/storage.ts KEPT_KINDS), mounted at /api/devices/storage/kept:
  *   GET  /              → KeptView: this account's files in the server's data folder, in every workspace, by kind (size and count)
  *   POST /:kind/empty   → deletes this account's files of one EMPTIED kind: the trash, a chat's pictures and videos,
- *                         finished renders, the shot description sheets its Macs keep. Work (projects, Review videos,
+ *                         finished renders, the shot description sheets its Macs keep, a computer's proxies (?device=). Work (projects, Review videos,
  *                         posts…) is deleted in its own tool.
  * The shot description sheets are on the account's Macs, not here: counted from what each Mac's last claim said, and
- * emptied by telling each Mac on its next claim (library/mac-look.ts).
+ * emptied by telling each Mac on its next claim (library/mac-look.ts). So is each computer's proxy cache, one row per
+ * computer (work/offline.ts emptyProxies); its Empty leaves the proxies kept offline.
  * Only the caller's own files: a kind's folder is fixed here, never sent by the client. A file with no owner (made before
  * accounts) counts as the server's first admin's.
  *
@@ -145,7 +146,8 @@ async function itemsOf(kind: KeptKind, u: Who, stores: Stores): Promise<Item[]> 
     case "exports":
       return (await (await import("./exports")).finishedExportDirs(u.username)).map((d) => ({ id: path.basename(d), paths: [d] }));
     case "look-sheets":
-      return []; // on the Macs: measure reads their count
+    case "proxies":
+      return []; // on the computers: measure reads their count
   }
 }
 
@@ -206,6 +208,14 @@ async function measure(u: Who, stores: Stores = new Map()): Promise<Array<KeptRo
       listed.push(item);
     }
     if (kind === "library") bytes += await bucketBytes(listed.map((i) => i.id));
+    if (kind === "proxies") {
+      const { listDevices } = await import("./lib/devices");
+      for (const d of listDevices((x) => x.owner === u.username && !!x.work?.cache)) {
+        const cache = d.work!.cache!;
+        rows.push({ kind, bytes: cache.bytes, items: cache.versions?.length ?? 0, device: { id: d.id, name: d.name }, listed });
+      }
+      continue;
+    }
     if (kind === "look-sheets") {
       const on = (await import("./library/mac-look")).lookSheetsOf(u.username);
       rows.push({ kind, ...on, listed });
@@ -225,7 +235,8 @@ export async function keptView(u: Who, stores?: Stores): Promise<KeptView> {
 }
 
 /** Empty one kind: exactly the items its row counts go, each the way its own tool deletes it. */
-export async function emptyKept(kind: KeptKind, u: Who): Promise<void> {
+export async function emptyKept(kind: KeptKind, u: Who, device?: string): Promise<void> {
+  if (kind === "proxies") return (await import("./work/offline")).emptyProxies(u.username, device);
   const listed = (await measure(u)).find((r) => r.kind === kind)?.listed ?? [];
   if (kind === "captions-trash") return (await import("./projects")).emptyProjectTrash(listed.map((i) => i.id));
   if (kind === "review-trash") return (await import("./review")).emptyReviewTrash(listed.map((i) => i.id));
@@ -241,6 +252,6 @@ keptApp.get("/", async (c) => c.json(await keptView(c.get("user"))));
 keptApp.post("/:kind/empty", async (c) => {
   const kind = EMPTIED.find((k) => k === c.req.param("kind"));
   if (!kind) return c.json({ error: "That can't be emptied here" }, 400);
-  await emptyKept(kind, c.get("user"));
+  await emptyKept(kind, c.get("user"), c.req.query("device"));
   return c.json(await keptView(c.get("user")));
 });

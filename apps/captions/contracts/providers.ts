@@ -191,6 +191,12 @@ export interface Device {
    * LIBRARY_LOOK_KIND): their size and how many clips; `clear`: Settings → Storage → Empty, told on its next claim
    */
   looks?: { bytes: number; items: number; clear?: true };
+  /**
+   * its work package worker, by its last work claim (contracts/work.ts, api/work/routes.ts): the package format it reads,
+   * the plug-in steps it has, its proxy cache. Kept apart from `kinds`, which the device runner's claim rewrites.
+   * `empty`: Settings → Storage → Empty, told on its next claim.
+   */
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

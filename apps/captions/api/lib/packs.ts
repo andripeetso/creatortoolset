@@ -11,6 +11,7 @@ import { slotSkills } from "./skills";
 import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import type { Framework } from "./workshop/types";
 import type { ProviderOpts } from "../ai-complete";
+import { ask, onComputer } from "../work/on-computer";
 
 /**
  * Installed packs. Install copies a pack's frameworks and caption styles into the person's account with
@@ -382,6 +383,8 @@ export const runsWithoutTools = (ai: ProviderOpts): boolean => !ai.mac?.provider
  * as files (api/workshop.ts) and the script step only the one a style names (skillText).
  */
 export async function packInstructions(username: string, slot: PackSlot, projectId: string | null | undefined, run: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
+  // on a computer: the server reads the job's account's packs on its own route (work/serve.ts)
+  if (onComputer.on) return ask("packInstructions", slot, projectId ?? null, !!run.tools);
   const packs = await listInstalled(username);
   const shippedOnly = run.tools || !runsWithoutTools(run.ai);
   const text = renderPackInstructions(shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);

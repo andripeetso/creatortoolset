@@ -68,8 +68,12 @@ export function indexAsset(db: DatabaseSync, assetId: string): void {
   );
 }
 
-/** Reads the query string of GET /assets. Unknown kinds are dropped; limit is clamped to 1..200. */
-export function parseSearch(p: Record<string, string | undefined>): SearchQuery {
+/**
+ * Reads the query string of GET /assets. Unknown kinds are dropped; limit is clamped to 1..200. A computer is kept only
+ * when it is `username`'s own.
+ */
+export function parseSearch(p: Record<string, string | undefined>, username?: string): SearchQuery {
+  const device = p.device && username && deviceOf(p.device)?.owner === username ? p.device : undefined;
   const num = (v: string | undefined) => (v !== undefined && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : undefined);
   const kind = (p.kind ?? "").split(",").filter((k): k is AssetKind => KINDS.includes(k as AssetKind));
   const limit = num(p.limit);
@@ -87,6 +91,7 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
     ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
     ...(p.place && /^[A-Z]{2}$/.test(p.place) ? { place: p.place } : {}),
+    ...(device ? { device, ...(p.here === "1" ? { here: true as const } : {}) } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
@@ -146,9 +151,17 @@ const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM ass
 /** Filmed in this country: the current version's probe (media/probe.ts countryOf). */
 const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions pv WHERE pv.id = a.current_version_id) = ?";
 
+/** The versions whose proxy `device`'s cache holds, as its last work claim said (api/work/routes.ts). */
+const cachedOn = (device: string): string[] => deviceOf(device)?.work?.cache?.versions ?? [];
+
+/** On this computer: its proxy in the computer's cache, or the file indexed there. */
+const HERE = `(a.current_version_id IN (SELECT value FROM json_each(?))
+  OR (SELECT hv.mac_device FROM asset_versions hv WHERE hv.id = a.current_version_id) = ?)`;
+
 /** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
 export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
   return [
+    ...(query.here && query.device ? [{ sql: HERE, params: [JSON.stringify(cachedOn(query.device)), query.device] }] : []),
     ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
     ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
     ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
@@ -286,6 +299,16 @@ const describedAs = (s: string): NonNullable<AssetCard["description"]> => {
   const i = s.indexOf("\x1f");
   return { source: s.slice(0, i) === "user" ? "user" : "ai", text: s.slice(i + 1) };
 };
+
+/** Marks the cards on `device` (the asker's own computer, parseSearch): its proxy cached there, or the file indexed there. */
+export function markHere(db: DatabaseSync, cards: AssetCard[], device?: string): AssetCard[] {
+  if (!device || !cards.length) return cards;
+  const cached = new Set(cachedOn(device));
+  const there = new Set(
+    (db.prepare("SELECT id FROM asset_versions WHERE mac_device = ? AND id IN (SELECT value FROM json_each(?))").all(device, JSON.stringify(cards.map((c) => c.versionId))) as { id: string }[]).map((r) => r.id),
+  );
+  return cards.map((c) => (cached.has(c.versionId) || there.has(c.versionId) ? { ...c, here: true as const } : c));
+}
 
 /** One page: items, plus the cursor when more follow. */
 export function pageOf(rows: CardRow[], limit: number): AssetPage {

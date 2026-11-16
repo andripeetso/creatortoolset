@@ -23,15 +23,20 @@ import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
+import { locateApp } from "./locate";
 import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
-import { buildAssetQuery, indexAsset, macPlace, pageOf, parseSearch, type CardRow } from "./query";
+import { offlineApp } from "../work/offline";
+import { buildAssetQuery, indexAsset, macPlace, markHere, pageOf, parseSearch, type CardRow } from "./query";
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, parseOnMac } from "./on-mac";
+import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
+import { deviceOf } from "../lib/devices";
+import { WORK_MIN } from "../../contracts/work";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -43,6 +48,8 @@ import { indexOnMac, parseOnMac } from "./on-mac";
 export const libraryApp = new Hono<{ Variables: AuthVars }>();
 libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
+libraryApp.route("/offline", offlineApp); // GET/POST /offline: Available offline (api/work/offline.ts)
+libraryApp.route("/", locateApp); // GET, POST /:id/locate
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
@@ -264,9 +271,49 @@ interface UploadRow {
   direct_upload_id: string | null;
   from_path: string | null;
   from_device: string | null;
+  /** what the phone made of the file itself (derived.ts Made), JSON; cleared once filed */
+  made: string | null;
 }
 
 const db = () => libraryDb();
+
+const madeOf = (row: UploadRow): Made | null => (row.made ? (JSON.parse(row.made) as Made) : null);
+
+/** The library's copy of this upload's file: by its checksum, or by the original's quick fingerprint and size (a 720p copy's checksum is its own). */
+function duplicateOf(row: UploadRow, sha256: string): { id: string; current: string | null } | undefined {
+  if (row.replaces_asset_id) return undefined;
+  const made = madeOf(row);
+  return db()
+    .prepare(
+      `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
+    )
+    .get(row.library_id, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
+}
+
+/**
+ * After the version of an upload with what the phone made was recorded (its probe job held back): files the card picture,
+ * the quick fingerprint and, for a 720p copy, the original's probe (derived.ts recordMade). Whatever fails here, the
+ * version is probed by this server as any upload is: it never waits on a picture.
+ */
+async function fileMade(row: UploadRow, versionId: string): Promise<void> {
+  const made = madeOf(row);
+  if (!made) return;
+  const thumb = made.thumb ? path.join(stagingDir(), `${row.id}.thumb.jpg`) : null;
+  try {
+    if (thumb) {
+      await mkdir(stagingDir(), { recursive: true });
+      await writeFile(thumb, Buffer.from(made.thumb!, "base64"));
+    }
+    await recordMade(versionId, made, row.size, thumb, row.created_by);
+  } catch (e) {
+    console.error("[library] what the phone made:", e);
+    enqueueJob(db(), row.library_id, versionId, "probe", row.created_by);
+  } finally {
+    if (thumb) await rm(thumb, { force: true });
+    db().prepare("UPDATE uploads SET made = NULL WHERE id = ?").run(row.id);
+  }
+}
 
 // a Review video: Review owns its versions and its trash, so the library refuses to add a version or trash it
 const IN_REVIEW = { error: "This video lives in Review: change it there", code: "conflict" } as const;
@@ -336,19 +383,12 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
     throw new Error("The bucket's copy is not the size that was declared");
   }
   const sha256 = await sha256File(await store.localCopy(key));
-  if (!row.replaces_asset_id) {
-    const dup = db()
-      .prepare(
-        `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1`,
-      )
-      .get(row.library_id, sha256) as { id: string; current: string | null } | undefined;
-    if (dup) {
-      await store.delete(key); // not metered yet, so no usage to take back
-      db().prepare("UPDATE uploads SET state = 'done' WHERE id = ?").run(row.id);
-      uploadDone(row.id, dup.current);
-      return c.json({ duplicateOf: dup.id });
-    }
+  const dup = duplicateOf(row, sha256);
+  if (dup) {
+    await store.delete(key); // not metered yet, so no usage to take back
+    db().prepare("UPDATE uploads SET state = 'done', made = NULL WHERE id = ?").run(row.id);
+    uploadDone(row.id, dup.current);
+    return c.json({ duplicateOf: dup.id });
   }
   meter(row.library_id, row.size); // the bytes went to the bucket around blobs.put, so the usage is counted here
   const d = db();
@@ -361,13 +401,14 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       versionId: row.id,
       sourceKey: key,
       filename: row.filename,
-      size: row.size,
+      size: madeOf(row)?.proxy?.size ?? row.size, // a 720p copy: the version is the original's size, as one kept on a computer
       sha256,
       by: row.created_by,
       collectionId: row.collection_id,
       fromPath: row.from_path,
       fromDevice: row.from_device,
     });
+    if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
     d.exec("COMMIT");
   } catch (e) {
@@ -375,6 +416,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
     await blobs.delete(key); // metered above, so the delete takes the usage back
     throw e;
   }
+  await fileMade(row, row.id);
   uploadDone(row.id, row.id);
   return c.json({ assetId, versionId: row.id });
 }
@@ -394,8 +436,11 @@ libraryApp.post("/:id/uploads/check", async (c) => {
   return c.json(dup ? { duplicateOf: dup.id } : {});
 });
 
-// POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice? } → 201 { id, offset, chunkSize }
+// POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice?, quick?, send? } → 201 { id, offset, chunkSize }
 // fromPath / fromDevice: where the file is on the Mac it is sent from (a library that keeps only proxies keeps that place)
+// send (with quick, the Mac's quickPrint): a video on the caller's own computer whose worker takes library jobs is not
+// uploaded by the page: 200 { assetId, versionId, sent: true } | { duplicateOf }, and that computer makes the proxy and
+// the small files and sends them, the original too only to a library that keeps originals (derived.ts sendLater)
 libraryApp.post("/:id/uploads", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -424,11 +469,22 @@ libraryApp.post("/:id/uploads", async (c) => {
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   }
-  await sweepStale();
   const id = randomUUID();
   const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
   const from = typeof body?.fromPath === "string" && body.fromPath.startsWith("/") && body.fromPath.length <= 2048 && !body.fromPath.split("/").includes("..") ? body.fromPath : null;
   const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
+  const sender = fromDevice ? deviceOf(fromDevice) : undefined;
+  if (
+    body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename)
+  ) {
+    const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
+    return c.json("versionId" in r ? { ...r, sent: true } : r);
+  }
+  // what the phone made of the file itself (derived.ts Made): only to a library this server files it for
+  const made = await parseMade(body);
+  if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
+  await sweepStale();
   const staging = path.join(stagingDir(), id);
   // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
   const direct = libraryStore(libraryId).direct;
@@ -444,8 +500,8 @@ libraryApp.post("/:id/uploads", async (c) => {
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -460,6 +516,7 @@ libraryApp.post("/:id/uploads", async (c) => {
       started?.uploadId ?? null,
       from,
       fromDevice,
+      made ? JSON.stringify(made) : null,
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -603,19 +660,12 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     const got = await stagedBytes(row.staging_path);
     if (got !== row.size) return c.json({ error: "The upload is incomplete", code: "conflict", offset: got }, 409);
     const sha256 = await sha256File(row.staging_path);
-    if (!row.replaces_asset_id) {
-      const dup = db()
-        .prepare(
-          `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-           WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1`,
-        )
-        .get(row.library_id, sha256) as { id: string; current: string | null } | undefined;
-      if (dup) {
-        await rm(row.staging_path, { force: true });
-        db().prepare("UPDATE uploads SET state = 'done' WHERE id = ?").run(row.id);
-        uploadDone(row.id, dup.current);
-        return c.json({ duplicateOf: dup.id });
-      }
+    const dup = duplicateOf(row, sha256);
+    if (dup) {
+      await rm(row.staging_path, { force: true });
+      db().prepare("UPDATE uploads SET state = 'done', made = NULL WHERE id = ?").run(row.id);
+      uploadDone(row.id, dup.current);
+      return c.json({ duplicateOf: dup.id });
     }
     const versionId = randomUUID();
     const sourceKey = `libraries/${row.library_id}/v/${versionId}/source`;
@@ -630,19 +680,21 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         versionId,
         sourceKey,
         filename: row.filename,
-        size: row.size,
+        size: madeOf(row)?.proxy?.size ?? row.size, // a 720p copy: the version is the original's size, as one kept on a computer
         sha256,
         by: row.created_by,
         collectionId: row.collection_id, // the folder it was dropped in
         fromPath: row.from_path,
         fromDevice: row.from_device,
       });
+      if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
       d.exec("COMMIT");
     } catch (e) {
       d.exec("ROLLBACK");
       throw e;
     }
+    await fileMade(row, versionId);
     uploadDone(row.id, versionId);
     return c.json({ assetId, versionId });
   } catch (e) {
@@ -667,7 +719,8 @@ libraryApp.get("/", async (c) => {
     settings: settingsOf(r.settings),
     ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
   }));
-  return c.json({ libraries });
+  // uploadTakes: an upload start here takes what a phone made of a video itself (derived.ts Made)
+  return c.json({ libraries, uploadTakes: UPLOAD_TAKES });
 });
 
 const settingsOf = (json: string): LibrarySettings => {
@@ -821,11 +874,11 @@ libraryApp.get("/:id/assets", async (c) => {
     }
     return c.json({ items, ...(refused ? { refused } : {}) });
   }
-  const query = expandCollection(libraryId, parseSearch(c.req.query()));
+  const query = expandCollection(libraryId, parseSearch(c.req.query(), user.username));
   if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);
   const { sql, params, limit } = buildAssetQuery(libraryId, query);
   const page = pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit);
-  return c.json({ ...page, items: await visibleCards(viewer, libraryId, page.items) });
+  return c.json({ ...page, items: markHere(db(), await visibleCards(viewer, libraryId, page.items), query.device) });
 });
 
 /**

@@ -14,6 +14,7 @@ import Foundation
 //   Look for new files. Hidden entries, packages and links are skipped; at most 20 000.
 // - import:print:{"paths":[…]} → { prints:{ path: hex } }: each granted file's quick fingerprint, the same as the page's
 //   quickPrint (src/lib/onMac.ts), which the server's duplicate check compares.
+// - import:locate:{"folder"?,"files":[…]} → Locate… in the Media Library (Locate.swift).
 
 func isImportAsk(_ ask: String) -> Bool { ask.hasPrefix("import:") }
 
@@ -28,6 +29,7 @@ enum ImportAsk: Equatable {
     case cancel(String)
     case scan(String)
     case print([String])
+    case locate(folder: String?, files: [LocateFile])
 }
 
 /// An `import:` ask as its parts; nil when it is malformed.
@@ -48,6 +50,12 @@ func importAsk(_ ask: String) -> ImportAsk? {
         return files.count == list.count ? .copy(id: id, files: files) : nil
     case "scan": return (json["path"] as? String).map(ImportAsk.scan)
     case "print": return (json["paths"] as? [String]).map { ImportAsk.print(Array($0.prefix(5000))) }
+    case "locate":
+        guard let list = json["files"] as? [[String: Any]] else { return nil }
+        let files = list.compactMap { f in
+            (f["id"] as? String).flatMap { id in (f["path"] as? String).flatMap { path in (f["bytes"] as? NSNumber).map { LocateFile(id: id, path: path, bytes: $0.int64Value) } } }
+        }
+        return files.count == list.count ? .locate(folder: json["folder"] as? String, files: files) : nil
     default: return nil
     }
 }
@@ -112,6 +120,8 @@ final class Imports: @unchecked Sendable {
                 for p in paths where Self.inside(p, granted) != nil { prints[p] = Self.quickPrint(p) }
                 main(["prints": prints])
             }
+        case .locate(let folder, let files)?:
+            DispatchQueue.global(qos: .userInitiated).async { main(Locate.answer(folder: folder, files: files, allowed: MediaFiles.granted + Self.destinations)) }
         case nil: done(["error": "Not an import this app knows."])
         }
     }

@@ -356,6 +356,12 @@ export const importScan = (path: string) =>
 /** Each path's fingerprint, the one lib/onMac.ts quickPrint makes from the file. */
 export const importPrint = (paths: string[]) =>
   importAsk<{ prints?: Record<string, string> }>(`import:print:${JSON.stringify({ paths })}`).then((r) => r.prints ?? {});
+/** Locate… (apps/mac Locate.swift): which of `files` are gone from their path here, and the files in `folder` of their sizes with fingerprints. */
+export const importLocate = (files: { id: string; path: string; bytes: number }[], folder?: string) =>
+  importAsk<{ gone?: string[]; files?: { path: string; size: number; quick: string }[] }>(`import:locate:${JSON.stringify({ folder, files })}`).then((r) => ({
+    gone: r.gone ?? [],
+    files: r.files ?? [],
+  }));
 
 /** The address the page reads a file on this Mac by (the Mac app's media scheme): the path, base64url. */
 export const macMediaUrl = (path: string) =>

@@ -160,7 +160,7 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
       brief: edit.brief,
       workspace: await workspaceSetup(edit, 6000),
       notes: edit.feedback ?? [],
-      style: styleBlock(edit.style, edit),
+      style: await styleBlock(edit.style, edit),
       shots: await cutLines(plan, titles),
       sheets: sheets.length,
       seconds: plan.shots.reduce((t, s) => Math.max(t, s.at + s.dur), 0),

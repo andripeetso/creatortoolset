@@ -139,7 +139,7 @@ export async function workspaceNote(username: string, workspace?: string): Promi
   const context = await workspaceContext(workspace, CONTEXT_MAX);
   // read when asked, as footageProfile reads the library: the editor's styles load the plug-in registry
   const { finishedProfile } = await import("./editor/styles");
-  const profile = [await footageProfile(workspace), finishedProfile(username, workspace ?? "")].filter(Boolean).join("\n");
+  const profile = [await footageProfile(workspace), await finishedProfile(username, workspace ?? "")].filter(Boolean).join("\n");
   return (
     (await foldersNote(username, workspace)) +
     (context ? `\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\n${context}` : "") +

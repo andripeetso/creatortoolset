@@ -21,6 +21,7 @@ import { tfidf } from "../lib/workshop/posted";
 import { typedIn } from "./own-words";
 import { allEdits, ownerOf, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
 import { change, findStyle } from "./styles";
+import { ask, onComputer } from "../work/on-computer";
 
 /**
  * What an editing style learns from (contracts/editor-styles.ts, FinishedEdit): the edits made with it that their
@@ -252,6 +253,8 @@ export function closestFinished(brief: string, list: FinishedEdit[], n = FINISHE
  */
 export async function finishedBlock(edit: Pick<EditMeta, "id" | "createdBy" | "projectId" | "brief" | "style"> & { workspaceId?: string }): Promise<string> {
   if (!edit.style) return "";
+  // on a computer the finished examples are the server's (work/serve.ts)
+  if (onComputer.on) return ask<string>("finishedBlock");
   // the edit's workspace is its owner's (ownerOf), also for an edit a teammate made there
   const owner = ownerOf(edit);
   const all = finishedOf(owner, edit.style.id).filter((r) => r.editId !== edit.id);

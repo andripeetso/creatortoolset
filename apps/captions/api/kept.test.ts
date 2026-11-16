@@ -140,3 +140,20 @@ it("through the route: a member reads their own, only the short-lived kinds can 
   expect((await member.request("/api/devices/storage/kept/chat-pictures/empty", { method: "POST" })).status).toBe(200);
   expect((await as({ username: "guest", role: "visitor" }).request("/api/devices/storage/kept")).status).toBe(403);
 });
+
+it("each computer's proxies are a row of their own, counted from its last claim; Empty tells only that computer", async () => {
+  const { pairDevice, setDeviceWork, deviceOf } = await import("./lib/devices");
+  const mac = pairDevice("tiny", "Studio Mac").device;
+  const pc = pairDevice("tiny", "Edit PC").device;
+  pairDevice("other", "Their Mac");
+  setDeviceWork(mac.id, { v: 1, steps: [], cache: { bytes: 900, versions: ["va", "vb"] } });
+  setDeviceWork(pc.id, { v: 1, steps: [], cache: { bytes: 50, versions: ["va"] } });
+  const proxies = async () => (await keptView(tiny)).rows.filter((r) => r.kind === "proxies");
+  expect(await proxies()).toEqual([
+    { kind: "proxies", bytes: 900, items: 2, device: { id: mac.id, name: "Studio Mac" } },
+    { kind: "proxies", bytes: 50, items: 1, device: { id: pc.id, name: "Edit PC" } },
+  ]);
+  await emptyKept("proxies", tiny, mac.id);
+  expect(deviceOf(mac.id)!.work).toMatchObject({ empty: true, cache: { bytes: 0, versions: [] } });
+  expect(deviceOf(pc.id)!.work!.empty).toBeUndefined();
+});

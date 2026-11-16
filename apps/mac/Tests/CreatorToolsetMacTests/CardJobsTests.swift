@@ -289,7 +289,7 @@ final class CardJobsTests: XCTestCase {
         for request in site.requests {
             // the same request the app sends today, to the same address; the one thing new is a field in its body
             XCTAssertEqual("\(request.method) \(request.path)", poll)
-            XCTAssertEqual(json(request), ["blobs": true, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check"]])
+            XCTAssertEqual(json(request), ["blobs": true, "work": 1, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check"]])
         }
         XCTAssertTrue(seen.statuses.isEmpty, "and nothing a person sees changes")
     }
@@ -329,7 +329,7 @@ final class CardJobsTests: XCTestCase {
         // while it draws, its polls go on for AI requests but list no kind: one card step at a time
         let during = all[(claimed + 1)..<finished].filter { $0.path.hasSuffix("/relay/wait") }
         XCTAssertFalse(during.isEmpty)
-        XCTAssertTrue(during.allSatisfy { self.json($0) == ["blobs": true] })
+        XCTAssertTrue(during.allSatisfy { self.json($0) == ["blobs": true, "work": 1] })
         XCTAssertEqual(seen.statuses.map(\.drawing), [true, false])
         XCTAssertTrue(seen.statuses.allSatisfy { $0.lastError == nil && $0.running == 0 })
     }
@@ -343,8 +343,8 @@ final class CardJobsTests: XCTestCase {
         XCTAssertTrue(ended)
         // the hint is followed once; the next poll lists no kind, and a hint it did not ask for is left alone for a poll's length
         XCTAssertEqual(paths(site), [poll, claim, poll])
-        XCTAssertEqual(json(site.requests[0]), ["blobs": true, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check"]])
-        XCTAssertEqual(json(site.requests[2]), ["blobs": true])
+        XCTAssertEqual(json(site.requests[0]), ["blobs": true, "work": 1, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check"]])
+        XCTAssertEqual(json(site.requests[2]), ["blobs": true, "work": 1])
         XCTAssertTrue(seen.statuses.isEmpty)
     }
 
@@ -374,9 +374,9 @@ final class CardJobsTests: XCTestCase {
         XCTAssertTrue(seen.statuses.isEmpty, "none of it is an error a person sees")
 
         // the poll's body: as today when no kind is to be said, the kinds otherwise, and none for a Mac that can't draw
-        XCTAssertEqual(runner.waitBody(listing: nil) as NSDictionary, ["blobs": true])
-        XCTAssertEqual(runner.waitBody(listing: ["cards-draw"]) as NSDictionary, ["blobs": true, "editor": ["cards-draw"]])
-        XCTAssertEqual(runner.waitBody(listing: []) as NSDictionary, ["blobs": true, "editor": [String]()])
+        XCTAssertEqual(runner.waitBody(listing: nil) as NSDictionary, ["blobs": true, "work": 1])
+        XCTAssertEqual(runner.waitBody(listing: ["cards-draw"]) as NSDictionary, ["blobs": true, "work": 1, "editor": ["cards-draw"]])
+        XCTAssertEqual(runner.waitBody(listing: []) as NSDictionary, ["blobs": true, "work": 1, "editor": [String]()])
         // only {"editor": true} is the hint
         XCTAssertTrue(RelayRunner.editorWaits(Data(#"{"editor":true}"#.utf8)))
         for other in [#"{"editor":false}"#, #"{"editor":"yes"}"#, "{}", #"{"job":null}"#, "", "not json"] {
@@ -462,7 +462,7 @@ final class CardJobsTests: XCTestCase {
         XCTAssertEqual(told?["error"] as? String, "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect (NoSuchFeature).")
         // from now on its polls say it draws no cards, so the server stops counting on it and another Mac gets the step
         for now in [1001.0, 5000, 1_000_000] { XCTAssertEqual(runner.editorKinds(now: now), ["cutout", "split", "faceblur", "folder-list", "helper-check"]) }
-        XCTAssertEqual(runner.waitBody(listing: runner.editorKinds()) as NSDictionary, ["blobs": true, "editor": ["cutout", "split", "faceblur", "folder-list", "helper-check"]])
+        XCTAssertEqual(runner.waitBody(listing: runner.editorKinds()) as NSDictionary, ["blobs": true, "work": 1, "editor": ["cutout", "split", "faceblur", "folder-list", "helper-check"]])
     }
 
     func testAStepOfAKindThisMacDidNotListIsHandedBack() {

@@ -41,6 +41,8 @@ export interface AssetCard {
   onComputer?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
+  /** on the computer that asked (`?device=`): its proxy in that computer's cache, or the file indexed there */
+  here?: true;
   /** a strip of frames across the clip, side by side in one picture (videos, once made): hover scrub and the filmstrip */
   spriteUrl?: string;
   /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
@@ -83,6 +85,10 @@ export interface SearchQuery {
   sort?: LibrarySort;
   /** only clips filmed in this country (`?place=`, ISO 3166-1 alpha-2) */
   place?: string;
+  /** the asker's own computer (`?device=`, the Mac app's id on this server): cards on it get `here` */
+  device?: string;
+  /** only clips on that computer (`?here=1`) */
+  here?: true;
   /** only clips with every one of these tags (`?tag=a,b`) */
   tags?: string[];
   /** only clips filmed from / before these times, ms (`?filmedFrom=&filmedTo=`); a clip with no filming time by when it was added. `from`/`to` stay when it was added */

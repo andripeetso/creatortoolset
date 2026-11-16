@@ -8,13 +8,16 @@ import {
   completeWithFallback,
   contentFromAnthropic,
   onApiKey,
+  parseAnswer,
   readBody,
   requestSignal,
+  serverAnswer,
   wrapFetchError,
 } from "./ai-complete";
 import type { JobId } from "../contracts/providers";
 import { recordUsage } from "./lib/mac-claude";
 import { addSpend } from "./lib/workspaces";
+import { onComputer } from "./work/on-computer";
 
 /**
  * Reading pictures (the Analyzer's slides and video frames) on the Analyzer's AI provider: the pictures go to
@@ -47,6 +50,11 @@ export async function completeVisionWithFallback<T>(
   opts: { label?: string; background?: boolean; preferKey?: boolean; job?: JobId } = {},
 ): Promise<{ value: T; provider: string }> {
   if (!images.length) throw new AiProviderError("No image to analyze", "FAILED", false);
+  // on a computer: the server reads the pictures on the job's own route (work/serve.ts); the answer is parsed here
+  if (onComputer.on) {
+    const r = await serverAnswer({ system, user: userText, images, job: opts.job ?? "analyzer", label: opts.label, ...(opts.background ? { background: true } : {}), ...(opts.preferKey ? { preferKey: true } : {}) });
+    return { value: parseAnswer(r.mac ? "mac" : "anthropic", r.text, parse), provider: r.provider };
+  }
   const label = opts.label ?? "Image reading";
   const name = typeof who === "string" ? who : who?.username;
   const job = opts.job ?? "analyzer";

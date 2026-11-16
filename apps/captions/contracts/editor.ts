@@ -124,6 +124,9 @@ export interface EditJob {
   /** while it runs: what it is doing now, when the step says (a first-time install, waiting for the person's AI); queued:
    *  why no computer has taken it, when none that runs it can read its footage ("Only Mac Studio can read Footage") */
   line?: string;
+  /** while it runs on one of the person's computers: that computer's name and, while it downloads, the bytes done and
+   *  total and the seconds left */
+  progress?: { device: string; done?: number; total?: number; leftS?: number };
 }
 
 export interface EditSummary {

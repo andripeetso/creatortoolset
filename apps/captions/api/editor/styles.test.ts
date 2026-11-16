@@ -384,13 +384,13 @@ describe.skipIf(rootReplaced)("Editing styles: what reaches the script step", ()
     expect(got.user).toBe(plain.user);
   });
 
-  it("at the cap: the block is never more than the name and the notes a style can hold, even from a file changed by hand", () => {
+  it("at the cap: the block is never more than the name and the notes a style can hold, even from a file changed by hand", async () => {
     const head = (name: string) => `Editing style ${JSON.stringify(name)}, in the author's own words:\n`;
-    const full = styleBlock({ id: "s", name: "n".repeat(STYLE_NAME_MAX), notes: "w".repeat(STYLE_NOTES_MAX), pace: "tight" });
+    const full = await styleBlock({ id: "s", name: "n".repeat(STYLE_NAME_MAX), notes: "w".repeat(STYLE_NOTES_MAX), pace: "tight" });
     expect(full).toBe(head("n".repeat(STYLE_NAME_MAX)) + "w".repeat(STYLE_NOTES_MAX));
-    expect(styleBlock({ id: "s", name: "n".repeat(500), notes: "w".repeat(50_000), pace: "tight" })).toBe(full);
-    expect(styleBlock(undefined)).toBe("");
-    expect(styleBlock({ id: "s", name: "A", notes: "  \n ", pace: "natural" })).toBe("");
+    expect(await styleBlock({ id: "s", name: "n".repeat(500), notes: "w".repeat(50_000), pace: "tight" })).toBe(full);
+    expect(await styleBlock(undefined)).toBe("");
+    expect(await styleBlock({ id: "s", name: "A", notes: "  \n ", pace: "natural" })).toBe("");
   });
 });
 
@@ -484,13 +484,13 @@ describe.skipIf(rootReplaced)("A style that learns: its playbook and what approv
     const s = await made("maker", { name: "Hard edit", notes: "Cut on the drums." });
     const copy = styleCopy(s);
     const now = { id: "e-now", createdBy: "maker", projectId: "w1" };
-    expect(styleBlock(copy, now)).toBe(styleBlock(copy));
-    expect(styleBlock(undefined, now)).toBe("");
+    expect(await styleBlock(copy, now)).toBe(await styleBlock(copy));
+    expect(await styleBlock(undefined, now)).toBe("");
     learn(s.id, [entry("e3", "w2", ["OTHER-WORKSPACE line"]), entry("e-now", "w1", ["OWN-EDIT line"]), entry("e2", "w1", ["first note", "second note"], 22), entry("e1", "w1", ["oldest note"])]);
-    expect(styleBlock(copy, { ...now, projectId: "w9" })).toBe(styleBlock(copy));
-    const got = styleBlock(copy, now);
+    expect(await styleBlock(copy, { ...now, projectId: "w9" })).toBe(await styleBlock(copy));
+    const got = await styleBlock(copy, now);
     expect(got).toBe(
-      `${styleBlock(copy)}\n\n${LEARNED_INTRO}\nCuts the author approved in this style here: 22 s, 38 shots, 0.66 s a shot, 1.5 effects a shot, 9 sources; 25 s, 38 shots, 0.66 s a shot, 1.5 effects a shot, 9 sources.\nWhat the author said about them on the way, word for word, newest first:\n- second note\n- first note\n- oldest note`,
+      `${await styleBlock(copy)}\n\n${LEARNED_INTRO}\nCuts the author approved in this style here: 22 s, 38 shots, 0.66 s a shot, 1.5 effects a shot, 9 sources; 25 s, 38 shots, 0.66 s a shot, 1.5 effects a shot, 9 sources.\nWhat the author said about them on the way, word for word, newest first:\n- second note\n- first note\n- oldest note`,
     );
     expect(got).not.toMatch(/OTHER-WORKSPACE|OWN-EDIT/);
   });
@@ -501,13 +501,13 @@ describe.skipIf(rootReplaced)("A style that learns: its playbook and what approv
     const lines = (got: string) => got.split("newest first:\n")[1]!;
     const many = Array.from({ length: 40 }, (_, i) => `note ${String(i).padStart(2, "0")} ${"w".repeat(140)}`);
     learn(s.id, [entry("e1", "", many)]);
-    const part = lines(styleBlock(styleCopy(s), { id: "x", createdBy: "maker" }));
+    const part = lines(await styleBlock(styleCopy(s), { id: "x", createdBy: "maker" }));
     expect(part.length).toBeLessThanOrEqual(LEARNED_PROMPT_MAX);
     expect(part.split("\n")).toEqual([...many].reverse().slice(0, part.split("\n").length).map((t) => `- ${t}`));
     expect(part.split("\n").length).toBeGreaterThan(10);
     // one line longer than the whole cap: the newest, cut to it
     learn(s.id, [entry("e1", "", ["x".repeat(4000)])]);
-    expect(lines(styleBlock(styleCopy(s), { id: "x", createdBy: "maker" })).length).toBe(LEARNED_PROMPT_MAX);
+    expect(lines(await styleBlock(styleCopy(s), { id: "x", createdBy: "maker" })).length).toBe(LEARNED_PROMPT_MAX);
   });
 
   it("× takes one learned entry off; another account can't", async () => {
@@ -526,8 +526,8 @@ describe.skipIf(rootReplaced)("A style that learns: its playbook and what approv
     const recap = await made("maker", { name: "Recap" });
     learn(hard.id, [entry("a", "w1", [], 22), entry("b", "w1", [], 25), entry("c", "w1", [], 24), entry("d", "w2", [], 60)]);
     learn(recap.id, [entry("e", "w1", [], 48)]);
-    expect(finishedProfile("maker", "w1")).toBe('Finished here: 3 "Hard edit" edits, 22 to 25 s; 1 "Recap" edit, 48 s.');
-    expect(finishedProfile("maker", "w2")).toBe('Finished here: 1 "Hard edit" edit, 60 s.');
-    expect(finishedProfile("maker", "w3")).toBe("");
+    expect(await finishedProfile("maker", "w1")).toBe('Finished here: 3 "Hard edit" edits, 22 to 25 s; 1 "Recap" edit, 48 s.');
+    expect(await finishedProfile("maker", "w2")).toBe('Finished here: 1 "Hard edit" edit, 60 s.');
+    expect(await finishedProfile("maker", "w3")).toBe("");
   });
 });

@@ -451,4 +451,16 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (collection_id, asset_id)
   );
   `,
+  // 25: every version's quick fingerprint (SHA-256 over the size, the first and the last MiB: work/files.ts quickPrint, the
+  // Mac's the same), so a moved original is found again by it (locate.ts) and a computer finds its own copy. A file
+  // indexed on a Mac kept it in sha256 ("mac:<quick>"); an upload gets it at its probe, older ones by locate.ts backfillQuick
+  `
+  ALTER TABLE asset_versions ADD COLUMN quick TEXT;
+  UPDATE asset_versions SET quick = substr(sha256, 5) WHERE sha256 LIKE 'mac:%';
+  `,
+  // 26: what a phone made of a video itself, sent with its upload's start (derived.ts Made: quick fingerprint, card
+  // picture, a 720p copy's original probe), kept until the upload finishes and it is filed
+  `
+  ALTER TABLE uploads ADD COLUMN made TEXT;
+  `,
 ];
