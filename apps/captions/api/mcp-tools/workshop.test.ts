@@ -311,6 +311,7 @@ describe("who writes a piece", () => {
   it("an AI app writes the words itself from the writer's material, given at once: the project, the posts and the user's rewrites", async () => {
     const cookie = await cookieOf("ana");
     const project = String((await page(cookie, "/api/workshop/projects", "POST", { name: "Puppy school", notes: "For new dog owners. Classes at puppyschool.example." })).id);
+    const guide = String((await page(cookie, "/api/workshop/sources", "POST", { name: "classes.md", text: "Classes run on Saturdays.", projectId: project })).id);
     const s = (await tool(key, "workshop_new_session", { title: "Recall", project })).value!;
     const piece = String((s.pieces as Row[])[0]!.id);
     // a rewrite of hers: the AI's line, then the one she made of it on the page
@@ -327,6 +328,10 @@ describe("who writes a piece", () => {
     expect(asked).toMatchObject({ write_it_yourself: true });
     const material = asked.material as Row;
     expect(String(material.project)).toContain("For new dog owners. Classes at puppyschool.example.");
+    // the workspace's context files are listed with it, by the id workspace_files reads them by
+    expect(String(material.project)).toContain("Context files added to the workspace:");
+    expect(String(material.project)).toContain(`[${guide}]`);
+    expect(String(asked.answer)).toContain("workspace_files reads one");
     expect(String(material.their_rewrites)).toContain("AI wrote:\nUnlock your dog's recall potential today.\n--- The author made it:\nCall them once, then go quiet and wait.");
     // no Instagram on this project, so no posts of hers: how people talk stands in for them
     expect(String(material.plain_voice)).toContain("How people sound when they talk to one person.");

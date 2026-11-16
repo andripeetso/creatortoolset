@@ -63,14 +63,14 @@ import {
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
-import { workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
+import { renderContext, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
 import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN, pieceMarkdown } from "../src/lib/workshop-markdown";
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
-import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext, renderInstructions } from "./lib/workshop/prompt";
+import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext } from "./lib/workshop/prompt";
 import { DRAFT_SYSTEM, OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, inlineFiles, keptFiles, knowledgeFiles, splitBundle, knowledgeIndex, ocrPrompt, parseDraft, parseReading, parseSourcePatch, readPrompt, type Filing } from "./lib/workshop/sources";
 import { documentText, webPageText } from "./lib/workshop/source-files";
 import { parseYoutubeUrl } from "./lib/youtube/url";
@@ -360,6 +360,8 @@ const knowledgeFor = async (user: SessionUser, project: Project): Promise<Knowle
 
 /** Most of its workspace a one-shot call about one piece or question carries. */
 const WORKSPACE_MAX = 6000;
+/** Most of its workspace the writer's material carries: the instructions whole (INSTRUCTIONS_MAX), the rest for the list of context files. */
+const MATERIAL_WORKSPACE_MAX = 30_000;
 /**
  * What a one-shot call is told of the workspace a session is in (lib/workshop/context.ts: its own, or its owner's
  * first brand for one from before workspaces); "" with no workspace, and the call reads what it always did.
@@ -3376,7 +3378,9 @@ workshopApp.get("/sessions/:id/chat/:messageId/live", async (c) => {
  * What the Workshop's writer would read next to a piece, for an AI that writes it itself: an AI app (ChatGPT, Claude, a
  * script's model), or the app's assistant when the writer can't run. The usual way for an app inside an AI: its model
  * writes, the app gives it what it needs, at once (owner, 2026-11-14: "do best practice"). The voice is in the user's
- * posts and rewrites; the project is facts. `text`: what the user asked, to pick the closest ones.
+ * posts and rewrites; the project is facts: the workspace's instructions and what each of its context files is, by id
+ * (the one rule, lib/workshop/context.ts), which the caller reads with the workspace_files tool. `text`: what the user
+ * asked, to pick the closest ones.
  */
 workshopApp.post("/sessions/:id/docs/:docId/material", async (c) => {
   const user = c.get("user");
@@ -3401,7 +3405,8 @@ workshopApp.post("/sessions/:id/docs/:docId/material", async (c) => {
   const frameworks = (await Promise.all(doc.frameworkIds.map((id) => readFramework(id, user)))).filter((f): f is Framework => !!f);
   const captions = caption ? captionExamplesFor(own?.posts ?? [], docs.filter((d) => d.id !== doc.id && d.caption?.text.trim()).map((d) => d.caption!.text)) : undefined;
   return c.json({
-    project: project ? renderInstructions(project) : null,
+    // ponytail: workspace_files reads the caller's current workspace; a piece in another one lists files it reads only after workshop_set_project
+    project: project ? renderContext(project, project.knowledge ?? [], MATERIAL_WORKSPACE_MAX) : null,
     piece: renderDocument(doc),
     ...(notes ? { session_notes: notes } : {}),
     their_posts: (own ? closestPosts(near, own.posts, 6) : []).map((p) => ({

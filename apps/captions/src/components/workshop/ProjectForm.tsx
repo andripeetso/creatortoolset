@@ -438,11 +438,8 @@ export function ProjectForm({
   );
   // the <form> holds no rows of its own (see `fid`)
   const form = <form id={fid} className="contents" onSubmit={submit} />;
-  const files = !setup && initial && (
-    <Section id="workspace-files" title="Context files">
-      <KnowledgePanel projectId={initial.id} />
-    </Section>
-  );
+  // its own section (title, Add, the list), the same one the Workshop's Knowledge tab draws
+  const files = !setup && initial && <KnowledgePanel projectId={initial.id} />;
 
   if (settings)
     return (
