@@ -25,7 +25,7 @@ const { searchApp } = await import("./search");
 const { indexAsset, buildAssetQuery, pageOf } = await import("./query");
 const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
-const { describePrompt, parseDescribe, saveDescribed, workspaceOf } = await import("./describe");
+const { describePrompt, parseDescribe, saveDescribed, tagsOf, workspaceOf } = await import("./describe");
 const { saveTranscript } = await import("./transcribe");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -120,6 +120,26 @@ describe("describe job", () => {
     expect(ws).toMatch(/Workspace: Ember Realm[\s\S]*A free online fantasy RPG server/);
     expect(describePrompt({ title: "gameplay-1", frames: 4, workspace: ws }).user).toMatch(/^The workspace this clip belongs to[\s\S]*Ember Realm[\s\S]*Title: gameplay-1/);
     rmSync(path.join(dir, "workshop", "projects", "p-ember.json"));
+  });
+
+  it("the library's tags go in the prompt, most used first, without the clip's own or a trashed clip's", async () => {
+    const d = libraryDb();
+    const v = await seed("ast-voc-0001");
+    await seed("ast-voc-0002");
+    await seed("ast-voc-0003");
+    const tag = d.prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES (?, ?, ?)");
+    tag.run("ast-voc-0001", "own tag", "ai");
+    tag.run("ast-voc-0002", "lava cave", "ai");
+    tag.run("ast-voc-0003", "lava cave", "user");
+    tag.run("ast-voc-0003", "boss fight", "ai");
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-voc-0003'").run();
+    expect(tagsOf(d, v).list.map((t) => t.tag)).not.toContain("boss fight");
+    d.prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast-voc-0003'").run();
+    const tags = tagsOf(d, v);
+    expect(tags.list.slice(0, 2)).toEqual([{ tag: "lava cave", count: 2 }, { tag: "boss fight", count: 1 }]);
+    expect(tags.list.map((t) => t.tag)).not.toContain("own tag");
+    const user = describePrompt({ title: "x", frames: 4, tags }).user;
+    expect(user).toMatch(/what sets it apart[\s\S]*Tags already in this library of \d+ clips[^\n]*lava cave: 2, boss fight: 1/);
   });
 
   it("with a route: four frames go to the actor's AI; the description and AI tags are stored and searchable", async () => {
