@@ -1933,14 +1933,14 @@ export default function InstagramPage() {
                     <option value="both">Both</option>
                     <option value="knowhow">{KNOWHOW.label}</option>
                   </select>
-                  {selected.size >= 2 && (
-                    {editable && <button
+                  {editable && selected.size >= 2 && (
+                    <button
                       type="button"
                       onClick={() => setStackOpen(true)}
                       className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
                     >
                       Stack as topic
-                    </button>}
+                    </button>
                   )}
                   {stacks.length > 0 && (
                     <select

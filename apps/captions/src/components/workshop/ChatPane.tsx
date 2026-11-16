@@ -535,9 +535,9 @@ export function ChatPane({
                 ) : m.status === "error" ? (
                   <Notice
                     action={
-                      {!readOnly && <button type="button" onClick={() => onRetry(m)} disabled={thinking} className="-my-0.5 flex shrink-0 items-center gap-1 rounded-md border border-red-400/30 px-2 py-0.5 text-[11px] text-red-100 hover:bg-red-500/15 disabled:opacity-50">
+                      !readOnly && <button type="button" onClick={() => onRetry(m)} disabled={thinking} className="-my-0.5 flex shrink-0 items-center gap-1 rounded-md border border-red-400/30 px-2 py-0.5 text-[11px] text-red-100 hover:bg-red-500/15 disabled:opacity-50">
                         <RotateCcw className="h-3 w-3" /> Retry
-                      </button>}
+                      </button>
                     }
                   >
                     {m.error || "The turn failed"}

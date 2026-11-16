@@ -126,7 +126,7 @@ export function AuditModal({
                 claim={c}
                 place={claimPlaceLabel(doc, c.where)}
                 applied={applied.has(c.id)}
-                canApply={canApply}
+                canApply={canApply && !readOnly}
                 decision={decisions[c.id]}
                 locked={locked}
                 onDecision={(d) => setDecisions((prev) => ({ ...prev, [c.id]: d }))}
@@ -217,9 +217,9 @@ function ClaimRow({
       ) : (
         <p className="mt-2 text-[13px] leading-relaxed text-foreground">{c.claim}</p>
       )}
-      {(reviewable && !readOnly) || hasWhy || (applied && c.fix) ? (
+      {reviewable || hasWhy || (applied && c.fix) ? (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {reviewable && !readOnly ? (
+          {reviewable ? (
             <>
               <button
                 type="button"

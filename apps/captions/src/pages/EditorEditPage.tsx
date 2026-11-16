@@ -109,7 +109,8 @@ export default function EditorEditPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor" to="/editor" trail={edit.name}>
-{editable && <>        <Button size="sm" variant="outline" onClick={() => void saveAsStyle()}>
+        {editable && <>
+        <Button size="sm" variant="outline" onClick={() => void saveAsStyle()}>
           Save as style
         </Button>
         {busy && (
@@ -127,7 +128,8 @@ export default function EditorEditPage() {
         <Button size="sm" variant="ghost" aria-label="Move to the trash" onClick={() => void remove()}>
           <Trash2 className="h-4 w-4" />
         </Button>
-      </AppBar></>}
+        </>}
+      </AppBar>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -178,10 +180,10 @@ export default function EditorEditPage() {
                     )}
                   </span>
                 )}
-                {(j.state === "failed" || j.state === "needs_key") && (
-                  {editable && <Button size="sm" variant="outline" className="ml-auto" onClick={() => void act(retryJob(id, j.id))}>
+                {editable && (j.state === "failed" || j.state === "needs_key") && (
+                  <Button size="sm" variant="outline" className="ml-auto" onClick={() => void act(retryJob(id, j.id))}>
                     Retry
-                  </Button>}
+                  </Button>
                 )}
               </li>
             ))}
@@ -386,13 +388,13 @@ export default function EditorEditPage() {
                           </a>
                         </Button>
                       ))}
-{editable &&                       {pv && (
+                      {editable && pv && (
                         <Button size="sm" variant={cutting === n ? "secondary" : "ghost"} aria-pressed={cutting === n} onClick={() => setCutting(n)}
                           title="Trim, cut, move and take out clips on this version's timeline, then make the next version from them with no AI">
                           <Scissors className="h-3.5 w-3.5" />
                           Edit by hand
                         </Button>
-                      )}}
+                      )}
                       {pv && (
                         <Button asChild size="sm" variant="ghost">
                           <Link to={`/review/${pv.assetId}?v=${pv.n}`}>

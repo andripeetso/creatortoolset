@@ -933,12 +933,14 @@ function DesignPage({ id }: { id: string }) {
         <span className="text-xs text-zinc-500" aria-live="polite">
           {saved === "unsaved" ? "Not saved yet" : saved === "saving" ? "Saving" : ""}
         </span>
-        {!locked && <Button size="icon" variant="ghost" aria-label="Undo" disabled={!hist.past.length} onClick={() => step(true)}>
+        {!locked && <>
+        <Button size="icon" variant="ghost" aria-label="Undo" disabled={!hist.past.length} onClick={() => step(true)}>
           <Undo2 className="h-4 w-4" />
         </Button>
         <Button size="icon" variant="ghost" aria-label="Redo" disabled={!hist.future.length} onClick={() => step(false)}>
           <Redo2 className="h-4 w-4" />
-        </Button>}
+        </Button>
+        </>}
         <Button size="sm" disabled={!frameCount} onClick={() => void exportPngs()}>
           <Download className="h-4 w-4" />
           {frameCount === 1 ? "Export PNG" : `Export ${frameCount} PNGs`}
