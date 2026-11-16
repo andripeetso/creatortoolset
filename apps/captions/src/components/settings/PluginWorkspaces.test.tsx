@@ -4,9 +4,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canUse, setOffHere, useAuth, type Me } from "@/lib/auth";
-import { PluginWorkspaces } from "./PluginWorkspaces";
+import { workspaceFor } from "@/lib/current-workspace";
+import { useWorkspace } from "@/lib/workspace";
+import { PluginWorkspaces, WithPluginWorkspaces } from "./PluginWorkspaces";
 
-// A plug-in's settings start with the workspaces it works in: All workspaces, or Only these with a switch each. Server stubbed.
+// A plug-in's settings start with the workspaces it works in: an All workspaces switch and one for each. Server stubbed.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | undefined;
@@ -19,7 +21,7 @@ afterEach(() => {
   setOffHere([]);
 });
 
-async function draw(answers: unknown[]) {
+async function draw(answers: unknown[], page = <PluginWorkspaces id="blur-faces" />) {
   const sent: unknown[] = [];
   vi.stubGlobal(
     "fetch",
@@ -31,7 +33,7 @@ async function draw(answers: unknown[]) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<MemoryRouter><PluginWorkspaces id="blur-faces" /></MemoryRouter>));
+  act(() => root!.render(<MemoryRouter>{page}</MemoryRouter>));
   await flush();
   return sent;
 }
@@ -41,7 +43,7 @@ const some = { id: "blur-faces", name: "Face Blur", all: false, workspaces: [{ i
 describe("Workspaces", () => {
   it("lists the workspaces with a switch each, and a switch saves the ones on", async () => {
     const sent = await draw([some, { ...some, workspaces: some.workspaces.map((w) => ({ ...w, on: true })) }]);
-    expect(host!.textContent).toContain("Only these");
+    expect(host!.querySelector('[aria-label="Face Blur in all workspaces"]')!.getAttribute("aria-checked")).toBe("false");
     expect(host!.textContent).toContain("Tiny Acrobatics");
     expect(host!.textContent).toContain("Tiny Homes");
     const homes = host!.querySelector<HTMLButtonElement>('[aria-label="Face Blur in Tiny Homes"]')!;
@@ -49,6 +51,29 @@ describe("Workspaces", () => {
     act(() => homes.click());
     await flush();
     expect(sent).toEqual([{ only: ["ws-tiny", "ws-homes"] }]);
+  });
+
+  it("in All workspaces every workspace shows on, and switching one off keeps the rest", async () => {
+    const sent = await draw([{ ...some, all: true }, some]);
+    const homes = host!.querySelector<HTMLButtonElement>('[aria-label="Face Blur in Tiny Homes"]')!;
+    expect(homes.getAttribute("aria-checked")).toBe("true");
+    act(() => homes.click());
+    await flush();
+    expect(sent).toEqual([{ only: ["ws-tiny"] }]);
+  });
+
+  it("off in this workspace, the settings below are the ones of a workspace where it is on", async () => {
+    useWorkspace.setState({ currentProjectId: "ws-homes" });
+    setOffHere(["blur-faces"]);
+    await draw([some], <WithPluginWorkspaces id="blur-faces"><p>Style</p></WithPluginWorkspaces>);
+    expect(host!.textContent).toContain("These are its settings for Tiny Acrobatics");
+    expect(host!.textContent).toContain("Style");
+    expect(workspaceFor("/api/x/blur-faces/settings")).toBe("ws-tiny");
+    expect(workspaceFor("/api/library/files")).toBe("ws-homes");
+    act(() => root!.unmount());
+    root = undefined;
+    expect(workspaceFor("/api/x/blur-faces/settings")).toBe("ws-homes");
+    useWorkspace.setState({ currentProjectId: null });
   });
 
   it("says a plug-in that changes the whole server is on in every workspace, with no switches", async () => {
