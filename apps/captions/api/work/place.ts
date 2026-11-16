@@ -123,7 +123,7 @@ export function workWaitLine(owner: string, job: Pick<JobRow, "kind" | "version_
     const need = readEdit(editOf(job))?.steps ?? [];
     for (const c of online.filter((x) => works(x.x))) {
       const lacks = need.find((s) => !c.x.work!.steps.includes(s.id));
-      if (lacks) return `${pluginEditorSteps().find((s) => s.id === lacks.id)?.label ?? lacks.id} isn't on ${c.x.name}`;
+      if (lacks) return `${pluginEditorSteps().find((s) => s.id === lacks.id)?.title ?? lacks.id} isn't on ${c.x.name}`;
     }
     return "Needs the original files: open Creator Toolset on the Mac that has them";
   }
