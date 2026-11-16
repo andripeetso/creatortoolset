@@ -17,6 +17,8 @@ export interface Me {
   cloud: boolean;
   /** Apps and plug-in gates switched off for this account (see canUse). */
   off: (Tool | PluginGateId)[];
+  /** Apps it opens but doesn't change (Settings → Team → Access: Read); the server refuses their writes. */
+  read?: Tool[];
   logins?: number | null; // real accounts only — used to spot a first login
   /** The picture from a linked Google or GitHub sign-in (its own URL); null: the initial is shown. */
   picture?: string | null;
@@ -28,6 +30,8 @@ export const canUseCloud = (me: Me | null): boolean => !!me;
  *  the same for the apps boot.ts gates and for a plug-in's requireGate routes. */
 export const canUse = (me: Me | null, tool: Tool | PluginGateId): boolean =>
   !!me && (me.role === "admin" || !me.off.includes(tool));
+/** The app is on and not set to Read: this account may change things there, so its edit controls show. */
+export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool) && (me!.role === "admin" || !me!.read?.includes(tool));
 
 /** A Home tile: a tool, or the Screen Recorder, which is open to whoever can use Review or Video Notes (where a recording goes). */
 export const canUseTile = (me: Me | null, tile: HomeTile): boolean =>

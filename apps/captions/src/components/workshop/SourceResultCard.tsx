@@ -32,6 +32,7 @@ export function SourceResultCard({
   own,
   onToggle,
   onRead,
+  readOnly,
 }: {
   hit: FindHit;
   selected: boolean;
@@ -45,6 +46,8 @@ export function SourceResultCard({
   own?: boolean;
   onToggle: () => void;
   onRead: () => void;
+  /** Shows the post only: no Add. */
+  readOnly?: boolean;
 }) {
   const { post } = hit;
   const first = post.slides[0];
@@ -118,7 +121,7 @@ export function SourceResultCard({
             ))}
           </div>
         ) : null}
-        <div className="mt-2 pointer-events-auto">
+        {!readOnly && <div className="mt-2 pointer-events-auto">
           <button
             type="button"
             disabled={!selected && full}
@@ -130,7 +133,7 @@ export function SourceResultCard({
             {selected ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
             {selected ? "Added" : "Add"}
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );

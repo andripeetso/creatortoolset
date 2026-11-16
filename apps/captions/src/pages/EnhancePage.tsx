@@ -14,7 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
-import { useAuth } from "@/lib/auth";
+import { canChange, useAuth, useMe } from "@/lib/auth";
 import { fmtClock } from "@/lib/ass";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import {
@@ -260,6 +260,7 @@ function StatusChip({ s }: { s: EnhanceSession }) {
 
 function SessionView({
   session,
+  editable,
   avail,
   engine,
   setEngine,
@@ -270,6 +271,8 @@ function SessionView({
   onDeleted,
 }: {
   session: EnhanceSession;
+  /** False on a Read account: the page shows the file, its strength and downloads, with no change controls. */
+  editable: boolean;
   avail: EnhanceAvailability | null;
   engine: Engine;
   setEngine: (e: Engine) => void;
@@ -353,7 +356,7 @@ function SessionView({
             {session.engine && <> · {chainLabel(session)}</>}
           </p>
         </div>
-        {!isEnhancing(session) && (
+        {editable && !isEnhancing(session) && (
           <button
             onClick={() => setEditing((v) => !v)}
             aria-expanded={editing}
@@ -365,16 +368,18 @@ function SessionView({
             <ChevronDown className={`h-3 w-3 transition-transform ${editing ? "rotate-180" : ""}`} />
           </button>
         )}
-        <button
-          onClick={remove}
-          title="Delete this file from the server"
-          className="rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-red-400"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        {editable && (
+          <button
+            onClick={remove}
+            title="Delete this file from the server"
+            className="rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-red-400"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
-      {editing && !isEnhancing(session) && (
+      {editable && editing && !isEnhancing(session) && (
         <div className="-mt-2 mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-3">
           <EnginePicker compact avail={avail} value={engine} onChange={setEngine} then={then} onThen={setThen} />
           <button
@@ -408,12 +413,14 @@ function SessionView({
             <span className="text-[11px] text-zinc-500">
               {workingNote(session, avail)}
             </span>
-            <button
-              onClick={stop}
-              className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
-            >
-              Cancel
-            </button>
+            {editable && (
+              <button
+                onClick={stop}
+                className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -423,15 +430,18 @@ function SessionView({
           <span className="min-w-0 text-xs text-red-300">
             {session.error || "Enhancement failed"}
           </span>
-          <button
-            onClick={retry}
-            className="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
-          >
-            <RotateCcw className="h-3 w-3" /> Try again
-          </button>
+          {editable && (
+            <button
+              onClick={retry}
+              className="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+            >
+              <RotateCcw className="h-3 w-3" /> Try again
+            </button>
+          )}
         </div>
       )}
-      {session.status === "ready" &&
+      {editable &&
+        session.status === "ready" &&
         !session.hasEnhanced &&
         !isEnhancing(session) && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5">
@@ -448,7 +458,7 @@ function SessionView({
         )}
       {error && <p className="mb-3 text-[11px] text-red-400">{error}</p>}
 
-      <EnhancePlayer session={session} mix={mix} onMix={changeMix} />
+      <EnhancePlayer session={session} mix={mix} onMix={editable ? changeMix : undefined} />
 
       {session.hasEnhanced && (
         <>
@@ -479,6 +489,7 @@ function SessionView({
 export default function EnhancePage() {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId?: string }>();
+  const editable = canChange(useMe(), "enhance");
   const [drag, setDrag] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -566,6 +577,7 @@ export default function EnhancePage() {
           <>
             <SessionView
               session={current}
+              editable={editable}
               avail={avail}
               engine={engine}
               setEngine={setEngine}
@@ -587,6 +599,8 @@ export default function EnhancePage() {
           </>
         ) : (
           <>
+            {editable && (
+              <>
             <div className="mb-3">
               <EnginePicker avail={avail} value={engine} onChange={setEngine} then={then} onThen={setThen} />
             </div>
@@ -628,6 +642,8 @@ export default function EnhancePage() {
                 }}
               />
             </label>
+              </>
+            )}
             {(uploadError || (sessionId && !current && detail.error)) && (
               <p className="mt-2 text-xs text-red-400">{uploadError || detail.error}</p>
             )}
@@ -658,6 +674,7 @@ export default function EnhancePage() {
                         </p>
                       </div>
                       <StatusChip s={s} />
+                      {editable && (
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
@@ -677,6 +694,7 @@ export default function EnhancePage() {
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
+                      )}
                     </div>
                   ))}
                 </div>

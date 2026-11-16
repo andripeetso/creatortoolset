@@ -18,6 +18,7 @@ export function SharePopover({
   onStatus,
   shared,
   onShared,
+  readOnly,
 }: {
   sessionId: string;
   title?: string;
@@ -27,6 +28,8 @@ export function SharePopover({
   /** Whether a link is on, when the caller knows (the sessions list); else it's asked once. */
   shared?: boolean;
   onShared?: (on: boolean) => void;
+  /** Copies and views the links that exist; no making or stopping one. */
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   /** The share page in a window over the session (Esc, ✕ or a click outside closes it). */
@@ -154,11 +157,13 @@ export function SharePopover({
                   ))}
                 </ul>
               ) : null}
-              <button type="button" onClick={() => void stop()} className="self-start rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-red-400">
-                Stop this link
-              </button>
+              {!readOnly && (
+                <button type="button" onClick={() => void stop()} className="self-start rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-red-400">
+                  Stop this link
+                </button>
+              )}
             </>
-          ) : (
+          ) : readOnly ? null : (
             <>
               <button type="button" disabled={busy} onClick={() => void make()} className="flex items-center justify-center gap-1.5 rounded-md bg-violet-600 px-2 py-1 text-[12px] font-medium text-white hover:bg-violet-500 disabled:opacity-50">
                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />} Make a link and copy it

@@ -102,7 +102,7 @@ import { resumeSound, useEditSound } from "@/lib/synced-sound";
 import { OriginalsPicture } from "@/components/OriginalsPicture";
 import { PlanOverlay } from "@/components/PlanOverlay";
 import { payloadError } from "@contracts/review-payload";
-import { useMe } from "@/lib/auth";
+import { canChange, useMe } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { webPlugins } from "@/plugins.gen";
 
@@ -247,11 +247,13 @@ function Review({
   const [name, setName] = useState(reviewerName);
   const guest = !view.user;
   const me = useMe();
+  // a signed-in account set to Read: looks and reads only (a share link's reviewer with no account keeps commenting)
+  const locked = !!view.user && !canChange(me, "review");
   const slots = useMemo(() => reviewSlotsFor(me, webPlugins), [me]);
   // plug-in slots: their chips above the box, their data for the next comment, their ⌘Z (see lib/review-slots.ts)
   const [, setSlotTick] = useState(0);
   const bridge = useMemo(() => new ReviewSlotBridge(() => setSlotTick((t) => t + 1)), []);
-  const slotCtx = { asset, version, manage, api, reload, player: { video: () => video.current, seek: (t: number) => seek(t), pause: () => pause() } };
+  const slotCtx = { asset, version, manage: manage && !locked, api, reload, player: { video: () => video.current, seek: (t: number) => seek(t), pause: () => pause() } };
   // each plug-in's slot functions, plus what its open comments on this version already sent (its panel shows them)
   const bindSlot = (pluginId: string) => ({
     ...bridge.bind(pluginId),
@@ -738,12 +740,13 @@ function Review({
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
         setDropping(false);
-        attach([...e.dataTransfer.files]);
+        if (!locked) attach([...e.dataTransfer.files]);
       }}
     >
       <Header
         view={view}
         setView={setView}
+        locked={locked}
         n={n}
         pickVersion={pickVersion}
         reload={reload}
@@ -1013,7 +1016,7 @@ function Review({
               url={(f) => api.stem(version, f)}
               muted={muted || editSound.live}
               onLive={setVoiceLive}
-              save={version.edit ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
+              save={version.edit && !locked ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
                 () => "Kept for this edit: the AI Editor cuts it again with this voice, back here as the next version.") : undefined}
             />
           )}
@@ -1052,6 +1055,7 @@ function Review({
                   active={c.id === selected}
                   flash={c.id === flash}
                   manage={manage}
+                  locked={locked}
                   refUrl={api.refUrl}
                   onPick={() => focusComment(c)}
                   onReply={(body) => reply(c.id, body)}
@@ -1064,7 +1068,7 @@ function Review({
 
           {/* composer: drop (anywhere on the page) or paste images and videos in as references */}
           {/* in the window's bottom right corner: the assistant's bubble sits above this box, not over Send (dock-place.ts) */}
-          <div ref={cornerTaken} className={cn("border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
+          {!locked && <div ref={cornerTaken} className={cn("border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
             {guest && (
               <input
                 id="review-name"
@@ -1223,7 +1227,7 @@ function Review({
             <p className="mt-1.5 hidden text-[11px] text-zinc-600 lg:block">
               Space play · J/K/L or 1/2/3 shuttle · ←/→ frame · Shift ←/→ second · C comment
             </p>
-          </div>
+          </div>}
         </aside>
       </div>
     </div>
@@ -1246,6 +1250,7 @@ function Header({
   actions,
   slotCtx,
   bind,
+  locked,
 }: {
   view: ReviewView;
   setView: React.Dispatch<React.SetStateAction<ReviewView | null>>;
@@ -1262,6 +1267,8 @@ function Header({
   actions: ReviewActionEntry[];
   slotCtx: ReviewBaseContext;
   bind: ReviewBind;
+  /** Read: no rename, versions, timeline, zoom, captions, share, plug-in actions or delete */
+  locked: boolean;
 }) {
   const [error, setError] = useState("");
   const { asset, manage } = view;
@@ -1361,9 +1368,9 @@ function Header({
         />
       ) : (
         <h1
-          className={cn("min-w-0 truncate text-sm font-semibold", manage && "cursor-text rounded px-1 hover:bg-zinc-900")}
-          onClick={() => manage && setRenaming(true)}
-          title={manage ? "Rename" : undefined}
+          className={cn("min-w-0 truncate text-sm font-semibold", manage && !locked && "cursor-text rounded px-1 hover:bg-zinc-900")}
+          onClick={() => manage && !locked && setRenaming(true)}
+          title={manage && !locked ? "Rename" : undefined}
         >
           {asset.name}
         </h1>
@@ -1391,7 +1398,7 @@ function Header({
               {v.n === n && <Check className="h-3.5 w-3.5" />}
             </DropdownMenuItem>
           ))}
-          {manage && (
+          {manage && !locked && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => fileInput.current?.click()}>Upload new version…</DropdownMenuItem>
@@ -1408,7 +1415,7 @@ function Header({
           <Columns2 className="h-3.5 w-3.5" /> Compare
         </button>
       )}
-      {manage && version.screen && version.status === "ready" && !version.removed && (
+      {manage && !locked && version.screen && version.status === "ready" && !version.removed && (
         <button
           onClick={onZoom}
           title="Zooms where you clicked, a smooth pointer, background and frame shape; makes the next version"
@@ -1419,7 +1426,7 @@ function Header({
       )}
       {/* an AI Editor version has its own timeline (the editor's), so no file is added here */}
       {/* not beside the chats (chat mode): there the video and its comments are what the page is for */}
-      {manage && version.status === "ready" && !version.removed && !version.edit && !version.draft && (
+      {manage && !locked && version.status === "ready" && !version.removed && !version.edit && !version.draft && (
         <span className="contents chat:hidden">
           {version.timelineFile && <span className="truncate text-xs text-zinc-500">Timeline from {version.timelineFile}</span>}
           <button
@@ -1462,7 +1469,7 @@ function Header({
       {error && <span className="text-xs text-red-400">{error}</span>}
 
       <div className="ml-auto flex items-center gap-2">
-        <ApprovalControl asset={asset} manage={manage} approve={approve} />
+        <ApprovalControl asset={asset} manage={manage} locked={locked} approve={approve} />
         {asset.download && version.status !== "error" && !version.removed && (
           <a
             href={api.media(version, "download")}
@@ -1476,10 +1483,10 @@ function Header({
         {manage && version.status !== "error" && !version.removed &&
           (version.captioned ? (
             <CaptionedPair asset={asset} n={n} />
-          ) : (
+          ) : locked ? null : (
             <CaptionStudioButton asset={asset} n={n} next={asset.approval.status === "approved"} />
           ))}
-        {manage && (
+        {manage && !locked && (
           <ReviewShareButton
             share={asset.share}
             url={asset.share ? shareUrl(asset.share.token) : ""}
@@ -1487,7 +1494,7 @@ function Header({
             update={async (share) => setAsset(await patchReviewAsset(asset.id, { share }))}
           />
         )}
-        <ReviewActionButtons actions={actions} ctx={slotCtx} bind={bind} />
+        {!locked && <ReviewActionButtons actions={actions} ctx={slotCtx} bind={bind} />}
         {manage && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1497,9 +1504,9 @@ function Header({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={exportCsv}>Export V{n} comments (CSV)</DropdownMenuItem>
-              <CaptionsMenu asset={asset} n={n} setAsset={setAsset} onError={setError} />
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
+              {!locked && <CaptionsMenu asset={asset} n={n} setAsset={setAsset} onError={setError} />}
+              {!locked && <DropdownMenuSeparator />}
+              {!locked && <DropdownMenuItem
                 className="text-red-400"
                 onClick={async () => {
                   if (!(await confirmDialog({ title: `Move “${asset.name}” to the trash?`, body: "You can restore it for 30 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
@@ -1508,7 +1515,7 @@ function Header({
                 }}
               >
                 <Trash2 /> Delete video
-              </DropdownMenuItem>
+              </DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -1647,10 +1654,12 @@ function CaptionedPair({ asset, n }: { asset: ReviewAsset; n: number }) {
 function ApprovalControl({
   asset,
   manage,
+  locked,
   approve,
 }: {
   asset: ReviewAsset;
   manage: boolean;
+  locked: boolean;
   approve: (s: Approval) => Promise<void>;
 }) {
   const cur = asset.approval;
@@ -1659,9 +1668,10 @@ function ApprovalControl({
       <span className={cn("h-2 w-2 rounded-full", APPROVAL[cur.status].dot)} />
       {APPROVAL[cur.status].label}
       {cur.by && cur.status !== "none" && <span className="hidden text-zinc-500 sm:inline">· {cur.by}</span>}
-      {manage && <ChevronDown className="h-3 w-3 text-zinc-500" />}
+      {manage && !locked && <ChevronDown className="h-3 w-3 text-zinc-500" />}
     </span>
   );
+  if (locked) return badge;
   if (manage) {
     return (
       <DropdownMenu>
@@ -1792,6 +1802,7 @@ function Thread({
   active,
   flash,
   manage,
+  locked,
   refUrl,
   onPick,
   onReply,
@@ -1805,6 +1816,8 @@ function Thread({
   /** just sent: lit up for a moment */
   flash?: boolean;
   manage: boolean;
+  /** Read: no reply, edit, resolve or delete */
+  locked: boolean;
   refUrl: Api["refUrl"];
   onPick: () => void;
   onReply: (body: string) => Promise<boolean>;
@@ -1857,10 +1870,10 @@ function Thread({
         c.resolved && "opacity-60",
       )}
     >
-      <Entry c={c} fps={fps} manage={manage} refUrl={refUrl} onPick={onPick} onEdit={onEdit} onDelete={onDelete} top {...editProps(c)} />
+      <Entry c={c} fps={fps} manage={manage} locked={locked} refUrl={refUrl} onPick={onPick} onEdit={onEdit} onDelete={onDelete} top {...editProps(c)} />
       {replies.map((r) => (
         <div key={r.id} className="ml-8 mt-2 border-l border-zinc-800 pl-3">
-          <Entry c={r} fps={fps} manage={manage} refUrl={refUrl} onEdit={onEdit} onDelete={onDelete} {...editProps(r)} />
+          <Entry c={r} fps={fps} manage={manage} locked={locked} refUrl={refUrl} onEdit={onEdit} onDelete={onDelete} {...editProps(r)} />
         </div>
       ))}
       {replying ? (
@@ -1891,7 +1904,7 @@ function Thread({
           </button>
           {error && <span className="text-red-400">{error}</span>}
         </div>
-      ) : (
+      ) : locked ? null : (
         <div className="ml-8 mt-1.5 flex gap-3 text-xs text-zinc-500">
           <button className="hover:text-zinc-300" onClick={() => setReplying(true)}>
             Reply
@@ -1911,6 +1924,7 @@ function Entry({
   c,
   fps,
   manage,
+  locked,
   refUrl,
   top,
   onPick,
@@ -1922,6 +1936,7 @@ function Entry({
   c: ReviewComment;
   fps: number;
   manage: boolean;
+  locked: boolean;
   refUrl: Api["refUrl"];
   top?: boolean;
   onPick?: () => void;
@@ -1946,7 +1961,7 @@ function Entry({
           <span className="truncate font-medium text-zinc-200">{c.author}</span>
           <span className="shrink-0 text-zinc-600">{timeAgo(c.createdAt)}</span>
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            {top && (manage || c.mine) && (
+            {top && !locked && (manage || c.mine) && (
               <button
                 title={c.resolved ? "Reopen" : "Mark done"}
                 onClick={() => void onEdit(c.id, { resolved: !c.resolved })}
@@ -1958,7 +1973,7 @@ function Entry({
                 <Check className="h-3 w-3" />
               </button>
             )}
-            {(manage || c.mine) && (
+            {!locked && (manage || c.mine) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="rounded p-0.5 text-zinc-600 hover:text-zinc-300" aria-label="Comment actions">

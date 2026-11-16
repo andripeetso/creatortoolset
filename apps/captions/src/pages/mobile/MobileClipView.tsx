@@ -55,6 +55,7 @@ import {
   type ClipWord,
 } from "@/lib/clips";
 import { useChapters } from "@/components/ClipBlocks";
+import { canChange, useMe } from "@/lib/auth";
 import { ShareThemeSwitch } from "@/components/ShareTheme";
 import { confirmDialog } from "@/lib/dialogs";
 
@@ -528,13 +529,16 @@ export function MobileClipView({
   const [playhead, setPlayhead] = useState(0);
   const [copied, setCopied] = useState(false);
   const [menu, setMenu] = useState(false);
+  // the owner on an account not set to Read: rename, notes, clean-up, delete (Download and Share stay)
+  const signedIn = useMe();
+  const editable = owns && canChange(signedIn, "notes");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
 
   const chapters = clipChapters(session);
-  const making = useChapters(session, owns, onChange);
+  const making = useChapters(session, editable, onChange);
   const blocks = displayBlocks(session);
   const tabs = [
     ...blocks.map((b) => ({
@@ -581,7 +585,7 @@ export function MobileClipView({
   const commitRename = (raw: string) => {
     const name = raw.trim().slice(0, 120);
     setRenaming(false);
-    if (!owns || !name || name === session.name) return;
+    if (!editable || !name || name === session.name) return;
     void renameClip(session.id, name)
       .then(onChange)
       .catch(() => {});
@@ -671,7 +675,7 @@ export function MobileClipView({
           ) : (
             <span className="w-2" />
           )}
-          {owns && renaming ? (
+          {editable && renaming ? (
             <input
               autoFocus
               value={draft}
@@ -772,7 +776,7 @@ export function MobileClipView({
               <span className="min-w-0 flex-1">
                 {session.error || "Processing failed"}
               </span>
-              {owns && (
+              {editable && (
                 <button
                   type="button"
                   disabled={busy}
@@ -810,7 +814,7 @@ export function MobileClipView({
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             {activeTab === "transcript" ? (
               <div className="flex flex-col gap-5">
-                {owns && canClean ? (
+                {editable && canClean ? (
                   <button
                     type="button"
                     disabled={busy}
@@ -878,14 +882,16 @@ export function MobileClipView({
           />
           <div className="pb-safe fixed inset-x-0 bottom-0 z-50 rounded-t-2xl border-t border-border bg-card px-2 pb-2 pt-1">
             <div className="mx-auto mb-2 mt-1 h-1 w-10 rounded-full bg-muted-foreground/40" />
-            <button
-              type="button"
-              onClick={startRename}
-              className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-foreground active:bg-accent"
-            >
-              <Pencil className="h-5 w-5 text-muted-foreground" />
-              Rename
-            </button>
+            {editable && (
+              <button
+                type="button"
+                onClick={startRename}
+                className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-foreground active:bg-accent"
+              >
+                <Pencil className="h-5 w-5 text-muted-foreground" />
+                Rename
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -897,7 +903,7 @@ export function MobileClipView({
               <Download className="h-5 w-5 text-muted-foreground" />
               Download
             </button>
-            {owns && canClean && words.length > 0 ? (
+            {editable && canClean && words.length > 0 ? (
               <button
                 type="button"
                 onClick={() => void runCleanup(cleaned)}
@@ -907,14 +913,16 @@ export function MobileClipView({
                 {cleaned ? "Restore original transcript" : "Clean up transcript"}
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => void remove()}
-              className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-red-500 active:bg-accent"
-            >
-              <Trash2 className="h-5 w-5" />
-              Delete clip
-            </button>
+            {editable && (
+              <button
+                type="button"
+                onClick={() => void remove()}
+                className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-red-500 active:bg-accent"
+              >
+                <Trash2 className="h-5 w-5" />
+                Delete clip
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setMenu(false)}

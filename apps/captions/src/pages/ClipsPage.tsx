@@ -17,7 +17,7 @@ import {
   Circle,
 } from "lucide-react";
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
-import { useAuth } from "@/lib/auth";
+import { canChange, useAuth, useMe } from "@/lib/auth";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { useSteadyList } from "@/lib/steady-list";
 import { Picture } from "@/components/Picture";
@@ -207,6 +207,9 @@ function ClipView({
   const [chapterBusy, setChapterBusy] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
+  // the owner on an account not set to Read: rename, notes, clean-up and delete; Download and Share stay for anyone who can see it
+  const signedIn = useMe();
+  const editable = owns && canChange(signedIn, "notes");
 
   useEffect(() => {
     if (!session.hasTranscript) {
@@ -235,7 +238,7 @@ function ClipView({
     return () => window.clearTimeout(t);
   }, [theater]);
 
-  const making = useChapters(session, owns, onChange);
+  const making = useChapters(session, editable, onChange);
 
   const retry = async () => {
     setError(null);
@@ -310,7 +313,7 @@ function ClipView({
   const commitRename = (raw: string) => {
     const name = raw.trim().slice(0, 120);
     setRenaming(false);
-    if (!owns || !name || name === session.name) return;
+    if (!editable || !name || name === session.name) return;
     void renameClip(session.id, name)
       .then(onChange)
       .catch(() => {});
@@ -330,7 +333,7 @@ function ClipView({
       <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
         <Video className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          {owns && renaming ? (
+          {editable && renaming ? (
             <input
               autoFocus
               value={draft}
@@ -352,12 +355,12 @@ function ClipView({
             <div className="flex min-w-0 items-center gap-1">
               <p
                 className="min-w-0 truncate text-sm text-foreground"
-                title={owns ? `${session.name} — double-click to rename` : session.name}
-                onDoubleClick={owns ? startRename : undefined}
+                title={editable ? `${session.name} — double-click to rename` : session.name}
+                onDoubleClick={editable ? startRename : undefined}
               >
                 {session.name}
               </p>
-              {owns && (
+              {editable && (
                 <button
                   type="button"
                   onClick={startRename}
@@ -395,13 +398,15 @@ function ClipView({
             >
               <Download className="h-3.5 w-3.5" />
             </button>
-            <button
-              onClick={remove}
-              title="Delete this clip"
-              className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-red-400"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            {editable && (
+              <button
+                onClick={remove}
+                title="Delete this clip"
+                className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-red-400"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </>
         )}
       </div>
@@ -447,7 +452,7 @@ function ClipView({
               seek={seek}
               pending={making.pending}
               failed={making.failed}
-              onRetry={owns ? retryChapters : undefined}
+              onRetry={editable ? retryChapters : undefined}
               retrying={chapterBusy}
             />
           )}
@@ -469,7 +474,7 @@ function ClipView({
               seek={seek}
               pending={making.pending}
               failed={making.failed}
-              onRetry={owns ? retryChapters : undefined}
+              onRetry={editable ? retryChapters : undefined}
               retrying={chapterBusy}
             />
           </div>
@@ -480,7 +485,7 @@ function ClipView({
             <span className="min-w-0 text-xs text-red-600 dark:text-red-300">
               {session.error || "Processing failed"}
             </span>
-            {owns && (
+            {editable && (
               <button
                 onClick={retry}
                 className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-accent"
@@ -495,7 +500,7 @@ function ClipView({
         {!isProcessing(session) && (
           <ClipBlocks
             session={session}
-            owns={owns}
+            owns={editable}
             seek={seek}
             hasTranscript={words.length > 0 || session.hasTranscript}
             onChange={onChange}
@@ -509,7 +514,7 @@ function ClipView({
           >
             <h2 className={`${label} justify-between`}>
               Transcript
-              {owns && canClean ? (
+              {editable && canClean ? (
                 <button
                   type="button"
                   disabled={cleanBusy}
@@ -560,6 +565,7 @@ export default function ClipsPage() {
   const location = useLocation();
   const { clipId } = useParams<{ clipId?: string }>();
   const me = useAuth((s) => s.me);
+  const editable = canChange(me, "notes");
   const required = useAuth((s) => s.required);
   const home = toolsetHomePath();
   const rec = useClipsRecorder();
@@ -703,7 +709,7 @@ export default function ClipsPage() {
     <div className="relative flex min-h-screen flex-col items-center bg-background pb-10 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Video Notes" to={clipId ? "/clips" : undefined} trail={current?.name} account={!!me} className="mb-6">
         {isPublicSharePath(location.pathname) ? <ShareThemeSwitch /> : null}
-        {me && !clipId && rec.phase === "idle" && sessions.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
+        {editable && !clipId && rec.phase === "idle" && sessions.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {!me && required ? (
           <Link
             to={home}
@@ -866,6 +872,7 @@ export default function ClipsPage() {
           </div>
         ) : (
           <>
+            {editable && (
             <label
               onDragOver={(e) => {
                 e.preventDefault();
@@ -914,7 +921,8 @@ export default function ClipsPage() {
                 }}
               />
             </label>
-            {canRecordScreen() && (
+            )}
+            {editable && canRecordScreen() && (
               <button
                 onClick={openRecorder}
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-800 py-3 text-sm text-zinc-200 hover:bg-zinc-900"
@@ -935,7 +943,7 @@ export default function ClipsPage() {
                   // inside a folder: the way back up, and sharing the whole folder
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2 [&>nav]:mb-0">
                     <FolderTrail state={folders} top="Your clips" />
-                    <FolderShareButton state={folders} />
+                    {editable && <FolderShareButton state={folders} />}
                   </div>
                 ) : (
                   <h2 className={label}>Your clips</h2>
@@ -979,17 +987,19 @@ export default function ClipsPage() {
                             </span>
                           ) : null
                         }
-                        drag={folders.drag(s.id)}
+                        drag={editable ? folders.drag(s.id) : undefined}
                         actions={
-                          <>
-                            <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />
-                            <button type="button" title="Rename" aria-label={`Rename ${s.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename clip", s.name).then((name) => name && renameTo(s, name))}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button type="button" title="Delete" aria-label={`Delete ${s.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void removeClip(s)}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </>
+                          editable ? (
+                            <>
+                              <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />
+                              <button type="button" title="Rename" aria-label={`Rename ${s.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename clip", s.name).then((name) => name && renameTo(s, name))}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" title="Delete" aria-label={`Delete ${s.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void removeClip(s)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : undefined
                         }
                       />
                     ))}
@@ -1000,7 +1010,7 @@ export default function ClipsPage() {
                   {shownClips.map((s) => (
                     <div
                       key={s.id}
-                      {...folders.drag(s.id)}
+                      {...(editable ? folders.drag(s.id) : {})}
                       onClick={() => {
                         if (renaming !== s.id) navigate(`/clips/${s.id}`);
                       }}
@@ -1052,28 +1062,32 @@ export default function ClipsPage() {
                           {Math.round(s.progress * 100)}%
                         </span>
                       ) : null}
-                      <MoveToMenu state={folders} id={s.id} className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDraft(s.name);
-                          setRenaming(s.id);
-                        }}
-                        title="Rename"
-                        className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 group-hover:opacity-100"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void removeClip(s);
-                        }}
-                        title="Delete"
-                        className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {editable && (
+                        <>
+                          <MoveToMenu state={folders} id={s.id} className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDraft(s.name);
+                              setRenaming(s.id);
+                            }}
+                            title="Rename"
+                            className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 group-hover:opacity-100"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void removeClip(s);
+                            }}
+                            title="Delete"
+                            className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>

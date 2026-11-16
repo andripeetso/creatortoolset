@@ -264,6 +264,8 @@ export interface LibrarySummary {
   settings: LibrarySettings;
   /** the team owner's, in a workspace given to this person (Settings → Team): to look at and download, never change */
   readOnly?: true;
+  /** read-only all the same, but it takes this person's uploads: the owner set their Media Library to Read & write */
+  canAdd?: true;
 }
 
 /**

@@ -40,6 +40,7 @@ import {
 import { useCachedLoad } from "@/lib/local-cache";
 import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { checkUpload } from "@/lib/library";
+import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
@@ -128,8 +129,10 @@ export default function LibraryPage() {
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
-  /** a workspace given to this person by its owner: to look at and download from, never change (the server refuses) */
-  const readOnly = !!library?.readOnly;
+  /** a workspace given to this person by its owner, or the Media Library on Read for them: to look at and download from,
+   *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
+  const me = useMe();
+  const readOnly = !!library?.readOnly || !canChange(me, "media");
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -773,6 +776,7 @@ export default function LibraryPage() {
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
   const changing = !!library && !readOnly && !trash;
+  const adding = !!library && (!readOnly || (!!library.canAdd && canChange(me, "media"))) && !trash;
 
   const sidebar = library && (
     <LibrarySidebar
@@ -804,7 +808,7 @@ export default function LibraryPage() {
   );
 
   return (
-    <div className="flex min-h-dvh flex-col" onContextMenu={noBrowserMenu} {...(readOnly ? {} : drop.props)}>
+    <div className="flex min-h-dvh flex-col" onContextMenu={noBrowserMenu} {...(adding ? drop.props : {})}>
       {drop.dialog}
       {/* where you are and in which workspace; what the page does is on the page itself */}
       <AppBar tool="Media Library" trail={library?.name}>
@@ -908,20 +912,22 @@ export default function LibraryPage() {
                   <>
                     {!firstScreen && <TrashLink to="/library?trash=1" title="Trash" />}
                     {!smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
-                    <Button size="sm" className="h-8" onClick={chooseFiles}>
-                      <Upload className="h-4 w-4" />
-                      Upload
-                    </Button>
                   </>
+                )}
+                {adding && (
+                  <Button size="sm" className="h-8" onClick={chooseFiles}>
+                    <Upload className="h-4 w-4" />
+                    Upload
+                  </Button>
                 )}
               </BrowseBar>
 
               <SpaceMenu
                 className="flex flex-1 flex-col gap-4"
                 items={
-                  changing && (
+                  adding && (
                     <>
-                      {!smart && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
+                      {changing && !smart && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
                       <ContextMenuItem onSelect={chooseFiles}>Upload…</ContextMenuItem>
                     </>
                   )
@@ -1056,7 +1062,7 @@ export default function LibraryPage() {
       {sharing && libId && (
         <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
       )}
-      {drop.dropping && !readOnly && (
+      {drop.dropping && adding && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center border-4 border-dashed border-violet-500/70 bg-violet-950/30">
           <p className="rounded-xl bg-zinc-950/90 px-5 py-3 text-base font-medium text-zinc-100">Drop to add to {into && openFolder ? openFolder.name : "the library"}</p>
         </div>

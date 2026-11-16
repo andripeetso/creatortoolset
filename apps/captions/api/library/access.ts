@@ -6,7 +6,7 @@ import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
 import { sharedHere, sharedProjects } from "../lib/workshop/workspace";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
-import { findUser, listUsers, LOCAL_USER, mayUse, type SessionUser } from "../users";
+import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb } from "./db";
 import { assetRef, canSee } from "./sources";
 
@@ -114,6 +114,15 @@ export function libraryRole(username: string, libraryId: string): "owner" | null
     | { workspace_id: string }
     | undefined;
   return row && row.workspace_id === homeOf(username) ? "owner" : null;
+}
+
+/**
+ * Whether the account may add footage to the library: its own, or the owner's in a workspace the owner gave it with the
+ * Media Library on Read & write (Settings → Team → Access). Adding only: changing or deleting what is there stays with
+ * libraryRole (the owner), and a member's upload is marked as theirs (created_by).
+ */
+export async function mayAdd(user: SessionUser, libraryId: string): Promise<boolean> {
+  return !!libraryRole(user.username, libraryId) || (mayChange(user, "media") && (await givenLibrary(user.username, libraryId)));
 }
 
 /**

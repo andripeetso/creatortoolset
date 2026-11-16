@@ -93,7 +93,7 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
  * The account's knowledge, as the open workspace reads it (the Workshop's Knowledge tab). With `projectId` (a
  * workspace's own settings): only that workspace's own context files, added to it, with no switches.
  */
-export function KnowledgePanel({ projectId }: { projectId?: string } = {}) {
+export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; readOnly?: boolean } = {}) {
   const projects = useWorkspace((s) => s.projects);
   const current = useWorkspace((s) => s.currentProjectId);
   const here = projectId ?? current;
@@ -142,7 +142,7 @@ export function KnowledgePanel({ projectId }: { projectId?: string } = {}) {
 
   return (
     <section>
-      <div
+      {!readOnly && <div
         onDragOver={(e) => {
           e.preventDefault();
           setOver(true);
@@ -191,7 +191,7 @@ export function KnowledgePanel({ projectId }: { projectId?: string } = {}) {
             <Loader2 className="h-3 w-3 animate-spin" /> {adding}
           </p>
         )}
-      </div>
+      </div>}
       {paste && (
         <form
           className="mb-3 flex flex-col gap-1.5 rounded-lg border border-zinc-800 p-3"
@@ -221,6 +221,7 @@ export function KnowledgePanel({ projectId }: { projectId?: string } = {}) {
               open={open === s.id}
               here={projects.find((p) => p.id === here)}
               own={!!projectId}
+              readOnly={readOnly}
               onToggle={() => setOpen(open === s.id ? null : s.id)}
               onSave={(fields) => act(patchSource(s.id, fields).then(moved))}
               onRead={() => void act(readSourceAgain(s.id).then(put))}
@@ -244,6 +245,7 @@ function SourceRow({
   onDelete,
   onProject,
   own,
+  readOnly,
 }: {
   s: KnowledgeSource;
   /** in a workspace's own settings: no choice of workspaces */
@@ -255,6 +257,8 @@ function SourceRow({
   onRead: () => void;
   onDelete: () => Promise<unknown>;
   onProject: (projectId: string) => void;
+  /** Shows the source as text: no kind picker, workspace choice, reading, deleting or editing. */
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState({ title: s.title ?? "", about: s.about ?? "", uses: (s.uses ?? []).join("\n"), sections: (s.sections ?? []).map(sectionLine).join("\n") });
   useEffect(() => {
@@ -273,7 +277,7 @@ function SourceRow({
             <button type="button" onClick={onToggle} className="truncate text-left">
               {s.title || s.name}
             </button>
-            <select
+            {readOnly ? <span className="text-[10px] text-zinc-400">{SOURCE_KINDS.find((k) => k.id === s.kind)?.label ?? "not filed"}</span> : <select
               value={s.kind ?? ""}
               onChange={(e) => void onSave({ kind: e.target.value as SourceKind })}
               className="rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-300 outline-none"
@@ -285,7 +289,7 @@ function SourceRow({
                   {k.label}
                 </option>
               ))}
-            </select>
+            </select>}
             <span className="text-[10px] text-zinc-600">{knowledgeSizeLabel(s.chars)}</span>
             {s.status === "reading" && (
               <span className="flex items-center gap-1 text-[10px] text-violet-300">
@@ -297,7 +301,7 @@ function SourceRow({
             {s.readCost !== undefined && <span className="text-[10px] text-zinc-600">read for ${s.readCost.toFixed(2)} API-equivalent</span>}
           </p>
           {s.about && !open && <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{s.about}</p>}
-          {!own && <div className="mt-1 flex flex-wrap items-center gap-1">
+          {!own && !readOnly && <div className="mt-1 flex flex-wrap items-center gap-1">
             <select
               value={s.projectId ?? ""}
               onChange={(e) => void onSave({ projectId: e.target.value || null })}
@@ -324,7 +328,7 @@ function SourceRow({
             })()}
           </div>}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        {!readOnly && <div className="flex shrink-0 items-center gap-1">
           <button type="button" onClick={onRead} disabled={s.status === "reading"} className={small} title="Claude reads it again and files it fresh">
             <RotateCw className="h-3 w-3" /> {s.status === "new" ? "Read" : "Read again"}
           </button>
@@ -335,13 +339,14 @@ function SourceRow({
             className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
             armedClassName="!bg-red-500/10 !text-red-200"
           />
-        </div>
+        </div>}
       </div>
       {open && (
         <form
           className="mt-2 flex flex-col gap-2 border-t border-zinc-800 pt-2 text-[11px] text-zinc-400"
           onSubmit={(e) => {
             e.preventDefault();
+            if (readOnly) return;
             void onSave({
               title: draft.title,
               about: draft.about,
@@ -359,25 +364,25 @@ function SourceRow({
           </p>
           <label>
             Title
-            <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`${field} mt-0.5`} />
+            <input value={draft.title} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`${field} mt-0.5`} />
           </label>
           <label>
             What it is
-            <textarea value={draft.about} onChange={(e) => setDraft({ ...draft, about: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
+            <textarea value={draft.about} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, about: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
           </label>
           <label>
             What it answers (one per line)
-            <textarea value={draft.uses} onChange={(e) => setDraft({ ...draft, uses: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
+            <textarea value={draft.uses} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, uses: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
           </label>
           <label>
             Its parts (L first-L last Title — what's in it)
-            <textarea value={draft.sections} onChange={(e) => setDraft({ ...draft, sections: e.target.value })} className={`${field} mt-0.5 min-h-16 font-mono text-[11px] [field-sizing:content]`} />
+            <textarea value={draft.sections} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, sections: e.target.value })} className={`${field} mt-0.5 min-h-16 font-mono text-[11px] [field-sizing:content]`} />
           </label>
-          <div className="flex justify-end">
+          {!readOnly && <div className="flex justify-end">
             <button type="submit" className={small}>
               Save
             </button>
-          </div>
+          </div>}
         </form>
       )}
     </div>

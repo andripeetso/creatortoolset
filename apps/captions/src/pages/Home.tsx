@@ -38,7 +38,7 @@ import { ProjectSettingsDialog } from "@/components/ProjectSettingsDialog";
 import { AppBar } from "@/components/AppBar";
 import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "@/components/PersistenceStatus";
-import { useMe } from "@/lib/auth";
+import { canChange, useAuth, useMe } from "@/lib/auth";
 import { itemActionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -46,7 +46,8 @@ import { webPlugins } from "@/plugins.gen";
 function ProjectActions() {
   const me = useMe();
   const projectId = useStudio((s) => s.projectId);
-  if (!projectId) return null;
+  // a plug-in's button may change the project (Read accounts see none)
+  if (!projectId || !canChange(me, "captions")) return null;
   return itemActionsFor(me, webPlugins, "captions").map((a) => (
     <button
       key={a.label}
@@ -146,6 +147,7 @@ function ProjectSwitcher() {
 
 /** The switcher plus a pencil that turns the project name into an input. */
 function ProjectName() {
+  const editable = canChange(useMe(), "captions");
   const fileName = useStudio((s) => s.fileName);
   const setFileName = useStudio((s) => s.setFileName);
   const [editing, setEditing] = useState(false);
@@ -175,16 +177,18 @@ function ProjectName() {
   return (
     <div className="group flex items-center">
       <ProjectSwitcher />
-      <button
-        onClick={() => {
-          setDraft(fileName);
-          setEditing(true);
-        }}
-        title="Rename project"
-        className="rounded p-1 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <Pencil className="h-3 w-3" />
-      </button>
+      {editable && (
+        <button
+          onClick={() => {
+            setDraft(fileName);
+            setEditing(true);
+          }}
+          title="Rename project"
+          className="rounded p-1 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -286,6 +290,7 @@ export default function Home() {
   const importFiles = useStudio((s) => s.importFiles);
   const setupPending = useStudio((s) => s.setupPending);
   const editorBusy = useStudio(isEditorBusy);
+  const editable = canChange(useMe(), "captions");
   const [exportOpen, setExportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -336,6 +341,8 @@ export default function Home() {
     const onKey = (e: KeyboardEvent) => {
       // another handler (e.g. caption-box nudging) already claimed this key
       if (e.defaultPrevented) return;
+      // Read: the keys that change the project (undo, redo, delete) do nothing
+      const mayEdit = canChange(useAuth.getState().me, "captions");
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if ((e.target as HTMLElement)?.isContentEditable) return;
@@ -357,12 +364,13 @@ export default function Home() {
         const step = e.shiftKey ? 1 : 1 / st.fps;
         playerRef.video?.pause();
         st.seek(st.currentTime + (e.code === "ArrowRight" ? step : -step));
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && mayEdit) {
         e.preventDefault();
         if (e.shiftKey) useStudio.getState().redoEdit();
         else useStudio.getState().undoEdit();
       } else if (
         (e.key === "Delete" || e.key === "Backspace") &&
+        mayEdit &&
         !e.metaKey &&
         !e.ctrlKey &&
         !e.altKey
@@ -406,13 +414,15 @@ export default function Home() {
         }
         className="bg-zinc-925"
       >
-          <button
-            onClick={() => setSettingsOpen(true)}
-            title="Project settings"
-            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
-          >
-            <Settings2 className="h-4 w-4" />
-          </button>
+          {editable && (
+            <button
+              onClick={() => setSettingsOpen(true)}
+              title="Project settings"
+              className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
+            >
+              <Settings2 className="h-4 w-4" />
+            </button>
+          )}
           <button
             onClick={() => setHelpOpen(true)}
             title="Shortcuts & tips (?)"
@@ -420,6 +430,7 @@ export default function Home() {
           >
             <CircleHelp className="h-4 w-4" />
           </button>
+          {editable && (
           <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
             <FilePlus2 className="h-3.5 w-3.5" /> New project
             <input
@@ -439,6 +450,7 @@ export default function Home() {
               }}
             />
           </label>
+          )}
           <ProjectActions />
           <button
             onClick={() => setExportOpen(true)}
@@ -466,12 +478,17 @@ export default function Home() {
         <div className="min-w-0 flex-1 p-3">
           <Player />
         </div>
-        <StylePanel />
+        {/* Read: the style panel and the timeline stay looked at, not changed (inert: no clicks, no keys) */}
+        <div inert={editable ? undefined : true} className="contents">
+          <StylePanel />
+        </div>
       </div>
 
       {/* clip pool + timeline */}
       <ClipBar />
-      <Timeline />
+      <div inert={editable ? undefined : true} className="contents">
+        <Timeline />
+      </div>
 
       {editorBusy && (
         <div

@@ -65,7 +65,7 @@ export function IdeaCard({
   workshopByPost: Map<string, PostWorkshopUse[]>;
   making?: boolean;
   onOpen: (id: string) => void;
-  onMake: () => void;
+  onMake?: () => void;
 }) {
   const thumbs = posts.filter((p) => p.slides[0]?.thumb).slice(0, 4);
   const plays = posts.reduce((n, p) => n + virality(p), 0);
@@ -103,14 +103,14 @@ export function IdeaCard({
             ) : null}
           </p>
         </div>
-        <button
+        {onMake && <button
           type="button"
           disabled={making || !posts.length}
           onClick={onMake}
           className="mt-0.5 shrink-0 rounded-lg bg-violet-600 px-2.5 py-1.5 text-[12px] font-medium text-white hover:bg-violet-500 disabled:opacity-50"
         >
           {making ? <Loader2 className="h-4 w-4 animate-spin" /> : "Do this"}
-        </button>
+        </button>}
       </div>
       {workshops.length ? (
         <div className="flex flex-wrap gap-1 px-3 pb-3">

@@ -19,7 +19,7 @@ import {
   TriangleAlert,
   Video,
 } from "lucide-react";
-import { canUse, useAuth } from "@/lib/auth";
+import { canChange, canUse, useAuth, useMe } from "@/lib/auth";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { Picture } from "@/components/Picture";
 import { timeAgo } from "@/lib/exports";
@@ -519,6 +519,9 @@ function Editor({
     end?: number;
   } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // the owner on an account not set to Read: edit, share, sources, regenerate and delete
+  const signedIn = useMe();
+  const editable = owns && canChange(signedIn, "guides");
 
   useEffect(() => {
     setName(doc.name);
@@ -586,7 +589,7 @@ function Editor({
   return (
     <div className="w-full">
       <div inert={sourceClip ? true : undefined}>
-      {owns && (
+      {editable && (
         <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-0.5 sm:mb-4">
           <span className="mr-auto shrink-0 text-[11px] text-muted-foreground">
             {saving ? "Saving…" : "Saved"}
@@ -690,7 +693,7 @@ function Editor({
         </div>
       )}
 
-      {owns && compose && (
+      {editable && compose && (
         <div className="mb-6 rounded-xl border border-border p-4">
           <ComposeForm
             existingId={doc.id}
@@ -714,7 +717,7 @@ function Editor({
       )}
 
       <div className="rounded-xl border border-border bg-card px-4 py-6 shadow-sm sm:px-10 sm:py-8">
-            {owns ? (
+            {editable ? (
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -735,7 +738,7 @@ function Editor({
                 {doc.name}
               </h1>
             )}
-            {owns && editing && !isGuide ? (
+            {editable && editing && !isGuide ? (
               <DocumentWysiwyg
                 source={body}
                 onChange={scheduleBody}
@@ -746,7 +749,7 @@ function Editor({
               <GuideBody
                 docId={doc.id}
                 guide={guide}
-                editing={owns && editing}
+                editing={editable && editing}
                 onChange={scheduleGuide}
                 onPlay={(step) =>
                   setSourceClip({
@@ -794,6 +797,7 @@ export default function DocumentsPage() {
   const { pathname } = useLocation();
   const { docId } = useParams<{ docId?: string }>();
   const me = useAuth((s) => s.me);
+  const editable = canChange(me, "guides");
   const required = useAuth((s) => s.required);
   const home = toolsetHomePath();
   const phone = isPhoneHub();
@@ -852,7 +856,7 @@ export default function DocumentsPage() {
     <div className="flex min-h-screen flex-col bg-background pb-12 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Guide Builder" to={docId ? "/documents" : undefined} trail={current?.name} account={!!me}>
         {isPublicSharePath(pathname) ? <ShareThemeSwitch /> : null}
-        {canUse(me, "guides") && !docId && !composing && docs.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
+        {editable && !docId && !composing && docs.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {!me && required ? (
           <Link
             to={home}
@@ -866,7 +870,7 @@ export default function DocumentsPage() {
 
       {!docId && (
         <ToolIntro icon={FileText} title="Guide Builder" line="Turn recordings into SOPs, walkthroughs and step-by-step guides" className="w-full max-w-[720px]">
-          {canUse(me, "guides") && !phone && (
+          {editable && !phone && (
             <button
               type="button"
               onClick={() => navigate("/documents/new")}
@@ -887,7 +891,7 @@ export default function DocumentsPage() {
       ) : null}
 
       <div className={`w-full ${wide ? "max-w-7xl" : "max-w-[720px]"}`}>
-        {composing ? (
+        {composing && !editable ? null : composing ? (
           <>
             <button
               type="button"
@@ -982,17 +986,19 @@ export default function DocumentsPage() {
                       icon={guide ? ListOrdered : FileText}
                       name={d.name}
                       meta={`${timeAgo(d.updatedAt)}${guide ? " · Guide" : ""}${d.published ? " · Shared" : ""}`}
-                      drag={folders.drag(d.id)}
+                      drag={editable ? folders.drag(d.id) : undefined}
                       actions={
-                        <>
-                          <MoveToMenu state={folders} id={d.id} className="rounded p-1 hover:bg-white/20" />
-                          <button type="button" title="Rename" aria-label={`Rename ${d.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename", d.name).then((name) => name && renameTo(d, name))}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button type="button" title="Delete" aria-label={`Delete ${d.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void remove(d)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </>
+                        editable ? (
+                          <>
+                            <MoveToMenu state={folders} id={d.id} className="rounded p-1 hover:bg-white/20" />
+                            <button type="button" title="Rename" aria-label={`Rename ${d.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename", d.name).then((name) => name && renameTo(d, name))}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button type="button" title="Delete" aria-label={`Delete ${d.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void remove(d)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        ) : undefined
                       }
                     />
                   );
@@ -1004,7 +1010,7 @@ export default function DocumentsPage() {
               {listed.map((d) => (
                 <div
                   key={d.id}
-                  {...folders.drag(d.id)}
+                  {...(editable ? folders.drag(d.id) : {})}
                   onClick={() => {
                     if (renaming !== d.id) navigate(`/documents/${d.id}`);
                   }}
@@ -1046,30 +1052,34 @@ export default function DocumentsPage() {
                       {d.published ? " · Shared" : ""}
                     </p>
                   </div>
-                  <MoveToMenu state={folders} id={d.id} className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDraft(d.name);
-                      setRenaming(d.id);
-                    }}
-                    title="Rename"
-                    className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 group-hover:opacity-100"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void remove(d);
-                    }}
-                    className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
-                    title="Delete"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {editable && (
+                    <>
+                      <MoveToMenu state={folders} id={d.id} className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDraft(d.name);
+                          setRenaming(d.id);
+                        }}
+                        title="Rename"
+                        className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 group-hover:opacity-100"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void remove(d);
+                        }}
+                        className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
           </div>
