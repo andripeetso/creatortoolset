@@ -9,7 +9,9 @@
 //   { done: true, format }                  that was all: the server's AI looks at them once, and they are not kept there
 //   or …/fail { error }                     with a reason a person can read
 // The sheets stay on this Mac (the relay folder's looks/<version>.json), so lines written again under a new context
-// send them again without reading the video.
+// send them again without reading the video. Only a video in a folder the person gave this app is read (MediaFiles.gate).
+// ponytail: a version deleted on the server leaves its sheets here (about 2 MB for 45 minutes of footage); clear them
+// when a version goes, if that ever adds up
 import Foundation
 
 /// The device job kind this Mac lists for shot descriptions of its own files.
@@ -30,6 +32,8 @@ struct LibraryLookJob {
     let folder: URL
     var ffmpeg: URL? = HelperCheckJob.ffmpeg
     var stopped: @Sendable () -> Bool = { false }
+    /// the folders the person gave this app (MediaFiles.swift): a file outside them is never read, whatever the server asks
+    var granted: [String] = MediaFiles.granted
 
     /// What this Mac keeps of a version: the stretches its sheets show, and the sheets.
     struct Kept: Codable, Equatable {
@@ -62,8 +66,13 @@ struct LibraryLookJob {
                     throw LibraryLookRefused(why: "This copy of the Mac app has no ffmpeg to make the sheets with.")
                 }
                 let path = step.options["path"] ?? ""
-                guard path.hasPrefix("/"), FileManager.default.isReadableFile(atPath: path) else { throw LibraryLookRefused(why: "The file is not on this Mac at \(path).") }
-                let src = URL(fileURLWithPath: path)
+                let src: URL
+                switch MediaFiles.gate(path, granted: granted) {
+                case .file(let real, _): src = URL(fileURLWithPath: real)
+                case .status(404): throw LibraryLookRefused(why: "The file is not on this Mac at \(path).")
+                case .status(415): throw LibraryLookRefused(why: "\(path) is not a video this Mac reads.")
+                case .status: throw LibraryLookRefused(why: "\(path) is not in a folder Creator Toolset was given on this Mac (dropped on its window or chosen).")
+                }
                 let beat = Beat(api: api, path: base, stopped: stopped)
                 let reading = stretches.isEmpty
                 let opened = try waitAsync { try await LookPicture.open(src, reading: reading) }

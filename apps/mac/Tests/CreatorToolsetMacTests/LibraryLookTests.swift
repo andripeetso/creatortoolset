@@ -100,7 +100,7 @@ final class LibraryLookTests: XCTestCase {
         }
         let api = DeviceAPI(base: site.url, token: "ctd_test")
         var options = ["path": Self.clip.path, "version": "ver-1", "duration": "6", "format": "3x16", "stretches": "[]"]
-        let first = LibraryLookJob(api: api, step: EditorJob(id: 4, kind: libraryLookKind, options: options), folder: dir, ffmpeg: ffmpeg)
+        let first = LibraryLookJob(api: api, step: EditorJob(id: 4, kind: libraryLookKind, options: options), folder: dir, ffmpeg: ffmpeg, granted: [Self.fixtures.path])
         let end = await offMain { first.run().end }
         XCTAssertEqual(end, .done)
         let bodies = site.requests.map { (try? JSONSerialization.jsonObject(with: $0.body)) as? [String: Any] ?? [:] }
@@ -124,13 +124,22 @@ final class LibraryLookTests: XCTestCase {
         XCTAssertEqual(more, [["sheet"], ["done", "format"]])
     }
 
-    func testAJobForAFileThatIsGoneSaysSo() async throws {
+    func testAFileThatIsGoneOrOutsideTheGivenFoldersIsNeverRead() async throws {
         let site = FakeSite()
-        let step = EditorJob(id: 6, kind: libraryLookKind, options: ["path": "/nowhere/clip.mov", "version": "ver-2", "stretches": "[]"])
-        let job = LibraryLookJob(api: DeviceAPI(base: site.url, token: "ctd_test"), step: step, folder: testFolder("look-gone"), ffmpeg: URL(fileURLWithPath: "/usr/bin/true"))
-        let end = await offMain { job.run().end }
-        XCTAssertEqual(end, .failed("The file is not on this Mac at /nowhere/clip.mov."))
-        XCTAssertEqual(site.requests.map(\.path), ["/api/devices/relay/job/library-look/6/fail"])
+        let given = testFolder("look-given")
+        addTeardownBlock { try? FileManager.default.removeItem(at: given) }
+        let run = { (path: String, id: Int) -> CardJob.End in
+            let step = EditorJob(id: id, kind: libraryLookKind, options: ["path": path, "version": "ver-2", "stretches": "[]"])
+            return LibraryLookJob(api: DeviceAPI(base: site.url, token: "ctd_test"), step: step, folder: given, ffmpeg: URL(fileURLWithPath: "/usr/bin/true"),
+                                  granted: [given.path]).run().end
+        }
+        let gone = given.appendingPathComponent("clip.mov").path
+        let end = await offMain { run(gone, 6) }
+        XCTAssertEqual(end, .failed("The file is not on this Mac at \(gone)."))
+        // the server named a file this app was never given: refused, nothing read or sent
+        let outside = await offMain { run(Self.clip.path, 7) }
+        XCTAssertEqual(outside, .failed("\(Self.clip.path) is not in a folder Creator Toolset was given on this Mac (dropped on its window or chosen)."))
+        XCTAssertEqual(site.requests.map(\.path), ["/api/devices/relay/job/library-look/6/fail", "/api/devices/relay/job/library-look/7/fail"])
     }
 
     /// A JPEG as grey pixels, with its size.
