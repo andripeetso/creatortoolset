@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { pictureHash, samePicture } from "./look";
+import { pictureHash, SAME_PICTURE_BITS, samePicture } from "./look";
 import { MIGRATIONS } from "./schema";
 import { stretchesOf } from "./stretches";
 
@@ -15,6 +15,11 @@ describe("picture hash", () => {
     const other = frame((x, y) => (x * 61 + y * 97 + 13) % 241);
     expect(samePicture(pictureHash(a), pictureHash(brighter))).toBe(true);
     expect(samePicture(pictureHash(a), pictureHash(other))).toBe(false);
+  });
+  it(`up to ${SAME_PICTURE_BITS} bits apart is the same picture (a still scene, 0-3 measured); 5 is another moment (one fight's, 6-11 measured)`, () => {
+    expect(SAME_PICTURE_BITS).toBe(4);
+    expect(samePicture("0000000000000000", "000000000000000f")).toBe(true);
+    expect(samePicture("0000000000000000", "100000000000000f")).toBe(false);
   });
   it("an empty or broken hash is never the same", () => {
     expect(samePicture("", "")).toBe(false);

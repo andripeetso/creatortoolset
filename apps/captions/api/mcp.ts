@@ -90,10 +90,9 @@ that first when it is there. The user's notes on a cut go to editor_feedback in 
 the next version is made from the last one, changing what they named.
 Editing styles: when the brief names one of the user's styles or clearly is that kind of edit, use it (editor_create
 start=false, editor_style_use, editor_run); when none fits, make one named for the kind of edit ("Hard edit") with
-editor_style_save. Before the first edit in a style with no playbook, search the web for that kind of edit and save
-what you found as its playbook (editor_style_save): what it is, its structure, its pace in numbers, its effects by the
-editor's names (punch, zoom, flash, shake, rgb, glitch, blur, invert, strobe, zoomblur, reverse, stutter, freeze,
-whip), what makes it fail, and the sources. When the search fails or isn't allowed, make the edit without one.
+editor_style_save. A style can hold a playbook: what that kind of edit is, its structure, its pace in numbers, its
+effects by the editor's names (punch, zoom, flash, shake, rgb, glitch, blur, invert, strobe, zoomblur, reverse,
+stutter, freeze, whip), what makes it fail, and the sources. Save one with editor_style_save when you have it.
 
 A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
 as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no

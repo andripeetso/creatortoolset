@@ -9,7 +9,7 @@ import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
-import type { Coverage, EditPlan } from "../../contracts/edit-plan";
+import type { Coverage, Critique, EditPlan } from "../../contracts/edit-plan";
 import { cardsView } from "./cards/state";
 import { waitLine } from "./reach";
 import { passesView } from "./passes";
@@ -129,7 +129,19 @@ export interface StepFiles {
   /** the passes Carry on queued for each version, in order (passes.ts) */
   passes: Record<string, string[]>;
   /** each planned version's plan as checked and repaired, and what was changed (plan.ts) */
-  shots: Record<string, { plan: EditPlan; notes: string[] }>;
+  shots: Record<string, PlannedVersion>;
+}
+
+/**
+ * A planned version's plan (plan.ts). After the look at its cut (critique.ts): `fix` on the plan of the one fix round,
+ * with the first cut's look and plan to go back to; `critique` on a plan whose cut was looked at already (the first,
+ * when the fix was no better), so its next draft is filed with that look and not looked at again.
+ */
+export interface PlannedVersion {
+  plan: EditPlan;
+  notes: string[];
+  fix?: { first: Critique; was: { plan: EditPlan; notes: string[] } };
+  critique?: Critique;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -162,6 +174,10 @@ export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: 
 export interface DraftFile {
   timeline: Timeline;
   notes: string[];
+  /** a planned version's cut as the AI made it: the round of the look it waits for before Review (critique.ts) */
+  due?: 1 | 2;
+  /** the look at this cut before Review: the shots that don't hold up */
+  critique?: Critique;
 }
 
 /** A draft's name: a version (v1…) or a moment of a long recording (m1…m20, moments.ts). Nothing else is a file name here. */
@@ -190,6 +206,9 @@ export async function saveDraft(id: string, name: string, d: DraftFile): Promise
   }
   await writeJsonAtomic(cur, d);
 }
+
+/** Writes what a step learned about a draft into it, with no new revision: the cut is the same (critique.ts). */
+export const markDraft = (id: string, name: string, d: DraftFile) => writeJsonAtomic(path.join(editDir(id), "drafts", `${name}.json`), d);
 
 /**
  * The timeline a Review version was rendered from (filed/<video>.<n>.json): what that version's timeline in Review

@@ -473,6 +473,18 @@ describe("a cut the app's own AI Editor made", () => {
     expect(host.textContent).not.toContain("Making the next version");
   });
 
+  it("names the shots the look before Review found still don't hold up, and nothing when the cut passed", async () => {
+    server([], () => new Response("{}", { status: 200 }));
+    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens" }] } });
+    await settle();
+    expect(host.textContent).toContain("Shot 7: walking through town, nothing happens");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await mount([], own);
+    await settle();
+    expect(host.textContent).not.toMatch(/Shot \d+:/);
+  });
+
   it("someone the edit is not theirs gets no button, and any other version has none", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Not found" }), { status: 404 })));
     await mount([], own);

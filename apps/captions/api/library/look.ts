@@ -524,8 +524,14 @@ export function ratedLine(v: unknown): RatedLine | null {
   return { text, action: Number.isFinite(n) ? Math.max(0, Math.min(5, Math.round(n))) : 0, clear: r!.clear === true, tags };
 }
 
-/** Bits two picture hashes may differ in and still show the same picture (64-bit difference hashes). */
-export const SAME_PICTURE_BITS = 10;
+/**
+ * Bits two picture hashes may differ in and still show the same picture (64-bit difference hashes). Measured on real
+ * gameplay with a fixed camera: the same standing scene 0-3 bits apart, different moments of one fight 3-14 (mostly
+ * 6-11), different files 18-25. At 10 a cut could take only about two stretches of a 25-second fight.
+ * ponytail: the hash covers the whole frame, the HUD included, so moments that look alike stay apart only by this
+ * threshold; hash the picture without the HUD (look.ts hudOf) if repeats get through.
+ */
+export const SAME_PICTURE_BITS = 4;
 
 /**
  * Whether two 64-bit picture hashes (16 hex digits, the difference hash of a frame's 9×8 grey: each bit says whether a

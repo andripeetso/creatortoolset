@@ -253,6 +253,14 @@ export async function indexSources(
   return { sources, left };
 }
 
+/** What is known of a source's shots without reading it again: the library's shot descriptions (with what its cached
+ * index measured), else the AI Editor's own index of it. */
+export async function knownShots(versionId: string): Promise<IndexShot[]> {
+  const lines = stretchesOf(libraryDb(), versionId);
+  const measured = (await cached(versionId))?.src.shots ?? [];
+  return lines.length ? lines.map((l) => lineShot(l, measured)) : measured;
+}
+
 /** One shot description as the plan reads a shot, with what the picture measured at its middle (`measured`, the same
  * finder's stretches): whether it is junk and where it moves, so its crop follows the action. */
 const lineShot = (s: Stretch, measured: IndexShot[] = []): IndexShot => {

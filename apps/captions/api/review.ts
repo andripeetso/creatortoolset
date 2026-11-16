@@ -42,6 +42,7 @@ import { announceSoon } from "./lib/announce-soon";
 import { announce } from "./lib/sync";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
+import type { Critique } from "../contracts/edit-plan";
 
 export { sendFile };
 
@@ -136,8 +137,8 @@ interface Version {
   timelineFile?: string;
   /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. */
   edit?: { project: string; draft: string };
-  /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. */
-  draft?: { edit: string; name: string };
+  /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. `fails`: the shots the look before Review found still don't hold up. */
+  draft?: { edit: string; name: string; fails?: Critique["fails"] };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
@@ -1067,7 +1068,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string; fails?: Critique["fails"] }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
