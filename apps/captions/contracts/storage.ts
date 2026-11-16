@@ -33,6 +33,21 @@ export interface Disk {
   totalGb?: number;
   network?: true;
   server?: string;
+  /** a network share: how it is shared and its name on the server ("footage"; NFS: the exported path). Never a password or user name */
+  fs?: ShareFs;
+  share?: string;
+}
+
+export const SHARE_FS = ["smb", "nfs", "afp"] as const;
+export type ShareFs = (typeof SHARE_FS)[number];
+
+/** How a folder's drive is connected on the computer that added it, when it is a network share: the share, and where the
+ *  folder is inside it ("/"-separated, "" for the share itself). Another computer that connects the same share has it. */
+export interface FolderMount {
+  fs: ShareFs;
+  server: string;
+  share: string;
+  sub: string;
 }
 
 export interface StorageFolder {
@@ -53,6 +68,35 @@ export interface StorageFolder {
   error?: string;
   /** the workspace it belongs to (stamped when added; none = from before workspaces kept their own: the first brand) */
   workspace?: string;
+  /** the share its drive is, on the computer that added it (api/lib/storage.ts mountOf); none: a disk of that computer's own */
+  mount?: FolderMount;
+}
+
+/** A share's server and name as they may be reported (contracts/providers.ts parseMachine) and put into a command. */
+export const SAFE_SERVER = /^[\w.-]{1,253}$/;
+export const SAFE_SHARE = /^[\w .$\/-]{1,200}$/;
+
+/** A share's server as a computer can find it on the network: a bare name ("nas") gets ".local" for a Mac or Linux. */
+const reachable = (server: string, os: "mac" | "linux" | "windows") => (os !== "windows" && /^[a-z0-9-]+$/i.test(server) ? `${server}.local` : server);
+
+/**
+ * How to connect a folder's share on another computer (Settings → Storage, Connect): a link a Mac opens in the Finder,
+ * or the one line to run on Linux or Windows. The computer asks for the share's password itself; none is ever kept here.
+ * Null: that kind of computer can't connect that kind of share.
+ */
+export function connectFor(m: FolderMount, os: "mac" | "linux" | "windows"): { url: string } | { line: string } | null {
+  // what goes into a command is only a plain host name and share name: anything else is not offered
+  if (!SAFE_SERVER.test(m.server) || !SAFE_SHARE.test(m.share)) return null;
+  const host = reachable(m.server, os);
+  const share = m.share.replace(/^\/+/, "");
+  const at = `/mnt/${share.split("/").pop()!.replace(/[^\w.-]+/g, "-") || "share"}`;
+  if (os === "mac") return { url: `${m.fs}://${host}/${share.split("/").map(encodeURIComponent).join("/")}` };
+  if (os === "linux") {
+    if (m.fs === "smb") return { line: `sudo mkdir -p ${at} && sudo mount -t cifs '//${host}/${share}' ${at} -o username=$USER,uid=$(id -u),gid=$(id -g)` };
+    if (m.fs === "nfs") return { line: `sudo mkdir -p ${at} && sudo mount -t nfs '${host}:/${share}' ${at}` };
+    return null;
+  }
+  return m.fs === "smb" ? { line: `net use * "\\\\${host}\\${share.replace(/\//g, "\\")}" /persistent:yes` } : null;
 }
 
 export interface StorageState {
@@ -73,6 +117,7 @@ export function sourcesOf(folders: StorageFolder[]): StorageFolder[] {
         name: sub,
         origin: { host: lib.origin.host, path: `${lib.origin.path}/${sub}` },
         reach: Object.fromEntries(Object.entries(lib.reach).map(([h, r]) => [h, { ...r, path: `${r.path}/${sub}` }])),
+        ...(lib.mount ? { mount: { ...lib.mount, sub: lib.mount.sub ? `${lib.mount.sub}/${sub}` : sub } } : {}),
       };
     }));
   return [...folders.filter((f) => f.role !== "library"), ...derived];

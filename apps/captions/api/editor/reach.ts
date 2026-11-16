@@ -5,7 +5,7 @@ import type { StorageFolder } from "../../contracts/storage";
 import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
-import { hostPath, parseStorageFile, storageFilePath } from "../lib/storage";
+import { hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
@@ -68,9 +68,10 @@ export function editFiles(editId: string): FileRow[] {
 /** The edit a step belongs to: its version id is "<editId>:<variant>". */
 export const editOf = (job: Pick<JobRow, "version_id">): string => (job.version_id ?? "").split(":")[0]!;
 
-/** The account's storage folders (Settings → Storage). */
+/** The account's storage folders (Settings → Storage), with the computers that reach them through a connected share. */
 export async function foldersOf(owner: string): Promise<StorageFolder[]> {
-  return parseStorageFile(await readFile(storageFilePath(env.dataDir, owner), "utf-8").catch(() => "{}")).folders;
+  const folders = parseStorageFile(await readFile(storageFilePath(env.dataDir, owner), "utf-8").catch(() => "{}")).folders;
+  return withMounts(folders, listDevices((x) => x.owner === owner).map((x) => ({ id: x.id, disks: x.report?.machine?.disks })));
 }
 
 /** What a device that took a step of `editId` is told of its files: each one's path on it, or which server copy to fetch. */

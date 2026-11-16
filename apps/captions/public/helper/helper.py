@@ -119,7 +119,59 @@ def machine():
     g = gpu()
     if g:
         m.update(gpu=g[0], gpuMemGb=g[1], gpuFreeGb=g[2])
+    shares = disks()
+    if shares:
+        m["disks"] = shares
     return m
+
+
+NET_FS = {"cifs": "smb", "smb3": "smb", "nfs": "nfs", "nfs4": "nfs"}
+
+
+def soon(fn, wait=2):
+    """fn() in a thread, or None after `wait` seconds: a share that went away can hang a statvfs for minutes."""
+    box = []
+
+    def run():
+        try:
+            box.append(fn())
+        except OSError:
+            pass
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(wait)
+    return box[0] if box else None
+
+
+def disks():
+    """The network shares this computer has connected (Disk in contracts/storage.ts): where each is, its server and its
+    name there, so the server knows which of its person's shared folders this computer reaches. Never a user name."""
+    out = []
+    try:
+        with open("/proc/mounts") as f:
+            rows = [line.split() for line in f]
+    except OSError:
+        return out
+    for row in rows:
+        if len(row) < 3 or row[2] not in NET_FS:
+            continue
+        src, at, fs = row[0].replace("\\040", " "), row[1].replace("\\040", " "), NET_FS[row[2]]
+        if fs == "smb":
+            if not src.startswith("//") or "/" not in src[2:]:
+                continue
+            server, share = src[2:].split("/", 1)
+            server = server.rsplit("@", 1)[-1]
+        elif ":" in src:
+            server, share = src.split(":", 1)
+        else:
+            continue
+        st = soon(lambda: os.statvfs(at))
+        if not st or not share.strip("/"):
+            continue
+        gb = lambda n: round(n * st.f_frsize / 2**30, 1)
+        out.append({"path": at, "name": os.path.basename(at.rstrip("/")) or at, "freeGb": gb(st.f_bavail), "totalGb": gb(st.f_blocks),
+                    "network": True, "server": server.lower(), "fs": fs, "share": share.strip("/")})
+    return out[:20]
 
 
 def cuda_libs():

@@ -8,7 +8,7 @@ import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
+import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
 import { keptApp } from "./kept";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
@@ -75,7 +75,9 @@ async function scopeOf(c: C): Promise<{ mine: (f: StorageFolder) => boolean; wor
   return { mine: (f) => !inWs || inWs(f.workspace), ...(workspace ? { workspace } : {}) };
 }
 /** The list the page gets: this workspace's folders only. */
-const shown = (st: StorageState, mine: (f: StorageFolder) => boolean): StorageState => ({ ...st, folders: st.folders.filter(mine) });
+/** The folders this workspace shows, with the account's computers that reach them through a connected share (lib/storage.ts withMounts). */
+const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string): StorageState =>
+  ({ ...st, folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))) });
 
 export const storageApp = new Hono<{ Variables: AuthVars }>();
 
@@ -91,7 +93,7 @@ storageApp.route("/kept", keptApp);
  *  no drives (the row then has nothing else to show). */
 storageApp.get("/", async (c) => {
   const u = c.get("user");
-  const st = shown(await readStorage(u.username), (await scopeOf(c)).mine);
+  const st = shown(await readStorage(u.username), (await scopeOf(c)).mine, u.username);
   const lib = st.folders.find((f) => f.role === "library");
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
@@ -126,11 +128,12 @@ storageApp.post("/library", async (c) => {
           st.folders.push({ id: randomUUID(), role, name: LIBRARY_SUBFOLDERS[role], origin: { host: old.origin.host, path: at }, make: false, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
       }
     }
-    st.folders.push({ id: randomUUID(), role: "library", name: LIBRARY_NAME, origin: { host, path: p }, make: true, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
+    const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
+    st.folders.push({ id: randomUUID(), role: "library", name: LIBRARY_NAME, origin: { host, path: p }, make: true, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });
-  return out ? c.json(shown(out, here)) : c.json({ error: "The library is already there" }, 400);
+  return out ? c.json(shown(out, here, user)) : c.json({ error: "The library is already there" }, 400);
 });
 
 /** Use a folder you already have as footage or music. */
@@ -152,11 +155,13 @@ storageApp.post("/folders", async (c) => {
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
-    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: false, createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}) });
+    // the share its drive is on that computer, so another computer can be told how to connect it (never a password)
+    const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
+    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: false, createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });
-  return out ? c.json(shown(out, here)) : c.json({ error: "That folder is already there" }, 400);
+  return out ? c.json(shown(out, here, user)) : c.json({ error: "That folder is already there" }, 400);
 });
 
 /** Forget a folder (its marker files stay where they are). */
@@ -176,5 +181,5 @@ storageApp.delete("/folders/:id", async (c) => {
   // another workspace may read the same folder: it stays on the Library's watch list while one still lists it
   const still = out.st.folders.some((f) => f.role !== "library" && f.origin.host === out.gone.origin.host && f.origin.path === out.gone.origin.path);
   if (out.gone.role !== "library" && !still && readHere(user, out.gone.origin.host)) await removeWatchFolder(user, out.gone.origin.path);
-  return c.json(shown(out.st, here));
+  return c.json(shown(out.st, here, user));
 });

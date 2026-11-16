@@ -1,7 +1,7 @@
 import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
 export function libraryPath(disk: string): string {
@@ -107,6 +107,46 @@ export function hostPath(p: string, folders: StorageFolder[], to: string, from?:
   const m = folderFor(p, folders, from);
   const dir = m ? pathOn(m.folder, to) : undefined;
   return m && dir !== undefined ? join(dir, m.rest) : null;
+}
+
+/** The share a path is on, from its computer's reported disks (the deepest network disk that holds it); undefined for a
+ *  disk of that computer's own, or a share it did not say the name of. */
+export function mountOf(p: string, disks: Disk[] = []): FolderMount | undefined {
+  let best: { d: Disk; sub: string } | undefined;
+  for (const d of disks) {
+    const sub = d.network ? inside(p, d.path) : null;
+    if (sub !== null && (!best || d.path.length > best.d.path.length)) best = { d, sub };
+  }
+  const d = best?.d;
+  return d?.fs && d.server && d.share ? { fs: d.fs, server: d.server, share: d.share, sub: best!.sub } : undefined;
+}
+
+/** "nas", "NAS.local" and "nas._smb._tcp.local" are one server; an SMB share's name has no case. */
+const sameShare = (m: FolderMount, d: Disk) => {
+  const host = (x: string) => x.toLowerCase().replace(/(\._smb\._tcp)?\.local\.?$/, "");
+  const name = (x: string) => x.replace(/^\/+|\/+$/g, "");
+  return !!d.network && !!d.server && d.share !== undefined && (!d.fs || d.fs === m.fs) && host(d.server) === host(m.server)
+    && (m.fs === "nfs" ? name(d.share) === name(m.share) : name(d.share).toLowerCase() === name(m.share).toLowerCase());
+};
+
+/**
+ * The folders with what each computer's disks say: the share a folder is on (from the computer that added it, when it was
+ * not stored), and every other computer that has the same share connected reaches the folder inside it, at its own path.
+ * So a second computer needs nothing typed: connecting the share is enough.
+ */
+export function withMounts(folders: StorageFolder[], computers: Array<{ id: string; disks?: Disk[] }>): StorageFolder[] {
+  const disks = new Map(computers.map((c) => [c.id, c.disks ?? []]));
+  return folders.map((f) => {
+    const mount = f.mount ?? mountOf(f.origin.path, disks.get(f.origin.host));
+    if (!mount) return f;
+    const reach = { ...f.reach };
+    for (const [id, list] of disks) {
+      if (id === f.origin.host || reach[id]) continue;
+      const d = list.find((x) => sameShare(mount, x));
+      if (d) reach[id] = { path: join(d.path, mount.sub), at: 0 };
+    }
+    return { ...f, mount, reach };
+  });
 }
 
 /** May computer `host` take footage at these paths? A path inside a footage folder: only where that computer has the folder
