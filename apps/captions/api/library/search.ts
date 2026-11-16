@@ -16,7 +16,7 @@ import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
 import { enqueueJob, prepareFirst } from "./jobs";
-import { CARD, FINISHED, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
+import { CARD, FINISHED, ftsQuery, indexAsset, markHere, parseSearch, toCard, type CardRow } from "./query";
 import { filterClauses } from "./query";
 import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
@@ -159,7 +159,7 @@ searchApp.get("/:id/search", async (c) => {
   if (!viewer) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
-  const query = parseSearch(c.req.query());
+  const query = parseSearch(c.req.query(), user.username);
   const { roll } = query;
   // footage only, by text and by meaning (query.ts FINISHED)
   const where = [...searchClauses(query), { sql: `NOT ${FINISHED}`, params: [] }];
@@ -167,9 +167,9 @@ searchApp.get("/:id/search", async (c) => {
   const meaning = await semanticHits(libraryId, q, user.username, where).catch(() => null);
   const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
   if (!meaning && meaningGettingReady(libraryId, user.username)) c.header("X-Search-Meaning", "getting-ready");
-  const seen = await visibleCards(viewer, libraryId, hits.map((h) => h.asset));
-  const shown = new Set(seen.map((a) => a.id));
-  return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll))); // ponytail: narrowed after the top hits
+  const seen = markHere(db(), await visibleCards(viewer, libraryId, hits.map((h) => h.asset)), query.device);
+  const shown = new Map(seen.map((a) => [a.id, a]));
+  return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll)).map((h) => ({ ...h, asset: shown.get(h.asset.id)! }))); // ponytail: narrowed after the top hits
 });
 
 // GET /api/library/:id/tags → { tags: [{ tag, count }] }: every tag on a clip in the library (not in the trash), most used

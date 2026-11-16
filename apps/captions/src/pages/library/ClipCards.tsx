@@ -1,5 +1,5 @@
 import { Fragment, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
-import { AudioLines, FileText, Image as ImageIcon, Video } from "lucide-react";
+import { AudioLines, FileText, Image as ImageIcon, Laptop, Video } from "lucide-react";
 import { SPRITE_FRAMES, type AssetCard, type AssetKind } from "@contracts/library";
 import { ClipStage } from "@/components/LibraryProcessing";
 import { libraryBadges } from "@/lib/library-slots";
@@ -9,6 +9,13 @@ import { AiBadge } from "./ClipPanel";
 /** The Media Library's clips as cards and as list rows (LibraryPage.tsx), and their frames before the list is known. */
 
 export const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio: AudioLines, image: ImageIcon, doc: FileText };
+
+/** The small mark of a clip on this computer (its proxy cached here, or its file indexed here): the card's `here`. */
+export const HereMark = ({ className }: { className?: string }) => (
+  <span role="img" aria-label="On this computer" title="On this computer" className={className}>
+    <Laptop aria-hidden className="h-3 w-3" />
+  </span>
+);
 
 export const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -103,6 +110,7 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
             <div aria-hidden className="absolute bottom-0 left-0 h-0.5 bg-white/90" style={{ width: `${at * 100}%` }} />
           </>
         )}
+        {a.here && <HereMark className="absolute bottom-1.5 left-1.5 rounded bg-black/70 p-1 text-white" />}
         {a.durationS !== undefined && (
           <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white">
             {clock(a.durationS)}
@@ -150,6 +158,7 @@ export function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen:
         {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
       </div>
       <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
+      {a.here && <HereMark className="shrink-0 text-zinc-500" />}
       {a.state === "missing" ? (
         <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />

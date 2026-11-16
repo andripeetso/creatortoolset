@@ -2,7 +2,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmS
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { WORK_V, type WorkClaim, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
+import { WORK_V, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
 import { Waiting } from "../editor/analyze";
 import { editDir, readEdit } from "../editor/store";
 import { limitWait, STEPS } from "../editor/worker";
@@ -11,7 +11,7 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport } from "./cache";
+import { cacheReport, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 
@@ -21,6 +21,8 @@ import { turnOff, turnOn, type WorkServer } from "./on-computer";
  * package. It claims with a long poll, beats every 10 s (5 s while downloading), and sends the edit folder's changes
  * back. A beat answered ok: false (Stop on the page, the lease lost) stops the step and sends nothing. Started by
  * api/boot.ts with CT_WORKER=<server address>; it ends after 10 minutes with nothing to do.
+ * The proxy cache (cache.ts): each claim reports it; the answer may say to empty it and lists the proxies kept offline,
+ * which download one at a time while no step waits. After each step the size limit removes the least recently used.
  */
 
 export interface WorkerOptions {
@@ -96,15 +98,42 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
       await new Promise((r) => setTimeout(r, o.retryMs ?? 5000));
       continue;
     }
+    if (claim.offline) setKeptOffline(claim.offline.map((f) => f.id));
+    if (claim.empty) emptyCache();
     if (claim.pkg) {
       await runJob(claim.pkg, o);
+      trimCache();
       idleSince = Date.now();
     } else if ("update" in claim && claim.update) {
       console.log("[work] the server needs a newer Creator Toolset to hand it steps");
       return "update";
-    }
+    } else if (claim.offline && (await keepOffline(claim.offline, o))) idleSince = Date.now();
   }
   return "idle";
+}
+
+/**
+ * Downloads one proxy kept offline that the cache lacks, from the server's offline route; the next claim comes first,
+ * so a step never waits for more than one. Cancel (the menu) stops it and keeps the `.part`. True when it downloaded one.
+ */
+export async function keepOffline(list: WorkOffline[], o: WorkerOptions): Promise<boolean> {
+  const f = list.find((x) => x.bytes > 0 && sizeOf(proxyPath(x.id)) !== x.bytes);
+  if (!f) return false;
+  const c = client(o);
+  const ctl = new AbortController();
+  current = { ctl, cancelled: false };
+  try {
+    await resolveFiles(
+      { files: [{ id: f.id, title: f.title, bytes: 0, proxy: { bytes: f.bytes } }] },
+      { folders: [], get: (v, init) => c.raw(`work/offline/${encodeURIComponent(v)}`, init), signal: ctl.signal },
+    );
+    return true;
+  } catch (e) {
+    if (!ctl.signal.aborted) console.warn(`[work] keeping ${f.title} offline:`, e instanceof Error ? e.message : e);
+    return false;
+  } finally {
+    current = null;
+  }
 }
 
 /** The running step, for Cancel (the menu): it ends as "Stopped". */
@@ -298,6 +327,7 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
     });
     downloading = false;
     for (const k of ["done", "total", "leftS"] as const) delete beat[k];
+    for (const p of Object.values(paths)) touchProxy(p);
 
     seedRows(pkg);
     await layOut(pkg, (rel) => c.raw(`work/${id}/own?path=${encodeURIComponent(rel)}`, { signal: ctl.signal }));

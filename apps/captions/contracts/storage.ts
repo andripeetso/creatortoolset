@@ -195,16 +195,18 @@ export interface UploadRelayView {
  */
 export const KEPT_KINDS = [
   "captions", "review", "notes", "guides", "enhance", "editor", "analyzer", "workshop", "designs",
-  "captions-trash", "review-trash", "library", "chat-pictures", "exports", "chat-videos", "look-sheets",
+  "captions-trash", "review-trash", "library", "chat-pictures", "exports", "chat-videos", "look-sheets", "proxies",
 ] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];
 /** The kinds Empty clears: the trash, and copies no work needs. The rest is the account's work, deleted one by one in its own tool. */
-export const EMPTIED: readonly KeptKind[] = ["captions-trash", "review-trash", "chat-pictures", "exports", "chat-videos", "look-sheets"];
+export const EMPTIED: readonly KeptKind[] = ["captions-trash", "review-trash", "chat-pictures", "exports", "chat-videos", "look-sheets", "proxies"];
 export interface KeptRow {
   kind: KeptKind;
   bytes: number;
   items: number;
   keepDays?: number;
+  /** `proxies`: one row per computer, its proxy cache as its last claim said (POST …/proxies/empty?device=<id>) */
+  device?: { id: string; name: string };
 }
 export interface KeptView {
   rows: KeptRow[];

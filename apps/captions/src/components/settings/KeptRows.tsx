@@ -9,8 +9,8 @@ import { Card, EmptyRow, ErrorRow, LoadingRow, Row, Section } from "./ui";
 /**
  * "Kept on the server" (api/kept.ts): what this account keeps in the server's data folder, one row per kind with its size,
  * the biggest first, and the total beside the title. Each row has a bar: its share of everything kept, all on one scale
- * and in one colour, so the rows compare at a glance (the same bar as Settings → Usage). The trash, a chat's pictures and
- * videos and finished renders have Empty, which asks first in the app's own dialog; the rest is the account's work,
+ * and in one colour, so the rows compare at a glance (the same bar as Settings → Usage). Each computer's proxies are a
+ * row of their own. The trash, a chat's pictures and videos, finished renders and a computer's proxies have Empty, which asks first in the app's own dialog; the rest is the account's work,
  * deleted one by one in its own tool.
  */
 
@@ -33,7 +33,11 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   exports: ["Exported videos", "video", "videos"],
   "chat-videos": ["Chat videos", "video", "videos"],
   "look-sheets": ["Shot description sheets on your Mac", "clip", "clips"],
+  proxies: ["Proxies", "clip", "clips"],
 };
+
+/** A row's title: a computer's proxies name the computer (one row each). */
+export const keptTitle = (r: KeptRow) => (r.device ? `Proxies on ${r.device.name}` : LABEL[r.kind][0]);
 
 export const bytesLabel = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
@@ -72,6 +76,7 @@ const ASK: Partial<Record<KeptKind, [thing: string, after: string]>> = {
   exports: ["exported video", "The projects stay, so you can export again."],
   "chat-videos": ["chat video", "A video already sent on to Review, Video Notes, Caption Studio or the Media Library stays there."],
   "look-sheets": ["", "The shot descriptions stay. A clip described again reads its video on the Mac again."],
+  proxies: ["", "Clips kept offline stay. A step that needs one downloads it again."],
 };
 
 /** The question Empty asks first, in the app's own dialog: how many of what, how much, what stays, and that it is for good. */
@@ -79,7 +84,12 @@ export function emptyQuestion(r: KeptRow): DialogOpts {
   const [thing, after] = ASK[r.kind] ?? [LABEL[r.kind][1], ""];
   const s = r.items === 1 ? "" : "s";
   return {
-    title: r.kind === "look-sheets" ? `Delete the shot description sheets of ${r.items} clip${s}?` : `Delete ${r.items} ${thing}${s}?`,
+    title:
+      r.kind === "look-sheets"
+        ? `Delete the shot description sheets of ${r.items} clip${s}?`
+        : r.kind === "proxies"
+          ? `Delete the proxies of ${r.items} clip${s} on ${r.device?.name ?? "your computers"}?`
+          : `Delete ${r.items} ${thing}${s}?`,
     body: [`${bytesLabel(r.bytes)}.`, after, "This cannot be undone."].filter(Boolean).join(" "),
     ok: `Delete ${bytesLabel(r.bytes)}`,
     danger: true,
@@ -110,9 +120,9 @@ export function KeptSection() {
   const [error, setError] = useState("");
   const rows = kept.data && keptRows(kept.data.rows);
   const total = rows?.reduce((n, r) => n + r.bytes, 0) ?? 0;
-  const empty = async (kind: KeptKind) => {
+  const empty = async (kind: KeptKind, device?: string) => {
     setError("");
-    await call<KeptView>(`${KEPT_API}/${kind}/empty`, "POST").catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    await call<KeptView>(`${KEPT_API}/${kind}/empty${device ? `?device=${encodeURIComponent(device)}` : ""}`, "POST").catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
     await kept.refresh().catch(() => {});
   };
   return (
@@ -134,12 +144,12 @@ export function KeptSection() {
         ) : (
           rows.map((r) => (
             <Row
-              key={r.kind}
-              title={LABEL[r.kind][0]}
+              key={r.device ? `${r.kind}:${r.device.id}` : r.kind}
+              title={keptTitle(r)}
               description={keptLine(r)}
-              control={EMPTIED.includes(r.kind) && r.bytes > 0 ? <EmptyButton row={r} onEmpty={() => empty(r.kind)} /> : undefined}
+              control={EMPTIED.includes(r.kind) && r.bytes > 0 ? <EmptyButton row={r} onEmpty={() => empty(r.kind, r.device?.id)} /> : undefined}
             >
-              <ShareBar name={LABEL[r.kind][0]} bytes={r.bytes} total={total} />
+              <ShareBar name={keptTitle(r)} bytes={r.bytes} total={total} />
             </Row>
           ))
         )}

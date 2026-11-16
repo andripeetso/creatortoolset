@@ -10,7 +10,9 @@ import { WORK_MIN, type WorkClaim, type WorkResult } from "../../contracts/work"
 import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
 import { deviceForToken, deviceOf, setDeviceWork, touchDevice } from "../lib/devices";
 import { libraryDb } from "../library/db";
+import { libraryMedia } from "../library/routes";
 import { finishJob, type JobRow } from "../library/jobs";
+import { claimExtras, offlineFor } from "./offline";
 import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
@@ -50,18 +52,27 @@ workApp.post("/claim", async (c) => {
   if (typeof v !== "number" || !Number.isSafeInteger(v) || !steps) return c.json({ error: "v: a number, steps: a list of step ids" }, 400);
   const raw = b?.cache && typeof b.cache === "object" ? (b.cache as Record<string, unknown>) : null;
   const cache = raw && typeof raw.bytes === "number" && raw.bytes >= 0
-    ? { bytes: raw.bytes, ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}), ...(strings(raw.offline, 10_000) ? { offline: raw.offline as string[] } : {}) }
+    ? {
+        bytes: raw.bytes,
+        ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
+        ...(strings(raw.offline, 20_000) ? { offline: raw.offline as string[] } : {}),
+        ...(strings(raw.versions, 20_000) ? { versions: raw.versions as string[] } : {}),
+      }
     : undefined;
-  // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it
-  setDeviceWork(d.id, { v, steps, ...(cache ? { cache } : {}) });
-  if (v < WORK_MIN) return c.json({ pkg: null, update: true } satisfies WorkClaim);
+  // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
+  // told yet stays, and the cache it will empty counts as emptied
+  const empty = deviceOf(d.id)?.work?.empty;
+  setDeviceWork(d.id, { v, steps, ...(cache ? { cache: empty ? { ...cache, bytes: 0, versions: [] } : cache } : {}), ...(empty ? { empty } : {}) });
+  // Empty and the proxies kept offline go with every answer (api/work/offline.ts)
+  const answer = async (claim: WorkClaim) => c.json({ ...claim, ...(await claimExtras(d.id, cache?.offline)) } satisfies WorkClaim);
+  if (v < WORK_MIN) return answer({ pkg: null, update: true });
   const end = Date.now() + CLAIM_POLL.holdMs;
   for (;;) {
     const got = await claimForComputer(deviceOf(d.id)!);
     if (got) {
       try {
         const pkg = await buildPackage(got.job, d);
-        return c.json({ pkg: got.gate === undefined ? pkg : { ...pkg, gate: got.gate } } satisfies WorkClaim);
+        return answer({ pkg: got.gate === undefined ? pkg : { ...pkg, gate: got.gate } });
       } catch (e) {
         // a package the server could not build: a failed try (retried after its backoff), never a held step nobody runs
         libraryDb().prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(got.job.id);
@@ -69,10 +80,19 @@ workApp.post("/claim", async (c) => {
         continue;
       }
     }
-    if (Date.now() >= end || c.req.raw.signal.aborted) return c.json({ pkg: null } satisfies WorkClaim);
+    if (Date.now() >= end || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
     await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
     touchDevice(d.id, c.req.header("user-agent"));
   }
+});
+
+/** A proxy the computer keeps offline (offline.ts offlineFor): only one its owner set offline and may see, never the original. */
+workApp.get("/offline/:version", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const version = c.req.param("version");
+  if (!(await offlineFor(d)).some((f) => f.id === version)) return c.json({ error: "Not found" }, 404);
+  return libraryMedia(c, d.owner, version, "proxy");
 });
 
 workApp.post("/:id/beat", async (c) => {

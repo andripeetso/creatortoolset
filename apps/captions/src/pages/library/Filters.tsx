@@ -1,23 +1,48 @@
 import { useEffect, useState } from "react";
 import type { SearchQuery } from "@contracts/library";
+import { Laptop } from "lucide-react";
 import type { LibraryFilters } from "@/lib/library";
+import { thisMacDevice } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 
 /**
  * The library's own filters, as the sidebar shows them (./Sidebar.tsx): Tags (every one picked), When (filmed, else
- * added), Where (the country, once a clip has one). The page hands the value to listAssets and searchLibrary, and keeps
+ * added), Where (the country, once a clip has one), On this computer (the Mac app). The page hands the value to listAssets and searchLibrary, and keeps
  * it in a saved search.
  */
 
-export const anyFilter = (f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place;
+export const anyFilter = (f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place || !!f.here;
 
-/** A saved search's own filters, with the ones picked now in their place (as the server merges a smart folder's). */
+/** A saved search's own filters, with the ones picked now in their place (as the server merges a smart folder's). On this computer is never saved: it names one computer. */
 export const withSaved = (f: LibraryFilters, saved?: SearchQuery): LibraryFilters => ({
   tags: f.tags?.length ? f.tags : saved?.tags,
   filmedFrom: f.filmedFrom ?? saved?.filmedFrom,
   filmedTo: f.filmedTo ?? saved?.filmedTo,
   place: f.place ?? saved?.place,
+  ...(f.here ? { here: true as const } : {}),
 });
+
+/**
+ * On this computer: only the clips whose proxy or file is on the computer this window runs on (the Mac app; a browser
+ * has no computer of its own, so it shows nothing). A second click lets go of it.
+ */
+export function HereFilter({ value, onChange }: { value: LibraryFilters; onChange: (here: LibraryFilters["here"]) => void }) {
+  if (!thisMacDevice()) return null;
+  return (
+    <button
+      type="button"
+      aria-pressed={!!value.here}
+      onClick={() => onChange(value.here ? undefined : true)}
+      className={cn(
+        "flex h-7 w-fit items-center gap-1.5 rounded-full border px-2.5 text-[12px] transition-colors",
+        value.here ? "border-violet-500 bg-violet-500/15 text-zinc-100" : "border-zinc-500/30 text-zinc-400 hover:border-zinc-400/60 hover:text-zinc-200",
+      )}
+    >
+      <Laptop aria-hidden className="h-3.5 w-3.5" />
+      On this computer
+    </button>
+  );
+}
 
 const day = (iso: string) => {
   const [y, m, d] = iso.split("-").map(Number);
