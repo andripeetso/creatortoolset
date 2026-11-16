@@ -449,7 +449,10 @@ describe("a skill saved before skills had a place", () => {
     const raw = readFileSync(file, "utf8");
 
     const dock = await dockTurn();
-    expect(dock.job.system).toBe(`${before.job.system}\n\n${skillLines([today], "tool")}`);
+    // the skill's line goes before the turn's memory, which ends with the workspace's context (lib/workshop/context.ts)
+    const at = before.job.system.indexOf("\n\nThis workspace's context.");
+    expect(at).toBeGreaterThan(0);
+    expect(dock.job.system).toBe(`${before.job.system.slice(0, at)}\n\n${skillLines([today], "tool")}${before.job.system.slice(at)}`);
     expect({ ...sent(dock.job), system: "" }).toEqual({ ...sent(before.job), system: "" });
     expect(dock.tools.filter((t) => t.name !== "skill_read")).toEqual(before.tools);
     expect(JSON.parse((await tool(dock.token, "skill_read", { name: "Old hooks" })).text)).toEqual({ name: "Old hooks", when: today.when, text: today.body });

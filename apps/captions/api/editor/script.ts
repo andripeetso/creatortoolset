@@ -9,7 +9,7 @@ import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
 import { finishedBlock } from "./finished";
 import { momentMap, momentsPrompt, parseMoments, type RawMoment } from "./moments";
-import { isPlanned, planStep } from "./plan";
+import { isPlanned, planStep, workspaceSetup } from "./plan";
 import { readEdit, readStep, saveEdit, saveStep, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
@@ -186,9 +186,11 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   if (route.off) throw new NeedsKey(route.off);
   // not cut around speech: asked for, or nobody speaks in the footage. The AI plans shots from the brief (plan.ts)
   if (isPlanned(edit, analysis.sentences)) return planStep({ edit, job, variant: "", signal }, analysis.sentences);
+  // the workspace it is for: what the brand, product or game is, and its context files (lib/workshop/context.ts)
+  const workspace = await workspaceSetup(edit, 12_000);
   // short videos from a long recording: the AI finds the parts that stand alone, and each is a version of one line (moments.ts)
   if (edit.moments) {
-    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: styleBlock(edit.style) });
+    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: [workspace, styleBlock(edit.style)].filter(Boolean).join("\n\n") });
     let found: RawMoment[];
     try {
       // ponytail: the whole transcript in one request (measured: 31.5 minutes of talk, 467 sentences, is a request of 16,600 tokens,
@@ -223,7 +225,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     targetS: edit.targetS,
     // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts), then the one skill
     // the style names (api/lib/skills.ts, cut there); no style adds nothing
-    packText: [await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
+    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
     examples: finishedBlock(edit),
   });
   let raw: RawScript;

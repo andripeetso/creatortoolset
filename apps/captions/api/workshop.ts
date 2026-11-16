@@ -60,6 +60,7 @@ import {
   writeUserMarker,
 } from "./lib/workshop/workspace";
 import { inProjectOf, sharedTo } from "./lib/project-of";
+import { workspaceKnowledge } from "./lib/workshop/context";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -67,7 +68,7 @@ import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
 import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext, renderInstructions } from "./lib/workshop/prompt";
-import { DRAFT_SYSTEM, OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, asKnowledge, inlineFiles, keptFiles, knowledgeFiles, knowledgeIndex, ocrPrompt, parseDraft, parseReading, parseSourcePatch, readPrompt, type Filing } from "./lib/workshop/sources";
+import { DRAFT_SYSTEM, OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, inlineFiles, keptFiles, knowledgeFiles, knowledgeIndex, ocrPrompt, parseDraft, parseReading, parseSourcePatch, readPrompt, type Filing } from "./lib/workshop/sources";
 import { documentText, webPageText } from "./lib/workshop/source-files";
 import { parseYoutubeUrl } from "./lib/youtube/url";
 import { channelFiles } from "./connectors";
@@ -318,10 +319,8 @@ async function listSources(user: SessionUser): Promise<KnowledgeSource[]> {
 }
 
 /** What a project's AI reads: the account's sources that are not another project's, minus the ones it switched off. */
-async function knowledgeFor(user: SessionUser, project: Project): Promise<KnowledgeFile[]> {
-  const mine = onFor((await listSources(user)).filter((s) => !s.projectId || s.projectId === project.id), project);
-  return Promise.all(mine.map(async (s) => asKnowledge(s, await readSourceText(s.id))));
-}
+const knowledgeFor = async (user: SessionUser, project: Project): Promise<KnowledgeFile[]> =>
+  workspaceKnowledge({ ...project, owner: user.username, knowledge: [] }, await listSources(user));
 
 /** A project as the prompts read it: its knowledge filled in from the account's sources. */
 async function projectForAi(id: string | undefined, user: SessionUser): Promise<Project | null> {

@@ -336,14 +336,19 @@ describe("projects are kept apart", () => {
     await newChat();
     const here = await turn("Hello");
     expect(here.job.system.slice(UNCHANGED.length)).toBe(
-      '\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone\nOnly for their current workspace, "Tiny Acrobatics":\n- we never show faces',
+      '\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone\nOnly for their current workspace, "Tiny Acrobatics":\n- we never show faces' +
+        // the workspace's own context follows its facts (lib/workshop/context.ts)
+        "\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\nWorkspace: Tiny Acrobatics",
     );
     await here.end();
 
     await enter(garden);
     await newChat();
     const there = await turn("Hello");
-    expect(there.job.system.slice(UNCHANGED.length)).toBe("\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone");
+    expect(there.job.system.slice(UNCHANGED.length)).toBe(
+      "\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone" +
+        "\n\nThis workspace's context. Use it for anything you write, describe or pick in it; read a file's whole text with workspace_files:\nWorkspace: Tiny Gardens",
+    );
     expect(there.job.system).not.toContain("faces");
     // forget reaches what this chat holds: the other project's fact is not named here and not removed from here
     expect(await tool(there.token, "forget", { quote: "we never show faces" })).toEqual({ error: true, text: "Nothing kept says that." });

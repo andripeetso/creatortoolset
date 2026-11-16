@@ -9,6 +9,7 @@ import { aiFor, completeWithFallback } from "../../ai-complete";
 import { completeVisionWithFallback, type VisionImage } from "../../ai-vision";
 import { isOnline, listDevices } from "../../lib/devices";
 import { packInstructions } from "../../lib/packs";
+import { workspaceSetup } from "../plan";
 import { libraryDb } from "../../library/db";
 import { whoFor } from "../../library/describe";
 import { enqueueJob } from "../../library/jobs";
@@ -215,7 +216,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
       const lines = linesOf(edit.id, variant, tl);
       if (!lines.some((l) => l.ok)) return end("no line of this cut has room for one");
       if (!(await spend())) return end();
-      const picked = await answer(actor, planPrompt({ lines, brief: style.brief, packText: await planPackText(actor) }), [], (t) => parsePlan(t, lines), signal);
+      const picked = await answer(actor, planPrompt({ lines, brief: style.brief, packText: [await workspaceSetup(edit, 6000), await planPackText(actor)].filter(Boolean).join("\n\n") }), [], (t) => parsePlan(t, lines), signal);
       const { w, h } = previewSize(tl);
       const cards = picked.map((p, k) => {
         const l = lines[p.line - 1]!;
