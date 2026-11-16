@@ -440,7 +440,7 @@ function AimPad({ look, zoom, player, onAim }: { look: ScreenLook; zoom: Zoom; p
 
   // the box is the part of the recording the zoom shows, worked out the way the picture itself is laid out (a
   // window that grows with the zoom shows more than 1/depth of each side)
-  const out = outputSize(look.shape, ratio * 1000, 1000, false);
+  const out = outputSize(look.shape, ratio * 1000, 1000, 1080);
   const view = zoomView(look, zoom, ratio * 1000, 1000, out.width, out.height);
 
   const aimAt = (e: { clientX: number; clientY: number }, el: HTMLElement) => {
@@ -544,7 +544,7 @@ function CameraTab({
     change(layout === "split" && look.shape === "source" ? { camera: { ...cam, layout }, shape: "16:9" } : { camera: { ...cam, layout } });
   const on = cam.layout !== "hidden";
   // in a split: the camera's share that leaves the screen its whole picture (naturalSplit)
-  const out = outputSize(look.shape === "source" ? "16:9" : look.shape, ratio * 1000, 1000, false);
+  const out = outputSize(look.shape === "source" ? "16:9" : look.shape, ratio * 1000, 1000, 1080);
   const natural = Math.round(naturalSplit(out.width, out.height, ratio) * 100) / 100;
   // the face decides where the cut looks: Left – right and Up – down would do nothing
   const following = !!cam.follow && faces.found;

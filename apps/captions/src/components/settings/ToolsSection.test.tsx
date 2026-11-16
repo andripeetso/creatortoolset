@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { useSetup } from "@/lib/setup";
 import { webPlugins } from "@/plugins.gen";
-import { ToolsSection, hasToolPage, skillPlacesOf } from "./ToolsSection";
+import { ToolsSection, canAddTo, skillPlacesOf } from "./ToolsSection";
 
 // Settings → Tools: a tool something can be added to opens its own page, which holds its Home switch, its plug-ins (an
 // AI Editor step with its switch for new edits on the Mac app's own server), its packs, its skills and the way to
@@ -51,24 +51,21 @@ async function render(sub?: string) {
 }
 
 describe("Settings → Tools", () => {
-  it("a tool has a page when packs reach it or a plug-in names it", () => {
-    for (const t of ["workshop", "instagram", "captions", "editor"] as const) expect(hasToolPage(t, null)).toBe(true);
-    expect(hasToolPage("enhance", null)).toBe(false);
-    expect(hasToolPage("enhance", { steps: [engine as never], canAdd: true })).toBe(true);
-    // the Screen Recorder has a page only in a Mac app that has its settings (one that reports `recorder`)
-    expect(hasToolPage("record", null)).toBe(false);
-    expect(hasToolPage("record", null, true)).toBe(true);
+  it("Community has something to add to a tool when packs reach it or a plug-in names it", () => {
+    for (const t of ["workshop", "instagram", "captions", "editor"] as const) expect(canAddTo(t, null)).toBe(true);
+    expect(canAddTo("enhance", null)).toBe(false);
+    expect(canAddTo("enhance", { steps: [engine as never], canAdd: true })).toBe(true);
+    expect(canAddTo("record", null)).toBe(false);
     expect(skillPlacesOf("editor")).toEqual(["editor.script"]);
     expect(skillPlacesOf("workshop")).toEqual(["workshop.write", "workshop.review"]);
     expect(skillPlacesOf("review")).toEqual([]);
   });
 
-  it("the list links each tool that has a page, and counts what is added to it and on (a pack off everywhere is not)", async () => {
+  it("the list opens every tool's page, and says nothing about what is on it", async () => {
     await render();
     const links = [...host!.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.textContent]);
-    expect(links).toContainEqual(["/settings/tools/editor", expect.stringContaining("2 added")]);
-    expect(links).toContainEqual(["/settings/tools/enhance", expect.stringContaining("1 added")]);
-    expect(links.some(([h]) => h === "/settings/tools/review")).toBe(false);
+    for (const t of ["editor", "enhance", "review"]) expect(links).toContainEqual([`/settings/tools/${t}`, expect.any(String)]);
+    expect(host!.textContent).not.toMatch(/added|plug-in ·/);
     expect(host!.querySelectorAll("[role=switch]").length).toBeGreaterThan(4);
   });
 

@@ -30,6 +30,11 @@ MODELS = os.path.join(HOME, "models")
 # Hugging Face's own cache and logs go in this folder too, not ~/.cache
 os.environ.setdefault("HF_HOME", os.path.join(HOME, "hf"))
 KIND = "transcribe"
+# a check of this computer for helping with heavy work (the server's lib/helper-check.ts): its disks again, a file read
+# in each folder it is given, a short timed encode
+CHECK = "helper-check"
+MEDIA = {".mov", ".mp4", ".m4v", ".mxf", ".mkv", ".avi", ".mts", ".wav", ".mp3", ".aif", ".aiff", ".m4a", ".flac", ".jpg", ".png"}
+ENCODE_S = 4
 # exit status when the server no longer knows this computer (removed in Devices): the unit does not restart on it
 REMOVED = 3
 
@@ -293,9 +298,14 @@ class Helper:
         did = False
         with self.lock:
             for _ in range(3):
-                r = self.call("POST", "/api/devices/relay/editor/claim", {"kinds": [KIND], "models": held(), "getting": sorted(self.getting)})
-                if r.get("job"):
-                    self.jobs.put(r["job"])
+                r = self.call("POST", "/api/devices/relay/editor/claim", {"kinds": [KIND, CHECK], "models": held(), "getting": sorted(self.getting)})
+                job = r.get("job")
+                if job and job.get("kind") == CHECK:
+                    # never behind a transcript: someone waits on this screen
+                    threading.Thread(target=self.safe, args=(self.check, job), daemon=True).start()
+                    did = True
+                elif job:
+                    self.jobs.put(job)
                     did = True
                 if not self.sync(r.get("models") or []):
                     return did
@@ -383,6 +393,20 @@ class Helper:
             log("server:", str(e)[:300])
         return None
 
+    def check(self, job):
+        """A check (CHECK): the report again with its disks read now, then each folder read and, for a test, an encode."""
+        jid = job["id"]
+        opts = job.get("options") or {}
+        self.report()
+        body = {"ffmpeg": bool(shutil.which("ffmpeg")), "folders": [read_folder(i, p) for i, p in json.loads(opts.get("folders") or "{}").items()]}
+        if opts.get("test") == "1":
+            speed = encode_speed()
+            if speed:
+                body["encode"] = speed
+        r = self.call("POST", f"/api/devices/relay/job/{CHECK}/{jid}", body)
+        if r and r.get("editor"):
+            self.claim()
+
     def report(self):
         self.call("POST", "/api/devices/relay/report", {"drivers": [], "homes": [], "machine": machine(), "version": VERSION})
 
@@ -399,7 +423,7 @@ class Helper:
                     self.claim()
                 self.retry_downloads()
                 # the server holds this for up to 25 s: as long as it runs the computer is online, also while it downloads or transcribes
-                r = self.call("POST", "/api/devices/relay/wait", {"blobs": False, "editor": [KIND]})
+                r = self.call("POST", "/api/devices/relay/wait", {"blobs": False, "editor": [KIND, CHECK]})
                 failures = 0
                 if r and r.get("editor"):
                     # the server hints again while a wish stays open: wait a little instead of asking at once
@@ -416,6 +440,41 @@ class Helper:
                 time.sleep(min(60, 2 ** failures))
         log("This computer was removed in Settings → Devices. Pair it again with a new code.")
         sys.exit(REMOVED)
+
+
+def read_folder(fid, path):
+    """One folder of a check: part of a media file in it read (else any file; an empty folder is read by listing it)."""
+    if not os.path.isdir(path):
+        return {"id": fid, "ok": False, "error": f"{path} is not on this computer. Connect the shared drive again."}
+    by, pick, media = time.time() + 5, None, None
+    try:
+        os.listdir(path)
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            seen = [os.path.join(root, f) for f in files if not f.startswith(".")]
+            pick = pick or (seen[0] if seen else None)
+            media = next((f for f in seen if os.path.splitext(f)[1].lower() in MEDIA), None)
+            if media or time.time() > by:
+                break
+        pick = media or pick
+        if pick:
+            with open(pick, "rb") as fh:
+                fh.read(4 << 20)
+        return {"id": fid, "ok": True}
+    except OSError as e:
+        return {"id": fid, "ok": False, "error": f"This computer could not read {path}: {e.strerror or e}"}
+
+
+def encode_speed():
+    """Seconds of 720p video encoded per second, or None when ffmpeg is missing or fails."""
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        return None
+    t0 = time.time()
+    r = subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+                        "-t", str(ENCODE_S), "-c:v", "libx264", "-preset", "veryfast", "-f", "null", "-"], capture_output=True, timeout=120)
+    took = time.time() - t0
+    return round(ENCODE_S / took, 2) if r.returncode == 0 and took > 0 else None
 
 
 def main():

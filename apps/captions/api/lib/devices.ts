@@ -254,6 +254,15 @@ export function setDeviceKinds(id: string, kinds: string[]): void {
   persist();
 }
 
+/** A computer's last test for helping with heavy work (lib/helper-check.ts); its owner's pages are told. */
+export function setDeviceCheck(id: string, check: NonNullable<Device["check"]>): void {
+  const d = find(id);
+  if (!d) return;
+  d.check = check;
+  persist();
+  tell(d.owner);
+}
+
 /** A computer's speech models (lib/computer-transcribe.ts). Written only when they change. */
 export function setDeviceStt(id: string, stt: NonNullable<Device["stt"]>): void {
   const d = find(id);
@@ -274,7 +283,9 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   // a CLI installed, signed in or on another plan is a change setup shows, and so is the app's new version; the machine's
   // load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
-  if (drivers(d.report) !== drivers(r) || (!!version && version !== d.version)) tell(d.owner);
+  // so is a shared drive connected or gone (Storage and the Help screen show which folders it reaches)
+  const shares = (x: MacReport | undefined) => JSON.stringify((x?.machine?.disks ?? []).filter((k) => k.network).map((k) => k.path));
+  if (drivers(d.report) !== drivers(r) || shares(d.report) !== shares(r) || (!!version && version !== d.version)) tell(d.owner);
   d.report = r;
   if (version) d.version = version;
   persist();

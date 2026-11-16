@@ -26,6 +26,11 @@ import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
+import { HelperPair, HelperSetup } from "@/components/setup/HelperStep";
+import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
+import type { ProvidersView } from "@contracts/providers";
+import { useCachedLoad } from "@/lib/local-cache";
+import { getProviders } from "@/lib/providers";
 import { HowPicker, PictureCard } from "@/components/setup/HowPicker";
 import { LookArt } from "@/components/setup/HowArt";
 import { JobStep } from "@/components/setup/JobStep";
@@ -40,6 +45,9 @@ import {
   MAKE_NAMES,
   SETUP_PATH,
   dismissSetup,
+  openSetupAt,
+  helperOffers,
+  markHelperOffered,
   firstProjectName,
   markIntroSeen,
   introPlays,
@@ -80,6 +88,8 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your workspaces and projects, as you." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
   account: { title: "Create your account", hint: "" },
+  // titled with the other computer's name when there is one (SetupDialog)
+  helper: { title: "Help with heavy work", hint: "This computer takes drafts and renders when your other computer is busy." },
 };
 
 const MAKE_ICONS: Record<Make, LucideIcon> = {
@@ -130,6 +140,20 @@ export function SetupDialog() {
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
   const asked = params.get("setup");
+  // the Help screen: this Mac, and the account's other computers (it opens by itself once, right after a sign-in here)
+  const macApp = hasThisMac();
+  const bridge = useThisMac(macApp && !!me && asked === "helper"); // asked every 3 s: only while the Help screen is up
+  // read only in the Mac app (the screen is about this computer): a browser never loads it for this
+  const { data: providers } = useCachedLoad<ProvidersView>(macApp ? "/api/providers" : null, getProviders, { topic: ["providers", "devices"], own: true });
+  const self = bridge?.device ?? document.documentElement.dataset.macDevice ?? null;
+  const others = (providers?.devices ?? []).filter((d) => d.owner === me?.username && d.id !== self).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
+  const tested = !!providers?.devices.find((d) => d.id === self)?.check;
+  const offer = !!me && !!providers && helperOffers({ macApp, others: others.length, tested });
+  useEffect(() => {
+    if (!offer || asked) return;
+    markHelperOffered();
+    openSetupAt("helper");
+  }, [offer, asked]);
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it; never on a phone
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
   const open = real && !!prefs && setupOpen(view, asked, { firstRun, phone: isPhoneHub() });
@@ -293,7 +317,9 @@ export function SetupDialog() {
               <X className="size-4" />
             </button>
           </div>
-          <DialogTitle className={cn("mt-4 text-2xl font-semibold tracking-tight", step === "account" && "sr-only")}>{STEP[step].title}</DialogTitle>
+          <DialogTitle className={cn("mt-4 text-2xl font-semibold tracking-tight", step === "account" && "sr-only")}>
+            {step === "helper" && others[0] ? `Help ${others[0].name} with heavy work` : STEP[step].title}
+          </DialogTitle>
           {hint && <DialogDescription className="mt-1.5 text-sm">{hint}</DialogDescription>}
         </header>
 
@@ -335,6 +361,10 @@ export function SetupDialog() {
           {step === "connect" && <ConnectStep picked={THIS_COMPUTER} onPick={() => {}} />}
 
           {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
+
+          {step === "helper" && (self && providers?.devices.some((d) => d.id === self) ? <HelperSetup device={self} /> : macApp ? <HelperPair /> : (
+            <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the computer that should help, or add it in Settings → Devices.</p>
+          ))}
 
           {step === "job" && (
             <JobStep mine={mine} have={view.have} job={prefs.job ?? null} onPick={pickJob} ai={<AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />} />

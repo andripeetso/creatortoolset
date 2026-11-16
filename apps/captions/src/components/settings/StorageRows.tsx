@@ -348,8 +348,9 @@ function FolderReach({ folder, devices, copies }: { folder: StorageFolder; devic
   );
 }
 
-/** How to connect a folder's share on one computer: the Finder link on a Mac, the one line to run on Linux or Windows. */
-function ConnectDialog({ folder, computer, onClose }: { folder: StorageFolder; computer: Computer; onClose: () => void }) {
+/** How to connect a folder's share on one computer: the Finder link on a Mac, the one line to run on Linux or Windows.
+ *  `onUsed`: Open or Copy was pressed (the Help screen checks the computer's drives again). */
+export function ConnectDialog({ folder, computer, onClose, onUsed }: { folder: StorageFolder; computer: Computer; onClose: () => void; onUsed?: () => void }) {
   const how = connectFor(folder.mount!, computer.report?.machine?.os ?? "mac");
   const where = `${folder.mount!.server}/${folder.mount!.share}`;
   return (
@@ -365,7 +366,7 @@ function ConnectDialog({ folder, computer, onClose }: { folder: StorageFolder; c
               <div className="flex items-center gap-2">
                 <code className="min-w-0 flex-1 break-all rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{how.url}</code>
                 <Button size="sm" variant="outline" asChild>
-                  <a href={how.url}>Open</a>
+                  <a href={how.url} onClick={onUsed}>Open</a>
                 </Button>
               </div>
             </>
@@ -374,7 +375,7 @@ function ConnectDialog({ folder, computer, onClose }: { folder: StorageFolder; c
               <p>Run this on {computer.name}. It asks for the shared drive's password.</p>
               <div className="flex items-center gap-2">
                 <code className="min-w-0 flex-1 break-all rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{how.line}</code>
-                <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(how.line)}>
+                <Button size="sm" variant="outline" onClick={() => (void navigator.clipboard?.writeText(how.line), onUsed?.())}>
                   Copy
                 </Button>
               </div>

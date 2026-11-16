@@ -8,10 +8,9 @@ import { useSetup, useSetupLive } from "@/lib/setup";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, isHomeTile, needsLine, readiness, type Have, type HomeTile, type Need } from "@contracts/tools";
 import { SLOT_TOOL, slotSpot, type InstalledPack, type PackSkillSlot, type PackSlot } from "@contracts/packs";
-import { SKILL_PLACES, placeOf, type SharedSkill, type Skill, type SkillPlace } from "@contracts/skills";
+import { SKILL_PLACES, type SkillPlace } from "@contracts/skills";
 import type { StepsView } from "@contracts/editor-steps";
 import { useCachedLoad } from "@/lib/local-cache";
-import { listSkills } from "@/lib/skills";
 import { listInstalled } from "@/components/community/packs-api";
 import { PACK_TOOLS, containsOf, reachesTool } from "@/components/community/packs-helpers";
 import { PackRow } from "@/components/community/PacksInstalled";
@@ -75,28 +74,8 @@ function useHomeSwitches() {
 /** The skill places that are part of a tool (the assistant's are no tool's: Community → Skills has them). */
 export const skillPlacesOf = (t: HomeTile): SkillPlace[] => SKILL_PLACES.filter((p): p is PackSkillSlot | "workshop.write" => p !== "assistant" && SLOT_TOOL[p] === t);
 
-/** A tool has a page when something can be added to it: packs and skills have a place in it, or a plug-in names it. */
-/** `recorder`: the Mac app has the Screen Recorder's settings (useMacRecorder); without them that tool has no page. */
-export const hasToolPage = (t: HomeTile, steps: StepsView | null, recorder = false): boolean => (t === "record" && recorder) || PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
-
-/**
- * What the person has added to each tool and is using: installed packs that reach it and are on (not off everywhere, not
- * pulled), skills at its places that are on (their own and the ones packs and plug-ins bring), plug-ins that are in.
- * Best effort: a list that did not load counts nothing.
- */
-function useAdded(steps: StepsView | null) {
-  const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"] });
-  const skills = useCachedLoad<{ skills: Skill[]; shared?: SharedSkill[] }>("/api/skills", listSkills, { topic: ["skills", "packs"] });
-  return (t: HomeTile): number => {
-    const places = skillPlacesOf(t) as string[];
-    return (
-      (packs.data ?? []).filter((p) => !p.off.includes("*") && !p.delisted && reachesTool(containsOf(p), t)).length +
-      (skills.data?.skills ?? []).filter((s) => s.on && places.includes(placeOf(s))).length +
-      (skills.data?.shared ?? []).filter((s) => s.on && places.includes(s.place)).length +
-      stepsFor(steps, t).filter((r) => r.state === "on" || r.state === "loaded").length
-    );
-  };
-}
+/** Community has something to add to a tool: packs and skills have a place in it, or a plug-in names it. */
+export const canAddTo = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
 
 /** One tile's Home switch, with one amber line per thing it is missing and the button that goes where it is fixed. */
 function TileRow({ tile: t, have, shown, onChange, head }: { tile: HomeTile; have: readonly Have[]; shown: boolean; onChange: (on: boolean) => void; head: ReactNode }) {
@@ -125,8 +104,8 @@ function TileRow({ tile: t, have, shown, onChange, head }: { tile: HomeTile; hav
  * Settings → Tools: every tile Home can show, in Home's order (the tools, then the Screen Recorder), each with the
  * switch that shows it on Home. A tool that cannot work yet says why under its name, one amber line per thing it is
  * missing with the button that goes where it is fixed: the reason for its marker on Home. A tool that works shows only
- * its switch. A tool something can be added to opens its own page (ToolPage), and says how many things are added to it.
- * `/settings/tools/<tile>` is that page.
+ * its switch. Every tool opens its own page (ToolPage, `/settings/tools/<tile>`), the one place for its settings: the
+ * list says nothing about what is on it (owner, 2026-11-15, on "1 added": "very confusing… needs proper refiguring").
  */
 export function ToolsSection({ sub }: { sub?: string }) {
   const steps = useSteps();
@@ -135,16 +114,15 @@ export function ToolsSection({ sub }: { sub?: string }) {
   if (sub) {
     // the Screen Recorder's page waits for the Mac app to say whether it has its settings
     if (sub === "record" && recorder === null) return <LoadingRow />;
-    if (!isHomeTile(sub) || (me && !canUseTile(me, sub)) || (steps.view && !hasToolPage(sub, steps.view, !!recorder))) return <Navigate to="/settings/tools" replace />;
+    if (!isHomeTile(sub) || (me && !canUseTile(me, sub))) return <Navigate to="/settings/tools" replace />;
     return <ToolPage tile={sub} steps={steps} recorder={!!recorder} />;
   }
-  return <ToolsList steps={steps.view} recorder={!!recorder} />;
+  return <ToolsList />;
 }
 
-function ToolsList({ steps, recorder }: { steps: StepsView | null; recorder: boolean }) {
+function ToolsList() {
   const me = useMe();
   const { view, hidden, set } = useHomeSwitches();
-  const added = useAdded(steps);
   return (
     <Section
       title="Shown on Home"
@@ -161,15 +139,11 @@ function ToolsList({ steps, recorder }: { steps: StepsView | null; recorder: boo
                 <div className="text-xs text-muted-foreground">{HOME_TILE_LINES[t]}</div>
               </div>
             );
-            const n = added(t);
-            const head = hasToolPage(t, steps, recorder) ? (
+            const head = (
               <Link to={`/settings/tools/${t}`} replace className="group -my-1 flex min-w-0 flex-1 items-center gap-3 rounded-md py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {text}
-                {n > 0 && <span className="shrink-0 text-xs text-muted-foreground">{n} added</span>}
                 <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
               </Link>
-            ) : (
-              text
             );
             return <TileRow key={t} tile={t} have={view.have} shown={!hidden.includes(t)} onChange={(on) => set(t, on)} head={head} />;
           })
@@ -221,11 +195,13 @@ function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; rec
         </Section>
       )}
       {places.length > 0 && <SkillsView places={places} title={(p) => `Skills for ${slotSpot(p as PackSlot)}`} />}
-      <div>
-        <Button asChild size="sm" variant="outline">
-          <Link to={`/community/tool/${tile}`}>Get more for {name}</Link>
-        </Button>
-      </div>
+      {canAddTo(tile, steps.view) && (
+        <div>
+          <Button asChild size="sm" variant="outline">
+            <Link to={`/community/tool/${tile}`}>Get more for {name}</Link>
+          </Button>
+        </div>
+      )}
     </>
   );
 }
