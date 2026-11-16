@@ -41,6 +41,15 @@ export interface WorkerOptions {
 export const STOPPED_LINE = "Creator Toolset stopped while it ran this step";
 const heldFile = () => path.join(env.dataDir, "held.json");
 
+/**
+ * What the Mac app's menu shows (apps/mac Worker.swift reads stdout): one line per change, `[work:status] {…}` with the
+ * edit and the download's bytes and time left, `[work:status] null` once the step ends. Only in a worker process.
+ */
+export const STATUS = "[work:status] ";
+const tell = (s: string) => {
+  if (process.env.CT_WORKER) process.stdout.write(`${STATUS}${s}\n`);
+};
+
 const client = (o: WorkerOptions) => {
   const f = o.fetch ?? fetch;
   const url = (p: string) => `${o.server.replace(/\/$/, "")}/api/devices/relay/${p}`;
@@ -259,6 +268,20 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
   let downloading = false;
   const review: { value?: WorkResult["effects"]["review"] } = {};
   writeFileSync(heldFile(), JSON.stringify({ id }));
+  const name = (() => {
+    try {
+      return String((JSON.parse(pkg.edit["edit.json"] ?? "{}") as { name?: unknown }).name ?? "");
+    } catch {
+      return "";
+    }
+  })();
+  let told = "";
+  const show = () => {
+    const s = JSON.stringify({ editId: pkg.job.editId, edit: name, line: beat.line, done: beat.done, total: beat.total, leftS: beat.leftS });
+    if (s !== told) tell((told = s));
+  };
+  const shown = setInterval(show, 1000);
+  show();
 
   let timer: NodeJS.Timeout | undefined;
   const beatLoop = () => {
@@ -378,6 +401,8 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
     return ended("failed", () => c.post(`work/${id}/fail`, { error: e instanceof Error ? e.message : String(e) }));
   } finally {
     clearTimeout(timer);
+    clearInterval(shown);
+    tell("null");
     ctl.abort(); // ends a beat in flight's loop
     current = null;
     rmSync(heldFile(), { force: true });

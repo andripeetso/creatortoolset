@@ -638,7 +638,7 @@ const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(
  * it to end, and is dropped if that reply reads the ended work with a tool meanwhile (noteWork): it then says so in
  * its own words, once. Returns whether a card was running.
  */
-export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[]; href?: string }): boolean {
+export function workEnded(username: string, idStart: string, end: WorkEnd & { say?: string; choices?: string[]; href?: string }): boolean {
   const conv = load(username);
   let hit = false;
   let said = false;
@@ -665,6 +665,80 @@ export function workEnded(username: string, idStart: string, end: { status: "don
   }
   return hit;
 }
+
+/** How a card ends: what it says once its work is over. */
+export type WorkEnd = { status: "done" | "failed" | "stopped"; detail?: string };
+/** A card's work, asked by its card id: null while it still runs, its end once it is over, undefined when the card is not this check's. */
+export type WorkCheck = (id: string, username: string) => WorkEnd | null | undefined | Promise<WorkEnd | null | undefined>;
+type Check = { idStart: string; check: WorkCheck };
+/** Kept on checkWork itself, not in a module const: a module in an import cycle can register before this file has run. */
+function checksOf(): Check[] {
+  return ((checkWork as { checks?: Check[] }).checks ??= []);
+}
+/** Cards whose work was not running at the last sweep: one more miss ends them. */
+const suspects = new Set<string>();
+
+/**
+ * One rule for every card in every chat (owner, 2026-11-16: "if the process isn't running it shouldn't be spinning,
+ * it should have a stopped state"): each kind of work says here whether a card of it still runs. A card whose work
+ * ended without telling the chat (a restart, a crash, a stop or delete on another path) gets its end from sweepWork.
+ */
+export function checkWork(idStart: string, check: WorkCheck): void {
+  checksOf().push({ idStart, check });
+}
+
+/**
+ * Asks every running card's check and ends the ones whose work is over. Two sweeps in a row must find it over, so work
+ * that ends in its first seconds, before its own end reaches the chat, is told by that end. Production runs it every
+ * 30 s: work held in memory is only known to the server that runs it, and dev servers can share the data folder.
+ */
+export async function sweepWork(): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = readdirSync(dirOf()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return;
+  }
+  const seen = new Set<string>();
+  for (const f of names) {
+    const username = f.slice(0, -5);
+    try {
+      if (!readFileSync(path.join(dirOf(), f), "utf-8").includes('"status":"running"')) continue;
+    } catch {
+      continue;
+    }
+    const cards = (conv: Conv) => everyChat(conv).flatMap((l) => l.flatMap((m) => m.work ?? [])).filter((w) => w.status === "running");
+    const ends = new Map<string, WorkEnd>();
+    for (const id of new Set(cards(load(username)).map((w) => w.id))) {
+      let end: WorkEnd | null | undefined;
+      for (const c of checksOf()) {
+        if (!cardOf(id, c.idStart)) continue;
+        end = await (async () => c.check(id, username))().catch(() => undefined);   // a check that fails says nothing
+        if (end !== undefined) break;
+      }
+      if (!end) continue;
+      const key = `${username}\n${id}`;
+      seen.add(key);
+      if (suspects.has(key)) ends.set(id, end);
+      else suspects.add(key);
+    }
+    if (!ends.size) continue;
+    // on the conversation as it is now, with no await between: a reply may have written while the checks ran
+    let hit = false;
+    for (const w of cards(load(username))) {
+      const end = ends.get(w.id);
+      if (!end) continue;
+      Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
+      hit = true;
+    }
+    if (hit) {
+      save(username);
+      tell(username);
+    }
+  }
+  for (const k of suspects) if (!seen.has(k)) suspects.delete(k);
+}
+if (env.isProduction) setInterval(() => void sweepWork().catch((e) => console.error("[assistant] card sweep:", e)), 30_000).unref();
 
 /** A reply ended: the lines that waited for it go under it. */
 function sayLater(username: string, replyId: string): void {
@@ -939,7 +1013,7 @@ const asked = (m: AssistantMessage) =>
   (m.confirms ?? []).map((q) => `[asked: "${q.question}" → ${q.status === "waiting" ? "not answered yet" : q.status === "no" ? "the user said no" : q.status === "done" ? `yes, done${q.result ? `: ${q.result}` : ""}` : `yes, but it failed: ${q.result ?? ""}`}]`);
 
 /** What a reply started or opened, with its page, so "show me" a few messages later has somewhere to go. */
-const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : "made"}: ${w.title} → ${w.href}]`);
+const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : w.status === "stopped" ? "stopped" : "made"}: ${w.title} → ${w.href}]`);
 
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>

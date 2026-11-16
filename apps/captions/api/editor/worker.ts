@@ -17,7 +17,7 @@ import { jobFiles } from "./reach";
 import { fitsWork, gates, serverMayTake } from "../work/place";
 import type { Device } from "../../contracts/providers";
 import { passesDone } from "./passes";
-import { editRole, ownerOf, purgeEdits, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "./store";
+import { editRole, ownerOf, purgeEdits, readDraft, readEdit, seesEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 export type { StepContext } from "./engine";
 
@@ -108,8 +108,12 @@ export async function tick(now = Date.now()): Promise<boolean> {
   }
 }
 
-/** The edit's footage is all still in its workspace, and `actor` (who asked for the step) still sees the edit there (store.ts editRole). */
-const stillReadable = async (actor: string, edit: EditMeta) => sourcesWorkspace(ownerOf(edit), edit.sources) === edit.workspaceId && !!(await editRole(actor, edit));
+/**
+ * The edit's footage is all still in its workspace, and `actor` (who asked for the step) still sees the edit there
+ * (store.ts editRole) and every clip it uses (store.ts seesEdit: a teammate refused one by a library policy is stopped).
+ */
+const stillReadable = async (actor: string, edit: EditMeta) =>
+  sourcesWorkspace(ownerOf(edit), edit.sources) === edit.workspaceId && !!(await editRole(actor, edit)) && (await seesEdit(actor, edit));
 
 async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<boolean> {
   const vid = job.version_id ?? "";

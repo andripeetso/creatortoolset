@@ -1,5 +1,8 @@
 import { Hono, type Context } from "hono";
 import { turnVersion } from "./turn";
+import { emitEvent } from "../lib/events";
+import { workspaceOf } from "./describe";
+import { fileSmart } from "./smart";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "../auth";
@@ -281,6 +284,12 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     d.exec("ROLLBACK");
     throw e;
   }
+  // what the smart folders judge it by changed: judged again, in the background (smart.ts)
+  const version = a.current_version_id;
+  void workspaceOf(d, version)
+    .then((ws) => fileSmart(d, version, user, ws))
+    .then((n) => n !== null && emitEvent("library.changed", {}))
+    .catch(() => {});
   return c.json(assetDetail(libraryId, assetId, user));
 });
 

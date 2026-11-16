@@ -136,7 +136,7 @@ async function tellChat(job: Job, stopped = false): Promise<void> {
   const finals = job.finals?.status === "sent" ? " It is in Finals too." : job.finals?.error ? ` It was not put in Finals: ${job.finals.error.replace(/\.$/, "")}.` : "";
   const why = exportFailure(job.error);
   const end = stopped
-    ? { status: "failed" as const, detail: "Stopped" }
+    ? { status: "stopped" as const, detail: "Stopped" }
     : job.status === "done"
       ? { status: "done" as const, detail: job.finals?.status === "sent" ? "Ready, and in Finals" : "Ready to download", say: `${file} is ready: [Download it](/api/exports/${job.id}/file).${finals}` }
       : { status: "failed" as const, detail: why, say: `${file} was not exported: ${why}.` };
@@ -147,6 +147,14 @@ async function tellChat(job: Job, stopped = false): Promise<void> {
   if (!tell()) setTimeout(tell, 2000).unref();
 }
 const chatHears = (job: Job, stopped = false) => void tellChat(job, stopped).catch((e: unknown) => console.error("[exports] the chat was not told:", e));
+// a render's card runs while it renders (assistant.ts sweepWork); a removed one stopped. Loaded late, as tellChat does.
+void import("./assistant").then(({ checkWork }) => checkWork("export", async (id) => {
+  await loaded;
+  const job = jobs.get(id.slice("export:".length));
+  if (!job) return { status: "stopped", detail: "Stopped" };
+  if (job.status === "queued" || job.status === "running") return null;
+  return job.status === "done" ? { status: "done", detail: "Ready to download" } : { status: "failed", detail: exportFailure(job.error) };
+}));
 
 const jobs = new Map<string, Job>();
 const children = new Map<string, ChildProcess>();

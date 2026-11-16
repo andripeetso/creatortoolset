@@ -12,7 +12,7 @@ import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
 import { fileFor, foldersOf, lightKey } from "../editor/reach";
-import { editDir, editRole, ownerOf, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "../editor/store";
+import { editDir, editRole, ownerOf, readDraft, readEdit, seesEdit, sourcesWorkspace, type EditMeta } from "../editor/store";
 
 /** The server's copy of a package handed out: what the result is merged against. */
 export const keptPath = (jobId: number) => path.join(env.dataDir, "work", `${jobId}.json`);
@@ -85,7 +85,8 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
   if (!job.actor || job.actor !== device.owner) throw new Error("This step is not this computer's account's");
   const ids = jobFiles(edit, variant);
   // the access rule the worker checks at every step (worker.ts stillReadable), over every file the step may read
-  if (sourcesWorkspace(ownerOf(edit), ids) !== edit.workspaceId || !(await editRole(job.actor, edit))) throw new Error("Some footage is gone or no longer yours to read");
+  // and the library's own per-clip check for a teammate (store.ts seesEdit: a clip a library policy hides from them never goes down)
+  if (sourcesWorkspace(ownerOf(edit), ids) !== edit.workspaceId || !(await editRole(job.actor, edit)) || !(await seesEdit(job.actor, edit))) throw new Error("Some footage is gone or no longer yours to read");
 
   const db = libraryDb();
   const versions = rowsOf("SELECT * FROM asset_versions WHERE id IN (?*)", ids);

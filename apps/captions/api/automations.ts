@@ -41,6 +41,8 @@ const RESULT_MAX = 2000;
 export const MISSED_MS = 10 * 60_000;
 /** Which tasks are running now (this process): one run at a time per task. */
 const running = new Set<string>();
+// "Run it now"'s card runs while the task does (assistant.ts sweepWork): its answer is in the task's own chat
+void import("./assistant").then(({ checkWork }) => checkWork("automation", (id) => (running.has(id.slice("automation:".length)) ? null : { status: "done", detail: "Ran: the answer is in its chat" })));
 
 /* ---- the store: sync read, sync write, so a read-modify-write can't interleave with another in this process ---- */
 

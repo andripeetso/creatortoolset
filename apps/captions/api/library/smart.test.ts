@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -12,11 +12,21 @@ vi.mock("../lib/jev", async (orig) => ({
     Object.fromEntries(
       Object.entries(questions).map(([k, q]) => {
         const about = JSON.stringify(q);
-        const phone = /phone/i.test(state.clip.match(/Description: .*/)?.[0] ?? "");
-        return [k, { noul: about.includes('\\"Mobile\\"') === phone ? 0.9 : 0.1 }];
+        const said = state.clip.match(/Description: .*/)?.[0] ?? "";
+        if (/maybe/i.test(said)) return [k, { noul: 0.45 }];
+        return [k, { noul: about.includes('\\"Mobile\\"') === /phone/i.test(said) ? 0.9 : 0.1 }];
       }),
     ),
   ),
+}));
+// the pictures settle what Jev was unsure of: the first folder asked about
+const looked = vi.fn();
+vi.mock("../ai-vision", async (orig) => ({
+  ...(await orig<typeof import("../ai-vision")>()),
+  completeVisionWithFallback: vi.fn(async (_s: string, user: string, images: unknown[], _c: unknown, parse: (t: string) => unknown) => {
+    looked(user, images.length);
+    return { value: parse('{"in": [1]}'), provider: "test" };
+  }),
 }));
 vi.mock("../my-keys", async (orig) => ({
   ...(await orig<typeof import("../my-keys")>()),
@@ -27,7 +37,8 @@ const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "library-smart-"));
 process.env.DATA_DIR = dir;
-const { libraryDb } = await import("./db");
+const { blobs, libraryDb } = await import("./db");
+const { searchApp } = await import("./search");
 const { libraryApp } = await import("./routes");
 const { collectionApp } = await import("./collections");
 const { indexAsset } = await import("./query");
@@ -42,6 +53,7 @@ app.use(async (c, next) => {
 });
 app.route("/api/library", libraryApp);
 app.route("/api/library", collectionApp);
+app.route("/api/library", searchApp);
 const call = (method: string, url: string, body?: unknown) =>
   app.request(url, { method, headers: { "x-user": "owner-s", ...(body !== undefined ? { "content-type": "application/json" } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
 const data = async (r: Response | Promise<Response>): Promise<any> => (await r).json();
@@ -100,6 +112,33 @@ describe("smart folders", () => {
     expect(inFolder(desk.id)).toContain("d2*");
   });
 
+  it("a clip Jev is unsure of is looked at, with only the folders in doubt; one with no picture stays where it was", async () => {
+    const desk = (await data(call("GET", "/api/library/lib_s/collections"))).collections.find((c: any) => c.name === "Desktop");
+    seed("u1", "Maybe a recording of something.");
+    seed("u2", "Maybe another one.");
+    const pic = path.join(dir, "u1.jpg");
+    writeFileSync(pic, "jpeg");
+    await blobs.put("libraries/lib_s/v/u1-v1/thumb.jpg", pic, { contentType: "image/jpeg" });
+    libraryDb().prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('u1-v1', 'thumb', 'libraries/lib_s/v/u1-v1/thumb.jpg', 4)").run();
+    const who = { username: "owner-s", role: "member" } as never;
+    expect(await fileSmart(libraryDb(), "u1-v1", who, "")).toBe(1);
+    expect(looked).toHaveBeenCalledTimes(1);
+    expect(looked.mock.calls[0]![0]).toContain('"Desktop"');
+    expect(looked.mock.calls[0]![1]).toBe(1);
+    expect(await fileSmart(libraryDb(), "u2-v1", who, "")).toBe(0);
+    expect(looked).toHaveBeenCalledTimes(1);
+    expect(inFolder(desk.id)).toContain("u1*");
+    expect(inFolder(desk.id)).not.toContain("u2*");
+  });
+
+  it("a description changed by hand is judged again", async () => {
+    const desk = (await data(call("GET", "/api/library/lib_s/collections"))).collections.find((c: any) => c.name === "Desktop");
+    seed("h1", "A phone recording.");
+    expect(await fileSmart(libraryDb(), "h1-v1", { username: "owner-s", role: "member" } as never, "")).toBe(0);
+    expect((await call("PATCH", "/api/library/lib_s/assets/h1", { description: "A desktop recording." })).status).toBe(200);
+    await vi.waitFor(() => expect(inFolder(desk.id)).toContain("h1*"));
+  });
+
   it("a saved search can't take a rule", async () => {
     const s = await data(call("POST", "/api/library/lib_s/collections", { name: "Search", kind: "smart", query: { q: "x" } }));
     expect((await call("PATCH", `/api/library/lib_s/collections/${s.id}`, { rule: "anything" })).status).toBe(409);
@@ -120,7 +159,7 @@ describe("smart folders", () => {
   });
 
   it("the judge reads the picture as it is watched: a clip turned on its side is portrait", () => {
-    const c = { id: "x", title: "x", kind: "video", what: null, description: null, tags: null, duration: 10, width: 1920, height: 1080, rotation: 90, turn: null };
+    const c = { id: "x", version: "x-v1", title: "x", kind: "video", what: null, description: null, tags: null, duration: 10, width: 1920, height: 1080, rotation: 90, turn: null };
     expect(clipText(c)).toContain("1080×1920 (1:1.78, portrait");
   });
 });

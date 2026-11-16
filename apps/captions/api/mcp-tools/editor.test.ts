@@ -222,7 +222,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     expect((await chat()).at(-1)!.steps).toEqual(["Stopping the edit"]);
     await t.end();
     expect((await editOf(waiting.id)).jobs).toMatchObject([{ kind: "analyze", state: "failed", error: "Stopped" }]);
-    expect(await cardOf(`edit:${waiting.id}:new`)).toMatchObject({ status: "failed", detail: "Stopped" });
+    expect(await cardOf(`edit:${waiting.id}:new`)).toMatchObject({ status: "stopped", detail: "Stopped" });
     await drain();
     expect(await saidSince(waiting.from)).toEqual([]);
     // stopped again with nothing running: the answer says so
@@ -239,7 +239,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     await step;
     await drain();
     expect((await editOf(live.id)).jobs).toMatchObject([{ kind: "analyze", state: "failed", error: "Stopped" }]);
-    expect(await cardOf(`edit:${live.id}:new`)).toMatchObject({ status: "failed", detail: "Stopped" });
+    expect(await cardOf(`edit:${live.id}:new`)).toMatchObject({ status: "stopped", detail: "Stopped" });
     expect(await saidSince(live.from)).toEqual([]);
   });
 

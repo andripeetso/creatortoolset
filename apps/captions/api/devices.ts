@@ -17,7 +17,7 @@ import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balan
 import { claimTranscript, declareModels, heldAudio, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
-import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
+import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, setDeviceWork, touchDevice } from "./lib/devices";
 import { clearTries, waitFor, wrongTry } from "./lib/sign-in-code";
 import { findUser } from "./users";
 import { resolveGranted } from "./lib/packs";
@@ -116,11 +116,14 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
  * as the claim keeps them, and true says a claim made now would be handed a step, so the poll is answered with the hint.
  * A list that is no list of kinds is read as none sent.
  */
-async function editorWaits(device: string, listed: unknown): Promise<DeviceHint | null> {
+async function editorWaits(device: string, listed: unknown, workV?: unknown): Promise<DeviceHint | null> {
   const d = deviceOf(device);
+  if (!d) return null;
+  // `work`: the package version this computer's worker runs (contracts/work.ts WORK_V). Kept with the device before its
+  // worker ever claimed, so a computer that never ran one is told when a step waits for it and starts it
+  if (typeof workV === "number" && workV > (d.work?.v ?? 0)) setDeviceWork(d.id, { ...(d.work ?? { steps: [] }), v: workV });
   const kinds = parseKinds(listed);
-  if (!d || !kinds) return null;
-  const editor = await waits(d, await declared(d, kinds));
+  const editor = kinds ? await waits(d, await declared(d, kinds)) : false;
   // a core step placed on a computer: the app starts its worker, which claims it through work/claim
   const work = await workWaits(d);
   return editor || work ? { ...(editor ? { editor: true as const } : {}), ...(work ? { work: true as const } : {}) } : null;

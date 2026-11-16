@@ -177,6 +177,11 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
 
 /** Who each running job is for and its project's name, for Home (api/activity.ts). */
 const started = new Map<string, { owner: string; name: string; workspace?: string }>();
+// a transcription's card runs while it is captioned here (assistant.ts sweepWork); a restart ends that
+void import("./assistant").then(({ checkWork }) => checkWork("captions", (id) => {
+  const projectId = id.slice("captions:".length);
+  return captioning.has(projectId) || started.has(projectId) ? null : { status: "stopped", detail: "Stopped" };
+}));
 /** Caption jobs a restart of the server would drop: a deploy waits for 0 (/api/health). */
 export const captionJobsAtRisk = (): number => started.size;
 /** The person's jobs in the workspace the request works in. */

@@ -895,8 +895,10 @@ export async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewe
   // the preview of an AI Editor edit shared with this person (a teammate's, api/editor/store.ts editRole): to watch on the edit page
   const edit = meta.versions.find((v) => v.draft)?.draft?.edit;
   if (edit && realUser(user)) {
-    const { editRole, readEdit } = await import("./editor/store");
-    if (await editRole(user.username, readEdit(edit))) return { meta, manage: false, download: true, user: user.username, guestKey };
+    // and only when they may see every clip it is made from (seesEdit: a library policy may refuse them one), else not shared
+    const { editRole, readEdit, seesEdit } = await import("./editor/store");
+    const e = readEdit(edit);
+    if (e && (await editRole(user.username, e)) && (await seesEdit(user.username, e))) return { meta, manage: false, download: true, user: user.username, guestKey };
   }
   return null;
 }

@@ -1,5 +1,5 @@
 import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Puzzle, Server, Share2, ShieldCheck, SlidersHorizontal, UserRound, Users } from "lucide-react";
-import { settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
+import { PLUGINS_GROUP, settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
 type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?: { storage?: unknown } }>;
@@ -89,6 +89,17 @@ export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): 
 /** The sections the sidebar lists: sectionsFor without the routable-only ones (account). */
 export function navListFor(ctx: NavContext, plugins: PluginList = webPlugins): SettingsEntry[] {
   return sectionsFor(ctx, plugins).filter((s) => !("listed" in s && s.listed === false));
+}
+
+/**
+ * The sidebar list with one entry per tool that has a settings page (`tools/<tile>`, so its link is that page), first in
+ * the Tool settings block, before the plug-ins' own sections: a tool's settings open from the sidebar like every other
+ * page, never from a row of the Tools list.
+ */
+export function withToolPages(list: ReadonlyArray<SettingsEntry>, tools: ReadonlyArray<Pick<SettingsEntry, "id" | "title" | "icon">>): SettingsEntry[] {
+  const pages = tools.map((t) => ({ ...t, id: `tools/${t.id}`, group: PLUGINS_GROUP }));
+  const at = list.findIndex((s) => s.group === PLUGINS_GROUP);
+  return at < 0 ? [...list, ...pages] : [...list.slice(0, at), ...pages, ...list.slice(at)];
 }
 
 /** Consecutive sidebar sections by group: the heading each block shows ("undefined" = the top block, no heading). */
