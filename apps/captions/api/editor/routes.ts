@@ -19,7 +19,7 @@ import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { cardsApp } from "./cards/routes";
 import { markPasses, nextPass } from "./passes";
-import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
+import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 import { onEvent } from "../lib/events";
 import { readComments, readMeta } from "../review";
@@ -124,11 +124,26 @@ const NOT_TYPED = "Not saved: the notes are not the user's own words in this cha
 /** An editing style's notes are the person's own words, also when the assistant saves them (own-words.ts). True when the save is refused. */
 const notesNotTyped = (c: C, b: Record<string, unknown>): boolean => notTyped(c, b, ["notes", "addNotes"]);
 
+const THEIR_PLAYBOOK = "Not saved: the user changed this style's playbook themselves, so it is theirs. Leave it as it is; they change it on the style's sheet.";
+
+/**
+ * A playbook sent is marked with who sent it: an AI's tool or key writes the researched one (`ai`), the person's own
+ * screen makes it theirs (`person`), and one of theirs is never replaced or taken off by an AI. A string: refused.
+ */
+function playbookBy(c: C, b: Record<string, unknown>, had: ReturnType<typeof findStyle>): string | null {
+  if (b.playbook === undefined) return null;
+  const ai = viaTool(c);
+  if (ai && had?.playbook?.by === "person") return THEIR_PLAYBOOK;
+  if (b.playbook && typeof b.playbook === "object") b.playbook = { ...(b.playbook as object), by: ai ? "ai" : "person" };
+  return null;
+}
+
 /** A new style from the fields sent, or with `fromEdit` from an edit of the caller's own (its choices, never its brief, script or footage). */
 editorApp.post("/styles", async (c) => {
   const user = c.get("user").username;
   const b = await body(c);
   if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
+  playbookBy(c, b, null);
   const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
   if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
   const made = createStyle(user, b, from ?? undefined, b.first === true);
@@ -146,6 +161,8 @@ editorApp.put("/styles/:id", async (c) => {
   const user = c.get("user").username;
   const b = await body(c);
   if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
+  const theirs = playbookBy(c, b, findStyle(user, c.req.param("id")));
+  if (theirs) return c.json({ error: theirs, code: "theirs" }, 409);
   if (typeof b.addNotes === "string" && b.addNotes.trim()) {
     const had = findStyle(user, c.req.param("id"))?.notes ?? "";
     const add = b.addNotes.trim();
@@ -172,6 +189,9 @@ editorApp.get("/styles/:id/finished", (c) => {
 
 editorApp.delete("/styles/:id/finished/:editId", async (c) =>
   (await removeFinished(c.get("user").username, c.req.param("id"), c.req.param("editId"))) ? c.json({ ok: true }) : notFound(c));
+
+// × on what an approved edit taught the style (styles.ts removeLearned)
+editorApp.delete("/styles/:id/learned/:editId", (c) => (removeLearned(c.get("user").username, c.req.param("id"), c.req.param("editId")) ? c.json({ ok: true }) : notFound(c)));
 
 // the person's animation styles and their pictures (animation-styles.ts); before /:id, as the styles are
 editorApp.route("/animation-styles", animationApp);

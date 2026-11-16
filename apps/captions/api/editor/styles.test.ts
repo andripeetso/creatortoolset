@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Edit } from "../../contracts/editor";
-import { MAX_EDITING_STYLES, STYLE_NAME_MAX, STYLE_NOTES_MAX, type EditingStyle, type EditingStylesView } from "../../contracts/editor-styles";
+import { LEARNED_PROMPT_MAX, MAX_EDITING_STYLES, STYLE_NAME_MAX, STYLE_NOTES_MAX, type EditingStyle, type EditingStylesView, type StyleLearned } from "../../contracts/editor-styles";
 import type { Pack } from "../../contracts/packs";
 import { energy, FPS, lines, plans, probe, sentences, words } from "./golden/pauses";
 
@@ -33,7 +33,8 @@ const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
 const { cutTake } = await import("./cut");
 const { runSteps } = await import("./post");
 const { editDir, readDraft, readEdit, saveStep } = await import("./store");
-const { styleBlock } = await import("./styles");
+const { change, finishedProfile, LEARNED_INTRO, styleBlock, styleCopy } = await import("./styles");
+const { innerCall } = await import("../auth");
 const { NATURAL_CUT } = await import("./timeline");
 const { tick } = await import("./worker");
 
@@ -352,6 +353,37 @@ describe.skipIf(rootReplaced)("Editing styles: what reaches the script step", ()
     expect(await sent({ style: bare.id })).toEqual(before);
   });
 
+  it("a style's playbook and what approved edits taught come after its notes, from the style as it is now; with neither the prompt is the same", async () => {
+    await clear("maker");
+    const s = await made("maker", { name: "Fast and warm", notes: "Short lines. No intro." });
+    const plain = await sent({ style: s.id });
+    // nothing more on it: an empty list and no playbook change nothing
+    change("maker", (f) => {
+      f.editing.find((x) => x.id === s.id)!.learned = [];
+    });
+    expect(await sent({ style: s.id })).toEqual(plain);
+    // an edit made before the playbook was saved reads it too: the style as it is now, not the edit's copy
+    const e = await edit("maker", { ...brief, style: s.id });
+    expect((await call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook: { text: "Hooks land in the first second.", sources: [] } })).status).toBe(200);
+    change("maker", (f) => {
+      f.editing.find((x) => x.id === s.id)!.learned = [{ editId: "e-done", workspaceId: "", at: 1, rounds: 2, notes: ["no intro, start on the question"], cut: { seconds: 40, shots: 12, avgShotS: 3.33, fxPerShot: 0, sourcesUsed: 2 } }];
+    });
+    await saveStep(e.id, "analysis", { sentences: sixSentences, notes: [] });
+    let got = { system: "", user: "" };
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (system, user, _c, parse) => {
+      got = { system, user };
+      return parse(JSON.stringify({ lines: [{ id: "L1", text: "sentence 1", takes: [{ first: 1, last: 1, score: 1 }] }], versions: [{ name: "One", lines: ["L1"] }] }));
+    });
+    libraryDb().prepare("DELETE FROM edit_jobs").run();
+    enqueueJob(libraryDb(), "maker", `${e.id}:`, "script", "maker", true, "edit_jobs");
+    await tick();
+    expect(got.system).toBe(
+      `${plain.system}\n\nResearched reference for this kind of edit, as the author keeps it:\nHooks land in the first second.\n\n${LEARNED_INTRO}\nCuts the author approved in this style here: 40 s, 12 shots, 3.33 s a shot, 2 sources.\nWhat the author said about them on the way, word for word, newest first:\n- no intro, start on the question`,
+    );
+    expect(got.user).toBe(plain.user);
+  });
+
   it("at the cap: the block is never more than the name and the notes a style can hold, even from a file changed by hand", () => {
     const head = (name: string) => `Editing style ${JSON.stringify(name)}, in the author's own words:\n`;
     const full = styleBlock({ id: "s", name: "n".repeat(STYLE_NAME_MAX), notes: "w".repeat(STYLE_NOTES_MAX), pace: "tight" });
@@ -407,5 +439,95 @@ describe.skipIf(rootReplaced)("Editing styles: pace and punch-in change the cut"
     expect(await zooms(1)).toEqual([1, 1, 1, 1, 1]);
     expect(await zooms(1.15)).toEqual([1, 1.15, 1, 1.15, 1]);
     expect(await zooms(1.3)).toEqual([1, 1.3, 1, 1.3, 1]);
+  });
+});
+
+describe.skipIf(rootReplaced)("A style that learns: its playbook and what approved edits taught", () => {
+  /** A call as a tool's own call runs (innerCall), with the person's session. */
+  const asTool = (fn: () => Response | Promise<Response>): Promise<Response> => innerCall.run({ username: "maker", role: "user", cloud: false, off: [] } as never, async () => fn());
+  const one = async (id: string) => (await styles("maker")).styles.find((x) => x.id === id)!;
+  const entry = (editId: string, workspaceId: string, notes: string[], seconds = 25): StyleLearned => ({ editId, workspaceId, at: 1, rounds: 1, notes, cut: { seconds, shots: 38, avgShotS: 0.66, fxPerShot: 1.5, sourcesUsed: 9 } });
+  const learn = (id: string, list: StyleLearned[], playbook: EditingStyle["playbook"] = null) =>
+    change("maker", (f) => {
+      Object.assign(f.editing.find((x) => x.id === id)!, { learned: list, playbook });
+    });
+
+  it("a playbook a tool saves is the AI's; changed at the person's screen it is theirs, and no tool replaces or removes it then", async () => {
+    await clear("maker");
+    const s = await made("maker", { name: "Hard edit" });
+    const pb = { text: "A hard edit: 0.4 to 0.8 s a shot, flash and shake on the drops.", sources: [{ title: "How hard edits are cut", url: "https://example.com/hard" }] };
+    // a tool that says it is the person changes nothing: the route marks who sent it
+    expect((await asTool(() => call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook: { ...pb, by: "person" } }))).status).toBe(200);
+    expect((await one(s.id)).playbook).toEqual({ ...pb, at: expect.any(Number), by: "ai" });
+    expect((await one(s.id)).notes).toBe("");
+    // the person changes it at their screen: theirs from then on
+    expect((await call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook: { ...pb, text: "Mine now: 0.5 s a shot." } })).status).toBe(200);
+    expect((await one(s.id)).playbook).toMatchObject({ text: "Mine now: 0.5 s a shot.", by: "person", sources: pb.sources });
+    for (const playbook of [pb, null]) {
+      const r = await asTool(() => call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook }));
+      expect(r.status).toBe(409);
+      expect(((await r.json()) as { code: string }).code).toBe("theirs");
+    }
+    expect((await one(s.id)).playbook).toMatchObject({ text: "Mine now: 0.5 s a shot.", by: "person" });
+    // what it can't be; and Delete at the screen takes it off
+    expect((await call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook: { text: "x".repeat(6001) } })).status).toBe(400);
+    expect((await call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook: { text: "x", sources: [{ title: "a", url: "file:///etc" }] } })).status).toBe(400);
+    expect((await call("maker", "PUT", `/api/editor/styles/${s.id}`, { playbook: null })).status).toBe(200);
+    expect((await one(s.id)).playbook).toBeNull();
+    // and a learned list is never set by a request
+    expect((await call("maker", "PUT", `/api/editor/styles/${s.id}`, { learned: [entry("e1", "", ["AI-SAID"])] })).status).toBe(200);
+    expect((await one(s.id)).learned).toBeUndefined();
+  });
+
+  it("the edit's prompt: nothing more for a style with neither, never another workspace's lines nor the edit's own", async () => {
+    await clear("maker");
+    const s = await made("maker", { name: "Hard edit", notes: "Cut on the drums." });
+    const copy = styleCopy(s);
+    const now = { id: "e-now", createdBy: "maker", projectId: "w1" };
+    expect(styleBlock(copy, now)).toBe(styleBlock(copy));
+    expect(styleBlock(undefined, now)).toBe("");
+    learn(s.id, [entry("e3", "w2", ["OTHER-WORKSPACE line"]), entry("e-now", "w1", ["OWN-EDIT line"]), entry("e2", "w1", ["first note", "second note"], 22), entry("e1", "w1", ["oldest note"])]);
+    expect(styleBlock(copy, { ...now, projectId: "w9" })).toBe(styleBlock(copy));
+    const got = styleBlock(copy, now);
+    expect(got).toBe(
+      `${styleBlock(copy)}\n\n${LEARNED_INTRO}\nCuts the author approved in this style here: 22 s, 38 shots, 0.66 s a shot, 1.5 effects a shot, 9 sources; 25 s, 38 shots, 0.66 s a shot, 1.5 effects a shot, 9 sources.\nWhat the author said about them on the way, word for word, newest first:\n- second note\n- first note\n- oldest note`,
+    );
+    expect(got).not.toMatch(/OTHER-WORKSPACE|OWN-EDIT/);
+  });
+
+  it(`the person's lines in a prompt: whole lines, newest first, never more than ${LEARNED_PROMPT_MAX} characters`, async () => {
+    await clear("maker");
+    const s = await made("maker", { name: "Hard edit" });
+    const lines = (got: string) => got.split("newest first:\n")[1]!;
+    const many = Array.from({ length: 40 }, (_, i) => `note ${String(i).padStart(2, "0")} ${"w".repeat(140)}`);
+    learn(s.id, [entry("e1", "", many)]);
+    const part = lines(styleBlock(styleCopy(s), { id: "x", createdBy: "maker" }));
+    expect(part.length).toBeLessThanOrEqual(LEARNED_PROMPT_MAX);
+    expect(part.split("\n")).toEqual([...many].reverse().slice(0, part.split("\n").length).map((t) => `- ${t}`));
+    expect(part.split("\n").length).toBeGreaterThan(10);
+    // one line longer than the whole cap: the newest, cut to it
+    learn(s.id, [entry("e1", "", ["x".repeat(4000)])]);
+    expect(lines(styleBlock(styleCopy(s), { id: "x", createdBy: "maker" })).length).toBe(LEARNED_PROMPT_MAX);
+  });
+
+  it("× takes one learned entry off; another account can't", async () => {
+    await clear("maker");
+    const s = await made("maker", { name: "Hard edit" });
+    learn(s.id, [entry("e2", "", ["two"]), entry("e1", "", ["one"])]);
+    expect((await call("other", "DELETE", `/api/editor/styles/${s.id}/learned/e2`)).status).toBe(404);
+    expect((await call("maker", "DELETE", `/api/editor/styles/${s.id}/learned/e2`)).status).toBe(200);
+    expect((await one(s.id)).learned!.map((l) => l.editId)).toEqual(["e1"]);
+    expect((await call("maker", "DELETE", `/api/editor/styles/${s.id}/learned/e2`)).status).toBe(404);
+  });
+
+  it("finishedProfile: what was finished in a workspace, from every style's entries", async () => {
+    await clear("maker");
+    const hard = await made("maker", { name: "Hard edit" });
+    const recap = await made("maker", { name: "Recap" });
+    learn(hard.id, [entry("a", "w1", [], 22), entry("b", "w1", [], 25), entry("c", "w1", [], 24), entry("d", "w2", [], 60)]);
+    learn(recap.id, [entry("e", "w1", [], 48)]);
+    expect(finishedProfile("maker", "w1")).toBe('Finished here: 3 "Hard edit" edits, 22 to 25 s; 1 "Recap" edit, 48 s.');
+    expect(finishedProfile("maker", "w2")).toBe('Finished here: 1 "Hard edit" edit, 60 s.');
+    expect(finishedProfile("maker", "w3")).toBe("");
   });
 });

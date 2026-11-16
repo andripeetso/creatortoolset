@@ -5,7 +5,7 @@ import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { AuthVars } from "./auth";
+import { jobTurn, type AuthVars } from "./auth";
 import type { Expired } from "./retention";
 import { sendFile } from "./lib/send-file";
 import { uploadRelayView } from "./lib/storage";
@@ -2456,7 +2456,11 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       m.approval = { status, by, at: Date.now() };
     });
     if (!meta) return c.json({ error: "Not found" }, 404);
-    if (status === "approved") emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
+    if (status === "approved") {
+      const turn = jobTurn(c.req.header("authorization"));
+      const words = typeof body?.words === "string" ? body.words : "";
+      emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization"), ...(turn && words ? { turn, words } : {}) });
+    }
     if (status === "changes") emitEvent("review.changes", { asset: meta.id, owner: meta.owner, by });
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });

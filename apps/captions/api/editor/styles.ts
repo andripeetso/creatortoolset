@@ -4,8 +4,11 @@ import path from "node:path";
 import { MAX_VERSIONS } from "../../contracts/editor";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import {
+  LEARNED_MAX,
+  LEARNED_PROMPT_MAX,
   MAX_EDITING_STYLES,
   PACES,
+  PLAYBOOK_MAX,
   PUNCHES,
   STYLE_NAME_MAX,
   STYLE_NOTES_MAX,
@@ -15,6 +18,9 @@ import {
   type EditingStylesView,
   type EditStyleCopy,
   type Pace,
+  cutLine,
+  type StyleLearned,
+  type StylePlaybook,
   WORKING_SIZES,
 } from "../../contracts/editor-styles";
 import { env } from "../lib/env";
@@ -26,8 +32,10 @@ import type { EditMeta } from "./store";
 /**
  * Editing styles (contracts/editor-styles.ts): one file per account, $DATA_DIR/editor-styles/<username>.json, holding
  * `editing` (the styles) and `last` (the one the last new edit was made with). Other keys in that file are kept as
- * they are. Only the person writes here: a style is what they typed and chose, and nothing an AI wrote is saved.
- * What an edit does with a style is in store.ts (styleFields), script.ts (the notes) and timeline.ts (the pace).
+ * they are. A style is what the person typed and chose. Two parts are kept apart from that and never mixed into it: the
+ * playbook an AI researched (marked as such until the person changes it) and what finished edits taught (finished.ts
+ * keepLearned, the person's own lines and numbers measured by code). What an edit does with a style is in store.ts
+ * (styleFields), script.ts and plan.ts (styleLayers) and timeline.ts (the pace).
  */
 
 const USER = /^[a-zA-Z0-9._-]{1,64}$/;
@@ -196,7 +204,32 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     if (typeof body.passes !== "boolean") return "passes is true or false";
     out.passes = body.passes;
   }
+  if (body.playbook !== undefined) {
+    const p = cleanPlaybook(body.playbook);
+    if (typeof p === "string") return p;
+    out.playbook = p;
+  }
   return out;
+}
+
+const PLAYBOOK_SOURCES = 20;
+
+/** A playbook as sent: null or no text takes it off. `by` is the route's word for who sent it (routes.ts); anything else reads as an AI's. */
+function cleanPlaybook(v: unknown): StylePlaybook | null | string {
+  if (v === null) return null;
+  const p = v as { text?: unknown; sources?: unknown; by?: unknown };
+  if (!p || typeof p !== "object" || typeof p.text !== "string") return "playbook is { text, sources }, or null";
+  const text = p.text.trim();
+  if (!text) return null;
+  if (text.length > PLAYBOOK_MAX) return `The playbook is at most ${PLAYBOOK_MAX} characters`;
+  const given = p.sources === undefined ? [] : p.sources;
+  if (!Array.isArray(given) || given.length > PLAYBOOK_SOURCES) return `sources is a list of at most ${PLAYBOOK_SOURCES}`;
+  const sources: StylePlaybook["sources"] = [];
+  for (const g of given as { title?: unknown; url?: unknown }[]) {
+    if (!g || !short(g.url, 2000) || !/^https?:\/\/\S+$/i.test(g.url)) return "Each source is { title, url }, its url a web address";
+    sources.push({ title: String(g.title ?? "").trim().slice(0, 200), url: g.url });
+  }
+  return { text, sources, at: Date.now(), by: p.by === "person" ? "person" : "ai" };
 }
 
 /**
@@ -251,9 +284,92 @@ export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: 
 /**
  * The one block an edit's style adds to the script step's prompt, after the installed packs' text: the person's own
  * notes, marked as theirs. Nothing for an edit with no style, or a style with no notes. Cut to the caps here too, so
- * a file changed by hand can never send more.
+ * a file changed by hand can never send more. With the edit (`now`: the plan and script steps), what the style as it
+ * is now adds after the notes too (styleLayers); a style with no playbook and nothing learned adds nothing more.
  */
-export function styleBlock(style: EditStyleCopy | undefined): string {
+export function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta, "id" | "createdBy" | "projectId">): string {
+  if (now) return styleLayers({ ...now, style });
   const notes = (style?.notes ?? "").trim().slice(0, STYLE_NOTES_MAX);
   return notes ? `Editing style ${JSON.stringify(String(style!.name).slice(0, STYLE_NAME_MAX))}, in the author's own words:\n${notes}` : "";
+}
+
+/* ---- a style that learns (tasks/flywheel stage 5): its playbook and what finished edits taught ---- */
+
+/** × on one of the style's learned entries. False: no such style or entry. */
+export const removeLearned = (username: string, styleId: string, editId: string): boolean =>
+  change(username, (f) => {
+    const s = f.editing.find((x) => x.id === styleId);
+    if (!s?.learned?.some((l) => l.editId === editId)) return false;
+    s.learned = s.learned.filter((l) => l.editId !== editId);
+    return true;
+  });
+
+const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
+const clip = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`);
+
+export const LEARNED_INTRO = "From edits the author approved in this style, in this workspace. Examples of their taste, not rules: the brief and the footage of this edit decide.";
+
+/** The playbook as a prompt reads it, marked as researched, cut to its cap; nothing without one. */
+function playbookBlock(p: StylePlaybook | null | undefined): string {
+  const text = (p?.text ?? "").trim().slice(0, PLAYBOOK_MAX);
+  if (!text) return "";
+  return `${p!.by === "person" ? "Researched reference for this kind of edit, as the author keeps it" : "Researched reference for this kind of edit, written from research and not by the author (their notes and the brief come first)"}:\n${text}`;
+}
+
+/**
+ * Learned entries as a prompt reads them: the approved cuts' numbers, then the author's own lines word for word, newest
+ * first, whole lines while they fit in LEARNED_PROMPT_MAX (a newest line longer than that alone is cut). Nothing for none.
+ */
+export function learnedBlock(list: StyleLearned[]): string {
+  const cuts = list.filter((l) => l.cut.shots > 0).map((l) => cutLine(l.cut));
+  const lines: string[] = [];
+  let used = 0;
+  for (const t of list.flatMap((l) => [...l.notes].reverse())) {
+    const line = `- ${oneLine(t)}`;
+    const need = line.length + (lines.length ? 1 : 0);
+    if (used + need > LEARNED_PROMPT_MAX) {
+      if (!lines.length) lines.push(clip(line, LEARNED_PROMPT_MAX));
+      break;
+    }
+    lines.push(line);
+    used += need;
+  }
+  if (!cuts.length && !lines.length) return "";
+  return [
+    LEARNED_INTRO,
+    cuts.length > 0 && `Cuts the author approved in this style here: ${cuts.join("; ")}.`,
+    lines.length > 0 && `What the author said about them on the way, word for word, newest first:\n${lines.join("\n")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * What an edit's style adds to its plan and script steps: the notes of the copy it was made with (styleBlock), then,
+ * from the style as it is now, its playbook and what edits approved in it taught in the edit's own workspace (the edit
+ * itself left out). A style with neither gives styleBlock's text exactly. The workspace is the brand (`projectId`; an
+ * edit with none matches entries of edits with none), never the library's `workspaceId`.
+ */
+export function styleLayers(edit: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { style?: EditStyleCopy }): string {
+  const now = edit.style ? findStyle(edit.createdBy, edit.style.id) : null;
+  const here = (now?.learned ?? []).filter((l) => l.workspaceId === (edit.projectId ?? "") && l.editId !== edit.id).slice(0, LEARNED_MAX);
+  return [styleBlock(edit.style), playbookBlock(now?.playbook), learnedBlock(here)].filter(Boolean).join("\n\n");
+}
+
+/**
+ * The footage profile's second line: what was finished in a workspace, from the learned entries of all the person's
+ * styles: `Finished here: 3 "Hard edit" edits, 22 to 25 s.` Empty with none.
+ */
+export function finishedProfile(username: string, workspaceId: string): string {
+  const parts = read(username)
+    .editing.map((s) => {
+      const here = (s.learned ?? []).filter((l) => l.workspaceId === workspaceId);
+      const secs = here.map((l) => l.cut.seconds).filter((n) => n > 0);
+      const lo = Math.min(...secs);
+      const hi = Math.max(...secs);
+      return { n: here.length, text: `${here.length} ${JSON.stringify(s.name)} edit${here.length === 1 ? "" : "s"}${secs.length ? `, ${lo === hi ? lo : `${lo} to ${hi}`} s` : ""}` };
+    })
+    .filter((p) => p.n > 0)
+    .sort((a, b) => b.n - a.n);
+  return parts.length ? `Finished here: ${parts.map((p) => p.text).join("; ")}.` : "";
 }

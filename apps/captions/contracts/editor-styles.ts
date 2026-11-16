@@ -12,6 +12,9 @@ import type { EditStepChoice } from "./editor-steps";
  *   DELETE /api/editor/styles/:id      → { ok: true }
  *   GET    /api/editor/styles/:id/finished            → FinishedEdit[] (newest first)
  *   DELETE /api/editor/styles/:id/finished/:editId    → { ok: true }; that edit is never kept for the style again
+ *   DELETE /api/editor/styles/:id/learned/:editId     → { ok: true }; what that approved edit taught the style goes
+ * A `playbook` sent with POST or PUT is marked by the route: an AI's tool or key writes `by: "ai"`, the person's own screen
+ * `by: "person"`, and an AI can't replace or take off one that is the person's. null takes it off.
  *   POST   /api/editor/styles/asked    New edit's "How do you like to work?" was answered: it is not shown again → { ok: true }
  * POST /api/editor and PATCH /api/editor/:id take `style`: a style's id, or null for none.
  * A POST /api/editor/styles with `first: true` (that screen's button) also makes the style the one New edit opens on.
@@ -246,3 +249,9 @@ export interface StyleLearned {
   notes: string[];
   cut: { seconds: number; shots: number; avgShotS: number; fxPerShot: number; sourcesUsed: number };
 }
+
+const many = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+/** One approved cut's numbers, as the style's page shows them and a prompt reads them: "25 s, 38 shots, 0.66 s a shot, 9 sources". */
+export const cutLine = (c: StyleLearned["cut"]): string =>
+  [`${c.seconds} s`, many(c.shots, "shot"), `${c.avgShotS} s a shot`, c.fxPerShot > 0 && `${c.fxPerShot} effects a shot`, many(c.sourcesUsed, "source")].filter(Boolean).join(", ");

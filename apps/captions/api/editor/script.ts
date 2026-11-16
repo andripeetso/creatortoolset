@@ -225,7 +225,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     targetS: edit.targetS,
     // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts), then the one skill
     // the style names (api/lib/skills.ts, cut there); no style adds nothing
-    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
+    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style, edit), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
     examples: finishedBlock(edit),
   });
   let raw: RawScript;

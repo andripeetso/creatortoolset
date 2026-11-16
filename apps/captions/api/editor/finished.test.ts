@@ -43,7 +43,8 @@ const { addSkill, removeSkill, skillText, updateSkill } = await import("../lib/s
 const { INSTRUCTIONS_MAX } = await import("../lib/workshop/prompt");
 const { addVersion, reviewJobsDone } = await import("../review");
 const { closestFinished, FINISHED_BLOCK_MAX, FINISHED_INTRO, finishedBlock, finishedExample } = await import("./finished");
-const { editDir, readEdit, readStep, saveDraft, saveStep } = await import("./store");
+const { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep } = await import("./store");
+const { LEARNED_INTRO } = await import("./styles");
 const { tick } = await import("./worker");
 
 type Sent = { system: string; user: string };
@@ -298,6 +299,62 @@ describe.skipIf(rootReplaced)("Finished edits: only the edit's own maker finishe
   });
 });
 
+describe.skipIf(rootReplaced)("What an approved edit teaches its style", () => {
+  const learnedOf = async (styleId: string) => (await json<{ styles: EditingStyle[] }>(call("maker", "GET", "/api/editor/styles"))).styles.find((x) => x.id === styleId)!.learned ?? [];
+  /** A planned cut: four shots on V1 (two with effects, one with a picture beside it), a cutaway on V2, 6 s in all. */
+  const cut = (): Timeline => {
+    const t = timeline(0);
+    t.tracks.V1.items = [
+      { src: "ver_a", in: 0, len: 25, rec: 0, fx: [{ type: "flash" }, { type: "shake" }] },
+      { src: "ver_b", in: 0, len: 50, rec: 25, split: [{ src: "ver_c", in: 0 }] },
+      { src: "ver_a", in: 90, len: 25, rec: 75, fx: [{ type: "punch" }] },
+      { src: "ver_b", in: 60, len: 50, rec: 100 },
+    ];
+    t.tracks.V2.items = [{ src: "ver_d", in: 0, len: 20, rec: 30 }];
+    return t;
+  };
+
+  it("the maker's approval keeps one entry: their feedback word for word, the cut's numbers, the rounds; nothing is said", async () => {
+    const s = await style("maker", { name: "Hard edit" });
+    const e = await made("maker", { style: s.id, brief: "A hard edit." });
+    await saveDraft(e.id, "v1", { timeline: cut(), notes: [] });
+    // the third version of its Review video: two rounds after the first
+    await saveStep(e.id, "review", { v1: { assetId: e.asset, n: 3 } });
+    const feedback = [
+      { at: 1, from: "chat" as const, variant: "v1", text: "No walking around.\nStart on the fight.", by: "maker" },
+      { at: 2, from: "review" as const, variant: "v1", t: 3.5, text: "this shot again?", by: "other" },
+      { at: 3, from: "review" as const, variant: "v1", t: 1, text: "Too slow here", by: "maker" },
+    ];
+    await saveEdit({ ...readEdit(e.id)!, feedback });
+    const res = await approve("maker", e.asset);
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(await res.json())).not.toMatch(/learn|taught/i);
+    expect(await learnedOf(s.id)).toEqual([
+      { editId: e.id, workspaceId: "", at: expect.any(Number), rounds: 2, notes: ["No walking around.\nStart on the fight.", "Too slow here"], cut: { seconds: 6, shots: 5, avgShotS: 1.2, fxPerShot: 0.6, sourcesUsed: 4 } },
+    ]);
+    // approved again: still one entry for the edit, as it is now
+    await saveStep(e.id, "review", { v1: { assetId: e.asset, n: 4 } });
+    await approve("maker", e.asset, "needs_review");
+    await approve("maker", e.asset);
+    expect((await learnedOf(s.id)).map((l) => [l.editId, l.rounds])).toEqual([[e.id, 3]]);
+    // an edit with no style teaches nothing
+    const plain = await made("maker", { brief: "No style." });
+    await approve("maker", plain.asset);
+    expect((await learnedOf(s.id)).map((l) => l.editId)).toEqual([e.id]);
+  });
+
+  it("an AI key, the assistant's tool on a key, and a call after Yes on a card approve it: the style learns nothing", async () => {
+    const s = await style("maker", { name: "Only pressed" });
+    const e = await made("maker", { style: s.id, brief: "Whose approval teaches." });
+    expect((await req({ authorization: keys.maker! }, "POST", `/api/review/assets/${e.asset}/approval`, { status: "approved", words: "Approved, it is great" })).status).toBe(200);
+    expect((await tool("maker", "review_set_approval", { link: e.asset, status: "approved", words: "Approved, it is great" })).value).toMatchObject({ approval: "approved" });
+    expect((await innerCall.run({ username: "maker", role: "user", cloud: false, off: [] }, () => approve("maker", e.asset))).status).toBe(200);
+    expect(await learnedOf(s.id)).toEqual([]);
+    await approve("maker", e.asset);
+    expect((await learnedOf(s.id)).map((l) => l.editId)).toEqual([e.id]);
+  });
+});
+
 describe.skipIf(rootReplaced)("Finished edits: fixed in size", () => {
   const long = (word: string, n: number) => Array.from({ length: n }, () => word).join(" ");
 
@@ -404,7 +461,10 @@ describe.skipIf(rootReplaced)("Finished edits: which ones the script step is sho
     expect(await sent("maker", { style: other.id, brief: "Floating first.", targetS: 30 })).toEqual(inOther);
     // an edit in the style: the same system text as the style gives, and the example in the user message
     const next = await sent("maker", { style: s.id, brief: "Floating first.", targetS: 30 });
-    expect(next.system).toBe(inOther.system.replace(`Editing style "Long talks", in the author's own words:\nLong takes.`, `Editing style "Swim reels", in the author's own words:\nShort lines.`));
+    // and after the notes, what the approved edit taught the style (styles.ts styleLayers): its cut's numbers, as it had no feedback
+    expect(next.system).toBe(
+      `${inOther.system.replace(`Editing style "Long talks", in the author's own words:\nLong takes.`, `Editing style "Swim reels", in the author's own words:\nShort lines.`)}\n\n${LEARNED_INTRO}\nCuts the author approved in this style here: 41 s, 1 shot, 41 s a shot, 1 source.`,
+    );
     expect(next.user).toBe(plain.user.replace("\n\nSources:\n", `\n\n${finishedBlock({ id: "x", createdBy: "maker", brief: "Floating first.", style: { id: s.id, name: "", notes: "", pace: "tight" } })}\n\nSources:\n`));
     expect(next.user).toContain("Finished edit 1\nBrief: Swimming lessons for beginners: floating and kicking.");
     expect(next.user).not.toContain("Finished edit 2");

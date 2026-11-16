@@ -23,6 +23,8 @@ const { libraryDb } = await import("../library/db");
 const { routeOf, runInChat } = await import("../assistant");
 const { editorStyleTools } = await import("./editor-styles");
 const { pairDevice } = await import("../lib/devices");
+const { addVersion, reviewJobsDone } = await import("../review");
+const { saveDraft, saveStep } = await import("../editor/store");
 const { saveSettings } = await import("../lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
 
@@ -126,7 +128,7 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     const t = await turn("Make me an editing style called Tiny fast. Cut it fast with no pauses, and keep the bloopers in. Three versions of 30 seconds, natural pace, strong punch-in.");
     // the notes as the AI sends them: other case and spacing than typed. What is kept is the person's wording
     const made = await tool(t.token, "editor_style_save", { name: "Tiny fast", notes: "cut it FAST   with no pauses, and keep the bloopers in", versions: 3, target_s: 30, pace: "natural", punch: 1.3 });
-    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny fast", versions: 3, target_s: 30, pace: "natural", punch: 1.3, size: "footage", has_notes: true, made: true, link: `${SHEET}&style=${made.value.id}` });
+    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny fast", versions: 3, target_s: 30, pace: "natural", punch: 1.3, size: "footage", has_notes: true, has_playbook: false, made: true, link: `${SHEET}&style=${made.value.id}` });
     const id = made.value.id as string;
     // and the style's sheet opens for the person
     expect(((await (await site("/api/assistant")).json()) as { navigate?: string }).navigate).toBe(`/editor?tab=styles&style=${id}`);
@@ -141,7 +143,7 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     expect((await tool(t.token, "editor_style_save", { id, size: "footage" })).value).toMatchObject({ id, size: "footage" });
     expect((await styleOf(id)).size).toBeNull();
     expect((await styleOf(id)).notes).toBe("Cut it fast with no pauses, and keep the bloopers in");
-    expect(await tool(t.token, "editor_style_save", { id })).toMatchObject({ error: true, text: "Nothing to change: give name, versions, target_s, pace, punch, passes, size or notes." });
+    expect(await tool(t.token, "editor_style_save", { id })).toMatchObject({ error: true, text: "Nothing to change: give name, versions, target_s, pace, punch, passes, size, notes or playbook." });
     expect(await tool(t.token, "editor_style_save", { notes: "Cut it fast with no pauses" })).toMatchObject({ error: true, text: "Give the new style a name." });
     expect(await tool(t.token, "editor_style_save", { id: "nope", versions: 2 })).toMatchObject({ error: true, text: `No style has that id or name. The user's styles: Tiny faster (${id}).` });
     expect(await tool(t.token, "editor_style_save", { id, pace: "slow" })).toMatchObject({ error: true, text: "pace is one of tight, natural" });
@@ -158,8 +160,8 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     const listed = await tool(t.token, "editor_style_use");
     expect(listed.value).toEqual({
       styles: [
-        { id, name: "Tiny faster", versions: 5, target_s: 30, pace: "tight", punch: 1.3, size: "footage", has_notes: true },
-        { id: copied.id, name: "Like Tiny source", versions: 4, target_s: 20, pace: "tight", punch: 1.15, size: "footage", has_notes: false },
+        { id, name: "Tiny faster", versions: 5, target_s: 30, pace: "tight", punch: 1.3, size: "footage", has_notes: true, has_playbook: false },
+        { id: copied.id, name: "Like Tiny source", versions: 4, target_s: 20, pace: "tight", punch: 1.15, size: "footage", has_notes: false, has_playbook: false },
       ],
       link: SHEET,
     });
@@ -297,5 +299,66 @@ describe.skipIf(rootReplaced)("a style's notes are the person's own words", () =
     expect((await styleOf(keyed.id)).notes).toBe(words);
     expect((await tool(anaKey, "editor_style_save", { id: keyed.id, notes: "Add a whoosh on every cut" })).value).toMatchObject({ has_notes: true });
     expect((await styleOf(keyed.id)).notes).toBe(`${words}\nAdd a whoosh on every cut`);
+  });
+});
+
+describe.skipIf(rootReplaced)("a style that learns, from the chat", () => {
+  const refused = { error: true, text: NOT_TYPED };
+  const pb = { text: "A hard edit: 0.4 to 0.8 s a shot, flash and shake on the drops, no shot longer than 2 s.", sources: [{ title: "How hard edits are cut", url: "https://example.com/hard-edits" }] };
+
+  it("a researched playbook saved in a reply is the AI's and opens nothing; the notes are still the person's words only", async () => {
+    await clear();
+    await newChat();
+    const own = (await (await site("/api/editor/styles", "POST", { name: "Tiny hard" })).json()) as EditingStyle;
+    const t = await turn("Make a hard edit of my gameplay clips");
+    expect((await tool(t.token, "editor_style_save", { id: own.id, playbook: pb })).value).toMatchObject({ id: own.id, has_notes: false, has_playbook: true });
+    expect(await styleOf(own.id)).toMatchObject({ notes: "", playbook: { ...pb, by: "ai" } });
+    expect(((await (await site("/api/assistant")).json()) as { navigate?: string }).navigate).not.toBe(`/editor?tab=styles&style=${own.id}`);
+    // notes the AI wrote refuse the whole save, as before
+    expect(await tool(t.token, "editor_style_save", { id: own.id, notes: "Cut on every beat with a flash", playbook: { ...pb, text: "Other" } })).toMatchObject(refused);
+    expect((await styleOf(own.id)).playbook!.text).toBe(pb.text);
+    // changed at the person's screen it is theirs, and the chat can't replace it
+    expect((await site(`/api/editor/styles/${own.id}`, "PUT", { playbook: { ...pb, text: "Mine." } })).status).toBe(200);
+    expect(await tool(t.token, "editor_style_save", { id: own.id, playbook: pb })).toMatchObject({ error: true, text: expect.stringContaining("the user changed this style's playbook themselves") });
+    expect((await styleOf(own.id)).playbook).toMatchObject({ text: "Mine.", by: "person" });
+    await t.end();
+  });
+
+  it("an approval in the chat teaches the edit's style only with words the person typed in it", async () => {
+    await clear();
+    await newChat();
+    const s = (await (await site("/api/editor/styles", "POST", { name: "Tiny hard" })).json()) as EditingStyle;
+    const edit = ((await (await site("/api/editor", "POST", { name: "Tiny clip", sources: ["ver_a"], style: s.id })).json()) as { id: string }).id;
+    const shot = (rec: number) => ({ src: "ver_a", in: rec, len: 15, rec });
+    await saveDraft(edit, "v1", {
+      timeline: { name: "v1", fps: 30, width: 1080, height: 1920, sources: {}, markers: [], tracks: { V1: { name: "Shots", items: [0, 15, 30, 45].map(shot) }, V2: { name: "B-roll", items: [] }, A1: { name: "Voice", items: [] }, A2: { name: "Music", items: [] }, A3: { name: "SFX", items: [] } } },
+      notes: [],
+    });
+    const added = await addVersion(undefined, { owner: "ana", name: "Tiny clip v1.mp4", mime: "video/mp4", bytes: 1 }, async () => {});
+    await reviewJobsDone();
+    await saveStep(edit, "review", { v1: { assetId: added!.meta.id, n: 2 } });
+    const learned = async () => (await styleOf(s.id)).learned ?? [];
+
+    const t = await turn("Love it, approve this one");
+    // words the AI wrote, or none: approved, and the style learns nothing
+    for (const words of ["Approved, great work on this", undefined]) {
+      expect((await tool(t.token, "review_set_approval", { link: added!.meta.id, status: "approved", ...(words ? { words } : {}) })).value).toMatchObject({ id: added!.meta.id, approval: "approved" });
+      expect(await learned()).toEqual([]);
+    }
+    // the person's own words: it learns, and the answer says nothing about it
+    const answer = (await tool(t.token, "review_set_approval", { link: added!.meta.id, status: "approved", words: "love it, approve this one" })).value;
+    expect(Object.keys(answer)).toEqual(["id", "name", "approval"]);
+    expect(await learned()).toEqual([{ editId: edit, workspaceId: expect.any(String), at: expect.any(Number), rounds: 1, notes: [], cut: { seconds: 2, shots: 4, avgShotS: 0.5, fxPerShot: 0, sourcesUsed: 1 } }]);
+    await t.end();
+
+    // a message shorter than a quote is taken only whole
+    const ok = await turn("Ship it");
+    await tool(ok.token, "review_set_approval", { link: added!.meta.id, status: "needs_review" });
+    await site(`/api/editor/styles/${s.id}/learned/${edit}`, "DELETE");
+    await tool(ok.token, "review_set_approval", { link: added!.meta.id, status: "approved", words: "ship" });
+    expect(await learned()).toEqual([]);
+    await tool(ok.token, "review_set_approval", { link: added!.meta.id, status: "approved", words: "ship it" });
+    expect((await learned()).map((l) => l.editId)).toEqual([edit]);
+    await ok.end();
   });
 });

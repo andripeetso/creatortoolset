@@ -73,6 +73,7 @@ export async function addStylePictures(id: string, files: File[], kind: StyleKin
 /** The edits finished in a style, newest first, and × on one (it never counts for a style again). */
 export const listFinished = (styleId: string) => send<FinishedEdit[]>(`/api/editor/styles/${styleId}/finished`);
 export const removeFinished = (styleId: string, editId: string) => send<{ ok: true }>(`/api/editor/styles/${styleId}/finished/${editId}`, "DELETE");
+export const removeLearned = (styleId: string, editId: string) => send<{ ok: true }>(`/api/editor/styles/${styleId}/learned/${editId}`, "DELETE");
 export const setEyeline = (id: string, versionId: string, y: number) => send<Edit>(`${base(id)}/eyeline/${versionId}`, "PUT", { y });
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);

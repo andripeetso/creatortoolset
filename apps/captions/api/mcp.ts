@@ -88,6 +88,12 @@ An edit waits while the Media Library is still describing its footage, and its s
 it now, editor_run with now=true cuts from what is ready. editor_get lists the footage a cut left out (left_out): say
 that first when it is there. The user's notes on a cut go to editor_feedback in their own words, never into the brief:
 the next version is made from the last one, changing what they named.
+Editing styles: when the brief names one of the user's styles or clearly is that kind of edit, use it (editor_create
+start=false, editor_style_use, editor_run); when none fits, make one named for the kind of edit ("Hard edit") with
+editor_style_save. Before the first edit in a style with no playbook, search the web for that kind of edit and save
+what you found as its playbook (editor_style_save): what it is, its structure, its pace in numbers, its effects by the
+editor's names (punch, zoom, flash, shake, rgb, glitch, blur, invert, strobe, zoomblur, reverse, stutter, freeze,
+whip), what makes it fail, and the sources. When the search fails or isn't allowed, make the edit without one.
 
 A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
 as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
@@ -228,8 +234,8 @@ export const TOOLS = [
   },
   {
     name: "review_set_approval",
-    description: "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none.",
-    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "rejected", "approved"] } }, required: ["link", "status"] },
+    description: "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none. words: with approved, the user's message saying it is good, word for word.",
+    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "rejected", "approved"] }, words: str }, required: ["link", "status"] },
   },
   {
     name: "review_share",
@@ -840,7 +846,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     review_set_approval: async (a) => {
       const at = await reviewOf({ json, origin }, a.link);
       if (!at.manage && a.status !== "approved" && a.status !== "changes") throw new ToolError("That video is someone else's: on its share link you can approve it or ask for changes (approved, changes), nothing else.");
-      const r = await json(`${at.path}/approval`, "POST", { status: a.status });
+      const r = await json(`${at.path}/approval`, "POST", { status: a.status, ...(a.status === "approved" && typeof a.words === "string" ? { words: a.words } : {}) });
       return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
     },
     review_share: async (a) => {
