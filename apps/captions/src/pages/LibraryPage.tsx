@@ -24,6 +24,7 @@ import {
   isFinals,
   listAssets,
   listCollections,
+  orderCollections,
   listLibraries,
   listSources,
   changeFolderItems,
@@ -678,9 +679,20 @@ export default function LibraryPage() {
                 onOpen: () => go(c.id),
                 onItems: readOnly ? undefined : (ids) => void move(ids, c.id),
                 menu: folderMenu(c),
+                movable: !readOnly,
               }),
             ),
         ];
+  // the folder tabs dragged into another order: at once on screen, kept by the server for everyone
+  const reorderFolders = (ids: string[]) => {
+    const before = folderList.data;
+    const at = (id: string) => (ids.includes(id) ? ids.indexOf(id) : ids.length);
+    folderList.set((all) => all && [...all].sort((a, b) => at(a.id) - at(b.id)));
+    orderCollections(libId!, ids).catch((e) => {
+      folderList.set(before);
+      setError(message(e));
+    });
+  };
   // a library clip can be dragged onto a folder (not from the Trash, not a plug-in source's item)
   const dragOf = (a: AssetCard) =>
     trash || readOnly || a.id.startsWith("ext_")
@@ -937,7 +949,7 @@ export default function LibraryPage() {
                   )
                 }
               >
-                {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} />}
+                {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
 
                 <LibraryProgressBar libraryId={library.id} />
 

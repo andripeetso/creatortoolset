@@ -214,6 +214,18 @@ describe("folders and collections", () => {
     expect((await call("owner-a", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Mine again" })).status).toBe(200);
     expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${mine.id}/items`, { assetIds: ["e2"] }))).toEqual({ added: 1 });
   });
+
+  it("the owner drags the folders into an order everyone then lists; a new folder goes after them; another account gets 404", async () => {
+    const [x, y, z] = [await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Order X" })), await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Order Y" })), await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Order Z" }))];
+    const order = async () => ((await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections as { id: string }[]).map((c) => c.id).filter((id) => [x.id, y.id, z.id].includes(id));
+    expect((await call("stranger", "PUT", "/api/library/lib_a/collections/order", { ids: [z.id, x.id] })).status).toBe(404);
+    expect((await call("owner-a", "PUT", "/api/library/lib_a/collections/order", { ids: "nope" })).status).toBe(400);
+    expect((await call("owner-a", "PUT", "/api/library/lib_a/collections/order", { ids: [z.id, x.id, y.id] })).status).toBe(200);
+    const w = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Order W" }));
+    expect(await order()).toEqual([z.id, x.id, y.id]);
+    const all = ((await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections as { id: string }[]).map((c) => c.id);
+    expect(all.indexOf(w.id)).toBeGreaterThan(all.indexOf(y.id));
+  });
 });
 
 describe("trash", () => {
