@@ -1663,11 +1663,13 @@ export function chatBusy(username: string, chat: string | undefined): boolean {
  * named after the task starts among the earlier chats (the open one is left alone). `fresh`: the reply sees only this
  * prompt, not the chat's earlier messages. Stop by its reply id stops it (in the open chat, the dock's Stop too). It runs
  * beside other chats' replies, counts toward MAX_RUNNING and never waits for it. Resolves with the chat and the
- * answer; rejects with the reason when the run fails.
+ * answer; rejects with the reason when the run fails. `workspace`: the one the task was made for. The run's chat is
+ * that workspace's, as a chat started by hand is the one picked for it, so the reply's tools work there (mcp.ts)
+ * whatever the app has open, and the reply is told its context (workspaceNote). A task for no workspace runs as before.
  */
 export async function runInChat(
   username: string,
-  o: { chat?: string; task: { id: string; name: string }; prompt: string; preface: string; fresh: boolean; route: Route; url: string },
+  o: { chat?: string; task: { id: string; name: string }; prompt: string; preface: string; fresh: boolean; route: Route; url: string; workspace?: string },
 ): Promise<{ chat: string; text: string }> {
   const conv = load(username);
   let chat = chatOf(conv, o.chat);
@@ -1675,6 +1677,7 @@ export async function runInChat(
     chat = { id: randomUUID(), messages: [], title: o.task.name, task: o.task.id };
     keepPast(username, conv, [chat, ...(conv.past ?? [])]);
   }
+  if (o.workspace) chat.workspace = o.workspace;
   const now = Date.now();
   const asked: AssistantMessage = { id: randomUUID(), role: "user", text: o.prompt, at: now, task: o.task };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
@@ -1686,9 +1689,14 @@ export async function runInChat(
   const chatId = chat.id; // `chat` may be the open one, whose id changes with a New chat
   runsOf(username).set(reply.id, stop);
   try {
+    // the task's workspace as it is now: one the account can't open any more is their first brand's (workspaceNow)
+    const memory = o.workspace ? await workspaceNote(username, await workspaceNow(username, () => chatOf(load(username), chatId))) : undefined;
+    // stopped while that was read: nothing is asked of the Mac
+    if (stop.signal.aborted) throw new Error("Stopped.");
     const text = await answerWithTools(username, o.route, o.url, prompt, {
       label: "Scheduled task",
       turn: reply.id,
+      memory,
       background: true,
       cancel: stop.signal,
       onDelta: (t) => {
