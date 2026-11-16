@@ -151,7 +151,16 @@ function SpeechModels({ computers, want }: { computers: SttComputer[]; want: (co
                 <Row
                   key={m.id}
                   title={m.name}
-                  status={lineOf(m, c.os)}
+                  // its maker and licence, linked to the model's own page: the credit an open model's licence asks for
+                  status={
+                    <>
+                      {lineOf(m, c.os)} ·{" "}
+                      <a href={m.page} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+                        {m.by && !m.name.includes(m.by) ? `${m.by}, ` : ""}
+                        {m.licence}
+                      </a>
+                    </>
+                  }
                   control={
                     !has ? (
                       <Button size="sm" variant="outline" onClick={() => want(c.id, m.id, true)}>Download</Button>

@@ -92,6 +92,9 @@ describe("models on your computers", () => {
     expect(out).toContain(">Download<");
     expect(out).toContain("Most accurate · every language · 1.6 GB");
     expect(out).not.toContain("By OpenAI");
+    // a model that can be downloaded keeps its credit: its licence, linked to its makers' own page
+    expect(out).toContain('href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"');
+    expect(out).toContain("CC-BY-4.0");
   });
 
   it("a use offers a model on your computers only when it can run there", () => {
