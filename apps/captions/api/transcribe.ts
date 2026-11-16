@@ -486,7 +486,7 @@ transcribeApp.post("/mic", async (c) => {
     return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true }));
   } catch (e) {
     if (e instanceof NeedsKey) return c.json({ error: e.message, code: "NEEDS_KEY" }, 402);
-    return c.json({ error: e instanceof Error ? e.message : "Couldn't write that down" }, 502);
+    return c.json({ error: e instanceof Error ? e.message : "Could not transcribe" }, 502);
   } finally {
     await rm(src, { force: true });
   }

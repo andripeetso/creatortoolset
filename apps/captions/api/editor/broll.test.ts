@@ -233,6 +233,6 @@ describe("a cut whose takes have no picture: the B-roll is the whole picture", (
   it("a folder with no picture in it covers nothing and says why", () => {
     const { timeline, notes } = placeCover(spoken(lines, 600), [{ ...src("sound", 500), w: 0, h: 0 }]);
     expect(timeline.tracks.V2.items).toEqual([]);
-    expect(notes).toEqual([`${BROLL_NOTE}no clip with picture in the collection`]);
+    expect(notes).toEqual([`${BROLL_NOTE}no clip with picture in the folder`]);
   });
 });

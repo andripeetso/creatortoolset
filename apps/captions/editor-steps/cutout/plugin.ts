@@ -90,14 +90,14 @@ const tools = {
       return { said: `Cut out: put ![Cut-out](${href}) in your reply to show it.`, href };
     },
   },
-  steps: { picture_cutout: "Cutting the picture out on your Mac" },
+  steps: { picture_cutout: "Cutting the picture out" },
 };
 
 // `kind` is read as text by Community's list of the team's plug-ins
 const cutout = {
   id: "cutout",
   name: "Cut-out",
-  about: "Your assistant cuts the subject of a picture out of its background, on your Mac",
+  about: "Cuts the subject of a picture out of its background, on a Mac",
   kind: "assistant",
   routes,
   tools,

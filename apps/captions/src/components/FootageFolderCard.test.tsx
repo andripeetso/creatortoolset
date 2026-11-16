@@ -124,13 +124,13 @@ describe("Where are your videos?", () => {
 
   it("in a browser on this computer, a typed path is checked by the server and a refusal stays on the card", async () => {
     pick.mockResolvedValue(undefined); // no Mac app: no picker
-    postReply = { status: 400, body: { error: "No such folder on the server: ~/nope" } };
+    postReply = { status: 400, body: { error: "Folder not found on the server: ~/nope" } };
     await render();
     await click("Choose a folder");
     await typeInto("Folder path", "~/nope");
-    await click("Check folder");
+    await click("Add folder");
     expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ path: "~/nope", libraryId: "lib_1" });
-    expect(host!.textContent).toContain("No such folder on the server: ~/nope");
+    expect(host!.textContent).toContain("Folder not found on the server: ~/nope");
     expect(card()).not.toBeNull();
   });
 
@@ -138,7 +138,7 @@ describe("Where are your videos?", () => {
     watch.allowed = false;
     const onUpload = vi.fn();
     await render(onUpload);
-    expect(host!.textContent).toContain("Your videos are on your computer");
+    expect(host!.textContent).toContain("Reading a folder needs the Mac app");
     expect(button("Choose a folder")).toBeUndefined();
     await click("Upload files");
     expect(onUpload).toHaveBeenCalledTimes(1);
@@ -148,7 +148,7 @@ describe("Where are your videos?", () => {
     localStorage.setItem("ct-footage-folder-skipped", "1");
     await render(() => {}, true);
     expect(card()).not.toBeNull();
-    expect(host!.textContent).toContain("raw materials");
+    expect(host!.textContent).toContain("No clips");
     expect(host!.textContent).not.toContain("Where are your videos?");
     expect(button("Skip")).toBeUndefined();
     expect(button("Upload files")).toBeUndefined();
@@ -181,7 +181,7 @@ describe("Where are your videos?", () => {
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Add 40 files from Trip?");
     expect(dialog.textContent).toContain("of footage.");
-    const copy = dialog.querySelectorAll('input[name="import-mode"]')[1] as HTMLInputElement; // after Use them where they are
+    const copy = dialog.querySelectorAll('input[name="import-mode"]')[1] as HTMLInputElement; // after Keep in place
     expect(copy.checked).toBe(true); // copying is the default where there is room
     const sort = dialog.querySelectorAll<HTMLInputElement>('input[name="organize"]');
     expect(sort[0]!.checked).toBe(true); // the usual folders, until another is picked
@@ -233,7 +233,7 @@ describe("Where are your videos?", () => {
     await click("Choose a folder");
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Add 3 files from Trip?");
-    expect(dialog.textContent).toContain("Use them where they are");
+    expect(dialog.textContent).toContain("Keep in place");
     expect(dialog.textContent).not.toContain("of footage.");
     expect(dialog.querySelectorAll('input[name="organize"]')).toHaveLength(3);
   });

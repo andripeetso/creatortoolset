@@ -43,7 +43,7 @@ async function call(key: string, url: string, init: RequestInit = {}): Promise<R
   try {
     res = await fetch(`${API}${url}`, { ...init, headers: { "xi-api-key": key, ...init.headers }, signal: AbortSignal.timeout(5 * 60_000) });
   } catch (e) {
-    throw new VoiceError(`ElevenLabs did not answer (${e instanceof Error ? e.message : String(e)}): try again.`, 502);
+    throw new VoiceError("Could not reach ElevenLabs: try again later", 502);
   }
   if (res.ok) return res;
   const body = (await res.text().catch(() => "")).slice(0, 600);
@@ -57,10 +57,10 @@ async function call(key: string, url: string, init: RequestInit = {}): Promise<R
       return "";
     }
   })();
-  if (isOutOfCredits(res.status, body)) throw new VoiceError("Your ElevenLabs account is out of credits: add credits at elevenlabs.io, then try again.", 402);
-  if (res.status === 401) throw new VoiceError(`ElevenLabs refused the key${said ? ` (${said})` : ""}: check it in Settings → API keys. A key limited to some features needs Text to Speech and Voices.`);
-  if (res.status === 429) throw new VoiceError("ElevenLabs is busy: try again in a minute.", 502);
-  throw new VoiceError(`ElevenLabs answered ${res.status}${said ? `: ${said}` : ""}`, 502);
+  if (isOutOfCredits(res.status, body)) throw new VoiceError("The ElevenLabs account is out of credits: add credits at elevenlabs.io", 402);
+  if (res.status === 401) throw new VoiceError(`ElevenLabs refused the key${said ? ` (${said})` : ""}: check it in Settings → API keys (a limited key needs Text to Speech and Voices)`);
+  if (res.status === 429) throw new VoiceError("ElevenLabs is busy: try again in a minute", 502);
+  throw new VoiceError(`ElevenLabs could not make the voice${said ? `: ${said}` : ""}`, 502);
 }
 
 /** The key the voice runs on: the person's own (the server's only for its admin), or the sentence that says where to add it. */
@@ -90,7 +90,7 @@ function pickVoice(voices: Voice[], wanted: string, last: string | null): Voice 
   const w = wanted.trim().toLowerCase();
   const found = w ? voices.find((v) => v.id.toLowerCase() === w) ?? voices.find((v) => v.name.toLowerCase() === w) : voices.find((v) => v.id === last);
   if (found) return found;
-  if (!voices.length) throw new VoiceError("This ElevenLabs account has no voices: add one at elevenlabs.io.");
+  if (!voices.length) throw new VoiceError("This ElevenLabs account has no voices: add one at elevenlabs.io");
   const names = voices.slice(0, 20).map((v) => (v.own ? `${v.name} (your own)` : v.name));
   throw new VoiceError(`${w ? `No voice called “${wanted.trim()}”.` : "Which voice?"} Give voice: ${names.join(", ")}${voices.length > 20 ? ", and more in ElevenLabs" : ""}.`);
 }
@@ -102,7 +102,7 @@ function pickVoice(voices: Voice[], wanted: string, last: string | null): Voice 
 export async function makeVoice(user: AuthVars["user"], input: { text: string; voice?: string; name?: string }): Promise<MadeVoice> {
   // where a plug-in's source is the Media Library, the storage library is never shown: nothing goes where nobody looks
   const main = mainSource();
-  if (main) throw new VoiceError(`On this server the Media Library is the ${main.label}, and a voice made here has no place in it yet.`);
+  if (main) throw new VoiceError(`On this server the Media Library is the ${main.label}: a voice cannot be added to it`);
   const text = input.text.trim();
   if (!text) throw new VoiceError("Give the text the voice says.");
   if (text.length > MAX_VOICE_CHARS) throw new VoiceError(`The text is ${text.length.toLocaleString("en-US")} characters, and one voice recording takes up to ${MAX_VOICE_CHARS.toLocaleString("en-US")}: shorten it, or make it in parts.`);
@@ -117,7 +117,7 @@ export async function makeVoice(user: AuthVars["user"], input: { text: string; v
     await writeFile(file, Buffer.from(await res.arrayBuffer()));
     await ensureLibrary(user.username);
     const saved = await saveToLibrary(user.username, file, `${title}.mp3`, [], undefined, true);
-    if (!saved) throw new VoiceError("This account has no Media Library it may add to.");
+    if (!saved) throw new VoiceError("Needs a Media Library this account can add to");
     if ("error" in saved) throw new VoiceError(saved.error, 502);
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
     const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };

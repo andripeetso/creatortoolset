@@ -637,7 +637,7 @@ export function Inspector({
             {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) && (
               <div className="flex items-center gap-2">
                 <div className="grid min-w-0 flex-1 grid-cols-4 gap-1">{split && CORNERS.map(([sign, title], n) => <div key={title}>{num(sign, title, same((l) => cornerOf(l, n)), (v) => setCorner(n, v), { min: 0, max: 2000 })}</div>)}</div>
-                <Tap label="Each corner by itself" on={split} onClick={() => setSplit(!split)}>
+                <Tap label="Each corner separately" on={split} onClick={() => setSplit(!split)}>
                   <Scan className="h-3.5 w-3.5" />
                 </Tap>
               </div>

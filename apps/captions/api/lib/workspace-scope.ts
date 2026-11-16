@@ -22,6 +22,14 @@ export const currentWorkspaceId = async (user: SessionUser): Promise<string | un
   (await getWorkspace(user)).currentProjectId ?? undefined;
 
 /**
+ * The workspace a list answers for when its caller names none: the one this request works in (the app's header, a
+ * chat's tools), so no list answers every workspace's by default. A caller with neither (a phone, an API key) has no
+ * workspace to answer for and gets them all, as before.
+ */
+export const listWorkspaceId = async (user: SessionUser, asked?: string): Promise<string | undefined> =>
+  asked ?? (workspaceScope.getStore() ? await currentWorkspaceId(user) : undefined);
+
+/**
  * Which of the person's things are in the workspace this request works in, by the thing's own `projectId`: one made
  * before it had one belongs to the first brand (project-of.ts). null when nothing is kept apart (no workspace yet).
  * A view filter inside one account: a thing opened by its id still opens.

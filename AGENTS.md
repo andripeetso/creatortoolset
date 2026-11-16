@@ -276,6 +276,39 @@ and answers:
       is on.
     - A page with more than about a dozen rows is split. A folded "Advanced" block needs three rows or more.
     - An error says what happened and what to do next ("Could not load folders" with Retry; "Needs an AI provider").
+  - **App wording** (owner, 2026-11-16: "the same kind of language audit" for the whole app). Every screen, toast,
+    tooltip and server message a person reads follows "Settings wording" above (`src/app-wording.test.ts` holds the
+    mechanical ones, and the few lines kept as the owner's own); what that bullet does not say:
+    - **AI is the default here, so nothing is labelled as AI.** No "AI", "by AI", "AI-made", "smart" on an option, a
+      button, a badge or a section: say what the thing does ("Automatic", "Descriptions", "Suggested"). No wand or
+      sparkle icon: `CtMark` on what is made for the person, else the icon of what the button does. Allowed: the
+      names AI Editor, AI provider, AI apps, the Settings group AI, and a sentence that must name it to be true.
+    - A label is a noun of one to three words, or for an action a specific verb with its object ("Delete video",
+      "Add folder"); never "OK", "Yes", "Got it". No full stop on any one-line label, badge, tab, status or option.
+      A field's label says what goes in it; with a label there is no example placeholder.
+    - Running text is optional and one sentence. An empty list is "No <things>" and its one button; an empty tool
+      screen is a place to drop the raw material with its one button. No line that only says a feature exists.
+    - States: fine shows nothing. Missing is "Needs <thing>". Work in progress is what is being done, with a count
+      where there is one ("Transcribing", "Uploading 3 of 12", "Queued"). An error is "Could not <verb> <thing>" with
+      Retry beside it, never a raw server line, a status code or blame; a thing that is not there is "<Thing> not
+      found". A toast only when the change cannot be seen, in a few words.
+    - Names: the tools by their Home names (`HOME_TILE_NAMES`: Content Analyzer, Content Workshop, Media Library …,
+      never "the Analyzer", "Workshop", "the library" for the tool). Captions are the lines on a video; the text under
+      a post is its post description. Video Notes holds recordings, the Media Library clips, the Designer designs; a
+      Content Analyzer group of posts is a topic; the Content Workshop's panels are Writing, Chat and Browse. This
+      computer / Server, never "this device" or "cloud". One spelling: colour.
+    - Verbs, beside the Settings list: Edit (open to change), Rename, Export (make a file; never "render" on a
+      button), Download (get it), Upload, Copy, Share, Send to <tool>, Analyze (the Content Analyzer's run). Cancel
+      stops what has not happened; Stop stops what is running. In a sentence it is still "try again later".
+    - A tooltip may keep a how-to that is said nowhere else, and a credit or licence line stays. Cut the visible
+      paragraph, never the only place a fact lives.
+    - A screen that asks the person something by design keeps its question: first-run setup's titles ("What do you
+      make?", "Where are your videos?", "How do you work best?"), the new chat screen ("What should we make?"), the
+      chat list's "Needs you". The owner's own labels stay as they are: "Write it for me", "My words only", "New edit
+      defaults", "Headless access", "Sign-in code", the Media Library's "Standard" / "Automatic" / "None", the
+      rolls A-roll and B-roll, the grade panel's control names.
+    - Not app wording: what the AI writes, the prompts, and the tool definitions an AI reads (`api/mcp.ts`,
+      `api/mcp-tools/`; a change there needs the store check first).
 - Plug-ins get in two ways. Compiled in: `scripts/plugins.mjs` writes the registries at build time. From a folder,
   on the Mac app's own server only: `scripts/plugin-build.mjs` builds one folder by itself, `api/lib/folder-plugins.ts`
   loads what the Mac app says is on (`apps/mac` `Plugins.swift` keeps the person's Switch on clicks) and

@@ -92,7 +92,7 @@ export function placeBroll(tl: Timeline, pool: TimelineSource[]): BrollResult {
   const clips = pool.filter((s, k) => s.dur > 0 && s.w > 0 && pool.findIndex((o) => o.versionId === s.versionId) === k);
   if (!clips.length) {
     out.tracks.V2.items = [];
-    return { timeline: out, notes: [`${BROLL_NOTE}no clip with picture in the collection`] };
+    return { timeline: out, notes: [`${BROLL_NOTE}no clip with picture in the folder`] };
   }
   const taken = new Map<string, [number, number][]>();
   const placed: Item[] = [];
@@ -168,7 +168,7 @@ export function placeCover(tl: Timeline, pool: TimelineSource[], rank: (text: st
   const clips = pool.filter((s, k) => s.dur > 0 && s.w > 0 && pool.findIndex((o) => o.versionId === s.versionId) === k);
   if (!clips.length) {
     out.tracks.V2.items = [];
-    return { timeline: out, notes: [`${BROLL_NOTE}no clip with picture in the collection`] };
+    return { timeline: out, notes: [`${BROLL_NOTE}no clip with picture in the folder`] };
   }
   const taken = new Map<string, [number, number][]>();
   const shown = (s: TimelineSource) => taken.get(s.versionId)?.length ?? 0;
@@ -305,7 +305,7 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   if (!rows.length && cover) throw new NeedsKey(edit.brollCollectionId ? NO_COVER_IN_FOLDER : NO_COVER);
   if (!rows.length) return;
   // read again at this step: the creator may have lost a library or the collection's footage since the edit was made
-  if (sourcesWorkspace(ownerOf(edit), rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("The B-roll collection is no longer yours to read");
+  if (sourcesWorkspace(ownerOf(edit), rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("This account can no longer read the B-roll folder");
   const pool = rows.flatMap((r) => (r.probe ? [sourceOf(r.id, r.title, JSON.parse(r.probe) as ProbeSummary)] : []));
   if (signal.aborted) return;
   const spoken = () => Object.fromEntries([...new Set(draft.timeline.tracks.V1.items.map((i) => i.src))].map((id) => [id, wordsOf(libraryDb(), id) ?? []]));

@@ -145,3 +145,45 @@ it("taking the workspace away holds at the next request", async () => {
   const ws = (await (await call("bo", "GET", "/api/workshop/workspace")).json()) as { projects: { id: string }[] };
   expect(ws.projects).toEqual([]);
 });
+
+it("a member with the scripts grant reads only the scripts of the workspaces they were given", async () => {
+  // the test before took bo's workspace away: given back, with the grant
+  expect((await call("alex", "PATCH", "/api/workspace/members/bo", { scripts: true, workspaces: [BRAND] })).status).toBe(200);
+  const rows = (await (await call("bo", "GET", "/api/workshop/team/scripts")).json()) as { id: string }[];
+  expect(rows.map((r) => r.id)).toEqual([S1]);
+  expect((await call("bo", "GET", `/api/workshop/team/scripts/${S1}/docs`)).status).toBe(200);
+  expect((await call("bo", "GET", `/api/workshop/team/scripts/${S2}/docs`)).status).toBe(404);
+  // cy has the grant and was given no workspace: the grant is the owner's scripts, as before
+  expect((await call("alex", "PATCH", "/api/workspace/members/cy", { scripts: true })).status).toBe(200);
+  expect(((await (await call("cy", "GET", "/api/workshop/team/scripts")).json()) as { id: string }[]).map((r) => r.id).sort()).toEqual([S1, S2]);
+});
+
+it("a list that names no workspace answers the one the request works in, and a new project goes only into a workspace of the account's", async () => {
+  const ids = async (url: string, ws: string) => ((await (await call("alex", "GET", url, undefined, ws)).json()) as { id: string }[]).map((r) => r.id);
+  expect(await ids("/api/workshop/sessions", OTHER)).toEqual([S2]);
+  expect(await ids("/api/workshop/sessions", BRAND)).toEqual([S1]);
+  expect(await ids("/api/workshop/sessions/summary", OTHER)).toEqual([S2]);
+  // another owner's workspace named on a new project: it is made in the one the request works in
+  const made = (await (await call("alex", "POST", "/api/workshop/sessions", { title: "New", projectId: EVES }, OTHER)).json()) as { projectId?: string };
+  expect(made.projectId).toBe(OTHER);
+});
+
+it("a chat's tools open only the projects of the chat's own workspace, whatever id they are given", async () => {
+  const { workspaceScope } = await import("./lib/workshop/workspace");
+  const asChat = (id: string, ws: string) => workspaceScope.run({ id: ws, turn: "t1" }, () => call("alex", "GET", `/api/workshop/sessions/${id}`));
+  expect((await asChat(S2, OTHER)).status).toBe(200);
+  expect((await asChat(S1, OTHER)).status).toBe(404);
+  // the app itself still opens any of the account's by its id (its page then switches to that project's workspace)
+  expect((await call("alex", "GET", `/api/workshop/sessions/${S1}`, undefined, OTHER)).status).toBe(200);
+});
+
+it("deleting a workspace leaves its projects out of every other workspace", async () => {
+  const GONE = "bbbbbbbb-0000-4000-8000-000000000009";
+  const S9 = "aaaaaaaa-0000-4000-8000-000000000009";
+  project(GONE, "alex", "Old client", 9);
+  session(S9, "alex", GONE, "Old client's words");
+  expect((await call("alex", "DELETE", `/api/workshop/projects/${GONE}`, undefined, BRAND)).status).toBe(200);
+  const ids = async (ws: string) => ((await (await call("alex", "GET", "/api/workshop/sessions", undefined, ws)).json()) as { id: string }[]).map((r) => r.id);
+  expect(await ids(BRAND)).not.toContain(S9);
+  expect(await ids(OTHER)).not.toContain(S9);
+});

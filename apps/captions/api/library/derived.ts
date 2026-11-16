@@ -44,7 +44,7 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(versionId) as { id: string; library_id: string; kind: string; title: string; source_key: string; source_path: string | null; from_path: string | null; probe: string | null } | undefined;
-  if (!v) throw new Error("The version is gone");
+  if (!v) throw new Error("Version not found");
   const base = `libraries/${v.library_id}/v/${v.id}`;
   for (const [name, file] of Object.entries(x.files) as [DerivedFile, string][]) {
     if (name === "original") {

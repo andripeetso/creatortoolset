@@ -245,7 +245,7 @@ export function PickBar({
       <div
         data-keep-picked
         role="toolbar"
-        aria-label="Picked clips"
+        aria-label="Selected clips"
         className="pointer-events-auto flex max-w-full items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 pl-3.5 text-sm text-zinc-100 shadow-2xl"
       >
         <span className="mr-1 shrink-0 tabular-nums text-zinc-300">{count} selected</span>

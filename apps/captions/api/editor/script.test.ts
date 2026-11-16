@@ -72,8 +72,8 @@ describe("AI Editor script: takes", () => {
       { name: "v2", title: "Reversed", lines: ["L2", "L1"] },
     ]);
     expect(m.notes).toEqual([
-      "Line L2: take 3-4 runs across two files: dropped",
-      "Line L3: take 9-9 is not in sentences 1-6: dropped",
+      "Line L2: take 3-4 runs across two files: left out",
+      "Line L3: take 9-9 is not in sentences 1-6: left out",
       "Line L3 has no take in the footage: left out",
       "Short names lines that are not there (L9): skipped them",
     ]);

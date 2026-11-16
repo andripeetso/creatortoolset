@@ -192,13 +192,13 @@ export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
   embed: { needs: "an OpenAI key", href: "/settings/keys" },
 };
 
-/** "5 AI descriptions need an AI provider", and where to add it. */
+/** "5 descriptions need an AI provider", and where to add it. */
 export function waitingLine(w: { step: LibraryStep; count: number }): { text: string; href: string } {
   const one = w.count === 1;
   const [thing, things] = {
     files: ["file", "files"],
     transcript: ["transcript", "transcripts"],
-    describe: ["AI description", "AI descriptions"],
+    describe: ["description", "descriptions"],
     look: ["shot description", "shot descriptions"],
     embed: ["search entry", "search entries"],
   }[w.step];

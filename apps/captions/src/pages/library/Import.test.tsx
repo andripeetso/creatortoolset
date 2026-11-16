@@ -53,8 +53,8 @@ describe("what an add asks", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    act(() => root!.render(<ImportCards legend="How do you want to add your files?" value="in-place" onChange={() => {}} copy={{ to: null, off: NEEDS_MAC }} />));
-    const copy = [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith("Copy them into the library"))!;
+    act(() => root!.render(<ImportCards legend="Import" value="in-place" onChange={() => {}} copy={{ to: null, off: NEEDS_MAC }} />));
+    const copy = [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith("Copy into the library"))!;
     expect(copy.querySelector("input")!.disabled).toBe(true);
     expect(copy.textContent).toContain("Needs the latest Mac app");
   });

@@ -12,7 +12,7 @@ import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { addLoginAccount, allAccounts } from "./instagram";
-import { accountProjects } from "./lib/workshop/workspace";
+import { accountProjects, getWorkspace } from "./lib/workshop/workspace";
 import { announce } from "./lib/sync";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "./users";
 
@@ -94,7 +94,10 @@ connectorsApp.get("/login/:kind", async (c) => {
   const { url, verifier } = issuer === "service" ? serviceStart(kind, redirectFor(c, kind), state) : loginUrl(kind, redirectFor(c, kind), state);
   for (const [k, v] of states) if (Date.now() - v.at > STATE_MS) states.delete(k);
   const back = c.req.query("back")?.startsWith("/") && !c.req.query("back")!.startsWith("//") ? c.req.query("back")! : "/settings/connectors";
-  states.set(state, { user: user.username, kind, issuer, projectId: c.req.query("projectId") || undefined, verifier, at: Date.now(), back });
+  // a new account goes to the workspace the sign-in was started in, when that is one of this person's
+  const asked = c.req.query("projectId");
+  const projectId = asked && (await getWorkspace(user)).projects.some((p) => p.id === asked) ? asked : undefined;
+  states.set(state, { user: user.username, kind, issuer, projectId, verifier, at: Date.now(), back });
   return c.redirect(url);
 });
 

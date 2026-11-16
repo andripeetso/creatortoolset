@@ -26,7 +26,7 @@ async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const out = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  if (!r.ok) throw new Error(out.error ?? "Could not update the link");
   return out;
 }
 
@@ -186,19 +186,19 @@ export function ClipShare({
                       autoFocus
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder={row?.locked ? "Set · type to change it" : "Password"}
+                      placeholder={row?.locked ? "New password" : "Password"}
                       aria-label="Link password"
                       autoComplete="new-password"
                       className="h-8"
                     />
                     <Button type="submit" size="sm" variant="outline" disabled={!password}>
-                      Set
+                      Save
                     </Button>
                   </form>
                 )}
               </div>
               <label className="flex items-center justify-between gap-3 px-3 py-2.5">
-                Stops working in
+                Expires in
                 <select
                   value={left}
                   disabled={!row}
@@ -236,7 +236,7 @@ export function ClipShare({
                     </Button>
                   )}
                   <Button size="sm" variant="ghost" className="h-7 text-xs text-zinc-500 hover:text-red-400" onClick={() => void stop(s.id)}>
-                    Stop
+                    Turn off
                   </Button>
                 </div>
               );

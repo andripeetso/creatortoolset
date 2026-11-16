@@ -77,7 +77,10 @@ function write(user: string, data: UserConnectors): void {
 
 const keyOf = (a: Pick<ConnectedAccount, "platform" | "platformId">) => `${a.platform}:${a.platformId}`;
 
-/** Add or replace accounts (same platform + id), keeping a replaced one's project link. */
+/**
+ * Add or replace accounts (same platform + id). An account that already has a workspace keeps it, whichever workspace
+ * the sign-in was started from: signing in again never moves it (moving is its own Move to in Settings, patchAccount).
+ */
 export function saveAccounts(user: string, next: Array<Omit<StoredAccount, "key" | "connectedAt"> & Partial<Pick<StoredAccount, "connectedAt">>>): StoredAccount[] {
   const cur = readConnectors(user).accounts;
   const saved: StoredAccount[] = [];
@@ -86,7 +89,7 @@ export function saveAccounts(user: string, next: Array<Omit<StoredAccount, "key"
     const key = keyOf(a);
     const i = accounts.findIndex((x) => x.key === key);
     const old = i >= 0 ? accounts[i] : undefined;
-    const row: StoredAccount = { ...old, ...a, key, connectedAt: a.connectedAt ?? old?.connectedAt ?? Date.now(), projectId: a.projectId ?? old?.projectId };
+    const row: StoredAccount = { ...old, ...a, key, connectedAt: a.connectedAt ?? old?.connectedAt ?? Date.now(), projectId: old?.projectId ?? a.projectId };
     if (i >= 0) accounts[i] = row;
     else accounts.push(row);
     saved.push(row);

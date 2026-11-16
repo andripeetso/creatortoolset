@@ -34,8 +34,8 @@ import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
-import { scriptsOwnerFor } from "./lib/workspaces";
-import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
+import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -51,14 +51,14 @@ import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
 import {
   getWorkspace,
   inProject,
-  movesTo,
   onFor,
-  ownedProject,
   ownedProjects,
   readUserMarker,
   resolveProjectId,
   setCurrentProjectId,
   sharedHere,
+  sharedProjects,
+  workspaceScope,
   writeUserMarker,
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
@@ -745,7 +745,12 @@ function reconcileRestart(): Promise<void> {
 
 export async function ownedSession(id: string, user: SessionUser): Promise<SessionMeta | null> {
   const meta = await readSession(id);
-  return meta && canSee(meta.owner, user) ? meta : null;
+  if (!meta || !canSee(meta.owner, user)) return null;
+  // a chat's tools (mcp.ts, a scope with its turn) open only the projects of the chat's own workspace, whatever id
+  // they are given: another client's script is never read or written from this chat (owner, 2026-11-16)
+  const chat = workspaceScope.getStore();
+  if (chat?.turn && meta.projectId && meta.projectId !== chat.id) return null;
+  return meta;
 }
 
 /**
@@ -1060,7 +1065,8 @@ async function nameSession(sessionId: string, user: SessionUser, docId: string, 
   const names: string[] = [];
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const m = id === sessionId ? null : await readSession(id);
-    if (m?.owner === user.username && !UNTITLED.test(m.title.trim())) names.push(m.title.trim());
+    // this workspace's names only: another client's project names never go into a prompt here
+    if (m?.owner === user.username && m.projectId === meta.projectId && !UNTITLED.test(m.title.trim())) names.push(m.title.trim());
   }
   const name = await completeWithFallback(
     "Name this project. Reply with the name only.",
@@ -1147,7 +1153,7 @@ async function turnFolder(
   Object.assign(files, libraryFiles(await libraryForWorkshop(user, session.projectId)));
   await ensureSeeds(user.username);
   Object.assign(files, frameworkFiles(onFor((await listRecords<Framework>(DIRS.frameworks, user)).filter((f) => f.owner === user.username), project).map(withRole)));
-  const log = await readEditLog(session.owner);
+  const log = (await readEditLog(session.owner)).filter((p) => inProject(p, session.projectId));
   if (log.length) files["my-edits/INDEX.md"] = editsFile(log);
   return files;
 }
@@ -2184,20 +2190,8 @@ workshopApp.delete("/projects/:id", async (c) => {
   const user = c.get("user");
   const project = await readProject(c.req.param("id"), user);
   if (!project) return c.json({ error: "Not found" }, 404);
-  let names: string[] = [];
-  try {
-    names = await readdir(DIRS.sessions);
-  } catch {
-    names = [];
-  }
-  for (const id of names) {
-    const meta = await ownedSession(id, user);
-    if (meta?.projectId === project.id) {
-      await updateSession(id, (m) => {
-        delete m.projectId;
-      });
-    }
-  }
+  // its projects keep its id, so no other workspace lists them. They used to lose it, and a project with none is listed
+  // in every workspace (inProject): a deleted client's scripts showed up in all the others (owner, 2026-11-16).
   await rm(projectPath(project.id), { force: true });
   const ws = await getWorkspace(user);
   if (ws.currentProjectId === project.id) await setCurrentProjectId(user, ws.projects[0]?.id ?? null);
@@ -2577,7 +2571,7 @@ workshopApp.get("/sessions", async (c) => {
   // matching sessions to posts reads the account's posts: it runs beside the list, never in front of it
   void inJob([user.username], () => linkPosted(user)).catch((e) => console.error(`workshop: matching sessions to posts: ${errorMessage(e)}`));
   const scope = c.req.query("projectId") || "";
-  const projectId = okId(scope) ? scope : undefined;
+  const projectId = await listWorkspaceId(user, okId(scope) ? scope : undefined);
   let names: string[] = [];
   try {
     names = await readdir(DIRS.sessions);
@@ -2606,6 +2600,17 @@ workshopApp.get("/sessions", async (c) => {
   return c.json(rows);
 });
 
+/**
+ * Which of the owner's scripts a member with the scripts grant reads, by the script's workspace: once the owner gave
+ * them workspaces (Settings → Team → Access), only those workspaces' scripts, never another client's. With none given,
+ * the grant is all it says: the owner's scripts.
+ */
+async function givenScripts(user: SessionUser, owner: string): Promise<(projectId?: string) => boolean> {
+  if (!sharedWith(user.username)) return () => true;
+  const theirs = await Promise.all((await sharedProjects(user.username)).map((p) => inProjectOf({ username: owner } as SessionUser, p.id)));
+  return (projectId) => theirs.some((inIt) => inIt?.(projectId));
+}
+
 /*
  * Team scripts (contracts/workspaces.ts `scripts`): a member whose grant is on reads the owner's sessions, read-only.
  * Own routes, so canSee and ownedSession (which guard writes too) stay as they are. Reads only: no ensureDocuments
@@ -2614,10 +2619,11 @@ workshopApp.get("/sessions", async (c) => {
 workshopApp.get("/team/scripts", async (c) => {
   const owner = scriptsOwnerFor(c.get("user").username);
   if (!owner) return c.json({ error: "Not found" }, 404);
+  const given = await givenScripts(c.get("user"), owner);
   const rows = [];
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const meta = await readSession(id);
-    if (!meta || meta.owner !== owner || meta.status === "shelved") continue;
+    if (!meta || meta.owner !== owner || meta.status === "shelved" || !given(meta.projectId)) continue;
     const kinds = pieceKinds(await listDocs(meta.id));
     if (kinds.length) rows.push({ id: meta.id, title: meta.title, status: meta.status ?? "draft", kinds, updatedAt: meta.updatedAt, owner: meta.owner });
   }
@@ -2641,7 +2647,7 @@ workshopApp.get("/team/sessions/:id", async (c) => {
 workshopApp.get("/team/scripts/:id/docs", async (c) => {
   const owner = scriptsOwnerFor(c.get("user").username);
   const meta = owner && (await readSession(c.req.param("id")));
-  if (!owner || !meta || meta.owner !== owner || meta.status === "shelved") return c.json({ error: "Not found" }, 404);
+  if (!owner || !meta || meta.owner !== owner || meta.status === "shelved" || !(await givenScripts(c.get("user"), owner))(meta.projectId)) return c.json({ error: "Not found" }, 404);
   c.header("Cache-Control", "no-store");
   return c.json((await listDocs(meta.id)).filter((d) => d.kind !== "notes").map(publicDoc));
 });
@@ -2712,7 +2718,7 @@ workshopApp.get("/sessions/summary", async (c) => {
   const user = c.get("user");
   // the same project scope as the sessions list
   const scope = c.req.query("projectId") || "";
-  const projectId = okId(scope) ? scope : undefined;
+  const projectId = await listWorkspaceId(user, okId(scope) ? scope : undefined);
   const out = [];
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const meta = await ownedSession(id, user);
@@ -2766,8 +2772,8 @@ workshopApp.post("/sessions", async (c) => {
     const now = Date.now();
     const sources = Array.isArray(body?.sourceIds) ? parseSources(body.sourceIds, now) : [];
     const known = new Set((await postsForUser(sources.map((s) => s.postId), user)).map((p) => p.id));
-    const projectId = patch.projectId ?? (await resolveProjectId(user));
-    if (patch.projectId && (await ownedProject(patch.projectId, user))) movesTo(user, patch.projectId);
+    // the workspace named, when it is one of this account's (a chat that names another one moves there: resolveProjectId), else the current one
+    const projectId = await resolveProjectId(user, patch.projectId);
     const meta: SessionMeta = {
       id: randomUUID(),
       owner: user.username,
@@ -2991,11 +2997,12 @@ workshopApp.get("/sessions/:id/docs/:docId/versions/:versionId", async (c) => {
 /** The author's rewrites of the AI's text, kept for good (edit-log.ts): $DATA_DIR/workshop/users/<name>.edits.json. */
 const editLogPath = (username: string) => path.join(DIRS.users, `${username}.edits.json`);
 const readEditLog = async (username: string) => (await readJson<EditPair[]>(editLogPath(username))) ?? [];
-/** The author's rewrites closest to the piece, this project's first: they're the author's taste in every brand, but its own words come first. */
+/**
+ * The author's rewrites closest to the piece, from this workspace only: each workspace is its own client, so words
+ * rewritten for one never teach the writer in another (owner, 2026-11-16; they used to fill up from the other brands).
+ */
 function closestRewrites(near: string, log: EditPair[], projectId: string | undefined, n: number): EditPair[] {
-  const here = log.filter((p) => inProject(p, projectId));
-  const got = closestPairs(near, here, n);
-  return got.length >= n ? got : [...got, ...closestPairs(near, log.filter((p) => !here.includes(p)), n - got.length)];
+  return closestPairs(near, log.filter((p) => inProject(p, projectId)), n);
 }
 async function keepRewrites(username: string, doc: Document, projectId?: string): Promise<void> {
   await keepPairs(username, pairsOf(doc), projectId);
@@ -3099,6 +3106,9 @@ export interface WorkshopFinal {
 
 export async function workshopFinalsFor(username: string): Promise<Record<string, WorkshopFinal>> {
   const out: Record<string, WorkshopFinal> = {};
+  // the workspace the request works in: another workspace's session titles and text never show here (a phone, with none, gets all as before)
+  const ws = await listWorkspaceId({ username } as SessionUser);
+  const here = ws ? await inProjectOf({ username } as SessionUser, ws) : null;
   const shares = Object.entries(await readShares());
   const rows = libraryDb()
     .prepare("SELECT id, library_id, workshop_session AS session, workshop_doc AS doc FROM pieces WHERE workshop_session IS NOT NULL AND trashed_at IS NULL")
@@ -3106,7 +3116,7 @@ export async function workshopFinalsFor(username: string): Promise<Record<string
   for (const row of rows) {
     if (libraryRole(username, row.library_id) !== "owner") continue;
     const meta = await readSession(row.session);
-    if (!meta) continue;
+    if (!meta || (here && !here(meta.projectId))) continue;
     const main = await mainPiece(row.session);
     const doc = (row.doc && (await readDoc(row.session, row.doc))) || main;
     const items = libraryDb().prepare("SELECT id, label, post_description FROM piece_items WHERE piece_id = ? ORDER BY position, id").all(row.id) as {

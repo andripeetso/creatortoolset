@@ -199,7 +199,7 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       continue;
     }
     const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
-    if (!row) throw new Error("Some footage is gone from the library");
+    if (!row) throw new Error("Some footage was not found in the Media Library");
     if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
     out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
   }
@@ -265,7 +265,7 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
-  if (!added) throw new Error("Review did not take the preview");
+  if (!added) throw new Error("Could not file the preview in Review");
   // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)
   await saveFiled(edit.id, added.meta.id, added.n, { variant, timeline });
   const db = libraryDb();
@@ -284,9 +284,9 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
 export async function fileStep({ edit, job, variant }: StepContext): Promise<void> {
   const p = readStep(edit.id, "review")?.[variant];
   const d = readDraft(edit.id, variant);
-  if (!p || !d) throw new Error("No preview in Review yet");
+  if (!p || !d) throw new Error("No preview in Review");
   const v = (await readMeta(p.assetId))?.versions.find((x) => x.n === p.n);
-  if (!v) throw new Error("The preview is gone from Review");
+  if (!v) throw new Error("Preview not found in Review");
   if (v.status === "processing") throw new Waiting(10);
   if (v.status === "error") throw new Error(`Review could not read the preview: ${v.error ?? "unknown error"}`);
   await toLibrary(p.assetId); // Review mirrors it right after it is ready; this makes sure it has

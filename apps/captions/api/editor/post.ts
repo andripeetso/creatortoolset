@@ -31,7 +31,7 @@ export async function runSteps(
 ): Promise<PostResult> {
   const files: Record<string, string> = {};
   const notes: string[] = [];
-  for (const c of chosen) if (!steps.some((s) => s.id === c.id)) notes.push(`${POST_NOTE}${c.id} is not switched on in this app, so it was skipped`);
+  for (const c of chosen) if (!steps.some((s) => s.id === c.id)) notes.push(`${POST_NOTE}${c.id} is not turned on, so it was skipped`);
   for (const st of steps) {
     const c = chosen.find((x) => x.id === st.id);
     if (!c || input.signal.aborted) continue;

@@ -316,7 +316,7 @@ async function fileMade(row: UploadRow, versionId: string): Promise<void> {
 }
 
 // a Review video: Review owns its versions and its trash, so the library refuses to add a version or trash it
-const IN_REVIEW = { error: "This video lives in Review: change it there", code: "conflict" } as const;
+const IN_REVIEW = { error: "This video is in Review: change it there", code: "conflict" } as const;
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
 async function ownUpload(c: Context<{ Variables: AuthVars }>): Promise<UploadRow | null> {
@@ -467,7 +467,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
-    if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   }
   const id = randomUUID();
   const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
@@ -542,7 +542,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (!path.isAbsolute(given)) return refuse("Not a full path");
   const real = await realpath(given).catch(() => null);
   const s = real ? await stat(real).catch(() => null) : null;
-  if (!real || !s?.isFile()) return refuse(`No such file on this computer: ${given}`);
+  if (!real || !s?.isFile()) return refuse(`File not found on this computer: ${given}`);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
   // macOS may keep this server out of a folder the app itself may read (Desktop, Downloads): the page uploads it then
@@ -574,7 +574,7 @@ libraryApp.post("/:id/in-place", async (c) => {
         .prepare("SELECT v.source_path, a.id, a.trashed_at FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
         .get(got.versionId) as { source_path: string | null; id: string; trashed_at: number | null } | undefined)
     : undefined;
-  if (!v) return c.json({ error: "It could not be added", code: "conflict" }, 409);
+  if (!v) return c.json({ error: "Could not add the file", code: "conflict" }, 409);
   if (v.trashed_at) return c.json({ error: "In the trash in the Media Library: restore it there to use it", code: "conflict" }, 409);
   // this very file, taken now (or by the call this one asks again for); anything else was in the library already
   if (v.source_path === real && (got.fresh || body.again === true)) return c.json({ assetId: v.id, versionId: got.versionId });
@@ -595,7 +595,7 @@ libraryApp.post("/:id/on-mac", async (c) => {
   if (x.collectionId) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(x.collectionId, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
-    if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   }
   return c.json(await indexOnMac(libraryId, user.username, x));
 });
@@ -823,7 +823,7 @@ libraryApp.patch("/:id", async (c) => {
 // POST /api/library { name } → a local library of the caller's own, in the workspace this request works in
 libraryApp.post("/", async (c) => {
   const user = c.get("user");
-  if (user.role === "visitor") return c.json({ error: "Sign in to make a library", code: "forbidden" }, 403);
+  if (user.role === "visitor") return c.json({ error: "Sign in to create a library", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
   const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;

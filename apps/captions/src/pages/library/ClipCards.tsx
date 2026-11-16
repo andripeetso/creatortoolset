@@ -4,7 +4,6 @@ import { SPRITE_FRAMES, type AssetCard, type AssetKind } from "@contracts/librar
 import { ClipStage } from "@/components/LibraryProcessing";
 import { libraryBadges } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
-import { AiBadge } from "./ClipPanel";
 
 /** The Media Library's clips as cards and as list rows (LibraryPage.tsx), and their frames before the list is known. */
 
@@ -121,7 +120,7 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
           <span className="absolute left-1.5 top-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
             <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", a.state === "failed" ? "bg-red-500" : "bg-amber-500")} />
             {/* a failed clip whose step is known says which one under its name (ClipStage) */}
-            <span className="truncate">{a.state === "failed" ? "Couldn't read this file" : "File not found"}</span>
+            <span className="truncate">{a.state === "failed" ? "Could not read the file" : "File not found"}</span>
           </span>
         )}
       </div>
@@ -135,7 +134,6 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
       ))}
       {a.description && (
         <span className="line-clamp-2 text-xs text-zinc-500">
-          {a.description.source === "ai" && <AiBadge />}
           {a.description.text}
         </span>
       )}

@@ -105,9 +105,9 @@ export function FromScript({
         )}
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="edit-broll">Picture from</Label>
+        <Label htmlFor="edit-broll">B-roll folder</Label>
         <select id="edit-broll" value={broll} onChange={(e) => onBroll(e.target.value)} className={SELECT}>
-          <option value="">{styleFolder ? (folders.find((c) => c.id === styleFolder)?.name ?? "The style's folder") : "All my B-roll"}</option>
+          <option value="">{styleFolder ? (folders.find((c) => c.id === styleFolder)?.name ?? "The style's folder") : "All B-roll"}</option>
           {folders.filter((c) => c.id !== styleFolder).map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}

@@ -56,9 +56,9 @@ export function Locate({ libraryId, versionId, missing, onMac }: { libraryId: st
         body: JSON.stringify({ versionId, device: device || undefined, gone: found.gone, files: found.files }),
       });
       const body = (await r.json().catch(() => ({}))) as { reconnected?: number; error?: string };
-      if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
+      if (!r.ok) throw new Error(body.error ?? "Could not locate the file");
       const n = body.reconnected ?? 0;
-      setSaid(n ? `${n} ${n === 1 ? "file" : "files"} reconnected` : "No file in that folder matches");
+      setSaid(n ? `${n} ${n === 1 ? "file" : "files"} found` : "No matching files in that folder");
     } catch (e) {
       setSaid(e instanceof Error ? e.message : String(e));
     } finally {
