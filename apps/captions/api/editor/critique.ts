@@ -65,7 +65,7 @@ export async function cutSheets(file: string, frames: number[], landscape: boole
 }
 
 /** The shot description a stretch of footage has, as a line's tail: ` · a4 clear · fight, boss · what happens`. */
-const described = (x: IndexShot): string => {
+export const described = (x: Pick<IndexShot, "desc" | "action" | "clear" | "tags">): string => {
   const text = (x.desc ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_TEXT);
   return `${x.action !== undefined ? ` · a${x.action}${x.clear ? " clear" : ""}` : ""}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
 };

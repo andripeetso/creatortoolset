@@ -22,6 +22,8 @@ import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
 import { offHere } from "./lib/plugin-workspaces";
 import { editorTools, hasStyle } from "./mcp-tools/editor";
+import { one } from "./mcp-tools/editor-styles";
+import type { EditingStylesView } from "../contracts/editor-styles";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import { SOUNDS, type AssetCard } from "../contracts/library";
@@ -88,9 +90,9 @@ An edit waits while the Media Library is still describing its footage, and its s
 it now, editor_run with now=true cuts from what is ready. editor_get lists the footage a cut left out (left_out): say
 that first when it is there. The user's notes on a cut go to editor_feedback in their own words, never into the brief:
 the next version is made from the last one, changing what they named.
-Editing styles: when the brief names one of the user's styles or clearly is that kind of edit, use it (editor_create
-start=false, editor_style_use, editor_run); when none fits, make one named for the kind of edit ("Hard edit") with
-editor_style_save. A style can hold a playbook: what that kind of edit is, its structure, its pace in numbers, its
+Editing styles: when the brief names one of the user's styles or clearly is that kind of edit, pass it as
+editor_create's style; when none fits, make one named for the kind of edit ("Hard edit") with editor_style_save first
+and pass that. A style can hold a playbook: what that kind of edit is, its structure, its pace in numbers, its
 effects by the editor's names (punch, zoom, flash, shake, rgb, glitch, blur, invert, strobe, zoomblur, reverse,
 stutter, freeze, whip), what makes it fail, and the sources. Save one with editor_style_save when you have it.
 
@@ -262,10 +264,10 @@ export const TOOLS = [
   {
     name: "editor_create",
     description:
-      "Make a new AI Editor edit and start it (analyze → script or plan → draft → B-roll → a preview of each version, filed in Review). It cuts any footage into the kind of edit asked for: around what is said when someone talks, else as shots to a song or the brief. sources = the footage, as version_id from media_search or media_import_folder (up to 50): talking takes, any other clips, a song. script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel, in the user's words: the kind of edit, its length ('max 25 s'; a hard or social edit with none is 15-25 s), what to open with (a clip or a moment: 'start with the boss fight'), the look (pace, effects, sizes: not every shot has to fill the frame), words on screen. plan=true = planned as shots even though someone talks (a montage, a music edit); footage where nobody speaks is planned without it. song = the version_id of a song to cut to (media_search kind audio). broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+      "Make a new AI Editor edit and start it (analyze → script or plan → draft → B-roll → a preview of each version, filed in Review). It cuts any footage into the kind of edit asked for: around what is said when someone talks, else as shots to a song or the brief. sources = the footage, as version_id from media_search or media_import_folder (up to 50): talking takes, any other clips, a song. script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel, in the user's words: the kind of edit, its length ('max 25 s'; a hard or social edit with none is 15-25 s), what to open with (a clip or a moment: 'start with the boss fight'), the look (pace, effects, sizes: not every shot has to fill the frame), words on screen. plan=true = planned as shots even though someone talks (a montage, a music edit); footage where nobody speaks is planned without it. song = the version_id of a song to cut to (media_search kind audio). broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. style = the editing style for this kind of edit, its id or name (editor_style_save makes one). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
     inputSchema: {
       type: "object",
-      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, plan: { type: "boolean" }, song: str, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
+      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, plan: { type: "boolean" }, song: str, broll_folder: str, languages: { type: "array", items: str }, style: str, start: { type: "boolean" } },
       required: ["sources"],
     },
   },
@@ -929,6 +931,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages", "moments", "plan", "song"]) };
       if (a.target_s != null) body.targetS = a.target_s;
       if (a.broll_folder) body.brollCollectionId = a.broll_folder;
+      // the style by its id or name, as editor_style_use takes it
+      if (a.style != null && String(a.style).trim()) body.style = one((await json<EditingStylesView>("/api/editor/styles")).styles, a.style).id;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
       if (a.start !== false) await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
       return { id, name: a.name ?? "Untitled edit", status: a.start !== false ? "started" : "made", link: `${origin}/editor/${id}`, note: "It runs by itself and files each version's preview in Review; the chat says when it is ready, so end your reply rather than wait." };

@@ -41,7 +41,7 @@ const FROM_PASTE = (what: string) => `${what} taken word for word from the text 
 const sheetOf = (tab: "styles" | "animation" | "carousel", id: string) => (tab === "carousel" ? `/design?tab=styles&style=${id}` : `/editor?tab=${tab}&style=${id}`);
 
 /** One of the person's styles by its id, or by its name in any case. `kind`: "editing" or "animation", for the words of a miss. */
-function one<S extends { id: string; name: string }>(all: S[], key: unknown, kind = "editing", maker = "editor_style_save"): S {
+export function one<S extends { id: string; name: string }>(all: S[], key: unknown, kind = "editing", maker = "editor_style_save"): S {
   const k = String(key ?? "").trim().toLowerCase();
   const hits = all.filter((s) => s.id === k);
   const found = hits.length ? hits : all.filter((s) => s.name.toLowerCase() === k);

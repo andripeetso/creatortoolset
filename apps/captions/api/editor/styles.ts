@@ -215,7 +215,7 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
 const PLAYBOOK_SOURCES = 20;
 
 /** A playbook as sent: null or no text takes it off. `by` is the route's word for who sent it (routes.ts); anything else reads as an AI's. */
-function cleanPlaybook(v: unknown): StylePlaybook | null | string {
+export function cleanPlaybook(v: unknown): StylePlaybook | null | string {
   if (v === null) return null;
   const p = v as { text?: unknown; sources?: unknown; by?: unknown };
   if (!p || typeof p !== "object" || typeof p.text !== "string") return "playbook is { text, sources }, or null";
@@ -288,10 +288,13 @@ export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: 
  * is now adds after the notes too (styleLayers); a style with no playbook and nothing learned adds nothing more.
  */
 export function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta, "id" | "createdBy" | "projectId">): string {
-  if (now) return styleLayers({ ...now, style });
+  return now ? styleLayers({ ...now, style }) : notesBlock(style);
+}
+
+const notesBlock = (style: Pick<EditStyleCopy, "name" | "notes"> | undefined): string => {
   const notes = (style?.notes ?? "").trim().slice(0, STYLE_NOTES_MAX);
   return notes ? `Editing style ${JSON.stringify(String(style!.name).slice(0, STYLE_NAME_MAX))}, in the author's own words:\n${notes}` : "";
-}
+};
 
 /* ---- a style that learns (tasks/flywheel stage 5): its playbook and what finished edits taught ---- */
 
@@ -353,9 +356,21 @@ export function learnedBlock(list: StyleLearned[]): string {
  * edit with none matches entries of edits with none), never the library's `workspaceId`.
  */
 export function styleLayers(edit: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { style?: EditStyleCopy }): string {
-  const now = edit.style ? findStyle(edit.createdBy, edit.style.id) : null;
+  return layersOf(edit.style, edit.style ? findStyle(edit.createdBy, edit.style.id) : null, edit);
+}
+
+/**
+ * styleLayers' text for a style kept somewhere else (a plug-in's own editor keeps its styles): the notes of the copy the
+ * edit was made with, then the style as it is now (`now`): its playbook and what approved edits taught in the edit's own
+ * workspace, the edit itself left out.
+ */
+export function layersOf(
+  copy: Pick<EditStyleCopy, "name" | "notes"> | undefined,
+  now: Pick<EditingStyle, "playbook" | "learned"> | null | undefined,
+  edit: { id: string; projectId?: string },
+): string {
   const here = (now?.learned ?? []).filter((l) => l.workspaceId === (edit.projectId ?? "") && l.editId !== edit.id).slice(0, LEARNED_MAX);
-  return [styleBlock(edit.style), playbookBlock(now?.playbook), learnedBlock(here)].filter(Boolean).join("\n\n");
+  return [notesBlock(copy), playbookBlock(now?.playbook), learnedBlock(here)].filter(Boolean).join("\n\n");
 }
 
 /**

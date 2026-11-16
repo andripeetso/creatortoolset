@@ -196,6 +196,11 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     const edit = (await tool(anaKey, "editor_create", { sources: ["ver_a"], name: "Tiny keyed", start: false })).value.id as string;
     expect((await tool(anaKey, "editor_style_use", { edit, style: made.id })).value).toMatchObject({ id: edit, style: "Tiny calm", target_s: 45 });
     expect((await editOf(edit)).style).toMatchObject({ id: made.id, notes: "Leave the pauses in. Slow and warm." });
+    // editor_create puts the style on as it makes the edit, by name in any case or by id; a name it doesn't know is refused
+    const named = (await tool(anaKey, "editor_create", { sources: ["ver_a"], name: "Tiny named", style: "tiny CALM", start: false })).value.id as string;
+    expect((await editOf(named)).style).toMatchObject({ id: made.id, name: "Tiny calm" });
+    expect((await editOf((await tool(anaKey, "editor_create", { sources: ["ver_a"], style: copied.id, start: false })).value.id as string)).style?.id).toBe(copied.id);
+    expect(await tool(anaKey, "editor_create", { sources: ["ver_a"], style: "Hard edit", start: false })).toMatchObject({ error: true, text: expect.stringContaining("No style has that id or name") });
 
     // another account has neither the styles nor the edit
     expect((await tool(nicoKey, "editor_style_use")).value).toEqual({ styles: [], link: SHEET });

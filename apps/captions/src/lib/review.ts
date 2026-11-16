@@ -48,7 +48,7 @@ export interface ReviewVersion {
   /** It has a timeline to show under the player. */
   timeline?: boolean;
   /** (managers) the AI Editor draft it previews: its timeline, camera view and grade come from the editor. */
-  edit?: { project: string; draft: string };
+  edit?: { project: string; draft: string; fails?: Critique["fails"] };
   /** (managers) the app's own AI Editor draft it was rendered from: its timeline edits can be made into the next version. `fails`: the shots its look found still don't hold up. */
   draft?: { edit: string; name: string; fails?: Critique["fails"] };
   /** (managers) a link back to what made it (a plug-in's own page). */
