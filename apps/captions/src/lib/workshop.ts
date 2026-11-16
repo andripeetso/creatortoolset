@@ -988,10 +988,17 @@ export const listFinalsForDoc = (sessionId: string, docId: string) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/finals`).then((r) => json<{ versions: { key: string; label: string }[] }>(r)).then((x) => x.versions);
 export const getDocument = (sessionId: string, docId: string) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}`).then((r) => json<WorkshopDocument>(r));
+/** What an editor's save was typed on (the piece as the editor last had it): with it, what a turn wrote meanwhile stays. */
+export interface DocumentBase {
+  blocks: Array<{ id?: string; text: string }>;
+  hooks?: Array<{ id?: string; text: string }>;
+  caption?: string;
+  pinned?: string;
+}
 export const patchDocument = (
   sessionId: string,
   docId: string,
-  patch: { title?: string; kind?: DocKind; frameworkIds?: string[]; ruleIds?: string[] | null; carouselType?: string | null; carouselLayouts?: CarouselLayoutSet | null; blocks?: Array<{ id?: string; text: string }>; hooks?: Array<{ id?: string; text: string }>; caption?: string; captions?: Record<string, string>; pinned?: string; locked?: string[] },
+  patch: { title?: string; kind?: DocKind; frameworkIds?: string[]; ruleIds?: string[] | null; carouselType?: string | null; carouselLayouts?: CarouselLayoutSet | null; blocks?: Array<{ id?: string; text: string }>; hooks?: Array<{ id?: string; text: string }>; caption?: string; captions?: Record<string, string>; pinned?: string; locked?: string[]; base?: DocumentBase },
 ) => fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}`, jsonInit(patch, "PATCH")).then((r) => json<WorkshopDocument>(r));
 export const generateCarouselLayouts = (
   sessionId: string,

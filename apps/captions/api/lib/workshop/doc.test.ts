@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEdits, blocksFromMarkdown, currentVersionId, docToMarkdown, keep, markEditsSeen, newDocument, revert, setVersionKept, snapshot, userEdit } from "./doc";
+import { applyEdits, blocksFromMarkdown, currentVersionId, docToMarkdown, keep, markEditsSeen, mergePage, newDocument, onBase, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./doc";
 
 const make = () => {
   const doc = newDocument("d1", "s1", "reel", "Reel", { text: "Hook line", author: "ai", now: 1 });
@@ -179,5 +179,137 @@ describe("companions", () => {
     expect(revert(doc, "v1", 8)).toBe(true);
     expect(doc.hooks?.map((h) => h.text)).toEqual(["My open", "Third take"]);
     expect(docToMarkdown(doc)).toContain("=== === === === ===\n\n//HOOK1: My open");
+  });
+});
+
+// The piece stays open while a turn writes: the turn read it at 10, and everything the author does comes after.
+describe("the author types while a turn writes", () => {
+  const slides = () => {
+    const doc = make();
+    doc.kind = "carousel";
+    return doc;
+  };
+  const list = (doc: ReturnType<typeof make>) => doc.blocks.map((b) => ({ id: b.id, text: b.text }));
+  const page = (text: string) => newDocument("r1", "s1", "reel", "Reel", { text, author: "ai", now: 1 });
+
+  it("refuses the turn's edit to a slide they changed after it read the piece, and applies the rest", () => {
+    const doc = slides();
+    const read = doc.blocks.map((b) => ({ ...b }));
+    userEdit(doc, [{ id: "b1", text: "Hook line" }, { id: "b2", text: "My second beat" }, { id: "b3", text: "Third beat" }], 20);
+    const edits = [
+      { op: "replace" as const, id: "b1", text: "A sharper hook" },
+      { op: "replace" as const, id: "b2", text: "The AI's second beat" },
+      { op: "delete" as const, id: "b2" },
+    ];
+    const r = applyEdits(doc, edits, { now: 30, since: 10, read });
+    expect(doc.blocks.map((b) => b.text)).toEqual(["A sharper hook", "My second beat", "Third beat"]);
+    expect(r.skipped.map((x) => x.reason)).toEqual(["edited", "edited"]);
+    // what they wrote before the turn read it is the turn's to change, as before
+    expect(applyEdits(doc, [{ op: "replace", id: "b2", text: "Now it may" }], { now: 40, since: 25 }).skipped).toEqual([]);
+  });
+
+  it("refuses the turn's post description and hook when they changed theirs meanwhile", () => {
+    const doc = slides();
+    applyEdits(doc, [{ op: "set_caption", text: "The caption." }, { op: "add_hook", text: "Open" }], { now: 2 });
+    userEdit(doc, list(doc), 20, { caption: "My caption", hooks: [{ id: "h1", text: "My open" }] });
+    const r = applyEdits(doc, [{ op: "set_caption", text: "Another caption" }, { op: "replace", id: "h1", text: "Another open" }, { op: "set_pinned", text: "Pinned" }], { now: 30, since: 10 });
+    expect(r.skipped.map((x) => x.reason)).toEqual(["edited", "edited"]);
+    expect([doc.caption?.text, doc.hooks?.[0]?.text, doc.pinned?.text]).toEqual(["My caption", "My open", "Pinned"]);
+  });
+
+  it("keeps both hands' lines on a page, and theirs where the two meet", () => {
+    expect(mergePage("one\ntwo\nthree", "ONE\ntwo\nthree", "one\ntwo\nthree!\nfour")).toBe("ONE\ntwo\nthree!\nfour");
+    expect(mergePage("one\ntwo\nthree", "one\ntwo\nthree\nlast", "zero\none\ntwo\nthree")).toBe("zero\none\ntwo\nthree\nlast");
+    expect(mergePage("one\ntwo\nthree", "one\nTWO\nthree", "one\nmy two\nthree")).toBe("one\nmy two\nthree");
+    expect(mergePage("one\ntwo", "one\ntwo", "mine")).toBe("mine");
+    expect(mergePage("one\ntwo", "theirs", "one\ntwo")).toBe("theirs");
+
+    const doc = page("Hook\nMiddle\nEnd");
+    const read = doc.blocks.map((b) => ({ ...b }));
+    userEdit(doc, [{ id: "b1", text: "Hook\nMiddle\nMy end" }], 20);
+    const r = applyEdits(doc, [{ op: "replace", id: "b1", text: "A sharper hook\nMiddle\nEnd" }], { now: 30, since: 10, read });
+    expect(doc.blocks[0]).toMatchObject({ text: "A sharper hook\nMiddle\nMy end", author: "user" });
+    expect(r.skipped).toEqual([]);
+    // a rewrite of the lines they are in is refused whole
+    const again = applyEdits(doc, [{ op: "replace", id: "b1", text: "All\nnew\nlines" }], { now: 40, since: 10, read });
+    expect(again.skipped.map((x) => x.reason)).toEqual(["edited"]);
+    expect(doc.blocks[0]?.text).toBe("A sharper hook\nMiddle\nMy end");
+  });
+
+  it("a save typed on an older copy keeps what the turn wrote meanwhile", () => {
+    const doc = slides();
+    const base = { blocks: list(doc), caption: "", pinned: "" };
+    // the turn rewrites slide 1, adds one after it and removes slide 3, none of which the editor has seen
+    applyEdits(doc, [{ op: "replace", id: "b1", text: "A sharper hook" }, { op: "insert_after", id: "b1", text: "A new slide" }, { op: "delete", id: "b3" }, { op: "set_caption", text: "The caption." }], { now: 30 });
+    const mine = { blocks: [{ id: "b1", text: "Hook line" }, { id: "b2", text: "My second beat\n" }, { id: "b3", text: "Third beat" }, { text: "My new slide" }], caption: "", pinned: "" };
+    const save = onBase(doc, base, mine, 40);
+    userEdit(doc, save.blocks!, 40, { caption: save.caption, pinned: save.pinned });
+    expect(doc.blocks.map((b) => [b.text, b.author])).toEqual([["A sharper hook", "ai"], ["A new slide", "ai"], ["My second beat", "user"], ["My new slide", "user"]]);
+    expect(doc.caption?.text).toBe("The caption.");
+    expect(doc.versions).toEqual([]);
+    // the same save without its base is the whole list, as an editor that sends none means it
+    const old = slides();
+    applyEdits(old, [{ op: "insert_after", id: "b1", text: "A new slide" }], { now: 30 });
+    userEdit(old, mine.blocks, 40);
+    expect(old.blocks.map((b) => b.text)).toEqual(["Hook line", "My second beat", "Third beat", "My new slide"]);
+  });
+
+  it("their text wins a slide the turn wrote first, and the turn's text is kept as a version", () => {
+    const doc = slides();
+    const base = { blocks: list(doc) };
+    applyEdits(doc, [{ op: "replace", id: "b2", text: "The AI's second beat" }], { now: 30 });
+    const save = onBase(doc, base, { blocks: [{ id: "b1", text: "Hook line" }, { id: "b2", text: "My second beat" }, { id: "b3", text: "Third beat" }] }, 40);
+    userEdit(doc, save.blocks!, 40);
+    expect(doc.blocks[1]).toMatchObject({ text: "My second beat", author: "user" });
+    expect(doc.versions.map((v) => v.blocks[1]?.text)).toEqual(["The AI's second beat"]);
+    // a slide of theirs saved a moment ago without an id comes in the list again: it is not doubled
+    const two = slides();
+    userEdit(two, [...list(two), { text: "New" }], 20);
+    const next = onBase(two, { blocks: list(slides()) }, { blocks: [...list(slides()), { text: "New one" }] }, 30);
+    userEdit(two, next.blocks!, 30);
+    expect(two.blocks.map((b) => b.text)).toEqual(["Hook line", "Second beat", "Third beat", "New one"]);
+  });
+
+  it("a page's save keeps the turn's lines, also when the save before it has not come back yet", () => {
+    const doc = page("Hook\nMiddle\nEnd");
+    const shown = { blocks: [{ id: "b1", text: "Hook\nMiddle\nEnd" }] };
+    applyEdits(doc, [{ op: "replace", id: "b1", text: "A sharper hook\nMiddle\nEnd" }], { now: 30 });
+    const first = { blocks: [{ id: "b1", text: "Hook\nMiddle\nEnd\nMy line\n" }] };
+    userEdit(doc, onBase(doc, shown, first, 40).blocks!, 40);
+    expect(doc.blocks[0]?.text).toBe("A sharper hook\nMiddle\nEnd\nMy line");
+    // the next save was typed on the first one, not on what the server made of it
+    userEdit(doc, onBase(doc, first, { blocks: [{ id: "b1", text: "Hook\nMiddle\nEnd\nMy line\nAnd another" }] }, 50).blocks!, 50);
+    expect(doc.blocks[0]?.text).toBe("A sharper hook\nMiddle\nEnd\nMy line\nAnd another");
+  });
+
+  it("taking the turn back out leaves what they wrote since", () => {
+    const doc = slides();
+    const before = snapshot(doc, "before", 15).id;
+    applyEdits(doc, [{ op: "replace", id: "b1", text: "A sharper hook" }, { op: "insert_after", id: "b1", text: "A new slide" }, { op: "delete", id: "b3" }, { op: "set_caption", text: "The caption." }], { now: 20 });
+    userEdit(doc, [...doc.blocks.map((b) => ({ id: b.id, text: b.id === "b2" ? "My second beat" : b.text })), { text: "My new slide" }], 30);
+    expect(undoTurn(doc, before, 10, 40)).toBe(true);
+    expect(doc.blocks.map((b) => [b.id, b.text])).toEqual([["b1", "Hook line"], ["b2", "My second beat"], ["b3", "Third beat"], ["b5", "My new slide"]]);
+    expect(doc.caption).toBeUndefined();
+    // a slide they removed stays removed
+    const gone = slides();
+    const v = snapshot(gone, "before", 15).id;
+    applyEdits(gone, [{ op: "replace", id: "b1", text: "A sharper hook" }], { now: 20 });
+    userEdit(gone, [{ id: "b1", text: "A sharper hook" }, { id: "b3", text: "Third beat" }], 30);
+    undoTurn(gone, v, 10, 40);
+    expect(gone.blocks.map((b) => b.text)).toEqual(["Hook line", "Third beat"]);
+    // with nothing of theirs since, it is the version itself
+    const plain = slides();
+    const head = snapshot(plain, "before", 15).id;
+    applyEdits(plain, [{ op: "delete", id: "b2" }], { now: 20 });
+    undoTurn(plain, head, 10, 40);
+    expect([plain.blocks.map((b) => b.id), plain.headVersion]).toEqual([["b1", "b2", "b3"], head]);
+  });
+
+  it("edits made after the turn read the piece stay for the next turn", () => {
+    const doc = slides();
+    userEdit(doc, [{ id: "b1", text: "Mine before" }, { id: "b2", text: "Second beat" }, { id: "b3", text: "Third beat" }], 5);
+    userEdit(doc, [{ id: "b1", text: "Mine before" }, { id: "b2", text: "Mine during" }, { id: "b3", text: "Third beat" }], 20);
+    markEditsSeen(doc, 10);
+    expect(doc.userEdits?.map((e) => [e.blockId, !!e.seen])).toEqual([["b1", true], ["b2", false]]);
   });
 });

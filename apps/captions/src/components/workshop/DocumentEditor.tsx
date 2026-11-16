@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GripVertical, Loader2, Lock, LockOpen, MessageCircleQuestion, Plus, Shuffle, X } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { MarkdownBody } from "@/components/MarkdownBody";
@@ -38,6 +38,30 @@ function placeholderAt(text: string, caret: number): { from: number; to: number;
     if (caret >= from && caret <= to) return { from, to, label: (m[1] ?? "").trim() };
   }
   return null;
+}
+
+/**
+ * Text that changes from outside while the field has the cursor (a turn's lines landing in the page being typed in)
+ * leaves the cursor where it was in the text, not at the end. The returned function takes the field after each of
+ * its own inputs and selections.
+ */
+function useKeepCaret(field: React.RefObject<HTMLTextAreaElement | null>, value: string) {
+  const own = useRef({ value, start: 0, end: 0 });
+  const note = (el: HTMLTextAreaElement) => {
+    own.current = { value: el.value, start: el.selectionStart, end: el.selectionEnd };
+  };
+  useLayoutEffect(() => {
+    const el = field.current;
+    const was = own.current;
+    if (!el || was.value === value) return;
+    own.current = { ...was, value };
+    if (document.activeElement !== el) return;
+    // before the change the offset holds; after it, the distance from the end does
+    const at = (i: number) => (value.startsWith(was.value.slice(0, i)) ? i : Math.max(0, value.length - (was.value.length - i)));
+    el.setSelectionRange(at(was.start), at(was.end));
+    note(el);
+  }, [field, value]);
+  return note;
 }
 
 /** One text part of a field: a textarea that fits its text, with its own highlight layers. Offsets are this part's own. */
@@ -93,6 +117,7 @@ export function TextArea({
   useEffect(() => {
     if (ref.current) fitHeight(ref.current);
   }, [value]);
+  const noteCaret = useKeepCaret(ref, value);
   useEffect(() => {
     // a font arriving after the first fit re-wraps the lines at the same width
     const refit = () => {
@@ -107,7 +132,10 @@ export function TextArea({
       ref={attach}
       value={value}
       disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        noteCaret(e.target);
+        onChange(e.target.value);
+      }}
       onKeyDown={(e) => {
         // ⌘B / ⌘I: **bold** and *italic* for emphasis; the share view renders them
         if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "b" || e.key === "i")) {
@@ -120,7 +148,10 @@ export function TextArea({
         }
         onKeyDown?.(e);
       }}
-      onSelect={onSelectRange ? (e) => onSelectRange(e.currentTarget.selectionStart, e.currentTarget.selectionEnd) : undefined}
+      onSelect={(e) => {
+        noteCaret(e.currentTarget);
+        onSelectRange?.(e.currentTarget.selectionStart, e.currentTarget.selectionEnd);
+      }}
       // a drag-select gets the pill, a double- or triple-click doesn't. The drag often ends outside the field
       // (past a slide's last word), so the release is caught on the page, not on the field
       onMouseDown={
@@ -330,6 +361,7 @@ function AutoTextarea({
 export function DocumentEditor({
   doc,
   locked,
+  writing = false,
   quiet = false,
   saving,
   aiAvailable = true,
@@ -352,8 +384,10 @@ export function DocumentEditor({
   doc: WorkshopDocument;
   /** What the last AI turn changed: each block it wrote (by id, also caption / pinned / hooks) as it was before; `on` shades the new words. */
   changes?: AiChanges;
-  /** True while the AI is editing this document — typing is paused. */
+  /** Typing is paused (the piece shown is from memory and may be behind, or it is read-only). */
   locked: boolean;
+  /** A turn is running. The piece stays open: what the author types is theirs, and the turn's edit to it is refused. */
+  writing?: boolean;
   /** Locked without the "AI is editing…" label (refreshing a session shown from memory). */
   quiet?: boolean;
   /** "Not mine" is on: the author's words this session, to mark everything else on the AI's slides. */
@@ -384,12 +418,13 @@ export function DocumentEditor({
   onVersionCaption?: (key: string, text: string) => void;
 }) {
   if (doc.kind === "notes") {
-    return <NotesEditor doc={doc} locked={locked} quiet={quiet} saving={saving} preview={preview} onChange={onChange} />;
+    return <NotesEditor doc={doc} locked={locked} writing={writing} quiet={quiet} saving={saving} preview={preview} onChange={onChange} />;
   }
   return (
     <PieceEditor
       doc={doc}
       locked={locked}
+      writing={writing}
       quiet={quiet}
       saving={saving}
       aiAvailable={aiAvailable}
@@ -509,6 +544,7 @@ function VersionCaption({
 function NotesEditor({
   doc,
   locked,
+  writing = false,
   quiet = false,
   saving,
   preview,
@@ -516,6 +552,7 @@ function NotesEditor({
 }: {
   doc: WorkshopDocument;
   locked: boolean;
+  writing?: boolean;
   /** Locked without the "AI is editing…" label (refreshing a session shown from memory). */
   quiet?: boolean;
   saving: boolean;
@@ -537,10 +574,12 @@ function NotesEditor({
     const id = doc.blocks[0]?.id;
     onChange(next ? [{ ...(id ? { id } : {}), text: next }] : [], { caption: "", pinned: "" });
   };
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  const noteCaret = useKeepCaret(field, text);
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-transparent">
-      {(locked && !quiet) || saving ? (
-        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "Writing…" : "Saving…"}</span>
+      {writing || (locked && !quiet) || saving ? (
+        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{writing || (locked && !quiet) ? "Writing…" : "Saving…"}</span>
       ) : null}
       {/* the text box and the preview keep their bar's 8px at all times, out of this right padding (index.css) */}
       <div className="min-h-0 flex-1 overflow-hidden px-5 pb-8 pt-8 bars:pr-3">
@@ -550,9 +589,14 @@ function NotesEditor({
           </div>
         ) : (
           <textarea
+            ref={field}
             value={text}
             disabled={locked}
-            onChange={(e) => emit(e.target.value)}
+            onChange={(e) => {
+              noteCaret(e.target);
+              emit(e.target.value);
+            }}
+            onSelect={(e) => noteCaret(e.currentTarget)}
             spellCheck
             aria-label="Notes"
             placeholder="Notes"
@@ -570,6 +614,7 @@ const SLIDE_SURFACE = "rounded-lg bg-muted px-3 py-3.5 ring-1 ring-inset ring-fo
 function PieceEditor({
   doc,
   locked,
+  writing = false,
   quiet = false,
   saving,
   aiAvailable = true,
@@ -591,6 +636,8 @@ function PieceEditor({
 }: {
   doc: WorkshopDocument;
   locked: boolean;
+  /** A turn is running: the text stays open, only what would start a second piece of AI writing waits. */
+  writing?: boolean;
   /** Locked without the "AI is editing…" label (refreshing a session shown from memory). */
   quiet?: boolean;
   saving: boolean;
@@ -787,8 +834,8 @@ function PieceEditor({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-transparent">
-      {(locked && !quiet) || saving ? (
-        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "Writing…" : "Saving…"}</span>
+      {writing || (locked && !quiet) || saving ? (
+        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{writing || (locked && !quiet) ? "Writing…" : "Saving…"}</span>
       ) : null}
       {/* the bar's 8px at all times, out of the right padding (index.css): the text does not move when the piece outgrows its card */}
       <div className="min-h-0 flex-1 overflow-y-scroll px-5 pb-10 pt-8 bars:pr-3">
@@ -1068,7 +1115,7 @@ function PieceEditor({
                         <ConfirmButton
                           label="Rewrite"
                           confirmLabel="Replace"
-                          disabled={locked || !aiAvailable || !hasPiece}
+                          disabled={locked || writing || !aiAvailable || !hasPiece}
                           onConfirm={() => onGenerateCaption?.(true)}
                           title={captionGenerateWhy}
                           className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
@@ -1077,7 +1124,7 @@ function PieceEditor({
                       ) : (
                         <button
                           type="button"
-                          disabled={locked || !aiAvailable || !hasPiece}
+                          disabled={locked || writing || !aiAvailable || !hasPiece}
                           onClick={() => onGenerateCaption?.(false)}
                           title={captionGenerateWhy}
                           aria-label="Write post description"
@@ -1132,7 +1179,7 @@ function PieceEditor({
           blocks={blocks}
           caption={caption}
           typeId={doc.carouselType}
-          locked={locked}
+          locked={locked || writing}
           onClose={() => onCloseVisualize?.()}
           onType={(id) => onCarouselType?.(id)}
           onReorder={move}
@@ -1150,28 +1197,26 @@ function fromBlocks(list: Array<{ id: string; text: string; author: "ai" | "user
 }
 
 /**
- * Adopt the server's blocks into the local list. Local blocks match the
- * server's in order (by id, or by text for ones just created); empty new
- * blocks stay where they are. Anything else (an AI edit, a revert) replaces
- * the list wholesale.
+ * Adopt the server's blocks into the local list: its order and its texts. A block keeps its key (so a field keeps
+ * its focus) by its id, or by its text when it was made here and has no id yet. A blank one made here that the
+ * server does not have stays after the block it follows.
  */
 function mergeBlocks(local: EditorBlock[], server: Array<{ id: string; text: string; author: "ai" | "user" }>): EditorBlock[] {
-  const out: EditorBlock[] = [];
-  let si = 0;
-  for (const b of local) {
-    const s = server[si];
-    if (!b.id && !b.text.trim()) {
-      if (s && !s.text.trim()) {
-        out.push({ key: b.key, id: s.id, text: s.text, author: s.author });
-        si++;
-      } else {
-        out.push(b);
-      }
-      continue;
+  const keys = new Map(local.filter((b) => b.id).map((b) => [b.id, b.key]));
+  const fresh = local.filter((b) => !b.id);
+  const out: EditorBlock[] = server.map((s) => {
+    let key = keys.get(s.id);
+    if (!key) {
+      const i = fresh.findIndex((b) => b.text.trim() === s.text.trim());
+      if (i >= 0) key = fresh.splice(i, 1)[0]!.key;
     }
-    if (!s || (b.id ? s.id !== b.id : s.text.trim() !== b.text.trim())) return fromBlocks(server);
-    out.push({ key: b.key, id: s.id, text: s.text, author: s.author });
-    si++;
+    return { key: key ?? s.id, id: s.id, text: s.text, author: s.author };
+  });
+  for (const b of fresh) {
+    if (b.text.trim()) continue;
+    let at = -1;
+    for (let j = local.indexOf(b) - 1; j >= 0 && at < 0; j--) at = out.findIndex((o) => o.key === local[j]!.key);
+    out.splice(at + 1, 0, b);
   }
-  return si === server.length ? out : fromBlocks(server);
+  return out;
 }
