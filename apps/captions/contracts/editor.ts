@@ -33,7 +33,7 @@
  */
 
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
-import type { PlanEffect, PlanFrame, PlanText } from "./edit-plan";
+import type { Focus, PlanEffect, PlanFrame, PlanText } from "./edit-plan";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -260,7 +260,9 @@ export interface Item {
   /** how it sits in the frame (PlanShot.frame); its zoom is the main picture's size, so an export shows that much */
   frame?: PlanFrame;
   /** pictures stacked in a column with it: a source key in Timeline.sources and its in-point (source frames) */
-  split?: Array<{ src: string; in: number }>;
+  split?: Array<{ src: string; in: number; focus?: Focus }>;
+  /** where the crop sits in the room the picture leaves (PlanShot.focus): the preview draws it; an export keeps the centre */
+  focus?: Focus;
 }
 
 export interface TimelineSource {

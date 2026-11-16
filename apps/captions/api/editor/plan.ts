@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import path from "node:path";
-import type { EditPlan, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
+import type { EditPlan, Focus, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
 import type { Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
@@ -19,7 +19,7 @@ import type { StepContext } from "./engine";
 import { fitted } from "./framing";
 import { clearPasses } from "./passes";
 import { macAway } from "./script";
-import { describeShots, indexSources, songBeats } from "./index";
+import { describeShots, focusOf, frameJunk, indexSources, isJunk, songBeats } from "./index";
 import { readable } from "./media";
 import { generateClip, styles } from "./generate";
 import { editDir, readEdit, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta } from "./store";
@@ -262,9 +262,10 @@ function worth(shots: IndexShot[], k: number): number {
  * never two closer than POOL_GAP_S (or a 40th of the source). A shot the brief's words describe counts more.
  */
 export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
-  if (s.shots.length <= n) return s.shots;
+  if (s.shots.length <= n) return s.shots.filter((x) => !isJunk(x));
   const words = wordsOf(brief);
-  const score = s.shots.map((x, k) => worth(s.shots, k) + hits(words, x.desc));
+  // junk (a map, a menu, loading, dark, a desktop) is never offered: its change is no action
+  const score = s.shots.map((x, k) => (isJunk(x) ? -Infinity : worth(s.shots, k) + hits(words, x.desc)));
   const gap = Math.max(POOL_GAP_S, s.dur / 40);
   const picked: number[] = [];
   const free = (k: number) => !picked.includes(k) && picked.every((j) => Math.abs(s.shots[j]!.a - s.shots[k]!.a) >= gap);
@@ -274,8 +275,8 @@ export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
     const k = byScore.find((j) => s.shots[j]!.a >= (p * s.dur) / parts && s.shots[j]!.a < ((p + 1) * s.dur) / parts && free(j));
     if (k !== undefined) picked.push(k);
   }
-  for (const k of byScore) if (picked.length < n && free(k)) picked.push(k);
-  return picked.sort((a, b) => a - b).map((k) => s.shots[k]!);
+  for (const k of byScore) if (picked.length < n && free(k) && score[k] !== -Infinity) picked.push(k);
+  return picked.filter((k) => score[k] !== -Infinity).sort((a, b) => a - b).map((k) => s.shots[k]!);
 }
 
 const poolSize = (index: FootageIndex) => clamp(Math.floor(POOL_MAX / Math.max(1, index.sources.filter(pictured).length)), POOL_PER_SOURCE.min, POOL_PER_SOURCE.max);
@@ -507,9 +508,50 @@ function spare(index: FootageIndex, used: Map<string, Array<[number, number]>>, 
   for (const s of pics)
     for (const x of shotPool(s, poolSize(index))) {
       const at = freeIn(used.get(s.id) ?? [], span, x.a, s.dur);
-      if (at !== undefined) return { source: s, inS: at };
+      if (at !== undefined && !junkAt(s, at, span)) return { source: s, inS: at };
     }
   return undefined;
+}
+
+/** The stretch inS..inS+span of a source shows junk: an index shot it overlaps by a fifth of its length or more is
+ * junk (`isJunk`: measured, or the AI saw it on the sheet). */
+export function junkAt(s: IndexSource, inS: number, span: number): boolean {
+  return s.shots.some((x) => isJunk(x) && Math.min(inS + span, x.b) - Math.max(inS, x.a) >= Math.max(0.2 * span, 1e-3));
+}
+
+/** The window a shot's picture is cropped to, as its frame shows it: the frame (fill), a letterbox band, a split's row;
+ * null when the whole picture shows (fit, blur, inset). */
+export function cropShape(s: Pick<PlanShot, "frame" | "split">, W: number, H: number): [number, number] | null {
+  if (s.split?.length) return [W, H / (1 + s.split.length)];
+  if (!s.frame || s.frame === "fill") return [W, H];
+  return s.frame === "letterbox" ? [W, W / LETTERBOX] : null;
+}
+
+/** Each source shot's crop where its picture moves (focusOf), and a fill no window holds shown whole over a blur. */
+export function placeShots(shots: PlanShot[], index: FootageIndex, W: number, H: number): number {
+  const byId = new Map(index.sources.map((s) => [s.id, s]));
+  let blurred = 0;
+  const at = (src: { source: string; inS: number }, span: number, shape: [number, number]): ReturnType<typeof focusOf> | null => {
+    const s = byId.get(src.source);
+    return s && s.w ? focusOf(s, src.inS, src.inS + span, shape[0], shape[1]) : null;
+  };
+  const keep = (f: ReturnType<typeof focusOf> | null): { focus?: Focus } => (f && (f.x !== 0.5 || f.y !== 0.5) ? { focus: { x: f.x, y: f.y } } : {});
+  for (const s of shots) {
+    if (!("source" in s.src)) continue;
+    delete s.focus;
+    const span = sourceSpan(s.dur, s.speed ?? 1, s.ramp);
+    const shape = cropShape(s, W, H);
+    if (!shape) continue;
+    const f = at(s.src, span, shape);
+    if (f && !f.ok && !s.split?.length && (!s.frame || s.frame === "fill")) {
+      s.frame = "blur";
+      blurred++;
+      continue;
+    }
+    Object.assign(s, keep(f));
+    if (s.split) s.split = s.split.map((p) => ({ source: p.source, inS: p.inS, ...keep(at(p, span, shape)) }));
+  }
+  return blurred;
 }
 
 const ROTATION = ["punch", "zoomblur", "rgb", "shake", "zoom", "glitch", "stutter"] as const;
@@ -652,6 +694,7 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   const take = (id: string, a: number, span: number) => used.set(id, [...(used.get(id) ?? []), [a, a + span]]);
   let moved = 0;
   let gone = 0;
+  let junked = 0;
   const dense = overdone(c.brief ?? "");
   const strong = beat && song ? beat.strong.map((b) => b - beat.startS) : [];
   let added = 0;
@@ -677,9 +720,15 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         slowed++;
       }
       let inS = clamp(s.src.inS, 0, Math.max(0, source.dur - span - 0.001));
-      const free = freeIn(used.get(source.id) ?? [], span, inS, source.dur);
+      let free = freeIn(used.get(source.id) ?? [], span, inS, source.dur);
+      // a map, a menu, loading or a dark stretch is never shown: another moment instead
+      const junk = free !== undefined && junkAt(source, free, span);
+      if (junk) {
+        free = undefined;
+        junked++;
+      }
       if (free === undefined) {
-        // the source has no stretch this long left unshown: a moment from the least used one
+        // the source has no stretch this long left unshown (or only junk): a moment from the least used one
         const other = spare(c.index, used, span);
         if (!other) {
           gone++;
@@ -687,7 +736,7 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         }
         ({ source, inS } = other);
         if (source.sound === false) sound = "off";
-        moved++;
+        if (!junk) moved++;
       } else if (Math.abs(free - inS) > 1e-6) {
         inS = free;
         moved++;
@@ -744,6 +793,7 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     });
   }
   if (moved) notes.push(`${moved} ${moved === 1 ? "shot showed a moment" : "shots showed moments"} already in the edit: moved to footage not shown yet`);
+  if (junked) notes.push(`${junked} ${junked === 1 ? "shot was" : "shots were"} on a map, a menu, a loading screen or a dark stretch: moved to action`);
   if (gone) notes.push(`${gone} ${gone === 1 ? "shot was" : "shots were"} left out: every moment long enough was already in the edit`);
   if (added) notes.push(`Effects added to ${added} ${added === 1 ? "shot" : "shots"}: an overdone edit has one on every shot and stacks on the strong beats`);
   if (dense && out.length >= 6) {
@@ -783,11 +833,15 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   const h = num(raw.h);
   const own = !c.fixedSize && w && h && w >= 240 && h >= 240 && w <= 4096 && h <= 4096;
   const variation = str(raw.variation, 200);
+  const W = own ? even(w) : c.size.w;
+  const H = own ? even(h) : c.size.h;
+  const blurred = placeShots(out, c.index, W, H);
+  if (blurred) notes.push(`${blurred} ${blurred === 1 ? "shot shows" : "shots show"} the whole picture over a blur: no crop of ${blurred === 1 ? "it" : "them"} holds what moves`);
   return {
     plan: {
       kind: str(raw.kind, 60) || "edit",
-      w: own ? even(w) : c.size.w,
-      h: own ? even(h) : c.size.h,
+      w: W,
+      h: H,
       fps,
       lead: song ? { type: "song", source: song.id, startS: beat!.startS } : { type: "sources" },
       shots: out,
@@ -889,11 +943,12 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
       ...(fx?.length ? { fx } : {}),
       ...(enter && enter !== "cut" ? { enter } : {}),
       ...(s.frame && s.frame !== "fill" ? { frame: s.frame } : {}),
+      ...(s.focus ? { focus: s.focus } : {}),
     };
     const split = (s.split ?? []).filter((p) => sources[p.source]);
     if (split.length) {
       for (const p of split) tl.sources[p.source] = sources[p.source]!;
-      item.split = split.map((p) => ({ src: p.source, in: Math.round(p.inS * sources[p.source]!.fps) }));
+      item.split = split.map((p) => ({ src: p.source, in: Math.round(p.inS * sources[p.source]!.fps), ...(p.focus ? { focus: p.focus } : {}) }));
     }
     tl.tracks.V1.items.push(item);
     if (s.sound && s.sound !== "off") tl.tracks.A1.items.push({ src: key, in: inF, len, rec, link, ...(s.sound === "under" ? { gainDb: UNDER_DB } : {}), ...(item.speed ? { speed: item.speed } : {}), ...(item.ramp ? { ramp: item.ramp } : {}) });
@@ -977,18 +1032,63 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   const notes = [song ? `Cut to “${song.title}” (${song.from})` : "No song: the footage's own sound leads"];
   if (raws.length < edit.versions) notes.push(`The AI planned ${raws.length} of the ${edit.versions} versions asked for`);
   const shots: Record<string, { plan: EditPlan; notes: string[] }> = {};
-  const plans = raws.slice(0, edit.versions).map((raw, k) => {
+  const plans: Array<{ name: string; title: string; lines: [] }> = [];
+  for (const [k, raw] of raws.slice(0, edit.versions).entries()) {
     const name = `v${k + 1}`;
     shots[name] = repairPlan(raw, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen: genIds, brief: edit.brief });
+    const swapped = await lastLook(shots[name]!.plan, index, signal);
+    if (swapped) shots[name]!.notes.push(`${swapped} ${swapped === 1 ? "shot's picture was" : "shots' pictures were"} dark, empty or a screen of the game's menus as cropped: another moment instead`);
     const p = shots[name]!.plan;
-    return { name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] };
-  });
+    plans.push({ name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] });
+  }
   await saveStep(edit.id, "shots", shots);
   await saveStep(edit.id, "plan", { lines: [], plans, notes });
   const kind = shots.v1?.plan.kind;
   const now = readEdit(edit.id);
   if (kind && now?.name === UNNAMED) await saveEdit({ ...now, name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`.slice(0, 60), byTool: [...new Set([...(now.byTool ?? []), "name" as const])] });
 }
+
+/**
+ * The last look before a plan is drawn, so no shot is a frame of nothing: each shot's middle frame
+ * as it will show (its crop, frameJunk). One that is dark, flat or a screen of menus is moved to the best moment no
+ * shot shows yet (spare: never junk, the bad stretch left out), its crop placed again; up to LOOKS tries a shot. Counts
+ * the shots moved. A shot with no clean moment left keeps its picture.
+ */
+export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: AbortSignal): Promise<number> {
+  const db = libraryDb();
+  const files = new Map<string, string>();
+  const file = async (id: string) => {
+    if (!files.has(id)) files.set(id, await readable(id, (db.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(id) as { source_key: string }).source_key));
+    return files.get(id)!;
+  };
+  const byId = new Map(index.sources.map((s) => [s.id, s]));
+  const used = new Map<string, Array<[number, number]>>();
+  const span = (s: PlanShot) => sourceSpan(s.dur, s.speed ?? 1, s.ramp);
+  for (const s of plan.shots) if ("source" in s.src) used.set(s.src.source, [...(used.get(s.src.source) ?? []), [s.src.inS, s.src.inS + span(s)]]);
+  let moved = 0;
+  for (const s of plan.shots) {
+    if (!("source" in s.src) || signal?.aborted) continue;
+    const n = span(s);
+    for (let k = 0; k < LOOKS; k++) {
+      const src = s.src as { source: string; inS: number };
+      const at = byId.get(src.source);
+      if (!at?.w) break;
+      const shape = cropShape(s, plan.w, plan.h);
+      if (!(await frameJunk(await file(src.source), src.inS + n / 2, at, shape, s.focus ?? (shape ? { x: 0.5, y: 0.5 } : undefined), signal))) break;
+      const other = spare(index, used, n);
+      if (!other) break;
+      used.set(other.source.id, [...(used.get(other.source.id) ?? []), [other.inS, other.inS + n]]);
+      s.src = { source: other.source.id, inS: r3(other.inS) };
+      if (other.source.sound === false) s.sound = "off";
+      placeShots([s], index, plan.w, plan.h);
+      if (k === 0) moved++;
+    }
+  }
+  return moved;
+}
+
+/** Tries of the last look per shot */
+const LOOKS = 4;
 
 /** The draft of a planned version: its sources and generated clips, laid as a timeline. */
 export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: EditPlan; notes: string[] }, signal: AbortSignal): Promise<void> {
