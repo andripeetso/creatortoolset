@@ -6,11 +6,11 @@ import { listCollections, updateLibrary } from "@/lib/library";
  * folder (BigUploadDialog), and kept in Library settings. The folders are the library's own: files on disk never move.
  */
 
-/** The default folders' names, in their order: the folders "By type" makes. */
+/** The default folders' names, in their order: the folders "Standard" makes. */
 export const FOLDER_NAMES = DEFAULT_FOLDERS.map((f) => f.name).join(", ");
 
 /** The three choices by name, the same wherever they are offered (this dialog, Library settings). A name says what the choice does. */
-export const ORGANIZE_NAME: Record<Organize, string> = { default: "By type", ai: "By content", own: "None" };
+export const ORGANIZE_NAME: Record<Organize, string> = { default: "Standard", ai: "Automatic", own: "None" };
 
 export const ORGANIZE: { value: Organize; label: string; detail: string }[] = [
   { value: "default", label: ORGANIZE_NAME.default, detail: `${FOLDER_NAMES}. You sort files into them` },

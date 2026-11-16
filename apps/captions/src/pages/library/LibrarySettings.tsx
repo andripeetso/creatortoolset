@@ -55,7 +55,7 @@ const IMPORT: { value: ImportMode; label: string; detail: string; was: string }[
 
 /**
  * The library's folders, in the words of these settings: the three choices by the names the first add offers them under
- * (./Organize.tsx), and what the chosen one means. By type makes the folders and files nothing itself (A-roll and
+ * (./Organize.tsx), and what the chosen one means. Standard makes the folders and files nothing itself (A-roll and
  * B-roll fill from the roll the app sorts; api/library/organize.ts), so its line names the folders and no more.
  */
 const SORTING: { value: Organize; label: string; detail: string }[] = [

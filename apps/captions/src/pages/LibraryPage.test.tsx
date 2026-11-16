@@ -228,13 +228,13 @@ describe("Media Library page", () => {
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("raw materials");
     expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
-    expect(host.textContent).not.toContain("By type"); // asked in the first upload's dialog, not on the page
+    expect(host.textContent).not.toContain("Standard"); // asked in the first upload's dialog, not on the page
     expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
     expect(buttons(host)).not.toContain("Skip");
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
   });
 
-  it("the first upload asks how the library sorts files, By type until another is picked, saved before the files go in", async () => {
+  it("the first upload asks how the library sorts files, Standard until another is picked, saved before the files go in", async () => {
     server.items = [];
     const host = await mount();
     const files = [new File(["x"], "tiny-0.mp4", { type: "video/mp4" })];
