@@ -103,7 +103,7 @@ describe("Blur faces without an AI", () => {
   it("says what to connect, before it sets anything up", async () => {
     const f = path.join(dir, "take.mov");
     writeFileSync(f, "x");
-    await expect(blurFaces(input(tl([{ src: "t", in: 0, len: 50, rec: 0 }]), { t: f }))).rejects.toThrow("Blur faces needs your AI to decide which faces match: connect one in Settings → Providers");
+    await expect(blurFaces(input(tl([{ src: "t", in: 0, len: 50, rec: 0 }]), { t: f }))).rejects.toThrow("Blur faces needs an AI provider: add one in Settings → Providers");
   });
 });
 

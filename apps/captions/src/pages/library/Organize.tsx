@@ -13,9 +13,9 @@ export const FOLDER_NAMES = DEFAULT_FOLDERS.map((f) => f.name).join(", ");
 export const ORGANIZE_NAME: Record<Organize, string> = { default: "Standard", ai: "Automatic", own: "None" };
 
 export const ORGANIZE: { value: Organize; label: string; detail: string }[] = [
-  { value: "default", label: ORGANIZE_NAME.default, detail: `${FOLDER_NAMES}. You sort files into them` },
-  { value: "ai", label: ORGANIZE_NAME.ai, detail: "Folders are made to fit your footage as files come in, and each file is filed in one. Only in the library: your files stay where they are" },
-  { value: "own", label: ORGANIZE_NAME.own, detail: "Everything stays in one list until you make folders" },
+  { value: "default", label: ORGANIZE_NAME.default, detail: `The library has the folders ${FOLDER_NAMES}.` },
+  { value: "ai", label: ORGANIZE_NAME.ai, detail: "Folders are made to fit the footage, and each new file is filed in one." },
+  { value: "own", label: ORGANIZE_NAME.own, detail: "Files stay in one list." },
 ];
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -24,7 +24,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function OrganizePicker({ value, onChange }: { value: Organize; onChange: (o: Organize) => void }) {
   return (
     <fieldset className="flex flex-col gap-1.5">
-      <legend className="mb-1.5 text-sm font-medium">How should the library sort these?</legend>
+      <legend className="mb-1.5 text-sm font-medium">Folders</legend>
       {ORGANIZE.map((o) => (
         <label key={o.value} className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-zinc-500/20 px-3 py-2.5 has-[:checked]:border-violet-500/60">
           <input type="radio" name="organize" className="mt-1 accent-violet-500" checked={value === o.value} onChange={() => onChange(o.value)} />

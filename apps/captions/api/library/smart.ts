@@ -342,7 +342,7 @@ export function parseWays(text: string): Way[] {
     })
     .filter((w): w is Way => !!w)
     .slice(0, 3);
-  if (!ways.length) throw new Error("The AI gave no way to sort the library");
+  if (!ways.length) throw new Error("Could not suggest folders");
   return ways;
 }
 
@@ -354,7 +354,7 @@ export function parseWays(text: string): Way[] {
 export async function suggestWays(libraryId: string, who: Who, workspace: string): Promise<{ ways: Way[]; about: boolean }> {
   const d = libraryDb();
   const clips = clipsOf(d, libraryId);
-  if (!clips.length) throw new Error("There is nothing in the library to sort yet");
+  if (!clips.length) throw new Error("No clips to sort");
   const route = aiFor(who, "analyzer", LABEL);
   if (route.off) throw new Error(route.off);
   const tags = d

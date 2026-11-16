@@ -54,7 +54,7 @@ function draw(src: CanvasImageSource & { videoWidth?: number; naturalWidth?: num
 const once = (el: HTMLElement, ok: string, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const done = () => (el.removeEventListener(ok, done), el.removeEventListener("error", fail), resolve());
-    const fail = () => (el.removeEventListener(ok, done), reject(new Error("This window can't read the file")));
+    const fail = () => (el.removeEventListener(ok, done), reject(new Error("Could not read the file")));
     el.addEventListener(ok, done);
     el.addEventListener("error", fail);
     signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
@@ -158,7 +158,7 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
     signal,
   });
   const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; error?: string };
-  if (!r.ok) throw new Error(body.error ?? `Couldn't add it (${r.status})`);
+  if (!r.ok) throw new Error(body.error ?? "Could not add the file");
   return body;
 }
 

@@ -76,7 +76,7 @@ async function call<T>(url: string, body?: unknown): Promise<T> {
   if (!r.ok)
     throw new Error(
       ((await r.json().catch(() => ({}))) as { error?: string }).error ??
-        "Server error",
+        `Request failed (${r.status})`,
     );
   return (await r.json()) as T;
 }

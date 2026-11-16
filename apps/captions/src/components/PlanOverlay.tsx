@@ -29,10 +29,10 @@ export function PlanOverlay({ cards, fps, time, holding, playing = false, rate =
       ))}
       {(chips.length > 0 || holding > 0) && (
         <div className="absolute left-2 top-2 flex max-w-[85%] flex-col items-start gap-1">
-          {holding > 0 && <Chip tone="bg-amber-500/90 text-black">Held +{holding} f: the shot runs on here</Chip>}
+          {holding > 0 && <Chip tone="bg-amber-500/90 text-black">Held +{holding} frames</Chip>}
           {chips.map((c, i) => (
             <Chip key={i} tone={c.kind === "gone" ? "bg-rose-600/85" : "bg-teal-700/90"}>
-              {c.kind === "gone" ? `✕ ${c.label}: not here any more` : `♪ ${c.track} ${c.label}`}
+              {c.kind === "gone" ? `✕ ${c.label}: removed` : `♪ ${c.track} ${c.label}`}
             </Chip>
           ))}
         </div>

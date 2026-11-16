@@ -333,7 +333,7 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
         );
       } catch (e) {
         if (signal.aborted) break;
-        throw new Error(`Colour failed on ${name}: ${(e as Error).message}`);
+        throw new Error(`Colour could not convert ${name}: ${(e as Error).message}`);
       }
     }
     note(`${name}: ${PROFILES[profile].label} ${how}, converted to normal video`);
@@ -345,7 +345,7 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
 export default definePlugin({
   id: "editor-colour",
   name: "Colour",
-  about: "Turns log footage (S-Log3, F-Log, Apple Log and more) into normal video, on this computer. About 1.4 GB of disk for each minute of video",
+  about: "Turns log footage (S-Log3, F-Log, Apple Log and more) into normal video on this computer, with about 1.4 GB of disk for each minute of video",
   kind: "editor",
   editor: {
     steps: [
@@ -353,7 +353,7 @@ export default definePlugin({
         id: "colour",
         title: "Colour",
         about:
-          "Turns log footage into normal video with the camera maker's own published conversion, when the file says which log it is or you pick it here. Never a grade or a look. Footage that only looks flat is left as it is and named in the edit's notes. About 1.4 GB of disk for each minute of video.",
+          "Turns log footage into normal video with the camera maker's published conversion, with about 1.4 GB of disk for each minute of video.",
         order: 10,
         options: [
           {
@@ -362,7 +362,7 @@ export default definePlugin({
             kind: "choice",
             default: "auto",
             choices: [
-              { value: "auto", label: "Auto from the file" },
+              { value: "auto", label: "From the file" },
               { value: "slog3", label: "S-Log3" },
               { value: "flog", label: "F-Log" },
               { value: "flog2", label: "F-Log2" },

@@ -108,7 +108,7 @@ describe("appRows", () => {
     expect(rows.map((r) => [r.detail, r.state, r.href])).toEqual([
       ["Preparing 17 clips · 25%", "working", "/library"],
       ["2 transcripts need a transcription key", "ready", "/settings/keys"],
-      ["5 AI descriptions need an AI provider", "ready", "/settings/providers"],
+      ["5 descriptions need an AI provider", "ready", "/settings/providers"],
     ]);
     expect(rows[0].progress).toBe(0.25);
   });

@@ -81,7 +81,7 @@ describe("a version of the app's own AI Editor, opened to edit by hand on its ed
     await open();
     await press("stub trim");
     expect(button("Make the next version")?.disabled).toBe(false);
-    expect(host.textContent).toContain("The player shows this version as it is");
+    expect(host.textContent).toContain("The player shows this version without the edits");
     await press("Make the next version");
     expect(makeCut).toHaveBeenCalledWith("e1", "v1", { asset: "ast", n: 2, edits: [expect.objectContaining({ key: "V1:0", tail: -12 })] });
     expect(made).toHaveBeenCalledWith({ id: "e1" });
@@ -130,7 +130,7 @@ describe("a version of the app's own AI Editor, opened to edit by hand on its ed
     await press("stub trim");
     expect(host.textContent).not.toContain("Beach walk");
     await press("stub take out");
-    expect(host.textContent).toContain("On frames you took out, so it goes too: Beach walk.");
+    expect(host.textContent).toContain("On removed frames, so removed too: Beach walk");
   });
 
   it("nothing is made while the version's steps run", async () => {

@@ -38,7 +38,7 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
   const copy = () =>
     navigator.clipboard.writeText(codes.join("\n")).then(
       () => toast.success("Recovery codes copied"),
-      () => toast.error("Couldn't copy them. Select them and copy instead."),
+      () => toast.error("Could not copy them. Select them and copy instead."),
     );
   return (
     <div className="space-y-2">

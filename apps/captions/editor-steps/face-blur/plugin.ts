@@ -208,9 +208,9 @@ async function fetchModel(dir: string): Promise<void> {
   const dest = path.join(dir, MODEL.name);
   if (existsSync(dest)) return;
   const res = await fetch(MODEL.url).catch(() => null);
-  if (!res?.ok) throw new Error(`Blur faces could not download its face model from Google's MediaPipe storage: ${res ? `HTTP ${res.status}` : "no internet connection?"}`);
+  if (!res?.ok) throw new Error("Blur faces could not download its face model: check the internet connection");
   const bytes = Buffer.from(await res.arrayBuffer());
-  if (createHash("sha256").update(bytes).digest("hex") !== MODEL.sha256) throw new Error("Blur faces' face model did not match its checksum");
+  if (createHash("sha256").update(bytes).digest("hex") !== MODEL.sha256) throw new Error("Blur faces' face model was damaged in the download: run the edit again");
   await writeFile(`${dest}.part`, bytes);
   await rename(`${dest}.part`, dest);
 }
@@ -319,12 +319,12 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
     if (wanted.length) input.note(countsNote(counts, who));   // only photos: nothing was looked at, so no count
     return out;
   }
-  if (!given && !anyVisionConfigured(edit.createdBy)) throw new Error("Blur faces needs your AI to decide which faces match: connect one in Settings → Providers. Nothing was blurred, and this draft has no preview until it runs again");
+  if (!given && !anyVisionConfigured(edit.createdBy)) throw new Error("Blur faces needs an AI provider: add one in Settings → Providers. Nothing was blurred, and this version has no preview until it runs again");
   const ask = given ?? askAi;
   const rt = await ensure(() => input.say("Blur faces: setting up its face tools, the first time only (a few minutes)"));
   input.say("Blur faces: finding the faces");
   const fail = (id: string) => (e: unknown) => {
-    throw new Error(`Blur faces failed on ${timeline.sources[id]?.name ?? id}: ${(e as Error).message}`);
+    throw new Error(`Blur faces could not process ${timeline.sources[id]?.name ?? id}: ${(e as Error).message}`);
   };
 
   // 1. the faces in every file, as tracks
@@ -364,16 +364,16 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
       return describe(t, f.info, role, role === "speaker" && f.tracks[0] === t);
     });
     const user = `The editor's instruction: "${who}"\n\nThe face tracks, one picture each, in this order:\n${lines.join("\n")}\n\nWhich tracks match the instruction?`;
-    input.say("Blur faces: asking your AI which faces to blur");
+    input.say("Blur faces: choosing the faces to blur");
     const answer = await ask(SYSTEM, user, images, edit.createdBy, signal).catch((e: Error) => {
       if (signal.aborted) throw e;
-      throw new Error(`Blur faces could not ask your AI which faces to blur (${e.message}). Nothing was blurred, and this draft has no preview until it runs again`);
+      throw new Error(`Blur faces could not ask the AI provider which faces to blur (${e.message}). Nothing was blurred, and this version has no preview until it runs again`);
     });
     let ids: Set<string>;
     try {
       ids = chosenIn(answer, batch.map((b) => b.t.id));
     } catch (e) {
-      throw new Error(`Blur faces could not read your AI's answer (${(e as Error).message}). Nothing was blurred, and this draft has no preview until it runs again: run it again, or try another AI in Settings → Providers`);
+      throw new Error(`Blur faces could not read the AI provider's answer (${(e as Error).message}). Nothing was blurred, and this version has no preview until it runs again: run it again, or pick another AI provider in Settings → Providers`);
     }
     for (const id of ids) chosen.add(id);
   }
@@ -411,17 +411,17 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
 export default definePlugin({
   id: "editor-face-blur",
   name: "Blur faces",
-  about: "Blurs the faces you name in every edit (the people in the background, everyone but you), on this computer. About 1.4 GB of disk for each minute of video",
+  about: "Blurs the described faces in every edit on this computer, with about 1.4 GB of disk for each minute of video",
   kind: "editor",
   editor: {
     steps: [
       {
         id: "face-blur",
         title: "Blur faces",
-        about: "Finds the faces in the footage an edit shows, and your AI picks the ones that match what you write here. The first run sets up its own Python (MediaPipe). About 1.4 GB of disk for each minute of video.",
+        about: "Finds the faces in an edit's footage and blurs the ones that match the description, using the AI provider.",
         order: 30,
         options: [
-          { id: "who", label: "What to blur", kind: "text", default: DEFAULT_WHO },
+          { id: "who", label: "Faces to blur", kind: "text", default: DEFAULT_WHO },
           {
             id: "look",
             label: "Look",

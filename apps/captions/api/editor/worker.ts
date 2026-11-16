@@ -102,7 +102,7 @@ export function limitWait(e: unknown, now = Date.now()): { seconds: number; line
     const limit = (x as { limited?: unknown }).limited || (x instanceof MacClaudeError && x.kind === "limit") || (x instanceof AiProviderError && x.code === "RATE_LIMIT");
     if (!limit) continue;
     const message = x instanceof Error ? x.message : "";
-    return { seconds: until && until > now ? Math.ceil((until - now) / 1000) : LIMIT_WAIT_S, line: isLimitLine(message) ? limitLine(message) : "The AI's usage limit is reached: it carries on when it opens again" };
+    return { seconds: until && until > now ? Math.ceil((until - now) / 1000) : LIMIT_WAIT_S, line: isLimitLine(message) ? limitLine(message) : "The AI provider is at its usage limit: the edit continues at the reset" };
   }
   return null;
 }
@@ -139,9 +139,9 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
     parkJob(db, job.id, "This edit names no account to run as", T);
     return true;
   }
-  if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), true;
+  if (!edit || edit.trashedAt) return fail(db, job, "Edit not found"), true;
   // read again at every step: footage trashed since the edit was made, or the asker no longer in its workspace
-  if (!(await stillReadable(job.actor, edit))) return fail(db, job, "Some footage is gone or no longer yours to read"), true;
+  if (!(await stillReadable(job.actor, edit))) return fail(db, job, "Some footage was deleted or cannot be read by this account"), true;
   const step = STEPS[job.kind];
   if (!step) return fail(db, job, `No ${job.kind} step yet`), true;
 
@@ -192,8 +192,8 @@ export async function claimForDevice(device: { id: string; owner: string }, kind
   moved(job);
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
-  if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), null;
-  if (!(await stillReadable(job.actor ?? "", edit))) return fail(db, job, "Some footage is gone or no longer yours to read"), null;
+  if (!edit || edit.trashedAt) return fail(db, job, "Edit not found"), null;
+  if (!(await stillReadable(job.actor ?? "", edit))) return fail(db, job, "Some footage was deleted or cannot be read by this account"), null;
   return { id: job.id, kind: job.kind, editId, variant };
 }
 
@@ -214,12 +214,12 @@ export async function claimForComputer(d: Device, now = Date.now()): Promise<{ j
     const { editId, variant } = splitVersion(job);
     const edit = readEdit(editId);
     if (!edit || edit.trashedAt) {
-      fail(db, job, "The edit is gone");
+      fail(db, job, "Edit not found");
       continue;
     }
     // only the files the step names, and every one still in the edit's workspace (the draft's B-roll too)
     if (!(await stillReadable(job.actor ?? "", edit)) || sourcesWorkspace(ownerOf(edit), jobFiles(job).map((f) => f.id)) !== edit.workspaceId) {
-      fail(db, job, "Some footage is gone or no longer yours to read");
+      fail(db, job, "Some footage was deleted or cannot be read by this account");
       continue;
     }
     const gate = gates[job.kind];

@@ -18,7 +18,7 @@ function remoteRows(c: ComputerInfo) {
   const agents = c.drivers.filter(
     (d) => (AGENTS as readonly string[]).includes(d.driver) && (d.driver !== "gemini" || d.installed),
   );
-  if (!agents.length) return <p className="text-sm text-muted-foreground">Nothing reported yet. Open Creator Toolset on {c.name}, and its AIs show up here.</p>;
+  if (!agents.length) return <p className="text-sm text-muted-foreground">No AI providers reported: open Creator Toolset on {c.name}.</p>;
   return (
     <ul className="space-y-2">
       {agents.map((d) => {
