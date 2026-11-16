@@ -41,7 +41,7 @@ function placeholderAt(text: string, caret: number): { from: number; to: number;
 }
 
 /** One text part of a field: a textarea that fits its text, with its own highlight layers. Offsets are this part's own. */
-function TextArea({
+export function TextArea({
   value,
   disabled,
   onChange,
@@ -121,8 +121,22 @@ function TextArea({
         onKeyDown?.(e);
       }}
       onSelect={onSelectRange ? (e) => onSelectRange(e.currentTarget.selectionStart, e.currentTarget.selectionEnd) : undefined}
-      // a drag-select gets the pill, a double- or triple-click doesn't
-      onMouseUp={onSelectRange ? (e) => onSelectRange(e.currentTarget.selectionStart, e.currentTarget.selectionEnd, e.detail > 1 ? undefined : { x: e.clientX + 6, y: e.clientY + 10 }) : undefined}
+      // a drag-select gets the pill, a double- or triple-click doesn't. The drag often ends outside the field
+      // (past a slide's last word), so the release is caught on the page, not on the field
+      onMouseDown={
+        onSelectRange
+          ? (e) => {
+              const el = e.currentTarget;
+              document.addEventListener(
+                "mouseup",
+                (u) => {
+                  if (document.activeElement === el) onSelectRange(el.selectionStart, el.selectionEnd, u.detail > 1 ? undefined : { x: u.clientX + 6, y: u.clientY + 10 });
+                },
+                { once: true },
+              );
+            }
+          : undefined
+      }
       onKeyUp={
         onSelectRange
           ? (e) => {
