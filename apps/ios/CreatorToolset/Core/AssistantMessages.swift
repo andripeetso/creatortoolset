@@ -159,6 +159,7 @@ struct AssistantWorkCard: View {
                 switch work.status {
                 case "running": ProgressView().controlSize(.small).tint(.secondary).accessibilityLabel("Running")
                 case "failed": Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Failed")
+                case "stopped": Image(systemName: "stop.circle").foregroundStyle(.secondary).accessibilityLabel("Stopped")
                 default: Image(systemName: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(.secondary).accessibilityLabel("Done")
                 }
             }

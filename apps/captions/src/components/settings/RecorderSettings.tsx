@@ -15,7 +15,7 @@ const CAMERA = [
 ];
 
 /**
- * Settings → Tools → Screen Recorder, in the Mac app: how sharp the screen and the camera are recorded, and whether
+ * Settings → Screen Recorder, in the Mac app: how sharp the screen and the camera are recorded, and whether
  * Save and Send hand over the streams as separate files too. The app keeps every value; a change goes to it as
  * `recorder:<what>:<value>` and comes back in its next answer. A Mac app without these says nothing here.
  */

@@ -33,7 +33,7 @@ const wiped: string[] = [];
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { handle, pluginToolsOf } = await import("./mcp");
-const { routeOf, runInChat, workEnded } = await import("./assistant");
+const { checkWork, routeOf, runInChat, sweepWork, workEnded } = await import("./assistant");
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
@@ -182,6 +182,27 @@ describe("a tool asks before it deletes", () => {
 });
 
 describe("work the assistant started ends", () => {
+  it("a card whose work stopped without telling the chat stops spinning: two sweeps in a row must find it over", async () => {
+    const cookie = await cookieOf("ana");
+    const t = await turn(cookie, "Start the tiny edit");
+    await tool(t.token, "tiny_card", { id: "e20" });
+    await t.end();
+    let alive = true;
+    checkWork("edit", () => {
+      throw new Error("a check that fails says nothing: the next one answers");
+    });
+    checkWork("edit:e20", () => (alive ? null : { status: "stopped", detail: "Stopped" }));
+    const card = async () => (await viewOf(cookie)).messages.flatMap((m: AssistantMessage) => m.work ?? []).find((w) => w.id === "edit:e20:new");
+    await sweepWork();
+    await sweepWork();
+    expect(await card()).toMatchObject({ status: "running" });
+    alive = false;
+    await sweepWork();   // the first miss: its own end may still be on its way
+    expect(await card()).toMatchObject({ status: "running" });
+    await sweepWork();
+    expect(await card()).toMatchObject({ status: "stopped", detail: "Stopped" });
+  });
+
   it("its running card gets its end and the chat says so once, with answer buttons; work nobody started from the chat says nothing", async () => {
     const cookie = await cookieOf("ana");
     const t = await turn(cookie, "Start the tiny edit");
