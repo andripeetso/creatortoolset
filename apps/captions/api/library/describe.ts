@@ -29,7 +29,22 @@ import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile } from "./organize";
 export const FRAMES = 4;
 /** What the usage tally counts a description as: estimate.ts reads its average cost back. */
 export const DESCRIBE_LABEL = "Media Library describe";
-const MAX_TAGS = 8;
+const MAX_TAGS = 6;
+/** Most of the library's tags a description is shown, most used first. */
+const VOCABULARY = 60;
+
+/**
+ * What a tag is for: finding this clip among the library's others. Specific things in the workspace's own names, the
+ * library's spelling reused, nothing every clip shares (owner, 2026-11-15: "smart tags … adapted from the full context
+ * of the media", after a sidebar of "grass field", "cobblestone", "fantasy" and "screen recording 12").
+ */
+const TAG_RULE =
+  "tags are the words someone would search to find this clip among the others in the library: what sets it apart. " +
+  "Name the specific thing it shows in the workspace's own words when it has them (a place, a mode, a feature, an event, a product, a kind of shot). " +
+  "Never tag what nearly every clip here shares or the workspace's general subject (its genre, the medium, \"gameplay\", \"screen recording\"), " +
+  "and never colours, textures, light, mood or words that only describe the look. " +
+  "Use a tag from the library's list, spelled the same, when it means the same thing; add a new one only for what the list lacks. " +
+  "Lowercase, one to three words each. Fewer good tags beat many; none is fine.";
 
 /** Everything the prompt is built from. There is no field for who is in the clip: no names, no ages. */
 export interface DescribeInput {
@@ -42,6 +57,23 @@ export interface DescribeInput {
   folders?: string[];
   /** with folders: the answer may name a new folder (the library has fewer than MAX_AI_FOLDERS) */
   newFolder?: boolean;
+  /** the library's tags (tagsOf) so the answer reuses its words */
+  tags?: { clips: number; list: { tag: string; count: number }[] };
+}
+
+/** The tags on the library's other clips (not in the trash), most used first, and how many clips it has. */
+export function tagsOf(db: DatabaseSync, versionId: string): NonNullable<DescribeInput["tags"]> {
+  const of = "SELECT a.library_id AS lib, a.id AS asset FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?";
+  const at = db.prepare(of).get(versionId) as { lib: string; asset: string } | undefined;
+  if (!at) return { clips: 0, list: [] };
+  const { clips } = db.prepare("SELECT COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NULL").get(at.lib) as { clips: number };
+  const list = db
+    .prepare(
+      `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
+       WHERE a.library_id = ? AND a.id <> ? AND a.trashed_at IS NULL GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT ${VOCABULARY}`,
+    )
+    .all(at.lib, at.asset) as { tag: string; count: number }[];
+  return { clips, list };
 }
 
 export interface Described {
@@ -72,9 +104,13 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
             input.newFolder
               ? `folder is where this clip is filed in the library, judged by what the footage is (gameplay, an interview, a product, a place…). ${input.folders.length ? `Use one of these folders when it fits: ${JSON.stringify(input.folders)}. Otherwise name` : "Name"} a new folder: one to three words, by what the footage is (for example "Gameplay", "Interviews", "Product shots", "Travel"), never a vague name like "Misc", "Other", "Clips" or "B-roll".`
               : `folder is the one of these folders the clip fits best: ${JSON.stringify(input.folders)}`,
-            'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "folder": "a folder name"}',
           ]
-        : ['Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b"}']),
+        : []),
+      TAG_RULE,
+      ...(input.tags?.list.length
+        ? [`Tags already in this library of ${input.tags.clips} clips (tag: clips it is on): ${input.tags.list.map((t) => `${t.tag}: ${t.count}`).join(", ")}`]
+        : []),
+      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], "roll": "a" or "b"${input.folders ? ', "folder": "a folder name"' : ""}}`,
     ].join("\n\n"),
   };
 }
@@ -193,6 +229,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       frames: images.length,
       ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
       ...(folders ? { folders, newFolder } : {}),
+      tags: tagsOf(db, versionId),
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider);
