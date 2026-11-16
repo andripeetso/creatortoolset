@@ -2787,12 +2787,17 @@ workshopApp.patch("/sessions/:id", async (c) => {
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   try {
-    const patch = parseSessionPatch(await c.req.json().catch(() => null));
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    const patch = parseSessionPatch(body);
+    // A session changes workspace only when asked by name (`moveTo`, the menu's Move to), and only into one of this
+    // account's. A plain `projectId` is ignored: an app still running the old page sent it on every workspace switch
+    // (owner, 2026-11-16: switching workspace moved the open project into the new one).
+    const moveTo = okId(body?.moveTo) ? body.moveTo : undefined;
+    if (moveTo && !(await getWorkspace(user)).projects.some((p) => p.id === moveTo)) return c.json({ error: "Unknown workspace" }, 400);
     const next = await updateSession(meta.id, (m) => {
       if (patch.title !== undefined) m.title = patch.title || "Untitled project";
       if (patch.query !== undefined) m.query = patch.query;
-      if (patch.projectId === null) delete m.projectId;
-      else if (patch.projectId) m.projectId = patch.projectId;
+      if (moveTo) m.projectId = moveTo;
       if (patch.status) setSessionStatus(m, patch.status, "session"); // a refused move throws: 409 below
       if (patch.pinned === true) m.pinned = true;
       else if (patch.pinned === false) delete m.pinned;
