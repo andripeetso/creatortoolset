@@ -127,6 +127,23 @@ export function keep(username: string, quote: unknown, said: Said[], project?: s
   };
 }
 
+/** The words a fact was kept from, and its rule (Settings → Memory: Rewrite). */
+export const factOf = (username: string, id: string) => read(username).facts.find((f) => f.id === id);
+
+/** A rule as the person wrote it in Settings → Memory. null: no fact by that id. */
+export function setRule(username: string, id: string, rule: unknown): Kept | { error: string } | null {
+  const r = typeof rule === "string" ? tidy(rule) : "";
+  if (r.length < MEMORY_QUOTE_MIN || r.length > MEMORY_RULE_MAX) return { error: `A rule is one sentence of ${MEMORY_QUOTE_MIN} to ${MEMORY_RULE_MAX} characters` };
+  const store = read(username);
+  const old = store.facts.find((f) => f.id === id);
+  if (!old) return null;
+  const next = { ...old, text: r, said: old.said ?? old.text };
+  const facts = store.facts.map((f) => (f === old ? next : f));
+  if (sizeOf(facts) > MEMORY_CAP) return { error: "Memory is full: make it shorter or remove something" };
+  write(username, { ...store, facts });
+  return next;
+}
+
 /** Remove a fact for good; false when the account has none by that id. */
 export function remove(username: string, id: string): boolean {
   const store = read(username);
