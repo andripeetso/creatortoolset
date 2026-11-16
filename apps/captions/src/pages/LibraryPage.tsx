@@ -38,7 +38,9 @@ import {
   updateAsset,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
-import { pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { checkUpload } from "@/lib/library";
+import { quickPrint } from "@/lib/onMac";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
@@ -51,6 +53,7 @@ import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./librar
 import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
 import { LibrarySettings } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
+import { useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
@@ -99,7 +102,7 @@ export default function LibraryPage() {
   const [filters, setFilters] = useState<LibraryFilters>({}); // tags, when, where (./library/Filters.tsx)
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
-  const askingPaths = useRef<Map<File, string> | undefined>(undefined); // those files' places on this Mac (a Finder drop)
+  const askingLook = useRef<ImportLook | null>(null); // those files' places on this Mac and what adding them asks (./library/Import.tsx)
   const [sharing, setSharing] = useState<AssetCard | null>(null); // the clip whose share box is open (right-click Share…)
   const [tags, setTags] = useState<string[]>([]); // the library's tags, most used first (Add tag)
   const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
@@ -315,21 +318,36 @@ export default function LibraryPage() {
     setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, ...change } : u)));
 
   // the Mac app with the server elsewhere: files are indexed where they are, never uploaded, unless the library's
-  // upload switch is on (Library settings and Settings → Storage, UploadSwitch)
-  const onMac = !!thisMacBridge() && !watch?.allowed && (library?.settings.upload ?? "none") === "none";
+  // upload setting says so (Library settings and Settings → Media Library, UploadSelect). A ref: an add's own answer
+  // can change it for the files it starts
+  const upload = useRef(library?.settings.upload ?? "none");
+  upload.current = library?.settings.upload ?? "none";
+  const macRemote = !!thisMacBridge() && !watch?.allowed;
+  const onMac = macRemote && upload.current === "none";
   const send = async (u: UploadItem) => {
     if (!libId || cancelled.current.has(u.key)) return;
     const ctl = new AbortController();
     controllers.current.set(u.key, ctl);
     try {
-      const here = u.path ?? (await pathOnMac(u.file));
+      const mac = macRemote && upload.current === "none";
+      let here = u.path ?? (await pathOnMac(u.file));
       // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks
-      // too). Indexed on the Mac it is matched there by its first and last MiB, so no gigabytes are hashed here
-      const dup = onMac ? null : await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+      // too). Indexed on the Mac it is matched there by its first and last MiB, so no gigabytes are hashed here; one to
+      // copy first is matched the same way, so no copy is made of a file the library has
+      const dup = mac
+        ? u.copyTo
+          ? ((await checkUpload(libId, u.file.size, `mac:${await quickPrint(u.file)}`).catch(() => null))?.duplicateOf ?? null)
+          : null
+        : await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
       ctl.signal.throwIfAborted();
       if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
+      // copied into the library's folder on this Mac first (the Mac app does it), then taken in from there
+      if (u.copyTo && here) {
+        here = await copyFirst(u, here, ctl.signal);
+        patch(u.key, { path: here, copyTo: undefined });
+      }
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
-      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here, { signal: ctl.signal, onMac });
+      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here, { signal: ctl.signal, onMac: mac });
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
@@ -340,48 +358,69 @@ export default function LibraryPage() {
       controllers.current.delete(u.key);
     }
   };
+  // one file's copy, its bytes counted in the tray; Cancel stops it and the Mac removes the part written
+  const copyFirst = async (u: UploadItem, from: string, signal: AbortSignal): Promise<string> => {
+    const id = `copy-${u.key}-${Date.now()}`;
+    patch(u.key, { status: "copying", sent: 0, error: undefined });
+    const tick = setInterval(() => void importProgress(id).then((p) => patch(u.key, { sent: p.bytes }), () => {}), 500);
+    const stop = () => void importCancel(id).catch(() => {});
+    signal.addEventListener("abort", stop, { once: true });
+    try {
+      const r = await importCopy(id, [{ from, to: u.copyTo! }]);
+      signal.throwIfAborted();
+      if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Not copied");
+      return r.copied[0].to;
+    } finally {
+      clearInterval(tick);
+      signal.removeEventListener("abort", stop);
+    }
+  };
   // Cancel: the file stops (what reached the server is deleted) and never starts again by itself; Retry starts it
   const cancel = (keys: number[]) => {
     for (const k of keys) {
       cancelled.current.add(k);
       controllers.current.get(k)?.abort();
     }
-    setUploads((prev) => prev.map((u) => (keys.includes(u.key) && (u.status === "waiting" || u.status === "checking" || u.status === "uploading") ? { ...u, status: "cancelled", error: undefined } : u)));
+    setUploads((prev) => prev.map((u) => (keys.includes(u.key) && (u.status === "waiting" || u.status === "checking" || u.status === "copying" || u.status === "uploading") ? { ...u, status: "cancelled", error: undefined } : u)));
   };
 
-  // a big upload says first what preparing it takes (time, and money on whose AI and keys)
+  // a big upload says first what preparing it takes (time, and money on whose AI and keys); the first add, or one from a
+  // new place, asks how the files come in (./library/Import.tsx)
   const addFiles = async (files: FileList | File[] | null, paths?: Map<File, string>) => {
     if (!files?.length) return;
     const all = Array.from(files); // before the picker is cleared
+    const look = await importQ.prepare(all, paths);
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
     // indexed on this Mac: nothing uploads either
-    const here = onMac || (paths ? paths.size === all.length : !!(await pathOnMac(all[0]!)));
+    const here = onMac || (look.paths ? look.paths.size === all.length : false);
     // the first upload also asks how the library sorts files
-    if (all.length >= BIG_DROP || organize.offer) {
-      askingPaths.current = paths;
+    if (all.length >= BIG_DROP || organize.offer || (look.ask && look.ask.kind !== "upload")) {
+      askingLook.current = look;
       setAskingHere(here);
       setAsking(all);
-    } else start(all, here, paths);
+    } else void importQ.answer(look, all).then((a) => start(all, here, look.paths, a.copies));
   };
 
   // one file after another: the server's disk and the phone's data are both easier on that
-  const start = (files: File[], here = false, paths?: Map<File, string>) => {
+  const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
     const folderId = into ?? undefined;
-    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: paths ? paths.has(file) : here, path: paths?.get(file) }));
+    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: paths ? paths.has(file) : here, path: paths?.get(file), copyTo: copies?.get(file) }));
     setUploads((prev) => [...prev, ...added]);
     void (async () => {
       for (const u of added) await send(u);
     })();
   };
 
+  const saved = (l: LibrarySummary) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
   const organize = useOrganize({
     library,
     owner: !!watch, // the settings are the owner's too
-    onSaved: (l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all),
+    onSaved: saved,
     setFolders: folderList.set,
     onError: setError,
   });
-  const drop = useLibraryDrop({ libraryId: libId, ignore: DRAG, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onError: setError });
+  const importQ = useImportQuestion({ library, serverHere: !!watch?.allowed, owner: !!watch, onSaved: saved, onError: setError });
+  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onSaved: saved, onError: setError });
 
   const create = async () => {
     try {
@@ -773,16 +812,22 @@ export default function LibraryPage() {
         <BigUploadDialog
           libraryId={libId}
           drop={{ clips: asking.length, bytes: asking.reduce((n, f) => n + f.size, 0), ...audioOf(asking) }}
-          title={`${askingHere ? "Add" : "Upload"} ${asking.length.toLocaleString()} clips?`}
+          title={`${askingHere ? "Add" : "Upload"} ${asking.length.toLocaleString()} ${asking.length === 1 ? "file" : "files"}?`}
           go={askingHere ? "Add" : "Upload"}
           offer={organize.offer}
+          estimate={asking.length >= BIG_DROP}
           onClose={() => setAsking(null)}
           onUpload={async (o) => {
             setAsking(null);
             if (o) await organize.answerOffer(o); // before the files: each is filed as it comes in
-            start(asking, askingHere, askingPaths.current);
+            const look = askingLook.current!;
+            const a = await importQ.answer(look, asking);
+            if (a.library) upload.current = a.library.settings.upload;
+            start(asking, askingHere, look.paths, a.copies);
           }}
-        />
+        >
+          {importQ.body}
+        </BigUploadDialog>
       )}
       <input
         ref={picker}
@@ -887,7 +932,7 @@ export default function LibraryPage() {
                   uploads={uploads}
                   onRetry={(u) => (cancelled.current.delete(u.key), void send(u))}
                   onCancel={cancel}
-                  onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting" || u.status === "checking"))}
+                  onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting" || u.status === "checking" || u.status === "copying"))}
                 />
 
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Search by meaning is getting ready.</p>}

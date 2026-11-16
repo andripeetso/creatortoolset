@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, Section } from "@/components/settings/ui";
 import { confirmDialog } from "@/lib/dialogs";
 import { getLibraryStorage, setLibraryStorage } from "@/lib/library";
+import { UPLOAD_LABEL } from "./library/UploadSelect";
 
 /**
  * Where a library keeps its files, for its owner, in the library's settings (api/library/usage.ts): the server's disk,
@@ -14,8 +15,9 @@ import { getLibraryStorage, setLibraryStorage } from "@/lib/library";
  * files keeps where they are: then there is no choice to make (an own bucket's keys and region can still change).
  * `children`: the card's rows that say where the files are (LibrarySettings SpaceRows), first, given what is saved.
  *
- * On this computer the first choice is the cloud copy: none, the proxies (one for every video, the originals stay here:
- * allowed while the library holds files), or the video files; then which bucket.
+ * On this computer the first choice is the cloud copy, in the upload setting's words (./library/UploadSelect.tsx): off,
+ * proxies only (one for every video, the originals stay here: allowed while the library holds files), or video files and
+ * proxies; then which bucket.
  */
 
 type Choice = "local" | "server" | "own" | "bunny";
@@ -152,10 +154,10 @@ export function LibraryStorageSettings({
         <div className="flex flex-col gap-3 px-3 py-3 text-sm sm:px-4">
           {onThisComputer && (keepsHere || !s?.locked) && (
             <div className="flex flex-wrap gap-x-5 gap-y-1">
-              <span className="text-zinc-500">Cloud copy</span>
-              {cloudOption("none", "No copy")}
-              {cloudOption("proxies", "Proxies")}
-              {cloudOption("originals", "Video files")}
+              <span className="text-zinc-500">{UPLOAD_LABEL}</span>
+              {cloudOption("none", "Off")}
+              {cloudOption("proxies", "Proxies only")}
+              {cloudOption("originals", "Video files and proxies")}
             </div>
           )}
           {!fixed && (!onThisComputer || cloud !== "none") && (

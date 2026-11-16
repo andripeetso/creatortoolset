@@ -11,7 +11,7 @@ export const FOLDER_NAMES = DEFAULT_FOLDERS.map((f) => f.name).join(", ");
 
 export const ORGANIZE: { value: Organize; label: string; detail: string }[] = [
   { value: "default", label: "Make the usual folders", detail: `${FOLDER_NAMES}. You sort files into them` },
-  { value: "ai", label: "AI sorts them into folders", detail: "The same folders, and the AI puts each new file in one. Only in the library: your files stay where they are" },
+  { value: "ai", label: "AI sorts them into folders", detail: "The AI makes folders that fit your footage as files come in and files each one. Only in the library: your files stay where they are" },
   { value: "own", label: "No folders", detail: "Everything stays in one list until you make folders" },
 ];
 

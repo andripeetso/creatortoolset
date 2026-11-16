@@ -75,6 +75,7 @@ export function ProjectForm({
   formId,
   variant,
   onReady,
+  children,
 }: {
   initial?: WorkshopProject;
   busy: boolean;
@@ -88,6 +89,8 @@ export function ProjectForm({
   variant?: "setup";
   /** Tells the parent whether the name has text, so it can enable its own Create button. */
   onReady?: (ready: boolean) => void;
+  /** More fields under the form's own (a new workspace's upload choice) */
+  children?: React.ReactNode;
 }) {
   const setup = variant === "setup";
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
@@ -406,6 +409,7 @@ export function ProjectForm({
           />
         </div>
       )}
+      {children}
       {/* Cancel / Save stay in view at the bottom while the form scrolls. -bottom-4 is the Projects window's own bottom
           padding (py-4): stuck at 0 the bar would stop above it, and the text would scroll by underneath */}
       {!formId && <div className="sticky -bottom-4 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">

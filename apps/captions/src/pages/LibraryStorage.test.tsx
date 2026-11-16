@@ -42,14 +42,14 @@ describe("library storage", () => {
   it("a library holding files on this computer: its proxies may still go to the cloud, its originals may not", async () => {
     const el = await render(local);
     const radio = (text: string) => [...el.querySelectorAll("label")].find((l) => l.textContent === text)!.querySelector("input")!;
-    expect(radio("No copy").checked).toBe(true);
-    expect(radio("Proxies").disabled).toBe(false);
-    expect(radio("Video files").disabled).toBe(true);
+    expect(radio("Off").checked).toBe(true);
+    expect(radio("Proxies only").disabled).toBe(false);
+    expect(radio("Video files and proxies").disabled).toBe(true);
   });
 
   it("proxies in a bucket: their choice is the one picked", async () => {
     const el = await render({ ...local, proxies: { kind: "bunny", zone: "tiny-proxies", keysSet: true }, storedBytes: 2e9, days: [] });
-    expect(([...el.querySelectorAll("label")].find((l) => l.textContent === "Proxies")!.querySelector("input") as HTMLInputElement).checked).toBe(true);
+    expect(([...el.querySelectorAll("label")].find((l) => l.textContent === "Proxies only")!.querySelector("input") as HTMLInputElement).checked).toBe(true);
   });
 
   it("an empty library: the choice and Save", async () => {
