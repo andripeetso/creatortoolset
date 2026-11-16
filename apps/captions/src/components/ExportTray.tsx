@@ -52,7 +52,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
             {job.status === "queued" && " · waiting"}
             {job.status === "running" && (job.note ? ` · ${job.note}` : ` · exporting ${Math.round(job.progress * 100)}%`)}
             {job.status === "done" && (
-              <> — ready{job.bytes ? ` · ${fmtBytes(job.bytes)}` : ""}</>
+              <>{job.bytes ? ` · ${fmtBytes(job.bytes)}` : ""}</>
             )}
           </p>
           {job.status === "error" && (
@@ -171,14 +171,14 @@ export function ExportTray() {
         {active.length ? (
           <>
             <Loader2 className="h-3 w-3 animate-spin text-violet-400" />
-            Rendering {Math.round(progress * 100)}%
+            Exporting {Math.round(progress * 100)}%
             {active.length > 1 && ` · ${active.length}`}
           </>
         ) : (
           <>
             <Check className="h-3 w-3 text-emerald-400" />
             {doneCount || visible.length} export
-            {(doneCount || visible.length) > 1 ? "s" : ""} ready
+            {(doneCount || visible.length) > 1 ? "s" : ""}
           </>
         )}
         <ChevronUp className="h-3 w-3 text-zinc-500" />

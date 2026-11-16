@@ -30,7 +30,7 @@ function CloudLocked() {
         Transcription is locked for this account
       </h1>
       <p className="mt-2 max-w-xs text-center text-sm leading-6 text-zinc-400">
-        On a phone Caption Studio needs it, and an admin can unlock it.
+        An admin can unlock it.
       </p>
       <Link
         to="/m"

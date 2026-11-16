@@ -389,7 +389,7 @@ function localExportError(
     .join(", ");
   const codecName = codec === "h265" ? "H.265" : "H.264";
   return new Error(
-    `${codecName} cannot be encoded by this browser/device${reason ? ` (${reason})` : ""}. Choose Cloud background render instead.`,
+    `This browser cannot encode ${codecName}${reason ? ` (${reason})` : ""}; export on the server`,
   );
 }
 
