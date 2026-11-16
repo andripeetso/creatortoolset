@@ -64,6 +64,12 @@ export const libraryTools: ToolModule = {
       inputSchema: { type: "object", properties: { clips: { type: "array", items: str }, folder: str, name: str }, required: ["clips"] },
     },
     {
+      name: "media_smart_folder",
+      description:
+        'Make a Media Library folder sort itself: rule = what goes in it and how to tell, in the user\'s own words ("phone gameplay: touch buttons in the corners, the picture wider than 16:9"). The app then files every clip that fits, now and as new ones come in; clips the user puts in or takes out by hand stay as they left them. folder = a plain folder\'s id (media_folders, kind manual), or name = a new folder to make. rule "" stops it: the clips it filed leave the folder.',
+      inputSchema: { type: "object", properties: { rule: str, folder: str, name: str }, required: ["rule"] },
+    },
+    {
       name: "media_share",
       description:
         "A share link to one clip or one folder (its id) for people without an account: they can watch, and with download: true also download the files. days = how long the link lasts (default 7, max 90). The user is asked first. Make one only when the user asks for a link to share.",
@@ -128,6 +134,30 @@ export const libraryTools: ToolModule = {
         ...(added < clips.length ? { note: `${clips.length - added} of the ${clips.length} were in it already, or are not clips of this library.` } : {}),
       };
     },
+    media_smart_folder: async (a, ctx) => {
+      const rule = typeof a.rule === "string" ? a.rule.trim() : "";
+      const name = typeof a.name === "string" ? a.name.trim() : "";
+      if (!a.folder === !name) throw new ToolError("Give folder (the id of a folder there is: media_folders) or name (a new folder to make), one of the two.");
+      if (/^finals$/i.test(name)) throw new ToolError(NOT_FINALS);
+      if (name && !rule) throw new ToolError("Give rule: what goes in the new folder.");
+      const lib = await home(ctx);
+      const at = `/api/library/${enc(lib)}/collections`;
+      let folder: Collection;
+      if (name) folder = await ctx.json<Collection>(at, "POST", { name, rule });
+      else {
+        const found = (await foldersOf(ctx, lib)).find((c) => c.id === a.folder);
+        if (!found) throw new ToolError("No folder has that id: media_folders lists them.");
+        if (isFinals(found)) throw new ToolError(NOT_FINALS);
+        if (found.kind !== "manual") throw new ToolError(`"${found.name}" fills itself from a search: pick a plain folder (kind manual), or give name to make one.`);
+        folder = await ctx.json<Collection>(`${at}/${enc(found.id)}`, "PATCH", { rule: rule || null });
+      }
+      return {
+        folder: folder.id,
+        name: folder.name,
+        ...(name ? { made: true } : {}),
+        note: rule ? "It is sorting the library now, in the background: the folder fills as it goes." : "It no longer sorts itself; the clips it filed left it.",
+      };
+    },
     media_share: async (a, ctx) => {
       if (!a.clip === !a.folder) throw new ToolError("Give clip (a clip's id) or folder (a folder's id), one of the two.");
       const days = a.days == null ? 7 : Number(a.days);
@@ -164,6 +194,7 @@ export const libraryTools: ToolModule = {
     media_get: "Reading the clip",
     media_update: "Updating the clip",
     media_add_to_folder: "Filing clips in a folder",
+    media_smart_folder: "Setting what goes in a folder",
     media_share: "Making a share link",
   },
 };

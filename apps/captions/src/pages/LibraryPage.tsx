@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { MoreHorizontal, Music, Quote, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
+import { CtMark } from "@/components/CtMark";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { askFolderName, askRename } from "@/components/browse/browse";
 import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Folder";
@@ -67,6 +68,7 @@ import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll 
 import { LibrarySidebar, SidebarSheet, sidebarPicked, SORTS } from "./library/Sidebar";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, type Tab } from "./library/Tabs";
+import { ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
 import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./library/views";
 
 /**
@@ -108,6 +110,8 @@ export default function LibraryPage() {
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
   const askingLook = useRef<ImportLook | null>(null); // those files' places on this Mac and what adding them asks (./library/Import.tsx)
   const [sharing, setSharing] = useState<AssetCard | null>(null); // the clip whose share box is open (right-click Share…)
+  const [ruling, setRuling] = useState<Collection | null>(null); // the folder whose "What goes here…" is open (smart folders)
+  const [reorganizing, setReorganizing] = useState(false);
   const [tags, setTags] = useState<string[]>([]); // the library's tags, most used first (Add tag)
   const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
   const [preview, setPreview] = useState<AssetCard | null>(null);
@@ -609,18 +613,26 @@ export default function LibraryPage() {
     }
   };
 
+  // a plain folder can be told what goes in it (a smart folder, api/library/smart.ts); Finals has its own tool
+  const sortsItself = (c: Collection) => holdsClips(c) && !isFinals(c);
   const folderProps = (c: Collection): FolderProps => ({
     name: c.name,
     to: folderTo(c.id),
-    icon: rollOfFolder(c) ? undefined : c.kind === "smart" ? Search : c.sounds?.length ? Music : undefined,
-    meta: holdsClips(c) ? (c.count ?? 0) + collections.filter((x) => x.parentId === c.id).length : rollOfFolder(c) ? c.count : undefined,
+    icon: c.rule ? CtMark : rollOfFolder(c) ? undefined : c.kind === "smart" ? Search : c.sounds?.length ? Music : undefined,
+    meta: c.sorting ? "Sorting" : holdsClips(c) ? (c.count ?? 0) + collections.filter((x) => x.parentId === c.id).length : rollOfFolder(c) ? c.count : undefined,
     drop:
       !readOnly && (holdsClips(c) || rollOfFolder(c))
         ? { type: DRAG, onItems: (ids) => void move(ids, c.id), label: rollOfFolder(c) ? `File as ${c.name}` : "Move into this folder" }
         : undefined,
     onRename: readOnly ? undefined : () => void renameFolder(c),
     onDelete: readOnly ? undefined : () => removeFolder(c),
-    menu: !readOnly && holdsClips(c) ? <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem> : undefined,
+    menu:
+      !readOnly && holdsClips(c) ? (
+        <>
+          <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>
+          {sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>What goes here…</ContextMenuItem>}
+        </>
+      ) : undefined,
   });
   /** a tab's right-click menu: the folder's own (Open, Rename…, New folder inside, Delete folder) */
   const folderMenu = (c: Collection) => (
@@ -630,6 +642,7 @@ export default function LibraryPage() {
         <>
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
           {holdsClips(c) && <ContextMenuItem onSelect={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
+          {sortsItself(c) && <ContextMenuItem onSelect={() => setRuling(c)}>What goes here…</ContextMenuItem>}
           <ContextMenuSeparator />
           <ContextMenuItem className="text-red-400" onSelect={() => removeFolder(c)}>
             <Trash2 /> Delete folder
@@ -965,6 +978,12 @@ export default function LibraryPage() {
                   </>
                 }
               >
+                {changing && !smart && !firstScreen && (
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setReorganizing(true)}>
+                    <CtMark className="h-4 w-4" />
+                    Reorganize
+                  </Button>
+                )}
                 {changing && !smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
                 {mayAdd && (
                   <Button size="sm" className="h-8" onClick={chooseFiles}>
@@ -1114,6 +1133,8 @@ export default function LibraryPage() {
       {sharing && libId && (
         <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
       )}
+      {libId && <SmartFolderDialog libraryId={libId} folder={ruling} onClose={() => setRuling(null)} onSaved={reloadFolders} />}
+      {libId && <ReorganizeDialog libraryId={libId} open={reorganizing} folders={collections} onClose={() => setReorganizing(false)} onDone={reloadFolders} />}
       {drop.dropping && mayAdd && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center border-4 border-dashed border-violet-500/70 bg-violet-950/30">
           <p className="rounded-xl bg-zinc-950/90 px-5 py-3 text-base font-medium text-zinc-100">Drop to add to {into && openFolder ? openFolder.name : "the library"}</p>

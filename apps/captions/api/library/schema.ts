@@ -437,6 +437,18 @@ export const MIGRATIONS: string[] = [
   DROP TABLE derivatives;
   ALTER TABLE derivatives_new RENAME TO derivatives;
   `,
-  // a folder's place in the order the owner dragged the tabs into; none yet: after the placed ones, oldest first
+  // 23: a folder's place in the order the owner dragged the tabs into; none yet: after the placed ones, oldest first
   `ALTER TABLE collections ADD COLUMN position INTEGER;`,
+  // 24: smart folders (smart.ts). A plain folder with a rule (the person's own words on what goes in it) is filled by the
+  // AI: its clips are real items, by_ai = 1 for the ones it filed. folder_out keeps the clips the person took out of one,
+  // so they are never filed there again
+  `
+  ALTER TABLE collections ADD COLUMN rule TEXT;
+  ALTER TABLE collection_items ADD COLUMN by_ai INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE folder_out (
+    collection_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    PRIMARY KEY (collection_id, asset_id)
+  );
+  `,
 ];
