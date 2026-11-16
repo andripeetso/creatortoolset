@@ -38,11 +38,11 @@ beforeAll(() => {
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES
       ('ast_a1', 'lib_a', 'video', 'Take 1', 'maker', 0), ('ast_a2', 'lib_a', 'video', 'Take 2', 'maker', 0),
       ('ast_a3', 'lib_a', 'video', 'B-roll', 'maker', 0), ('ast_b1', 'lib_b', 'video', 'Not yours', 'other', 0);
-    INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, mac_path, mac_device) VALUES
-      ('ver_a1', 'ast_a1', 1, 'k1', 100, 'mac:q1', 'ready', 'maker', 0, '/Users/maker/Footage/take1.mov', 'dev_mine'),
-      ('ver_a2', 'ast_a2', 1, 'k2', 200, 'x2', 'ready', 'maker', 0, NULL, NULL),
-      ('ver_a3', 'ast_a3', 1, 'k3', 300, 'x3', 'ready', 'maker', 0, NULL, NULL),
-      ('ver_b1', 'ast_b1', 1, 'kb', 400, 'xb', 'ready', 'other', 0, NULL, NULL);
+    INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, mac_path, mac_device, quick) VALUES
+      ('ver_a1', 'ast_a1', 1, 'k1', 100, 'mac:q1', 'ready', 'maker', 0, '/Users/maker/Footage/take1.mov', 'dev_mine', 'q1'),
+      ('ver_a2', 'ast_a2', 1, 'k2', 200, 'x2', 'ready', 'maker', 0, NULL, NULL, NULL),
+      ('ver_a3', 'ast_a3', 1, 'k3', 300, 'x3', 'ready', 'maker', 0, NULL, NULL, NULL),
+      ('ver_b1', 'ast_b1', 1, 'kb', 400, 'xb', 'ready', 'other', 0, NULL, NULL, NULL);
     INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_a2', 'proxy', 'p2', 20), ('ver_a3', 'proxy', 'p3', 30);
     INSERT INTO transcripts (version_id, provider, text, segments, created_at) VALUES ('ver_a1', 't', 'hi', '[]', 0), ('ver_b1', 't', 'theirs', '[]', 0);
   `);

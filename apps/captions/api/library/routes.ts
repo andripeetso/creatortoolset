@@ -23,6 +23,7 @@ import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
+import { locateApp } from "./locate";
 import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -43,6 +44,7 @@ import { indexOnMac, parseOnMac } from "./on-mac";
 export const libraryApp = new Hono<{ Variables: AuthVars }>();
 libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
+libraryApp.route("/", locateApp); // GET, POST /:id/locate
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
