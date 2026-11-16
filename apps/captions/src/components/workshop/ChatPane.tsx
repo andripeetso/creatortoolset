@@ -12,6 +12,7 @@ import { WhatChanged } from "./WhatChanged";
 import { AiPicker } from "@/components/assistant/AiPicker";
 import { ChatPicture } from "@/components/chat/ChatPicture";
 import { useFollowEnd } from "@/components/chat/useFollowEnd";
+import { ScrollToEnd } from "@/components/chat/ScrollToEnd";
 import { QueuedRow } from "@/components/chat/QueuedRow";
 import { ICON_BTN, MicButton, SendButton, VoiceDone, VoiceError, VoiceStatus, boxClass, useChatVoice } from "@/components/chat/MessageBox";
 import { cn } from "@/lib/utils";
@@ -167,7 +168,7 @@ export function ChatPane({
   const liveSteps = live?.steps?.length ?? 0;
 
   // follow the reply only while the reader is at the bottom; a scroll up to re-read stays put
-  const follow = useFollowEnd(() => listRef.current, draftKey, [messages.length, thinking, liveText, liveBlocks, liveSteps]);
+  const { follow, away, toEnd } = useFollowEnd(() => listRef.current, draftKey, [messages.length, thinking, liveText, liveBlocks, liveSteps]);
 
   useEffect(() => {
     if (text) localStorage.setItem(draftKey, text);
@@ -589,6 +590,7 @@ export function ChatPane({
             ),
           )}
         </div>
+        <ScrollToEnd show={away} onClick={toEnd} />
       </div>
       <div
         // where this stands in the window's bottom right corner, the assistant's bubble sits above it (dock-place.ts)
