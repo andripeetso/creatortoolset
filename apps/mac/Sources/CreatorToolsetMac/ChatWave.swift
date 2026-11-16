@@ -36,7 +36,7 @@ final class ChatWaveHost {
     /// The page is from before holding (it says nothing of `hold`): its own entrances still run after the switch.
     private var oldPage = false
     /// The sound of a held wave (WaveSound.swift); a click makes none.
-    let sound = WaveSound()
+    let sound: WaveSound
     /// The picture taken when the pointer came onto the button ("ready"), and who waits for one being taken (nil when
     /// none is).
     private var early: (picture: Picture, at: CFTimeInterval)?
@@ -47,8 +47,10 @@ final class ChatWaveHost {
     /// Counts the presses: a press's picture can come after a later press, and only the last press's makes a wave.
     private var presses = 0
 
-    init(_ view: WKWebView) {
+    /// (a test gives a sound that plays nothing)
+    init(_ view: WKWebView, sound: WaveSound = WaveSound()) {
         self.view = view
+        self.sound = sound
         // compiled now, so the first switch does not wait for it
         DispatchQueue.global(qos: .utility).async { _ = WaveRenderer.shared }
     }

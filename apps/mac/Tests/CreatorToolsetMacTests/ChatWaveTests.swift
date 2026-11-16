@@ -192,7 +192,8 @@ final class ChatWaveTests: XCTestCase {
     @MainActor
     func testAStopBeforeTheWaveIsUpEndsThePress() async throws {
         let page = try await page()
-        let host = ChatWaveHost(page.view)
+        // (its sound plays nothing: the test only asks whether it is on)
+        let host = ChatWaveHost(page.view, sound: WaveSound(plays: false))
         let waves = { page.view.subviews.filter { $0 is ChatWaveView }.count }
         func press(hold: Bool, then: () -> Void = {}) async -> Bool {
             var up = false

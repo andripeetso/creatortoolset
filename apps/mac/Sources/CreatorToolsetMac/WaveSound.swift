@@ -140,11 +140,16 @@ final class WaveSound {
     private var stopping: DispatchWorkItem?
     /// From a held press until its wave is over (what still sounds then dies away).
     private(set) var isOn = false
+    /// False for a test's: it is told everything and plays nothing.
+    private let plays: Bool
+
+    init(plays: Bool = true) { self.plays = plays }
 
     func begin() {
         isOn = true
         stopping?.cancel()
         told.withLock { $0 = Told() }
+        guard plays else { return }
         queue.async { [self] in
             if engine?.isRunning == true { return }
             let e = engine ?? AVAudioEngine()
