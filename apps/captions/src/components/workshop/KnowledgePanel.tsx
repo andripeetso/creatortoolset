@@ -1,33 +1,35 @@
 import { useRef, useState } from "react";
-import { useCachedList } from "@/lib/local-cache";
-import { ChevronDown, ChevronRight, Folder, FolderUp, Loader2, RotateCw, Upload } from "lucide-react";
+import { Plus } from "lucide-react";
 import { CONTEXT_CAPACITY_CHARS } from "@contracts/knowledge";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, EmptyRow, ErrorRow, FormDialog, LoadingRow, RowMenu, Section, Status, moveItems } from "@/components/settings/ui";
+import { ContextFileList, ContextFileViewer } from "./ContextFiles";
+import { useCachedList } from "@/lib/local-cache";
+import { cn } from "@/lib/utils";
 import { droppedFiles } from "../assistant/draft";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { onlyPageMarks, pdfPages, pdfText } from "@/lib/pdf-text";
 import { useWorkspace } from "@/lib/workspace";
 import {
-  SOURCE_KINDS,
   addScan,
   addSource,
   addSourceLink,
   deleteSource,
-  knowledgeSizeLabel,
   listSources,
   patchProject,
   patchSource,
   readSourceAgain,
-  sourceTextUrl,
   type KnowledgeSource,
 } from "@/lib/workshop";
 
 const ACCEPT = ".md,.markdown,.txt,.text,.pdf,.docx,.odt,.epub,text/plain,text/markdown,application/pdf,video/*,audio/*";
 const SCAN_PAGES = 600; // the server's SOURCE_LIMITS.scanPages
-const field = "w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-100 outline-none focus:border-violet-500";
-const small = "flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50";
 
 type SourceBody = { text: string } | { file: string } | { pages: string[] };
 
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const base64 = async (file: File) => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let bin = "";
@@ -43,7 +45,7 @@ async function videoText(file: File, say: (s: string) => void): Promise<string> 
   const { pcm } = await extractAudio(file);
   const words = await transcribeAudio(pcm, "Xenova/whisper-base", null, await detectDevice(), {
     onLoadProgress: (p) => say(`Loading the transcriber: ${Math.round(p * 100)}%`),
-    onTranscribeStart: () => say(`Transcribing ${file.name} (on this computer, nothing uploaded)…`),
+    onTranscribeStart: () => say(`Transcribing ${file.name}…`),
   }).promise;
   // a time mark every ~30 s, so a part can be found again
   let out = "";
@@ -55,7 +57,7 @@ async function videoText(file: File, say: (s: string) => void): Promise<string> 
     }
     out += `${w.text.trim()} `;
   }
-  if (!out.trim()) throw new Error(`Nothing is said in ${file.name}`);
+  if (!out.trim()) throw new Error(`No speech in ${file.name}`);
   return out.trim();
 }
 
@@ -65,13 +67,12 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
   if (n.endsWith(".pdf") || file.type === "application/pdf") {
     const text = await pdfText(file, (i, total) => say(`Reading ${file.name}: page ${i} of ${total}`));
     if (!onlyPageMarks(text)) return { text };
-    say(`${file.name} is a scan: preparing its pages for Claude to read`);
-    return { pages: await pdfPages(file, SCAN_PAGES, (i, total) => say(`${file.name}: page ${i} of ${total}`)) };
+    return { pages: await pdfPages(file, SCAN_PAGES, (i, total) => say(`Reading ${file.name}: page ${i} of ${total}`)) };
   }
   if (/\.(docx|odt|epub)$/.test(n)) return { file: await base64(file) };
   if (file.type.startsWith("video/") || file.type.startsWith("audio/") || /\.(mp4|mov|m4v|webm|mkv|m4a|mp3|wav|aac)$/.test(n)) return { text: await videoText(file, say) };
   if (TEXT_FILE.test(n) || file.type.startsWith("text/")) return { text: await file.text() };
-  throw new Error(`${file.name}: drop PDF, Word, EPUB, a video, Markdown or text (save Pages files as PDF)`);
+  throw new Error(`${file.name}: not a PDF, Word, EPUB, video, Markdown or text file`);
 }
 
 const TEXT_FILE = /\.(md|markdown|txt|text|csv|tsv|json|yaml|yml|html?|srt|vtt)$/;
@@ -79,17 +80,21 @@ const TEXT_FILE = /\.(md|markdown|txt|text|csv|tsv|json|yaml|yml|html?|srt|vtt)$
 const readable = (f: File) => /\.(pdf|docx|odt|epub|mp4|mov|m4v|webm|mkv|m4a|mp3|wav|aac)$/i.test(f.name) || TEXT_FILE.test(f.name.toLowerCase()) || /^(text|video|audio)\//.test(f.type) || f.type === "application/pdf";
 /** Its path in a dropped or picked folder ("kit/voice.md"), else its name. */
 const pathOf = (f: File) => f.webkitRelativePath || f.name;
-const folderOf = (s: KnowledgeSource) => (s.name.includes("/") ? s.name.split("/")[0]! : "");
-const timeOf = (t: number) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const count = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
+/** "4 files · 2 read · 1 failed": the read count only while some, not all, are read. */
+const tally = (list: KnowledgeSource[]) => {
+  const read = list.filter((s) => s.status === "read").length;
+  const failed = list.filter((s) => s.status === "failed").length;
+  return [count(list.length), read > 0 && read < list.length && `${read} read`, failed > 0 && `${failed} failed`].filter(Boolean).join(" · ");
+};
 
 /**
- * The account's knowledge: drop anything to write from — books, studies, old scripts,
- * references, brand docs. Claude reads each once and files it; the filing shows here to check and change, and
- * which projects read each one is switched here or in a project's form.
- */
-/**
- * The account's knowledge, as the open workspace reads it (the Workshop's Knowledge tab). With `projectId` (a
- * workspace's own settings): only that workspace's own context files, added to it, with no switches.
+ * Context files, drawn from the Settings kit in both places: the Content Workshop's Knowledge tab (the account's files as
+ * the open workspace reads them: its own and the ones for every workspace, each moved or switched off from its row's
+ * menu) and, with `projectId`, a workspace's own in Settings → Details (no workspace choice). Add is one button with a
+ * menu (files, a folder, text, a link) and the whole section takes a drop; a folder opens into its files, one context
+ * file each, under a folder row with its name. The list shows files as files (ContextFiles: name, type, size, date or
+ * where its reading is); a click opens one to read. `readOnly`: the list and opening a file, nothing else.
  */
 export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; readOnly?: boolean } = {}) {
   const projects = useWorkspace((s) => s.projects);
@@ -104,16 +109,14 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
-  const [paste, setPaste] = useState<{ name: string; text: string } | null>(null);
-  const [link, setLink] = useState("");
-  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const [dialog, setDialog] = useState<"text" | "link" | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
+  const folderRef = useRef<HTMLInputElement>(null);
 
   const put = (s: KnowledgeSource) => setSources((list) => (list.some((x) => x.id === s.id) ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]));
   // kept to another workspace: it leaves this one's list, as the server's would
   const moved = (s: KnowledgeSource) => (s.projectId && here && s.projectId !== here && projects.some((p) => p.id === s.projectId) ? setSources((l) => l.filter((x) => x.id !== s.id)) : put(s));
-  const act = (p: Promise<unknown>) => p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const add = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
@@ -132,282 +135,159 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
         setAdding(`Adding ${name}${of}…`);
         put("pages" in body ? await addScan(name, body.pages, (n) => setAdding(`Sending ${name}: page ${n} of ${body.pages.length}`), projectId) : await addSource({ name, ...body, projectId }));
       } catch (e) {
-        failed.push(e instanceof Error ? e.message : String(e));
+        failed.push(message(e));
       }
     }
     setAdding(null);
-    const notes = [...(failed.length > 2 ? [`${failed.length} files weren't added. ${failed[0]}`] : failed), ...(skipped ? [`${skipped} file${skipped === 1 ? "" : "s"} in the folder can't be read (pictures, other formats) and were left out`] : [])];
+    const notes = [...(failed.length > 2 ? [`${count(failed.length)} not added: ${failed[0]}`] : failed), ...(skipped ? [`${count(skipped)} in the folder left out (pictures, other formats)`] : [])];
     if (notes.length) setError(notes.join(" · "));
   };
-  const folderRef = useRef<HTMLInputElement>(null);
 
-  const toggleProject = (projectId: string, sourceId: string) => {
-    const p = projects.find((x) => x.id === projectId);
+  const toggleProject = (sourceId: string) => {
+    const p = projects.find((x) => x.id === here);
     if (!p) return;
     const off = p.off ?? [];
-    void act(patchProject(p.id, { off: off.includes(sourceId) ? off.filter((x) => x !== sourceId) : [...off, sourceId] }));
+    return patchProject(p.id, { off: off.includes(sourceId) ? off.filter((x) => x !== sourceId) : [...off, sourceId] });
   };
 
+  const ws = projects.find((p) => p.id === here);
+  // a file for every workspace, seen from one workspace: it can be switched off there
+  const shared = (s: KnowledgeSource) => !projectId && !s.projectId && !!ws;
+  const isOff = (s: KnowledgeSource) => shared(s) && (ws?.off ?? []).includes(s.id);
+  const menu = (s: KnowledgeSource) => (
+    <RowMenu
+      label="Context file actions"
+      items={[
+        ...(s.status === "reading" ? [] : [{ label: s.status === "new" ? "Read" : "Read again", onSelect: () => readSourceAgain(s.id).then(put) }]),
+        ...(shared(s) ? [{ label: isOff(s) ? "Turn on in this workspace" : "Turn off in this workspace", onSelect: () => toggleProject(s.id) }] : []),
+        ...(projectId ? [] : moveItems(projects, s.projectId, (to) => patchSource(s.id, { projectId: to }).then(moved))),
+        { label: "Delete", destructive: true, confirm: { title: "Delete this context file?" }, onSelect: () => deleteSource(s.id).then(() => setSources((l) => l.filter((x) => x.id !== s.id))) },
+      ]}
+    />
+  );
+  const failed = error || (!sources.length && loadError);
+  const held = listed.filter((x) => !x.projectId || x.projectId === here).reduce((n, x) => n + x.chars, 0);
+
   return (
-    <section>
-      {!readOnly && <div
-        onDragOver={(e) => {
+    <div
+      // the whole section takes a drop; a dropped folder opens into its files (and its folders')
+      {...(!readOnly && {
+        onDragOver: (e: React.DragEvent) => {
           e.preventDefault();
           setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => {
+        },
+        onDragLeave: (e: React.DragEvent) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOver(false),
+        onDrop: (e: React.DragEvent) => {
           e.preventDefault();
           setOver(false);
-          // a dropped folder opens into its files (and its folders')
-          void droppedFiles(e.dataTransfer).then((d) => add(d.files), (err) => setError(err instanceof Error ? err.message : String(err)));
-        }}
-        className={`mb-3 rounded-lg border border-dashed px-4 py-5 text-center ${over ? "border-violet-500 bg-violet-500/5" : "border-zinc-800"}`}
+          void droppedFiles(e.dataTransfer).then((d) => add(d.files), (err) => setError(message(err)));
+        },
+      })}
+      className={cn("rounded-xl outline-2 outline-offset-8 outline-transparent transition-colors", over && "outline-dashed outline-ring")}
+    >
+      <Section
+        id={projectId ? "workspace-files" : undefined}
+        title="Context files"
+        action={
+          !readOnly && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button size="xs" variant="ghost" disabled={!!adding}>
+                  <Plus className="size-3" /> Add
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-40">
+                {(
+                  [
+                    ["Files", () => inputRef.current?.click()],
+                    ["Folder", () => folderRef.current?.click()],
+                    ["Text", () => setDialog("text")],
+                    ["Link", () => setDialog("link")],
+                  ] as const
+                ).map(([label, run]) => (
+                  <DropdownMenuItem key={label} className="text-sm" onSelect={run}>
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        }
       >
-        <p className="text-[13px] text-zinc-200">Drop books, studies, old scripts, videos, references, brand docs, or a whole folder</p>
-        <p className="mt-0.5 text-[11px] text-zinc-500">
-          PDF (scans too), Word, EPUB, videos, Markdown or text, or a link. Claude reads each one once and files it: what it is,
-          what it answers, where its parts are.{" "}
-          {projectId
-            ? "The chat, the Media Library, the AI Editor and the Workshop all read it in this workspace."
-            : "This workspace uses it; set it to every workspace if it is general."}
-        </p>
-        <div className="mt-3 flex justify-center gap-2">
-          <button type="button" onClick={() => inputRef.current?.click()} disabled={!!adding} className={small}>
-            <Upload className="h-3 w-3" /> Choose files
-          </button>
-          <button type="button" onClick={() => folderRef.current?.click()} disabled={!!adding} className={small}>
-            <FolderUp className="h-3 w-3" /> Choose a folder
-          </button>
-          <button type="button" onClick={() => setPaste(paste ? null : { name: "", text: "" })} disabled={!!adding} className={small}>
-            Paste text
-          </button>
-        </div>
-        <form
-          className="mx-auto mt-2 flex max-w-md gap-1.5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!link.trim()) return;
-            setAdding(`Reading ${link.trim()}…`);
-            void act(addSourceLink(link.trim(), projectId).then((s) => (put(s), setLink("")))).finally(() => setAdding(null));
-          }}
-        >
-          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Or a link: an article, a YouTube video" className={field} />
-          <button type="submit" disabled={!link.trim() || !!adding} className={small}>
-            Add
-          </button>
-        </form>
-        <input ref={inputRef} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => void add(e.target.files).then(() => (e.target.value = ""))} />
-        <input ref={folderRef} type="file" multiple {...{ webkitdirectory: "" }} className="hidden" onChange={(e) => void add(e.target.files).then(() => (e.target.value = ""))} />
-        {adding && (
-          <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-zinc-400">
-            <Loader2 className="h-3 w-3 animate-spin" /> {adding}
-          </p>
+        <input ref={inputRef} type="file" multiple accept={ACCEPT} hidden onChange={(e) => void add(e.target.files).then(() => (e.target.value = ""))} />
+        <input ref={folderRef} type="file" multiple {...{ webkitdirectory: "" }} hidden onChange={(e) => void add(e.target.files).then(() => (e.target.value = ""))} />
+        {(adding || failed) && (
+          <Card>
+            {adding && <LoadingRow title={adding} />}
+            {failed && <ErrorRow title={failed} />}
+          </Card>
         )}
-      </div>}
-      {paste && (
-        <form
-          className="mb-3 flex flex-col gap-1.5 rounded-lg border border-zinc-800 p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(addSource({ name: paste.name.trim() || paste.text.trim().split("\n", 1)[0]!.slice(0, 80), text: paste.text, projectId }).then((s) => (put(s), setPaste(null))));
-          }}
-        >
-          <input value={paste.name} onChange={(e) => setPaste({ ...paste, name: e.target.value })} placeholder="Name" className={field} />
-          <textarea value={paste.text} onChange={(e) => setPaste({ ...paste, text: e.target.value })} placeholder="Paste it here" className={`${field} min-h-32`} />
-          <div className="flex justify-end">
-            <button type="submit" disabled={!paste.text.trim()} className={small}>
-              Add
-            </button>
-          </div>
-        </form>
-      )}
-      {(error || (!sources.length && loadError)) && <p className="mb-2 text-xs text-red-400">{error || loadError}</p>}
-      {sources.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-600">No files</p>
+        {sources.length ? (
+          <ContextFileList sources={sources} onOpen={(s) => setOpened(s.id)} menu={readOnly ? undefined : menu} isOff={isOff} />
+        ) : (
+          <Card>
+            <EmptyRow title="No context files" />
+          </Card>
+        )}
+        {sources.length > 0 && <Capacity sources={sources} held={held} />}
+      </Section>
+      {opened && <ContextFileViewer sources={sources} openId={opened} onOpen={setOpened} onClose={() => setOpened(null)} footer={room(sources, held).text} />}
+      {dialog && <AddDialog kind={dialog} projectId={projectId} onAdded={put} onClose={() => setDialog(null)} />}
+    </div>
+  );
+}
+
+/** Add text (pasted or typed, with a name) or a link (an article, a video): the server reads it like a file. */
+function AddDialog({ kind, projectId, onAdded, onClose }: { kind: "text" | "link"; projectId?: string; onAdded: (s: KnowledgeSource) => void; onClose: () => void }) {
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [missing, setMissing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    const v = value.trim();
+    if (!v) return setMissing(true);
+    setBusy(true);
+    setError(null);
+    try {
+      onAdded(kind === "link" ? await addSourceLink(v, projectId) : await addSource({ name: name.trim() || v.split("\n", 1)[0]!.slice(0, 80), text: value, projectId }));
+      onClose();
+    } catch (e) {
+      setError(message(e));
+      setBusy(false);
+    }
+  };
+  const needs = missing && !value.trim();
+  const field = { value, "aria-invalid": needs || undefined, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setValue(e.target.value) };
+  return (
+    <FormDialog open onOpenChange={(o) => !o && onClose()} title={kind === "link" ? "Add link" : "Add text"} submitLabel="Add" onSubmit={submit} busy={busy} error={error}>
+      {kind === "link" ? (
+        <Input {...field} aria-label="Link" placeholder="https://" autoComplete="off" />
       ) : (
         <>
-          <Progress sources={sources} held={listed.filter((x) => !x.projectId || x.projectId === here).reduce((n, x) => n + x.chars, 0)} />
-          <div className="flex flex-col gap-1.5">
-            {groups(sources).map(([folder, rows]) => {
-              const row = (s: KnowledgeSource) => (
-                <SourceRow
-                  key={s.id}
-                  s={s}
-                  folder={folder}
-                  here={projects.find((p) => p.id === here)}
-                  own={!!projectId}
-                  readOnly={readOnly}
-                  onSave={(fields) => act(patchSource(s.id, fields).then(moved))}
-                  onRead={() => void act(readSourceAgain(s.id).then(put))}
-                  onDelete={() => act(deleteSource(s.id).then(() => setSources((l) => l.filter((x) => x.id !== s.id))))}
-                  onProject={(pid) => toggleProject(pid, s.id)}
-                />
-              );
-              if (!folder) return rows.map(row);
-              const shut = closed.has(folder);
-              const read = rows.filter((s) => s.status === "read").length;
-              return (
-                <div key={folder} className="rounded-lg border border-zinc-800">
-                  <button
-                    type="button"
-                    onClick={() => setClosed((c) => (c.has(folder) ? new Set([...c].filter((x) => x !== folder)) : new Set([...c, folder])))}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-100"
-                  >
-                    {shut ? <ChevronRight className="h-3.5 w-3.5 text-zinc-500" /> : <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />}
-                    <Folder className="h-3.5 w-3.5 text-zinc-500" />
-                    <span className="truncate">{folder}</span>
-                    <span className="text-[11px] text-zinc-500">
-                      {rows.length} files{read < rows.length ? ` · ${read} read` : ""}
-                    </span>
-                  </button>
-                  {!shut && <div className="flex flex-col gap-1.5 px-2 pb-2">{rows.map(row)}</div>}
-                </div>
-              );
-            })}
-          </div>
+          <Input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" placeholder="Name" autoComplete="off" />
+          <Textarea {...field} aria-label="Text" placeholder="Text" rows={8} className="max-h-[50vh] text-sm" />
         </>
       )}
-    </section>
-  );
-}
-
-function SourceRow({
-  s,
-  here,
-  onSave,
-  onRead,
-  onDelete,
-  onProject,
-  own,
-  readOnly,
-  folder,
-}: {
-  s: KnowledgeSource;
-  /** shown under its folder: the folder's name is left off its own */
-  folder?: string;
-  /** in a workspace's own settings: no choice of workspaces */
-  own?: boolean;
-  here: ReturnType<typeof useWorkspace.getState>["projects"][number] | undefined;
-  onSave: (fields: Parameters<typeof patchSource>[1]) => Promise<unknown>;
-  onRead: () => void;
-  onDelete: () => Promise<unknown>;
-  onProject: (projectId: string) => void;
-  /** Shows the source as text: no workspace choice, reading or deleting. */
-  readOnly?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-x-2 text-sm text-zinc-100">
-            <a href={sourceTextUrl(s.id)} target="_blank" rel="noreferrer" title="The text it reads" className="truncate hover:underline">
-              {folder ? s.name.slice(folder.length + 1) : s.name}
-            </a>
-            {s.status === "read" && s.kind && <span className="text-[10px] text-zinc-400">{SOURCE_KINDS.find((k) => k.id === s.kind)?.label}</span>}
-            <span className="text-[10px] text-zinc-600">{knowledgeSizeLabel(s.chars)}</span>
-            {s.status === "reading" && (
-              <span className="flex items-center gap-1 text-[10px] text-violet-300">
-                <Loader2 className="h-3 w-3 animate-spin" /> Reading
-              </span>
-            )}
-            {s.status === "queued" && <span className="text-[10px] text-zinc-500">{s.waitUntil ? `Waits for the AI provider's limit · ${timeOf(s.waitUntil)}` : "Queued"}</span>}
-            {s.status === "new" && <span className="text-[10px] text-amber-300">Not read yet</span>}
-            {s.status === "failed" && (
-              <span className="text-[10px] text-red-400" title={s.error}>
-                Couldn't read it
-              </span>
-            )}
-            {s.readCost !== undefined && <span className="text-[10px] text-zinc-600">read for ${s.readCost.toFixed(2)} API-equivalent</span>}
-          </p>
-          {s.about && <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{s.about}</p>}
-          {!own && !readOnly && <div className="mt-1 flex flex-wrap items-center gap-1">
-            <select
-              value={s.projectId ?? ""}
-              onChange={(e) => void onSave({ projectId: e.target.value || null })}
-              className="rounded bg-transparent py-px text-[10px] text-zinc-500 outline-none hover:text-zinc-300"
-              aria-label="Which workspaces use it"
-            >
-              {/* only this workspace's own sources and the ones for every workspace are listed (the server's GET /sources) */}
-              {s.projectId ? <option value={s.projectId}>This workspace</option> : here && <option value={here.id}>This workspace</option>}
-              <option value="">Every workspace</option>
-            </select>
-            {!s.projectId && here && (() => {
-              const on = !(here.off ?? []).includes(s.id);
-              return (
-                <button
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => onProject(here.id)}
-                  title={on ? "This workspace uses it: click to switch off" : "This workspace doesn't use it: click to switch on"}
-                  className={`rounded-full border px-1.5 py-px text-[10px] ${on ? "border-violet-500/50 bg-violet-500/10 text-zinc-200" : "border-zinc-800 text-zinc-600 line-through"}`}
-                >
-                  {on ? "Used here" : "Off here"}
-                </button>
-              );
-            })()}
-          </div>}
-        </div>
-        {!readOnly && <div className="flex shrink-0 items-center gap-1">
-          <button type="button" onClick={onRead} disabled={s.status === "reading"} className={small} title="Claude reads it again and files it fresh">
-            <RotateCw className="h-3 w-3" /> {s.status === "new" ? "Read" : "Read again"}
-          </button>
-          <ConfirmButton
-            label="Delete"
-            confirmLabel="Click again"
-            onConfirm={() => void onDelete()}
-            className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
-            armedClassName="!bg-red-500/10 !text-red-200"
-          />
-        </div>}
-      </div>
-    </div>
-  );
-}
-
-/** Folders first (in the order they came), each with its files; loose files after, under "". */
-function groups(sources: KnowledgeSource[]): Array<[string, KnowledgeSource[]]> {
-  const by = new Map<string, KnowledgeSource[]>();
-  for (const s of sources) by.set(folderOf(s), [...(by.get(folderOf(s)) ?? []), s]);
-  const loose = by.get("");
-  by.delete("");
-  return [...by, ...(loose ? [["", loose] as [string, KnowledgeSource[]]] : [])];
-}
-
-/** How far the reading is, and how much of the workspace's room its context files take. */
-function Progress({ sources, held }: { sources: KnowledgeSource[]; held: number }) {
-  const read = sources.filter((s) => s.status === "read").length;
-  const failed = sources.filter((s) => s.status === "failed").length;
-  // what is still on its way (a file from before, "not read yet", waits for its Read button)
-  const left = sources.filter((s) => s.status === "queued" || s.status === "reading").length;
-  const batch = read + failed + left;
-  const wait = sources.find((s) => s.status === "queued" && s.waitUntil)?.waitUntil;
-  const pct = Math.min(100, (held / CONTEXT_CAPACITY_CHARS) * 100);
-  const files = `${sources.length} file${sources.length === 1 ? "" : "s"}`;
-  return (
-    <div className="mb-2 flex flex-col gap-1.5">
-      {left > 0 && (
-        <div>
-          <div className="flex items-center justify-between text-[11px] text-zinc-400">
-            <span className="flex items-center gap-1.5">
-              {!wait && <Loader2 className="h-3 w-3 animate-spin" />}
-              Read {batch - left} of {batch}
-            </span>
-            <span className="text-zinc-500">{wait ? `Waits for the AI provider's limit, continues at ${timeOf(wait)}` : "A note goes to the inbox when all are read"}</span>
-          </div>
-          <div className="mt-1 h-1 overflow-hidden rounded-full bg-zinc-800">
-            <div className="h-full bg-violet-500 transition-[width]" style={{ width: `${((batch - left) / batch) * 100}%` }} />
-          </div>
-        </div>
-      )}
-      <div>
-        <div className="h-1 overflow-hidden rounded-full bg-zinc-800">
-          <div className={`h-full ${pct >= 90 ? "bg-amber-400" : "bg-zinc-500"}`} style={{ width: `${Math.max(pct, 0.5)}%` }} />
-        </div>
-        <p className="mt-1 text-[11px] text-zinc-500" title="About 1M tokens (4 characters a token): what one AI can read in one go. Each file is read once; a chat or edit carries one line per file and reads the parts it needs.">
-          {files} · {pct < 1 ? "under 1" : Math.round(pct)}% of the workspace's context used{failed ? ` · ${failed} couldn't be read` : ""}
+      {needs && (
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+          {kind === "link" ? "Needs a link" : "Needs text"}
         </p>
-      </div>
-    </div>
+      )}
+    </FormDialog>
+  );
+}
+
+/** One quiet line: how many files, how many of them are read (while not all are), and how much of the workspace's room they take (amber from 90%). */
+const room = (sources: KnowledgeSource[], held: number) => {
+  const pct = Math.min(100, (held / CONTEXT_CAPACITY_CHARS) * 100);
+  return { pct, text: `${tally(sources)} · ${pct < 1 ? "under 1" : Math.round(pct)}% of the workspace's context used` };
+};
+function Capacity({ sources, held }: { sources: KnowledgeSource[]; held: number }) {
+  const { pct, text } = room(sources, held);
+  return (
+    <p className="px-0.5">
+      <Status tone={pct >= 90 ? "attention" : undefined}>{text}</Status>
+    </p>
   );
 }
