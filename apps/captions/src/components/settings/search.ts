@@ -83,6 +83,7 @@ const STATIC_ROWS = [
   { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
   { section: "devices", id: "add-phone", title: "Add phone", keywords: ["phone", "iphone", "qr", "pair", "camera", "scan", "code", "wifi", "same wi-fi"] },
   { section: "devices", id: "use-this-mac", title: "AI on this Mac", keywords: ["mac app", "this mac", "switch", "use this mac", "ai jobs"], needs: "mac" },
+  { section: "devices", id: "shared-drives", title: "Shared drives", keywords: ["nas", "network drive", "share", "smb", "connect", "reconnect", "office"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Memory: the rules the assistant keeps from one chat to the next

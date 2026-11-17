@@ -8,6 +8,7 @@ import Foundation
 //   size is one of the gone files' sizes, each with Imports.quickPrint. Only those are read, 2 MiB each; the folder
 //   joins the ones the page may play from once one of its files could be a match.
 // The server matches them to the person's own versions; nothing here decides which clip a file is.
+// A file on a network disk that doesn't answer is neither gone nor found (Places.swift): it is away.
 
 struct LocateFile: Equatable {
     let id: String
@@ -18,8 +19,9 @@ struct LocateFile: Equatable {
 enum Locate {
     static func answer(folder: String?, files: [LocateFile], allowed: [String], grant: (String) -> Void = MediaFiles.add) -> [String: Any] {
         let size = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value }
-        let gone = files.filter { size($0.path) != $0.bytes }
+        let gone = files.filter { f in Places.shared.guarded(f.path, { size(f.path) }).map { $0 != f.bytes } ?? false }
         guard let folder else { return ["gone": gone.map(\.id), "files": [Any]()] }
+        guard Places.shared.reachable(folder) else { return ["error": "That folder's disk isn't connected."] }
         guard Imports.inside(folder, allowed) != nil else { return ["error": "This app may not read that folder. Choose it again."] }
         let sizes = Set(gone.map(\.bytes))
         var found: [[String: Any]] = []

@@ -174,7 +174,20 @@ final class Shell: NSObject, ObservableObject {
                 Task {
                     let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
                                else { await self.client().clipPath(library: clip!.library, asset: clip!.asset) }
-                    done(Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                    done(await Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                }
+                return
+            }
+            // here or away (Places.swift): the paths to try come from the window's server, never from the page
+            if isPlacesAsk(ask) {
+                switch placesAsk(ask) {
+                case .check(let library, let versions)?:
+                    let device = DeviceVault.deviceID(for: self.base.host ?? "")
+                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device)) }
+                case .connect(let root)?:
+                    Task { done(await Places.shared.connect(root: root)) }
+                case nil:
+                    done(["problem": "Not an ask this app knows."])
                 }
                 return
             }
@@ -244,6 +257,15 @@ final class Shell: NSObject, ObservableObject {
             if let back { webView.load(URLRequest(url: back)) } else { open("/") }
             if aiOn { startAI() }
         }
+        // here or away (Places.swift): a disk came, went, went away or came back; this Mac's report goes now (the
+        // server's view of its disks), and the page checks its originals again
+        Places.shared.onChange = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.runner?.reportNow()
+                self?.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-places', {detail: {at: Date.now()}}))")
+            }
+        }
+        Places.shared.start()
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.runner?.reportNow() }
