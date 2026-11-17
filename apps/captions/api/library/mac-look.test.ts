@@ -124,6 +124,19 @@ describe("a look of a file kept on a Mac", () => {
       { seg: 0, a: 0, b: 5 },
       { seg: 1, a: 5, b: 12 },
     ]);
+    const cutsBy = () => (libraryDb().prepare("SELECT cuts_by FROM asset_versions WHERE id = ?").get(v) as { cuts_by: string | null }).cuts_by;
+    expect(cutsBy()).toBeNull();
+    // a Mac that ran the cut model sends each frame's odds: the cuts are found from them (it marks 6.9 s: a cut at 7 s,
+    // none where the picture jumps at 5 s), and the version keeps that the model found them
+    expect((await post(road(got.id), { signal: { ...signal, one: Array(120).fill(2), many: Array(120).fill(0) } })).status).toBe(400);
+    const odds = { one: Array.from({ length: 120 }, (_, i) => (i === 69 ? 0.95 : 0.01)), many: Array(120).fill(0.01) };
+    expect(((await (await post(road(got.id), { signal: { ...signal, ...odds } })).json()) as typeof found).stretches).toEqual([
+      { seg: 0, a: 0, b: 7 },
+      { seg: 1, a: 7, b: 12 },
+    ]);
+    expect(cutsBy()).toBe("transnetv2");
+    await post(road(got.id), { signal });
+    expect(cutsBy()).toBeNull();
     expect((await post(road(got.id), { sheet: { segs: [0, 1], jpeg: "bm90IGEganBlZw==" } })).status).toBe(400);
     // not every stretch is on a sheet yet
     expect((await post(road(got.id), { sheet: sheet([0]) })).status).toBe(200);

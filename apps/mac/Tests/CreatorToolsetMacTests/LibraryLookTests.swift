@@ -100,7 +100,7 @@ final class LibraryLookTests: XCTestCase {
         }
         let api = DeviceAPI(base: site.url, token: "ctd_test")
         var options = ["path": Self.clip.path, "version": "ver-1", "duration": "6", "format": "3x16", "stretches": "[]"]
-        let first = LibraryLookJob(api: api, step: EditorJob(id: 4, kind: libraryLookKind, options: options), folder: dir, ffmpeg: ffmpeg, granted: [Self.fixtures.path])
+        let first = LibraryLookJob(api: api, step: EditorJob(id: 4, kind: libraryLookKind, options: options), folder: dir, ffmpeg: ffmpeg, granted: [Self.fixtures.path], cuts: { nil })
         let end = await offMain { first.run().end }
         XCTAssertEqual(end, .done)
         let bodies = site.requests.map { (try? JSONSerialization.jsonObject(with: $0.body)) as? [String: Any] ?? [:] }

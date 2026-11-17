@@ -567,6 +567,10 @@ export interface PictureSignal {
   step: number[];
   cut: number[];
   lag: number[];
+  /** each frame's odds (0 to 1) of a cut and of being in a transition, where the reading computer ran the cut model
+   * (api/library/cuts.ts; the Mac app's CutModel.swift): the cuts are then found from them, else measured (cutsOf) */
+  one?: number[];
+  many?: number[];
 }
 
 /**
