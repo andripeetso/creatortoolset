@@ -387,8 +387,9 @@ extension AppWebView {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: MediaFiles.nearestExisting(ask.hasPrefix("/") ? ask : "/"), isDirectory: true)
-        panel.title = "Play original files from this folder?"
-        panel.message = "Play original files from this folder? The edit's original files are here. Creator Toolset only reads video and sound files from the folder you choose."
+        // one panel for every ask (Show in Finder, a clip or an edit playing its original), so it says what Allow does
+        panel.title = "Original files"
+        panel.message = "Choose the folder with your original videos. Asked once for each folder: after Allow, the videos in it play here and Show in Finder opens them. Creator Toolset only reads video and sound files in the folder you choose."
         panel.prompt = "Allow"
         panel.beginSheetModal(for: window) { [weak self] answer in
             self?.mediaPanelOpen = false
