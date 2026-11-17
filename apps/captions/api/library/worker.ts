@@ -463,7 +463,8 @@ async function run(job: JobRow): Promise<void> {
         await lookFromSheets(db, v.id, job.actor, sheets);
         // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
         const copy = takeWatchCopy(v.id);
-        if (copy) await watchAfter(db, v.id, async () => copy, job.actor).finally(() => rm(copy, { force: true }));
+        // the watch runs beside the look lane (timeline.ts watchAfter): the copy goes when it ends
+        if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
         // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
         else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
         return;
@@ -566,8 +567,9 @@ async function run(job: JobRow): Promise<void> {
     await budgetCheck(db, v.id);
     // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
     await lookVersion(db, v.id, lighter, p, job.actor, dir);
-    // with a Gemini key: the timeline, from the same file (timeline.ts); without one nothing more happens
-    await watchAfter(db, v.id, lighter, job.actor);
+    // with a Gemini key: the timeline, from the same file (timeline.ts), beside the look lane so a busy Gemini holds no
+    // look up (it asks for the file at once); without a key nothing more happens
+    void watchAfter(db, v.id, lighter, job.actor);
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }

@@ -22,9 +22,13 @@ const { blobs, libraryDb } = await import("./db");
 const { tick } = await import("./worker");
 const { searchLibrary, assetDetail } = await import("./search");
 const { queueLook, WATCH_LABEL } = await import("./shots");
-const { holesOf, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS, WATCH_MODEL } = await import("./timeline");
+const { freeTierStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
 const { clock } = await import("./look");
 watchTiming.backoffMs = 0;
+// the long call goes through the stubbed fetch, so each test sees and answers it
+watchTiming.post = (url, headers, body) => fetch(url, { method: "POST", headers, body });
+/** Waits for the watches running beside the look lane. */
+const watched = () => Promise.all([...watching.values()]);
 const { embedChunks } = await import("./embed");
 const { saveMyKey } = await import("../my-keys");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -35,18 +39,22 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// a picture with a sound track (a tone), and the same picture with none
 const cuts = path.join(dir, "cuts.mp4");
+const silent = path.join(dir, "silent.mp4");
 beforeAll(() => {
-  execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=12:size=160x90:rate=10", "-c:v", "libx264", "-pix_fmt", "yuv420p", cuts]);
+  const ff = (...a: string[]) => execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", ...a]);
+  ff("-f", "lavfi", "-i", "testsrc=duration=12:size=160x90:rate=10", "-f", "lavfi", "-i", "sine=frequency=440:duration=12", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cuts);
+  ff("-i", cuts, "-an", "-c:v", "copy", silent);
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_t', 'local', 'T', 'local', 0)").run();
 });
 
-async function seed(id: string, duration = 12) {
+async function seed(id: string, duration = 12, from = cuts) {
   const d = libraryDb();
   const v = `ver-${id}`;
   const key = `libraries/lib_t/v/${v}/source`;
   const file = path.join(dir, `src-${id}.mp4`);
-  copyFileSync(cuts, file);
+  copyFileSync(from, file);
   await blobs.put(key, file);
   d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, 'lib_t', 'video', ?, ?, 'local', 1, 'b')").run(id, `Tiny Acrobatics ${id}`, v);
   d.prepare(
@@ -87,6 +95,7 @@ function gemini(events: (a: number, b: number) => unknown[] = wholePart, fail?: 
 }
 
 beforeEach(() => {
+  parked.clear();
   saveMyKey("local", "GEMINI_API_KEY", null);
   vi.mocked(completeVisionWithFallback).mockImplementation(async (_s, user, _i, _sig, parse) => {
     const shots = [...user.matchAll(/(\d+) \(\d+:\d\d–\d+:\d\d\)/g)].map((m) => ({ n: Number(m[1]), text: "bars", action: 1, clear: true, tags: [] }));
@@ -113,10 +122,20 @@ describe("a timeline's answer", () => {
     expect(parseTimeline(JSON.stringify({ events: [{ start: "20:05", end: "20:09", what: "late" }] }), 1200, 2400)[0]).toMatchObject({ a: 1205 });
   });
 
-  it("an hour costs cents, more at Detailed", () => {
-    expect(watchUsdPerHour("standard")).toBeCloseTo(0.16, 2);
-    expect(watchUsdPerHour("detailed")).toBeGreaterThan(watchUsdPerHour("standard"));
-    expect(watchUsdPerHour("light")).toBeLessThan(watchUsdPerHour("standard"));
+  it("an hour costs cents, more at Detailed, less on Flash-Lite", () => {
+    expect(watchUsdPerHour("standard", "gemini-3.5-flash-lite")).toBeCloseTo(0.16, 2);
+    for (const m of ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const) {
+      expect(watchUsdPerHour("detailed", m)).toBeGreaterThan(watchUsdPerHour("standard", m));
+      expect(watchUsdPerHour("light", m)).toBeLessThan(watchUsdPerHour("standard", m));
+    }
+    expect(watchUsdPerHour("standard")).toBe(watchUsdPerHour("standard", "gemini-3.8-flash"));
+    expect(watchUsdPerHour("standard", "gemini-3.5-flash-lite")).toBeLessThan(watchUsdPerHour("standard"));
+  });
+
+  it("drops the sound notes of a file with no sound track", () => {
+    const text = JSON.stringify({ events: [{ start: "0:01", end: "0:04", what: "a jump", sound: "giggling", change: "a cut" }] });
+    expect(parseTimeline(text, 0, 12, false)).toEqual([{ a: 1, b: 4, what: "a jump", change: "a cut" }]);
+    expect(parseTimeline(text, 0, 12)[0]).toMatchObject({ sound: "giggling" });
   });
 
   it("its moments are search-by-meaning chunks with their time", () => {
@@ -133,7 +152,7 @@ describe("watching a video", () => {
     const r = await watchVersion(libraryDb(), v, file, "local");
     const asks = calls.filter((c) => c.url.includes(":generateContent"));
     expect(asks).toHaveLength(3);
-    expect(asks[0]!.url).toContain(WATCH_MODEL);
+    expect(asks[0]!.url).toContain("/models/gemini-3.8-flash:generateContent");
     const body = JSON.parse(String(asks[1]!.init.body)) as { contents: { parts: { videoMetadata: unknown }[] }[]; generationConfig: { mediaResolution: string } };
     expect(body.contents[0]!.parts[0]!.videoMetadata).toEqual({ startOffset: `${PART_S}s`, endOffset: `${2 * PART_S}s`, fps: WATCH_LEVELS.standard.fps });
     expect(body.generationConfig.mediaResolution).toBe("MEDIA_RESOLUTION_LOW");
@@ -143,7 +162,7 @@ describe("watching a video", () => {
     expect(r.events).toBe(3);
     // the second part's times came from its own start: moved there
     expect(timelineOf(libraryDb(), v).map((e) => e.a)).toEqual([0, PART_S, 2 * PART_S]);
-    expect(r.usd).toBeCloseTo(3 * ((100_000 * 0.3 + 1000 * 2.5) / 1e6), 6);
+    expect(r.usd).toBeCloseTo(3 * ((100_000 * 0.75 + 1000 * 3.75) / 1e6), 6);
     await new Promise((go) => setTimeout(go, 50));
     const hour = Object.values(await macUsageSince(Date.now() - 3600_000));
     expect(hour.some((h) => (h[WATCH_LABEL]?.calls ?? 0) >= 3)).toBe(true);
@@ -151,6 +170,55 @@ describe("watching a video", () => {
     const hits = searchLibrary("lib_t", "boss dies");
     expect(hits.some((h) => h.asset.id === "long" && h.seconds === PART_S)).toBe(true);
     expect(assetDetail("lib_t", "long")?.timeline?.[0]).toMatchObject({ what: "the boss dies", sound: "a roar" });
+  });
+});
+
+describe("sound", () => {
+  type Ask = { systemInstruction: { parts: { text: string }[] }; contents: { parts: { text?: string }[] }[]; generationConfig: { responseJsonSchema: { properties: { events: { items: { properties: Record<string, unknown> } } } } } };
+  const asked = (calls: ReturnType<typeof gemini>) => calls.filter((c) => c.url.includes(":generateContent")).map((c) => JSON.parse(String(c.init.body)) as Ask);
+
+  it("a file with no sound track: the model is told so, asked for no sound notes, and one sent anyway is dropped", async () => {
+    const { v, file } = await seed("silent", 12, silent);
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini();
+    const r = await watchVersion(libraryDb(), v, file, "local");
+    expect(r.sound).toBe(false);
+    const [ask] = asked(calls);
+    expect(ask!.systemInstruction.parts[0]!.text).toContain("no sound track");
+    expect(ask!.systemInstruction.parts[0]!.text).not.toContain("what the sound adds");
+    expect(ask!.contents[0]!.parts[1]!.text).toContain("with no sound");
+    expect(ask!.contents[0]!.parts[1]!.text).not.toContain('"sound"');
+    expect(ask!.generationConfig.responseJsonSchema.properties.events.items.properties).not.toHaveProperty("sound");
+    // the mocked answer says "a roar": dropped
+    expect(timelineOf(libraryDb(), v)).toEqual([{ a: 0, b: 12, what: "the boss dies", change: "a cut to wide" }]);
+  });
+
+  it("a file with sound: asked for what the sound adds, and it is kept", async () => {
+    const { v, file } = await seed("tone");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini();
+    expect((await watchVersion(libraryDb(), v, file, "local")).sound).toBe(true);
+    const [ask] = asked(calls);
+    expect(ask!.systemInstruction.parts[0]!.text).toContain("with its sound");
+    expect(ask!.generationConfig.responseJsonSchema.properties.events.items.properties).toHaveProperty("sound");
+    expect(timelineOf(libraryDb(), v)[0]).toMatchObject({ sound: "a roar" });
+  });
+});
+
+describe("the model", () => {
+  it("a library set to Flash-Lite watches with it, at its price, and stores which", async () => {
+    const { v, file } = await seed("lite");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineModel', 'gemini-3.5-flash-lite') WHERE id = 'lib_t'`).run();
+    try {
+      const calls = gemini();
+      const r = await watchVersion(libraryDb(), v, file, "local");
+      expect(calls.find((c) => c.url.includes(":generateContent"))!.url).toContain("/models/gemini-3.5-flash-lite:generateContent");
+      expect(r.usd).toBeCloseTo((100_000 * 0.3 + 1000 * 2.5) / 1e6, 6);
+      expect((libraryDb().prepare("SELECT model FROM timelines WHERE version_id = ?").get(v) as { model: string }).model).toBe("gemini-3.5-flash-lite");
+    } finally {
+      libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+    }
   });
 });
 
@@ -174,6 +242,42 @@ describe("a busy or patchy answer", () => {
   });
 });
 
+describe("a quota", () => {
+  it("a free key's daily quota parks the watch: no next part, no other video, kept to try later, said once for the library", async () => {
+    const { v, file } = await seed("quota", 2 * PART_S);
+    const { v: other, file: otherFile } = await seed("quota-2");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini();
+    let asked = 0;
+    const post = watchTiming.post;
+    const said = "You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20. Please retry in 4h2m59s.";
+    // one part at a time here, so "the next part" is a call that would come after the quota answer
+    watchTiming.post = async () => (asked++, Response.json({ error: { message: said, details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "14579s" }] } }, { status: 429 }));
+    try {
+      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(false);
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      // two parts of ten minutes were asked at once; each was told once, neither asked again
+      expect(asked).toBe(2);
+      const uploads = calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length;
+      await watchAfter(libraryDb(), other, async () => otherFile, "local");
+      expect(asked).toBe(2);
+      expect(calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length).toBe(uploads);
+      // kept with Gemini's words, tried again later, never failed for good
+      expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("Please retry in 4h2m59s");
+      expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
+      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(true);
+      // the wait over, the next watch asks again
+      parked.clear();
+      gemini();
+      watchTiming.post = post;
+      await watchVersion(libraryDb(), other, otherFile, "local");
+      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(false);
+    } finally {
+      watchTiming.post = post;
+    }
+  });
+});
+
 describe("in the look job", () => {
   it("no key: the look runs as before and Gemini is never called", async () => {
     const { v } = await seed("nokey");
@@ -187,6 +291,7 @@ describe("in the look job", () => {
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");
     expect(sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true))).toBe(true);
     while (await tick(Date.now(), ["look"]));
+    await watched();
     expect(timelineOf(libraryDb(), v)).toHaveLength(1);
     expect(calls.some((c) => c.url.includes(":generateContent"))).toBe(true);
   });
@@ -212,10 +317,40 @@ describe("in the look job", () => {
     gemini(undefined, 400);
     queueLook(libraryDb(), v, "local");
     while (await tick(Date.now(), ["look"]));
+    await watched();
     expect((libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'look'").get(v) as { state: string }).state).toBe("done");
     expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("API key not valid");
     expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
     expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
+  });
+
+  it("a watch waiting on a busy Gemini holds no look: the job is done, the next look runs, the sweep waits for it", async () => {
+    const { v } = await seed("slow");
+    const { v: next } = await seed("after-slow");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    gemini();
+    const answers: ((r: Response) => void)[] = [];
+    const post = watchTiming.post;
+    watchTiming.post = (url, headers, body) => (url.includes(":generateContent") ? new Promise<Response>((go) => answers.push(go)) : post(url, headers, body, 0));
+    try {
+      queueLook(libraryDb(), v, "local");
+      while (await tick(Date.now(), ["look"]));
+      expect((libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'look'").get(v) as { state: string }).state).toBe("done");
+      expect(watching.has(v)).toBe(true);
+      // the sweep never queues the one being watched again
+      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+      queueLook(libraryDb(), next, "local");
+      while (await tick(Date.now(), ["look"]));
+      expect((libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'look'").get(next) as { state: string }).state).toBe("done");
+      // both watches wait on Gemini at once; answered, both end
+      expect(watching.has(next)).toBe(true);
+      while (answers.length < 2) await new Promise((go) => setTimeout(go, 10));
+      for (const go of answers) go(Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ events: wholePart(0, 12) }) }] } }], usageMetadata: {} }));
+      while (watching.size) await watched();
+      expect(timelineOf(libraryDb(), v)).toHaveLength(1);
+    } finally {
+      watchTiming.post = post;
+    }
   });
 });
 

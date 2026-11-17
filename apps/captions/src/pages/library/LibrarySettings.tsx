@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Folder } from "lucide-react";
-import { LOOK_LEVELS, NEEDS, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -225,7 +225,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
       () => live && setEst({ clips: 0, minutes: 0, steps: [], seconds: 0 }),
     );
     return () => void (live = false);
-  }, [library.id, describe, look, timeline, embed, lookLevel, lookBudget]);
+  }, [library.id, describe, look, timeline, embed, lookLevel, lookBudget, library.settings.timelineModel]);
 
   const flip = (key: "describe" | "look" | "timeline" | "embed", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
@@ -268,7 +268,11 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
                 timeline &&
                 est &&
                 (est.timelineKey ? (
-                  <Status>Uses the Gemini API key</Status>
+                  est.timelineFreeTier ? (
+                    <Status tone="attention">The Gemini key is on Google's free tier, about 20 calls a day; billing in Google AI Studio lifts the limit</Status>
+                  ) : (
+                    <Status>Uses the Gemini API key</Status>
+                  )
                 ) : (
                   <Status tone="attention">
                     <Link to="/settings/keys" className="underline-offset-4 hover:underline">
@@ -280,6 +284,36 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
               control={<Switch aria-label="Timelines" checked={timeline} onCheckedChange={(on) => void flip("timeline", on)} />}
             />
           )}
+          {look &&
+            timeline &&
+            // the model that watches, each with what an hour of footage costs at the library's level (estimate.ts timelineModels)
+            WATCH_MODELS.map((m) => {
+              const usd = est?.timelineModels?.find((x) => x.model === m.value)?.usd;
+              return (
+                <ListRow
+                  key={m.value}
+                  title={m.label}
+                  subtitle={usd === undefined ? m.note : `${m.note}, ${aboutUsd(usd)} an hour of footage`}
+                  actions={
+                    m.value === watchModelOf(library.settings.timelineModel) ? (
+                      <InUse>In use</InUse>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          void updateLibrary(library.id, { settings: { timelineModel: m.value } })
+                            .then(onChange)
+                            .catch((e: unknown) => onError(message(e)))
+                        }
+                      >
+                        Use
+                      </Button>
+                    )
+                  }
+                />
+              );
+            })}
           {row("embed", "embed", "Search by meaning")}
         </Card>
       </Section>

@@ -16,7 +16,7 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -746,6 +746,7 @@ const settingsOf = (json: string): LibrarySettings => {
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
     lookLevel: lookLevelOf(s.lookLevel),
+    timelineModel: watchModelOf(s.timelineModel),
     lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
   };
 };
@@ -799,6 +800,8 @@ libraryApp.patch("/:id", async (c) => {
   // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
   // (All clips → Shot descriptions), or an edit asks for its files
   if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
+  // a new model watches the videos watched from now on; the timelines made keep theirs
+  if (WATCH_MODELS.some((m) => m.value === s.timelineModel)) put("timelineModel", s.timelineModel);
   if (s.lookBudget === null || (typeof s.lookBudget === "number" && Number.isFinite(s.lookBudget) && s.lookBudget >= 0 && s.lookBudget <= 1_000_000)) {
     put("lookBudget", s.lookBudget === null ? null : Math.round(s.lookBudget * 100) / 100);
     releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
