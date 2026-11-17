@@ -13,7 +13,7 @@ import { env } from "../lib/env";
 import { libraryDb } from "../library/db";
 import { MAX_ATTEMPTS, WAITS_FOR_COMPUTER } from "../library/jobs";
 import type { WorkerOptions } from "./computer";
-import { mayRunHere } from "./place";
+import { mayRunHere } from "./may-run";
 import { serverKind, serverWeight, serverWorks } from "./server-work";
 
 /**
