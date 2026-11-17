@@ -37,7 +37,7 @@ export const TOOL_NAMES: Record<Tool, string> = {
   captions: "Caption Studio",
   review: "Review",
   media: "Media Library",
-  editor: "AI Editor",
+  editor: "Editor",
   stories: "Story Splitter",
   design: "Designer",
   notes: "Video Notes",

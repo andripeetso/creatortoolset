@@ -88,9 +88,16 @@ export function useToolFolders<T extends { id: string }>(tool: FolderTool, items
       set((d) => ({ ...d, folders: d.folders.map((x) => (x.id === f.id ? { ...x, name } : x)) }));
       await patchFolder(tool, f.id, { name }).finally(again);
     },
+    /** No question first: what was in it moves up one level, and ⌘Z makes the folder again with all of it back inside. */
     remove: async (f: ToolFolder) => {
-      const yes = await confirmDialog({ title: `Delete the folder “${f.name}”?`, body: "What is in it moves up one level.", ok: "Delete folder", danger: true });
-      if (yes) await deleteFolder(tool, f.id).finally(again);
+      const items = Object.keys(data.items).filter((id) => data.items[id] === f.id);
+      const kids = data.folders.filter((x) => x.parentId === f.id);
+      set((d) => ({ ...d, folders: d.folders.filter((x) => x.id !== f.id) }));
+      await deleteFolder(tool, f.id).finally(again);
+      undoable("folder deleted", async () => {
+        const back = await makeFolder(tool, f.name, f.parentId);
+        await Promise.all([items.length ? moveItems(tool, items, back.id) : null, ...kids.map((k) => patchFolder(tool, k.id, { parentId: back.id }))]).finally(again);
+      });
     },
     /** Whole folders can be shared by a link in this tool. */
     editable,

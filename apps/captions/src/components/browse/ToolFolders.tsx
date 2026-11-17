@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronRight, FolderInput, Link2, Share2 } from "lucide-react";
 import type { ToolFolder } from "@contracts/folders";
@@ -6,17 +6,20 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { ToolFoldersState } from "@/lib/folders";
-import { FolderCard, FolderRow } from "./Folder";
+import { FolderCard, FolderRow, FolderSidebar } from "./Folder";
+
+/** What a tool may set on its folders: where one opens (its own page for a folder; else the list inside it) and the line beside its name (else its count). */
+type FolderLook = { open?: (id: string) => string; metaOf?: (f: ToolFolder) => ReactNode };
 
 /** The folders on screen as cards: their pictures from inside, their count, items dropped on one go in. `aspect`: the picture box's shape, when the tool's own cards are not 16:9. */
-export function ToolFolderCards({ state, pictureOf, aspect }: { state: ToolFoldersState; pictureOf: (id: string) => string | undefined; aspect?: "video" | "portrait" | "square" }) {
+export function ToolFolderCards({ state, pictureOf, aspect, open, metaOf }: { state: ToolFoldersState; pictureOf: (id: string) => string | undefined; aspect?: "video" | "portrait" | "square" } & FolderLook) {
   return (
     <>
       {state.folders.map((f) => (
         <FolderCard
           key={f.id}
           name={f.name}
-          to={state.to(f.id)}
+          to={open?.(f.id) ?? state.to(f.id)}
           covers={state
             .inside(f.id)
             .map((i) => pictureOf(i.id))
@@ -24,7 +27,7 @@ export function ToolFolderCards({ state, pictureOf, aspect }: { state: ToolFolde
             .slice(0, 4)
             .map((src) => ({ src }))}
           aspect={aspect}
-          meta={<FolderMeta state={state} f={f} />}
+          meta={metaOf?.(f) ?? <FolderMeta state={state} f={f} />}
           drop={state.editable ? { type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" } : undefined}
           onRename={state.editable ? () => void state.rename(f) : undefined}
           onDelete={state.editable ? () => void state.remove(f) : undefined}
@@ -36,15 +39,15 @@ export function ToolFolderCards({ state, pictureOf, aspect }: { state: ToolFolde
 }
 
 /** The folders on screen as rows, the same menu and drops. */
-export function ToolFolderRows({ state }: { state: ToolFoldersState }) {
+export function ToolFolderRows({ state, open, metaOf }: { state: ToolFoldersState } & FolderLook) {
   return (
     <>
       {state.folders.map((f) => (
         <FolderRow
           key={f.id}
           name={f.name}
-          to={state.to(f.id)}
-          meta={<FolderMeta state={state} f={f} />}
+          to={open?.(f.id) ?? state.to(f.id)}
+          meta={metaOf?.(f) ?? <FolderMeta state={state} f={f} />}
           drop={state.editable ? { type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" } : undefined}
           onRename={state.editable ? () => void state.rename(f) : undefined}
           onDelete={state.editable ? () => void state.remove(f) : undefined}
@@ -136,5 +139,31 @@ export function MoveToMenu({ state, id, className }: { state: ToolFoldersState; 
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** Every folder as a sidebar (components/browse/Folder.tsx FolderSidebar): `top` names the top level ("All edits"). */
+export function ToolFolderSidebar({ state, top }: { state: ToolFoldersState; top: string }) {
+  const drop = (id: string | null) =>
+    state.editable ? { type: state.dragType, onItems: (ids: string[]) => void state.move(ids, id), label: id ? "Move into this folder" : "Move out of the folder" } : undefined;
+  return (
+    <FolderSidebar
+      top={{ name: top, to: state.to(null), on: !state.open, drop: drop(null) }}
+      folders={state.options(null).flatMap((f) =>
+        f.id
+          ? [{
+              id: f.id,
+              depth: f.depth,
+              name: f.name,
+              to: state.to(f.id),
+              on: state.open === f.id,
+              meta: state.countOf(f.id),
+              drop: drop(f.id),
+              onRename: state.editable ? () => void state.rename(f as ToolFolder) : undefined,
+              onDelete: state.editable ? () => void state.remove(f as ToolFolder) : undefined,
+            }]
+          : [],
+      )}
+    />
   );
 }

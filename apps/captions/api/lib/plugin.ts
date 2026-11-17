@@ -224,8 +224,8 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     for (const r of p.uploadRelays ?? []) adds.push({ text: `Upload relay: ${r.label}` });
     const tools = (p.tools as { defs?: unknown[] } | undefined)?.defs?.length ?? 0;
     if (tools) adds.push({ text: `${tools} ${tools === 1 ? "tool" : "tools"} for your own AI`, to: "/settings/own-ai" });
-    for (const f of p.editFlags ?? []) adds.push({ text: `AI Editor flag: ${f.label}`, to: "/editor" });
-    for (const st of p.editor?.steps ?? []) adds.push({ text: `AI Editor step: ${st.title}`, to: "/settings/tools/editor" });
+    for (const f of p.editFlags ?? []) adds.push({ text: `Editor flag: ${f.label}`, to: "/editor" });
+    for (const st of p.editor?.steps ?? []) adds.push({ text: `Editor step: ${st.title}`, to: "/settings/tools/editor" });
     for (const i of p.packItems ?? []) adds.push({ text: `Pack items: ${i.kind === "designSystems" ? "design systems" : i.kind}` });
     if (p.library) adds.push({ text: "Media Library source", to: "/library" });
     if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });

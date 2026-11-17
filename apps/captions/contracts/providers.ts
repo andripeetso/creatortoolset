@@ -144,7 +144,7 @@ export const JOBS = [
   { id: "captions", label: "Caption Studio" },
   { id: "analyzer", label: "Content Analyzer" },
   { id: "notes", label: "Video Notes and guides" },
-  { id: "editor", label: "AI Editor" },
+  { id: "editor", label: "Editor" },
 ] as const;
 export type JobId = (typeof JOBS)[number]["id"];
 

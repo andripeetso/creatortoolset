@@ -116,7 +116,7 @@ export default function ScreenProjectPage() {
       }
       navigate(`/editor?new=1&name=${encodeURIComponent(rec.name)}`, { state: { pick } });
     } catch (e) {
-      await alertDialog({ title: "Could not send to the AI Editor", body: e instanceof Error ? e.message : String(e) });
+      await alertDialog({ title: "Could not send to the Editor", body: e instanceof Error ? e.message : String(e) });
     } finally {
       setToEditor(null);
     }
@@ -177,7 +177,7 @@ export default function ScreenProjectPage() {
                 <Button size="sm" variant="outline" disabled={toEditor !== null}>
                   {toEditor !== null ? (
                     <>
-                      <Loader2 className="animate-spin" /> Sending to the AI Editor {toEditor}%
+                      <Loader2 className="animate-spin" /> Sending to the Editor {toEditor}%
                     </>
                   ) : (
                     <>
@@ -195,7 +195,7 @@ export default function ScreenProjectPage() {
                 ))}
                 {canUse(me, "editor") && (
                   <DropdownMenuItem onSelect={() => void sendToEditor()}>
-                    <Clapperboard /> Send to AI Editor
+                    <Clapperboard /> Send to Editor
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
