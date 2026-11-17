@@ -5,6 +5,9 @@ import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import { edgesOf, endOf, isVideo, lengthOf, move, roll, slip, trackOrder, trim, withLinked, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
+import { peaks, wavePath } from "@/lib/waveform";
+import { thumbAt } from "@/lib/nle/thumbs";
+import type { NleFile } from "./NlePlayer";
 
 // The editor's timeline: track headers (name, lock, hide or mute, take off), the clips on their lanes, the ruler and the
 // playhead. A drag shows its result live (`onLive`) and becomes one step of undo when let go (`onCommit`).
@@ -31,7 +34,7 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onRemoveTrack, nameOf, zoomKeys,
+  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onRemoveTrack, nameOf, zoomKeys, fileOf,
 }: {
   tl: NleTimeline;
   time: number;
@@ -51,6 +54,8 @@ export const NleTracks = memo(function NleTracks({
   nameOf: (it: NleItem) => string;
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
+  /** a source's file here (the player's): sound clips show its waveform, video clips its pictures */
+  fileOf?: (src: string) => NleFile | null;
 }) {
   const fps = tl.timeline.fps;
   const seconds = Math.max(lengthOf(tl) / fps, 1);
@@ -221,8 +226,9 @@ export const NleTracks = memo(function NleTracks({
                       (it.enabled === false || off) && "opacity-40",
                       tool === "select" ? "cursor-grab" : tool === "trim" ? "cursor-ew-resize" : "")}
                     style={{ left: (it.rec / fps) * pps, width: Math.max(2, w) }}>
-                    {w > 24 && <span className="block truncate">{nameOf(it)}</span>}
-                    {w > 60 && isVideo(id) && <span className="block truncate text-[9px] text-sky-200/70">{(it.len / fps).toFixed(2)} s</span>}
+                    {fileOf && w > 8 && <ClipLook it={it} tl={tl} video={v} file={fileOf(it.src)} width={w} height={laneH(id) - 8} />}
+                    {w > 24 && <span className="relative block truncate [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">{nameOf(it)}</span>}
+                    {w > 60 && isVideo(id) && <span className="relative block truncate text-[9px] text-sky-200/70 [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">{(it.len / fps).toFixed(2)} s</span>}
                     <span className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
                     <span className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
                   </div>
@@ -234,5 +240,67 @@ export const NleTracks = memo(function NleTracks({
       })}
       <div className="pointer-events-none absolute top-0 bottom-0 z-30 w-px bg-red-500" style={{ left: ph }} />
     </TimelineFrame>
+  );
+});
+
+const SOUND_FILE = /\.(wav|aif|aiff|m4a|mp3|flac|caf|aac)$/i;
+const peakOf = new WeakMap<Float32Array, number>();
+const loudestIn = (d: Float32Array) => {
+  let p = peakOf.get(d);
+  if (p === undefined) peakOf.set(d, (p = d.reduce((a, b) => Math.max(a, b), 0)));
+  return p;
+};
+
+/** Under a clip's name: a sound clip's waveform from its sound file, a video clip's pictures along it (a picture a second). */
+const ClipLook = memo(function ClipLook({ it, tl, video, file, width, height }: {
+  it: NleItem; tl: NleTimeline; video: boolean; file: NleFile | null; width: number; height: number;
+}) {
+  const path = String(tl.sources[it.src]?.path ?? "");
+  const fps = tl.timeline.fps;
+  const sfps = tl.sources[it.src]?.fps || fps;
+  const from = it.in / sfps;
+  const to = from + (it.len / fps) * (it.speed || 1);
+  const url = file?.url ?? null;
+  const [wave, setWave] = useState<Float32Array | null>(null);
+  // sound files only: a camera file would be decoded whole for its sound
+  const sound = !video && !!url && SOUND_FILE.test(path);
+  useEffect(() => {
+    if (!sound || !url) return void setWave(null);
+    let gone = false;
+    peaks(url).then((d) => !gone && setWave(d), () => {});
+    return () => void (gone = true);
+  }, [sound, url]);
+  const strip = useRef<HTMLCanvasElement>(null);
+  const pictures = video && !!url && !file?.frame && !/\.(png|jpe?g|webp|gif)$/i.test(path);
+  useEffect(() => {
+    const c = strip.current;
+    if (!pictures || !url || !c) return;
+    let gone = false;
+    const tile = Math.round(height * 0.75);
+    const n = Math.min(40, Math.ceil(width / tile));
+    const g = c.getContext("2d");
+    for (let i = 0; i < n; i++) {
+      const sec = Math.floor(from + ((to - from) * i) / n);
+      void thumbAt(url, sec).then((b) => {
+        if (gone || !b || !g) return;
+        // a picture filling its tile, cut to it
+        const s = Math.max(tile / b.width, height / b.height);
+        g.save();
+        g.beginPath();
+        g.rect(i * tile, 0, tile, height);
+        g.clip();
+        g.drawImage(b, i * tile + (tile - b.width * s) / 2, (height - b.height * s) / 2, b.width * s, b.height * s);
+        g.restore();
+      });
+    }
+    return () => void (gone = true);
+  }, [pictures, url, from, to, width, height]);
+  if (pictures) return <canvas ref={strip} width={Math.min(Math.ceil(width), 4000)} height={height} className="pointer-events-none absolute inset-0 h-full opacity-60" style={{ width: Math.min(Math.ceil(width), 4000) }} />;
+  if (!wave) return null;
+  const path_ = wavePath(wave, from, to, loudestIn(wave));
+  return (
+    <svg className="pointer-events-none absolute inset-0 size-full text-emerald-300/50" viewBox={`0 -1 ${path_.n} 2`} preserveAspectRatio="none">
+      <path d={path_.d} fill="currentColor" />
+    </svg>
   );
 });

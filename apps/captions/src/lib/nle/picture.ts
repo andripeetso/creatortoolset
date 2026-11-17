@@ -30,11 +30,8 @@ export function placement(it: NleItem, track: string, sw: number, sh: number, W:
   const b = k * fx * sin;
   const c = -k * fy * sin;
   const d = k * fy * cos;
-  // a shot-list cut's picture placed across the room the cover leaves (0 left … 1 right), as the renderer's window
-  const ox = covers(track) && typeof it.fit_x === "number" ? (sw * s - W) * (0.5 - it.fit_x) : 0;
-  const oy = covers(track) && typeof it.fit_y === "number" ? (sh * s - H) * (0.5 - it.fit_y) : 0;
-  const cx = W / 2 + (it.pan ?? 0) + ox;
-  const cy = H / 2 - (it.tilt ?? 0) + oy;
+  const cx = W / 2 + (it.pan ?? 0);
+  const cy = H / 2 - (it.tilt ?? 0);
   const [l, t, r, btm] = (it.crop ?? [0, 0, 0, 0]).map((v) => clamp(Number(v) || 0, 0, 1));
   return {
     m: [a, b, c, d, cx - (a * sw) / 2 - (c * sh) / 2, cy - (b * sw) / 2 - (d * sh) / 2],
@@ -48,12 +45,13 @@ export type Playing = { track: string; item: NleItem };
 const pictureTracks = (tl: NleTimeline) =>
   Object.entries(tl.tracks).filter(([id, t]) => isVideo(id) && !t.hidden && t.enabled !== false);
 
-/** Bottom to top: V1, a track named SOURCE (the intro's source) right over it, then V2, V3, … */
-const layer = ([id, t]: [string, { name?: string }]) => (t.name === "SOURCE" ? 1.5 : trackNo(id));
+/** Bottom to top: V1, a track named SOURCE… (the intro's source) right over it, then V2, V3, … (the renderer draws no V0) */
+const layer = ([id, t]: [string, { name?: string }]) => (id !== "V1" && (t.name ?? "").toUpperCase().startsWith("SOURCE") ? 1.5 : trackNo(id));
 
 /** The pictures at frame `f`, the bottom one first: tracks that show, clips that are on. */
 export function picturesAt(tl: NleTimeline, f: number): Playing[] {
   return pictureTracks(tl)
+    .filter(([id]) => trackNo(id) >= 1)
     .sort((x, y) => layer(x) - layer(y))
     .flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false && i.rec <= f && f < endOf(i)).map((item) => ({ track, item })));
 }

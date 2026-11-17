@@ -136,7 +136,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   };
 
   const urlFor = useCallback((src: string) => urlOf(src, shown), [urlOf, shown]);
-  const nameOfSrc = useCallback((src: string) => String(shown.sources[src]?.path ?? src).split("/").pop()!.replace(/\.[^.]+$/, ""), [shown]);
+  const nameOfSrc = useCallback((src: string) => String(shown.sources[src]?.path ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
   const nameOf = useCallback((it: NleItem) => (typeof it.name === "string" && it.name) || (typeof it.line === "string" && it.line ? `${it.line} · ${nameOfSrc(it.src)}` : nameOfSrc(it.src)), [nameOfSrc]);
 
   // a clip from the bin: its picture on a video track, its sound with it on a free sound track, linked; on a sound
@@ -311,7 +311,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
       <div className="min-h-32 flex-1 overflow-y-auto">
       <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} marks={marks} onSeek={seek} onSelect={setSelected}
-        onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys}
+        onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
         onBlade={(f, key) => commit(blade(tl, f, [key]))}
         onMenu={(at) => setMenu(at)}
         onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
