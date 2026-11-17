@@ -7,7 +7,7 @@ import Foundation
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). These have parts of their own:
 /// "install:<claude|codex>:<key>" (installAsk), "ai-install:<id>" (aiInstallAsk), and the Media Library's "import:…" (Import.swift).
-let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "ai-install-progress"]
+let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "ai-install-progress", "pair"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -180,6 +180,8 @@ extension Shell {
             "lastError": ai.lastError ?? NSNull(),
             "notice": notice ?? NSNull(),
             "paired": pairedHere,
+            // answers "pair": adds this Mac to the open server with the AI left as it is (its folders, LocationAgent.swift)
+            "pairs": true,
             // on an account through the connect service (setup's Add this computer hides once it is); none = no service set
             "linked": connectService == nil ? NSNull() : linkedHere,
             // this Mac's names as the site matches its records: the name it pairs with, and the host name its worker reports

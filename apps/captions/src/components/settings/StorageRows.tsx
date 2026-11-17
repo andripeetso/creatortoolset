@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
-import { chooseFolderOnMac, macImports } from "@/lib/thisMac";
+import { chooseFolderOnMac, macImports, pairThisMac, thisMacState, type ThisMacState } from "@/lib/thisMac";
 import { folderGrant } from "@/lib/local-files";
 import { thisMacDevice } from "@/lib/providers";
 import { timeAgo } from "@/lib/exports";
@@ -528,6 +528,9 @@ export function ConnectDialog({ folder, computer, onClose, onUsed }: { folder: S
   );
 }
 
+/** The Add folder dialog's "This Mac" before this Mac is on the server (pairThisMac on submit). */
+const NEW_MAC = "this-mac:new";
+
 /**
  * A folder the person already has, as footage or music, on a drive of one of the account's computers. With two or more
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
@@ -544,13 +547,18 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // in the Mac app, on a server this Mac isn't on yet: "This Mac" is offered, and added to the server when the folder is
+  const [mac, setMac] = useState<ThisMacState | null>(null);
   useEffect(() => {
     if (!open) return;
     setPickWorkspace("");
     setPath("");
     setErr(null);
+    void thisMacState().then(setMac);
   }, [open]);
-  const host = devices.some((d) => d.id === pickHost) ? pickHost : devices[0]?.id ?? "";
+  const unpaired = !!mac?.pairs && !mac.paired;
+  const hosts = [...(unpaired ? [{ id: NEW_MAC, name: mac.computer ?? "This Mac" }] : []), ...devices];
+  const host = hosts.some((d) => d.id === pickHost) ? pickHost : hosts[0]?.id ?? "";
   const known = (id?: string | null) => (id && w?.workspaces.some((p) => p.id === id) ? id : null);
   const workspace = known(pickWorkspace) ?? known(w?.id) ?? known(windowIn) ?? w?.workspaces[0]?.id ?? null;
 
@@ -560,7 +568,9 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
     const p = path.trim();
     const add = async () => {
       try {
-        await addStorageFolder({ role, host, path: p }, workspace);
+        const on = host === NEW_MAC ? (await pairThisMac())?.device : host;
+        if (!on) throw new Error("This Mac could not be added to this server");
+        await addStorageFolder({ role, host: on, path: p }, workspace);
         onOpenChange(false);
         onChanged();
       } catch (x) {
@@ -577,16 +587,16 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   };
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
-      {devices.length === 0 ? (
+    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={hosts.length === 0} error={err}>
+      {hosts.length === 0 ? (
         <Status tone="attention">Needs a computer</Status>
       ) : (
         <>
           {w?.many && workspace && (
             <SettingsSelect label="Workspace" value={workspace} onValueChange={setPickWorkspace} options={w.workspaces.map((p) => ({ value: p.id, label: p.name }))} className="sm:w-full" />
           )}
-          <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
-          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
+          <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={hosts.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
+          <DriveSelect disks={host === NEW_MAC ? [] : disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "finals" ? "/Volumes/Drive/Finals" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
           {/* chosen in the Mac app's picker, the Mac app may copy a dropped final into it */}
           {role === "finals" && macImports() && (

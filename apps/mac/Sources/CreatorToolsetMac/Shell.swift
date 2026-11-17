@@ -245,6 +245,8 @@ final class Shell: NSObject, ObservableObject {
             // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             case "folder": done(self.chooseFolder())
+            // Settings → Folders' "This Mac" on a server it isn't on yet (a press): paired, the AI left as it is
+            case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; done(self.thisMacState()) }
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
