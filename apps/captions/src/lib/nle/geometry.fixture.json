@@ -1,0 +1,468 @@
+{
+ "about": "The renderer's picture geometry for a hand-edited timeline, case by case: the frame (W x H), the track, the source's size, the clip's fields, and where the renderer puts the picture. matrix [a,b,c,d,e,f] maps source px (u,v) to frame px: x = a*u + c*v + e, y = b*u + d*v + f. crop = the part of the source that shows (x, y, w, h). The render rounds to whole output pixels.",
+ "cases": [
+  {
+   "name": "portrait source, untouched",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V1",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {},
+   "place": {
+    "matrix": [
+     0.5,
+     0.0,
+     0.0,
+     0.5,
+     0.0,
+     0.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     2160.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "punch in, moved right and up",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V1",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "zoom": 1.5,
+    "pan": 100,
+    "tilt": 200
+   },
+   "place": {
+    "matrix": [
+     0.75,
+     0.0,
+     0.0,
+     0.75,
+     -170.0,
+     -680.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     2160.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "half size, black around",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V1",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "zoom": 0.5
+   },
+   "place": {
+    "matrix": [
+     0.25,
+     0.0,
+     0.0,
+     0.25,
+     270.0,
+     480.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     2160.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "moved down past the edge at zoom 1",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V1",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "tilt": -300
+   },
+   "place": {
+    "matrix": [
+     0.5,
+     0.0,
+     0.0,
+     0.5,
+     0.0,
+     300.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     2160.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "16:9 on V1 fills (covers) the frame",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V1",
+   "source": [
+    1920,
+    1080
+   ],
+   "item": {},
+   "place": {
+    "matrix": [
+     1.7778,
+     0.0,
+     0.0,
+     1.7778,
+     -1166.6667,
+     0.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     1920.0,
+     1080.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "16:9 on V2 moved right",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V2",
+   "source": [
+    1920,
+    1080
+   ],
+   "item": {
+    "pan": 300
+   },
+   "place": {
+    "matrix": [
+     1.7778,
+     0.0,
+     0.0,
+     1.7778,
+     -866.6667,
+     0.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     1920.0,
+     1080.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "16:9 on V3 shows whole (fit)",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V3",
+   "source": [
+    1920,
+    1080
+   ],
+   "item": {},
+   "place": {
+    "matrix": [
+     0.5625,
+     0.0,
+     0.0,
+     0.5625,
+     0.0,
+     656.25
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     1920.0,
+     1080.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "16:9 on V2 at 1:1 (zoom 0.5625)",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V2",
+   "source": [
+    1920,
+    1080
+   ],
+   "item": {
+    "zoom": 0.5625
+   },
+   "place": {
+    "matrix": [
+     1.0,
+     0.0,
+     0.0,
+     1.0,
+     -420.0,
+     420.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     1920.0,
+     1080.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "flipped sideways, left quarter cropped",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V1",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "flip": "h",
+    "crop": [
+     0.25,
+     0,
+     0,
+     0
+    ]
+   },
+   "place": {
+    "matrix": [
+     -0.5,
+     0.0,
+     0.0,
+     0.5,
+     1080.0,
+     0.0
+    ],
+    "crop": [
+     540.0,
+     0.0,
+     1620.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "crop every edge, zoom, pan and tilt",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V2",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "crop": [
+     0.1,
+     0.2,
+     0.3,
+     0.05
+    ],
+    "zoom": 1.2,
+    "pan": -50,
+    "tilt": 80
+   },
+   "place": {
+    "matrix": [
+     0.6,
+     0.0,
+     0.0,
+     0.6,
+     -158.0,
+     -272.0
+    ],
+    "crop": [
+     216.0,
+     768.0,
+     1296.0,
+     2880.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "16:9 on V4 at zoom 2, half see-through, flipped both ways",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V4",
+   "source": [
+    1920,
+    1080
+   ],
+   "item": {
+    "zoom": 2,
+    "opacity": 0.5,
+    "flip": "hv"
+   },
+   "place": {
+    "matrix": [
+     -1.125,
+     0.0,
+     0.0,
+     -1.125,
+     1620.0,
+     1567.5
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     1920.0,
+     1080.0
+    ],
+    "opacity": 0.5
+   }
+  },
+  {
+   "name": "rotated 15 degrees",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V2",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "rot": 15,
+    "zoom": 0.8
+   },
+   "place": {
+    "matrix": [
+     0.3864,
+     -0.1035,
+     0.1035,
+     0.3864,
+     -76.053,
+     329.9788
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     2160.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "16:9 on V2 turned 90 degrees",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V2",
+   "source": [
+    1920,
+    1080
+   ],
+   "item": {
+    "rot": 90,
+    "zoom": 0.5625,
+    "pan": -100
+   },
+   "place": {
+    "matrix": [
+     0.0,
+     -1.0,
+     1.0,
+     0.0,
+     -100.0,
+     1920.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     1920.0,
+     1080.0
+    ],
+    "opacity": 1.0
+   }
+  },
+  {
+   "name": "off the frame",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "track": "V2",
+   "source": [
+    2160,
+    3840
+   ],
+   "item": {
+    "pan": 2000
+   },
+   "place": {
+    "matrix": [
+     0.5,
+     0.0,
+     0.0,
+     0.5,
+     2000.0,
+     0.0
+    ],
+    "crop": [
+     0.0,
+     0.0,
+     2160.0,
+     3840.0
+    ],
+    "opacity": 1.0
+   }
+  }
+ ]
+}
