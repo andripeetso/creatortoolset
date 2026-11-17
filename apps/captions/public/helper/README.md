@@ -38,8 +38,15 @@ docker run -d --restart unless-stopped --name creator-toolset-helper \
   -v /mnt/tank/helper:/data -v /mnt/tank/library-copy:/copies creator-toolset-helper
 ```
 
-`/data` keeps its token (`config.json`, mode 0600): the code is used once, on the first start. Mount the dataset the
-copy goes in at `/copies`, then in Creator Toolset: Settings → Media Library → Copies → Add copy → this computer →
+It runs as user and group 568 (the TrueNAS apps user), never root, so the copy's files belong to that user. Another
+user: `docker build --build-arg PUID=1000 --build-arg PGID=1000 .`, or `docker run --user 1000:1000`. Both folders must
+be writable by it.
+
+`/data` keeps its token (`config.json`, mode 0600): the code is used once, on the first start. Make it a bind mount
+of a folder on the host as above: with no mount, or an anonymous volume, the pairing is lost each time the container
+is made again (an update), and the code no longer works. Mount the dataset the copy goes in at `/copies`. When the
+dataset is not mounted the copy finds no marker there and asks to be reconnected; it never writes into the empty
+folder under it. Then in Creator Toolset: Settings → Media Library → Copies → Add copy → this computer →
 `/copies`. Once the computer is removed in Settings → Devices the helper exits (status 3) on each start: stop the
 container, empty `/data` and start it again with a new code.
 
@@ -51,11 +58,13 @@ container, empty `/data` and start it again with a new code.
 - Runs Whisper (large-v3 turbo, large-v3) with faster-whisper: on the graphics card in float16, else on the CPU in int8.
   Parakeet TDT 0.6B v3 (English) with onnx-asr, on the CPU.
 - Sends back the words with their times. One transcript at a time.
-- A copy: one file at a time, each written as `.<name>.partial`, checked against the library's checksum and renamed. A
-  newer version moves the older one into `.versions/`; a file of yours in the way stays and the new one goes beside it
-  as `<name> 2`. `.creatortoolset-copy.json` at the folder's top says which copy it is (without it the copy asks to be
-  reconnected); `.creatortoolset-copy.lock` keeps a second writer out. Nothing in the folder is ever deleted but its own
-  partials. Copies need no speech libraries.
+- A copy: one file at a time, each written as `.<name>.<computer id>.partial`, checked on the disk against the
+  library's size and checksum and renamed. A newer version moves the older one into `.versions/`; a file of yours in
+  the way stays and the new one goes beside it as `<name> 2`. `.creatortoolset-copy.json` at the folder's top says
+  which copy it is (without it, or on another disk than when the job began, the copy asks to be reconnected);
+  `.creatortoolset-copy.lock` keeps a second computer out. A Mac and a helper read and write the same folder the same
+  way. Nothing in the folder is ever deleted but this computer's own partials. Copies need no speech libraries.
+- Sends an original it holds to the server when another computer's copy needs it.
 
 ## Logs, stop, remove
 
