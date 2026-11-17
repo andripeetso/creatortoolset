@@ -9,7 +9,7 @@ import { clipAgentApp } from "./clip-agent";
 import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp, enhancesAtRisk } from "./enhance";
-import { exportApp, resolveFontsDir } from "./export";
+import { resolveFontsDir } from "./export";
 import { exportsApp, exportsAtRisk, resumeFinalsSends } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
@@ -460,7 +460,6 @@ app.route("/api/captions", captionLayoutApp);
 // before the built-in routers of those paths take them, and after the account gate above
 mountAnsweredRoutes(app, serverPlugins);
 app.route("/api/exports", exportsApp);
-app.route("/api/export", exportApp);
 app.route("/api/hf", hfApp);
 app.route("/api/presets", presetsApp);
 app.route("/api/packs", packsApp);

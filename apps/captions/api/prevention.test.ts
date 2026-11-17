@@ -54,10 +54,7 @@ const DECODERS: Record<string, string> = {
   // processing with no gate yet: the phase that moves it to a computer
   "api/projects.ts": "OPEN P3a: Caption Studio ingest and proxy",
   "api/captions-job.ts": "OPEN P3a",
-  "api/exports.ts": "OPEN P3b",
-  "api/export.ts": "OPEN P3b",
-  "api/alpha-video.ts": "OPEN P3b",
-  "api/caption-frames.ts": "OPEN P3b: headless browser",
+  "api/caption-frames.ts": "the frame browser, used only by the export and design-pages tasks (work/tasks.ts mayRunHere)",
   "api/review.ts": "serving (decision 5): the Review upload transcode",
   "api/work/tasks/review.ts": "computer task (work/tasks.ts mayRunHere)",
   "api/clips.ts": "OPEN P3d",
@@ -70,6 +67,7 @@ const DECODERS: Record<string, string> = {
   "api/work/look.ts": "a computer's own work (the work package)",
   "api/work/computer.ts": "a computer's own runner (CT_WORKER)",
   "api/work/tasks/design-pages.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/export.ts": "computer task (work/tasks.ts mayRunHere)",
   "api/work/tasks/frames.ts": "computer task (work/tasks.ts mayRunHere)",
   "api/work/tasks/social-prints.ts": "computer task (work/tasks.ts mayRunHere)",
   // not video work: AI programs, tools, the app itself
