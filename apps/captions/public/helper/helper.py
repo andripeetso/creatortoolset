@@ -885,15 +885,16 @@ def own_copy(root, copy):
         os.replace(tmp, COPIES)
 
 
-def readable(paths, size):
+def readable(paths, size, copied_too=True):
     """The first of `paths` this helper may read for the server, as its real path: a regular file of `size` bytes with a
     media extension, inside (prefix + "/") a network share this computer has connected (disks()), or in one of its own
     copy folders (whose marker is still its own) a file that marker lists as copied, at its rel and size: a folder the
     server named as a copy never opens the person's files already in it. Else None: "not on this computer". A server
-    that names any other file (a key in ~/.ssh, found by its size) never gets it read, through a link or otherwise."""
+    that names any other file (a key in ~/.ssh, found by its size) never gets it read, through a link or otherwise.
+    `copied_too` False: shares only."""
     roots = [r for r in (os.path.realpath(d["path"]).rstrip("/") for d in disks()) if r]
     copied = {}
-    for root, copy in (read_json(COPIES) or {}).items():
+    for root, copy in (read_json(COPIES) or {}).items() if copied_too else ():
         try:
             m = read_json(os.path.join(root, MARKER)) or {}
         except OSError:
@@ -975,7 +976,10 @@ def copy_file(folder, o, fetch, m):
         return {"rel": at, "size": size, "sha256": sha}
 
     def source(p):
-        """The very file this job would read from (indexed in place)."""
+        """The very file this job would read from (indexed in place): only on a network share, where a library is indexed
+        in place; a file the server names in a folder it called a copy is the person's own, never taken as copied."""
+        if readable([p], size, copied_too=False) is None:
+            return False
         for s in paths:
             try:
                 if os.path.samefile(p, s):

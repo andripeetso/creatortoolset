@@ -150,11 +150,13 @@ class Copies(unittest.TestCase):
         # a file of the same size is not this file without a hash
         self.assertEqual(self.job("copy", key="s1", rel="Same.mov", size="10", paths="[]", url="/f")["done"]["rel"], "Same 2.mov")
         self.assertEqual(self.read("Same.mov"), b"same size!")
-        # with no hash, only the source itself (a path the job reads from) counts as copied
+        # with no hash, the source itself counts as copied only on a share (test_no_hash_source_only_on_a_share); in a
+        # folder off any share it stays, and the server's file goes beside it
         self.write("Src.mov", b"the source")
         self.asked = []
-        self.assertEqual(self.job("copy", key="s2", rel="Src.mov", size="10", paths=json.dumps([self.path("Src.mov")]), url="/f")["done"]["rel"], "Src.mov")
-        self.assertEqual(self.asked, [])
+        self.assertEqual(self.job("copy", key="s2", rel="Src.mov", size="10", paths=json.dumps([self.path("Src.mov")]), url="/f")["done"]["rel"], "Src 2.mov")
+        self.assertEqual(self.asked, [0])
+        self.assertEqual(self.read("Src.mov"), b"the source")
 
     def test_final_check_reads_the_disk(self):
         self.job("check", init="1")
@@ -379,6 +381,30 @@ class Copies(unittest.TestCase):
         h.post = lambda url, f, size: self.fail("the key was sent")
         h.copy({"id": 3, "options": {"op": "send", "key": "k", "size": str(len(key)), "url": "/api/devices/relay/job/copy/3/file", "paths": json.dumps([os.path.join(ssh, "id_ed25519")])}})
         self.assertEqual(calls, [("/api/devices/relay/job/copy/3/fail", {"error": "The original is not on this computer any more"})])
+
+    def test_no_hash_source_only_on_a_share(self):
+        """With no sha256, a file at rel counts as copied only when it is the source on a share: a server that names a
+        home folder as a copy and a video in it as rel and source gets nothing recorded, and nothing sent."""
+        self.job("check", init="1")
+        self.write("Home.mov", b"homevideo")
+        with self.assertRaises(RuntimeError):  # it goes beside, and there is no other place to read it from
+            self.job("copy", key="h1", rel="Home.mov", size="9", paths=json.dumps([self.path("Home.mov")]))
+        self.assertNotIn("h1", helper.read_json(self.path(helper.MARKER))["files"])
+        self.assertEqual(self.read("Home.mov"), b"homevideo")
+        self.assertIsNone(helper.readable([self.path("Home.mov")], 9))
+        calls = []
+        h = fake_helper(calls)
+        h.post = lambda url, f, size: self.fail("the video was sent")
+        h.copy({"id": 4, "options": {"op": "send", "key": "h1", "size": "9", "url": "/api/devices/relay/job/copy/4/file", "paths": json.dumps([self.path("Home.mov")])}})
+        self.assertEqual(calls, [("/api/devices/relay/job/copy/4/fail", {"error": "The original is not on this computer any more"})])
+        # a copy folder on a share: the clip indexed in place there is the source, and counts as copied
+        on_share = os.path.join(self.share, "Copy")
+        os.mkdir(on_share)
+        self.job("check", init="1", root=on_share, copy="cp_2")
+        with open(os.path.join(on_share, "Kitchen.mov"), "wb") as f:
+            f.write(b"kitchen")
+        done = self.job("copy", root=on_share, copy="cp_2", key="k1", rel="Kitchen.mov", size="7", paths=json.dumps([os.path.join(on_share, "Kitchen.mov")]))["done"]
+        self.assertEqual(done, {"rel": "Kitchen.mov", "size": 7, "sha256": sha(b"kitchen")})
 
     def test_folder_walk(self):
         for p in ("a/b/c", "a/.hidden", "z.app/inside"):
