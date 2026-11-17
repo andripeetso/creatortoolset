@@ -218,3 +218,51 @@ describe("a planned edit drawn", () => {
     expect(diff(frame(await run("zoomblur", [{ type: "zoomblur", at: 0, dur: 0.5, amount: 1 }]), 2), frame(plain, 2))).toBeGreaterThan(2);
   }, 120_000);
 });
+
+describe("the sound effects on A3 are heard in the preview", () => {
+  const sdir = path.join(dir, "a3");
+  const game = path.join(sdir, "game.mp4");
+  const beep = path.join(sdir, "beep.wav");
+  const ff = (...args: string[]) => execFileSync(ffmpegCommand(), ["-v", "error", "-y", ...args]);
+  // the RMS level of the sound in [from, to) seconds, mono
+  const level = (file: string, from: number, to: number) => {
+    const b = execFileSync(ffmpegCommand(), ["-v", "error", "-ss", String(from), "-t", String(to - from), "-i", file, "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], { maxBuffer: 1 << 26 });
+    let sum = 0;
+    for (let i = 0; i + 1 < b.length; i += 2) sum += (b.readInt16LE(i) / 32768) ** 2;
+    return Math.sqrt(sum / (b.length / 2));
+  };
+  // one silent 3 s shot, and a 0.5 s beep on A3 at 1 s
+  const timeline = (plan: boolean): Timeline => {
+    const t: Timeline = {
+      name: "Run v1",
+      fps: 30,
+      width: 320,
+      height: 180,
+      sources: {
+        game: { versionId: "game", name: "Run", fps: 30, tc: 0, dur: 90, w: 320, h: 180 },
+        beep: { versionId: "beep", name: "Beep", fps: 30, tc: 0, dur: 15, w: 0, h: 0 },
+      },
+      tracks: emptyTracks(),
+      markers: [],
+    };
+    t.tracks.V1.items = [{ src: "game", in: 0, len: 90, rec: 0, link: "c1" }];
+    t.tracks.A3.items = [{ src: "beep", in: 0, len: 15, rec: 30, gainDb: -12 }];
+    if (plan) t.plan = { kind: "hard edit" };
+    return t;
+  };
+  beforeAll(() => {
+    mkdirSync(sdir, { recursive: true });
+    ff("-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", game);
+    ff("-f", "lavfi", "-i", "sine=f=1000:d=0.5", beep);
+  }, 60_000);
+  afterAll(() => rmSync(sdir, { recursive: true, force: true }));
+
+  it("mixes A3 into a planned cut and into a draft, at its place and nowhere else", async () => {
+    for (const plan of [true, false]) {
+      const out = path.join(sdir, `${plan ? "plan" : "draft"}.mp4`);
+      await renderPreview(timeline(plan), { game, beep }, out);
+      expect(level(out, 0.05, 0.9)).toBeLessThan(0.002);
+      expect(level(out, 1.05, 1.45)).toBeGreaterThan(0.02);
+    }
+  }, 120_000);
+});
