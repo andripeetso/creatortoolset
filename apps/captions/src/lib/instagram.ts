@@ -1425,6 +1425,7 @@ export const PROCESS_STEPS: { id: PostStep; label: string }[] = [
   { id: "info", label: "Reading the post" },
   { id: "download", label: "Downloading" },
   { id: "thumbs", label: "Preparing previews" },
+  { id: "computer", label: "Waits for one of your computers" },
   { id: "transcribe", label: "Transcribing" },
   { id: "vision", label: "Reading the slides" },
   { id: "comments", label: "Loading comments" },

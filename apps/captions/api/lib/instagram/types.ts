@@ -23,6 +23,8 @@ export type PostStep =
   | "info"
   | "download"
   | "thumbs"
+  /** waits for one of the owner's computers to make its media (api/instagram.ts postMedia) */
+  | "computer"
   | "transcribe"
   | "vision"
   | "comments"

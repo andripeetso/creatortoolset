@@ -551,6 +551,9 @@ export async function getClipRecordingPath(id: string): Promise<string | null> {
 
 export const clipFramesDir = (id: string) => path.join(sesDir(id), "frames");
 
+/** Whose published clip it is: its frames are made on that person's computers (lib/clip-frame.ts). */
+export const clipOwner = async (id: string): Promise<string> => (await publishedMeta(id))?.owner ?? "";
+
 export { loadWords, okId };
 
 function chapterSystem(durationSec: number): string {

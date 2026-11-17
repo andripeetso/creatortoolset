@@ -367,6 +367,7 @@ export function PieceEditor({
                 </Button>
               )}
             </div>
+            {piece.coverWaits && <p className="text-xs text-zinc-500">{piece.coverWaits}</p>}
           </div>
         )}
       </section>

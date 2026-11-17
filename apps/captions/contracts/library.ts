@@ -542,6 +542,8 @@ export interface Piece {
   items: PieceItem[];
   /** The owner's picked frame (`?v=` stamped); absent or null = the automatic cover (the winner's thumbnail). */
   coverUrl?: string | null;
+  /** A picked frame that waits for one of the owner's computers to make it: the line it waits with. */
+  coverWaits?: string;
   /** Whether the viewer may change it: every item is theirs to change. Set on the single-piece read only. */
   writable?: boolean;
 }

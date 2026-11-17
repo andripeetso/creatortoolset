@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import {
@@ -22,8 +21,8 @@ import {
   completeVisionWithFallback,
   type VisionImage,
 } from "./ai-vision";
-import { ffmpegCommand } from "./ffmpeg-runtime";
-import { extractClipJpegFrame } from "./lib/clip-frame";
+import { dropTask, keep, startTask } from "./work/tasks";
+import type { PostMediaDone, PostMediaInput, PostMediaSlide } from "./work/tasks/social-prints";
 import { smallJpeg } from "./lib/small-jpeg";
 import {
   availabilitySnapshot,
@@ -290,6 +289,8 @@ interface JobOptions {
   more?: boolean;
   /** Run transcript, slide text, comments, tags and idea even though the media is already in the library. */
   ignoreDuplicate?: boolean;
+  /** A computer's post-media came in for this run (filePostMedia): what it could not make is not asked for again. */
+  computed?: boolean;
 }
 
 /** Jobs that cost money or minutes; skipped when the same media is already in the library. */
@@ -305,7 +306,6 @@ interface TranscriptWord {
 
 const active = new Map<string, PostMeta>();
 export const accountActive = new Map<string, AccountMeta>();
-const children = new Map<string, Set<ChildProcess>>();
 const aborts = new Map<string, AbortController>();
 const jobUsers = new Map<string, SessionUser>();
 const jobKinds = new Map<string, JobType[]>();
@@ -1202,185 +1202,107 @@ function parseUserTags(raw: unknown[]): Tag[] {
   return out;
 }
 
-/* ---- media helpers ---- */
+/* ---- media: the post-media computer task (work/tasks/social-prints.ts) ---- */
 
-function probe(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve) => {
-    const p = spawn("ffprobe", ["-v", "error", ...args, file]);
-    let out = "";
-    const kill = setTimeout(() => {
-      p.kill("SIGKILL");
-      resolve(out.trim());
-    }, 15_000);
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => {
-      clearTimeout(kill);
-      resolve(out.trim());
-    });
-    p.on("error", () => {
-      clearTimeout(kill);
-      resolve("");
-    });
-  });
-}
+/** A run that waits for one of the owner's computers to make its media: it stops here and goes on when it comes. */
+class WaitsForComputer extends Error {}
 
-const probeDuration = async (f: string) =>
-  Number(await probe(f, ["-show_entries", "format=duration", "-of", "csv=p=0"])) || 0;
-
-const probeHasAudio = async (f: string) =>
-  (
-    await probe(f, [
-      "-select_streams",
-      "a:0",
-      "-show_entries",
-      "stream=codec_name",
-      "-of",
-      "csv=p=0",
-    ])
-  ).length > 0;
-
-const probeSize = async (f: string): Promise<{ width: number; height: number }> => {
-  const out = await probe(f, [
-    "-select_streams",
-    "v:0",
-    "-show_entries",
-    "stream=width,height",
-    "-of",
-    "csv=p=0",
-  ]);
-  const [w, h] = out.split(",").map((n) => Number(n));
-  return { width: w || 0, height: h || 0 };
-};
-
-function runFfmpeg(id: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegCommand(), [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-nostdin",
-      "-y",
-      ...args,
-    ]);
-    let set = children.get(id);
-    if (!set) {
-      set = new Set();
-      children.set(id, set);
-    }
-    set.add(p);
-    let err = "";
-    p.stderr.on("data", (d) => {
-      err += d.toString();
-      if (err.length > 4000) err = err.slice(-4000);
-    });
-    const done = () => {
-      set!.delete(p);
-      if (!set!.size) children.delete(id);
+/**
+ * The media `want` asks for, of the slides that lack it: made by the post-media task, here where the server's video work
+ * is on (filed before this returns), else on one of the owner's computers: then WaitsForComputer, with its line.
+ */
+async function postMedia(
+  meta: PostMeta,
+  user: SessionUser,
+  want: { prepare?: boolean; fingerprint?: boolean; wav?: boolean; frames?: boolean },
+  covers: (i: number) => string | undefined = () => undefined,
+): Promise<void> {
+  const id = meta.id;
+  const files: Record<string, string> = {};
+  const slides: PostMediaSlide[] = [];
+  for (const s of meta.slides) {
+    if (!s.file || !existsSync(abs(id, s.file))) continue;
+    const video = s.kind === "video";
+    const ask: PostMediaSlide = {
+      index: s.index,
+      kind: s.kind,
+      file: `slide-${nn(s.index)}`,
+      durationS: s.durationS,
+      hasAudio: s.hasAudio,
+      cover: covers(s.index),
+      ...(want.prepare ? { prepare: true, thumb: existsSync(thumbJpeg(id, s.index)), vision: existsSync(visionJpeg(id, s.index)) } : {}),
+      ...(want.fingerprint && !s.fingerprint ? { fingerprint: true } : {}),
+      ...(want.wav && video && s.transcript.status === "pending" && s.hasAudio !== false && !existsSync(wavPath(id, s.index)) ? { wav: true } : {}),
+      ...(want.frames && video && s.vision.status === "pending" && !visionFramesHere(id, s) ? { frames: true } : {}),
     };
-    p.on("error", (e) => {
-      done();
-      reject(e);
-    });
-    p.on("close", (code) => {
-      done();
-      if (code === 0) resolve();
-      else reject(new Error(err.trim() || `ffmpeg exited ${code}`));
-    });
+    if (!ask.prepare && !ask.fingerprint && !ask.wav && !ask.frames) continue;
+    files[ask.file] = abs(id, s.file);
+    slides.push(ask);
+  }
+  if (!slides.length) return;
+  const r = await startTask<PostMediaInput, unknown>("post-media", id, user.username, null, { post: id, slides, files, visionFrames: VISION_FRAMES });
+  if (r.state === "queued") throw new WaitsForComputer(r.line ?? "");
+}
+
+/** The vision frames of a video slide, where its slide text reads them (named by their ms). */
+const visionFrame = (id: string, i: number, ms: number) => path.join(postFramesDir(id, i), `${ms}.jpg`);
+const visionFramesHere = (id: string, s: Slide) =>
+  !!s.durationS && frameSampleTimes(s.durationS, VISION_FRAMES).every((t) => existsSync(visionFrame(id, s.index, Math.round(t * 1000))));
+
+/** The post-media task failed for good: a run that waited for it fails as a run does, and Retry offers its jobs. */
+export async function postMediaFailed(input: PostMediaInput, error: string): Promise<void> {
+  if (active.has(input.post)) return; // the run that asked has the error itself
+  const meta = await readMeta(input.post);
+  if (!meta || meta.status !== "processing" || meta.step !== "computer") return;
+  meta.status = move(POST_STATUS_MOVES, meta.status, "error", "post");
+  meta.step = undefined;
+  meta.error = error;
+  meta.jobs = (meta.jobs ?? []).map((j) => (j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error } : j));
+  await persist(meta);
+}
+
+/**
+ * The post-media task's result filed on its post (the task's apply, on the server): the slides' sizes, previews,
+ * fingerprints, sound and frames. A run that waited for it goes on.
+ */
+export async function filePostMedia(input: PostMediaInput, done: PostMediaDone[], files: Record<string, string>): Promise<void> {
+  const id = input.post;
+  const live = active.get(id);
+  const meta = live ?? (await readMeta(id));
+  if (!meta) return; // deleted meanwhile
+  for (const r of done) {
+    const slide = meta.slides.find((s) => s.index === r.index);
+    if (!slide) continue;
+    const n = nn(r.index);
+    if (r.durationS) slide.durationS = r.durationS;
+    if (r.hasAudio !== undefined) {
+      slide.hasAudio = r.hasAudio;
+      if (!r.hasAudio) slide.transcript = { status: "skipped" };
+    }
+    if (r.width && r.height) {
+      slide.width = r.width;
+      slide.height = r.height;
+    }
+    if (r.fingerprint) slide.fingerprint = r.fingerprint;
+    if (files[`thumb-${n}.jpg`]) await keep(files[`thumb-${n}.jpg`]!, thumbJpeg(id, r.index));
+    if (files[`vision-${n}.jpg`]) await keep(files[`vision-${n}.jpg`]!, visionJpeg(id, r.index));
+    if (files[`audio-${n}.wav`]) await keep(files[`audio-${n}.wav`]!, wavPath(id, r.index));
+    for (const ms of r.frames ?? []) await keep(files[`frame-${n}-${ms}.jpg`]!, visionFrame(id, r.index, ms));
+    if (r.prepared) slide.thumb = existsSync(thumbJpeg(id, r.index)) ? `thumbs/${n}.jpg` : undefined;
+  }
+  // the run that asked holds the post: it goes on and saves it
+  if (live) return;
+  if (meta.status === "processing" && meta.step === "computer") {
+    const user = sessionUserFor(meta.owner);
+    const pending = (meta.jobs ?? []).filter((j) => j.status === "running" || j.status === "pending").map((j) => j.type);
+    if (user && pending.length) {
+      enqueue(meta, user, pending, { computed: true });
+      return persist(meta);
+    }
+  }
+  await afterWrite(id, async () => {
+    if (!active.has(id)) await writeFile(metaPath(id), JSON.stringify(meta)).catch(() => {});
   });
-}
-
-/** Like runFfmpeg but returns what ffmpeg writes to stdout (small outputs only). */
-function ffmpegBytes(id: string, args: string[], maxBytes = 1 << 20): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-nostdin", ...args]);
-    let set = children.get(id);
-    if (!set) {
-      set = new Set();
-      children.set(id, set);
-    }
-    set.add(p);
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let err = "";
-    const timer = setTimeout(() => p.kill("SIGKILL"), 30_000);
-    p.stdout.on("data", (d: Buffer) => {
-      size += d.length;
-      if (size <= maxBytes) chunks.push(d);
-    });
-    p.stderr.on("data", (d) => {
-      err += d.toString();
-      if (err.length > 2000) err = err.slice(-2000);
-    });
-    const done = () => {
-      clearTimeout(timer);
-      set!.delete(p);
-      if (!set!.size) children.delete(id);
-    };
-    p.on("error", (e) => {
-      done();
-      reject(e);
-    });
-    p.on("close", (code) => {
-      done();
-      if (code === 0) resolve(Buffer.concat(chunks));
-      else reject(new Error(err.trim() || `ffmpeg exited ${code}`));
-    });
-  });
-}
-
-/* ---- duplicate media ---- */
-
-const GRAY_TILE_ARGS = [
-  "-frames:v",
-  "1",
-  "-vf",
-  `scale=${HASH_W}:${HASH_H}:flags=area,format=gray`,
-  "-f",
-  "rawvideo",
-  "-pix_fmt",
-  "gray",
-  "pipe:1",
-];
-
-async function grayTile(id: string, src: string, atS?: number): Promise<Uint8Array | null> {
-  try {
-    const seek = atS === undefined ? [] : ["-ss", atS.toFixed(2)];
-    const buf = await ffmpegBytes(id, [...seek, "-i", src, ...GRAY_TILE_ARGS]);
-    const need = HASH_W * HASH_H;
-    return buf.length >= need ? new Uint8Array(buf.subarray(0, need)) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function fingerprintSlide(id: string, slide: Slide): Promise<MediaFingerprint | undefined> {
-  if (!slide.file || !existsSync(abs(id, slide.file))) return undefined;
-  const src = abs(id, slide.file);
-  if (slide.kind === "video") {
-    const d = slide.durationS ?? 0;
-    const h: string[] = [];
-    for (const t of fingerprintFrameTimes(d)) {
-      const px = await grayTile(id, src, t);
-      if (px) h.push(dhashFromGray(px));
-    }
-    return h.length ? { h, d: Number(d.toFixed(2)) } : undefined;
-  }
-  const px = await grayTile(id, src);
-  return px ? { h: [dhashFromGray(px)] } : undefined;
-}
-
-/** Fills in missing slide fingerprints; returns whether anything changed. */
-async function fingerprintPost(meta: PostMeta): Promise<boolean> {
-  let changed = false;
-  for (const slide of meta.slides) {
-    if (slide.fingerprint) continue;
-    const fp = await fingerprintSlide(meta.id, slide);
-    if (fp) {
-      slide.fingerprint = fp;
-      changed = true;
-    }
-  }
-  return changed;
 }
 
 /** The earliest post in this user's library carrying the same media, slide for slide. */
@@ -1588,86 +1510,6 @@ async function saveYoutubeTranscript(meta: PostMeta, info: PostInfo): Promise<bo
   return true;
 }
 
-async function prepareSlide(
-  meta: PostMeta,
-  slide: Slide,
-  cover: string | undefined,
-  signal: AbortSignal,
-): Promise<void> {
-  const id = meta.id;
-  const src = abs(id, slide.file);
-  await mkdir(thumbsDir(id), { recursive: true });
-  const thumb = thumbJpeg(id, slide.index);
-  if (slide.kind === "video") {
-    const [duration, hasAudio, size] = await Promise.all([
-      probeDuration(src),
-      probeHasAudio(src),
-      probeSize(src),
-    ]);
-    if (duration) slide.durationS = duration;
-    slide.hasAudio = hasAudio;
-    if (size.width && size.height) {
-      slide.width = size.width;
-      slide.height = size.height;
-    }
-    if (!hasAudio) slide.transcript = { status: "skipped" };
-    if (!existsSync(thumb)) {
-      let made = false;
-      if (cover) {
-        const tmp = `${thumb}.download`;
-        try {
-          await downloadToFile(cover, tmp, {
-            maxBytes: THUMB_MAX_BYTES,
-            signal,
-            fallbackMime: "image/jpeg",
-          });
-          await runFfmpeg(id, ["-i", tmp, "-vf", "scale='min(720,iw)':-2", "-q:v", "4", thumb]);
-          made = true;
-        } catch {
-          /* fall back to a frame */
-        } finally {
-          await rm(tmp, { force: true }).catch(() => {});
-        }
-      }
-      if (!made) {
-        const ss = (slide.durationS ?? 0) > 1 ? "0.5" : "0";
-        await runFfmpeg(id, [
-          "-ss",
-          ss,
-          "-i",
-          src,
-          "-frames:v",
-          "1",
-          "-vf",
-          "scale='min(720,iw)':-2",
-          "-q:v",
-          "4",
-          thumb,
-        ]).catch(() => {});
-      }
-    }
-  } else {
-    const size = await probeSize(src);
-    if (size.width && size.height) {
-      slide.width = size.width;
-      slide.height = size.height;
-    }
-    if (!existsSync(thumb)) {
-      await runFfmpeg(id, ["-i", src, "-vf", "scale='min(720,iw)':-2", "-q:v", "4", thumb]).catch(
-        () => {},
-      );
-    }
-    const vj = visionJpeg(id, slide.index);
-    if (!existsSync(vj)) {
-      await mkdir(visionDir(id), { recursive: true });
-      await runFfmpeg(id, ["-i", src, "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", vj]).catch(
-        () => {},
-      );
-    }
-  }
-  slide.thumb = existsSync(thumb) ? `thumbs/${nn(slide.index)}.jpg` : undefined;
-}
-
 /**
  * The languages a Workshop project asked a post's transcript in (transcribeForUser), read when its transcript is made;
  * a post with none is heard in its owner's Voice languages.
@@ -1688,18 +1530,8 @@ async function transcribeSlide(
   const id = meta.id;
   const wav = wavPath(id, slide.index);
   try {
-    await runFfmpeg(id, [
-      "-i",
-      abs(id, slide.file),
-      "-vn",
-      "-ac",
-      "1",
-      "-ar",
-      "16000",
-      "-f",
-      "wav",
-      wav,
-    ]);
+    // cut by the post-media task (postMedia), on a computer or here
+    if (!existsSync(wav)) throw new Error("The sound could not be read");
     const audio = await readFile(wav);
     const result = await transcribeWav(audio, user, { languages: askIn.get(id) });
     if ("error" in result) throw new Error(result.error);
@@ -1738,10 +1570,9 @@ async function visionSlide(
       frameTimes = frameSampleTimes(slide.durationS ?? 0, VISION_FRAMES);
       for (const t of frameTimes) {
         if (signal.aborted) throw new AiProviderError("Stopped", "ABORTED", false);
-        const buf = await extractClipJpegFrame({
-          src: abs(id, slide.file),
-          cacheDir: postFramesDir(id, slide.index),
-          atMs: Math.round(t * 1000),
+        // made by the post-media task (postMedia)
+        const buf = await readFile(visionFrame(id, slide.index, Math.round(t * 1000))).catch(() => {
+          throw new Error("A frame of the video could not be read");
         });
         images.push({ jpegBase64: buf.toString("base64") });
       }
@@ -2507,11 +2338,9 @@ async function processPost(id: string): Promise<void> {
           }
           if (!still()) return;
           await setStep(meta, "thumbs", 0.45);
-          for (const slide of meta.slides) {
-            await prepareSlide(meta, slide, info.slides[slide.index]?.coverUrl, signal);
-            if (!still()) return;
-          }
-          await fingerprintPost(meta);
+          // the run's other media in the same go: its transcript's sound and its slide text's frames
+          const media = info;
+          if (!opts.computed) await postMedia(meta, user, { prepare: true, fingerprint: true, wav: requested.includes("transcript"), frames: requested.includes("vision") }, (i) => media.slides[i]?.coverUrl);
           if (!still()) return;
           if (!opts.force && !opts.ignoreDuplicate) {
             const dup = await findSameMedia(meta, user);
@@ -2554,6 +2383,7 @@ async function processPost(id: string): Promise<void> {
             continue;
           }
           await setStep(meta, "transcribe", 0.52);
+          if (!opts.computed) await postMedia(meta, user, { wav: true });
           stopCrawl = crawlProgress(meta, 0.7);
           await mapLimit(videos, 2, async (slide) => {
             if (!still()) return;
@@ -2578,6 +2408,7 @@ async function processPost(id: string): Promise<void> {
             continue;
           }
           await setStep(meta, "vision", 0.7);
+          if (!opts.computed) await postMedia(meta, user, { frames: true });
           stopCrawl = crawlProgress(meta, 0.88);
           await mapLimit(work, 2, async (slide) => {
             if (!still()) return;
@@ -2627,7 +2458,7 @@ async function processPost(id: string): Promise<void> {
         }
         await persist(meta);
       } catch (e) {
-        if (e instanceof InstagramError && e.code === "CANCELLED") throw e;
+        if ((e instanceof InstagramError && e.code === "CANCELLED") || e instanceof WaitsForComputer) throw e;
         meta.jobs = patchJob(meta.jobs, job, {
           status: "error",
           error: errorMessage(e).slice(0, 300),
@@ -2666,6 +2497,12 @@ async function processPost(id: string): Promise<void> {
   } catch (e) {
     stopCrawl();
     if (active.get(id) !== meta) return;
+    if (e instanceof WaitsForComputer) {
+      // its jobs stay open: the task's result enqueues them again (filePostMedia), as a restart does (resumeInterrupted)
+      meta.step = "computer";
+      await persist(meta);
+      return;
+    }
     meta.status = "error";
     meta.step = undefined;
     meta.error = errorMessage(e);
@@ -2681,8 +2518,6 @@ async function processPost(id: string): Promise<void> {
     jobUsers.delete(id);
     jobKinds.delete(id);
     jobOpts.delete(id);
-    for (const p of children.get(id) ?? []) p.kill("SIGKILL");
-    children.delete(id);
     const next = followUps.get(id);
     followUps.delete(id);
     if (next && existsSync(metaPath(id))) {
@@ -2900,8 +2735,7 @@ function cancel(id: string): void {
   active.delete(id);
   aborts.get(id)?.abort();
   aborts.delete(id);
-  for (const p of children.get(id) ?? []) p.kill("SIGKILL");
-  children.delete(id);
+  dropTask("post-media", id);
   jobUsers.delete(id);
   jobKinds.delete(id);
   jobOpts.delete(id);
@@ -3189,27 +3023,23 @@ async function resumeInterrupted(): Promise<void> {
 }
 setTimeout(() => void resumeInterrupted().catch(() => {}), 1500).unref();
 
-/** Older posts were saved before fingerprints existed; hash them once so duplicates are caught. */
-async function backfillFingerprints(): Promise<void> {
-  let done = 0;
+/**
+ * Older posts were saved before fingerprints existed; hash them once so duplicates are caught. Each goes to the
+ * post-media task: here only where the server's video work is on, else to the owner's computers (filed when they come).
+ */
+export async function backfillFingerprints(): Promise<void> {
+  let asked = 0;
   for (const id of await allIds()) {
     if (active.has(id)) continue;
-    let meta: PostMeta;
-    try {
-      meta = JSON.parse(await readFile(metaPath(id), "utf-8")) as PostMeta;
-    } catch {
-      continue;
-    }
-    if (meta.status === "processing") continue;
+    const meta = await readMeta(id);
+    if (!meta || meta.status === "processing") continue;
     if (!meta.slides.some((s) => s.file && !s.fingerprint)) continue;
-    if (!(await fingerprintPost(meta))) continue;
-    await afterWrite(id, async () => {
-      if (active.has(id)) return;
-      await writeFile(metaPath(id), JSON.stringify(meta)).catch(() => {});
-    });
-    done++;
+    const user = sessionUserFor(meta.owner);
+    if (!user) continue;
+    await postMedia(meta, user, { fingerprint: true }).catch(() => {});
+    asked++;
   }
-  if (done) console.log(`[instagram] fingerprinted media on ${done} post(s)`);
+  if (asked) console.log(`[instagram] fingerprints asked for on ${asked} post(s)`);
 }
 setTimeout(() => void backfillFingerprints().catch(() => {}), 8000).unref();
 
