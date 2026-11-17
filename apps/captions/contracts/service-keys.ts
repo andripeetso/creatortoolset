@@ -49,6 +49,7 @@ export const MY_KEYS = [
   { env: "YOUTUBE_API_KEY", name: "YouTube Data API", group: "research", what: "Public YouTube channels followed in Social accounts", where: "https://console.cloud.google.com/apis/library/youtube.googleapis.com" },
   { env: "OPENAI_API_KEY", name: "OpenAI", group: "ai", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
   { env: "TYPESAFE_API_KEY", name: "TypeSafe Jev", group: "ai", what: "Content Analyzer comments and ideas, and Content Workshop rules" },
+  { env: "GEMINI_API_KEY", name: "Gemini API", group: "ai", what: "Media Library timelines: what happens when in each video, from its picture and sound", where: "https://aistudio.google.com/apikey" },
   // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey); the page hides it then, unless a key is saved
   { env: "ANTHROPIC_API_KEY", name: "Anthropic API", group: "ai", what: "Used by the tools, except Content Workshop, when there is no AI provider", where: "https://console.anthropic.com/settings/keys" },
 ] as const satisfies ReadonlyArray<{ env: string; name: string; group: MyKeyGroup; what: string; where?: string }>;

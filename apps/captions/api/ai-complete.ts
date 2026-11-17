@@ -95,7 +95,7 @@ export const macLabelOf = (opts: ProviderOpts): string => `${DRIVERS.find((d) =>
 export function aiFor(who: Who, job: JobId, label: string, own?: Selection): ProviderOpts {
   // on a computer: the server answers as the job's account (work/serve.ts); the package says whether it has AI for this
   if (onComputer.on) {
-    const off = (job === "analyzer" ? onComputer.pkg!.ai.analyzer : onComputer.pkg!.ai.editor) ?? undefined;
+    const off = (job === "analyzer" || job === "library" ? onComputer.pkg!.ai.analyzer : onComputer.pkg!.ai.editor) ?? undefined;
     return { only: ["server"], ...(off ? { off } : {}), job, mac: { label } };
   }
   const name = typeof who === "string" ? who : who?.username;

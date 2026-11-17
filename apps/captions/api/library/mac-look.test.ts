@@ -187,6 +187,51 @@ describe("a look of a file kept on a Mac", () => {
     expect(completeVisionWithFallback).toHaveBeenCalledTimes(2); // the one the limit stopped, and the one that wrote the lines
   });
 
+  it("with a Gemini key the claim asks for a copy to watch; the copy goes to Gemini and is deleted, and a Mac that sends none is named", async () => {
+    const { saveMyKey } = await import("../my-keys");
+    const { timelineOf } = await import("./timeline");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        asked.push(`${init.method ?? "GET"} ${url}`);
+        if (url.endsWith("/upload/v1beta/files")) return new Response("{}", { headers: { "x-goog-upload-url": "https://upload.test/m" } });
+        if (url === "https://upload.test/m") return Response.json({ file: { name: "files/m", uri: "https://files.test/m", state: "ACTIVE" } });
+        if (url.includes(":generateContent"))
+          return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ events: [{ start: "0:03", end: "0:06", what: "a jump" }] }) }] } }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } });
+        return new Response("{}");
+      }),
+    );
+    vi.mocked(completeVisionWithFallback).mockImplementation(answerAll as never);
+    try {
+      for (const sends of [true, false]) {
+        const v = await seed(`ast-m-w${sends ? 1 : 2}`);
+        const got = (await claim())!;
+        expect(got.options).toMatchObject({ watch: "1" });
+        await post(road(got.id), { signal });
+        await post(road(got.id), { sheet: sheet([0, 1]) });
+        if (sends) {
+          const r = await app.request(`${road(got.id)}/file?name=watch.mp4`, { method: "POST", headers: { authorization: `Bearer ${mac.token}`, "content-type": "video/mp4" }, body: Buffer.from("tiny video") });
+          expect(r.status).toBe(200);
+        }
+        await post(road(got.id), { done: true, format: "3x16" });
+        await runLooks();
+        expect(job(v).state).toBe("done");
+        if (sends) {
+          expect(timelineOf(libraryDb(), v)).toEqual([{ a: 3, b: 6, what: "a jump" }]);
+          expect(asked.some((a) => a.startsWith("DELETE"))).toBe(true);
+          expect(files(dir).filter((f) => f.includes("watch-"))).toEqual([]);
+        } else {
+          expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("needs an update");
+        }
+      }
+    } finally {
+      saveMyKey("local", "GEMINI_API_KEY", null);
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("an account with no AI connected waits for that, and the Mac reads nothing", async () => {
     vi.mocked(aiFor).mockReturnValueOnce({ off: "Connect an AI" } as never);
     const v = await seed("ast-m-30");

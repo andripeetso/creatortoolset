@@ -62,6 +62,21 @@ export interface AssetDetail extends AssetCard {
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
   /** its shot descriptions, in order (a person's own line wins): a video's moments, each with its start and end second */
   shots?: { seg: number; a: number; b: number; text: string; source: "ai" | "user" }[];
+  /** what happens when, from Gemini watching the video with its sound (api/library/timeline.ts); absent without one */
+  timeline?: TimelineEvent[];
+}
+
+/**
+ * One moment of a video's timeline, in order: Gemini watched the video with its sound (api/library/timeline.ts). `sound`:
+ * what the sound adds (a hit, a line, music rising); `change`: what changed from the moment before (a cut, the camera,
+ * the place). Never who anyone is.
+ */
+export interface TimelineEvent {
+  a: number;
+  b: number;
+  what: string;
+  sound?: string;
+  change?: string;
 }
 
 export interface SearchQuery {
@@ -124,6 +139,7 @@ export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
   look: boolean; // the AI writes a line for each shot of a longer video that isn't a talking take (Shot descriptions)
+  timeline: boolean; // with a Gemini key, Gemini watches each of those videos with its sound and writes its timeline (Timelines)
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
   /**
    * What a file added from a computer the server is not on sends to the server: "none" (the default) indexes it where it
@@ -266,6 +282,8 @@ export interface LibraryEstimate {
   lookLevels?: { level: LookLevel; seconds: number; usd: number }[];
   /** what shot descriptions cost this month in this library's workspace, in dollars */
   lookSpent?: number;
+  /** the asker has a Gemini key, so the library's Timelines run (api/library/timeline.ts) */
+  timelineKey?: boolean;
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
@@ -437,7 +455,7 @@ export interface SharedView {
   items: SharedItem[];
 }
 
-/** A watch folder (api/library/watch.ts): a folder on the server's own disk whose new files join the library. */
+/** A watch folder (api/library/timeline.ts): a folder on the server's own disk whose new files join the library. */
 export interface WatchFolder {
   path: string; // absolute, on the server's disk
   mode: "reference" | "copy"; // reference: the file stays where it is; copy: stored in the library like an upload

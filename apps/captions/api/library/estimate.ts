@@ -4,6 +4,7 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
+import { watchKey, watchUsdPerHour } from "./timeline";
 import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
@@ -102,12 +103,12 @@ type Route = { route: LibraryStepRoute; missing?: string };
 export function routesOf(libraryId: string, username: string): Record<LibraryStep, Route> {
   let describe: Route = { route: "off" };
   if (librarySetting(libraryId, "describe")) {
-    const r = onApiKey(username, "analyzer", DESCRIBE_LABEL) ?? aiFor(whoFor(username), "analyzer", DESCRIBE_LABEL);
+    const r = onApiKey(username, "library", DESCRIBE_LABEL) ?? aiFor(whoFor(username), "library", DESCRIBE_LABEL);
     describe = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
   let look: Route = { route: "off" };
   if (librarySetting(libraryId, "look")) {
-    const r = onApiKey(username, "analyzer", LOOK_LABEL) ?? aiFor(whoFor(username), "analyzer", LOOK_LABEL);
+    const r = onApiKey(username, "library", LOOK_LABEL) ?? aiFor(whoFor(username), "library", LOOK_LABEL);
     look = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
   let transcript: Route;
@@ -279,11 +280,14 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
     // an hour of footage at each level, so the person picks with the time and cost in front of them
     const mine = levelShare(libraryLookLevel(libraryId));
     out.lookLevels = [];
+    // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from measured tokens)
+    const watching = librarySetting(libraryId, "timeline") && !!watchKey(username);
     for (const l of LOOK_LEVELS) {
       const p = await lookPerClip(db, look, 3600, levelShare(l.value), mine);
-      out.lookLevels.push({ level: l.value, seconds: p.seconds / p.at, usd: p.usd });
+      out.lookLevels.push({ level: l.value, seconds: p.seconds / p.at, usd: p.usd + (watching ? watchUsdPerHour(l.value) : 0) });
     }
   }
+  out.timelineKey = !!watchKey(username);
   if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);
   if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);

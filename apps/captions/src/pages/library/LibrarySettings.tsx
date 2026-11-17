@@ -41,9 +41,10 @@ const WHERE: Partial<Record<LibraryStepRoute, string>> = {
 };
 
 /** What each switch adds, before where it runs. */
-const WHAT: Record<"describe" | "look" | "embed", string> = {
+const WHAT: Record<"describe" | "look" | "timeline" | "embed", string> = {
   describe: "What is on screen in each video, written down for search.",
   look: "A line for each shot of a longer video.",
+  timeline: "What happens when in each of those videos, from its picture and sound, made by Gemini.",
   embed: "Search matches by meaning as well as by exact words.",
 };
 
@@ -216,7 +217,7 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
 function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError">) {
   const [est, setEst] = useState<LibraryEstimate | null>(null);
   const routes = est?.steps ?? null;
-  const { describe, look, embed, lookLevel, lookBudget } = library.settings;
+  const { describe, look, timeline, embed, lookLevel, lookBudget } = library.settings;
   useEffect(() => {
     let live = true;
     getEstimate(library.id, { clips: 1, bytes: 1 }).then(
@@ -224,9 +225,9 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
       () => live && setEst({ clips: 0, minutes: 0, steps: [], seconds: 0 }),
     );
     return () => void (live = false);
-  }, [library.id, describe, look, embed, lookLevel, lookBudget]);
+  }, [library.id, describe, look, timeline, embed, lookLevel, lookBudget]);
 
-  const flip = (key: "describe" | "look" | "embed", on: boolean) =>
+  const flip = (key: "describe" | "look" | "timeline" | "embed", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
@@ -259,6 +260,26 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
         <Card>
           {row("describe", "describe", "Descriptions")}
           {row("look", "look", "Shot descriptions")}
+          {look && (
+            <Row
+              title="Timelines"
+              description={WHAT.timeline}
+              status={
+                timeline &&
+                est &&
+                (est.timelineKey ? (
+                  <Status>Uses the Gemini API key</Status>
+                ) : (
+                  <Status tone="attention">
+                    <Link to="/settings/keys" className="underline-offset-4 hover:underline">
+                      Needs a Gemini API key
+                    </Link>
+                  </Status>
+                ))
+              }
+              control={<Switch aria-label="Timelines" checked={timeline} onCheckedChange={(on) => void flip("timeline", on)} />}
+            />
+          )}
           {row("embed", "embed", "Search by meaning")}
         </Card>
       </Section>
