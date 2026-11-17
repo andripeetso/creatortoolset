@@ -16,7 +16,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { promptDialog } from "@/lib/dialogs";
 import { cn } from "@/lib/utils";
-import { revealClip } from "./clip";
+import { revealClip, servedHere } from "./clip";
 
 /**
  * Picking several clips in the Media Library (LibraryPage.tsx), as Review picks videos: a plain click still opens a clip,
@@ -327,8 +327,6 @@ export function saveFile(href: string) {
   a.remove();
 }
 
-/** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
-export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
 /**
  * Show in Finder, in the Mac app. On the server on this Mac every clip has its file here; on a server elsewhere only a

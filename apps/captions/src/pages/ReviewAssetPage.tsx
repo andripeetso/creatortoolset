@@ -18,6 +18,7 @@ import {
   Clock,
   Columns2,
   Download,
+  FolderOpen,
   Layers,
   Loader2,
   Maximize,
@@ -105,6 +106,7 @@ import { payloadError } from "@contracts/review-payload";
 import { canChange, useMe } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { webPlugins } from "@/plugins.gen";
+import { canReveal, revealReviewFile } from "./library/clip";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
 const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-fuchsia-600", "bg-teal-600"];
@@ -1236,6 +1238,10 @@ function Review({
 
 // ---------- header: title, versions, approval, share ----------
 
+// ponytail: a file made on a Linux helper (/home/…) is never on this Mac, so it keeps Download; a cut made on another
+// Mac still gets Show in Finder, which downloads when the file is not here. Name the computer on the version if that bites.
+const MAC_PATH = /^\/(Users|Volumes)\//;
+
 function Header({
   view,
   setView,
@@ -1470,7 +1476,23 @@ function Header({
 
       <div className="ml-auto flex items-center gap-2">
         <ApprovalControl asset={asset} manage={manage} locked={locked} approve={approve} />
-        {asset.download && version.status !== "error" && !version.removed && (
+        {version.local && MAC_PATH.test(version.local) && canReveal() && version.status !== "error" ? (
+          // made on a computer: its own file, shown in Finder when it is on this Mac (else Review's copy downloads)
+          <button
+            type="button"
+            onClick={() =>
+              void revealReviewFile(asset.id, version.n, version.local!).then((problem) => {
+                if (!problem) return;
+                setError(`${problem}: downloading Review's copy`);
+                if (asset.download) location.assign(api.media(version, "download"));
+              })
+            }
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+            title="Show in Finder"
+          >
+            <FolderOpen className="h-4 w-4" />
+          </button>
+        ) : asset.download && version.status !== "error" && !version.removed && (
           <a
             href={api.media(version, "download")}
             download

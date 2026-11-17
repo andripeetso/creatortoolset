@@ -50,5 +50,10 @@ final class RevealTests: XCTestCase {
         XCTAssertNil(revealAsk(#"reveal:{"library":"lib_1","asset":"a/../b"}"#))
         XCTAssertNil(revealAsk(#"reveal:{"library":"lib_1"}"#))
         XCTAssertNil(revealAsk("reveal:/a/b.MOV"))
+        XCTAssertEqual(reviewRevealAsk(#"reveal:{"review":"b94200d6-3321","v":2}"#)?.n, 2)
+        XCTAssertNil(reviewRevealAsk(#"reveal:{"review":"../x","v":2}"#))
+        XCTAssertNil(reviewRevealAsk(#"reveal:{"review":"b94200d6","v":0}"#))
+        XCTAssertNil(reviewRevealAsk(#"reveal:{"library":"lib_1","asset":"a1"}"#))
+        XCTAssertNil(revealAsk(#"reveal:{"review":"b94200d6","v":2}"#))
     }
 }
