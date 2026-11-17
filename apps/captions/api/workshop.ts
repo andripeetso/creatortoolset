@@ -67,7 +67,7 @@ import { inProjectOf, sharedTo } from "./lib/project-of";
 import { renderContext, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
 import { memoryFor } from "./lib/memory";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
-import { allIn, asIn, dropWorkspaceFromRules, sharedAgainIn, type AsIn, type Scoped } from "./lib/workshop/rule-workspaces";
+import { allIn, asIn, sharedAgainIn, type AsIn, type Scoped } from "./lib/workshop/rule-workspaces";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
 import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN, pieceMarkdown } from "../src/lib/workshop-markdown";
@@ -2285,7 +2285,6 @@ workshopApp.delete("/projects/:id", async (c) => {
   // everything in it goes first, while it still exists: the first brand is worked out from it (owner, 2026-11-16)
   await deleteWorkspaceContents(user, project.id);
   await rm(projectPath(project.id), { force: true });
-  await dropWorkspaceFromRules(project.id);
   const ws = await getWorkspace(user);
   if (ws.currentProjectId === project.id) await setCurrentProjectId(user, ws.projects[0]?.id ?? null);
   return c.json({ ok: true });

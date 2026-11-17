@@ -52,17 +52,31 @@ export function sharedAgainIn<T extends Scoped>(x: T, workspace: string): T {
   return { ...rest, ...(Object.keys(versions).length ? { versions } : {}) } as T;
 }
 
+type Kind = "rules" | "frameworks";
+
+/** Every rule or framework on file, with the file it is in. */
+async function records(kind: Kind): Promise<Array<{ file: string; rec: (Scoped & { owner?: string }) | null }>> {
+  const dir = path.join(env.dataDir, "workshop", kind);
+  const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".json"));
+  return Promise.all(
+    names.map(async (name) => {
+      const file = path.join(dir, name);
+      return { file, rec: await readFile(file, "utf-8").then((t) => JSON.parse(t) as Scoped & { owner?: string }, () => null) };
+    }),
+  );
+}
+
+/** How many of `owner`'s rules or frameworks are kept to `workspace` alone: what deleting it deletes (its confirm counts them). */
+export const keptOnlyTo = async (kind: Kind, owner: string, workspace: string): Promise<number> =>
+  (await records(kind)).filter(({ rec }) => rec?.owner === owner && withoutWorkspace(rec, workspace) === "delete").length;
+
 /**
  * A deleted workspace leaves every rule and framework: dropped from each Only these list (one left with none is
- * deleted) and its own versions deleted. Called by DELETE /projects/:id (api/workshop.ts).
+ * deleted) and its own versions deleted. Run by the workspace delete (lib/workspace-delete.ts).
  */
 export async function dropWorkspaceFromRules(workspace: string): Promise<void> {
-  for (const kind of ["rules", "frameworks"]) {
-    const dir = path.join(env.dataDir, "workshop", kind);
-    for (const name of await readdir(dir).catch(() => [] as string[])) {
-      if (!name.endsWith(".json")) continue;
-      const file = path.join(dir, name);
-      const rec = await readFile(file, "utf-8").then((t) => JSON.parse(t) as Scoped, () => null);
+  for (const kind of ["rules", "frameworks"] as const) {
+    for (const { file, rec } of await records(kind)) {
       const next = rec && withoutWorkspace(rec, workspace);
       if (next === "delete") await rm(file, { force: true });
       else if (next) await writeFile(`${file}.tmp-${process.pid}`, JSON.stringify(next)).then(() => rename(`${file}.tmp-${process.pid}`, file));

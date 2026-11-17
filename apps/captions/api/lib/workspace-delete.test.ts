@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -116,6 +116,13 @@ beforeAll(async () => {
   put(at("workshop", "users", "alex.edits.json"), [{ key: "a", projectId: A }, { key: "b", projectId: B }, { key: "all" }]);
   const note = (id: string, workspace: string) => ({ id, kind: "workshop", by: "Content Workshop", assetId: randomUUID(), name: id, href: "/", at: 1, workspace });
   put(at("review", "notifications", "alex.json"), [note("na", A), note("nb", B)]);
+  // writing rules and frameworks: kept to B alone (goes with B), to A and B (only leaves B), to A alone, to every workspace
+  const rule = (kind: string, rid: string, only?: string[]) => put(at("workshop", kind, `${rid}.json`), { id: rid, owner: "alex", text: rid, createdAt: 1, updatedAt: 1, ...(only ? { only } : {}) });
+  rule("rules", "r-b", [B]);
+  rule("rules", "r-ab", [A, B]);
+  rule("rules", "r-all");
+  rule("frameworks", "f-b", [B]);
+  rule("frameworks", "f-a", [A]);
   // the person's own footage folder, read in place by B's Media Library through a link
   put(take, "the person's own video");
   const folder = (fid: string, ws: string) => ({ id: fid, role: "footage", name: "My footage", origin: { host: "mac", path: own }, make: false, createdAt: 1, reach: {}, workspace: ws });
@@ -136,8 +143,10 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 const ONE_EACH = {
   project: 1, chat: 1, "Review video": 1, "AI Editor edit": 1, "Caption Studio project": 1, recording: 1, guide: 1, "enhanced file": 1,
   "story split": 1, "context file": 1, "saved rewrite": 1, design: 1, "Content Analyzer account": 1, "saved post": 1, "idea board": 1,
-  "social account": 1, "scheduled task": 1, folder: 1, "footage folder": 1, "Media Library clip": 1,
+  "social account": 1, "scheduled task": 1, folder: 1, "footage folder": 1, "Media Library clip": 1, "writing rule": 1, framework: 1,
 };
+const onFile = (kind: string) => readdirSync(at("workshop", kind)).map((n) => path.basename(n, ".json")).sort();
+const onlyOf = (kind: string, rid: string) => (JSON.parse(readFileSync(at("workshop", kind, `${rid}.json`), "utf-8")) as { only?: string[] }).only;
 
 describe.skipIf(pluginWorkspaceStores().length > 0)("deleting a workspace", () => {
   it("counts what it holds, its member's work in it too, and deletes exactly that", async () => {
@@ -168,6 +177,9 @@ describe.skipIf(pluginWorkspaceStores().length > 0)("deleting a workspace", () =
     expect(libs).toEqual([lib.a]);
     expect(existsSync(at("library", "blobs", "libraries", lib.b))).toBe(false);
     expect(readFileSync(take, "utf-8")).toBe("the person's own video");
+    // B's own rule and framework go; the one it shared with A is now A's alone; the one for every workspace stays
+    expect([onFile("rules"), onFile("frameworks")]).toEqual([["r-ab", "r-all"], ["f-a"]]);
+    expect([onlyOf("rules", "r-ab"), onlyOf("rules", "r-all")]).toEqual([[A], undefined]);
     // nothing of B's is left to count, and A's are all still there
     expect(counts(await contents(A))).toEqual({ ...ONE_EACH, "memory rule": 1 });
   });
@@ -182,6 +194,7 @@ describe.skipIf(pluginWorkspaceStores().length > 0)("deleting a workspace", () =
     for (const f of loose.everywhere) expect(existsSync(f), f).toBe(true);
     const facts = (JSON.parse(readFileSync(at("memory", "alex.json"), "utf-8")) as { facts: { id: string }[] }).facts.map((f) => f.id);
     expect(facts).toEqual(["fall"]);
+    expect([onFile("rules"), onFile("frameworks")]).toEqual([["r-all"], []]);
     expect(readFileSync(take, "utf-8")).toBe("the person's own video");
   });
 });

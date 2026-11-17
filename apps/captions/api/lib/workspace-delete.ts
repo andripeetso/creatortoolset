@@ -68,12 +68,14 @@ function metaStore(name: WorkspaceStore["name"], dir: string, o: { flat?: boolea
 /** The person's own folders: their entries go, the files in them stay (devices-storage.ts). */
 const FOOTAGE_FOLDERS: WorkspaceStore = {
   name: ["footage folder", "footage folders"],
+  ownFiles: true,
   find: async (a, ws) => (await import("../devices-storage")).workspaceStorageFolders(a.username, ws.has),
 };
 
 /** The workspace's Media Libraries, counted by their clips: the app's copies, proxies and index go; a file indexed in place stays. */
 const LIBRARIES: WorkspaceStore = {
   name: ["Media Library clip", "Media Library clips"],
+  ownFiles: true,
   find: async (a, ws) => {
     const { libraryDb } = await import("../library/db");
     const { homeOf } = await import("../library/access");
@@ -201,6 +203,16 @@ export const STORES: WorkspaceStore[] = [
   { name: ["folder", "folders"], find: async (a, ws) => (await import("../folders")).workspaceToolFolders(a.username, ws.has) },
   FOOTAGE_FOLDERS,
   LIBRARIES,
+  // writing rules and frameworks kept to it alone go; a shared one only leaves its lists (lib/workshop/rule-workspaces.ts)
+  ...([["rules", ["writing rule", "writing rules"]], ["frameworks", ["framework", "frameworks"]]] as const).map(
+    ([kind, name]): WorkspaceStore => ({
+      name: [...name],
+      find: async (a, ws) => {
+        const r = await import("./workshop/rule-workspaces");
+        return { n: await r.keptOnlyTo(kind, a.username, ws.id), drop: () => r.dropWorkspaceFromRules(ws.id) };
+      },
+    }),
+  ),
 ];
 
 /** Every store: the app's own and the loaded plug-ins' (ServerPlugin.workspaceStores). */
@@ -229,7 +241,7 @@ export async function workspaceContents(owner: SessionUser, id: string): Promise
   const counted = (await plan(owner, id)).map(({ store, found }) => ({ store, n: found.reduce((t, f) => t + f.n, 0) })).filter((x) => x.n > 0);
   return {
     items: counted.map(({ store, n }) => ({ n, what: n === 1 ? store.name[0] : store.name[1] })),
-    ownFiles: counted.some((x) => x.store === FOOTAGE_FOLDERS || x.store === LIBRARIES),
+    ownFiles: counted.some((x) => x.store.ownFiles),
   };
 }
 

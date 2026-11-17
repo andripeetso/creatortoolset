@@ -143,6 +143,9 @@ export interface ServerPlugin {
  */
 export interface WorkspaceStore {
   name: [one: string, many: string];
+  /** The person's own files are behind these records (their folders, footage read in place): the records go, the files
+   *  stay, and the confirm says so. */
+  ownFiles?: true;
   find: (account: SessionUser, ws: { id: string; has: (stamp?: string) => boolean }) => Promise<{ n: number; drop: () => Promise<unknown> }>;
 }
 
