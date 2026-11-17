@@ -1,9 +1,9 @@
 import { createReadStream, createWriteStream, statSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript } from "../../contracts/work";
+import { WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type PictureInput, type PicturePackage, type PictureResult } from "../../contracts/work";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
 import { fingerprint } from "../library/fingerprint";
@@ -14,6 +14,8 @@ import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
 import { ffmpegTo } from "../library/media/run";
 import { soundArgs } from "../library/transcribe";
+import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
+import { SHEET_FORMAT, type LookSheet } from "../library/shots";
 import { sizeOf } from "./cache";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
@@ -188,5 +190,55 @@ export async function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Prom
     if (current === ctl) current = null;
     // the job's folder, with an original downloaded for the proxy: never kept
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The sheets the Mac app keeps for `p`'s version (LibraryLookJob.swift: looks/<version>.json in the folder whose "work"
+ * folder is this worker's data folder, Shell.swift), when they show the stretches the server has; else none.
+ */
+async function sheetsHere(p: PicturePackage): Promise<LookSheet[] | null> {
+  if (!/^[\w-]{1,100}$/.test(p.versionId)) return null;
+  const kept = (await readFile(path.join(env.dataDir, "..", "looks", `${p.versionId}.json`), "utf8")
+    .then((t) => JSON.parse(t) as { format?: string; stretches?: number[][]; sheets?: LookSheet[] })
+    .catch(() => null));
+  if (kept?.format !== SHEET_FORMAT || JSON.stringify(kept.stretches) !== JSON.stringify(p.stretches ?? []) || !Array.isArray(kept.sheets)) return null;
+  return kept.sheets.map(({ segs, jpeg }) => ({ segs, jpeg }));
+}
+
+const b64 = (v: Float32Array) => Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString("base64");
+
+/**
+ * Search by picture's vectors of one clip (contracts/work.ts PicturePackage): its card picture and look sheets read from
+ * the server, or the sheets this Mac keeps, through the server's own picture code; only the vectors go back.
+ */
+export async function runPictureJob(p: PicturePackage, o: WorkerOptions): Promise<"done" | "failed" | "stopped"> {
+  const c = client(o);
+  const base = `work/pictures/${p.id}`;
+  let taken = false;
+  const beat = setInterval(() => {
+    c.post<{ ok: boolean }>(`${base}/beat`, {})
+      .then((r) => void (r.ok === false && (taken = true)))
+      .catch(() => {}); // the server is away a moment: the lease outlives a few missed beats
+  }, o.beatMs ?? 10_000);
+  try {
+    const res = await c.raw(`${base}/input`);
+    if (!res.ok) throw new Error(`The server gave no pictures (${res.status})`);
+    const input = (await res.json()) as PictureInput;
+    const sheets = input.sheets ?? (p.sheets === "here" ? await sheetsHere(p) : null);
+    const rows: PictureResult["rows"] = [];
+    if (input.card) {
+      const vec = await cardVector(Buffer.from(input.card, "base64"), false);
+      rows.push({ seg: CARD_SEG, vec: vec ? b64(vec) : null });
+    }
+    if (sheets) for (const r of await sheetVectors(sheets, false)) rows.push({ seg: r.seg, vec: r.vec ? b64(r.vec) : null });
+    if (taken) return "stopped";
+    await c.post(`${base}/done`, { v: WORK_V, rows } satisfies PictureResult);
+    return "done";
+  } catch (e) {
+    await c.post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e) }).catch(() => {});
+    return "failed";
+  } finally {
+    clearInterval(beat);
   }
 }

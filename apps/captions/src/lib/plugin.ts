@@ -265,6 +265,8 @@ export interface ReviewTimelineSlot {
  * A product site a plug-in serves on its own hosts, signed in or not, in place of the app (the hosted front page, its
  * download and legal pages). `claims` says which pages the site takes; any other page is the app as usual.
  */
+export type WorkspacePage = { path: RegExp; to: string };
+
 export interface SiteFrame {
   hosts: string[];
   claims: (pathname: string, search: string) => boolean;
@@ -280,6 +282,9 @@ export interface WebPlugin {
   site?: SiteFrame;
   // Pages added to the app's Routes. Paths must not repeat a built-in page; the generator checks that.
   routes?: { path: string; element: ReactNode }[];
+  // Its pages that show one workspace's things (a record, a store of one brand's): when the window's workspace changes,
+  // a page whose address `path` matches leaves for `to`, as a built-in record page leaves for its tool (lib/page-workspace.ts).
+  workspacePages?: WorkspacePage[];
   // Media Library sidebar facets and item badges (LibraryPage reads them from webPlugins).
   library?: LibraryWebSlot;
   tiles?: PluginTile[];

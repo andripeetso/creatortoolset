@@ -65,6 +65,8 @@ function pluginScreens() {
   return {
     // pages from plug-ins (plugins/<id>/web.tsx), routed like the built-in pages above
     pluginRoutes: webPlugins.flatMap((p) => p.routes ?? []),
+    // their pages that show one workspace's things, which leave on a workspace switch (lib/page-workspace.ts)
+    workspacePages: webPlugins.flatMap((p) => p.workspacePages ?? []),
     // a plug-in's replacement for the editor pages (replaces in web.tsx); the built-in pages when none does
     EditorScreen: replacementFor(webPlugins, "editor") ?? EditorPage,
     EditorEditScreen: replacementFor(webPlugins, "editorEdit") ?? EditorEditPage,
@@ -274,10 +276,10 @@ function InstagramAnalyzeRoute() {
 }
 
 export default function App() {
-  const { pluginRoutes, EditorScreen, EditorEditScreen, LibraryScreen, FinalsScreen } = (screens ??= pluginScreens());
+  const { pluginRoutes, workspacePages, EditorScreen, EditorEditScreen, LibraryScreen, FinalsScreen } = (screens ??= pluginScreens());
   const look = useAppearance();
   useRootTint(look.projectTint, look.ownColour);
-  usePageFollowsWorkspace();
+  usePageFollowsWorkspace(workspacePages);
   const location = useLocation();
   useTelemetry(location.pathname);
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never

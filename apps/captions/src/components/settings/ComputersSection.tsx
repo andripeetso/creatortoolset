@@ -17,7 +17,7 @@ import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu
 import { CopyBox } from "./copy-box";
 import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
-import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
+import { hasThisMac, SharedDrivesRow, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
 import { LoadBalancing } from "./ServerWorkSection";
 
@@ -251,20 +251,24 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
 }
 
 /**
- * This Mac's own switch: it adds this Mac to the account, and then the app's AI jobs run on it. Under this Mac's row
- * once it is on the list; before that the switch is its only row (a row that could only name this Mac has no action).
+ * This Mac's own switches: AI on this Mac adds this Mac to the account, and then the app's AI jobs run on it; Shared
+ * drives. Under this Mac's row once it is on the list; before that they are its only rows (a row that could only name
+ * this Mac has no action).
  */
 function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
   return (
-    <Row
-      id="use-this-mac"
-      title="AI on this Mac"
-      description="AI jobs can run on this Mac."
-      status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
-      control={
-        <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="AI on this Mac" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
-      }
-    />
+    <>
+      <Row
+        id="use-this-mac"
+        title="AI on this Mac"
+        description="AI jobs can run on this Mac."
+        status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
+        control={
+          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="AI on this Mac" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
+        }
+      />
+      <SharedDrivesRow bridge={bridge} />
+    </>
   );
 }
 

@@ -514,6 +514,18 @@ export const MIGRATIONS: string[] = [
     version_id UNINDEXED, a UNINDEXED, text, tokenize = 'unicode61 remove_diacritics 2'
   );
   `,
+  // 30: search by picture (pictures.ts): a vector of what each shot shows, by the stretch it is the middle of (seg as in
+  // stretches) or -1 for the card picture; start_s is where the hit opens. An empty vec: no picture could be read
+  `
+  CREATE TABLE pictures (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    seg INTEGER NOT NULL,
+    start_s REAL NOT NULL,
+    model TEXT NOT NULL,
+    vec BLOB NOT NULL,
+    PRIMARY KEY (version_id, seg)
+  );
+  `,
   // 31: how well each stretch is taken, measured where the picture is read (look.ts qualityOf): 0..1, and its flaws as a
   // JSON list ("blurry", "too dark", "shaky"). NULL: not measured (a picture read on a computer that sends no measures)
   `

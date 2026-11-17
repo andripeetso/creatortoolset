@@ -15,7 +15,7 @@ import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
-import { addFrom, copyAvailable, copyRoot, lookForNew } from "./Import";
+import { addFrom, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
@@ -41,11 +41,12 @@ const WHERE: Partial<Record<LibraryStepRoute, string>> = {
 };
 
 /** What each switch adds, before where it runs. */
-const WHAT: Record<"describe" | "look" | "timeline" | "embed", string> = {
+const WHAT: Record<"describe" | "look" | "timeline" | "embed" | "pictures", string> = {
   describe: "What is on screen in each video, written down for search.",
   look: "A line for each shot of a longer video.",
   timeline: "What happens when in each of those videos, from its picture and sound, made by Gemini.",
   embed: "Search matches by meaning as well as by exact words.",
+  pictures: "Search matches what the footage shows as well as its words.",
 };
 
 /** The two ways a file is imported, in the words of these settings (the add dialog asks the same in its own, ./Import.tsx). */
@@ -144,8 +145,8 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
         if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Could not look for new files (${r.status})`);
         setLine("Looking for new files…");
       } else {
-        const n = await lookForNew(library, setLine);
-        setLine(n ? `${n.toLocaleString()} new ${n === 1 ? "file" : "files"} added` : "No new files");
+        const { added, reconnected } = await lookForNew(library, setLine);
+        setLine(lookedLine(added, reconnected));
       }
     } catch (e) {
       setLine(null);
@@ -227,7 +228,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
     return () => void (live = false);
   }, [library.id, describe, look, timeline, embed, lookLevel, lookBudget]);
 
-  const flip = (key: "describe" | "look" | "timeline" | "embed", on: boolean) =>
+  const flip = (key: "describe" | "look" | "timeline" | "embed" | "pictures", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
@@ -281,6 +282,14 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
             />
           )}
           {row("embed", "embed", "Search by meaning")}
+          {/* made here or on the person's own computers (api/library/pictures.ts): nothing to add; absent on an older server */}
+          {library.settings.pictures !== undefined && (
+            <Row
+              title="Search by picture"
+              description={WHAT.pictures}
+              control={<Switch aria-label="Search by picture" checked={library.settings.pictures} onCheckedChange={(on) => void flip("pictures", on)} />}
+            />
+          )}
         </Card>
       </Section>
       {look && <ShotDetail library={library} estimate={est} onChange={onChange} onError={onError} />}

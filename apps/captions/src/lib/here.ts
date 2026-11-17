@@ -14,8 +14,13 @@ export type Source = { src: string; badge: "Original" | "Proxy" };
 /** What plays a version, from this computer's answer (none: nothing found here, the server's proxy). */
 export function pickSource(check: PlaceCheck | undefined, versionId: string): Source {
   if (check?.state === "here" && check.url) return { src: check.url, badge: "Original" };
-  if (check?.state === "cached") return { src: check.url, badge: "Proxy" };
-  return { src: `/api/library/media/${versionId}/play`, badge: "Proxy" };
+  return proxySource(check, versionId);
+}
+
+/** The proxy that plays a version: this computer's cached one (Available offline, plays without internet), else the server's. */
+export function proxySource(check: PlaceCheck | undefined, versionId: string): Source {
+  const cached = check?.state === "cached" ? check.url : check?.cached;
+  return { src: cached ?? `/api/library/media/${versionId}/play`, badge: "Proxy" };
 }
 
 /** "footage (office-nas)": a root as the lines under a player name it. */

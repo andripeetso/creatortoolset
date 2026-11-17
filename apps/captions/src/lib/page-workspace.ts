@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
+import type { WorkspacePage } from "./plugin";
 import { useWorkspace } from "./workspace";
 
 /**
@@ -17,8 +18,13 @@ const TOOLS = /^\/(review|workshop|editor|finals|library|design|enhance|record|c
 /** Share links under those tools: what someone shared, in none of the person's workspaces. */
 const SHARED = /^\/(clips\/f|library\/s)\//;
 
-/** Where a page goes when the workspace changes: its tool's own page; null when it shows no one thing (it stays). */
-export function leaveFor(path: string, search = ""): string | null {
+/**
+ * Where a page goes when the workspace changes: its tool's own page; null when it shows no one thing (it stays). A
+ * plug-in's pages say it themselves (`pages`, WebPlugin.workspacePages), ahead of the tools'.
+ */
+export function leaveFor(path: string, search = "", pages: readonly WorkspacePage[] = []): string | null {
+  const own = pages.find((p) => p.path.test(path));
+  if (own) return own.to === path && !search ? null : own.to;
   const tool = TOOLS.exec(path)?.[0];
   if (!tool || SHARED.test(path) || (path === tool && !search)) return null;
   return tool;
@@ -37,8 +43,10 @@ export const pageWorkspace = (): string | null | undefined => opened.get(entry()
 /** A move made here, not a link followed: chat mode does not bring a hidden page back for it (AssistantDock). */
 export const leftForWorkspace = (state: unknown): boolean => (state as { leftForWorkspace?: boolean } | null)?.leftForWorkspace === true;
 
-/** For App, once: the page follows the window's workspace. */
-export function usePageFollowsWorkspace(): void {
+const NO_PAGES: readonly WorkspacePage[] = [];
+
+/** For App, once: the page follows the window's workspace. `pages`: the plug-ins' (leaveFor). */
+export function usePageFollowsWorkspace(pages: readonly WorkspacePage[] = NO_PAGES): void {
   const navigate = useNavigate();
   const { key } = useLocation();
   const ws = useWorkspace((s) => s.currentProjectId);
@@ -48,9 +56,9 @@ export function usePageFollowsWorkspace(): void {
     const at = entry();
     if (!opened.has(at)) opened.set(at, ws);
     if (opened.get(at) === ws) return;
-    const to = leaveFor(window.location.pathname, window.location.search);
+    const to = leaveFor(window.location.pathname, window.location.search, pages);
     // a page of no one workspace stays, and shows the new one's from here on
     if (!to) return void opened.set(at, ws);
     navigate(to, { replace: true, state: { leftForWorkspace: true } });
-  }, [key, ws, loaded, navigate]);
+  }, [key, ws, loaded, navigate, pages]);
 }

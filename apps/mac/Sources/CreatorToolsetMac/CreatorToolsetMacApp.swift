@@ -233,6 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
+        QuitGuard.shared.install()
         // the last window closed: out of the Dock and the app switcher, still in the menu bar (Shell.showWindow brings it back)
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
             let closing = note.object as? NSWindow

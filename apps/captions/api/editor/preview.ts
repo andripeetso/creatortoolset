@@ -42,10 +42,28 @@ export function previewSize(tl: Pick<Timeline, "width" | "height">): { w: number
 }
 
 /**
+ * A reframed shot's window x (Item.path) as an ffmpeg expression of the filter's time `t`, which starts `from` seconds
+ * into the item: eased from key to key as framing.ts pathAt does, a cut where two keys share a time. Commas escaped for
+ * a filter chain.
+ */
+export function pathExpr(keys: { t: number; x: number }[], from = 0): string {
+  const T = `(t+${from})`;
+  let e = String(keys.at(-1)!.x);
+  for (let i = keys.length - 2; i >= 0; i--) {
+    const [a, b] = [keys[i]!, keys[i + 1]!];
+    const u = `clip((${T}-${a.t})/${b.t - a.t},0,1)`;
+    const seg = b.t > a.t && b.x !== a.x ? `(${a.x}+${Math.round((b.x - a.x) * 1e4) / 1e4}*${u}*${u}*(3-2*${u}))` : String(a.x);
+    e = `if(lt(${T},${b.t}),${seg},${e})`;
+  }
+  return e.replace(/,/g, "\\,");
+}
+
+/**
  * The video filter for one speaker shot: the source fitted into the frame, scaled by its zoom, moved up by its tilt
  * (timeline px), cut to what shows and padded black to the preview's size, at the timeline's rate, then graded (if a grade is set).
+ * A reframed shot's window moves along its path; `from`: seconds into the item the filter's time starts at.
  */
-export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number): string {
+export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number, from = 0): string {
   const src = tl.sources[item.src]!;
   const { w: PW, h: PH, k } = previewSize(tl);
   const f = fitted(src, tl.width, tl.height);
@@ -55,7 +73,7 @@ export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number)
   // a planned shot's crop where its picture moves (item.focus), in the window it shows through: the frame, or a
   // letterbox's band of height `band`
   const wh = band ?? PH;
-  const fx = item.focus && sw > PW ? item.focus.x : 0.5;
+  const fx = item.path?.length && sw > PW ? item.path[0]!.x : item.focus && sw > PW ? item.focus.x : 0.5;
   const fy = item.focus && sh > wh ? item.focus.y : 0.5;
   const x = Math.round(sw > PW ? -(sw - PW) * fx : (PW - sw) / 2);
   const y = Math.round((sh > wh ? (PH - wh) / 2 - (sh - wh) * fy : (PH - sh) / 2) - (item.tilt ?? 0) * k);
@@ -65,9 +83,10 @@ export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number)
   const ch = Math.min(sh - cy, PH - Math.max(0, y));
   const [num, den] = frameDuration(tl.fps);
   const colour = cdlFilter(grade);
+  const moving = item.path && item.path.length > 1 && sw > PW;
   return [
     `scale=${sw}:${sh}`,
-    `crop=${cw}:${ch}:${cx}:${cy}`,
+    moving ? `crop=${PW}:${ch}:${sw - PW}*${pathExpr(item.path!, from)}:${cy}` : `crop=${cw}:${ch}:${cx}:${cy}`,
     `pad=${PW}:${PH}:${Math.max(0, x)}:${Math.max(0, y)}:black`,
     "setsar=1",
     `fps=${den}/${num}`,
@@ -136,7 +155,7 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         // a cutaway's picture: its own clip from its in point, framed at zoom 1 and ungraded
         const pic = c
           ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, { ...c, zoom: 1, tilt: 0 }) }
-          : { file: files[v.src]!, at: v.in / vs.fps + off, filter: shotFilter(tl, v, grade) };
+          : { file: files[v.src]!, at: v.in / vs.fps + off, filter: shotFilter(tl, v, grade, undefined, off) };
         // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
         const picture = c || vs.w > 0 ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
         // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one

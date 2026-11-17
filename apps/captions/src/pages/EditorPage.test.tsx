@@ -362,12 +362,16 @@ describe("New edit: short videos from a long recording", () => {
     // a long recording can be sound only: the picker asks the library for videos and recordings there, videos alone elsewhere
     expect(listed.at(-1)).toContain("kind=video%2Caudio");
     expect(listed.find((u) => u.includes("kind="))).toMatch(/kind=video(&|$)/);
+    // each is cut to a shape, the picture following who talks: 9:16 unless the person picks another, or as filmed
+    expect([...field<HTMLSelectElement>("edit-shape")!.options].map((o) => o.value)).toEqual(["", "9:16", "4:5", "1:1"]);
+    expect(field<HTMLSelectElement>("edit-shape")!.value).toBe("9:16");
     await choose("edit-moments", "5");
-    expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", moments: 5, targetS: 0 });
+    expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", moments: 5, targetS: 0, shape: "9:16" });
     // back to Footage: versions again, and no moments sent
     act(() => button("Footage").click());
     await flush();
     expect(field("edit-moments")).toBeNull();
+    expect(field("edit-shape")).toBeNull();
     act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     await flush();
     await flush();

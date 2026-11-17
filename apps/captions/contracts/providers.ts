@@ -205,7 +205,7 @@ export interface Device {
    * the plug-in steps it has, its proxy cache. Kept apart from `kinds`, which the device runner's claim rewrites.
    * `empty`: Settings → Storage → Empty, told on its next claim.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

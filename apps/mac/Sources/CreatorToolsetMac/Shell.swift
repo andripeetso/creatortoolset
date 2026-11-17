@@ -174,7 +174,29 @@ final class Shell: NSObject, ObservableObject {
                 Task {
                     let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
                                else { await self.client().clipPath(library: clip!.library, asset: clip!.asset) }
-                    done(Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                    done(await Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                }
+                return
+            }
+            // here or away (Places.swift): the paths to try come from the window's server, never from the page
+            if isPlacesAsk(ask) {
+                switch placesAsk(ask) {
+                case .check(let library, let versions)?:
+                    let device = DeviceVault.deviceID(for: self.base.host ?? "")
+                    // the proxy cache is a server elsewhere's (no worker runs for This Mac)
+                    let cache = !self.runsHere
+                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache)) }
+                case .connect(let root)?:
+                    // a share this Mac never had asks first, naming this window's server
+                    let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")
+                    Task { done(await Places.shared.connect(root: root, server: server)) }
+                case .search(let library)?:
+                    let device = DeviceVault.deviceID(for: self.base.host ?? "")
+                    Task { done(PlacesSearch.shared.start(library: library, site: await self.client(), device: device, pressed: true)) }
+                case .searchState?:
+                    done(PlacesSearch.shared.state)
+                case nil:
+                    done(["problem": "Not an ask this app knows."])
                 }
                 return
             }
@@ -251,6 +273,15 @@ final class Shell: NSObject, ObservableObject {
             if let back { webView.load(URLRequest(url: back)) } else { open("/") }
             if aiOn { startAI() }
         }
+        // here or away (Places.swift): a disk came, went, went away or came back; this Mac's report goes now (the
+        // server's view of its disks), and the page checks its originals again
+        Places.shared.onChange = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.runner?.reportNow()
+                self?.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-places', {detail: {at: Date.now()}}))")
+            }
+        }
+        Places.shared.start()
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.runner?.reportNow() }
@@ -1186,8 +1217,9 @@ struct Site {
     let base: URL
     let cookies: [HTTPCookie]
 
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        let (data, _) = try await send("GET", path, body: nil)
+    /// `timeout`: the longest wait for the server (a server that doesn't answer is a URLError); the system's 60 s by default.
+    func get<T: Decodable>(_ path: String, timeout: TimeInterval? = nil) async throws -> T {
+        let (data, _) = try await send("GET", path, body: nil, timeout: timeout)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
@@ -1215,9 +1247,10 @@ struct Site {
         _ = try await send("DELETE", path, body: nil)
     }
 
-    private func send(_ method: String, _ path: String, body: [String: Any]?) async throws -> (Data, URLResponse) {
+    private func send(_ method: String, _ path: String, body: [String: Any]?, timeout: TimeInterval? = nil) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: URL(string: path, relativeTo: base) ?? base)
         request.httpMethod = method
+        if let timeout { request.timeoutInterval = timeout }
         request.httpShouldHandleCookies = false
         request.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: cookies)
         if let body {

@@ -105,6 +105,8 @@ export interface SearchQuery {
   device?: string;
   /** only clips on that computer (`?here=1`) */
   here?: true;
+  /** only clips that computer last found gone (`?missing=1`, api/library/places.ts): not where they were, their disk there */
+  missing?: true;
   /** only clips with every one of these tags (`?tag=a,b`) */
   tags?: string[];
   /** only clips filmed from / before these times, ms (`?filmedFrom=&filmedTo=`); a clip with no filming time by when it was added. `from`/`to` stay when it was added */
@@ -139,6 +141,8 @@ export interface ShareInput {
 export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
+  /** search by picture: what each shot shows, matched with what is typed (api/library/pictures.ts); absent on an older server */
+  pictures?: boolean;
   look: boolean; // the AI writes a line for each shot of a longer video that isn't a talking take (Shot descriptions)
   timeline: boolean; // with a Gemini key, Gemini watches each of those videos with its sound and writes its timeline (Timelines)
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)

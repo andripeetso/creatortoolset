@@ -1,6 +1,8 @@
 import { TRACKS, type Item, type Timeline, type TrackId } from "../../contracts/editor";
 import { editedSpan, playPlan, splitView, type ItemEdit, type TimelineItem, type TimelineView } from "../../contracts/edit-timeline";
 import type { TimedWord } from "../library/transcribe";
+import type { PathKey } from "./framing";
+import { fillZoom, pathIn, windowOf } from "./framing";
 
 /**
  * A draft on Review's timeline, and the hand edits made there cut into the draft's next version with no AI.
@@ -16,6 +18,8 @@ import type { TimedWord } from "../library/transcribe";
  * - a voice (A1): cut, taken out, an edge in: the picture stays and plays silent there. It never moves or runs past its shot;
  * - B-roll and the other sound (V2, A2, A3): moved, trimmed, slipped, cut, copied, taken out. One dropped on another
  *   takes its place there. Under frames a speaker edit takes out it gets shorter at its end, its clip running on unbroken.
+ * - a reframed speaker shot (a moment cut to 9:16, Item.path): its window held where the hand put it, or following
+ *   another speaker or who talks again (Timeline.reframe), and that stays on the next versions' pieces of it.
  */
 
 /** An edit that can't be made into a cut: the message is the whole line the person reads. */
@@ -42,9 +46,19 @@ export function draftView(tl: Timeline, words: Record<string, TimedWord[]> = {})
     }
     if (mine.length) line.set(a.rec, mine.slice(0, 7).map((w) => w.w).join(" "));
   }
+  /** A reframed shot's window and the paths it can take, over its own frames (TimelineItem.window). */
+  const windowIn = (i: Item, s: Timeline["sources"][string], sfps: number): TimelineItem["window"] => {
+    const r = tl.reframe?.[i.src];
+    if ((!i.path?.length && !r) || !s?.w) return undefined;
+    const [inS, lenS] = [i.in / sfps, i.len / tl.fps];
+    const follow = Object.fromEntries([["0", r?.auto], ...Object.entries(r?.speakers ?? {})].filter((e): e is [string, PathKey[]] => !!e[1]?.length).map(([k, keys]) => [k, pathIn(keys, inS, lenS)]));
+    const w = Math.round(windowOf(s, tl.width, tl.height, i.zoom ?? fillZoom(s, tl.width, tl.height)) * 1e4) / 1e4;
+    return { path: i.path ?? [{ t: 0, x: 0.5 }], from: Math.round(inS * 1000) / 1000, w, follow, ...(i.crop ? { crop: i.crop } : {}) };
+  };
   const item = (track: TrackId, i: Item): TimelineItem => {
     const s = tl.sources[i.src];
     const sfps = s?.fps || tl.fps;
+    const window = track === "V1" ? windowIn(i, s, sfps) : undefined;
     const name = s?.name ?? i.src;
     const text = track === "V1" || track === "A1" ? line.get(i.rec) : undefined;
     return {
@@ -59,6 +73,7 @@ export function draftView(tl: Timeline, words: Record<string, TimedWord[]> = {})
       // a voice has no room of its own: it runs for as long as its shot does
       before: track === "A1" ? 0 : recFrames(i.in, sfps, tl.fps),
       after: track === "A1" || !s ? 0 : Math.max(0, recFrames(s.dur - i.in, sfps, tl.fps) - i.len),
+      ...(window ? { window } : {}),
     };
   };
   return {
@@ -80,6 +95,7 @@ export function draftView(tl: Timeline, words: Record<string, TimedWord[]> = {})
 
 /** Why these edits can't be made on this view, one line per edit; empty when they all can. */
 function refusals(items: TimelineItem[], edits: ItemEdit[]): string[] {
+  const pieceOf = (e: ItemEdit) => items.find((i) => i.key === e.key);
   const why: string[] = [];
   for (const e of edits) {
     const it = items.find((i) => i.key === e.key);
@@ -88,6 +104,9 @@ function refusals(items: TimelineItem[], edits: ItemEdit[]): string[] {
       why.push(`${e.label}: this editor has no layer ${e.track ?? it.track}`);
     else if (e.zoom !== undefined) why.push(`${e.label}: a reframe can't be made into a version here`);
     else if (e.grade) why.push(`${e.label}: a colour change can't be made into a version here`);
+    else if (e.crop && !pieceOf(e)?.window) why.push(`${e.label} is not reframed`);
+    else if (e.crop && "speaker" in e.crop && !pieceOf(e)!.window!.follow[e.crop.speaker])
+      why.push(`${e.label}: ${e.crop.speaker ? `Speaker ${e.crop.speaker}` : "who talks"} can't be followed in this shot`);
     else if (it.track === "A1" && (e.move || (e.head ?? 0) > 0 || (e.tail ?? 0) > 0)) why.push(`${e.label}: a voice stays with its picture, it can only be cut or removed`);
     else if (!e.remove && it.len + (e.head ?? 0) + (e.tail ?? 0) < 1) why.push(`${e.label} is trimmed to nothing: remove it`);
   }
@@ -136,10 +155,19 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     // a frame it gained takes the voice of the edge it was pulled from
     const silent = (k: number) => !voice || muted(Math.min(bodyB - 1, Math.max(bodyA, start + k)));
     const rec = at(p.rec);
-    const { link: _link, ...shot } = orig;
+    const { link: _link, crop: _crop, ...shot } = orig;
+    // a reframed shot's window: the one set by hand (held, or another source path), else its own; `from`: the path's 0 in its take's seconds
+    const crop = e?.crop ?? orig.crop;
+    const set = e?.crop;
+    const keys = !set ? (orig.path ? { path: orig.path, from: orig.in / sfps(orig.src) } : null)
+      : "x" in set ? { path: [{ t: 0, x: set.x }], from: 0 }
+        : { path: set.speaker ? tl.reframe![orig.src]!.speakers[set.speaker]! : tl.reframe![orig.src]!.auto, from: 0 };
+    const hand = crop && !("speaker" in crop && !crop.speaker) ? { crop } : {};
     for (let k0 = 0, k = 1; k <= len; k++) {
       if (k < len && silent(k) === silent(k0)) continue;
-      const here = { in: srcAt(k0), len: k - k0, rec: rec + k0 };
+      // the window's path from where this piece starts in its take
+      const path = keys && pathIn(keys.path, srcAt(k0) / sfps(orig.src) - keys.from, (k - k0) / tl.fps);
+      const here = { in: srcAt(k0), len: k - k0, rec: rec + k0, ...(path?.length ? { path } : {}), ...hand };
       if (silent(k0)) tracks.V1.items.push({ ...shot, ...here });
       else {
         const link = `c${++links}`;
@@ -203,6 +231,8 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     sources: Object.fromEntries(Object.entries(tl.sources).filter(([k]) => used.has(k))),
     tracks,
     markers: tl.markers.map((m) => ({ ...m, rec: at(m.rec) })),
+    ...(tl.speakers ? { speakers: tl.speakers.map((x) => ({ ...x, rec: at(x.rec), len: at(x.rec + x.len) - at(x.rec) })).filter((x) => x.len > 0) } : {}),
+    ...(tl.reframe ? { reframe: tl.reframe } : {}),
     ...(tl.plan ? { plan: tl.plan } : {}),
   };
 }

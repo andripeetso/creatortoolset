@@ -165,7 +165,8 @@ final class LimitsTests: XCTestCase {
         let script = [
             "#!/bin/sh",
             "echo \"$@\" >> '\(log.path)'",
-            "case \"$1\" in --version) echo fake-1.0 ;; auth) echo '{\"loggedIn\":true}' ;; *) echo 'Logged in' ;; esac",
+            // a version above any real install's, so binary() (the newest copy) picks this fake over one on the machine
+            "case \"$1\" in --version) echo fake 9999.0.0 ;; auth) echo '{\"loggedIn\":true}' ;; *) echo 'Logged in' ;; esac",
         ].joined(separator: "\n") + "\n"
         for name in ["claude", "codex"] {
             let file = bin.appendingPathComponent(name)

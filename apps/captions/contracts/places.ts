@@ -7,7 +7,7 @@
  * disk) is that computer's place. The server lists the paths to try on a computer (best first); the computer that reads
  * the disk says what is there.
  *
- * The Mac app: `<html data-mac-places="1">` when it answers the places asks below, and
+ * The Mac app: `<html data-mac-places="1">` when it answers the places asks below ("2": Find missing files too), and
  * `window.dispatchEvent(new CustomEvent("mac-places", { detail: { at } }))` whenever a disk is connected, goes away or
  * comes back (every answer cached before it is stale).
  */
@@ -125,7 +125,8 @@ export interface PlacesReportAnswer {
   refused: string[];
 }
 
-/** GET /api/library/:lib/places/gone?device=<computer id>: what that computer last found gone and can search for. */
+/** GET /api/library/:lib/places/gone?device=<computer id>[&away=1]: what that computer last found gone and can search for;
+ *  `away=1` also the versions whose root isn't connected there. */
 export interface GoneVersion {
   versionId: string;
   bytes: number;
@@ -134,7 +135,7 @@ export interface GoneVersion {
   /** the root key and root path it was at; null when not known */
   root: string | null;
   rootRel: string | null;
-  /** where that computer last looked */
+  /** where that computer last looked; "" when it never had a path for it */
   path: string;
   /** the file's name */
   name: string;
@@ -171,7 +172,7 @@ export interface PlacesCheckAsk {
   /** at most PLACES_MAX */
   versions: string[];
 }
-export type PlaceCheck =
+export type PlaceCheck = (
   /** read here; `url` plays it (ctlocal://media/…) */
   | { state: "here"; path: string; url: string; needs?: never }
   /** read here, outside the folders the page may play from: the access button opens the folder panel at `folder` */
@@ -181,8 +182,13 @@ export type PlaceCheck =
   | { state: "away"; root?: RootLabel; needs?: "connect" }
   /** the disk is reachable, and no try has the file */
   | { state: "gone" }
-  /** no original here, and this computer's proxy cache has the proxy */
-  | { state: "cached"; url: string };
+) & {
+  /** this computer's proxy cache has the proxy (Available offline): it plays from here (ctlocal://media/…) before the
+   *  server's when the original doesn't */
+  cached?: string;
+}
+  /** nothing else known here (no original on a computer, or the server not answering), and the proxy cache has it */
+  | { state: "cached"; url: string; cached?: never };
 export interface PlacesCheckAnswer {
   versions: Record<string, PlaceCheck>;
 }
@@ -200,10 +206,15 @@ export interface PlacesSearchAsk {
   library: string;
 }
 export interface PlacesSearchState {
+  /** the library of the last search ("" before the first) */
+  library: string;
   running: boolean;
   /** entries listed so far */
   looked: number;
   found: number;
   /** gone versions not found yet */
   left: number;
+  /** folders holding files that may be gone ones, outside the folders the page may play from: none of them was read,
+   *  and the server heard nothing of them. Allow access (askMediaFolder), then search again. */
+  access: string[];
 }

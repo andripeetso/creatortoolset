@@ -69,7 +69,7 @@ const STATIC_ROWS = [
   { section: "library", id: "library-upload", title: "Upload to the server", keywords: ["media library", "upload", "proxies", "cloud", "server", "bucket", "storage"] },
   { section: "library", id: "finals-upload", title: "Finals upload", keywords: ["media library", "finals", "upload", "phone", "final video"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
-  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "ai"] },
+  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "picture", "ai"] },
   { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
   { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
@@ -87,6 +87,7 @@ const STATIC_ROWS = [
   { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
   { section: "devices", id: "add-phone", title: "Add phone", keywords: ["phone", "iphone", "qr", "pair", "camera", "scan", "code", "wifi", "same wi-fi"] },
   { section: "devices", id: "use-this-mac", title: "AI on this Mac", keywords: ["mac app", "this mac", "switch", "use this mac", "ai jobs"], needs: "mac" },
+  { section: "devices", id: "shared-drives", title: "Shared drives", keywords: ["nas", "network drive", "share", "smb", "connect", "reconnect", "office"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Memory: the rules the assistant keeps from one chat to the next

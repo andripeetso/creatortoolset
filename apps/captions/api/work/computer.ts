@@ -1,5 +1,6 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { WORK_V, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
@@ -13,7 +14,7 @@ import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
-import { cancelLibraryJob, runLibraryJob } from "./library";
+import { cancelLibraryJob, runLibraryJob, runPictureJob } from "./library";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 
 /**
@@ -85,6 +86,16 @@ export async function reportLeftover(o: WorkerOptions): Promise<void> {
   rmSync(heldFile(), { force: true });
 }
 
+/** Whether this computer can run search by picture's model: the model runtime came with this app (onnxruntime-node). */
+const runsPictureModel = (): boolean => {
+  try {
+    createRequire(import.meta.url).resolve("onnxruntime-node");
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** Claims and runs steps until 10 minutes pass with none, or the server asks for a newer app. */
 export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "update"> {
   const c = client(o);
@@ -93,7 +104,13 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
     let claim: WorkClaim;
     try {
-      claim = await c.post<WorkClaim>("work/claim", { v: WORK_V, steps: pluginEditorSteps().map((s) => s.id), cache: cacheReport(), library: true });
+      claim = await c.post<WorkClaim>("work/claim", {
+        v: WORK_V,
+        steps: pluginEditorSteps().map((s) => s.id),
+        cache: cacheReport(),
+        library: true,
+        ...(runsPictureModel() ? { pictures: true } : {}),
+      });
     } catch (e) {
       console.warn("[work] claim:", e instanceof Error ? e.message : e);
       await new Promise((r) => setTimeout(r, o.retryMs ?? 5000));
@@ -109,6 +126,9 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
       idleSince = Date.now();
     } else if (claim.lib) {
       await runLibraryJob(claim.lib, o);
+      idleSince = Date.now();
+    } else if (claim.pics) {
+      await runPictureJob(claim.pics, o);
       idleSince = Date.now();
     } else if ("update" in claim && claim.update) {
       console.log("[work] the server needs a newer Creator Toolset to hand it steps");

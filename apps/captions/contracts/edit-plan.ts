@@ -33,6 +33,8 @@ export interface IndexShot {
   quality?: number;
   /** what it is named for when a measure is past its line: "blurry", "too dark", "shaky" */
   flaws?: string[];
+  /** how well its picture matches the brief, 0…1 (1: the best match in this footage), when the library has its picture vectors (search by picture) */
+  pic?: number;
 }
 
 export interface IndexSource {

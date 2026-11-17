@@ -43,6 +43,10 @@ export const MAX_VERSIONS = 5;
 /** The most short videos one long recording is cut into (EditBrief.moments). */
 export const MAX_MOMENTS = 20;
 
+/** The frames a moment can be reframed to, and their sizes. */
+export const MOMENT_SHAPES = { "9:16": { w: 1080, h: 1920 }, "4:5": { w: 1080, h: 1350 }, "1:1": { w: 1080, h: 1080 } } as const;
+export type MomentShape = keyof typeof MOMENT_SHAPES;
+
 /** What the user says about the video. */
 export interface EditBrief {
   name: string;
@@ -58,6 +62,8 @@ export interface EditBrief {
    * and each is cut as a version of its own, named m1, m2, … (api/editor/moments.ts). Absent: an edit as it always was.
    */
   moments?: number;
+  /** with `moments`: the frame each is cut to, the picture following who talks (or the subject); absent = as filmed */
+  shape?: MomentShape;
   /** a library collection to take B-roll from, or none */
   brollCollectionId: string | null;
   /** punch-in zoom on jump cuts */
@@ -278,7 +284,17 @@ export interface Item {
   split?: Array<{ src: string; in: number; focus?: Focus }>;
   /** where the crop sits in the room the picture leaves (PlanShot.focus): the preview draws it; an export keeps the centre */
   focus?: Focus;
+  /**
+   * A reframed shot's window over time (api/editor/framing.ts followPath): Focus.x from `t` seconds into the item, eased
+   * to the next key, two keys at one time a cut. It moves x only; the preview draws it, the exports key it (framing.ts panKeys).
+   */
+  path?: { t: number; x: number }[];
+  /** what a hand in Review set the path to (edit-timeline.ts ItemEdit.crop): held at x, or following Speaker n; absent = who talks */
+  crop?: WindowCrop;
 }
+
+/** A reframed shot's window set by hand: held at x (Focus.x), or following Speaker n (0 = whoever talks). */
+export type WindowCrop = { x: number } | { speaker: number };
 
 export interface TimelineSource {
   versionId: string;
@@ -307,6 +323,16 @@ export interface Timeline {
   tracks: Record<TrackId, { name: string; items: Item[] }>;
   /** one per script line, at the line's first frame; colour is an OTIO marker colour (RED, BLUE, …) */
   markers: { rec: number; name: string; color: string; note: string }[];
+  /**
+   * Who talks when (api/editor/speakers.ts), on the timeline's frames: Speaker 1, 2, … in the order they first talk, 0 =
+   * someone not in the picture. Found for a reframed moment; absent where nobody looked.
+   */
+  speakers?: { rec: number; len: number; speaker: number }[];
+  /**
+   * A reframed source's window paths in its own seconds (framing.ts): following who talks (`auto`) and each speaker
+   * alone, so a shot cut from it can be set to any of them by hand (edits.ts).
+   */
+  reframe?: Record<string, { auto: { t: number; x: number }[]; speakers: Record<number, { t: number; x: number }[]> }>;
   /** a planned edit (api/editor/plan.ts): the kind it is, in the brief's words, and its texts (seconds on the timeline). Absent: cut around speech */
   plan?: { kind: string; texts?: PlanText[] };
 }

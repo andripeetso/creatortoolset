@@ -13,7 +13,8 @@ import { allBroll, isPlanned } from "./plan";
 import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
 import { scriptStep } from "./script";
-import { draftStep } from "./timeline";
+import { speakersFile } from "./speakers";
+import { draftStep, reframeSpan } from "./timeline";
 import { readEdit, readStep, type EditMeta } from "./store";
 
 /**
@@ -62,7 +63,10 @@ const computerIf = (yes: boolean): Place => (yes ? "computer" : "server");
 /** analyze reads the footage only for an edit cut around speech, and only for a source not measured yet (analyze.ts). */
 const analyzePlace = (edit: EditMeta): Place => computerIf(!edit.plan && !allBroll(edit) && edit.sources.some((id) => unmeasured(id, true)));
 
-/** One version's draft: a planned one with a generated shot, or one cut around speech from a source not measured yet (timeline.ts). */
+/**
+ * One version's draft: a planned one with a generated shot, one cut around speech from a source not measured yet, or a
+ * moment reframed where its faces are not looked at yet (timeline.ts).
+ */
 function draftPlace(edit: EditMeta, variant: string): Place {
   if (!variant) return "server";
   const plan = readStep(edit.id, "plan");
@@ -70,6 +74,9 @@ function draftPlace(edit: EditMeta, variant: string): Place {
   if (!version) return "server";
   if (!version.lines.length) return computerIf(!!readStep(edit.id, "shots")?.[variant]?.plan.shots.some((s) => "generate" in s.src));
   const sentences = readStep(edit.id, "analysis")?.sentences ?? [];
+  // a reframed moment reads its faces once (speakers.ts)
+  const span = reframeSpan(edit, version, sentences);
+  if (span && probeOf(span.src)?.vcodec && !existsSync(speakersFile(span.src, span.a, span.b))) return "computer";
   return computerIf(version.lines.some((l) => {
     const src = sentences.find((s) => s.n === l.take.first)?.src;
     return !!src && unmeasured(src, false);

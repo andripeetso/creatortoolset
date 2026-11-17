@@ -1,6 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
+import { panKeys } from "./framing";
 import { meanSpeed } from "./plan";
 
 /**
@@ -13,6 +14,9 @@ import { meanSpeed } from "./plan";
  * a scripted import fails); adjust-transform comes in as Resolve's Zoom and Tilt (scale 1.2 and position "0 5" on a
  * 1080 timeline = Zoom 1.2, Tilt 54 px up). Resolve keeps no marker from an FCPXML in any form (on a clip, a chapter
  * marker, a to-do, version 1.9) and writes none into its own: the lines' markers reach Resolve in the OTIO (otio.ts).
+ * A reframed shot's moving window (Item.path) is its position keyed in the clip's own time (keyframeAnimation, linear
+ * between keys every frame it eases, framing.ts panKeys); Final Cut plays it, Resolve reads moving transforms
+ * from an FCPXML less surely than from the OTIO, which carries the same keys.
  * Not yet checked: whether a relative media-rep src (in a zip) relinks without asking.
  */
 
@@ -105,9 +109,17 @@ function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string
     const d = (i.len * s.fps) / tl.fps;
     inner.push(`<timeMap>`, `  <timept time="0s" value="0s" interp="linear"/>`, `  <timept time="${time(Math.round(d), s.fps)}" value="${time(Math.round(d * speed), s.fps)}" interp="linear"/>`, `</timeMap>`);
   }
-  if ((i.zoom ?? 1) !== 1 || i.tilt) {
-    const y = Math.round(((i.tilt ?? 0) / tl.height) * 100 * 1000) / 1000;
-    inner.push(`<adjust-transform position="0 ${y}" scale="${i.zoom ?? 1} ${i.zoom ?? 1}"/>`);
+  // position is in hundredths of the frame's height on both axes, + x right, + y up
+  const pct = (px: number) => Math.round((px / tl.height) * 100 * 1000) / 1000;
+  const pans = s.w ? panKeys(i, s, tl.width, tl.height, tl.fps) : [];
+  if ((i.zoom ?? 1) !== 1 || i.tilt || pans.length) {
+    const y = pct(i.tilt ?? 0);
+    const scale = `scale="${i.zoom ?? 1} ${i.zoom ?? 1}"`;
+    if (pans.length > 1) {
+      inner.push(`<adjust-transform ${scale}>`, `  <param name="position">`, `    <keyframeAnimation>`);
+      for (const k of pans) inner.push(`      <keyframe time="${time(srcFrames(i.rec + k.f), s.fps)}" value="${pct(k.pan)} ${y}" interp="linear" curve="linear"/>`);
+      inner.push(`    </keyframeAnimation>`, `  </param>`, `</adjust-transform>`);
+    } else inner.push(`<adjust-transform position="${pct(pans[0]?.pan ?? 0)} ${y}" ${scale}/>`);
   }
   for (const m of tl.markers) {
     if (m.rec < i.rec || m.rec >= i.rec + i.len) continue;
