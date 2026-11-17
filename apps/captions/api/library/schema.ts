@@ -526,4 +526,10 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (version_id, seg)
   );
   `,
+  // 31: how well each stretch is taken, measured where the picture is read (look.ts qualityOf): 0..1, and its flaws as a
+  // JSON list ("blurry", "too dark", "shaky"). NULL: not measured (a picture read on a computer that sends no measures)
+  `
+  ALTER TABLE stretches ADD COLUMN quality REAL;
+  ALTER TABLE stretches ADD COLUMN flaws TEXT;
+  `,
 ];

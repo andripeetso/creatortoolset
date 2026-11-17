@@ -150,7 +150,7 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
   const t = db().prepare("SELECT provider FROM transcripts WHERE version_id = ?").get(row.version_id) as { provider: string } | undefined;
   const shots = stretchesOf(db(), row.version_id)
     .filter((s) => s.text)
-    .map((s) => ({ seg: s.seg, a: s.a, b: s.b, text: s.text, source: s.source }));
+    .map((s) => ({ seg: s.seg, a: s.a, b: s.b, text: s.text, source: s.source, ...(s.flaws.length ? { flaws: s.flaws } : {}) }));
   const timeline = timelineOf(db(), row.version_id);
   return {
     ...toCard(row),

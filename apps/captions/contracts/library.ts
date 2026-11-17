@@ -61,7 +61,8 @@ export interface AssetDetail extends AssetCard {
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
   /** its shot descriptions, in order (a person's own line wins): a video's moments, each with its start and end second */
-  shots?: { seg: number; a: number; b: number; text: string; source: "ai" | "user" }[];
+  /** flaws: what the shot is named for, measured ("blurry", "too dark", "shaky") */
+  shots?: { seg: number; a: number; b: number; text: string; source: "ai" | "user"; flaws?: string[] }[];
   /** what happens when, from Gemini watching the video with its sound (api/library/timeline.ts); absent without one */
   timeline?: TimelineEvent[];
 }
@@ -591,6 +592,10 @@ export interface Stretch {
   text: string;
   /** 64-bit picture hash of its middle frame, hex */
   ph: string;
+  /** how well it is taken, measured (api/library/look.ts qualityOf): 1 sharp, well exposed and steady … 0; null: not measured */
+  quality: number | null;
+  /** "blurry", "too dark", "shaky": a measure past its line */
+  flaws: string[];
   source: "ai" | "user";
   /** the context stamp it was written under (lib/workshop/context.ts contextStamp) */
   stamp: string;

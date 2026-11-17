@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { FootageIndex, SongBeats } from "../../contracts/edit-plan";
+import type { FootageIndex, IndexSource, SongBeats } from "../../contracts/edit-plan";
 
 vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
@@ -29,7 +29,7 @@ const { saveTranscript } = await import("../library/transcribe");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { NO_SPEECH } = await import("./analyze");
-const { APART_S, briefMaxS, isPlanned, lengthOf, MIN_SHOT_S, openerOf, parsePlans, planPrompt, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, openerOf, parsePlans, planPrompt, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
 const { toOtio } = await import("./otio");
 const { toFcpxml } = await import("./fcpxml");
 const { qaOf } = await import("./qa");
@@ -499,4 +499,25 @@ describe("footage where nobody speaks reaches Review", () => {
     expect(v.status).toBe("ready");
     expect(Math.abs(v.duration - end / 30)).toBeLessThanOrEqual(0.1);
   }, 240_000);
+});
+
+describe("badly taken shots", () => {
+  const src = (shots: IndexSource["shots"]): IndexSource => ({ id: "s", title: "s", dur: 40, fps: 25, w: 640, h: 360, speech: false, shots });
+  it("go behind every well taken one, and of two takes the better taken goes first", () => {
+    const s = src([
+      { a: 0, b: 4, motion: 0.9, action: 5, clear: true, quality: 0.2, flaws: ["blurry"] },
+      { a: 4, b: 8, motion: 0.5, action: 3, clear: true, quality: 0.7 },
+      { a: 8, b: 12, motion: 0.5, action: 3, clear: true, quality: 1 },
+    ]);
+    expect(byAction(s).map((x) => x.a)).toEqual([8, 4, 0]);
+  });
+  it("are offered last in the plan's pool, and named on its lines", () => {
+    const shots = Array.from({ length: 12 }, (_, k) => ({ a: 3 * k, b: 3 * k + 3, motion: k % 2 ? 0.9 : 0.3, ...(k % 2 ? { quality: 0.1, flaws: ["too dark"] } : {}) }));
+    const pool = shotPool(src(shots), 4);
+    expect(pool.every((x) => !x.flaws)).toBe(true);
+    const { user } = planPrompt({ brief: "", versions: 1, targetS: 0, setup: "", index: { sources: [src(shots.slice(0, 2))] }, words: {}, gen: [] });
+    expect(user).toContain("motion 0.90 · too dark");
+    expect(user).toContain("A shot marked blurry, too dark or shaky is badly taken");
+    expect(planPrompt({ brief: "", versions: 1, targetS: 0, setup: "", index: { sources: [src(shots.slice(0, 1))] }, words: {}, gen: [] }).user).not.toContain("badly taken");
+  });
 });

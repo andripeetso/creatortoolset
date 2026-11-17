@@ -25,7 +25,8 @@ import { styleBlock } from "./styles";
 /**
  * The look at a planned cut before the person sees it (tasks/flywheel/PLAN.md stage 4). Two frames of every shot, from
  * the rendered preview, on numbered sheets go to the person's own AI with the brief, their notes word for word, the
- * editing style and each shot's line, for one judgement of the whole cut: the shots that don't hold up, and why. When
+ * editing style and each shot's line, for one judgement of the whole cut: the shots that don't hold up, and why (a shot
+ * whose footage is measured as blurry, too dark or shaky fails for that too: withFlaws). When
  * some don't, the one fix round (plan.ts fixPlan) replaces those shots, and the new cut is drafted, post-processed,
  * rendered and looked at once more. The person then gets one version in Review: the fixed one when it has fewer failing
  * shots, else the first, with the shots still failing named on it. A cut is never held back (PLAN.md D7): a look or a
@@ -69,32 +70,53 @@ export async function cutSheets(file: string, frames: number[], landscape: boole
   return Array.from({ length: Math.ceil(frames.length / (COLS * ROWS)) }, (_, k) => path.join(dir, `${k + 1}.jpg`));
 }
 
-/** The shot description a stretch of footage has, as a line's tail: ` · a4 clear · fight, boss · what happens`. */
-export const described = (x: Pick<IndexShot, "desc" | "action" | "clear" | "tags">): string => {
+/** The shot description a stretch of footage has, as a line's tail: ` · a4 clear · blurry · fight, boss · what happens`. */
+export const described = (x: Pick<IndexShot, "desc" | "action" | "clear" | "tags" | "flaws">): string => {
   const text = (x.desc ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_TEXT);
-  return `${x.action !== undefined ? ` · a${x.action}${x.clear ? " clear" : ""}` : ""}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
+  return `${x.action !== undefined ? ` · a${x.action}${x.clear ? " clear" : ""}` : ""}${x.flaws?.length ? ` · ${x.flaws.join(", ")}` : ""}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
 };
+
+/** The stretch of footage each shot of the cut shows at its middle, by its place in the cut; none for a made clip or footage not indexed. */
+export async function shownStretches(plan: EditPlan): Promise<(IndexShot | undefined)[]> {
+  const known = new Map<string, IndexShot[]>();
+  const out: (IndexShot | undefined)[] = [];
+  for (const s of plan.shots) {
+    if ("generate" in s.src) {
+      out.push(undefined);
+      continue;
+    }
+    const id = s.src.source;
+    if (!known.has(id)) known.set(id, await knownShots(id));
+    const mid = s.src.inS + sourceSpan(s.dur, s.speed, s.ramp) / 2;
+    out.push(known.get(id)!.find((y) => y.a <= mid && mid < y.b));
+  }
+  return out;
+}
 
 /**
  * Each shot's line for the look, by its place in the cut from 1: when it plays, which footage and where in it, what that
  * stretch is described as (the library's shot description, else the AI Editor's own) and why it was picked.
  */
-export async function cutLines(plan: EditPlan, titles: Record<string, string>): Promise<string[]> {
-  const known = new Map<string, IndexShot[]>();
-  const out: string[] = [];
-  for (const [k, s] of plan.shots.entries()) {
-    let from: string;
-    if ("generate" in s.src) from = `a clip made from nothing (${s.src.generate.style})`;
-    else {
-      const id = s.src.source;
-      if (!known.has(id)) known.set(id, await knownShots(id));
-      const mid = s.src.inS + sourceSpan(s.dur, s.speed, s.ramp) / 2;
-      const x = known.get(id)!.find((y) => y.a <= mid && mid < y.b);
-      from = `${JSON.stringify(titles[id] ?? id)} at ${clock(s.src.inS)}${x ? described(x) : ""}`;
-    }
-    out.push(`${k + 1}. ${s.at.toFixed(2)}–${(s.at + s.dur).toFixed(2)} s · ${from}${s.why ? ` · picked: ${s.why}` : ""}`);
-  }
-  return out;
+export function cutLines(plan: EditPlan, titles: Record<string, string>, shown: (IndexShot | undefined)[]): string[] {
+  return plan.shots.map((s, k) => {
+    const x = shown[k];
+    const from = "generate" in s.src ? `a clip made from nothing (${s.src.generate.style})` : `${JSON.stringify(titles[s.src.source] ?? s.src.source)} at ${clock(s.src.inS)}${x ? described(x) : ""}`;
+    return `${k + 1}. ${s.at.toFixed(2)}–${(s.at + s.dur).toFixed(2)} s · ${from}${s.why ? ` · picked: ${s.why}` : ""}`;
+  });
+}
+
+/**
+ * The look's verdict with every shot whose footage is measured as badly taken (look.ts qualityOf) failing for that, its
+ * flaws the reason and its place in the cut (`shots`) with it, when the AI did not name it already.
+ */
+export function withFlaws(c: Critique, shown: (IndexShot | undefined)[], shots: { at: number; dur: number }[] = []): Critique {
+  const fails = [...c.fails];
+  shown.forEach((x, k) => {
+    if (!x?.flaws?.length || fails.some((f) => f.n === k + 1)) return;
+    const s = shots[k];
+    fails.push({ n: k + 1, why: x.flaws.join(", "), ...(s ? { at: s.at, dur: s.dur } : {}) });
+  });
+  return { ...c, ok: !fails.length, fails: fails.sort((a, b) => a.n - b.n) };
 }
 
 export const CRITIQUE_SYSTEM = `You watch a cut of a video before the person who asked for it does. You get what they asked for (the brief), their own words on earlier versions when there are any, the editing style, a line for each shot (when it plays, which footage it is and where in it, what that stretch of footage is described as, and why it was picked), and pictures of the cut: two frames of every shot, one just after it starts and one just before it ends.
@@ -162,17 +184,18 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
     const sheets = await cutSheets(previewFile(edit.id, variant), shotFrames(plan), plan.w >= plan.h, dir);
     const images = await Promise.all(sheets.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
     const titles = Object.fromEntries(Object.entries(d.timeline.sources).map(([id, s]) => [id, s.name]));
+    const shown = await shownStretches(plan);
     const { system, user } = critiquePrompt({
       brief: edit.brief,
       workspace: await workspaceSetup(edit, 6000),
       notes: edit.feedback ?? [],
       style: await styleBlock(edit.style, edit),
-      shots: await cutLines(plan, titles),
+      shots: cutLines(plan, titles, shown),
       sheets: sheets.length,
       seconds: plan.shots.reduce((t, s) => Math.max(t, s.at + s.dur), 0),
       song: plan.lead.type === "song",
     });
-    return (await completeVisionWithFallback(system, user, images, signal, (t) => parseCritique(t, plan.shots, round), who, { label: LABEL, job: "editor" })).value;
+    return withFlaws((await completeVisionWithFallback(system, user, images, signal, (t) => parseCritique(t, plan.shots, round), who, { label: LABEL, job: "editor" })).value, shown, plan.shots);
   } catch (e) {
     const away = macAway(e);
     if (away) throw new NeedsKey(away.message);

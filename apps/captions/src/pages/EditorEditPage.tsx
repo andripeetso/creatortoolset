@@ -13,6 +13,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import { editorsOnMac, openInEditor, type MacEditor } from "@/lib/thisMac";
+import { ExportGapsNote, gapsLine } from "@/components/ExportGapsNote";
 import { confirmHeavy } from "@/lib/setup";
 import { Maker, StateBadge, thumb } from "./EditorPage";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
@@ -400,7 +401,7 @@ export default function EditorEditPage() {
                       {postHeld && <p className="text-xs text-amber-600">Post-processing did not finish on this version: run it again before exporting</p>}
                       {!postHeld && (["otio", "fcpxml", "zip"] as const).map((f) => (
                         <Button key={f} asChild size="sm" variant="outline">
-                          <a href={exportUrl(id, n, f)} download>
+                          <a href={exportUrl(id, n, f)} download title={(f === "otio" ? gapsLine(d?.exportGaps, "resolve") : f === "fcpxml" ? gapsLine(d?.exportGaps, "final-cut") : null) ?? undefined}>
                             <Download className="h-3.5 w-3.5" />
                             {f === "otio" ? "OTIO" : f === "fcpxml" ? "FCPXML" : "ZIP"}
                           </a>
@@ -443,6 +444,7 @@ export default function EditorEditPage() {
                         </Button>
                       )}
                     </div>
+                    {!postHeld && d && <ExportGapsNote gaps={d.exportGaps} editors={editors.map((ed) => ed.id)} />}
                   </article>
                 );
               })}

@@ -1561,7 +1561,7 @@
   },
   {
    "name": "show_video",
-   "description": "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an AI Editor draft's preview (edit and draft, as editor_get lists them).",
+   "description": "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an Editor draft's preview (edit and draft, as editor_get lists them).",
    "inputSchema": {
     "type": "object",
     "properties": {

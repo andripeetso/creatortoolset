@@ -354,7 +354,17 @@ export interface Draft {
   /** what the cut skipped (a take with no speech found…) */
   notes: string[];
   qa: QaReport;
+  exportGaps?: ExportGaps;
 }
+
+/** The editors a draft's timeline file is written for. */
+export type ExportEditor = "resolve" | "final-cut" | "premiere";
+/** Per editor, what its file can't carry of the preview, as short phrases ("shake (54 shots)"); a missing key = all of it. */
+export type ExportGaps = Partial<Record<ExportEditor, string[]>>;
+
+/** A video editor's id on the Mac (apps/mac Editors.swift) as the file it reads; null for one that reads none (avid). */
+export const exportEditor = (id: string): ExportEditor | null =>
+  id === "resolve-studio" || id === "resolve" ? "resolve" : id === "final-cut" || id === "premiere" ? id : null;
 
 /** A voice of the person's ElevenLabs account. `own`: one they made or cloned, not one given to everyone. */
 export interface Voice {

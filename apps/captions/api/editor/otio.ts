@@ -1,7 +1,9 @@
 import path from "node:path";
 import { TRACKS, type Item, type Timeline, type TimelineSource } from "../../contracts/editor";
 import { type Cdl, cdlMeta } from "./grade";
-import { fitted, panKeys } from "./framing";
+import { motion } from "./carry";
+import { dissolveFrames } from "./fcpxml";
+import { fitted } from "./framing";
 import { meanSpeed } from "./plan";
 
 /**
@@ -15,6 +17,8 @@ import { meanSpeed } from "./plan";
  * moves (framing.ts panKeys), since Resolve eases linearly between keys and its own curve handles are not written.
  * `target_url` is the file's path as given: an absolute path on this machine, or relative
  * to the timeline file in a zip (bare paths are what Resolve itself writes; a file:// URL is not needed).
+ * A planned shot's moves (punch, zoom, shake, a whip) are keyed the same way on Zoom, Pan and Tilt, the window's pan and
+ * the moves' summed into one set of keys (carry.ts motion).
  */
 
 /**
@@ -45,18 +49,21 @@ const effect = (name: string, type: number, params: object[], display = name) =>
 function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: boolean, linkIds: Map<string, number>, grade?: Cdl) {
   const effects: object[] = [];
   const meta: Record<string, unknown> = {};
-  // a reframed shot's window: Pan as a share of the fitted picture's width, keyed where it moves
-  const pans = video ? panKeys(i, src, tl.width, tl.height, tl.fps) : [];
-  if (video && ((i.zoom ?? 1) !== 1 || i.tilt || pans.length)) {
+  // the shot's window and moves (carry.ts motion): Pan a share of the fitted picture's width, Tilt of its height
+  const keys = video ? motion(tl, i) : [];
+  if (keys.length > 1 || (keys[0] && (keys[0].zoom !== 1 || keys[0].x || keys[0].y))) {
     const { w, h } = fitted(src, tl.width, tl.height);
-    const zoom = i.zoom ?? 1;
-    const pan = pans.map((k) => ({ f: k.f, v: Math.round((k.pan / w) * 1e5) / 1e5 }));
+    // each value at the first key, and keyed only when it changes
+    const keyed = (id: string, v: (k: (typeof keys)[number]) => number, def: number, lo: number, hi: number) => {
+      const ks = keys.map((k) => ({ f: k.f, v: v(k) }));
+      return param(id, ks[0]!.v, def, lo, hi, ks.some((k) => k.v !== ks[0]!.v) ? ks : []);
+    };
     effects.push(
       effect("Transform", 2, [
-        param("transformationZoomX", zoom, 1, 0, 100),
-        param("transformationZoomY", zoom, 1, 0, 100),
-        param("transformationPan", pan[0]?.v ?? 0, 0, -4, 4, pan.length > 1 ? pan : []),
-        param("transformationTilt", (i.tilt ?? 0) / h, 0, -4, 4),
+        keyed("transformationZoomX", (k) => k.zoom, 1, 0, 100),
+        keyed("transformationZoomY", (k) => k.zoom, 1, 0, 100),
+        keyed("transformationPan", (k) => Math.round((k.x / w) * 1e5) / 1e5, 0, -4, 4),
+        keyed("transformationTilt", (k) => k.y / h, 0, -4, 4),
       ]),
     );
   }
@@ -111,6 +118,13 @@ export function toOtio(tl: Timeline, files: Record<string, string>, grade?: Cdl)
     for (const i of [...tl.tracks[id].items].sort((a, b) => a.rec - b.rec)) {
       if (i.rec < at) throw new Error(`${id}: the clip at ${i.rec} overlaps the one before`);
       if (i.rec > at) children.push(gap(i.rec - at, tl.fps));
+      if (video && i.enter === "dissolve") {
+        // a cross dissolve centred on the cut (OTIO's own transition; the first shot's fades in from black)
+        // ponytail: OTIO's documented Transition.1, not yet checked in Resolve
+        const d = dissolveFrames(tl, i);
+        const half = i.rec ? Math.floor(d / 2) : 0;
+        children.push({ OTIO_SCHEMA: "Transition.1", metadata: {}, name: "Cross Dissolve", transition_type: "SMPTE_Dissolve", in_offset: rt(half, tl.fps), out_offset: rt(d - half, tl.fps) });
+      }
       const src = tl.sources[i.src];
       const file = files[i.src];
       if (!src || !file) throw new Error(`${id}: no media for ${i.src}`);
