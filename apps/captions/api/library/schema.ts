@@ -536,4 +536,16 @@ export const MIGRATIONS: string[] = [
   // ran the cut model, NULL where look.ts cutsOf measured them. A library can hold both; a version is read again only
   // when its shots are asked for again
   `ALTER TABLE asset_versions ADD COLUMN cuts_by TEXT;`,
+  // 33: where a sound the app added came from (api/library/sfx.ts): its page, its licence and its author. Append only: a
+  // row is written once, when the sound goes in, and never changed
+  `
+  CREATE TABLE asset_sources (
+    asset_id TEXT NOT NULL REFERENCES assets(id),
+    url TEXT NOT NULL,
+    license TEXT NOT NULL,
+    author TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (asset_id, url)
+  );
+  `,
 ];

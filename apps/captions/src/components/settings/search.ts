@@ -72,6 +72,9 @@ const STATIC_ROWS = [
   { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "picture", "ai"] },
   { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
   { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },
+  { section: "sound-effects", id: "sfx-library", title: "Your library", keywords: ["sound effects", "sfx", "sounds", "folder", "library"] },
+  { section: "sound-effects", id: "sfx-starter", title: "Starter set", keywords: ["sound effects", "sfx", "install", "remove", "starter", "kenney", "cc0", "sounds"] },
+  { section: "sound-effects", id: "sfx-sources", title: "Sources", keywords: ["sound effects", "sfx", "licence", "license", "cc0", "kenney", "source", "credit"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
