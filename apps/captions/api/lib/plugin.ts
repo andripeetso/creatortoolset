@@ -127,9 +127,27 @@ export interface ServerPlugin {
   // Whether this server does video work for an account's work in a workspace (api/work/server-work.ts): true or false
   // decides, undefined leaves it to the server's own setting. On Creator Toolset Cloud only a true answer turns it on.
   serverWork?: (q: { account: string | null; workspace: string | null }) => boolean | undefined;
+  // What the plug-in keeps in a workspace (its own AI Editor edits, say), deleted with the workspace
+  // (api/lib/workspace-delete.ts): the delete confirm counts them and the delete removes them, with the app's files for them.
+  workspaceStores?: WorkspaceStore[];
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
+
+/**
+ * One kind of thing kept in a workspace (api/lib/workspace-delete.ts; ServerPlugin.workspaceStores): what the delete confirm
+ * calls one and many, and `find`, the ones of `account` in workspace `ws` with `drop`, which deletes exactly those and the
+ * app's own files for them (never the person's own folders). `ws.has(stamp)`: whether a record with that workspace stamp
+ * is in it. A record with no stamp is in it when `has(undefined)` says so (the workspace is the first brand); a record
+ * that shows in every workspace is never its alone, so it stays.
+ */
+export interface WorkspaceStore {
+  name: [one: string, many: string];
+  find: (account: SessionUser, ws: { id: string; has: (stamp?: string) => boolean }) => Promise<{ n: number; drop: () => Promise<unknown> }>;
+}
+
+/** Every loaded plug-in's workspace stores. */
+export const pluginWorkspaceStores = (): WorkspaceStore[] => loaded.flatMap((p) => p.workspaceStores ?? []);
 
 /** A look a plug-in keeps (ServerPlugin.design.looks). `made`: a picture the person made and liked in it; else an inspiration. */
 export interface PluginLook {

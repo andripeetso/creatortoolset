@@ -36,6 +36,7 @@ import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
 import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
+import { deleteWorkspaceContents, workspaceContents } from "./lib/workspace-delete";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -516,7 +517,7 @@ async function readsDone(user: SessionUser): Promise<void> {
     const ws = projectId ? await readProject(projectId, user) : null;
     const where = ws ? `${ws.name}'s` : "Every workspace's";
     const text = `${where} context is ready: ${n.ok} file${n.ok === 1 ? "" : "s"} read and filed${n.failed ? `, ${n.failed} couldn't be read` : ""}`;
-    await notifyWorkshopOwner(user.username, { kind: "workshop", by: "Context", name: ws?.name ?? "Context", text, href: ws ? `/projects?edit=${ws.id}` : "/workshop", ref: projectId || "context" }).catch(() => {});
+    await notifyWorkshopOwner(user.username, { kind: "workshop", by: "Context", name: ws?.name ?? "Context", text, href: ws ? `/projects?edit=${ws.id}` : "/workshop", ref: projectId || "context", workspace: ws?.id }).catch(() => {});
   }
 }
 
@@ -1827,7 +1828,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     liveEnd(assistantId);
     await writerEnded(session, user, ask.docId, failed).catch(() => {});
     const title = session.title || "Untitled";
-    await notifyWorkshopOwner(session.owner, { kind: "workshop", by: "Content Workshop", name: title, text: `${outcome}: ${title}`, href: `/workshop/sessions/${session.id}`, ref: session.id }).catch(() => {});
+    await notifyWorkshopOwner(session.owner, { kind: "workshop", by: "Content Workshop", name: title, text: `${outcome}: ${title}`, href: `/workshop/sessions/${session.id}`, ref: session.id, workspace: session.projectId }).catch(() => {});
   }
 }
 
@@ -2227,12 +2228,20 @@ workshopApp.patch("/projects/:id", async (c) => {
   }
 });
 
+/** What deleting the workspace deletes with it, for the delete confirm (lib/workspace-delete.ts). Its owner only. */
+workshopApp.get("/projects/:id/contents", async (c) => {
+  const user = c.get("user");
+  const project = await readProject(c.req.param("id"), user);
+  if (project?.owner !== user.username) return c.json({ error: "Not found" }, 404);
+  return c.json(await workspaceContents(user, project.id));
+});
+
 workshopApp.delete("/projects/:id", async (c) => {
   const user = c.get("user");
   const project = await readProject(c.req.param("id"), user);
-  if (!project) return c.json({ error: "Not found" }, 404);
-  // its projects keep its id, so no other workspace lists them. They used to lose it, and a project with none is listed
-  // in every workspace (inProject): a deleted client's scripts showed up in all the others (owner, 2026-11-16).
+  if (project?.owner !== user.username) return c.json({ error: "Not found" }, 404);
+  // everything in it goes first, while it still exists: the first brand is worked out from it (owner, 2026-11-16)
+  await deleteWorkspaceContents(user, project.id);
   await rm(projectPath(project.id), { force: true });
   const ws = await getWorkspace(user);
   if (ws.currentProjectId === project.id) await setCurrentProjectId(user, ws.projects[0]?.id ?? null);
@@ -4641,7 +4650,7 @@ workshopShareApp.post("/:token/progress", async (c) => {
   await updateSession(meta.id, (m) => {
     if (!["published", "shelved"].includes(m.status ?? "draft")) setSessionStatus(m, state === "done" ? "toPost" : "editing", "freelancer progress");
   });
-  await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id, workspace: meta.projectId });
   announce(share.owner, "workshop");
   if (state === "done") sendDeliveriesToFinals(token);
   return c.json({ progress: share.progress });
@@ -4684,7 +4693,7 @@ workshopShareApp.post("/:token/deliveries", async (c) => {
   }
   live.deliveries = [...(live.deliveries ?? []), item];
   await writeJsonAtomic(SHARES_FILE, shares);
-  await notifyWorkshopOwner(share.owner, { kind: "delivered", by: by || "A freelancer", name: meta.title || share.title, text: name, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  await notifyWorkshopOwner(share.owner, { kind: "delivered", by: by || "A freelancer", name: meta.title || share.title, text: name, href: `/workshop/sessions/${meta.id}`, ref: meta.id, workspace: meta.projectId });
   announce(share.owner, "workshop");
   if (live.progress?.state === "done") sendDeliveriesToFinals(token);
   return c.json(item);
