@@ -347,6 +347,15 @@ export function isThisMachine(id: string): boolean {
   return !!host && shortHost(host) === shortHost(hostname());
 }
 
+/**
+ * `owner`'s computer whose report names host `host` (case and ".local" aside), the most recently seen: the device row
+ * of a computer another worker on it knows only by host name (a plug-in's helper), so both share one weight.
+ */
+export function deviceByHost(owner: string, host: string): Device | undefined {
+  const h = shortHost(host);
+  return listDevices((x) => x.owner === owner && !!x.report?.machine?.host && shortHost(x.report.machine.host) === h).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+}
+
 /** What the device reported last. */
 export function reportOf(id: string): MacReport | null {
   return find(id)?.report ?? null;

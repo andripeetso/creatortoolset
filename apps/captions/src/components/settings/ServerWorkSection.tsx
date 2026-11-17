@@ -91,6 +91,9 @@ export function ServerWorkSection() {
  * this server where it works for them, each with the same preference. Prefer on the server sends work there first.
  * Shown with two places or more (one has nothing to balance). Changes save at once.
  */
+/** What Off means, under a computer set to it: no work at all, even when no other computer could take it. */
+export const OFF_LINE = "Off — takes no work";
+
 export function LoadBalancing({ computers }: { computers: Listed[] }) {
   const [view, setView] = useState<ServerWorkView | null>(null);
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -134,7 +137,7 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
   return (
     <Section title="Load balancing">
       <Card>
-        {workers.map((d) => row(d.id, d.name, d.report?.machine?.os === "mac" || !d.report?.machine ? <Laptop className="size-4" /> : <Monitor className="size-4" />, d.online ? undefined : "Offline"))}
+        {workers.map((d) => row(d.id, d.name, d.report?.machine?.os === "mac" || !d.report?.machine ? <Laptop className="size-4" /> : <Monitor className="size-4" />, weightOf(d.id) === 0 ? OFF_LINE : d.online ? undefined : "Offline"))}
         {server && row(SERVER_PLACE, "This server", <Server className="size-4" />, "After your computers, unless set to Prefer")}
       </Card>
     </Section>

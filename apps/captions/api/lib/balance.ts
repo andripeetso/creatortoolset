@@ -36,6 +36,33 @@ export async function readBalance(user: string): Promise<Balance> {
 /** readBalance for a caller that cannot wait (a device job slot's claim, lib/plugin.ts DeviceJobSlot). */
 export const balanceNow = readBalanceSync;
 
+/** Writes the balance file whole (Settings → Computers; the studio's own Computers page writes it too). */
+export async function writeBalance(user: string, cur: Balance): Promise<void> {
+  await mkdir(path.dirname(balanceFile(user)), { recursive: true });
+  const tmp = `${balanceFile(user)}.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(cur, null, 2));
+  await rename(tmp, balanceFile(user));
+}
+
+/**
+ * The owner's computers set to Off in Load balancing (weight 0 while it is on): they take no work at all, not even when
+ * no other computer could (the owner, 17 Nov: Off is off), so none of them counts as the one that could.
+ */
+export function offOf(owner: string): Set<string> {
+  const b = readBalanceSync(owner);
+  return b.on ? new Set(Object.entries(b.weights).flatMap(([id, w]) => (w === 0 ? [id] : []))) : new Set();
+}
+
+/** Whether computer `id` takes Media Library work of library `library`: every library unless its list narrows it. */
+export const allowsLibrary = (b: Balance, id: string, library: string): boolean => !b.libraries?.[id] || b.libraries[id]!.includes(library);
+
+/** Whether computer `d` may download an original (to make the proxy of a file only the server has): as set, else a Mac yes, another computer no. */
+export const takesOriginals = (b: Balance, d: Pick<Device, "id" | "report">): boolean => b.originals?.[d.id] ?? d.report?.machine?.os === "mac";
+
+/** How recent a computer's last work claim must be for it to count as one that takes work now (an idle worker asks every 25 s). */
+export const CLAIM_FRESH_MS = 120_000;
+export const claimsFresh = (d: Pick<Device, "work">, now = Date.now()): boolean => !!d.work?.at && now - d.work.at < CLAIM_FRESH_MS;
+
 /** A computer that runs AI Editor steps, as its last report and heartbeat left it (a device in lib/devices.ts). */
 export interface WorkerSeen {
   host: string;
