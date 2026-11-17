@@ -150,7 +150,7 @@ editorApp.put("/defaults/:slot", async (c) => {
 // the person's editing styles (contracts/editor-styles.ts), the workspace's in one given to them; registered before /:id, as the defaults are
 editorApp.get("/styles", async (c) => c.json(stylesView(await settingsOf(c))));
 
-const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
+const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave notes out: they write them on the style's sheet (Editor, Editing styles).";
 
 /** An editing style's notes are the person's own words, also when the assistant saves them (own-words.ts). True when the save is refused. */
 const notesNotTyped = (c: C, b: Record<string, unknown>): boolean => notTyped(c, b, ["notes", "addNotes"]);

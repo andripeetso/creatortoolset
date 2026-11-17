@@ -12,7 +12,7 @@ const enc = encodeURIComponent;
 const fromSource = (id: string) => id.startsWith("ext_");
 /** Finals has its own tool: its folder (the plain top-level one named Finals) is not the Media Library's to fill or share. */
 const isFinals = (c: Collection) => c.kind === "manual" && c.parentId === null && c.name === "Finals";
-const NOT_FINALS = "Finals is not a Media Library folder: a finished video goes there from Review or the AI Editor.";
+const NOT_FINALS = "Finals is not a Media Library folder: a finished video goes there from Review or the Editor.";
 const LOCAL_ONLY = "This link opens only on this computer and its network. For other people the server needs an address on the internet (PUBLIC_ORIGIN: the name of a tunnel that points at it).";
 
 /** The account's own Media Library (the first one), the one media_search reads. */

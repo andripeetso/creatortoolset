@@ -41,7 +41,7 @@ const UPLOAD_MAX = 20 * 1024 * 1024;
 export type StyleKind = "animation" | "carousel";
 /** What sets the two lists apart: how many an account keeps, the longest brief, and where the person finds them. */
 const KIND = {
-  animation: { most: MAX_ANIMATION_STYLES, brief: ANIMATION_BRIEF_MAX, many: "animation styles", place: "AI Editor, Animation styles" },
+  animation: { most: MAX_ANIMATION_STYLES, brief: ANIMATION_BRIEF_MAX, many: "animation styles", place: "Editor, Animation styles" },
   carousel: { most: MAX_CAROUSEL_STYLES, brief: CAROUSEL_BRIEF_MAX, many: "carousel styles", place: "Designer, Carousel styles" },
 } as const;
 
