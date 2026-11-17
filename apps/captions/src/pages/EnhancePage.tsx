@@ -306,6 +306,10 @@ function SessionView({
     );
   };
   const pct = Math.round(mix * 100);
+  // while a download at this strength is being made: its line (the wait for a computer)
+  const [downloadLine, setDownloadLine] = useState<string | null>(null);
+  const download = (kind: "audio" | "video") =>
+    void downloadEnhanced(session, kind, mix, setDownloadLine).catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   // a running job's progress arrives as change notices (the page's useCachedLoad)
   const retry = async () => {
@@ -466,14 +470,14 @@ function SessionView({
           <p className={`${label} mt-5`}>Download</p>
           <div className="flex gap-2">
             <button
-              onClick={() => downloadEnhanced(session, "audio", mix)}
+              onClick={() => download("audio")}
               className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-violet-500"
             >
               <Download className="h-3.5 w-3.5" /> Enhanced audio{pct < 100 && <> at {pct}%</>} (.m4a)
             </button>
             {session.videoOutExt && (
               <button
-                onClick={() => downloadEnhanced(session, "video", mix)}
+                onClick={() => download("video")}
                 className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3.5 py-2 text-xs text-zinc-200 hover:bg-zinc-800"
               >
                 <Film className="h-3.5 w-3.5" /> Video with enhanced audio (.
@@ -481,6 +485,7 @@ function SessionView({
               </button>
             )}
           </div>
+          {downloadLine && <p className="mt-2 text-[11px] text-zinc-500">{downloadLine}</p>}
         </>
       )}
     </div>

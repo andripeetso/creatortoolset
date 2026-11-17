@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -105,5 +105,85 @@ describe("Audio Enhancer on a computer", () => {
     }, "enhance");
     expect(here).toMatchObject({ hasVideo: true, videoOutExt: "mp4", source: true });
     expect(there).toEqual(here);
+  });
+});
+
+// a plug-in engine: its own pass leaves a clean sound and hands it to the host's last steps
+const { registerEnhanceEngine } = await import("../enhance");
+registerEnhanceEngine({
+  id: "tinyclean",
+  start: async (host, meta) => {
+    const out = path.join(host.sesDir(meta.id), "tiny-out.wav");
+    copyFileSync(isolated, out);
+    await host.finish(meta.id, meta, out, meta.duration, () => true);
+  },
+});
+
+describe("the Audio Enhancer's last steps and its download at a strength, on a computer", () => {
+  const upload = async (engine: string) => (await read(`/api/enhance?engine=${engine}&name=walk.mp4`, { method: "POST", body: readFileSync(film) })).id as string;
+  const done = (id: string) =>
+    until(async () => {
+      const s = await read(`/api/enhance/${id}`);
+      if (s.status === "error") throw new Error(s.error);
+      expect(s.status).toBe("done");
+    });
+  const waits = async (id: string) => expect(await read(`/api/enhance/${id}`)).toMatchObject({ status: "queued", line: expect.stringMatching(/^Waits for one of your computers/) });
+  const runOne = async (kind: string) => {
+    const t = await claim([kind]);
+    expect(t).toMatchObject({ task: { kind } });
+    expect(await runTaskJob(t!, c, o)).toBe("done");
+  };
+  const loudness = (f: string) => Number(/mean_volume: (-?[\d.]+) dB/.exec(spawnSync(ffmpegCommand(), ["-hide_banner", "-i", f, "-af", "volumedetect", "-f", "null", "-"], { encoding: "utf8" }).stderr)![1]);
+
+  it("a plug-in engine's run: the loudness and the remux wait for a computer and come out as the server's", async () => {
+    process.env.CT_LOCAL = "1";
+    const here = await upload("tinyclean");
+    await done(here);
+    delete process.env.CT_LOCAL;
+    writeServerWork({ on: false });
+    await claim([]); // the computer names no kinds now: none can take a task, so each waits with the line
+    const there = await upload("tinyclean");
+    // first the length and the levelled original, then the engine's pass here, then the last steps: each task waits
+    await until(() => waits(there));
+    expect(existsSync(at("enhance", there, "source.m4a"))).toBe(false);
+    await runOne("enhance");
+    await claim([]);
+    await until(async () => {
+      expect(existsSync(at("enhance", there, "finish-in"))).toBe(true);
+      await waits(there);
+    });
+    expect(existsSync(at("enhance", there, "enhanced.m4a"))).toBe(false);
+    await runOne("enhance");
+    await done(there);
+    expect(existsSync(at("enhance", there, "finish-in"))).toBe(false);
+    for (const f of ["enhanced.m4a", "enhanced-video.mp4"]) expect(seconds(at("enhance", there, f))).toBe(seconds(at("enhance", here, f)));
+  });
+
+  it("a blend waits with the line, nothing made on the server, and a computer's blend matches the server's", async () => {
+    process.env.CT_LOCAL = "1";
+    const here = await upload("elevenlabs");
+    await done(here);
+    const local = await app.request(`/api/enhance/${here}/download?mix=0.6`);
+    expect(local.status).toBe(200);
+    await local.arrayBuffer();
+    const there = await upload("elevenlabs");
+    await done(there);
+    delete process.env.CT_LOCAL;
+    writeServerWork({ on: false });
+    await claim([]);
+    // picking the strength starts it; the download asks and waits
+    await app.request(`/api/enhance/${there}/mix`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mix: 0.6 }) });
+    const wait = await app.request(`/api/enhance/${there}/download?mix=0.6&ready=1`);
+    expect(wait.status).toBe(202);
+    expect(await wait.json()).toMatchObject({ ready: false, line: expect.stringMatching(/^Waits for one of your computers/) });
+    expect(existsSync(at("enhance", there, "blend-60.m4a"))).toBe(false);
+    await runOne("enhance-blend");
+    expect(await read(`/api/enhance/${there}/download?mix=0.6&ready=1`)).toEqual({ ready: true });
+    const [a, b] = [at("enhance", here, "blend-60.m4a"), at("enhance", there, "blend-60.m4a")];
+    expect(seconds(b)).toBe(seconds(a));
+    expect(Math.abs(loudness(b) - loudness(a))).toBeLessThan(0.1);
+    // the plain link serves the file once it is there
+    const file = await app.request(`/api/enhance/${there}/download?mix=0.6`);
+    expect([file.status, file.headers.get("content-disposition")]).toEqual([200, 'attachment; filename="walk-enhanced-60.m4a"']);
   });
 });
