@@ -62,7 +62,7 @@ const has = (copy: string) => `EXISTS (SELECT 1 FROM copy_files f WHERE f.copy_i
 /** Some copy of v's library lacks it. */
 const SOME_LACK = `EXISTS (SELECT 1 FROM library_copies c WHERE c.library_id = a.library_id AND NOT ${has("c.id")})`;
 /** Where computer ?1 may find the original itself (triesOn: its own place, a disk root, the computer it was indexed on). */
-const MAY_REACH = `(v.mac_device = ? OR v.root IS NOT NULL OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.gone_at IS NULL))`;
+const MAY_REACH = `(v.mac_device = ? OR v.root IS NOT NULL OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.kind = 'original' AND p.state <> 'gone'))`;
 
 type VersionRow = { id: string; asset_id: string; n: number; bytes: number; sha256: string; mac_path: string | null; mac_device: string | null; created_at: number; here: number };
 const VERSION = "v.id, v.asset_id, v.n, v.bytes, v.sha256, v.mac_path, v.mac_device, a.created_at";
@@ -110,8 +110,8 @@ function nextSend(d: string, now: number) {
     `SELECT ${VERSION}, 0 AS here, c.id AS copy, c.device AS target
        FROM library_copies c JOIN assets a ON a.library_id = c.library_id JOIN asset_versions v ON v.asset_id = a.id
        WHERE c.device != ? AND ${WANTS} AND NOT ${HERE} AND NOT ${has("c.id")}
-         AND (v.mac_device = ? OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.gone_at IS NULL))
-         AND NOT (v.mac_device = c.device OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = c.device AND p.gone_at IS NULL))
+         AND (v.mac_device = ? OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.kind = 'original' AND p.state <> 'gone'))
+         AND NOT (v.mac_device = c.device OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = c.device AND p.kind = 'original' AND p.state <> 'gone'))
          AND NOT EXISTS (SELECT 1 FROM copy_sends s WHERE s.version_id = v.id AND s.tried_at > ?)`,
     [d, d, d, now - RETRY_MS],
     (v) => {
@@ -505,7 +505,7 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
       // files whose original is nowhere: not here, on no computer, on no disk
       noOriginal = (
         db()
-          .prepare(`SELECT count(*) AS n ${lacks} AND NOT ${HERE} AND v.mac_path IS NULL AND v.root IS NULL AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.gone_at IS NULL)`)
+          .prepare(`SELECT count(*) AS n ${lacks} AND NOT ${HERE} AND v.mac_path IS NULL AND v.root IS NULL AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.kind = 'original' AND p.state <> 'gone')`)
           .get(libraryId, c.id) as { n: number }
       ).n;
       // files only another computer holds: while it is offline the first one is named; online, it sends them, where the
@@ -513,7 +513,7 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
       const holders = db()
         .prepare(
           `SELECT DISTINCT id, h FROM (SELECT v.id, v.mac_device AS h ${lacks} AND NOT ${HERE} AND v.mac_device IS NOT NULL
-             UNION ALL SELECT p.version_id AS id, p.device AS h FROM version_places p WHERE p.gone_at IS NULL AND p.version_id IN (SELECT v.id ${lacks} AND NOT ${HERE})) WHERE h != ? LIMIT 50`,
+             UNION ALL SELECT p.version_id AS id, p.device AS h FROM version_places p WHERE p.kind = 'original' AND p.state <> 'gone' AND p.version_id IN (SELECT v.id ${lacks} AND NOT ${HERE})) WHERE h != ? LIMIT 50`,
         )
         .all(libraryId, c.id, libraryId, c.id, c.device) as { id: string; h: string }[];
       const away = holders.find((x) => !isOnline(x.h));

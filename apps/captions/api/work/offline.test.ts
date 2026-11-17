@@ -44,6 +44,8 @@ async function clip(user: string, id: string, on?: string) {
       ('${id}', 'ast_${id}', 1, 'k_${id}', 100, 'x', 'ready', '${user}', 0, ${on ? `'${on}'` : "NULL"});
     INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('${id}', 'proxy', 'p_${id}', ${`proxy ${id}`.length});
   `);
+  // indexed on that computer: its place there, read (on-mac.ts writes it verified)
+  if (on) libraryDb().prepare("INSERT INTO version_places (version_id, device, path, state, source) VALUES (?, ?, ?, 'verified', 'drop')").run(id, on, `/Users/tiny/${id}.mov`);
   indexAsset(libraryDb(), `ast_${id}`);
   const f = path.join(dir, `p_${id}.mp4`);
   writeFileSync(f, `proxy ${id}`);

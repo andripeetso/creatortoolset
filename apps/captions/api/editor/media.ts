@@ -4,6 +4,7 @@ import { link, mkdir, rename, symlink } from "node:fs/promises";
 import path from "node:path";
 import type { TimelineSource } from "../../contracts/editor";
 import { blobs, libraryDb } from "../library/db";
+import { OWN } from "../library/places";
 import { onComputer, pathOf } from "../work/on-computer";
 import { editDir, type EditMeta } from "./store";
 
@@ -119,7 +120,9 @@ export interface MediaPaths {
  * plays from the library (B-roll). With `sources` (the timeline's), a clip that is the edit's own file (a card) gets its
  * place in the edit's folder, or, for a `zip`, a media/ path and a line in `own` so the zip carries the file itself.
  */
-export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Record<string, TimelineSource>, zip = false): Promise<MediaPaths> {
+export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Record<string, TimelineSource>, zip = false, device?: string): Promise<MediaPaths> {
+  // the asker's own computer (`device`): a file it has a place row for (whereis.ts), not gone there, is named where it is there
+  const own = libraryDb().prepare(`SELECT ${OWN} AS path FROM asset_versions v WHERE v.id = ?`);
   const q = libraryDb().prepare(
     `SELECT v.id, a.title, v.source_key, v.source_path, v.mac_path, v.mime, l.storage_kind FROM asset_versions v
      JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`,
@@ -141,8 +144,9 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
     const name = names[r.id]!;
     // a bucket or Bunny zone that signs links: the worker downloads the file itself
     // a file indexed on a Mac: the timeline names it where it is there, for the editor on that Mac
-    if (r.mac_path) {
-      out.files[r.id] = r.mac_path;
+    const there = device ? (own.get(device, r.id) as { path: string | null } | undefined)?.path : null;
+    if (there || r.mac_path) {
+      out.files[r.id] = there || r.mac_path!;
       continue;
     }
     const at = r.storage_kind === "local" ? null : await blobs.locate(r.source_key, LINK_TTL_S, { download: name });

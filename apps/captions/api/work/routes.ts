@@ -10,6 +10,7 @@ import { WORK_MIN, type WorkClaim, type WorkResult } from "../../contracts/work"
 import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
 import { deviceForToken, deviceOf, noteMachine, setDeviceWork, touchDevice } from "../lib/devices";
 import { libraryDb } from "../library/db";
+import { noteProxyCache } from "../library/places";
 import { libraryMedia } from "../library/routes";
 import { finishJob, type JobRow } from "../library/jobs";
 import { claimExtras, offlineFor } from "./offline";
@@ -90,6 +91,8 @@ workApp.post("/claim", async (c) => {
     ...(libraryOnly ? { libraryOnly: true as const } : {}),
     at: Date.now(),
   });
+  // the cache it reported is its proxy places (version_places kind 'proxy'): what "On this computer" and Locate read
+  if (cache?.versions || empty) noteProxyCache(d.id, empty ? [] : (cache?.versions ?? []));
   // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
   const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
   if (v < WORK_MIN) return answer({ pkg: null, update: true });

@@ -5,7 +5,9 @@ import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
 import { deviceOf } from "../lib/devices";
-import { rootsOn } from "./places";
+import { placeWordOf } from "../../contracts/places";
+import { folderStatesFor } from "./places";
+import { GONE_ON_COMPUTER_SQL, ON_COMPUTER_SQL, whereIsMany } from "./whereis";
 
 /**
  * Asset listing for the library (tasks/media-library-plan.md, sections 6 and 8): one SQL statement from a
@@ -152,29 +154,22 @@ const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM ass
 /** Filmed in this country: the current version's probe (media/probe.ts countryOf). */
 const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions pv WHERE pv.id = a.current_version_id) = ?";
 
-/** The versions whose proxy `device`'s cache holds, as its last work claim said (api/work/routes.ts). */
-const cachedOn = (device: string): string[] => deviceOf(device)?.work?.cache?.versions ?? [];
+/** Where the current version is, from the place rows only (whereis.ts): `v.id` read as `a.current_version_id`, since search by meaning has no `v`. */
+const atCurrent = (sql: string) => sql.replaceAll("= v.id", "= a.current_version_id");
 
-/**
- * The original of version `v` is on the computer (the asker's own, params placedParams): read there when it last looked
- * (places.ts), on a disk it has connected now (its root), or indexed there and not looked for since.
- */
-const placedOn = (v: string) => `(EXISTS (SELECT 1 FROM version_places hp WHERE hp.version_id = ${v} AND hp.device = ? AND hp.gone_at IS NULL)
-  OR EXISTS (SELECT 1 FROM asset_versions hv WHERE hv.id = ${v} AND (hv.root IN (SELECT value FROM json_each(?))
-    OR (hv.mac_device = ? AND NOT EXISTS (SELECT 1 FROM version_places hg WHERE hg.version_id = hv.id AND hg.device = ?)))))`;
-const placedParams = (device: string) => [device, JSON.stringify(rootsOn(device)), device, device];
+/** On this computer: its proxy in the computer's cache (a 'proxy' place row, from its work claims), or its original verified or found there. */
+const HERE = `(EXISTS (SELECT 1 FROM version_places xp WHERE xp.version_id = a.current_version_id AND xp.device = ? AND xp.kind = 'proxy' AND xp.state IN ('verified','found'))
+  OR ${atCurrent(ON_COMPUTER_SQL)})`;
 
-/** On this computer: its proxy in the computer's cache, or its original there (placedOn). */
-const HERE = `(a.current_version_id IN (SELECT value FROM json_each(?)) OR ${placedOn("a.current_version_id")})`;
-
-/** Missing here: the computer's last look found the current version gone (places.ts); one whose disk is away is not. */
-const MISSING = "a.current_version_id IN (SELECT version_id FROM version_places WHERE device = ? AND gone_at IS NOT NULL)";
+/** Missing there: that computer listed the file's folder whole and the file was not in it. A row not checked yet (a drive
+ *  away, a folder not found, a row from before) or no row at all is "Not checked yet", never missing. */
+const MISSING = atCurrent(GONE_ON_COMPUTER_SQL);
 
 /** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
 export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
   return [
-    ...(query.here && query.device ? [{ sql: HERE, params: [JSON.stringify(cachedOn(query.device)), ...placedParams(query.device)] }] : []),
-    ...(query.missing && query.device ? [{ sql: MISSING, params: [query.device] }] : []),
+    ...(query.here && query.device ? [{ sql: HERE, params: [query.device, query.device] }] : []),
+    ...(query.missing && query.device ? [{ sql: MISSING, params: [query.device, query.device] }] : []),
     ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
     ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
     ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
@@ -313,15 +308,26 @@ const describedAs = (s: string): NonNullable<AssetCard["description"]> => {
   return { source: s.slice(0, i) === "user" ? "user" : "ai", text: s.slice(i + 1) };
 };
 
-/** Marks the cards on `device` (the asker's own computer, parseSearch): its proxy cached there, or its original there (placedOn). */
-export function markHere(db: DatabaseSync, cards: AssetCard[], device?: string): AssetCard[] {
-  if (!device || !cards.length) return cards;
-  const cached = new Set(cachedOn(device));
-  const there = new Set(
-    (db.prepare(`SELECT v0.id FROM asset_versions v0 WHERE v0.id IN (SELECT value FROM json_each(?)) AND ${placedOn("v0.id")}`)
-      .all(JSON.stringify(cards.map((c) => c.versionId)), ...placedParams(device)) as { id: string }[]).map((r) => r.id),
-  );
-  return cards.map((c) => (cached.has(c.versionId) || there.has(c.versionId) ? { ...c, here: true as const } : c));
+/**
+ * Marks the cards with where they are (whereis.ts, the one reader): `placeWord` seen from `device` (the asker's own
+ * computer, parseSearch; none: any of the person's), for a clip some computer has a place row for; and `here` when it is
+ * on that computer (its proxy cached there, or its original verified or found there).
+ */
+export async function markHere(db: DatabaseSync, cards: AssetCard[], device?: string): Promise<AssetCard[]> {
+  if (!cards.length) return cards;
+  const ids = cards.map((c) => c.versionId);
+  const where = whereIsMany(ids, await folderStatesFor(ids));
+  const here = device
+    ? new Set(
+        (db.prepare(`SELECT a.current_version_id AS id FROM assets a WHERE a.current_version_id IN (SELECT value FROM json_each(?)) AND ${HERE}`)
+          .all(JSON.stringify(ids), device, device) as { id: string }[]).map((r) => r.id),
+      )
+    : new Set<string>();
+  return cards.map((c) => {
+    const w = where.get(c.versionId);
+    const placed = w?.computers.some((x) => x.original) ? { placeWord: placeWordOf(w, device) } : {};
+    return { ...c, ...placed, ...(here.has(c.versionId) ? { here: true as const } : {}) };
+  });
 }
 
 /** One page: items, plus the cursor when more follow. */
