@@ -78,6 +78,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   transcribe: "Transcripts",
   describe: "Descriptions",
   look: "Shot descriptions",
+  timeline: "Timelines",
   embed: "Search by meaning",
 };
 
@@ -262,6 +263,7 @@ const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = 
   transcribe: "Transcribing",
   describe: "Describing",
   look: "Describing its shots",
+  timeline: "Making its timeline",
   embed: "Adding to search",
 };
 const FAILED_WORDS: Record<NonNullable<AssetCard["failed"]>["step"], string> = {

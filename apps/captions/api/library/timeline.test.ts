@@ -36,6 +36,7 @@ watchTiming.post = (url, headers, body) => fetch(url, { method: "POST", headers,
 const watched = () => Promise.all([...watching.values()]);
 const { embedChunks } = await import("./embed");
 const { saveMyKey } = await import("../my-keys");
+const { enqueueJob } = await import("./jobs");
 const { completeVisionWithFallback } = await import("../ai-vision");
 const { MacClaudeError, macUsageSince } = await import("../lib/mac-claude");
 const { completeWithFallback } = await import("../ai-complete");
@@ -332,9 +333,11 @@ describe("in the look job", () => {
     expect((libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'look'").get(v) as { state: string }).state).toBe("done");
     expect(calls).toHaveLength(0);
     expect(libraryDb().prepare("SELECT 1 FROM timelines WHERE version_id = ?").get(v)).toBeUndefined();
-    // a key added later: the sweep queues its look again, which goes on to the watch
+    // swept while there is no key: passed over, not set aside for RETRY_MS
+    expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+    // a key added later: the next sweep queues its look again, which goes on to the watch
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");
-    expect(sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true))).toBe(true);
+    expect(sweepWatch(libraryDb(), (id, actor) => id === v && queueLook(libraryDb(), id, actor, true))).toBe(true);
     while (await tick(Date.now(), ["look"]));
     await watched();
     expect(timelineOf(libraryDb(), v)).toHaveLength(1);
@@ -367,6 +370,24 @@ describe("in the look job", () => {
     expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("API key not valid");
     expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
     expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
+    // a real failure keeps its wait in the sweep too
+    expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+  });
+
+  it("the sweep watches on the uploader's own key, never another account's", async () => {
+    const { v } = await seed("bobs");
+    libraryDb().prepare("UPDATE asset_versions SET created_by = 'bob' WHERE id = ?").run(v);
+    enqueueJob(libraryDb(), "lib_t", v, "look", "bob");
+    libraryDb().prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = 'look'").run(v);
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    try {
+      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+      // bob saves his own: the next sweep takes the clip
+      saveMyKey("bob", "GEMINI_API_KEY", "gk-bob");
+      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(true);
+    } finally {
+      saveMyKey("bob", "GEMINI_API_KEY", null);
+    }
   });
 
   it("a watch waiting on a busy Gemini holds no look: the job is done, the next look runs, the sweep waits for it", async () => {
