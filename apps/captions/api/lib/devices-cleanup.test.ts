@@ -36,14 +36,15 @@ describe("removing or re-pairing a computer", () => {
     await devicesSaved();
   });
 
-  it("repoints a re-paired Mac's providers to the new record", async () => {
+  it("a re-paired Mac keeps its id, so its providers stay on it", async () => {
     const old = pairDevice("otheruser", "Other Mac");
     await saveSettings({ instances: [inst("claude_other", old.device.id)], default: pick("claude_other"), jobs: {} }, "otheruser");
 
     const again = pairDevice("otheruser", "Other Mac");
-    expect(again.replaced).toEqual([old.device.id]);
+    expect(again.device.id).toBe(old.device.id);
+    expect(again.replaced).toEqual([]);
     await moveProviders("otheruser", again.replaced, again.device.id);
-    expect(ownSettings("otheruser")!.instances[0]!.device).toBe(again.device.id);
+    expect(ownSettings("otheruser")!.instances[0]!.device).toBe(old.device.id);
     await devicesSaved();
   });
 });

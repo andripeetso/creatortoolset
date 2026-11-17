@@ -147,8 +147,9 @@ export function deviceForToken(authorization: string | undefined): Device | null
  * - `machineId` given: the device with that machine id keeps its id and gets the new token (the same computer paired
  *   again); else the same owner's device of the same name that has no machine id yet (that computer before it sent one)
  *   is adopted the same way. A device with another machine id is never touched, whatever its name.
- * - no `machineId` (an app from before): a new id; the same owner's devices of the same name without a machine id are
- *   dropped (`replaced`), never one that has a machine id.
+ * - no `machineId` (an app from before): the same owner's first device of the same name without a machine id keeps its
+ *   id (the folders, balance and places that name it still point at it); the others of that name without one are
+ *   dropped (`replaced`). A device that has a machine id is never taken.
  * `replaced` ids move to the new one (moveProviders and whereis.ts aliasDevice, called by the route).
  */
 export function pairDevice(owner: string, name: string, version?: string, machineId?: string): { device: Device; token: string; replaced: string[] } {
@@ -161,8 +162,9 @@ export function pairDevice(owner: string, name: string, version?: string, machin
     tell(owner);
     return { device: strip(same), token, replaced: [] };
   }
+  const same = mid ? [] : all().filter((x) => x.owner === owner && x.name === name && !x.machineId);
   const d: Stored = {
-    id: `dev_${randomBytes(8).toString("hex")}`,
+    id: same[0]?.id ?? `dev_${randomBytes(8).toString("hex")}`,
     owner,
     name,
     createdAt: Date.now(),
@@ -170,8 +172,8 @@ export function pairDevice(owner: string, name: string, version?: string, machin
     ...(version ? { version } : {}),
     ...(mid ? { machineId: mid } : {}),
   };
-  const replaced = mid ? [] : all().filter((x) => x.owner === owner && x.name === name && !x.machineId).map((x) => x.id);
-  list = all().filter((x) => !replaced.includes(x.id));
+  const replaced = same.slice(1).map((x) => x.id);
+  list = all().filter((x) => !same.some((y) => y.id === x.id));
   list.push(d);
   persist();
   tell(owner);

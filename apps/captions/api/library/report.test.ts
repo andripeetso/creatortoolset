@@ -86,11 +86,12 @@ describe("location agents: the computers report, the server records", () => {
     expect((await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "x.mp4", path: "/Users/someone/x.mp4", size: 5, quick: quick(9), frames: [] }) })).status).toBe(400);
   });
 
-  it("moves an old pairing's rows to the new id when an app from before pairs again", async () => {
+  it("keeps an old pairing's id and its places when an app from before pairs again", async () => {
     const old = await pair();
     libraryDb().prepare("INSERT INTO version_places (version_id, device, path, state, source) VALUES ('v-old', ?, '/x.mp4', 'verified', 'scan')").run(old.device.id);
     const now = await pair();
-    expect(now.device.id).not.toBe(old.device.id);
-    expect(libraryDb().prepare("SELECT device FROM version_places WHERE version_id = 'v-old'").get()).toEqual({ device: now.device.id });
+    expect(now.device.id).toBe(old.device.id);
+    expect(libraryDb().prepare("SELECT device FROM version_places WHERE version_id = 'v-old'").get()).toEqual({ device: old.device.id });
+  });
   });
 });
