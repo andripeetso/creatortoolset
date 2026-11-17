@@ -123,10 +123,15 @@ async function editorWaits(device: string, listed: unknown, workV?: unknown): Pr
   const d = deviceOf(device);
   if (!d) return null;
   // `work`: the package version this computer's worker runs (contracts/work.ts WORK_V). Kept with the device before its
-  // worker ever claimed, so a computer that never ran one is told when a step waits for it and starts it. Its worker
-  // takes Media Library jobs too (computer.ts claims with library: true), so it counts as a library taker from here:
-  // without that, a Mac that never claimed is never told a library job waits for it (library-package.ts takesLibrary)
-  if (typeof workV === "number") setDeviceWork(d.id, { ...(d.work ?? { steps: [] }), v: Math.max(workV, d.work?.v ?? 0), library: true });
+  // worker ever claimed, so a computer that never ran one is told when a step waits for it and starts it. A poll never makes
+  // it a Media Library taker: only a claim does (work/routes.ts stamps `at` with it), so a `library` with no `at` was written
+  // by a poll and is dropped
+  const polled = !!d.work?.library && !d.work.at;
+  const v = typeof workV === "number" && workV > (d.work?.v ?? 0) ? workV : d.work?.v;
+  if (polled || v !== d.work?.v) {
+    const { library: _, ...unmarked } = d.work ?? { steps: [] };
+    setDeviceWork(d.id, { ...(polled ? unmarked : (d.work ?? { steps: [] })), v: v ?? 0 });
+  }
   const kinds = parseKinds(listed);
   const editor = kinds ? await waits(d, await declared(d, kinds)) : false;
   // a core step placed on a computer: the app starts its worker, which claims it through work/claim

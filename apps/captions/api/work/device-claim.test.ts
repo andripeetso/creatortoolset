@@ -167,6 +167,23 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     settle();
   });
 
+  it("a poll never makes a computer a Media Library taker, and drops a taker mark no claim wrote", async () => {
+    const mac = pairDevice("pollonly", "Poll Mac");
+    // the device record is written as the poll comes in, before the poll waits for anything: look a moment later
+    const poll = async () => {
+      void post(mac.token, "/api/devices/relay/wait", { blobs: true, work: 1 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 100));
+      return deviceOf(mac.device.id)?.work;
+    };
+    expect(await poll()).toMatchObject({ v: 1 });
+    expect((await poll())?.library).toBeUndefined();
+    setDeviceWork(mac.device.id, { v: 1, steps: [], library: true }); // a mark an earlier poll wrote: no claim time
+    expect((await poll())?.library).toBeUndefined();
+    setDeviceWork(mac.device.id, { v: 1, steps: [], library: true, at: Date.now() }); // a claim's mark stays
+    expect((await poll())?.library).toBe(true);
+  });
+
+
   it("a Mac re-paired under the same name keeps its id, so its folders and places still read", async () => {
     const first = pairDevice("again", "Again Mac");
     const second = pairDevice("again", "Again Mac");
