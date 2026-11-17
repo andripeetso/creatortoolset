@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import { putCached, readCached } from "@/lib/local-cache";
 import { postToApp } from "@/lib/mac-record";
+import { Row } from "./ui";
 
 /** Inside the Mac app (it sets <html data-mac-this-mac>): Settings shows this Mac's switch and the servers. A browser never does. */
 export const hasThisMac = () => typeof document !== "undefined" && document.documentElement.dataset.macThisMac === "1";
@@ -31,6 +33,9 @@ export type ThisMacState = {
   recorder?: { keep: boolean; screen: number; camera: number; faces?: boolean };
   /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
   version?: string;
+  /** Shared drives: the app connects the shares this Mac had when they answer, with the saved sign-in (apps/mac
+   *  Places.swift); the page sets it with `thismac-shares:on|off`. Missing in older Mac apps */
+  shares?: boolean;
   /** the app's last answer, kept on this device: it has not answered in this window yet */
   saved?: true;
 };
@@ -157,4 +162,17 @@ export function useThisMac(on: boolean): ThisMacState | null {
     };
   }, [on, user]);
   return state;
+}
+
+/** Settings → Computers, under this Mac: the Mac app's Shared drives switch; nothing in a Mac app that doesn't report it. */
+export function SharedDrivesRow({ bridge }: { bridge: ThisMacState | null }) {
+  if (typeof bridge?.shares !== "boolean") return null;
+  return (
+    <Row
+      id="shared-drives"
+      title="Shared drives"
+      description="Connects the shared drives this Mac used, with the saved sign-in, when they are reachable."
+      control={<Switch checked={bridge.shares} aria-label="Shared drives" onCheckedChange={(on) => tell(on ? "shares:on" : "shares:off")} />}
+    />
+  );
 }

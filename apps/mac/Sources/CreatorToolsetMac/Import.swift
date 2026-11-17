@@ -117,7 +117,8 @@ final class Imports: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async {
                 let granted = MediaFiles.granted
                 var prints: [String: String] = [:]
-                for p in paths where Self.inside(p, granted) != nil { prints[p] = Self.quickPrint(p) }
+                // a file on a network disk that doesn't answer gets no print (Places.swift)
+                for p in paths where Places.shared.reachable(p) && Self.inside(p, granted) != nil { prints[p] = Self.quickPrint(p) }
                 main(["prints": prints])
             }
         case .locate(let folder, let files)?:
@@ -236,6 +237,7 @@ final class Imports: @unchecked Sendable {
 
     /// The media files under `path` when it is a granted folder (or inside one): { files } or { error }.
     static func scan(_ path: String, granted: [String], max: Int = maxScan) -> [String: Any] {
+        guard Places.shared.reachable(path) else { return ["error": "That folder's disk isn't connected."] }
         var directory: ObjCBool = false
         guard inside(path, granted) != nil, FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else {
             return ["error": "This app may not read that folder. Drop it on the window first."]

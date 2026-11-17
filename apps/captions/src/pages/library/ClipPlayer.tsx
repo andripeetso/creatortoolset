@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-re
 import { SPRITE_FRAMES, type AssetCard, type AssetDetail } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { awayLine, pickSource, useHere, type Source } from "@/lib/here";
+import { awayLine, pickSource, proxySource, useHere, type Source } from "@/lib/here";
 import { listLibraries } from "@/lib/library";
 import { askMediaFolder } from "@/lib/local-files";
 import { macPlaces, placesConnect } from "@/lib/thisMac";
@@ -21,9 +21,11 @@ import { copyReady, original, playerNote, type PlayerNote } from "./clip";
  * would turn with it, so it has none: a click plays or pauses, and the strip under it goes to a moment.
  * ponytail: no volume or full screen on a turned clip; its own controls if he asks for them
  * In a Mac app that checks where originals are (lib/here.ts), a clip whose original is on a computer plays it from this
- * one when it is here (badge Original), else a proxy (badge Proxy). What plays is chosen once the answer is in, and kept:
- * the original going away (an error, 3 s stalled, or the next answer while it plays) takes the proxy at the same second
- * and keeps playing; an original coming back is taken at the next play after a pause, or at once after a button here.
+ * one when it is here (badge Original), else a proxy (badge Proxy): this computer's cached one (Available offline) before
+ * the server's. A clip kept offline asks too, so it plays without internet. What plays is chosen once the answer is in,
+ * and kept: the original going away (an error, 3 s stalled, or the next answer while it plays) takes the proxy at the
+ * same second and keeps playing, as does the server's proxy failing when the cache has the clip; an original coming back
+ * is taken at the next play after a pause, or at once after a button here.
  */
 
 type Phase = "loading" | "playing" | "paused" | "failed";
@@ -55,7 +57,7 @@ export function ClipPlayer({
   const [plainFailed, setPlainFailed] = useState(false);
   const retry = plainFailed && copyReady(detail);
   const server = `/api/library/media/${a.versionId}/play${retry ? "?r=1" : ""}`;
-  const places = macPlaces() && !!a.onMac;
+  const places = macPlaces() && (!!a.onMac || !!a.here);
   const [here, again] = useHere(places ? a.libraryId : null, [a.versionId]);
   const check = here?.[a.versionId];
   // what plays, once this computer has answered; `at` the second it starts at when it took over from another
@@ -79,11 +81,14 @@ export function ClipPlayer({
 
   // another source takes over at the second playing now
   const take = (s: Source) => void (s.src !== pin?.src && setPin({ ...s, at: media.current?.currentTime }));
-  // the original stopped answering: the proxy, and this computer asked again
+  // what plays stopped answering (the share or the internet went): the proxy, the cached one first, at the same second,
+  // and this computer asked again. False when that is what plays already
+  const fallback = proxySource(check, a.versionId);
   const leave = () => {
-    if (pin?.badge !== "Original") return;
-    take(pickSource(check?.state === "here" ? undefined : check, a.versionId));
+    if (!pin || pin.src === fallback.src) return false;
+    take(fallback);
     void again();
+    return true;
   };
   const stall = useRef(0);
   useEffect(() => () => clearTimeout(stall.current), [src]);
@@ -188,7 +193,7 @@ export function ClipPlayer({
     onWaiting: () => {
       to("loading");
       clearTimeout(stall.current);
-      if (pin?.badge === "Original") stall.current = window.setTimeout(leave, 3000);
+      if (pin && pin.src !== fallback.src) stall.current = window.setTimeout(leave, 3000);
     },
     onCanPlay: () => clearTimeout(stall.current),
     onSeeking: () => setSeekingAt(src),
@@ -200,7 +205,7 @@ export function ClipPlayer({
       setFetched(Array.from({ length: b.length }, (_, i) => [b.start(i) / v.duration, b.end(i) / v.duration]));
     },
     onError: () => {
-      if (pin?.badge === "Original") return leave();
+      if (leave()) return;
       if (!retry) setPlainFailed(true);
       to("failed");
     },

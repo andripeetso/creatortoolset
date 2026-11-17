@@ -171,7 +171,7 @@ export interface PlacesCheckAsk {
   /** at most PLACES_MAX */
   versions: string[];
 }
-export type PlaceCheck =
+export type PlaceCheck = (
   /** read here; `url` plays it (ctlocal://media/…) */
   | { state: "here"; path: string; url: string; needs?: never }
   /** read here, outside the folders the page may play from: the access button opens the folder panel at `folder` */
@@ -181,8 +181,13 @@ export type PlaceCheck =
   | { state: "away"; root?: RootLabel; needs?: "connect" }
   /** the disk is reachable, and no try has the file */
   | { state: "gone" }
-  /** no original here, and this computer's proxy cache has the proxy */
-  | { state: "cached"; url: string };
+) & {
+  /** this computer's proxy cache has the proxy (Available offline): it plays from here (ctlocal://media/…) before the
+   *  server's when the original doesn't */
+  cached?: string;
+}
+  /** nothing else known here (no original on a computer, or the server not answering), and the proxy cache has it */
+  | { state: "cached"; url: string; cached?: never };
 export interface PlacesCheckAnswer {
   versions: Record<string, PlaceCheck>;
 }

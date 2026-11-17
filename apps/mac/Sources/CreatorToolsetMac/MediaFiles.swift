@@ -7,6 +7,10 @@ import Foundation
 // folder), picked for the page in its open panel (a picked folder, or a picked file alone: Shell.swift), chosen as the
 // folder with the videos (ThisMacBridge.swift chooseFolder) or copied into by a Media Library import (Import.swift). The originals are private footage, so anything else
 // gets a status and no contents, and a missing file outside the folders reads as not granted, never as missing.
+// Each folder is also kept by its root (Places.swift): the disk's root key and the folder's path inside it, so a share
+// mounted again at another path (/Volumes/footage-1) is still the folder that was granted. A file on a network disk
+// that doesn't answer gets 503 at once (Places.guarded), never a wait. The proxy cache of the account the window is signed
+// in to on the page's server plays without a grant (ProxyCache.swift); every other account's cache is outside.
 
 enum MediaFiles {
     static let host = "media"
@@ -45,12 +49,60 @@ enum MediaFiles {
     static var granted: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
 
     static func add(_ folder: String) {
-        guard !granted.contains(folder) else { return }
-        UserDefaults.standard.set(granted + [folder], forKey: key)
+        if !granted.contains(folder) { UserDefaults.standard.set(granted + [folder], forKey: key) }
+        addRootGrants(disks: Places.shared.diskList())
     }
 
     static func remove(_ folder: String) {
         UserDefaults.standard.set(granted.filter { $0 != folder }, forKey: key)
+        saveRoots(rootGrants.filter { $0.path != folder })
+    }
+
+    /// A granted folder by its root: the folder as granted, its disk's root key, and the folder inside that disk.
+    struct RootGrant: Codable, Equatable {
+        let path: String
+        let root: String
+        let rel: String
+    }
+
+    private static let rootsKey = "mediaRoots"
+    static var rootGrants: [RootGrant] {
+        UserDefaults.standard.data(forKey: rootsKey).flatMap { try? JSONDecoder().decode([RootGrant].self, from: $0) } ?? []
+    }
+    private static func saveRoots(_ list: [RootGrant]) { UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: rootsKey) }
+
+    /// Each granted folder without a root grant gets one once its disk is mounted (the grants made before roots
+    /// existed, on the first launch that sees their disk). Reads no file: the disk comes from the mount paths.
+    static func addRootGrants(disks: [PlaceDisk]) {
+        let old = rootGrants
+        let new = rootGrants(for: granted.filter { f in !old.contains { $0.path == f } }, disks: disks)
+        if !new.isEmpty { saveRoots(old + new) }
+    }
+
+    /// The root grants of these folders whose disk is mounted (a folder on no mounted disk has none yet).
+    static func rootGrants(for folders: [String], disks: [PlaceDisk]) -> [RootGrant] {
+        folders.compactMap { f in
+            guard let disk = Places.disk(of: f, in: disks), let root = disk.key else { return nil }
+            return RootGrant(path: f, root: root, rel: Places.rel(f, in: disk.path))
+        }
+    }
+
+    /// The granted folders as real paths in NFC; one on a network disk as it is (resolving it could wait on its server).
+    static func realFolders(_ folders: [String], disks: [PlaceDisk]) -> [String] {
+        folders.compactMap { f in Places.disk(of: f, in: disks)?.network == true ? f : realPath(f) }.map(\.precomposedStringWithCanonicalMapping)
+    }
+
+    /// Whether a real path lies in a granted folder: under one of `folders` (real, NFC), or on a disk with a granted
+    /// root, inside the granted folder's path there.
+    static func isGranted(_ path: String, folders: [String], roots: [RootGrant], disks: [PlaceDisk]) -> Bool {
+        let p = path.precomposedStringWithCanonicalMapping
+        if folders.contains(where: { p == $0 || p.hasPrefix($0 == "/" ? "/" : $0 + "/") }) { return true }
+        guard let disk = Places.disk(of: path, in: disks), let key = disk.key else { return false }
+        let rel = Places.rel(p, in: disk.path)
+        return roots.contains { g in
+            let r = g.rel.precomposedStringWithCanonicalMapping
+            return g.root == key && (r.isEmpty || rel == r || rel.hasPrefix(r + "/"))
+        }
     }
 
     static func url(path: String) -> URL {
@@ -73,19 +125,31 @@ enum MediaFiles {
 
     enum Gate: Equatable {
         case file(String, type: String)   // the real path to read, and its type
-        case status(Int)                  // 403 not granted, 404 missing, 415 not a media file
+        case status(Int)                  // 403 not granted, 404 missing, 415 not a media file, 503 its disk doesn't answer
     }
 
-    static func gate(_ path: String, granted: [String]) -> Gate {
+    /// An absolute path with no `.` or `..` part.
+    static func isPlain(_ path: String) -> Bool {
         let parts = path.split(separator: "/")
-        guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return .status(403) }
+        return path.hasPrefix("/") && !parts.contains("..") && !parts.contains(".")
+    }
+
+    /// A plain path named as a file this app serves: the only paths the places check looks at (Places.swift).
+    static func isPlainMedia(_ path: String) -> Bool { isPlain(path) && isMedia(path) }
+
+    /// `cache`: the proxy cache folder this page may play from (ProxyCache.allowed), nil for none.
+    static func gate(_ path: String, granted: [String], roots: [RootGrant] = rootGrants, cache: String? = nil, places: Places = .shared) -> Gate {
+        guard isPlain(path) else { return .status(403) }
         guard type(of: path) != nil else { return .status(415) }
+        let disks = places.diskList()
+        let allowed = granted + (cache.map { [$0] } ?? [])
+        return places.guarded(path) { look(path, granted: allowed, roots: roots, disks: disks) } ?? .status(503)
+    }
+
+    private static func look(_ path: String, granted: [String], roots: [RootGrant], disks: [PlaceDisk]) -> Gate {
         // compared in one Unicode form (a folder's name may be stored decomposed); the file is opened as realpath named it
-        let folders = granted.compactMap(realPath).map(\.precomposedStringWithCanonicalMapping)
-        let inside = { (p: String) in
-            let p = p.precomposedStringWithCanonicalMapping
-            return folders.contains { p == $0 || p.hasPrefix($0 == "/" ? "/" : $0 + "/") }
-        }
+        let folders = realFolders(granted, disks: disks)
+        let inside = { (p: String) in isGranted(p, folders: folders, roots: roots, disks: disks) }
         guard let real = realPath(path) else {
             return .status(realPath(nearestExisting(path)).map(inside) == true ? 404 : 403)
         }
@@ -106,7 +170,7 @@ enum MediaFiles {
     private static func type(of path: String) -> String? { types[(path as NSString).pathExtension.lowercased()] }
 
     /// Symlinks, `..` and `/private` resolved; nil when missing.
-    private static func realPath(_ path: String) -> String? {
+    static func realPath(_ path: String) -> String? {
         guard let r = realpath(path, nil) else { return nil }
         defer { free(r) }
         return String(cString: r)
