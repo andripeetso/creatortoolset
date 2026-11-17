@@ -1,3 +1,5 @@
+import { mkdir, rename, rm, stat } from "node:fs/promises";
+import path from "node:path";
 import { LIBRARY_LOOK_KIND, type DeviceJob } from "../../contracts/devices";
 import type { Device } from "../../contracts/providers";
 import { deviceOf, listDevices, setDeviceLooks } from "../lib/devices";
@@ -9,6 +11,8 @@ import { defer, extendLease, finishJob, firstClips } from "./jobs";
 import { SHEET_STRETCHES } from "./look";
 import { MAC_WAITS, SHEET_FORMAT, type LookSheet } from "./shots";
 import { parseSignal, storeStretches, stretchLevelOf, takeSignal } from "./stretches";
+import { WATCH_LEVELS, wantsWatch } from "./timeline";
+import { env } from "../lib/env";
 import type { LookLevel } from "../../contracts/library";
 
 /**
@@ -21,6 +25,9 @@ import type { LookLevel } from "../../contracts/library";
  * Only the Mac in the version's mac_device takes it, and only when its account added the file; one look at a time.
  * The Mac keeps its sheets; each claim it makes says which versions it keeps them for, and the answer names the ones it
  * may drop (lookSheetsClaim). Settings → Storage counts them and empties them (api/kept.ts).
+ * With a Gemini key and Timelines on (timeline.ts wantsWatch), the claim also asks for a small copy of the video (option
+ * `watch`: the frames a second Gemini samples); the Mac posts it to …/file before done, and the look lane sends it to
+ * Gemini and deletes it (takeWatchCopy). It is held only until then.
  */
 
 /** How long a Mac holds a look without a word (it beats once a minute while it reads). */
@@ -31,14 +38,26 @@ const LEASE_S = 300;
  */
 export const LOOK_BYTES_MAX = 100_000_000;
 const JPEG_MAX = 4 * 1024 * 1024;
+/** The most a Mac's copy for the timeline may be: what Gemini's Files API takes on its free tier. */
+const WATCH_COPY_MAX = 2 * 1024 ** 3;
 /** Why a look past LOOK_BYTES_MAX failed: it stays failed, since the same file sends the same sheets again. */
 export const TOO_BIG = "This video is too long to describe shot by shot: its sheets come to more than 100 MB.";
 
 type Sheet = LookSheet & { ph: string[] };
 /** The looks Macs hold now, by job id: the Mac, the version, its length, and the sheets sent so far and their bytes. */
-const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; level: LookLevel; sheets: Sheet[]; bytes: number }>();
+const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; level: LookLevel; sheets: Sheet[]; bytes: number; watch: boolean; copy?: string }>();
 /** The sheets a Mac finished sending, by version, until the look lane takes them for its AI call. */
 const sent = new Map<string, LookSheet[]>();
+/** The copies for the timeline a Mac sent with its sheets, by version, until the look lane takes them (a file each). */
+const copies = new Map<string, string>();
+
+/** The copy a Mac sent of `versionId` for its timeline, now the caller's to delete; null when none came. */
+export function takeWatchCopy(versionId: string): string | null {
+  const f = copies.get(versionId) ?? null;
+  copies.delete(versionId);
+  return f;
+}
+const dropCopy = (f?: string) => void (f && rm(f, { force: true }).catch(() => {}));
 
 /** Whether a Mac sent the sheets of `versionId` and the look lane has not taken them yet. */
 export const macSheetsWaiting = (versionId: string): boolean => sent.has(versionId);
@@ -55,6 +74,7 @@ function holding(device: string, id: number) {
   const h = held.get(id);
   if (!h || h.device !== device) return undefined;
   if (!libraryDb().prepare("SELECT 1 FROM jobs WHERE id = ? AND state = 'running' AND lease_until >= ?").get(id, Date.now())) {
+    dropCopy(h.copy);
     held.delete(id);
     return undefined;
   }
@@ -66,13 +86,13 @@ const busy = (device: string) => [...held.keys()].some((id) => holding(device, i
 function nextFor(device: string, owner: string) {
   return libraryDb()
     .prepare(
-      `SELECT j.id, j.library_id, v.id AS version_id, v.mac_path, v.probe FROM jobs j
+      `SELECT j.id, j.library_id, j.actor, v.id AS version_id, v.mac_path, v.probe FROM jobs j
          JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
        WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.source_key LIKE 'mac:%' AND v.mac_device = ?
          AND v.created_by = ? AND a.trashed_at IS NULL
        ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 1`,
     )
-    .get(MAC_WAITS, device, owner, JSON.stringify(firstClips())) as { id: number; library_id: string; version_id: string; mac_path: string; probe: string | null } | undefined;
+    .get(MAC_WAITS, device, owner, JSON.stringify(firstClips())) as { id: number; library_id: string; actor: string | null; version_id: string; mac_path: string; probe: string | null } | undefined;
 }
 
 /** A sheet from the Mac, checked: its stretches (1 to SHEET_STRETCHES), a base64 JPEG under JPEG_MAX, a hash each. */
@@ -103,7 +123,8 @@ export const macLookJob: DeviceJobSlot = {
     // stretches found at another level than the library's are found again: the Mac reads the picture (none sent)
     const level = libraryLookLevel(r.library_id);
     if (stretchLevelOf(db, r.version_id) !== level) storeStretches(db, r.version_id, [], level);
-    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0 });
+    const watch = wantsWatch(db, r.version_id, r.actor);
+    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch });
     libraryChanged(r.library_id);
     const stretches = (db.prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(r.version_id) as { a: number; b: number }[]).map((s) => [s.a, s.b]);
     return {
@@ -111,7 +132,14 @@ export const macLookJob: DeviceJobSlot = {
       kind: LIBRARY_LOOK_KIND,
       editId: "",
       variant: "",
-      options: { path: r.mac_path, version: r.version_id, duration: String(duration), format: SHEET_FORMAT, stretches: JSON.stringify(stretches) },
+      options: {
+        path: r.mac_path,
+        version: r.version_id,
+        duration: String(duration),
+        format: SHEET_FORMAT,
+        stretches: JSON.stringify(stretches),
+        ...(watch ? { watch: String(WATCH_LEVELS[level].fps) } : {}),
+      },
     };
   },
   input: async () => null,
@@ -135,6 +163,7 @@ export const macLookJob: DeviceJobSlot = {
       h.bytes += Buffer.byteLength(sheet.jpeg, "base64");
       if (h.bytes > LOOK_BYTES_MAX) {
         // for good: the file would send the same sheets again; Retry or Describe again on the clip asks once more
+        dropCopy(h.copy);
         held.delete(id);
         db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?").run(TOO_BIG, id);
         libraryChanged(h.libraryId);
@@ -152,6 +181,10 @@ export const macLookJob: DeviceJobSlot = {
     const put = db.prepare("UPDATE stretches SET ph = ? WHERE version_id = ? AND seg = ? AND source = 'ai'");
     for (const s of h.sheets) s.ph.forEach((ph, k) => ph && put.run(ph, h.versionId, s.segs[k]!));
     sent.set(h.versionId, h.sheets.map(({ segs, jpeg }) => ({ segs, jpeg })));
+    if (h.copy) {
+      dropCopy(copies.get(h.versionId));
+      copies.set(h.versionId, h.copy);
+    }
     held.delete(id);
     // back to the look lane, the try not counted again: it asks the AI from the sheets (worker.ts)
     defer(db, id, 0);
@@ -159,10 +192,25 @@ export const macLookJob: DeviceJobSlot = {
     void wakeEditorPolls(); // the Mac's long poll hears of its next look at once
     return { reply: {} };
   },
-  file: async () => ({ error: "Send the sheets as JSON.", status: 400 }),
+  // the copy for the timeline, when the claim asked for one: moved out of the upload's place, kept until the lane takes it
+  file: async (device, id, file) => {
+    const h = holding(device, id);
+    if (!h) return { error: "Not found", status: 404 };
+    if (!h.watch) return { error: "Send the sheets as JSON.", status: 400 };
+    if ((await stat(file)).size > WATCH_COPY_MAX) return { error: "The copy for the timeline is too big.", status: 413 };
+    extendLease(libraryDb(), id, LEASE_S);
+    const dir = path.join(env.dataDir, "library", "scratch");
+    const dest = path.join(dir, `watch-${h.versionId}-${id}.mp4`);
+    await mkdir(dir, { recursive: true });
+    await rename(file, dest);
+    dropCopy(h.copy);
+    h.copy = dest;
+    return { reply: {} };
+  },
   fail: (device, id, why) => {
     const h = holding(device, id);
     if (!h) return false;
+    dropCopy(h.copy);
     held.delete(id);
     finishJob(libraryDb(), id, false, why.slice(0, 500));
     libraryChanged(h.libraryId);

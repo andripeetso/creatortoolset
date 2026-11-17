@@ -100,3 +100,14 @@ describe("an admin", () => {
     expect(fallbacks).toEqual(["claude_alex_2"]);
   });
 });
+
+describe("Media Library descriptions", () => {
+  it("with no pick of its own takes the Content Analyzer's, then its own once picked", async () => {
+    const two = [instance("claude_a", jordanMac), instance("claude_b", jordanMac)];
+    const sel = (id: string) => ({ instance: id, model: "claude-haiku-5-5", effort: "low" as const });
+    await saveSettings({ instances: two, default: sel("claude_a"), jobs: { analyzer: sel("claude_b") } }, "jordan");
+    expect(routeFor("jordan", false, "library")?.instance.id).toBe("claude_b");
+    await saveSettings({ instances: two, default: sel("claude_b"), jobs: { analyzer: sel("claude_b"), library: sel("claude_a") } }, "jordan");
+    expect(routeFor("jordan", false, "library")?.instance.id).toBe("claude_a");
+  });
+});

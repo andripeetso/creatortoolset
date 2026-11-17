@@ -214,7 +214,7 @@ export default function EditorPage() {
   if (tab === "animation") {
     return (
       <div className="flex min-h-dvh flex-col">
-        <AppBar tool="AI Editor">
+        <AppBar tool="Editor">
           {editable && !!animationList.data?.styles.length && (
             <Button size="sm" onClick={() => setOpenAnimation("new")}>
               <Plus className="h-4 w-4" />
@@ -235,7 +235,7 @@ export default function EditorPage() {
   if (tab === "styles") {
     return (
       <div className="flex min-h-dvh flex-col">
-        <AppBar tool="AI Editor">
+        <AppBar tool="Editor">
           {editable && !!styleList.data?.styles.length && (
             <Button size="sm" onClick={() => setOpenStyle("new")}>
               <Plus className="h-4 w-4" />
@@ -254,7 +254,7 @@ export default function EditorPage() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <AppBar tool="AI Editor">
+      <AppBar tool="Editor">
         {/* the list is the current project's edits, so the project is picked here too, as in the Workshop */}
         <ProjectSwitcher />
         {editable && anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
@@ -277,7 +277,7 @@ export default function EditorPage() {
             </Button>
           </div>
         )}
-        <FolderTrail state={folders} top="AI Editor" />
+        <FolderTrail state={folders} top="Editor" />
         {anything && (
           <BrowseBar
             search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}

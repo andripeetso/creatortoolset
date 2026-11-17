@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { SearchHit } from "../../contracts/library";
+import type { SearchHit, TimelineEvent } from "../../contracts/library";
 import { DEVICE_EMBED_MODEL, deviceEmbedModelKept, embedOnDevice } from "../lib/device-embed";
 import { deviceTranscribes } from "../lib/device-transcribe";
 import { libraryDb, librarySetting } from "./db";
@@ -7,6 +7,8 @@ import { enqueueJob } from "./jobs";
 import { CARD, toCard, type CardRow } from "./query";
 import { keyFor } from "../my-keys";
 import { NeedsKey, segmentsOf, type Segment } from "./transcribe";
+// timeline.ts imports this file too: only functions, called after both have loaded
+import { eventText, timelineOf } from "./timeline";
 
 /**
  * Optional semantic search (tasks/media-library-plan.md, section 6): the library's owner switches it on
@@ -38,14 +40,16 @@ export const meaningful = (text: string) => (text.match(/\p{L}+/gu)?.length ?? 0
 const FLOOR: Record<string, number> = { [DEVICE_EMBED_MODEL]: 0.35 };
 export const floorOf = (model: string): number => FLOOR[model] ?? 0.3;
 
-/** Chunk 0: title and description (the whole clip, no second). Then the transcript in windows of about 30 s. */
-export function embedChunks(title: string, description: string | null, segments: Segment[]): { start: number; text: string }[] {
+/** Chunk 0: title and description (the whole clip, no second). Then the transcript in windows of about 30 s, then the timeline a moment each. */
+export function embedChunks(title: string, description: string | null, segments: Segment[], events: TimelineEvent[] = []): { start: number; text: string }[] {
   const out = [{ start: 0, text: [title, description].filter(Boolean).join("\n") }];
   for (const s of segments) {
     const last = out[out.length - 1]!;
     if (out.length > 1 && s.start - last.start < WINDOW_S) last.text += ` ${s.text}`;
     else out.push({ start: s.start, text: s.text });
   }
+  // a timeline's moments one chunk each (timeline.ts), so a search by meaning finds the moment, not only the clip
+  for (const e of events) out.push({ start: e.a, text: eventText(e) });
   return out;
 }
 
@@ -97,7 +101,7 @@ export async function embedVersion(db: DatabaseSync, versionId: string, actor: s
     )
     .get(versionId) as { title: string; description: string | null };
   // ponytail: one request per version; a very long transcript would need batches under the endpoint's input limit
-  const chunks = embedChunks(row.title, row.description, segmentsOf(db, versionId));
+  const chunks = embedChunks(row.title, row.description, segmentsOf(db, versionId), timelineOf(db, versionId));
   // a chunk with nothing to search by keeps an empty row, so the catch-up sees the version as made with this model
   const kept = chunks.filter((c) => meaningful(c.text));
   const made = kept.length ? await embedTexts(kept.map((c) => c.text), route, { key: versionId }) : [];
@@ -208,8 +212,11 @@ export async function semanticHits(
     if (!asset) return [];
     if (r.chunk === 0) return [{ asset }];
     if (!segs.has(r.version_id)) segs.set(r.version_id, segmentsOf(db, r.version_id));
+    // a timeline's moment says what happens there; else the line said from there on
+    const moment = timelineOf(db, r.version_id).find((e) => e.a === r.start_s);
     const said = segs.get(r.version_id)!.find((s) => s.start >= r.start_s);
-    return [{ asset, seconds: r.start_s, ...(said ? { snippet: said.text } : {}) }];
+    const snippet = moment ? eventText(moment) : said?.text;
+    return [{ asset, seconds: r.start_s, ...(snippet ? { snippet } : {}) }];
   });
 }
 

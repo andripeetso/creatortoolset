@@ -17,8 +17,8 @@ export const PACK_SLOTS = {
   "workshop.review": "Content Workshop: the follower read and the fact check",
   "analyzer.ideas": "Content Analyzer: ideas and tags from posts",
   "captions.lines": "Caption Studio: where captions break into lines",
-  "editor.script": "AI Editor: the script",
-  "editor.cards": "AI Editor: the animated cards",
+  "editor.script": "Editor: the script",
+  "editor.cards": "Editor: the animated cards",
 } as const;
 export type PackSlot = keyof typeof PACK_SLOTS;
 export const isPackSlot = (s: string): s is PackSlot => Object.hasOwn(PACK_SLOTS, s);

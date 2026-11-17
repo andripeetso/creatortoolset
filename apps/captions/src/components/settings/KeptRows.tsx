@@ -22,7 +22,7 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   notes: ["Video Notes", "note", "notes"],
   guides: ["Guides", "guide", "guides"],
   enhance: ["Audio Enhancer sessions", "session", "sessions"],
-  editor: ["AI Editor edits", "edit", "edits"],
+  editor: ["Editor edits", "edit", "edits"],
   analyzer: ["Content Analyzer posts", "post", "posts"],
   workshop: ["Content Workshop sessions and sources", "item", "items"],
   designs: ["Designs", "design", "designs"],

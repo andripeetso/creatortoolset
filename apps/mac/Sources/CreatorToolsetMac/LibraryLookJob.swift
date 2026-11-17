@@ -15,6 +15,9 @@
 // sheets went makes them from the video again.
 // A look's sheets may come to 100 MB on the server; past that it answers 413 and fails the look for good, so this Mac
 // stops it, logs why, and is not asked for it again.
+// Option `watch` (frames a second, when the server has a Gemini key for the timeline): before done, this Mac makes a
+// small copy of the video (480 lines at most, that many frames a second, mono sound) and posts it to …/file; the server
+// sends it to Gemini and deletes it. A copy that can't be made is skipped: the look itself still finishes.
 import Foundation
 
 /// The device job kind this Mac lists for shot descriptions of its own files.
@@ -63,6 +66,7 @@ struct LibraryLookJob {
             var stretches = Self.stretches(step.options["stretches"])
             var kept = Self.load(file)
             let same = { kept?.format == LookSheets.format && kept?.stretches == stretches }
+            let beat = Beat(api: api, path: base, stopped: stopped)
             // the sheets this Mac kept show the stretches the server has: sent again, the video unread
             if stretches.isEmpty || !same() {
                 guard let ffmpeg else {
@@ -76,7 +80,6 @@ struct LibraryLookJob {
                 case .status(415): throw LibraryLookRefused(why: "\(path) is not a video this Mac reads.")
                 case .status: throw LibraryLookRefused(why: "\(path) is not in a folder Creator Toolset was given on this Mac (dropped on its window or chosen).")
                 }
-                let beat = Beat(api: api, path: base, stopped: stopped)
                 let reading = stretches.isEmpty
                 let opened = try waitAsync { try await LookPicture.open(src, reading: reading) }
                 if reading {
@@ -95,6 +98,23 @@ struct LibraryLookJob {
             for sheet in kept!.sheets {
                 if stopped() { throw LookGone() }
                 try send(base, ["sheet": ["segs": sheet.segs, "jpeg": sheet.jpeg, "ph": sheet.ph]], timeout: 120)
+            }
+            if let fps = Double(step.options["watch"] ?? ""), fps > 0, let ffmpeg,
+               case .file(let real, _) = MediaFiles.gate(step.options["path"] ?? "", granted: granted) {
+                let copy = folder.appendingPathComponent("\(version).watch.mp4")
+                defer { try? FileManager.default.removeItem(at: copy) }
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                do {
+                    try Self.watchCopy(ffmpeg: ffmpeg, src: URL(fileURLWithPath: real), fps: fps, out: copy, beat: beat.check)
+                } catch is LookGone {
+                    throw LookGone()
+                } catch {
+                    AppLog.write("library look: no copy to watch of \(version): \(error.localizedDescription)")
+                }
+                if FileManager.default.fileExists(atPath: copy.path) {
+                    let reply = try api.uploadFile("\(base)/file?name=watch.mp4", file: copy, type: "video/mp4")
+                    if reply.status == 404 || reply.status == 401 { throw LookGone() }
+                }
             }
             return (.done, RelayRunner.editorWaits(try send(base, ["done": true, "format": LookSheets.format]).data))
         } catch is LookGone {
@@ -136,6 +156,33 @@ struct LibraryLookJob {
                                 ph: LookSheets.hashes(ffmpeg: ffmpeg, sheet: out, count: these.count, landscape: landscape)))
         }
         return Kept(format: LookSheets.format, stretches: stretches, sheets: sheets)
+    }
+
+    /// A small copy of `src` for the server's timeline: `fps` frames a second (one at least), 480 lines at most, mono AAC.
+    /// Beats while ffmpeg runs, so a long video keeps the job this Mac's; stops ffmpeg when the job went elsewhere.
+    static func watchCopy(ffmpeg: URL, src: URL, fps: Double, out: URL, beat: () throws -> Void) throws {
+        let p = Process()
+        p.executableURL = ffmpeg
+        p.arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src.path,
+                       "-vf", "fps=\(max(fps, 1)),scale=-2:'min(480,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+                       "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "1", "-b:a", "48k", "-movflags", "+faststart", out.path]
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        while p.isRunning {
+            do { try beat() } catch {
+                p.terminate()
+                p.waitUntilExit()
+                try? FileManager.default.removeItem(at: out)
+                throw error
+            }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        guard p.terminationStatus == 0 else {
+            try? FileManager.default.removeItem(at: out)
+            throw LibraryLookRefused(why: "ffmpeg could not make the copy to watch.")
+        }
     }
 
     /// The sheets kept in `folder`: each version's file size, by version id.

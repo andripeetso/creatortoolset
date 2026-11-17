@@ -200,7 +200,7 @@ export function PlanQuestion({ view, onSave }: { view: SetupView; onSave: (plan:
         ))}
       </select>
       <span className="text-xs text-muted-foreground">
-        {reported && `The AI plan is ${reported}. `}On Pro or Plus, heavy runs (the AI Editor, deep research, big Analyzer runs) ask first: they can use up the 5-hour limit.
+        {reported && `The AI plan is ${reported}. `}On Pro or Plus, heavy runs (the Editor, deep research, big Analyzer runs) ask first: they can use up the 5-hour limit.
       </span>
     </label>
   );

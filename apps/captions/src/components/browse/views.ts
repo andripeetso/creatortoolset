@@ -10,7 +10,7 @@ export const BROWSE_VIEWS = {
   review: { label: "Review", view: "grid" },
   media: { label: "Media Library", view: "grid" },
   finals: { label: "Finals", view: "grid" },
-  editor: { label: "AI Editor", view: "list" },
+  editor: { label: "Editor", view: "list" },
   captions: { label: "Caption Studio", view: "grid" },
   stories: { label: "Story Splitter", view: "list" },
   notes: { label: "Video Notes", view: "list" },
