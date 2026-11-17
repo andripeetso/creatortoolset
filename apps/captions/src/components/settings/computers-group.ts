@@ -38,7 +38,7 @@ const machineKey = (d: Listed): string => {
  * computer that is not a Mac (a Linux one has no Mac app).
  */
 export const kindOf = (d: Listed): string | null => {
-  if (d.owner === "workspace") return "AI Editor";
+  if (d.owner === "workspace") return "Editor";
   const os = d.report?.machine?.os;
   return !os || os === "mac" ? "Mac app" : null;
 };

@@ -32,7 +32,7 @@ export const WINDOW_USD: Record<PlanId, number> = {
 
 /** A heavy feature's typical cost, and where the number comes from. `per`: the cost is per item (posts), times the count. */
 export const FEATURE_COST = {
-  editor: { label: "An AI Editor run", usd: 4, source: "measured on the editor pipeline this one was ported from: a full run with six versions (analyze, script, drafts), 2026-10; not yet measured on this code" },
+  editor: { label: "An Editor run", usd: 4, source: "measured on the editor pipeline this one was ported from: a full run with six versions (analyze, script, drafts), 2026-10; not yet measured on this code" },
   research: { label: "Deep research", usd: 1.5, source: "estimate: a few minutes of Claude reading sources (timed 2026-10, cost not measured)" },
   analyzer: { label: "Reading posts in the Analyzer", usd: 0.05, per: "post", source: "estimate: one post's caption, slides and transcript" },
 } as const;
