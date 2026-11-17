@@ -342,7 +342,7 @@ function HelperDialog({ device, name, onClose }: { device: string; name: string;
 
 /**
  * Which Media Library work a computer takes (Settings → Computers, Set up): every library unless narrowed to some, and
- * whether it may download an original to make a proxy (a Mac yes, another computer no, until set). Only for a computer
+ * whether it may download an original to make a proxy (until set: no on Linux or Windows, else yes). Only for a computer
  * whose worker takes library work.
  */
 function LibraryWork({ device }: { device: string }) {
@@ -357,7 +357,7 @@ function LibraryWork({ device }: { device: string }) {
   const d = view?.devices.find((x) => x.id === device);
   if (!d?.work?.library || !balance) return null;
   const only = balance.libraries?.[device];
-  const originals = balance.originals?.[device] ?? d.report?.machine?.os === "mac";
+  const originals = balance.originals?.[device] ?? !["linux", "windows"].includes(d.report?.machine?.os ?? "");
   const save = (body: Partial<Record<"libraries" | "originals", unknown>>) =>
     call<Balance>("/api/devices/balance", "PUT", body).then(setBalance, (e: Error) => setProblem(e.message));
   const pick = (id: string, on: boolean) => {

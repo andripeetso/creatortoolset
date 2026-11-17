@@ -56,8 +56,12 @@ export function offOf(owner: string): Set<string> {
 /** Whether computer `id` takes Media Library work of library `library`: every library unless its list narrows it. */
 export const allowsLibrary = (b: Balance, id: string, library: string): boolean => !b.libraries?.[id] || b.libraries[id]!.includes(library);
 
-/** Whether computer `d` may download an original (to make the proxy of a file only the server has): as set, else a Mac yes, another computer no. */
-export const takesOriginals = (b: Balance, d: Pick<Device, "id" | "report">): boolean => b.originals?.[d.id] ?? d.report?.machine?.os === "mac";
+/**
+ * Whether computer `d` may download an original (to make the proxy of a file only the server has): as set, else not on a
+ * Linux or Windows computer (a box that takes library work beside the Mac, owner 17 Nov) and yes on a Mac.
+ */
+export const takesOriginals = (b: Balance, d: Pick<Device, "id" | "report">): boolean =>
+  b.originals?.[d.id] ?? !["linux", "windows"].includes(d.report?.machine?.os ?? "");
 
 /** How recent a computer's last work claim must be for it to count as one that takes work now (an idle worker asks every 25 s). */
 export const CLAIM_FRESH_MS = 120_000;

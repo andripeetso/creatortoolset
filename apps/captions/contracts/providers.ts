@@ -252,7 +252,7 @@ export interface Balance {
   weights: Record<string, number>;
   /** the Media Library libraries a computer takes work of, by device id; absent: every library */
   libraries?: Record<string, string[]>;
-  /** whether a computer may download an original to make its proxy, by device id; absent: a Mac yes, another computer no */
+  /** whether a computer may download an original to make its proxy, by device id; absent: no on Linux or Windows, else yes */
   originals?: Record<string, boolean>;
 }
 export const LOAD_PREFERENCES = [

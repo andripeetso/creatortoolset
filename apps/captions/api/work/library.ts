@@ -168,7 +168,14 @@ export async function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Prom
   try {
     await mkdir(dir, { recursive: true });
     // where the file is on this computer first; a download only when it is not here
-    const own = [dir, proxiesDir()];
+    // its job folder, and the proxy cache once the server has named the account
+    const own = [dir, ...(() => {
+      try {
+        return [proxiesDir()];
+      } catch {
+        return [];
+      }
+    })()];
     let src = await copyHere(lib.file, lib.folders ?? [], (p) => mayReadHere(p, own));
     if (!src && lib.original) {
       src = path.join(dir, "original");
