@@ -676,6 +676,9 @@ export interface LibraryCopy {
   waitsFor?: string;
   /** files this copy lacks whose original is on no server and no computer any more ("No original for N files") */
   noOriginal?: number;
+  /** files only another computer holds, which the server keeps no original of for a copy while the library's Upload to
+   *  the server is not "Video files and proxies" ("Needs Upload to the server") */
+  needsUpload?: true;
   /** kept by a copier the app does not run (a plug-in's): no menu */
   readOnly?: true;
 }
