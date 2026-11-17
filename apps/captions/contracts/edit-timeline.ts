@@ -5,6 +5,7 @@
  * on the rendered cut and sent with a comment (src/components/ReviewEdits.tsx).
  */
 
+import type { WindowCrop } from "./editor";
 import { cleanGrade, describeGrade, type Grade } from "./grade";
 
 export interface TimelineItem {
@@ -37,6 +38,12 @@ export interface TimelineItem {
   copyOf?: string;
   /** switched off in its timeline (a clip or its track disabled): it never shows or sounds */
   off?: boolean;
+  /**
+   * V1, a reframed shot (an AI Editor moment): its window over the picture as it is cut (`path`, Focus.x from `from`
+   * seconds into its media: the shot's first, kept on the pieces it is cut into), the window's width as a share of the
+   * picture's, what a hand set it to (`crop`), and the paths it can be set to: "0" following who talks, "n" Speaker n.
+   */
+  window?: { path: { t: number; x: number }[]; from: number; w: number; crop?: WindowCrop; follow: Record<string, { t: number; x: number }[]> };
 }
 
 export interface TimelineView {
@@ -83,9 +90,11 @@ export interface ItemEdit {
   tilt?: number;
   /** V1: the shot's new grade (contracts/grade.ts) */
   grade?: Grade;
+  /** V1, a reframed shot (TimelineItem.window): its window held at x, or following a speaker (0 = whoever talks) */
+  crop?: WindowCrop;
 }
 
-const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade;
+const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade && !e.crop;
 /** Layers an overlay may go to: the same kind, never the talent or its voice. */
 export const layerFor = (from: string, to: string) => to !== from && to[0] === from[0] && /^[VA][2-9]$/.test(to);
 const whole = (v: unknown) => (Number.isInteger(v) && v !== 0 && Math.abs(v as number) <= 100_000 ? (v as number) : undefined);
@@ -113,6 +122,10 @@ export function cleanEdits(v: unknown): ItemEdit[] {
       if (zoom !== undefined) Object.assign(x, { zoom }, { pan: real(e.pan, -5000, 5000) ?? 0, tilt: real(e.tilt, -5000, 5000) ?? 0 });
       const grade = talent ? cleanGrade(e.grade) : undefined;
       if (grade) x.grade = grade;
+      const c = talent && e.crop && typeof e.crop === "object" ? (e.crop as Record<string, unknown>) : null;
+      const cx = c ? real(c.x, 0, 1, 10_000) : undefined;
+      if (cx !== undefined) x.crop = { x: cx };
+      else if (c && Number.isInteger(c.speaker) && (c.speaker as number) >= 0 && (c.speaker as number) <= 50) x.crop = { speaker: c.speaker as number };
     }
     // cuts stand whatever else the first piece gets (a removed first piece leaves the others)
     const split = Array.isArray(e.split)
@@ -193,7 +206,19 @@ export function describeEdit(e: ItemEdit, fps: number): string {
     e.split?.length && `split ${e.split.length === 1 ? "in two" : `in ${e.split.length + 1}`}`,
     e.zoom !== undefined && `reframed to ${e.zoom.toFixed(2)}×`,
     e.grade && `graded: ${describeGrade(e.grade)}`,
+    e.crop && ("x" in e.crop ? `held at ${Math.round(e.crop.x * 100)}% across` : e.crop.speaker ? `following Speaker ${e.crop.speaker}` : "following who talks"),
   ].filter(Boolean).join(", ");
+}
+
+/** A reframed shot's window x at `t` (Item.path): eased (smoothstep) between keys, held before the first and after the last. */
+export function pathAt(keys: { t: number; x: number }[], t: number): number {
+  if (!keys.length) return 0.5;
+  let i = 0;
+  while (i + 1 < keys.length && keys[i + 1]!.t <= t) i++;
+  const [a, b] = [keys[i]!, keys[i + 1]];
+  if (!b || t <= a.t) return a.x;
+  const u = (t - a.t) / (b.t - a.t);
+  return a.x + (b.x - a.x) * u * u * (3 - 2 * u);
 }
 
 // Reframe on Review's video (the rendered cut): a 9:16 box inside the frame,

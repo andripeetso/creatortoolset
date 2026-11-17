@@ -1,7 +1,7 @@
 import path from "node:path";
 import { TRACKS, type Item, type Timeline, type TimelineSource } from "../../contracts/editor";
 import { type Cdl, cdlMeta } from "./grade";
-import { fitted } from "./framing";
+import { fitted, panKeys } from "./framing";
 import { meanSpeed } from "./plan";
 
 /**
@@ -10,7 +10,10 @@ import { meanSpeed } from "./plan";
  *
  * Units: a clip's source_range is in the file's timecode frames at the timeline rate (start timecode + `in`), its
  * media's available_range at the file's own rate. Pan/Tilt are a fraction of the clip's size fitted into the frame,
- * + Tilt moving the picture up. `target_url` is the file's path as given: an absolute path on this machine, or relative
+ * + Tilt moving the picture up. A reframed shot's moving window (Item.path) is Pan keyed by frame from the clip's first
+ * (`Key Frames`: { "<frame>": { Value, Variant Type } }, as Resolve writes Dynamic Zoom's), eased by keys every frame it
+ * moves (framing.ts panKeys), since Resolve eases linearly between keys and its own curve handles are not written.
+ * `target_url` is the file's path as given: an absolute path on this machine, or relative
  * to the timeline file in a zip (bare paths are what Resolve itself writes; a file:// URL is not needed).
  */
 
@@ -19,13 +22,13 @@ import { meanSpeed } from "./plan";
  * Resolve 21.2 refuses a whole file whose effect values are whole numbers ("1" where it writes "1.0"), its markers too.
  */
 export const otioText = (o: object): string =>
-  JSON.stringify(o, null, 2).replace(/("(?:rate|value|Default Parameter Value|Parameter Value|maxValue|minValue)": -?\d+)(?=[,\n])/g, "$1.0");
+  JSON.stringify(o, null, 2).replace(/("(?:rate|value|Value|Default Parameter Value|Parameter Value|maxValue|minValue)": -?\d+)(?=[,\n])/g, "$1.0");
 
 const rt = (value: number, rate: number) => ({ OTIO_SCHEMA: "RationalTime.1", rate, value });
 const range = (start: number, dur: number, rate: number) => ({ OTIO_SCHEMA: "TimeRange.1", duration: rt(dur, rate), start_time: rt(start, rate) });
-const param = (id: string, value: number, def: number, lo: number, hi: number) => ({
+const param = (id: string, value: number, def: number, lo: number, hi: number, keys: { f: number; v: number }[] = []) => ({
   "Default Parameter Value": def,
-  "Key Frames": {},
+  "Key Frames": Object.fromEntries(keys.map((k) => [String(k.f), { Value: k.v, "Variant Type": "Double" }])),
   "Parameter ID": id,
   "Parameter Value": value,
   "Variant Type": "Double",
@@ -42,14 +45,17 @@ const effect = (name: string, type: number, params: object[], display = name) =>
 function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: boolean, linkIds: Map<string, number>, grade?: Cdl) {
   const effects: object[] = [];
   const meta: Record<string, unknown> = {};
-  if (video && ((i.zoom ?? 1) !== 1 || i.tilt)) {
-    const { h } = fitted(src, tl.width, tl.height);
+  // a reframed shot's window: Pan as a share of the fitted picture's width, keyed where it moves
+  const pans = video ? panKeys(i, src, tl.width, tl.height, tl.fps) : [];
+  if (video && ((i.zoom ?? 1) !== 1 || i.tilt || pans.length)) {
+    const { w, h } = fitted(src, tl.width, tl.height);
     const zoom = i.zoom ?? 1;
+    const pan = pans.map((k) => ({ f: k.f, v: Math.round((k.pan / w) * 1e5) / 1e5 }));
     effects.push(
       effect("Transform", 2, [
         param("transformationZoomX", zoom, 1, 0, 100),
         param("transformationZoomY", zoom, 1, 0, 100),
-        param("transformationPan", 0, 0, -4, 4) /* pan stays 0 */,
+        param("transformationPan", pan[0]?.v ?? 0, 0, -4, 4, pan.length > 1 ? pan : []),
         param("transformationTilt", (i.tilt ?? 0) / h, 0, -4, 4),
       ]),
     );

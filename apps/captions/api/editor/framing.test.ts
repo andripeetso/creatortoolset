@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineSource } from "../../contracts/editor";
-import { fillZoom, fitted, followPath, framingOf, maxPunch, pathAt, pathIn, reframeTimeline, speakerTargets, tiltFor, windowOf } from "./framing";
+import { fillZoom, fitted, followPath, framingOf, maxPunch, panKeys, pathAt, pathIn, reframeTimeline, speakerPath, speakerTargets, tiltFor, windowOf } from "./framing";
 import { pathExpr } from "./preview";
 import { reframeSpan } from "./timeline";
 
@@ -152,6 +152,46 @@ describe("a reframed moment on the timeline", () => {
     expect(out.speakers).toEqual([{ rec: 0, len: 122, speaker: 1 }, { rec: 125, len: 75, speaker: 2 }]);
     // nobody found: the middle, filled
     expect(reframeTimeline(tl, {}).tracks.V1.items.map((i) => i.path)).toEqual([undefined, undefined]);
+  });
+
+  it("keeps every source's paths on the timeline, so Review can follow someone else", () => {
+    const keys = [{ t: 0, x: 0.2 }];
+    const out = reframeTimeline(tl, { s: { keys, speakers: { 1: [{ t: 0, x: 0.1 }], 2: [{ t: 0, x: 0.9 }] } } });
+    expect(out.reframe).toEqual({ s: { auto: keys, speakers: { 1: [{ t: 0, x: 0.1 }], 2: [{ t: 0, x: 0.9 }] } } });
+  });
+
+  it("follows one person alone: held while they are not seen, a cut when their face is on a new track", () => {
+    const fr = (t: number, faces: { x: number; id: number }[]) => ({ t, faces: faces.map((f) => ({ ...f, w: 0.05 })) });
+    const frames = [
+      ...Array.from({ length: 20 }, (_, i) => fr(i / 10, [{ x: 0.1, id: 1 }, { x: 0.8, id: 2 }])),
+      ...Array.from({ length: 10 }, (_, i) => fr(2 + i / 10, [{ x: 0.5, id: 3 }])), // a close-up of someone else
+      ...Array.from({ length: 20 }, (_, i) => fr(3 + i / 10, [{ x: 0.7, id: 4 }])), // speaker 1 again, after a cut
+    ];
+    const keys = speakerPath(frames, [1, 4], 0.3);
+    expect(pathAt(keys, 1)).toBeCloseTo(0, 3);
+    expect(pathAt(keys, 2.5)).toBeCloseTo(0, 3); // not seen: held
+    expect(keys.filter((k, i) => i && keys[i - 1]!.t === k.t)).toHaveLength(1); // one cut, at 3 s
+    expect(pathAt(keys, 3)).toBeGreaterThan(0.7);
+  });
+
+  it("keys a moving window for an editor that eases in straight lines: a hold is its ends, an ease a key where it bends, a cut two frames", () => {
+    const s = src(1920, 1080);
+    const zoom = fillZoom(s, 1080, 1920);
+    const room = fitted(s, 1080, 1920).w * zoom - 1080;
+    const item = { len: 100, zoom, path: [{ t: 0, x: 0.5 }, { t: 1, x: 0.5 }, { t: 2, x: 1 }, { t: 3, x: 1 }, { t: 3, x: 0 }] };
+    const keys = panKeys(item, s, 1080, 1920, 25);
+    expect(keys[0]).toEqual({ f: 0, pan: 0 });
+    expect(keys.find((k) => k.f === 25)).toEqual({ f: 25, pan: 0 });
+    expect(keys.slice(-3).map((k) => k.f)).toEqual([74, 75, 99]);
+    // every frame between keys within half a pixel of the line through them
+    for (let f = 0; f < 100; f++) {
+      const [a, b] = [keys.filter((k) => k.f <= f).at(-1)!, keys.find((k) => k.f >= f)!];
+      const line = b.f === a.f ? a.pan : a.pan + ((b.pan - a.pan) * (f - a.f)) / (b.f - a.f);
+      expect(Math.abs(line - room * (0.5 - pathAt(item.path, f / 25)))).toBeLessThanOrEqual(0.51);
+    }
+    expect(panKeys({ len: 50, zoom, path: [{ t: 0, x: 0.5 }] }, s, 1080, 1920, 25)).toEqual([]);
+    const held = Math.round(room * 0.3 * 100) / 100;
+    expect(panKeys({ len: 50, zoom, path: [{ t: 0, x: 0.2 }] }, s, 1080, 1920, 25)).toEqual([{ f: 0, pan: held }]);
   });
 
   it("looks at a moment's own sentences, only when a shape is asked for", () => {

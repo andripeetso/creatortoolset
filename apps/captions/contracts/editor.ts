@@ -286,10 +286,15 @@ export interface Item {
   focus?: Focus;
   /**
    * A reframed shot's window over time (api/editor/framing.ts followPath): Focus.x from `t` seconds into the item, eased
-   * to the next key, two keys at one time a cut. It moves x only; the preview draws it, an export keeps the centre.
+   * to the next key, two keys at one time a cut. It moves x only; the preview draws it, the exports key it (framing.ts panKeys).
    */
   path?: { t: number; x: number }[];
+  /** what a hand in Review set the path to (edit-timeline.ts ItemEdit.crop): held at x, or following Speaker n; absent = who talks */
+  crop?: WindowCrop;
 }
+
+/** A reframed shot's window set by hand: held at x (Focus.x), or following Speaker n (0 = whoever talks). */
+export type WindowCrop = { x: number } | { speaker: number };
 
 export interface TimelineSource {
   versionId: string;
@@ -323,6 +328,11 @@ export interface Timeline {
    * someone not in the picture. Found for a reframed moment; absent where nobody looked.
    */
   speakers?: { rec: number; len: number; speaker: number }[];
+  /**
+   * A reframed source's window paths in its own seconds (framing.ts): following who talks (`auto`) and each speaker
+   * alone, so a shot cut from it can be set to any of them by hand (edits.ts).
+   */
+  reframe?: Record<string, { auto: { t: number; x: number }[]; speakers: Record<number, { t: number; x: number }[]> }>;
   /** a planned edit (api/editor/plan.ts): the kind it is, in the brief's words, and its texts (seconds on the timeline). Absent: cut around speech */
   plan?: { kind: string; texts?: PlanText[] };
 }

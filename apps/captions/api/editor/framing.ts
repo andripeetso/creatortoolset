@@ -1,4 +1,7 @@
-import type { Timeline, TimelineSource } from "../../contracts/editor";
+import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
+import { pathAt } from "../../contracts/edit-timeline";
+
+export { pathAt };
 
 /**
  * Punch-ins: every cut on the speaker track changes scale (1.0 ↔ punch), pan stays 0, and the tilt keeps each
@@ -74,16 +77,6 @@ export function fillZoom(src: Pick<TimelineSource, "w" | "h">, W: number, H: num
 /** The window's width as a share of the picture's at `zoom` (1 = it shows the whole width). */
 export const windowOf = (src: Pick<TimelineSource, "w" | "h">, W: number, H: number, zoom: number) => Math.min(1, W / (fitted(src, W, H).w * zoom));
 
-/** The path's x at `t`: eased (smoothstep) between keys, held before the first and after the last. */
-export function pathAt(keys: PathKey[], t: number): number {
-  if (!keys.length) return 0.5;
-  let i = 0;
-  while (i + 1 < keys.length && keys[i + 1]!.t <= t) i++;
-  const [a, b] = [keys[i]!, keys[i + 1]];
-  if (!b || t <= a.t) return a.x;
-  const u = (t - a.t) / (b.t - a.t);
-  return a.x + (b.x - a.x) * u * u * (3 - 2 * u);
-}
 
 const r4 = (x: number) => Math.round(x * 1e4) / 1e4;
 const r3 = (x: number) => Math.round(x * 1e3) / 1e3;
@@ -195,13 +188,53 @@ export function speakerTargets(
 }
 
 /**
+ * The window following one person alone (`ids`: their face's tracks, speakers.ts Speakers.tracks): their face wherever
+ * it is seen, held where it was last seen while it is not, a cut where it is found on a new track (a new shot).
+ */
+export function speakerPath(frames: { t: number; faces: { x: number; w: number; id: number }[] }[], ids: number[], win: number): PathKey[] {
+  const mine = new Set(ids);
+  const out: { t: number; c: number; jump?: boolean }[] = [];
+  let was: number | null = null;
+  for (const fr of frames) {
+    const f = fr.faces.find((x) => mine.has(x.id));
+    if (!f) continue;
+    out.push({ t: fr.t, c: f.x + f.w / 2, ...(was !== null && f.id !== was ? { jump: true } : {}) });
+    was = f.id;
+  }
+  return followPath(out, win);
+}
+
+/**
+ * A reframed shot's window as the picture's offset (timeline px, + = right; the render's `pan`) at frames from its
+ * first, for an editor that eases linearly from key to key (otio.ts, fcpxml.ts): its path sampled each frame, the keys
+ * that a straight line between their neighbours already gives (within half a pixel) left out. A cut is two keys a
+ * frame apart. One key for a window held still; none for one held in the middle.
+ */
+export function panKeys(item: Pick<Item, "path" | "len" | "zoom">, src: Pick<TimelineSource, "w" | "h">, W: number, H: number, fps: number): { f: number; pan: number }[] {
+  const room = fitted(src, W, H).w * (item.zoom ?? 1) - W;
+  if (!item.path?.length || room <= 0) return [];
+  const all = Array.from({ length: Math.max(1, item.len) }, (_, f) => ({ f, pan: Math.round(room * (0.5 - pathAt(item.path!, f / fps)) * 100) / 100 }));
+  if (all.every((k) => k.pan === 0)) return [];
+  if (all.every((k) => k.pan === all[0]!.pan)) return [all[0]!];
+  // ponytail: greedy line fit, O(frames²) at worst on one shot; fine for a shot of minutes
+  const out = [all[0]!];
+  for (let i = 1; i < all.length; i++) {
+    const a = out.at(-1)!;
+    const fits = (j: number) => all.slice(a.f + 1, j).every((k) => Math.abs(a.pan + ((all[j]!.pan - a.pan) * (k.f - a.f)) / (j - a.f) - k.pan) <= 0.5);
+    if (i + 1 < all.length && fits(i + 1)) continue;
+    out.push(all[i]!);
+  }
+  return out;
+}
+
+/**
  * A cut reframed to its own frame: every speaker shot (V1) of a source that has a picture fills the frame, its window
  * following `follow[src]` (the source's path, in its seconds); who talks (`turns`, source seconds) goes on the
  * timeline's frames. A shot of a source with no path keeps the middle.
  */
 export function reframeTimeline(
   tl: Timeline,
-  follow: Record<string, { keys: PathKey[]; turns?: { s: number; e: number; speaker: number }[] }>,
+  follow: Record<string, { keys: PathKey[]; turns?: { s: number; e: number; speaker: number }[]; speakers?: Record<number, PathKey[]> }>,
 ): Timeline {
   const speakers: NonNullable<Timeline["speakers"]> = [];
   const items = tl.tracks.V1.items.map((it) => {
@@ -225,5 +258,12 @@ export function reframeTimeline(
     else out.push({ ...x });
     return out;
   }, []);
-  return { ...tl, tracks: { ...tl.tracks, V1: { ...tl.tracks.V1, items } }, ...(joined.length ? { speakers: joined } : {}) };
+  // each source's paths, so Review can follow someone else or go back to who talks (edits.ts)
+  const reframe = Object.fromEntries(Object.entries(follow).filter(([, f]) => f.keys.length).map(([k, f]) => [k, { auto: f.keys, speakers: f.speakers ?? {} }]));
+  return {
+    ...tl,
+    tracks: { ...tl.tracks, V1: { ...tl.tracks.V1, items } },
+    ...(joined.length ? { speakers: joined } : {}),
+    ...(Object.keys(reframe).length ? { reframe } : {}),
+  };
 }

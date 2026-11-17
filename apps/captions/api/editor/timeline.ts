@@ -7,7 +7,7 @@ import type { ProbeSummary } from "../library/media/probe";
 import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
-import { fillZoom, followPath, framingOf, reframeTimeline, speakerTargets, windowOf } from "./framing";
+import { fillZoom, followPath, framingOf, reframeTimeline, speakerPath, speakerTargets, windowOf } from "./framing";
 import { measurable } from "./media";
 import { clearPasses, markPasses } from "./passes";
 import { draftPlan } from "./plan";
@@ -203,7 +203,9 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
       const frames = await facesIn(span.src, () => measurable(span.src, keyOf[span.src]!), span.a, span.b, src, signal);
       const said = words[span.src]!.filter((w) => w.e > span.a && w.s < span.b);
       const { turns, tracks } = turnsOf(frames, said);
-      follow = { [span.src]: { keys: followPath(speakerTargets(frames, turns, tracks, win), win), turns } };
+      // and each speaker followed alone, for Review's reframe
+      const speakers = Object.fromEntries(Object.entries(tracks).map(([n, ids]) => [n, speakerPath(frames, ids, win)]).filter(([, k]) => k.length));
+      follow = { [span.src]: { keys: followPath(speakerTargets(frames, turns, tracks, win), win), turns, speakers } };
     } catch (e) {
       if (signal.aborted) return;
       notes.push(`The picture stays in the middle: who talks could not be found (${(e as Error).message})`);
