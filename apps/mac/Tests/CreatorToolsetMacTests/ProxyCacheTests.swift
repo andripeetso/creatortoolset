@@ -50,6 +50,12 @@ final class ProxyCacheTests: XCTestCase {
         XCTAssertEqual(MediaFiles.gate(allowed + "/offline.json", granted: [], roots: [], cache: allowed), .status(415))
         // without the cache folder: not granted
         XCTAssertEqual(MediaFiles.gate(alice, granted: [], roots: [], cache: nil), .status(403))
+        // a link in alice's folder to bob's proxy is judged by its real path: not served, and no address for it
+        let link = allowed + "/v3.mp4"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: bob)
+        XCTAssertEqual(MediaFiles.gate(link, granted: [], roots: [], cache: allowed), .status(403))
+        XCTAssertNil(ProxyCache.url("v3", in: URL(fileURLWithPath: allowed)))
+        XCTAssertEqual(ProxyCache.url("v1", in: URL(fileURLWithPath: allowed)), MediaFiles.url(path: alice).absoluteString)
 
         // a page of another server gets none of this server's cache; signed out, none at all
         XCTAssertNil(ProxyCache.allowed(page: URL(string: "https://other.example.com/library")!))

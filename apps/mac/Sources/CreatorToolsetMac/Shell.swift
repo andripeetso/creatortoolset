@@ -187,7 +187,9 @@ final class Shell: NSObject, ObservableObject {
                     let cache = !self.runsHere
                     Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache)) }
                 case .connect(let root)?:
-                    Task { done(await Places.shared.connect(root: root)) }
+                    // a share this Mac never had asks first, naming this window's server
+                    let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")
+                    Task { done(await Places.shared.connect(root: root, server: server)) }
                 case nil:
                     done(["problem": "Not an ask this app knows."])
                 }

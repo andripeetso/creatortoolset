@@ -60,11 +60,12 @@ enum ProxyCache {
         return folder(server: page, account: account)?.path
     }
 
-    /// The ctlocal://media address of a version's proxy in `folder`; nil when it isn't there (a download still going
-    /// is a .part).
+    /// The ctlocal://media address of a version's proxy in `folder`, only when the media gate serves it from there (its
+    /// real path inside the folder); nil when it isn't there (a download still going is a .part).
     static func url(_ version: String, in folder: URL) -> String? {
         guard !version.isEmpty, !version.contains("/"), !version.hasPrefix(".") else { return nil }
         let file = folder.appendingPathComponent("\(version).mp4").path
-        return Places.size(file) == nil ? nil : MediaFiles.url(path: file).absoluteString
+        guard case .file = MediaFiles.gate(file, granted: [], roots: [], cache: folder.path) else { return nil }
+        return MediaFiles.url(path: file).absoluteString
     }
 }

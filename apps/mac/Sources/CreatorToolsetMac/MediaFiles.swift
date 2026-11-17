@@ -119,10 +119,18 @@ enum MediaFiles {
         case status(Int)                  // 403 not granted, 404 missing, 415 not a media file, 503 its disk doesn't answer
     }
 
+    /// An absolute path with no `.` or `..` part.
+    static func isPlain(_ path: String) -> Bool {
+        let parts = path.split(separator: "/")
+        return path.hasPrefix("/") && !parts.contains("..") && !parts.contains(".")
+    }
+
+    /// A plain path named as a file this app serves: the only paths the places check looks at (Places.swift).
+    static func isPlainMedia(_ path: String) -> Bool { isPlain(path) && isMedia(path) }
+
     /// `cache`: the proxy cache folder this page may play from (ProxyCache.allowed), nil for none.
     static func gate(_ path: String, granted: [String], roots: [RootGrant] = rootGrants, cache: String? = nil, places: Places = .shared) -> Gate {
-        let parts = path.split(separator: "/")
-        guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return .status(403) }
+        guard isPlain(path) else { return .status(403) }
         guard type(of: path) != nil else { return .status(415) }
         let disks = places.diskList()
         let allowed = granted + (cache.map { [$0] } ?? [])
