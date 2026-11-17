@@ -151,14 +151,17 @@ const remembered = () => {
  * order they run (pictures, proxies, duplicate checks, transcripts, descriptions), each counting up, and what waits.
  * When nothing runs, what waits for a key, an AI or the plan's limit is said by itself: it is why nothing moves.
  */
-export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
+/** `all`: also what waits for one of the person's computers (the Library status window); the library page leaves that out, as nothing there is for them to do. */
+export function LibraryProgressBar({ libraryId, all = false }: { libraryId: string; all?: boolean }) {
   const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
   // the same saved status as the folder card and the watch list; only the owner gets one
   const watch = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => getWatch(libraryId)).data;
   const [open, setOpen] = useState(remembered);
   const adding = (watch?.folders ?? []).filter((f) => f.adding > 0);
   const moving = !!p && p.left > 0;
-  if (!moving && !p?.waiting.length) return null;
+  // work that waits for a computer is said in the Library status window and on Settings → Computers (which share it can't reach), not over the clips
+  const shown = (p?.waiting ?? []).filter((w) => all || !w.away);
+  if (!moving && !shown.length) return null;
   const toggle = () => {
     setOpen(!open);
     try {
@@ -167,8 +170,8 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
       // a private window keeps it for this page only
     }
   };
-  const needsYou = !!p?.waiting.some((w) => !w.limit && !w.computer);
-  const waiting = p?.waiting.map((w) => (
+  const needsYou = shown.some((w) => !w.limit && !w.computer && !w.away);
+  const waiting = shown.map((w) => (
     <div
       key={`${w.step}${w.limit ? "-limit" : w.computer ? "-computer" : w.away ? "-away" : ""}`}
       // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
@@ -235,7 +238,7 @@ export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string;
       <DialogContent className="sm:max-w-lg">
         <DialogTitle>Library status</DialogTitle>
         <DialogDescription>{line}</DialogDescription>
-        <LibraryProgressBar libraryId={libraryId} />
+        <LibraryProgressBar libraryId={libraryId} all />
         {!!s?.stages.length && (
           <ul className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1.5">
             {s.stages.map((st) => <StageRow key={st.kind} name={STAGE_NAME[st.kind]} done={st.done} of={st.of} failed={st.failed} busy={false} />)}
