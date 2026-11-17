@@ -10,6 +10,7 @@ import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { downloadName, readerOf } from "./routes";
 import { assetRef, canSee } from "./sources";
+import { learnAll } from "./learn";
 import { lookable } from "./shots";
 
 /**
@@ -92,6 +93,8 @@ bulkApp.post("/:id/jobs", async (c) => {
       ? asked.map((id) => db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(id, libraryId))
       : db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL").all(libraryId)
   ).filter(Boolean) as { id: string; kind: string; v: string | null }[];
+  // described again: what the person's own tags mean is learned first, so this pass already knows (learn.ts)
+  if (b?.count !== true && kinds.includes("describe")) await learnAll(db(), libraryId, user.username).catch(() => 0);
   let clips = 0;
   for (const r of rows) {
     const v = r.v;

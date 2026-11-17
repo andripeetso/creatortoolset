@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { turnVersion } from "./turn";
 import { emitEvent } from "../lib/events";
+import { learnSoon } from "./learn";
 import { workspaceOf } from "./describe";
 import { fileSmart } from "./smart";
 import { existsSync } from "node:fs";
@@ -288,6 +289,8 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     return c.json({ error: "Send a title, tags, a description or a turn", code: "invalid" }, 400);
   const d = db();
   if (turn !== undefined) await turnVersion(d, a.current_version_id, turn);
+  // the tags as they were: what the person took off and gave is what the AI learns from (learn.ts)
+  const was = tags ? (d.prepare("SELECT tag, source FROM asset_tags WHERE asset_id = ?").all(assetId) as { tag: string; source: string }[]) : [];
   d.exec("BEGIN");
   try {
     if (title) d.prepare("UPDATE assets SET title = ? WHERE id = ?").run(title, assetId);
@@ -295,6 +298,11 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
       d.prepare(`DELETE FROM asset_tags WHERE asset_id = ? AND tag NOT IN (SELECT value FROM json_each(?))`).run(assetId, JSON.stringify(tags));
       const add = d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, ?)");
       for (const t of tags) add.run(assetId, t, aiTags.has(t) ? "ai" : "user");
+      // an AI tag taken off is never given to this clip again; one put back (by the person or an undo) may be
+      const reject = d.prepare("INSERT OR IGNORE INTO tag_rejections (asset_id, tag) VALUES (?, ?)");
+      for (const w of was) if (w.source === "ai" && !tags.includes(w.tag)) reject.run(assetId, w.tag);
+      const back = d.prepare("DELETE FROM tag_rejections WHERE asset_id = ? AND lower(tag) = lower(?)");
+      for (const t of tags) back.run(assetId, t);
     }
     if (description) {
       d.prepare("INSERT OR REPLACE INTO descriptions (version_id, source, text, provider, created_at) VALUES (?, 'user', ?, NULL, ?)").run(
@@ -308,6 +316,15 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
   } catch (e) {
     d.exec("ROLLBACK");
     throw e;
+  }
+  // the person's own tags given or taken off: the AI learns those tags again, in the background
+  if (tags) {
+    const mine = (t: string) => !aiTags.has(t);
+    const changed = [
+      ...tags.filter((t) => mine(t) && !was.some((w) => w.tag === t && w.source === "user")),
+      ...was.filter((w) => w.source === "user" && !tags.includes(w.tag)).map((w) => w.tag),
+    ];
+    if (changed.length) learnSoon(libraryId, changed, user.username);
   }
   // what the smart folders judge it by changed: judged again, in the background (smart.ts)
   const version = a.current_version_id;

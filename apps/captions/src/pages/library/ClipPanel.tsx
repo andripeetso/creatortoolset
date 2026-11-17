@@ -167,9 +167,8 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
 
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
-  // editing the description, shot lines and tags is rare: their controls show only after Edit details, for this clip
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const fixed = inTrash || editingId !== a.id;
+  // the description, shot lines and tags are edited where they are (owner, 2026-11-17: no separate edit mode); not in the trash
+  const fixed = inTrash;
   // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
   const more = !inTrash && (
     <DropdownMenu>
@@ -190,11 +189,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             New project
           </DropdownMenuItem>
         )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => setEditingId(a.id)}>
-          <Pencil className="h-4 w-4" />
-          Edit details
-        </DropdownMenuItem>
+        {a.kind === "video" && !a.review && <DropdownMenuSeparator />}
         {a.kind === "video" && !a.review && (
           <>
             <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(270); }}>
@@ -236,14 +231,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     <div className="flex flex-col gap-3">
       {!win && (
         <div className="flex items-start gap-2">{title}</div>
-      )}
-      {!fixed && (
-        <div className="flex items-center justify-between rounded-md bg-zinc-500/10 px-2 py-1 text-xs text-zinc-500">
-          Editing details
-          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setEditingId(null)}>
-            Done
-          </Button>
-        </div>
       )}
       <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       <ShotLines
@@ -564,7 +551,8 @@ function TagEditor({
           {[...userTags, ...aiTags].map((t) => (
             <li
               key={t}
-              className={`flex items-center rounded-full border py-0.5 pl-2 pr-1 text-[11px] text-zinc-500 ${asset.aiTags.includes(t) ? "border-zinc-500/25" : "border-transparent bg-zinc-500/15"}`}
+              title={asset.aiTags.includes(t) ? "Tagged by the AI" : undefined}
+              className={`flex items-center rounded-full border py-0.5 pl-2 pr-1 text-[11px] ${asset.aiTags.includes(t) ? "border-zinc-500/25 text-zinc-500" : "border-transparent bg-zinc-500/15 text-zinc-300"}`}
             >
               {t}
               {readOnly ? (
@@ -613,7 +601,7 @@ function TagEditor({
             aria-expanded={list.length > 0}
             aria-controls="clip-tag-suggestions"
             aria-activedescendant={pick >= 0 ? `clip-tag-${pick}` : undefined}
-            className="h-7 w-full rounded-md border border-transparent bg-transparent px-2 text-xs text-zinc-400 placeholder:text-zinc-500 hover:border-zinc-500/30 focus:border-zinc-500/40 focus:outline-none"
+            className="h-7 w-full rounded-md border border-dashed border-zinc-500/40 bg-transparent px-2 text-xs text-zinc-300 placeholder:text-zinc-500 hover:border-zinc-500/60 focus:border-solid focus:border-zinc-500/60 focus:outline-none"
           />
           {list.length > 0 && (
             <ul id="clip-tag-suggestions" role="listbox" aria-label="Suggested tags" className="mt-1 flex flex-col rounded-md border border-zinc-500/25 py-1 text-xs">

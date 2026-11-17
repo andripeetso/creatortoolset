@@ -536,4 +536,24 @@ export const MIGRATIONS: string[] = [
   // ran the cut model, NULL where look.ts cutsOf measured them. A library can hold both; a version is read again only
   // when its shots are asked for again
   `ALTER TABLE asset_versions ADD COLUMN cuts_by TEXT;`,
+  // 33: what the AI learned from the person's own tags (learn.ts): per library tag, how to recognise it, written from
+  // the clips the person gave it (`clips`: their ids, so it is learned again only when that set changes; `seen` 0: a tag
+  // for something no picture shows, never suggested). tag_rejections: an AI tag the person took off a clip, never given
+  // to that clip again
+  `
+  CREATE TABLE tag_notes (
+    library_id TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    note TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 1,
+    clips TEXT NOT NULL,
+    made_at INTEGER NOT NULL,
+    PRIMARY KEY (library_id, tag)
+  );
+  CREATE TABLE tag_rejections (
+    asset_id TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (asset_id, tag)
+  );
+  `,
 ];
