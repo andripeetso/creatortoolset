@@ -132,6 +132,13 @@ export async function choiceOf(p: ServerPlugin, owner: string): Promise<Workspac
   return read().choices[p.id]![owner]!;
 }
 
+/** A removed plug-in leaves no choice behind, and installed again it is a new install (its defaults above). */
+export const forgetPluginWorkspaces = (id: string): Promise<void> =>
+  write((s) => {
+    delete s.choices[id];
+    if (s.before) s.before = s.before.filter((x) => x !== id);
+  });
+
 /** Whether a plug-in works in `workspace` (one of `owner`'s); with no workspace, nothing is kept apart: on. */
 export async function pluginOnIn(p: ServerPlugin, owner: string, workspace: string | null | undefined): Promise<boolean> {
   if (!workspace) return true;

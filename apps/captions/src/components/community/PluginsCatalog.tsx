@@ -4,10 +4,11 @@ import type { StepRow, StepsView } from "@contracts/editor-steps";
 import { isHomeTile, type HomeTile } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Card, ListRow, LoadingRow, saveFailed, Section } from "@/components/settings/ui";
+import { Card, ListRow, LoadingRow, RowMenu, saveFailed, Section } from "@/components/settings/ui";
+import { PluginHereSwitch } from "@/components/settings/PluginWorkspaces";
 import { StepRowView } from "@/components/settings/EditorStepsSection";
 import { addEditStep, getEditSteps, setEditStep } from "@/lib/editor";
-import { switchPluginOff, switchPluginOn, type PluginReply } from "@/lib/thisMac";
+import { removePlugin, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply } from "@/lib/thisMac";
 
 /**
  * The plug-ins the Creator Toolset team makes, each one a download, listed under the tool it adds to (its own plugin.ts
@@ -43,7 +44,8 @@ export function stepsFor(view: StepsView | null, tool: HomeTile | null | "all", 
 /**
  * A tool's "Plug-ins" section; nothing when it has none. With `switches` (on the tool's own page, on the Mac app's own
  * server, where that Mac app runs the steps) a loaded AI Editor step shows its switch for new edits and its options.
- * Elsewhere a plug-in from the person's own folder has an On switch (the Mac app's), and an installed one Settings.
+ * Elsewhere a plug-in from the person's own folder has an On switch (the Mac app's) and ⋯ → Remove, any other installed one
+ * an On switch for the window's workspace (it can't be removed: the server is built with it), and each one Settings.
  */
 export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps; tool: HomeTile | null | "all"; q?: string; switches?: boolean }) {
   // best effort: a list that could not be read (a guest, the demo) leaves the section out, as for a tool with none
@@ -60,7 +62,7 @@ export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps
           switches && r.state === "on" ? (
             <StepRowView key={r.id} step={r} onChange={(c) => change(r.id, c)} />
           ) : (
-            <PluginRow key={r.folder ?? r.id} row={r} canAdd={steps.view!.canAdd} />
+            <PluginRow key={r.folder ?? r.id} row={r} canAdd={steps.view!.canAdd} reload={steps.retry} />
           ),
         )}
       </Card>
@@ -68,7 +70,7 @@ export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps
   );
 }
 
-function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
+function PluginRow({ row, canAdd, reload }: { row: StepRow; canAdd: boolean; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   // the Mac app answers in its own dialog, then restarts its server and reloads this window; anything else gives the row back
   const run = async (ask: () => Promise<PluginReply | null>, failed: string) => {
@@ -102,9 +104,11 @@ function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
       />
     </div>
   );
+  // installed into the plug-ins folder (by Download, or the person's own): it can go. An on one needs the Mac app to stop it
+  const removable = canAdd && row.folder && row.state !== "add" && (!on || !!thisMacBridge());
   const actions = (
     <>
-      {toggle}
+      {toggle || (on && <PluginHereSwitch id={row.pluginId ?? row.id} name={row.title} />)}
       {on ? (
         <Button asChild size="sm" variant="outline">
           <Link to={to}>Settings</Link>
@@ -114,6 +118,27 @@ function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
           Download
         </Button>
       ) : null}
+      {removable && (
+        <RowMenu
+          label={`More for ${row.title}`}
+          items={[
+            {
+              label: "Remove",
+              destructive: true,
+              confirm: { title: `Remove ${row.title}?`, body: "Its folder is deleted from the plug-ins folder. What it saved or made is kept.", ok: "Remove" },
+              onSelect: () => run(async () => {
+                const r = await removePlugin(row.folder!, on);
+                // an on one: the Mac app restarts its server and reloads this window; an off one is read again here
+                if (r.ok && !on) {
+                  reload();
+                  setBusy(false);
+                }
+                return r;
+              }, `Could not remove ${row.title}. Try again.`),
+            },
+          ]}
+        />
+      )}
     </>
   );
   return <ListRow title={row.title} subtitle={row.about} actions={actions} />;

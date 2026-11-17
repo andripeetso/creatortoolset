@@ -9,7 +9,10 @@ vi.mock("../plugin-host.gen", () => ({
   hostModules: { "api/lib/plugin": () => import("./plugin"), "pkg:hono": () => import("hono") } as Record<string, () => Promise<unknown>>,
 }));
 
-const { blamedPlugin, fingerprintOf, folderPluginRows, loadFolderPlugins, mountFolderPlugins, parseFolders, parseOn, pluginLimits, prepareFolderPlugin, resetFolderPluginsForTest, startFolderPlugin } =
+// Remove forgets a plug-in's workspace choices (plugin-workspaces.json in the data folder): a throwaway one, never the real one
+process.env.DATA_DIR = path.join(process.cwd(), "node_modules", ".tmp", `folder plugins data ${process.pid}`);
+
+const { blamedPlugin, fingerprintOf, folderPluginRows, loadFolderPlugins, mountFolderPlugins, parseFolders, parseOn, pluginLimits, prepareFolderPlugin, removeFolderPlugin, resetFolderPluginsForTest, startFolderPlugin } =
   await import("./folder-plugins");
 
 // A throwaway app folder under node_modules/.tmp (git-ignored, on the same disk as the build).
@@ -384,6 +387,56 @@ describe("plug-ins from the person's folder", () => {
     mountFolderPlugins(app);
     expect(await (await app.request("/api/plugins/folder")).json()).toMatchObject({ enabled: false, rows: [] });
     expect((await app.request("/api/plugins/folder/a/prepare", { method: "POST" })).status).toBe(403);
+  });
+
+  it("Remove deletes the folder and the copies the app took of it, for one that is on or off; another folder of the same id keeps them", async () => {
+    write("a", "plugin.ts", server("a"));
+    write("b", "plugin.ts", server("b"));
+    await switchOn("a");
+    process.env.CT_PLUGINS_FOLDERS = JSON.stringify({ a: "a" });
+    await start();
+    expect(existsSync(path.join(root, "plugins-approved", "a"))).toBe(true);
+    expect(await removeFolderPlugin("a")).toBe("a");
+    expect(existsSync(path.join(root, "plugins", "a"))).toBe(false);
+    expect(existsSync(path.join(root, "plugins-approved", "a"))).toBe(false);
+    expect(existsSync(path.join(root, "plugins-run", "a"))).toBe(false);
+    // off, never switched on: only its folder
+    expect(await removeFolderPlugin("b")).toBe("b");
+    expect(existsSync(path.join(root, "plugins", "b"))).toBe(false);
+    // a second folder stating the id of the one that is on is not it: the copies that run stay
+    write("c", "plugin.ts", server("c"));
+    await switchOn("c");
+    process.env.CT_PLUGINS_FOLDERS = JSON.stringify({ c: "c" });
+    write("copy", "plugin.ts", server("c"));
+    expect(await removeFolderPlugin("copy")).toBe("c");
+    expect(existsSync(path.join(root, "plugins-approved", "c"))).toBe(true);
+    // the person's own data folder is never touched
+    mkdirSync(path.join(root, "data", "c"), { recursive: true });
+    expect(await removeFolderPlugin("c")).toBe("c");
+    expect(existsSync(path.join(root, "data", "c"))).toBe(true);
+    await expect(removeFolderPlugin("../c")).rejects.toThrow("Not a plug-in folder");
+    await expect(removeFolderPlugin("gone")).rejects.toThrow("The folder is gone");
+  });
+
+  it("Remove is the admin's, on the Mac app's own server only", async () => {
+    write("a", "plugin.ts", server("a"));
+    const as = (role: string) => {
+      const app = new Hono();
+      app.use("*", async (c, next) => {
+        c.set("user" as never, { role } as never);
+        await next();
+      });
+      mountFolderPlugins(app);
+      return app;
+    };
+    expect((await as("user").request("/api/plugins/folder/a", { method: "DELETE" })).status).toBe(403);
+    process.env.CT_MODE = "hosted";
+    expect((await as("admin").request("/api/plugins/folder/a", { method: "DELETE" })).status).toBe(403);
+    delete process.env.CT_MODE;
+    expect(existsSync(path.join(root, "plugins", "a"))).toBe(true);
+    const r = await as("admin").request("/api/plugins/folder/a", { method: "DELETE" });
+    expect([r.status, await r.json()]).toEqual([200, { id: "a" }]);
+    expect(existsSync(path.join(root, "plugins", "a"))).toBe(false);
   });
 
   it("reads a fingerprint from every path and byte", () => {

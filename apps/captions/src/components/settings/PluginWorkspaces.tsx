@@ -89,6 +89,34 @@ export function PluginWorkspaces({ id, onView }: { id: string; onView?: (v: Plug
   );
 }
 
+/**
+ * A plug-in row's On switch (Community), for one that is not switched on and off by the Mac app: on or off in the
+ * workspace the window is in, in the same record as the plug-in's settings page. None for one fixed on for the whole
+ * server, or in a workspace that is someone else's (its owner chooses there).
+ */
+export function PluginHereSwitch({ id, name }: { id: string; name: string }) {
+  const current = useWorkspace((s) => s.currentProjectId);
+  const [view, setView] = useState<PluginWorkspacesView | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => void send(id).then(setView, () => {}), [id]);
+  const here = view && !view.fixed ? view.workspaces?.find((w) => w.id === current) : undefined;
+  if (!view || !here) return null;
+  const on = view.all || here.on;
+  const flip = (v: boolean) => {
+    setBusy(true);
+    const only = view.workspaces.filter((w) => (w.id === here.id ? v : view.all || w.on)).map((w) => w.id);
+    send(id, { only })
+      .then((next) => (setView(next), void useWorkspace.getState().load()), (e: Error) => saveFailed(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>{on ? "On" : "Off"}</span>
+      <Switch aria-label={`${name} on in ${here.name}`} checked={on} disabled={busy} onCheckedChange={flip} />
+    </div>
+  );
+}
+
 /** The plug-in a Settings section belongs to (its own section, not a server-wide one), or undefined. */
 export const pluginOfSection = (sectionId: string) => webPlugins.find((p) => p.settings?.some((s) => s.id === sectionId && !s.adminTab))?.id;
 

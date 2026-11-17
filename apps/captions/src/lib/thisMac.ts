@@ -232,6 +232,18 @@ async function pluginAsk(ask: string): Promise<PluginReply | null> {
 /** Switch on (or take the new version of) the plug-in in this folder of the plug-ins folder. */
 export const switchPluginOn = (folder: string) => pluginAsk(`plugin:on:${folder}`);
 export const switchPluginOff = (id: string) => pluginAsk(`plugin:off:${id}`);
+/**
+ * Remove, for good (a plug-in row's ⋯ → Remove): the server deletes its folder and the copies the app took of it. One
+ * that is on is then switched off by the Mac app, which restarts its server and reloads this window; one that is off
+ * restarts nothing, and the caller reads its list again. What the plug-in saved or made stays.
+ */
+export async function removePlugin(folder: string, on: boolean): Promise<PluginReply> {
+  const r = await fetch(`/api/plugins/folder/${encodeURIComponent(folder)}`, { method: "DELETE" });
+  const j = (await r.json().catch(() => null)) as { id?: string | null; error?: string } | null;
+  if (!r.ok) return { ok: false, problem: j?.error ?? "Could not remove it. Try again." };
+  if (!on || !j?.id) return { ok: true };
+  return (await switchPluginOff(j.id)) ?? { ok: false, problem: "Removed. It stops when the Creator Toolset Mac app restarts its server." };
+}
 /** After the app switched every plug-in off (its server stopped five times): on again. */
 export const resumePlugins = () => pluginAsk("plugins:resume");
 /**
