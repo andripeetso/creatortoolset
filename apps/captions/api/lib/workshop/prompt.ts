@@ -17,6 +17,8 @@ export interface PromptInput {
   project?: Pick<Project, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge">;
   /** Live Analyzer snapshot of the brand/author Instagram account. */
   account?: AccountContext | null;
+  /** The context files whose whole text goes in (wholeFiles, lib/workshop/context.ts); the rest are listed only. */
+  loaded?: KnowledgeFile[];
   /** One narrative shape sets the order; a persuasion and an argument framework must have every step present inside it. */
   frameworks?: Array<Pick<Framework, "name" | "role" | "summary" | "steps" | "whenToUse" | "example">>;
   notes: string;
@@ -32,8 +34,6 @@ export const NOTES_MAX = 8000;
 /** Always-on project instructions (audience, voice, CTA, notes) — keep this small. */
 export const INSTRUCTIONS_MAX = 20_000;
 export const CONTEXT_BLURB = 80;
-export const CONTEXT_EXCERPT = 240;
-export const GENERATE_CONTEXT_MAX = 2000;
 // The API-key fallback loads context files whole; on the Mac they are files in the folder.
 export const CONTEXT_FILE_MAX = 80_000;
 export const CONTEXT_FETCH_MAX = 160_000;
@@ -158,21 +158,6 @@ export function renderLoadedKnowledge(files: KnowledgeFile[]): string {
   return `Context loaded this turn (reference material, not a brief; do not paste it into the piece):\n${files.map((f) => `### ${f.name}\n${clipKnowledge(f, CONTEXT_FILE_MAX)}`).join("\n\n")}`;
 }
 
-function generateExcerpts(files: KnowledgeFile[]): string {
-  let used = 0;
-  const chunks: string[] = [];
-  for (const f of files.filter((x) => x.text.trim())) {
-    if (used >= GENERATE_CONTEXT_MAX) break;
-    const room = Math.min(CONTEXT_EXCERPT, GENERATE_CONTEXT_MAX - used);
-    if (room <= 0) break;
-    const slice = f.text.slice(0, room);
-    const body = f.text.length > room ? `${slice.trimEnd()}\n…[shortened]` : slice;
-    chunks.push(`### ${f.name}\n${body}`);
-    used += body.length;
-  }
-  return chunks.length ? `Context excerpts (short — fetch the rest in chat if you need the full file):\n${chunks.join("\n\n")}` : "";
-}
-
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /** Handle only — live stats are fetched, not attached. */
@@ -225,11 +210,11 @@ export function renderProjectStable(
 /** Capped instructions always on; context is an index, plus any files loaded this turn. */
 export function renderProjectPrompt(
   p: Pick<Project, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge">,
-  opts?: { loaded?: KnowledgeFile[]; excerpts?: boolean; account?: AccountContext | null },
+  opts?: { loaded?: KnowledgeFile[]; account?: AccountContext | null },
 ): string {
   return [
     renderProjectStable(p, opts?.account),
-    opts?.loaded?.length ? renderLoadedKnowledge(opts.loaded) : opts?.excerpts ? generateExcerpts(p.knowledge ?? []) : "",
+    opts?.loaded?.length ? renderLoadedKnowledge(opts.loaded) : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -238,7 +223,7 @@ export function renderProjectPrompt(
 export function buildGeneratePrompt(input: PromptInput): { system: string; user: string } {
   const blocks: string[] = [];
   const p = input.project;
-  if (p) blocks.push(renderProjectPrompt(p, { excerpts: true, account: input.account }));
+  if (p) blocks.push(renderProjectPrompt(p, { loaded: input.loaded, account: input.account }));
   else if (input.account) blocks.push(renderAccountIndex(input.account));
   const ROLE_WORD: Record<FrameworkRole, string> = {
     narrative: "narrative shape — sets the order of the whole piece",

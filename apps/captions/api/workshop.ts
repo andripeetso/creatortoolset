@@ -69,7 +69,7 @@ import {
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
-import { renderContext, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
+import { CONTEXT_MAX, renderContext, wholeFiles, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
 import { memoryFor } from "./lib/memory";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { allIn, asIn, sharedAgainIn, type AsIn, type Scoped } from "./lib/workshop/rule-workspaces";
@@ -377,7 +377,7 @@ const knowledgeFor = async (user: SessionUser, project: Project): Promise<Knowle
 
 /** Most of its workspace a one-shot call about one piece or question carries. */
 const WORKSPACE_MAX = 6000;
-/** Most of its workspace the writer's material carries: the instructions whole (INSTRUCTIONS_MAX), the rest for the list of context files. */
+/** Most of its workspace the writer's material carries (a tool's answer to an AI app): the instructions whole (INSTRUCTIONS_MAX), every file listed, whole texts in the rest. */
 const MATERIAL_WORKSPACE_MAX = 30_000;
 /**
  * What a one-shot call is told of the workspace a session is in (lib/workshop/context.ts: its own, or its owner's
@@ -4404,6 +4404,7 @@ export async function draftRequest(session: SessionMeta, draft: DraftMeta, user:
   const { system, user: userMsg } = buildGeneratePrompt({
     kind: draft.kind,
     project: project ?? undefined,
+    loaded: wholeFiles(project?.knowledge ?? [], CONTEXT_MAX),
     frameworks,
     rules: rules.map((r) => r.text),
     packText: await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: ais[0]!, tools: ais.some((ai) => !runsWithoutTools(ai)) }),

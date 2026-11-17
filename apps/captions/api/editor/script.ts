@@ -9,6 +9,7 @@ import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
 import { finishedBlock } from "./finished";
 import { momentMap, momentsPrompt, parseMoments, type RawMoment } from "./moments";
+import { CONTEXT_MAX } from "../lib/workshop/context";
 import { isPlanned, notesPrompt, planStep, workspaceSetup } from "./plan";
 import { ownerOf, readEdit, readStep, saveEdit, saveStep, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
@@ -209,7 +210,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   // not cut around speech: asked for, or nobody speaks in the footage. The AI plans shots from the brief (plan.ts)
   if (isPlanned(edit, analysis.sentences)) return planStep({ edit, job, variant: "", signal }, analysis.sentences);
   // the workspace it is for: what the brand, product or game is, and its context files (lib/workshop/context.ts)
-  const workspace = await workspaceSetup(edit, 12_000);
+  const workspace = await workspaceSetup(edit, CONTEXT_MAX);
   // short videos from a long recording: the AI finds the parts that stand alone, and each is a version of one line (moments.ts)
   if (edit.moments) {
     const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: [workspace, await styleBlock(edit.style)].filter(Boolean).join("\n\n"), ...(edit.feedback?.length ? { notes: notesPrompt(edit.feedback) } : {}) });

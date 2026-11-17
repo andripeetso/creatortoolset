@@ -9,7 +9,7 @@ import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { footageProfile, workspaceContext, workspaceOf } from "../lib/workshop/context";
+import { CONTEXT_MAX, footageProfile, workspaceContext, workspaceOf } from "../lib/workshop/context";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { samePicture } from "../library/look";
@@ -1219,8 +1219,8 @@ function wordsBySource(sentences: Sentence[]): Record<string, string> {
 }
 
 /**
- * The workspace the edit was made in: its instructions and what each context file is (lib/workshop/context.ts), in
- * `max`. It is its owner's (ownerOf), also for an edit a teammate made there, looked up the one way (workspaceOf).
+ * The workspace the edit was made in: its instructions, every context file and as much of their text as fits `max`
+ * (lib/workshop/context.ts). It is its owner's (ownerOf), also for an edit a teammate made there, looked up the one way (workspaceOf).
  */
 export async function workspaceSetup(edit: Pick<EditMeta, "createdBy" | "projectId"> & { workspaceId?: string }, max: number): Promise<string> {
   if (onComputer.on) return ask("workspaceSetup", max);
@@ -1302,7 +1302,7 @@ async function planContext(edit: EditMeta, actor: string, sentences: Sentence[],
   const gen = styles();
   // what footage the workspace holds and what was finished in it (lib/workshop/context.ts, styles.ts); none adds nothing
   const profile = [await footageProfile(edit.projectId), await finishedProfile(ownerOf(edit), edit.projectId ?? "")].filter(Boolean).join("\n");
-  const setup = [await workspaceSetup(edit, 24_000), profile, await styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
+  const setup = [await workspaceSetup(edit, CONTEXT_MAX), profile, await styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
   const packText = [await packInstructions(actor, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(ownerOf(edit), [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const input: PlanInput = { brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText };
   const repair: RepairContext = { index, ...(song ? { song } : {}), targetS: edit.targetS, size: frameOf(edit, index), fixedSize: !!edit.size?.w, gen: gen.map((g) => g.id), brief: edit.brief };
