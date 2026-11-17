@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router";
 import { Check, ChevronDown, ChevronRight, House } from "lucide-react";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
 import { ChatModeButton } from "@/components/assistant/ChatModeButton";
+import { ConnectionPill } from "@/components/ConnectionPill";
 import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
 import {
@@ -82,6 +83,7 @@ export function AppBar({
         {/* the pill sits on the account button's corner on a phone, so it never takes the bar's room (PlanLimitPill) */}
         {account && (
           <span className="relative flex items-center gap-1.5 sm:gap-2">
+            <ConnectionPill />
             <PlanLimitPill />
             <UserMenu />
           </span>
