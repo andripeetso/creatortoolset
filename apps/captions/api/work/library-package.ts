@@ -27,7 +27,7 @@ import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, touchDe
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
-import { mayReceive, provesProxies, type Received } from "../library/upload-gate";
+import { hasMembers, mayReceive, provesProxies, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { claimJob, enqueueJob, extendLease, finishJob, type JobRow } from "../library/jobs";
@@ -323,7 +323,8 @@ export async function acceptLibraryFile(
   const sender = deviceOf(deviceId);
   const into = { id: job.library_id, versionId: job.version_id };
   const must = provesProxies(sender) && kind === "proxy";
-  const before = mayReceive(kind, into, "computer", { sender, ...(must ? { proof: { sha256: declared ?? "" } } : {}) });
+  const team = kind === "proxy" && (await hasMembers(job.library_id));
+  const before = mayReceive(kind, into, "computer", { sender, team, ...(must ? { proof: { sha256: declared ?? "" } } : {}) });
   if (!before.ok) return before;
   const cap = name === "original" ? (r?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
   await mkdir(incoming(jobId), { recursive: true });
@@ -344,7 +345,7 @@ export async function acceptLibraryFile(
     return false;
   }
   if (kind === "proxy") {
-    const after = mayReceive("proxy", into, "computer", { sender, proof: { ...(declared ? { sha256: declared } : {}), got: hash.digest("hex"), bytes, original: r?.bytes } });
+    const after = mayReceive("proxy", into, "computer", { sender, team, proof: { ...(declared ? { sha256: declared } : {}), got: hash.digest("hex"), bytes, original: r?.bytes } });
     if (!after.ok) {
       await rm(out, { force: true }); // not the proxy it said: nothing of it is kept
       return after;

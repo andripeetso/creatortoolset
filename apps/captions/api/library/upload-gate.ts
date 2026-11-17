@@ -13,6 +13,8 @@ import type { LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
 import { accountOf } from "./access";
 import { workspaceOf } from "../lib/workspaces";
+import { projectOf } from "../lib/project-of";
+import type { SessionUser } from "../users";
 import { serverKind } from "../work/server-work";
 
 /** original: the file itself; proxy: a smaller copy made of it; derivative: a picture, sheet or text the Library shows; serving: bytes the server made. */
@@ -56,14 +58,18 @@ export const uploadFor = (library: ReceiveInto): LibraryUpload =>
       : libraryUpload(library.id);
 
 /** Whether the library's owner gave its workspace to at least one member (Settings → Team): its computers send team proxies. */
-export function hasMembers(libraryId: string): boolean {
+export async function hasMembers(libraryId: string): Promise<boolean> {
   const row = libraryDb().prepare("SELECT workspace_id, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as
     | { workspace_id: string; ws: string | null }
     | undefined;
   const owner = row && accountOf(row.workspace_id);
-  const team = owner ? workspaceOf(owner) : null;
-  // a library from before workspaces (no projectId) is the first brand's: any member given a workspace sees it
-  return !!team?.members.some((m) => m.role !== "owner" && !!m.workspaces?.length && (!row!.ws || m.workspaces.includes(row!.ws)));
+  if (!owner) return false;
+  const given = new Set((workspaceOf(owner)?.members ?? []).flatMap((m) => (m.role === "owner" ? [] : (m.workspaces ?? []))));
+  if (!given.size) return false;
+  if (row.ws && given.has(row.ws)) return true;
+  // one with no workspace of its own (from before workspaces) is the first brand's, as givenLibrary reads it
+  const of = await projectOf({ username: owner } as SessionUser);
+  return !!of && given.has(of(row.ws ?? undefined));
 }
 
 const refuse = (message: string): Received => ({ ok: false, status: 409, body: { error: message, code: "upload_refused", message } });
@@ -73,7 +79,8 @@ export function mayReceive(
   kind: ReceiveKind,
   library: ReceiveInto,
   origin: ReceiveOrigin,
-  opts: { sender?: Pick<Device, "work"> | null; proof?: ProxyProof } = {},
+  /** team: the library is shared with members (hasMembers), asked by the caller for a computer's proxy under none */
+  opts: { sender?: Pick<Device, "work"> | null; proof?: ProxyProof; team?: boolean } = {},
 ): Received {
   if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
   const upload = uploadFor(library);
@@ -83,7 +90,7 @@ export function mayReceive(
     return refuse(REFUSED_NONE);
   }
   // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs the setting
-  if (origin === "computer" && upload === "none" && !hasMembers(library.id)) return refuse(REFUSED_NONE);
+  if (origin === "computer" && upload === "none" && !opts.team) return refuse(REFUSED_NONE);
   const p = opts.proof;
   if (!p) return { ok: true };
   if (p.sha256 !== undefined && !HEX.test(p.sha256)) return refuse(REFUSED_PROOF);

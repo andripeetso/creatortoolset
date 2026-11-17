@@ -210,7 +210,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     await applyFolder(dev, folder, of, r, now, index, touched);
   }
   for (const l of touched) libraryChanged(l);
-  for (const l of libs) teamProxies(l, dev);
+  for (const l of libs) await teamProxies(l, dev);
   return { ok: true, index };
 }
 
@@ -222,8 +222,8 @@ const TEAM_PROXIES_PER_REPORT = 20;
  * holds gets a proxy, made there and sent (the "proxy" job, work/library-package.ts), whatever the library's Upload says.
  * Originals never. A version with any proxy job already (queued, running, failed or done) is left to that job.
  */
-export function teamProxies(libraryId: string, dev: Device): number {
-  if (!hasMembers(libraryId)) return 0;
+export async function teamProxies(libraryId: string, dev: Device): Promise<number> {
+  if (!(await hasMembers(libraryId))) return 0;
   const db = libraryDb();
   const rows = db
     .prepare(

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 import { filesMatching, repo } from "../lib/scan-source";
 
@@ -11,17 +11,7 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "uploa
 process.env.DATA_DIR = dir;
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
 
-const { libraryDb } = await import("./db");
-const { libraryApp } = await import("./routes");
-const { mayReceive, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
-const { acceptLibraryFile } = await import("../work/library-package");
-const { pairDevice, setDeviceWork } = await import("../lib/devices");
-const { createUser } = await import("../users");
-const { Readable } = await import("node:stream");
-
-// a team: the owner shares the workspace "ws_team" with one member (Settings → Team)
-createUser("tinyacrobatics", "secret-tiny-acrobatics");
-createUser("sam", "secret-sam-acrobatics");
+// written before anything reads it (lib/workspaces.ts caches it). A team: the owner shares the workspace "ws_team" with one member (Settings → Team)
 writeFileSync(
   path.join(dir, "workspaces.json"),
   JSON.stringify({
@@ -41,6 +31,17 @@ writeFileSync(
     spend: {},
   }),
 );
+
+const { libraryDb } = await import("./db");
+const { libraryApp } = await import("./routes");
+const { hasMembers, mayReceive, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
+const { acceptLibraryFile } = await import("../work/library-package");
+const { pairDevice, setDeviceWork } = await import("../lib/devices");
+const { createUser } = await import("../users");
+const { Readable } = await import("node:stream");
+
+createUser("tinyacrobatics", "secret-tiny-acrobatics");
+createUser("sam", "secret-sam-acrobatics");
 
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
@@ -89,7 +90,9 @@ describe("mayReceive: original bytes only where somebody chose to send them", ()
 
   it("a final follows the Finals setting (all when unset); derivatives and served bytes always pass; This Mac takes its own", () => {
     expect(mayReceive("original", { id: "lib_none", collectionId: "col_fin" }, "computer").ok).toBe(true);
-    for (const k of ["proxy", "derivative", "serving"] as const) expect(mayReceive(k, { id: "lib_none" }, "computer").ok).toBe(true);
+    for (const k of ["derivative", "serving"] as const) expect(mayReceive(k, { id: "lib_none" }, "computer").ok).toBe(true);
+    // P2: a computer's proxy under none only in a library shared with members (team proxies)
+    expect(mayReceive("proxy", { id: "lib_none" }, "computer").ok).toBe(false);
     process.env.CT_LOCAL = "1";
     try {
       expect(mayReceive("original", { id: "lib_none" }, "computer").ok).toBe(true);
@@ -126,6 +129,8 @@ const proving = { work: { v: 1, steps: [], library: true as const, proof: true a
 const older = { work: { v: 1, steps: [], library: true as const } };
 
 describe("P2: proxies and the proxy proof", () => {
+  beforeAll(() => void d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'proxies') WHERE id = 'lib_p'`).run());
+
   it("an original from a computer that makes its proxies is refused under proxies; an older computer's is still taken", () => {
     expect(mayReceive("original", { id: "lib_p" }, "computer", { sender: proving })).toEqual({
       ok: false,
@@ -136,10 +141,13 @@ describe("P2: proxies and the proxy proof", () => {
     expect(mayReceive("original", { id: "lib_all" }, "computer", { sender: proving }).ok).toBe(true);
   });
 
-  it("a proxy with a matching proof is taken under proxies and all; under none only in a library shared with members", () => {
+  it("a proxy with a matching proof is taken under proxies and all; under none only in a library shared with members", async () => {
     const proof = { sha256: hex("proxy"), got: hex("proxy"), bytes: 5, original: 500 };
-    for (const id of ["lib_p", "lib_all", "lib_team"]) expect(mayReceive("proxy", { id }, "computer", { sender: proving, proof }).ok, id).toBe(true);
-    expect(mayReceive("proxy", { id: "lib_none" }, "computer", { sender: proving, proof }).ok).toBe(false);
+    for (const id of ["lib_p", "lib_all"]) expect(mayReceive("proxy", { id }, "computer", { sender: proving, proof }).ok, id).toBe(true);
+    expect(await hasMembers("lib_team")).toBe(true);
+    expect(await hasMembers("lib_none")).toBe(false);
+    expect(mayReceive("proxy", { id: "lib_team" }, "computer", { sender: proving, proof, team: true }).ok).toBe(true);
+    expect(mayReceive("proxy", { id: "lib_none" }, "computer", { sender: proving, proof, team: false }).ok).toBe(false);
   });
 
   it("an original labelled proxy fails the proof: other bytes than declared, or the original's own size", () => {
@@ -179,9 +187,9 @@ describe("P2: proxies and the proxy proof", () => {
       d.prepare(`INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, ?, 900, 'mac:y', 'tinyacrobatics', 0, 'ready')`).run(v, a, `mac:${v}`);
       d.prepare(`INSERT INTO version_places (version_id, device, kind, folder_id, path, state) VALUES (?, ?, 'original', 'f1', '/Users/tiny/Movies/Flip.mov', 'verified')`).run(v, device.id);
     }
-    expect(teamProxies("lib_team", device)).toBe(1);
-    expect(teamProxies("lib_team", device)).toBe(0);
-    expect(teamProxies("lib_none", device)).toBe(0);
+    expect(await teamProxies("lib_team", device)).toBe(1);
+    expect(await teamProxies("lib_team", device)).toBe(0);
+    expect(await teamProxies("lib_none", device)).toBe(0);
     expect(d.prepare("SELECT kind, state, actor FROM jobs WHERE version_id = 'v_t2'").all()).toEqual([{ kind: "proxy", state: "queued", actor: "tinyacrobatics" }]);
   });
 
