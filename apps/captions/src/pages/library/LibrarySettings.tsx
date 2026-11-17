@@ -282,7 +282,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
             />
           )}
           {row("embed", "embed", "Search by meaning")}
-          {/* only where this server makes picture vectors (api/library/pictures.ts): it runs here, nothing to add */}
+          {/* made here or on the person's own computers (api/library/pictures.ts): nothing to add; absent on an older server */}
           {library.settings.pictures !== undefined && (
             <Row
               title="Search by picture"

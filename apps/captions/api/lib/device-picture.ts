@@ -10,7 +10,10 @@ import { hostedMode } from "./env";
  * the server runs on the person's own computer (deviceTranscribes), and on a server whose admin turns it on
  * (LIBRARY_PICTURES=1); never on a hosted server, whose processor every account shares: an hour of footage has some
  * 880 shots, and two cores of a busy desktop processor took about 2 minutes for them (0.13 s a shot, 1.2 GB held;
- * measured on 2 hours of public-domain films), minutes of a shared server per hour of every account's footage. The pictures go in at PICTURE_PX square; the text model reads
+ * measured on 2 hours of public-domain films), minutes of a shared server per hour of every account's footage. There
+ * the person's own computers make them (work/pictures.ts) and the server reads only typed searches with the text side
+ * alone: about 270 MB on disk, 710 MB held while searches come (given back 2 minutes after the last), loaded in 3.4 s and
+ * 18 ms a search on two cores of a busy desktop processor (measured). The pictures go in at PICTURE_PX square; the text model reads
  * up to 64 tokens. Vision and text are two models, loaded on their own and given back when idle or before a transcript.
  */
 
@@ -20,6 +23,8 @@ export const PICTURE_PX = 224;
 const VISION = { dtype: "fp32", file: "vision_model.onnx" } as const;
 const TEXT = { dtype: "q8", file: "text_model_quantized.onnx" } as const;
 export const PICTURE_MODEL_MB = 655;
+/** The length of a picture vector. */
+export const PICTURE_DIM = 768;
 const BATCH = 8;
 const IDLE_MS = 2 * 60_000;
 
@@ -28,7 +33,9 @@ export const picturesHere = (): boolean => !hostedMode() && (deviceTranscribes()
 
 const kept = (...f: string[]) => existsSync(path.join(modelsDir(), PICTURE_MODEL, ...f));
 /** Whether the model is on this computer (fetched once by the first library job, kept with the person's data). */
-export const pictureModelKept = (): boolean => kept("onnx", VISION.file) && kept("onnx", TEXT.file) && kept("tokenizer.json");
+export const pictureModelKept = (): boolean => kept("onnx", VISION.file) && pictureTextKept();
+/** Whether the text side is on this computer: all a search needs. */
+export const pictureTextKept = (): boolean => kept("onnx", TEXT.file) && kept("tokenizer.json");
 
 type Out = { pooler_output: { data: Float32Array; dims: number[] } };
 type Model = ((inputs: Record<string, unknown>) => Promise<Out>) & { dispose(): Promise<unknown> };
@@ -36,6 +43,9 @@ type Tokenize = ((texts: string[], o: Record<string, unknown>) => Record<string,
 
 let vision: Promise<Model> | null = null;
 let text: Promise<{ model: Model; tokenize: Tokenize }> | null = null;
+/** The text side is in memory; when it last failed to load or fetch. */
+let textUp = false;
+let textFailed = 0;
 let line: Promise<unknown> = Promise.resolve();
 let idle: NodeJS.Timeout | undefined;
 
@@ -45,6 +55,7 @@ function giveBack(): Promise<void> {
   const done = line.then(async () => {
     const [v, t] = [vision, text];
     vision = text = null;
+    textUp = false;
     await Promise.all([v?.then((m) => m.dispose()), t?.then((m) => m.model.dispose())].map((p) => p?.catch(() => {})));
   });
   line = done;
@@ -90,9 +101,10 @@ export function pixelValues(pictures: Uint8Array[]): Float32Array {
 
 /**
  * Vectors for `pictures` (PICTURE_PX² rgb24 each), in order. A library job's: it waits its turn in the line every ffmpeg
- * and transcript runs in, so it is one heavy job at a time. The first run fetches the model.
+ * and transcript runs in, so it is one heavy job at a time. The first run fetches the model, with its text side where
+ * this server searches too (`withText`; a computer making them for a server only makes them).
  */
-export function embedPictures(pictures: Uint8Array[]): Promise<Float32Array[]> {
+export function embedPictures(pictures: Uint8Array[], withText = true): Promise<Float32Array[]> {
   return ffmpegSlot(() =>
     inLine(async () => {
       const lib = await modelLibrary();
@@ -103,7 +115,7 @@ export function embedPictures(pictures: Uint8Array[]): Promise<Float32Array[]> {
         throw e;
       });
       // the text side is fetched with it, so a search finds the model here (it never waits for a download)
-      if (!pictureModelKept()) await textModel();
+      if (withText && !pictureModelKept()) await textModel();
       const out: Float32Array[] = [];
       for (let i = 0; i < pictures.length; i += BATCH) {
         const batch = pictures.slice(i, i + BATCH);
@@ -120,17 +132,31 @@ function textModel() {
   text ??= (async () => {
     const lib = await modelLibrary();
     const [model, tokenizer] = await Promise.all([lib.SiglipTextModel.from_pretrained(PICTURE_MODEL, { dtype: TEXT.dtype }), lib.AutoTokenizer.from_pretrained(PICTURE_MODEL)]);
+    textUp = true;
     return { model: model as unknown as Model, tokenize: tokenizer as unknown as Tokenize };
   })();
   return text.catch((e) => {
     text = null;
+    textFailed = Date.now();
     throw e;
   });
 }
 
+/**
+ * Whether a typed search's vector is made at once: "ready" when the text side is in memory; else it starts loading it
+ * (fetched the first time) and says "loading", so the search goes without pictures and asks again soon, never waiting.
+ * "failed": its last load failed under 10 minutes ago.
+ */
+export function pictureText(): "ready" | "loading" | "failed" {
+  if (textUp) return "ready";
+  if (Date.now() - textFailed < 10 * 60_000) return "failed";
+  void inLine(textModel, true).catch(() => {});
+  return "loading";
+}
+
 /** Vectors for typed `texts` in the pictures' space, at once (a search's). Throws when the model is not here yet or a transcript is being made. */
 export function embedPictureQuery(texts: string[]): Promise<Float32Array[]> {
-  if (!pictureModelKept()) return Promise.reject(new Error("The picture model is not on this computer yet"));
+  if (!pictureTextKept()) return Promise.reject(new Error("The picture model is not on this computer yet"));
   return inLine(async () => {
     const t = await textModel();
     // the model was trained on lower case, padded to 64 tokens

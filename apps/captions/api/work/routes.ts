@@ -14,6 +14,7 @@ import { libraryMedia } from "../library/routes";
 import { finishJob, type JobRow } from "../library/jobs";
 import { claimExtras, offlineFor } from "./offline";
 import { claimLibraryForComputer, libWorkApp } from "./library-package";
+import { claimPictures, picturesWorkApp } from "./pictures";
 import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
@@ -46,6 +47,7 @@ export const workApp = new Hono();
 
 // library jobs (phase 6): their own ids, under work/lib/:id/
 workApp.route("/lib", libWorkApp);
+workApp.route("/pictures", picturesWorkApp);
 
 workApp.post("/claim", async (c) => {
   const d = caller(c);
@@ -67,6 +69,7 @@ workApp.post("/claim", async (c) => {
   const parts = (cache && strings(raw?.parts, 1000)) || [];
   // a worker that runs library jobs says so: one that doesn't is never handed one
   const library = b?.library === true;
+  const pictures = b?.pictures === true;
   // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
   // told yet stays, and the cache it will empty counts as emptied
   const empty = deviceOf(d.id)?.work?.empty;
@@ -78,6 +81,7 @@ workApp.post("/claim", async (c) => {
     ...(kept ? { cache: empty ? { ...kept, bytes: 0, versions: [] } : kept } : {}),
     ...(empty ? { empty } : {}),
     ...(library ? { library: true as const } : {}),
+    ...(pictures ? { pictures: true as const } : {}),
   });
   // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
   const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
@@ -98,6 +102,8 @@ workApp.post("/claim", async (c) => {
     }
     const lib = library ? await claimLibraryForComputer(deviceOf(d.id)!) : null;
     if (lib) return answer({ pkg: null, lib });
+    const pics = await claimPictures(deviceOf(d.id)!);
+    if (pics) return answer({ pkg: null, pics });
     if (Date.now() >= end || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
     await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
     touchDevice(d.id, c.req.header("user-agent"));
