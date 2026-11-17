@@ -38,12 +38,14 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
     private static let chunk: Int64 = 1 << 20
 
     private let root: @MainActor () -> URL
-    private let granted: @MainActor () -> [String]
+    /// the folders the page may play from: its server's, for the clip's workspace (`?ws=` on the media URL; none: any)
+    private let granted: @MainActor (_ page: URL?, _ workspace: String?) -> [String]
     /// Tasks still being answered. Holding them keeps their ids unique until they end; `stop` removes one. Read and
     /// written on the main thread only.
     private var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
 
-    init(root: @escaping @MainActor () -> URL, granted: @escaping @MainActor () -> [String] = { MediaFiles.granted }) {
+    init(root: @escaping @MainActor () -> URL,
+         granted: @escaping @MainActor (URL?, String?) -> [String] = { MediaFiles.granted(server: MediaFiles.serverKey($0), workspace: $1) }) {
         self.root = root
         self.granted = granted
         super.init()
@@ -81,7 +83,8 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         let task = urlSchemeTask
         live[ObjectIdentifier(task)] = task
         // with the proxy cache of the account signed in on the page's own server (ProxyCache.swift)
-        let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(), ProxyCache.allowed(page: webView.url)) }
+        let workspace = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ws" }?.value
+        let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(webView.url, workspace), ProxyCache.allowed(page: webView.url)) }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
                        root: root, granted: granted, cache: cache, task: task)
@@ -98,6 +101,14 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
             guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
             switch MediaFiles.gate(path, granted: granted, cache: cache) {
             case .status(let status): return reply(task, url, status)
+            case .diskAway(let disk):
+                let body = (try? JSONSerialization.data(withJSONObject: ["state": "disk_away", "disk": disk])) ?? Data()
+                deliver(task, last: true) { t in
+                    t.didReceive(Self.response(url, 409, ["Content-Type": "application/json", "Content-Length": "\(body.count)"]))
+                    t.didReceive(body)
+                    t.didFinish()
+                }
+                return
             case .file(let real, let type): return stream(URL(fileURLWithPath: real), type: type, url, range: range, task: task)
             }
         }

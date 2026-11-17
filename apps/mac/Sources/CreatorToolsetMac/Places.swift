@@ -221,6 +221,8 @@ private final class Box<T>: @unchecked Sendable { var value: T? }
 
 final class Places: @unchecked Sendable {
     static let shared = Places()
+    /// Posted on the main thread when a disk came, went, went away or came back.
+    static let changed = Notification.Name("creatortoolset.places.changed")
 
     /// Settings → Computers → Shared drives: connect the shares this Mac had when they answer (on unless turned off).
     private static let connectKey = "connectSharedDrives"
@@ -418,7 +420,7 @@ final class Places: @unchecked Sendable {
                 case .file(let real, _):
                     guard let bytes = guarded(real, { size(real) }) else { sawAway = true; continue }
                     if bytes == v.bytes { found = (path, place, true) }
-                case .status(503): sawAway = true
+                case .status(503), .diskAway: sawAway = true
                 case .status(404): break   // inside the granted folders, not there
                 case .status(403):
                     allGranted = false
@@ -743,7 +745,10 @@ final class Places: @unchecked Sendable {
         lock.unlock()
         guard !same else { return }
         dropAnswers()
-        DispatchQueue.main.async { self.onChange?() }
+        DispatchQueue.main.async {
+            self.onChange?()
+            NotificationCenter.default.post(name: Places.changed, object: nil)   // the location agents scan (LocationAgent.swift)
+        }
     }
 
     /// The check answers kept are stale (a disk changed, or Find missing files found some).

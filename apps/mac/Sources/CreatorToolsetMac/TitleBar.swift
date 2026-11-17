@@ -375,14 +375,35 @@ extension AppWebView {
 
     /// "mediaAccess": only the open server's own main frame may ask. The page's folder is only where the panel starts:
     /// what is kept is the folder chosen in the panel, which may be a higher one. Cancelled, or a panel already open:
-    /// { granted: [] }.
+    /// { granted: [] }. No ask ({list: true}): this server's grants. {folderGrant: {path}} → {granted} (Settings →
+    /// Folders' Allow on this Mac); {placesState: {paths}} → {states, disks} (MediaFiles.placeState).
     fileprivate func mediaAccess(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
               let body = message.body as? [String: Any] else {
             return replyHandler(["granted": [String]()], nil)
         }
         if let folder = body["remove"] as? String { MediaFiles.remove(folder) }
-        guard let ask = body["ask"] as? String else { return replyHandler(["granted": MediaFiles.granted], nil) }
+        let server = MediaFiles.serverKey(site())
+        // Settings → Folders' "Allow on this Mac" (a press on the page): a folder this server lists for this Mac
+        if let ask = body["folderGrant"] as? [String: Any], let path = ask["path"] as? String {
+            let granted = MediaFiles.allow(path, server: server)
+            if granted { LocationAgents.shared.poke() }
+            return replyHandler(["granted": granted], nil)
+        }
+        if let ask = body["placesState"] as? [String: Any], let paths = ask["paths"] as? [String] {
+            let list = Array(paths.prefix(500))
+            DispatchQueue.global(qos: .userInitiated).async {
+                var states: [String: String] = [:], disks: [String: String] = [:]
+                for p in list {
+                    let (state, disk) = MediaFiles.placeState(p, server: server)
+                    states[p] = state
+                    if let disk { disks[p] = disk }
+                }
+                DispatchQueue.main.async { replyHandler(["states": states, "disks": disks], nil) }
+            }
+            return
+        }
+        guard let ask = body["ask"] as? String else { return replyHandler(["granted": MediaFiles.granted(server: server, workspace: nil)], nil) }
         guard !mediaPanelOpen, let window else { return replyHandler(["granted": [String]()], nil) }
         mediaPanelOpen = true
         let panel = NSOpenPanel()
@@ -398,7 +419,7 @@ extension AppWebView {
             self?.mediaPanelOpen = false
             guard answer == .OK, let chosen = panel.url else { return replyHandler(["granted": [String]()], nil) }
             MediaFiles.add(chosen.path)
-            replyHandler(["granted": MediaFiles.granted], nil)
+            replyHandler(["granted": MediaFiles.granted(server: server, workspace: nil)], nil)
         }
     }
 
