@@ -13,7 +13,8 @@ import Foundation
 //   in the home folder is looked for up to the home folder, never above, and never in Desktop, Documents, Downloads or
 //   Library unless a gone file was in there (macOS asks the person before an app reads those; nothing here may make it
 //   ask by itself).
-// - Only video and sound files of a gone file's size that MediaFiles' gate lets the page play are read (2 MiB each,
+// - Only plain paths to the files this app serves get a file call (MediaFiles.isPlainMedia, as in Places.check), and
+//   only those of a gone file's size that MediaFiles' gate lets the page play are read (2 MiB each,
 //   Imports.quickPrint) or told to the server. One the gate refuses is never read and the server hears nothing of it:
 //   its folder (the disk, for a share or another disk) goes to the page as one to grant (`access`), and a search after
 //   the grant reads it. The first match gives the rest: the folder change it shows (derivedMove) is tried on every
@@ -117,7 +118,8 @@ struct MissingSearch {
     private mutating func startFolders() -> [String] {
         let nfc = { (s: String) in s.precomposedStringWithCanonicalMapping }
         let home = nfc(home)
-        let olds = left.keys.compactMap { old[$0] }.filter { !$0.isEmpty }.map(nfc)
+        // where they were: the server's paths, walked from only when plain (absolute, no `.` or `..`)
+        let olds = left.keys.compactMap { old[$0] }.filter(MediaFiles.isPlain).map(nfc)
         // folders macOS guards with a question to the person: kept out of unless a gone file was in one
         let guarded = ["Desktop", "Documents", "Downloads", "Library"].map { home + "/" + $0 }
         skip = Set(guarded.filter { g in !olds.contains { Self.inside($0, g) } } + ["/Volumes"] + Self.automount)
@@ -143,7 +145,7 @@ struct MissingSearch {
         if everywhere { out += disks.filter { !$0.network && $0.path != "/" }.map { nfc($0.path) } }
         out += granted.map(nfc)
         // only folders on a disk mounted now, and never an automount
-        return out.filter { d in Places.disk(of: d, in: disks) != nil && !Self.automount.contains { Self.inside(d, $0) } }
+        return out.filter { d in MediaFiles.isPlain(d) && Places.disk(of: d, in: disks) != nil && !Self.automount.contains { Self.inside(d, $0) } }
     }
 
     private static let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
@@ -169,7 +171,7 @@ struct MissingSearch {
                 let path = (dir == "/" ? "/" : dir + "/") + e.lastPathComponent.precomposedStringWithCanonicalMapping
                 if v.isDirectory == true {
                     if v.isPackage != true && v.isSymbolicLink != true && !skip.contains(path) { below.append(path) }
-                } else if v.isRegularFile == true, let bytes = v.fileSize.map(Int64.init), sizes.contains(bytes), MediaFiles.isMedia(path),
+                } else if v.isRegularFile == true, let bytes = v.fileSize.map(Int64.init), sizes.contains(bytes), MediaFiles.isPlainMedia(path),
                           (v.contentModificationDate ?? .distantPast) < now.addingTimeInterval(-60) {
                     consider(path, bytes)
                     if left.isEmpty { return }
@@ -203,6 +205,8 @@ struct MissingSearch {
     /// The real path of the file at `path` when it is `g` (its size, not changed in the last minute, and, when the page
     /// may play it, its fingerprint); nil else. One the page may not play is not read: its folder is one to grant.
     private mutating func matches(_ path: String, _ g: GoneFile) -> String? {
+        // only a plain path to a file this app serves gets a file call (the same as Places.check)
+        guard MediaFiles.isPlainMedia(path) else { return nil }
         let at = places.guarded(path) { () -> (Int64, Date)? in
             guard let a = try? FileManager.default.attributesOfItem(atPath: path), a[.type] as? FileAttributeType == .typeRegular,
                   let size = (a[.size] as? NSNumber)?.int64Value else { return nil }

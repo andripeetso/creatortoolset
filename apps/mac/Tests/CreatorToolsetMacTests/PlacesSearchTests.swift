@@ -131,6 +131,21 @@ final class PlacesSearchTests: XCTestCase {
         XCTAssertEqual(t.access, [])
     }
 
+    func testAPathFromTheServerWithDotsIsNeverTouched() throws {
+        try file("outside/a.mov", 100)
+        let inner = (top as NSString).appendingPathComponent("inner")
+        try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
+        let disks = [PlaceDisk(path: inner, key: "vol:TEST")]
+        var s = MissingSearch(gone: [gone("a", "../outside/a.mov", 100)], disks: disks)
+        s.places = Places(diskList: { disks }, lookup: { _ in true })
+        s.home = "/nobody-home"
+        s.quickPrint = { [unowned self] path in prints.append(path); return Imports.quickPrint(path) }
+        XCTAssertEqual(s.run(), [])
+        XCTAssertEqual(prints, [])
+        XCTAssertEqual(s.access, [])
+        XCTAssertEqual(s.looked, 0)
+    }
+
     func testTheSearchAsksParse() {
         XCTAssertEqual(placesAsk("places:search:state"), .searchState)
         XCTAssertEqual(placesAsk(#"places:search:{"library":"lib_1"}"#), .search(library: "lib_1"))

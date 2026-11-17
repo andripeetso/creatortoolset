@@ -185,7 +185,9 @@ final class Shell: NSObject, ObservableObject {
                     let device = DeviceVault.deviceID(for: self.base.host ?? "")
                     Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device)) }
                 case .connect(let root)?:
-                    Task { done(await Places.shared.connect(root: root)) }
+                    // a share this Mac never had asks first, naming this window's server
+                    let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")
+                    Task { done(await Places.shared.connect(root: root, server: server)) }
                 case .search(let library)?:
                     let device = DeviceVault.deviceID(for: self.base.host ?? "")
                     Task { done(PlacesSearch.shared.start(library: library, site: await self.client(), device: device, pressed: true)) }
