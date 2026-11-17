@@ -86,6 +86,9 @@ import {
 import { undoable } from "@/lib/undo";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { cn } from "@/lib/utils";
+import { createPortal } from "react-dom";
+import { useChatShown } from "@/lib/chat-mode";
+import { useFeedback } from "@/lib/review-feedback";
 import { cornerTaken } from "@/lib/dock-place";
 import { useCachedLoad } from "@/lib/local-cache";
 import { fmtBytes } from "@/lib/exports";
@@ -445,7 +448,10 @@ function Review({
       else if (k === "arrowright") step(e.shiftKey ? Math.max(1, Math.round(fps || 30)) : 1);
       else if (k === "m") setMuted((m) => !m);
       else if (k === "f") void fullscreen();
-      else if (k === "c" || k === "enter") composerBox.current?.focus();
+      else if (k === "c" || k === "enter") {
+        if (!composerBox.current) useFeedback.setState({ on: true }); // beside the chats: the box opens in feedback mode, focused
+        composerBox.current?.focus();
+      }
       // Tab = straight into the comment box; Shift+Tab, menus and dialogs keep Tab's own job
       else if (k === "tab" && !e.shiftKey && composerBox.current
         && !(e.target as HTMLElement | null)?.closest?.("[role=menu], [role=dialog], [role=alertdialog], [role=listbox]")) {
@@ -494,6 +500,17 @@ function Review({
     .filter((c) => !c.parentId)
     .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity) || a.createdAt - b.createdAt);
   const shown = threads.filter((c) => (filter === "all" ? true : filter === "done" ? c.resolved : !c.resolved));
+  // beside the chats the comments column goes, and the comment box moves into the chat's place in feedback mode
+  // (owner, 2026-11-16; lib/review-feedback)
+  const besideChat = useChatShown();
+  const feedback = useFeedback();
+  const offered = besideChat && !locked;
+  useEffect(() => {
+    if (!offered) return;
+    useFeedback.setState({ count: threads.length });
+    return () => useFeedback.setState({ count: null });
+  }, [offered, threads.length]);
+  const place = (box: React.ReactNode) => (!besideChat ? box : feedback.on && feedback.slot ? createPortal(box, feedback.slot) : null);
   const replies = (id: string) => all.filter((c) => c.parentId === id).sort((a, b) => a.createdAt - b.createdAt);
   const sel = threads.find((c) => c.id === selected);
   const frameTol = fps ? 1 / fps : 0.05;
@@ -1026,7 +1043,7 @@ function Review({
         </div>
 
         {/* ---------- comments ---------- */}
-        <aside className="flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l">
+        <aside className={cn("flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l", besideChat && "hidden")}>
           <div className={cn("flex items-center gap-1 border-b border-zinc-900 px-3 py-2 text-xs")}>
             {(["all", "open", "done"] as const).map((f) => (
               <button
@@ -1070,7 +1087,7 @@ function Review({
 
           {/* composer: drop (anywhere on the page) or paste images and videos in as references */}
           {/* in the window's bottom right corner: the assistant's bubble sits above this box, not over Send (dock-place.ts) */}
-          {!locked && <div ref={cornerTaken} className={cn("border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
+          {!locked && place(<div ref={cornerTaken} className={cn(!besideChat && "border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
             {guest && (
               <input
                 id="review-name"
@@ -1132,6 +1149,7 @@ function Review({
                 attach([...e.clipboardData.files]);
               }}
               onFocus={pause}
+              autoFocus={besideChat}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -1229,7 +1247,7 @@ function Review({
             <p className="mt-1.5 hidden text-[11px] text-zinc-600 lg:block">
               Space play · J/K/L or 1/2/3 shuttle · ←/→ frame · Shift ←/→ second · C comment
             </p>
-          </div>}
+          </div>)}
         </aside>
       </div>
     </div>

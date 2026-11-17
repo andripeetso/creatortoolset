@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FindHit } from "@/lib/instagram";
 import type { SocialPlatform } from "@contracts/connectors";
 import type { Selection } from "@contracts/providers";
+import type { LibraryUpload } from "@contracts/library";
 import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type DraftStatus, type ProposalStatus, type ReplyStatus, type SessionStatus, type ShareProgressState } from "@contracts/workshop-statuses";
 /**
  * Client for the Content Workshop (api/workshop.ts): research sessions on
@@ -424,6 +425,31 @@ export const getSession = (id: string) =>
   fetch(`/api/workshop/sessions/${id}`).then((r) => json<SessionRecord>(r));
 export const patchSession = (id: string, patch: SessionPatch) =>
   fetch(`/api/workshop/sessions/${id}`, jsonInit(patch, "PATCH")).then((r) => json<SessionMeta>(r));
+/** GET /api/workshop/sessions/:id/finals (api/workshop.ts SessionFinals). */
+export interface SessionFinals {
+  linked: boolean;
+  libraryId: string | null;
+  finalsId: string | null;
+  upload: LibraryUpload;
+  /** the project's folder in the Finals folder on this computer, when it has one */
+  folder?: string;
+  /** the server reads that folder itself: a file put there comes in with nothing more to do */
+  reads?: boolean;
+}
+/** Whether this project has a final video in Finals yet, the library a dropped final goes to (null: no Media Library),
+ *  and its folder on this computer (`device`: the Mac app's id on this server). */
+export const getSessionFinals = (id: string, device?: string) =>
+  fetch(`/api/workshop/sessions/${id}/finals${device ? `?device=${encodeURIComponent(device)}` : ""}`).then((r) => json<SessionFinals>(r));
+/** A library video (one just uploaded) into Finals as this project's final. Asked again while the library reads its size. */
+export async function putFinal(id: string, assetId: string): Promise<void> {
+  // ponytail: five minutes of asking; past that the video stays in the library to link from Finals
+  for (let i = 0; i < 150; i++) {
+    const r = await fetch(`/api/workshop/sessions/${id}/finals`, jsonInit({ assetId }));
+    if (r.status !== 202) return void (await json(r));
+    await new Promise((done) => setTimeout(done, 2000));
+  }
+  throw new Error("The library is still reading this video. It is in the Media Library: link it from Finals.");
+}
 export const deleteSession = (id: string) =>
   fetch(`/api/workshop/sessions/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
 /** The menu's Duplicate: a copy under a new id (not the chat or share links). */

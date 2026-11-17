@@ -284,11 +284,14 @@
   },
   {
    "name": "finals_link_session",
-   "description": "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
+   "description": "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there. Or put a video in Finals as the project's final: version = a version_id use_file (to: library) gave, instead of piece.",
    "inputSchema": {
     "type": "object",
     "properties": {
      "piece": {
+      "type": "string"
+     },
+     "version": {
       "type": "string"
      },
      "session": {
@@ -299,7 +302,6 @@
      }
     },
     "required": [
-     "piece",
      "session"
     ]
    }

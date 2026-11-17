@@ -9,6 +9,8 @@ export type ServerUpdateView =
       nightly: number | null;
       /** An update is asked for and not finished. */
       requested: boolean;
+      /** It waits for work this server is running: no new job starts meanwhile, and the restart comes once they are done. */
+      waiting: boolean;
       /** The last update did not finish. */
       failed: boolean;
     };

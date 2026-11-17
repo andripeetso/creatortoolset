@@ -6,6 +6,11 @@
  * updates once `server-update/request` is there. No recent status means no updater on that machine, and Settings
  * shows nothing.
  *
+ * An update never cuts work this server is doing. Before it restarts, the updater writes `server-update/drain` and
+ * waits: while that file is fresh, the library's and the AI Editor's job loops take no new job, so the ones running
+ * finish, and /api/health counts them until they have. The updater writes it again on every run while it waits, so
+ * one that stops leaves no server paused for longer than DRAIN_MS.
+ *
  *   GET  /          → ServerUpdateView (admin)
  *   POST /request   → ServerUpdateView (admin): asks for the update; does nothing when none is waiting
  */
@@ -22,6 +27,16 @@ export const serverUpdateApp = new Hono<{ Variables: AuthVars }>();
 const STALE_MS = 60 * 60_000;
 const dir = () => path.join(env.dataDir, "server-update");
 const request = () => path.join(dir(), "request");
+const DRAIN_MS = 10 * 60_000;
+
+/** An update is waiting for this server's running jobs: take no new one (the job loops ask before each claim). */
+export function draining(now = Date.now()): boolean {
+  try {
+    return now - statSync(path.join(dir(), "drain")).mtimeMs < DRAIN_MS;
+  } catch {
+    return false;
+  }
+}
 
 const int = (v: unknown, min: number, max: number): number | null => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : null);
 
@@ -35,6 +50,7 @@ export function readServerUpdate(now = Date.now()): ServerUpdateView {
       behind: int(s.behind, 0, Number.MAX_SAFE_INTEGER) ?? 0,
       nightly: int(s.nightly, 1, Number.MAX_SAFE_INTEGER),
       requested: existsSync(request()),
+      waiting: s.waiting === true,
       failed: s.failed === true,
     };
   } catch {

@@ -55,6 +55,8 @@ import { CopyButton } from "@/components/workshop/CopyButton";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { LimitBanner } from "./LimitBanner";
+import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
+import { useFeedback } from "@/lib/review-feedback";
 import { ConfirmCards } from "./ConfirmCards";
 import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
 import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
@@ -158,6 +160,7 @@ export function AssistantDock() {
   /** The last message you've seen (undefined until the first load): a newer reply while closed nudges the bubble. */
   const [seenId, setSeenId] = useState<string | null | undefined>(undefined);
   const chatMode = useChatMode((s) => s.on);
+  const feedbackOn = useFeedback((s) => s.on && s.count !== null);
   const [chats, reloadChats] = useChats(real && chatMode);
   const bottom = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLButtonElement>(null);
@@ -1036,8 +1039,10 @@ export function AssistantDock() {
           {view && last?.status === "error" && last.limit && !busy && (
             <LimitBanner chat={view.id} limit={last.limit} snoozed={view.snoozed} />
           )}
+          {/* a Review video beside the chats: the box can be its comment box instead (lib/review-feedback) */}
+          <FeedbackBar />
           <div className="relative">
-          <Composer
+          {feedbackOn ? <FeedbackSlot /> : <Composer
             draft={draft}
             setDraft={setDraft}
             onSend={(d) => {
@@ -1057,7 +1062,7 @@ export function AssistantDock() {
                 <AiPicker ai={view.id in picks ? (picks[view.id] ?? undefined) : view.ai} fallback={view.defaultAi} onChange={(ai) => setPicks((p) => ({ ...p, [view.id]: ai }))} />
               ) : null
             }
-          />
+          />}
           </div>
         </div>
       )}

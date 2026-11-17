@@ -7,7 +7,7 @@ import type { AuthVars } from "./auth";
 
 const data = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "server-update-"));
 process.env.DATA_DIR = data;
-const { serverUpdateApp } = await import("./server-update");
+const { draining, serverUpdateApp } = await import("./server-update");
 afterAll(() => rmSync(data, { recursive: true, force: true }));
 
 const status = path.join(data, "server-update", "status.json");
@@ -29,7 +29,7 @@ describe("server update", () => {
 
   it("shows an admin what is waiting and takes the request", async () => {
     write({ behind: 3, nightly: 1800000000, failed: false });
-    expect(await (await as("admin").request("/")).json()).toEqual({ available: true, behind: 3, nightly: 1800000000, requested: false, failed: false });
+    expect(await (await as("admin").request("/")).json()).toEqual({ available: true, behind: 3, nightly: 1800000000, requested: false, waiting: false, failed: false });
     expect((await as("user").request("/")).status).toBe(403);
     expect((await as("user").request("/request", { method: "POST" })).status).toBe(403);
     expect(existsSync(request)).toBe(false);
@@ -41,7 +41,7 @@ describe("server update", () => {
 
   it("asks for nothing when the server is up to date, and reads odd values as none", async () => {
     write({ behind: "many", nightly: "04", failed: "yes" });
-    expect(await (await as("admin").request("/")).json()).toEqual({ available: true, behind: 0, nightly: null, requested: false, failed: false });
+    expect(await (await as("admin").request("/")).json()).toEqual({ available: true, behind: 0, nightly: null, requested: false, waiting: false, failed: false });
     await as("admin").request("/request", { method: "POST" });
     expect(existsSync(request)).toBe(false);
   });
@@ -51,5 +51,15 @@ describe("server update", () => {
     const old = new Date(Date.now() - 2 * 60 * 60_000);
     utimesSync(status, old, old);
     expect(await (await as("admin").request("/")).json()).toEqual({ available: false });
+  });
+
+  it("takes no new job while the updater's drain is fresh, and forgets one an updater left behind", () => {
+    const file = path.join(data, "server-update", "drain");
+    expect(draining()).toBe(false);
+    writeFileSync(file, "");
+    expect(draining()).toBe(true);
+    const old = new Date(Date.now() - 11 * 60_000);
+    utimesSync(file, old, old);
+    expect(draining()).toBe(false);
   });
 });

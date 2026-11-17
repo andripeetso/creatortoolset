@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { libraryChanged } from "./access";
-import { blobs, libraryDb, libraryUpload } from "./db";
+import { blobs, finalsUpload, isFinalsCollection, libraryDb, libraryUpload } from "./db";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
 import { kindOf, recordVersion } from "./routes";
@@ -125,8 +125,9 @@ export function sendLater(
   return { assetId, versionId };
 }
 
-/** Whether a file of this name, sent to `libraryId`, goes the computer's way (sendLater) rather than as its original. */
-export const sendsFromComputer = (libraryId: string, filename: string): boolean => kindOf(filename) === "video" && libraryUpload(libraryId) !== "none";
+/** Whether a file of this name, sent to `libraryId` (into `collectionId`), goes the computer's way (sendLater) rather than as its original. */
+export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null): boolean =>
+  kindOf(filename) === "video" && (collectionId && isFinalsCollection(collectionId) ? finalsUpload(libraryId) : libraryUpload(libraryId)) !== "none";
 
 /**
  * What a phone made of a video itself and sends with the upload start (phase 6, 6D; the iPhone's PhoneMade.swift), so this

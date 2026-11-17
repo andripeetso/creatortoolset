@@ -13,6 +13,7 @@ import { DocumentEditor } from "@/components/workshop/DocumentEditor";
 import { DocumentTabs } from "@/components/workshop/DocumentTabs";
 import { ExportMarkdown } from "@/components/workshop/ExportMarkdown";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
+import { AddFinalButton } from "@/components/workshop/AddFinalDialog";
 import { DeskControls, WorkshopDesk } from "@/components/workshop/WorkshopDesk";
 import { SelectedSourcesStrip } from "@/components/workshop/SelectedSourcesStrip";
 import { SelectionToContext } from "@/components/workshop/SelectionToContext";
@@ -1081,6 +1082,7 @@ export default function WorkshopSessionPage() {
         }
       >
         {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} readOnly={readOnly} /> : null}
+        {session && !readOnly ? <AddFinalButton id={session.id} title={session.title} status={session.status} /> : null}
         {session ? <SessionStatusSelect value={session.status} onChange={setStatus} readOnly={readOnly} /> : <Ghost className="h-8 w-[107px]" />}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}

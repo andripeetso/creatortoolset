@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "./db";
+import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -32,6 +32,8 @@ import { picturesHere } from "../lib/device-picture";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
+import { draining } from "../server-update";
+import { backfillRoots } from "./places";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -180,6 +182,8 @@ const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
 };
 
 const running = new Set<number>();
+/** Jobs this server is running: an update waits for them (/api/health, server-update.ts draining). */
+export const libraryJobsAtRisk = (): number => running.size;
 
 /**
  * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
@@ -301,8 +305,11 @@ export function startLibraryWorker(): () => void {
       const loop = async () => {
         let busy = false;
         try {
-          busy = await tick(Date.now(), lane.kinds);
-          if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
+          // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
+          if (!draining()) {
+            busy = await tick(Date.now(), lane.kinds);
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots();
+          }
         } catch (e) {
           console.error("[library] worker:", e);
         }
@@ -372,7 +379,7 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
-  if (!v || v.source_key === v.proxy || libraryUpload(v.library_id) !== "proxies") return false;
+  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies") return false;
   // the rows first: a delete that fails leaves an unread file behind, never a version pointing at nothing
   db.prepare("UPDATE asset_versions SET source_key = ?, mac_path = from_path, mac_device = from_device WHERE id = ?").run(v.proxy, versionId);
   await blobs.delete(v.source_key);
@@ -403,7 +410,7 @@ export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<Versi
   want("wave");
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
-  const onlyProxy = v.kind === "video" && !!v.from_path && libraryUpload(v.library_id) === "proxies";
+  const onlyProxy = v.kind === "video" && !!v.from_path && versionUpload(v.id) === "proxies";
   if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") })) want("proxy");
   if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read

@@ -3,9 +3,10 @@
 # on the machine that runs the app:
 #   */5 * * * * CT_UPDATE_HOUR=4 /opt/creator-toolset/apps/captions/scripts/server-update.sh >> /var/log/creator-toolset-update.log 2>&1
 # Each run tells the app what is waiting (Settings → Storage → Update). It updates when an admin presses Update now
-# there, and by itself in the hour CT_UPDATE_HOUR names (0 to 23, this machine's clock; unset = only on the button).
-# An update is step 10: pull, build, wait for running work, restart. A build that fails is not tried again until an
-# admin presses Retry or a newer change arrives.
+# there, and each night from the hour CT_UPDATE_HOUR names (0 to 23, this machine's clock; unset = only on the button).
+# An update never cuts work the server is doing: it asks the server to take no new job (server-update/drain), and
+# restarts only once nothing is running, however long that takes (each run looks again). Then it is step 10: pull,
+# build, restart. A build that fails is not tried again until an admin presses Retry or a newer change arrives.
 # ponytail: no rollback. If the new build does not start, the way back is step 10's: check out the previous commit,
 # build, up -d. Add one here when a failed start has cost someone a night.
 set -eu
@@ -18,11 +19,13 @@ note() { echo "$(date '+%F %T') $*"; }
 ask() { app node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>r.json()).then($1,$2)"; }
 idle() { ask "h=>process.exit((h.answering||0)+(h.working||0)?1:0)" "()=>process.exit(0)"; }
 up() { ask "h=>process.exit(h.ok?0:1)" "()=>process.exit(1)"; }
-status() { # <changes waiting> <true|false: the last update failed>
-  printf '{"behind":%s,"nightly":%s,"failed":%s}\n' "$1" "$next" "$2" |
+status() { # <changes waiting> <true|false: the last update failed> [waiting]
+  printf '{"behind":%s,"nightly":%s,"failed":%s,"waiting":%s}\n' "$1" "$next" "$2" "$([ "${3:-}" = waiting ] && echo true || echo false)" |
     app sh -c 'd="$DATA_DIR/server-update"; mkdir -p "$d" && cat > "$d/status.part" && mv "$d/status.part" "$d/status.json"'
 }
-answered() { app sh -c 'rm -f "$DATA_DIR/server-update/request"'; }
+# in the app's data folder: the request (an admin's, or the night's) and the drain (no new job while it is fresh)
+data() { app sh -c "d=\"\$DATA_DIR/server-update\"; mkdir -p \"\$d\" && $1"; }
+done_() { data 'rm -f "$d/request" "$d/drain"'; }
 
 hour=""
 case "${CT_UPDATE_HOUR:-}" in [0-9] | [01][0-9] | 2[0-3]) hour=$(expr "$CT_UPDATE_HOUR" + 0 || true) ;; esac
@@ -41,42 +44,51 @@ running=$(git config --get creatortoolset.running || git rev-parse HEAD)
 behind=$(git rev-list --count "$running..$new")
 failed=false
 [ "$(git config --get creatortoolset.failed || true)" = "$new" ] && failed=true
-asked=0
-app sh -c 'test -e "$DATA_DIR/server-update/request"' && asked=1
 
-due=$asked # the button also tries a failed build again
-[ -n "$hour" ] && [ "$now" = "$hour" ] && [ "$failed" = false ] && due=1
-if [ "$behind" = 0 ] || [ "$due" = 0 ]; then
-  if [ "$behind" = 0 ] && [ "$asked" = 1 ]; then answered; fi
+if [ "$behind" = 0 ]; then
+  done_
+  status 0 false
+  exit 0
+fi
+# the night asks as an admin would, so an update that has to wait for running work still happens that night
+if [ -n "$hour" ] && [ "$now" = "$hour" ] && [ "$failed" = false ]; then data 'touch "$d/request"'; fi
+if ! data 'test -e "$d/request"'; then
   status "$behind" "$failed"
   exit 0
 fi
 
+# no new job from here on; the running ones finish (the next run looks again)
+data 'touch "$d/drain"'
+if ! idle; then
+  status "$behind" false waiting
+  exit 0
+fi
 note "updating to $(git rev-parse --short "$new")"
 status "$behind" false
 if ! { git merge -q --ff-only "$new" && docker compose build; }; then
   note "the build failed"
   git config creatortoolset.failed "$new"
-  answered
+  done_
   status "$behind" true
   exit 1
 fi
-# wait while work is running that the restart would end; after 25 minutes the next run takes it up (the build is kept)
+# work that started during the build: wait for it too (the drain is refreshed so it holds)
 n=0
 until idle; do
   n=$((n + 1))
-  [ "$n" -lt 100 ] || { note "work is still running, trying again on the next run"; exit 0; }
+  [ "$n" -lt 40 ] || { status "$behind" false waiting; exit 0; } # the next run takes it up; the build is kept
+  data 'touch "$d/drain"'
   sleep "${CT_UPDATE_WAIT:-15}"
 done
 docker compose up -d
 n=0
 until up; do
   n=$((n + 1))
-  [ "$n" -lt 40 ] || { note "the new build did not start"; git config creatortoolset.failed "$new"; exit 1; }
+  [ "$n" -lt 40 ] || { note "the new build did not start"; git config creatortoolset.failed "$new"; done_; exit 1; }
   sleep 3
 done
 git config creatortoolset.running "$new"
 git config --unset creatortoolset.failed || true
-answered
+done_
 status 0 false
 note "updated"
