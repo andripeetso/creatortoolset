@@ -55,7 +55,8 @@ export function ScopeTags({ item }: { item: Scoped }) {
   const current = useWorkspace((s) => s.currentProjectId);
   const name = (id: string | null) => projects.find((p) => p.id === id)?.name;
   const only = item.only?.map(name).filter(Boolean);
-  const tag = "ml-2 rounded px-1 py-0.5 text-[10px]";
+  // inline-block: a tag that does not fit goes to the next line whole, never split across two
+  const tag = "ml-2 inline-block rounded px-1 py-0.5 text-[10px]";
   return (
     <>
       {only?.length ? <span className={`${tag} bg-zinc-800 text-zinc-400`}>Only in {only.join(", ")}</span> : null}

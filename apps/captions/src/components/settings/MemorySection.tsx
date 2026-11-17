@@ -84,8 +84,9 @@ const FILING = [
 ];
 
 /**
- * Where new rules are filed (api/memory.ts PUT /workspaces), one row per choice. With each workspace its own, the rules
- * still shared by all workspaces are counted: each row's menu below moves one to a workspace.
+ * Where new rules are filed (api/memory.ts PUT /workspaces), one row per choice. Under "Each workspace its own", the
+ * rules shared by all workspaces are counted (they stay shared; each row's menu below moves one to a workspace), in
+ * both modes: a switch never changes the rows' height, so the button just clicked stays under the pointer.
  */
 function Filing({ perWorkspace, shared, saved }: { perWorkspace: boolean; shared: number; saved: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
@@ -103,7 +104,7 @@ function Filing({ perWorkspace, shared, saved }: { perWorkspace: boolean; shared
             key={o.title}
             title={o.title}
             subtitle={o.subtitle}
-            status={o.perWorkspace && perWorkspace && shared > 0 ? `${shared} ${shared === 1 ? "rule" : "rules"} shared by all workspaces` : undefined}
+            status={o.perWorkspace && shared > 0 ? `${shared} ${shared === 1 ? "rule" : "rules"} shared by all workspaces` : undefined}
             actions={
               o.perWorkspace === perWorkspace ? (
                 <InUse>In use</InUse>
