@@ -8,6 +8,8 @@ import { inside } from "../lib/storage";
 import { ownedProjects } from "../lib/workshop/workspace";
 import { ensureLibrary, libraryChanged } from "./access";
 import { libraryDb } from "./db";
+import { enqueueJob } from "./jobs";
+import { hasMembers } from "./upload-gate";
 import { indexOnMac, type OnMacIndex } from "./on-mac";
 
 /**
@@ -199,13 +201,42 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   if (dev.owner === "workspace" || !folders.length) return { ok: true, index };
   const st = await storageOf(dev.owner);
   const touched = new Set<string>();
+  const libs = new Set<string>();
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
-    await applyFolder(dev, folder, await librariesOf(dev.owner, folder), r, now, index, touched);
+    const of = await librariesOf(dev.owner, folder);
+    for (const l of of) libs.add(l);
+    await applyFolder(dev, folder, of, r, now, index, touched);
   }
   for (const l of touched) libraryChanged(l);
+  for (const l of libs) teamProxies(l, dev);
   return { ok: true, index };
+}
+
+/** Team proxies queued per report: the backfill drips behind other work, a few each time the computer reports. */
+const TEAM_PROXIES_PER_REPORT = 20;
+
+/**
+ * Team proxies (local-first plan, decision 2): in a library its owner shares with members, every video computer `dev`
+ * holds gets a proxy, made there and sent (the "proxy" job, work/library-package.ts), whatever the library's Upload says.
+ * Originals never. A version with any proxy job already (queued, running, failed or done) is left to that job.
+ */
+export function teamProxies(libraryId: string, dev: Device): number {
+  if (!hasMembers(libraryId)) return 0;
+  const db = libraryDb();
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       JOIN version_places p ON p.version_id = v.id AND p.device = ? AND p.kind = 'original' AND p.state IN ('verified', 'found')
+       WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL AND v.source_key LIKE 'mac:%'
+         AND NOT EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy' AND x.storage_key IS NOT NULL)
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy')
+       LIMIT ?`,
+    )
+    .all(dev.id, libraryId, TEAM_PROXIES_PER_REPORT) as { id: string }[];
+  for (const r of rows) enqueueJob(db, libraryId, r.id, "proxy", dev.owner);
+  return rows.length;
 }
 
 /**

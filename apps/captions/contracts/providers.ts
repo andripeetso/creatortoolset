@@ -212,7 +212,7 @@ export interface Device {
    * `empty`: Settings → Storage → Empty, told on its next claim. `at`: when it last claimed. `libraryOnly`: a worker that
    * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true; at?: number; libraryOnly?: true };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true; at?: number; libraryOnly?: true; proof?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

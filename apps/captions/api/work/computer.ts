@@ -134,6 +134,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
         steps: only ? [] : pluginEditorSteps().map((s) => s.id),
         cache: cacheReport(),
         library: true,
+        proof: true,
         ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
         machine: await machineNow(),
       });

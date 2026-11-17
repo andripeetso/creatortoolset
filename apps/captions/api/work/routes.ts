@@ -89,6 +89,8 @@ workApp.post("/claim", async (c) => {
     ...(library ? { library: true as const } : {}),
     ...(pictures && !libraryOnly ? { pictures: true as const } : {}),
     ...(libraryOnly ? { libraryOnly: true as const } : {}),
+    // it declares each proxy's SHA-256 before sending it (library/upload-gate.ts provesProxies)
+    ...(library && b?.proof === true ? { proof: true as const } : {}),
     at: Date.now(),
   });
   // the cache it reported is its proxy places (version_places kind 'proxy'): what "On this computer" and Locate read

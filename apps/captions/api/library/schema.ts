@@ -659,4 +659,6 @@ export const MIGRATIONS: string[] = [
   );
   UPDATE asset_versions SET quick = NULL WHERE quick = '';
   `,
+  // Finals upload written down where it was never set (local-first plan DM6, decision 6): "all", what it read as
+  `UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'all') WHERE json_extract(settings, '$.finalsUpload') IS NULL;`,
 ];

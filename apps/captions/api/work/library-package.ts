@@ -11,7 +11,7 @@
  * speech model goes the speech road instead (lib/computer-transcribe.ts), where that computer cuts the sound itself.
  */
 import { Hono, type Context } from "hono";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -23,10 +23,11 @@ import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type Library
 import { computers, either, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
 import { folderFor } from "../lib/storage";
 import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOriginals, type WorkerSeen } from "../lib/balance";
-import { deviceForToken, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
+import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
+import { mayReceive, provesProxies, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { claimJob, enqueueJob, extendLease, finishJob, type JobRow } from "../library/jobs";
@@ -300,21 +301,54 @@ function capped(cap: number): Transform {
   });
 }
 
-/** A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it, "gone" when the job is not held. */
-export async function acceptLibraryFile(jobId: number, deviceId: string, name: string, body: Readable, claim?: string): Promise<boolean | "gone"> {
+/**
+ * A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it, "gone" when the
+ * job is not held, the gate's refusal (upload-gate.ts) when the library does not take it. `declared`: the SHA-256 a
+ * computer declared for a proxy before sending it; the bytes must hash to it.
+ */
+export async function acceptLibraryFile(
+  jobId: number,
+  deviceId: string,
+  name: string,
+  body: Readable,
+  claim?: string,
+  declared?: string,
+): Promise<boolean | "gone" | Exclude<Received, { ok: true }>> {
   const job = heldBy(jobId, deviceId, claim);
   if (!job) return "gone";
-  if (!NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile)) return false;
-  // the original only to a library that keeps originals: a proxies-only library never gets one
-  if (name === "original" && (!job.version_id || versionUpload(job.version_id) !== "all")) return false;
-  const cap = name === "original" ? (rowOf(job.version_id)?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
+  if (!NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile) || !job.version_id) return false;
+  const r = rowOf(job.version_id);
+  // a proxy of a file only a computer has (`mac:`) is that computer's upload; one of the server's own original is made from it
+  const kind = name === "original" ? "original" : name === "proxy" && r?.source_key.startsWith("mac:") ? "proxy" : "derivative";
+  const sender = deviceOf(deviceId);
+  const into = { id: job.library_id, versionId: job.version_id };
+  const must = provesProxies(sender) && kind === "proxy";
+  const before = mayReceive(kind, into, "computer", { sender, ...(must ? { proof: { sha256: declared ?? "" } } : {}) });
+  if (!before.ok) return before;
+  const cap = name === "original" ? (r?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
   await mkdir(incoming(jobId), { recursive: true });
   const out = path.join(incoming(jobId), name);
+  const hash = createHash("sha256");
+  let bytes = 0;
+  const tally = new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      hash.update(chunk);
+      bytes += chunk.length;
+      done(null, chunk);
+    },
+  });
   try {
-    await pipeline(body, capped(cap), createWriteStream(out));
+    await pipeline(body, capped(cap), tally, createWriteStream(out));
   } catch {
     await rm(out, { force: true });
     return false;
+  }
+  if (kind === "proxy") {
+    const after = mayReceive("proxy", into, "computer", { sender, proof: { ...(declared ? { sha256: declared } : {}), got: hash.digest("hex"), bytes, original: r?.bytes } });
+    if (!after.ok) {
+      await rm(out, { force: true }); // not the proxy it said: nothing of it is kept
+      return after;
+    }
   }
   return true;
 }
@@ -459,8 +493,9 @@ libWorkApp.put("/:id/file", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "Send the file." }, 400);
-  const ok = await acceptLibraryFile(idOf(c), d.id, c.req.query("name") ?? "", Readable.fromWeb(body as never), claimOf(c));
+  const ok = await acceptLibraryFile(idOf(c), d.id, c.req.query("name") ?? "", Readable.fromWeb(body as never), claimOf(c), c.req.query("sha256") || undefined);
   if (ok === "gone") return GONE(c);
+  if (typeof ok === "object") return c.json(ok.body, ok.status);
   return ok ? c.json({ ok }) : c.json({ error: "Not a file this job may send" }, 400);
 });
 

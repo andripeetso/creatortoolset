@@ -269,8 +269,10 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
       const file = made.files[name]!;
       const size = statSync(file).size;
       const at = before;
+      // a proxy is declared before its bytes: the server takes only bytes that hash to it (library/upload-gate.ts)
+      const declared = name === "proxy" ? `&sha256=${await sha256File(file)}` : "";
       const res = await call(() =>
-        c.raw(`${base}/file?name=${name}`, {
+        c.raw(`${base}/file?name=${name}${declared}`, {
           method: "PUT",
           headers: { "content-type": "application/octet-stream", "content-length": String(size) },
           body: Readable.toWeb(createReadStream(file).pipe(counter(size, (p) => progress({ ...p, done: at + p.done, total })))) as ReadableStream,
