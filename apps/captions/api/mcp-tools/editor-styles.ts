@@ -103,7 +103,7 @@ export const editorStyleTools: ToolModule = {
   defs: [
     {
       name: "editor_style_save",
-      description: "Make or change an AI Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat. playbook: what you researched about this kind of edit.",
+      description: "Make or change an Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat. playbook: what you researched about this kind of edit.",
       inputSchema: {
         type: "object",
         properties: {
@@ -128,7 +128,7 @@ export const editorStyleTools: ToolModule = {
     },
     {
       name: "animation_style_save",
-      description: "Make or change an AI Editor animation style, the look of an edit's animated cards (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add.",
+      description: "Make or change an Editor animation style, the look of an edit's animated cards (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add.",
       inputSchema: { type: "object", properties: { id: str, name: str, brief: str, pictures: { type: "integer" } } },
     },
   ],

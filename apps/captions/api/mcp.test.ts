@@ -530,6 +530,6 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 18365 -> 18486: editor_create's style (the editing style for the kind of edit, put on as the edit is made: a chat
     // that made a "Hard edit" style never got it onto the edit); -> 18625: finals_link_session's version (a file the person
     // dropped in the chat goes into Finals as the project's final when it is ready to post)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(18625);
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(18613);
   });
 });
