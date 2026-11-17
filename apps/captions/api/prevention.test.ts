@@ -79,7 +79,7 @@ const DECODERS: Record<string, string> = {
   "api/boot.ts": "names the runtime; unverified",
 };
 /** The count at the start (local-first plan P0): it may only go down. */
-const DECODERS_AT_START = 68;
+const DECODERS_AT_START = 58; // 68 at P0; P3 moved ten to computers
 const DECODE = /spawn\(|spawnSync|spawnKillable|execFile\(|execFileSync|execSync|ffmpeg|ffprobe|chromium|playwright|onnx/;
 
 /** T8: every remaining deletion by age under api/, with why it stays. Library and export files have none (decision 8). */
