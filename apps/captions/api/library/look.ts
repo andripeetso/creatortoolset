@@ -136,8 +136,8 @@ export function looks(g: ArrayLike<number>, w: number, h: number, chroma?: Array
 export const junkOf = ({ luma, detail, panels, tint = 0 }: { luma: number; detail: number; panels: number; tint?: number }) =>
   luma < DARK ? "dark" : detail < FLAT ? "flat" : panels >= UI_PANELS && tint < UI_TINT ? "ui" : "";
 
-/** Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before. */
-export async function readPicture(src: string, fps: number, signal?: AbortSignal): Promise<PictureRead> {
+/** Every frame of `src` (or of its stretch a..b s) at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before. */
+export async function readPicture(src: string, fps: number, signal?: AbortSignal, span?: { a: number; b: number }): Promise<PictureRead> {
   const rate = fps > 0 ? Math.min(fps, MAX_READ_FPS) : 25;
   const L = Math.max(1, Math.round(LAG_S * rate));
   const size = FW * FH;
@@ -146,7 +146,7 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
       new Promise((resolve, reject) => {
         const p = spawn(
           ffmpegCommand(),
-          ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn", "-vf", `fps=${rate},scale=${FW}:${FH}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"],
+          ["-hide_banner", "-loglevel", "error", "-nostdin", ...(span ? ["-ss", String(span.a), "-t", String(Math.max(0.1, span.b - span.a))] : []), "-i", src, "-an", "-sn", "-vf", `fps=${rate},scale=${FW}:${FH}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"],
           { signal },
         );
         const ring: Buffer[] = []; // the last L+1 frames

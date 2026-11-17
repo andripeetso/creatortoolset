@@ -81,6 +81,12 @@ export const windowOf = (src: Pick<TimelineSource, "w" | "h">, W: number, H: num
 const r4 = (x: number) => Math.round(x * 1e4) / 1e4;
 const r3 = (x: number) => Math.round(x * 1e3) / 1e3;
 
+/** The window's x (Focus.x) that puts `c` (a share of the picture's width) in its middle, as near as the edges let it. */
+export const centreOn = (c: number, win: number) => (win >= 0.999 ? 0.5 : r4(Math.min(1, Math.max(0, (c - win / 2) / (1 - win)))));
+
+/** A subject clicked in Review (WindowCrop.subject) as Timeline.reframe's `picked` key. */
+export const pickKey = (s: { t: number; x: number; y: number }) => `${s.t.toFixed(2)}:${s.x.toFixed(3)}:${s.y.toFixed(3)}`;
+
 /**
  * The window's path over the subject's middle `c` (a share of the picture's width) sampled in time; `jump` marks a
  * sample where the subject is someone else (a new speaker, a new shot): the window cuts there when it has to move.
@@ -91,7 +97,7 @@ export function followPath(targets: { t: number; c: number; jump?: boolean }[], 
   const lo = win / 2;
   const hi = 1 - win / 2;
   const inside = (c: number) => Math.min(hi, Math.max(lo, c));
-  const focus = (c: number) => r4((inside(c) - lo) / (hi - lo));
+  const focus = (c: number) => centreOn(c, win);
   const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1]!;
   const t0 = targets[0]!.t;
   let cur = inside(median(targets.filter((s) => s.t <= t0 + HOLD && (s.t === t0 || !s.jump)).map((s) => s.c)));
@@ -134,6 +140,23 @@ export function followPath(targets: { t: number; c: number; jump?: boolean }[], 
   }
   // a hold needs only its first key: drop a key between two of the same x
   return keys.filter((k, i) => !(i > 0 && i < keys.length - 1 && keys[i - 1]!.x === k.x && keys[i + 1]!.x === k.x && keys[i - 1]!.t !== k.t));
+}
+
+/**
+ * `base` (a source's path; none: the middle) with `part` cut in from `s` to `e` seconds: a cut to it at `s` and back at
+ * `e`. A subject clicked in one camera shot is followed there and nowhere else (subject.ts followPicked).
+ */
+export function splicePath(base: PathKey[], part: PathKey[], s: number, e: number): PathKey[] {
+  const at = (keys: PathKey[], t: number) => r4(pathAt(keys, t));
+  return [
+    ...base.filter((k) => k.t < s),
+    { t: r3(s), x: at(base, s) },
+    { t: r3(s), x: at(part, s) },
+    ...part.filter((k) => k.t > s && k.t < e),
+    { t: r3(e), x: at(part, e) },
+    { t: r3(e), x: at(base, e) },
+    ...base.filter((k) => k.t > e),
+  ];
 }
 
 /** The part of a source's path an item shows: from `inS` for `lenS` seconds, timed from the item's start. */

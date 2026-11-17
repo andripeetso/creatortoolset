@@ -96,6 +96,29 @@ copy each one's licence next to the files they install.
   downloads the YuNet face detector `face_detection_yunet_2023mar.onnx` (232 KB) from the OpenCV Zoo copy on Hugging
   Face (`opencv/face_detection_yunet`, revision and SHA-256 pinned in that file) into the app's data folder
   (`models/opencv/face_detection_yunet/`). MIT, Copyright (c) 2020 Shiqi Yu (the `LICENSE` in that repository).
+- The AI Editor's subject tracker (`apps/captions/api/editor/subject.ts`), for reframing footage with no faces: only on a
+  computer running Linux x86-64 with an NVIDIA graphics card, the first time a moment with no faces is reframed there
+  or a subject clicked in Review is followed. It installs its own Python runtime into the app's data folder
+  (`runtime/subject-<hash>/`, the list in `apps/captions/api/editor/subject-requirements.ts`). pip installs these from
+  PyPI:
+  - `torch` 2.15.0 (PyTorch: BSD-3-Clause, with the parts its metadata lists under Apache-2.0, BSD-2-Clause, BSL-1.0,
+    ISC, MIT and Zlib), `torchvision` 0.29.2 (BSD-3-Clause), `triton` 3.9.0 (MIT).
+  - NVIDIA's CUDA libraries that PyTorch needs (`nvidia-cublas`, `nvidia-cudnn-cu13`, `nvidia-cuda-runtime` and the
+    other `nvidia-*` packages, `cuda-toolkit`): NVIDIA's own licence (LicenseRef-NVIDIA-Proprietary, the NVIDIA
+    Software License Agreement and CUDA EULA in each wheel). They come from PyPI onto the person's computer; this
+    repository does not ship them. `cuda-bindings` and `cuda-pathfinder`: Apache-2.0.
+  - `transformers` 5.23.0, `huggingface-hub`, `tokenizers`, `safetensors` and `hf-xet` (Apache-2.0).
+  - their dependencies: NumPy (BSD-3-Clause and others, as its metadata lists), Pillow (MIT-CMU), regex (Apache-2.0
+    and CNRI-Python), tqdm (MPL-2.0 and MIT), `truststore`, `pydantic`, `pydantic-core`, `rich`, `typer`,
+    `anyio`, `h11`, `filelock`, `pyyaml`, `setuptools`, `markdown-it-py`, `mdurl`, `annotated-types`, `annotated-doc`
+    and `typing-inspection` (MIT), `click`, `fsspec`, `idna`, `markupsafe`, `jinja2`, `networkx`, `httpx2` and
+    `httpcore2` (BSD-3-Clause), `sympy` and `mpmath` (BSD), `pygments` (BSD-2-Clause), `packaging` (Apache-2.0 or
+    BSD-2-Clause), `shellingham` (ISC), `typing-extensions` (PSF-2.0).
+
+  It then downloads two models from Hugging Face into the app's data folder (`runtime/subject/models/`), each pinned
+  to a commit in `subject-engine.ts`, both Apache-2.0 according to their model cards:
+  - SAM 2.1 Hiera Small (`facebook/sam2.1-hiera-small`, 184 MB), Meta's Segment Anything Model 2.1.
+  - Grounding DINO Tiny (`IDEA-Research/grounding-dino-tiny`, 689 MB), IDEA Research's text-to-box detector.
 
 ## Mac app
 

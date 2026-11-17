@@ -11,7 +11,9 @@ import { fillZoom, followPath, framingOf, reframeTimeline, speakerPath, speakerT
 import { measurable } from "./media";
 import { clearPasses, markPasses } from "./passes";
 import { draftPlan } from "./plan";
+import { sayFor } from "./progress";
 import { facesIn, turnsOf } from "./speakers";
+import { describedSeeds, faceless, subjectTargets, trackSubject } from "./subject";
 import { draftNames, editDir, type EditMeta, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -206,6 +208,17 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
       // and each speaker followed alone, for Review's reframe
       const speakers = Object.fromEntries(Object.entries(tracks).map(([n, ids]) => [n, speakerPath(frames, ids, win)]).filter(([, k]) => k.length));
       follow = { [span.src]: { keys: followPath(speakerTargets(frames, turns, tracks, win), win), turns, speakers } };
+      // no faces to follow (game capture, a product, someone turned away): the subject its look names (subject.ts)
+      const seeds = faceless(frames) ? describedSeeds(db, span.src, span.a, span.b) : [];
+      if (seeds.length) {
+        const say = () => sayFor(job, "Setting up the subject tracker, the first time only (about 4 GB)");
+        const got = await trackSubject(span.src, () => measurable(span.src, keyOf[span.src]!), span.a, span.b, src.fps, seeds, signal, say).catch((e: Error) => e);
+        if (got instanceof Error) {
+          if (signal.aborted) return;
+          notes.push(`The picture stays in the middle: its subject could not be followed (${got.message})`);
+        } else if (got) follow = { [span.src]: { keys: followPath(subjectTargets(got), win) } };
+        else notes.push("The picture stays in the middle: following what is in it takes a computer with an NVIDIA graphics card");
+      }
     } catch (e) {
       if (signal.aborted) return;
       notes.push(`The picture stays in the middle: who talks could not be found (${(e as Error).message})`);

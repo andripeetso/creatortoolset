@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { cleanEdits, playPlan, splitView, voicePieces, type ItemEdit } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
+import { pickKey } from "./framing";
 import { emptyTracks } from "./timeline";
 
 /** Three linked 30-frame shots (a 60 fps take on a 30 fps timeline), B-roll over the second and third, a marker on each shot. */
@@ -107,6 +108,25 @@ describe("timeline edits made into a cut", () => {
     expect(() => make(t, { key: "V1:0", crop: { speaker: 3 } })).toThrow("Speaker 3 can't be followed in this shot");
     // as the server keeps them: a window on a talent shot only, x within the picture
     expect(cleanEdits([edit({ key: "V1:0", crop: { x: 1.5 } }), edit({ key: "A1:0", crop: { speaker: 1 } }), edit({ key: "V1:30", crop: { speaker: 1.5 } as never })])).toEqual([]);
+  });
+
+  it("a reframed moment's shot set to follow what was clicked on it: held on the click until a computer follows it, then on its path", () => {
+    const t = three();
+    t.sources.A = { ...t.sources.A!, w: 1920, h: 1080 };
+    for (const i of t.tracks.V1.items) Object.assign(i, { zoom: 3.1605, path: [{ t: 0, x: 0.3 }] });
+    t.reframe = { A: { auto: [{ t: 0, x: 0.3 }], speakers: {} } };
+    const click = { t: 2, x: 0.8, y: 0.5 };
+    const n = make(t, { key: "V1:0", crop: { subject: click } });
+    // the window's middle on the click: 0.8 across a picture whose window is 0.316 of it
+    expect(n.tracks.V1.items[0]!.path).toEqual([{ t: 0, x: 0.9389 }]);
+    expect(n.tracks.V1.items[0]!.crop).toEqual({ subject: click });
+    // once followed (subject.ts followPicked keeps the path), a later version of the shot takes it
+    // in the take's seconds: the shot is 1.667-2.667 s of it
+    n.reframe!.A!.picked = { [pickKey(click)]: [{ t: 0, x: 0.2 }, { t: 2.167, x: 0.2 }, { t: 2.167, x: 0.6 }] };
+    const m = make(n, { key: "V1:0", crop: { subject: click } });
+    expect(m.tracks.V1.items[0]!.path).toEqual([{ t: 0, x: 0.2 }, { t: 0.5, x: 0.2 }, { t: 0.5, x: 0.6 }, { t: 1, x: 0.6 }]);
+    // as the server keeps them: a click inside the picture only
+    expect(cleanEdits([edit({ key: "V1:0", crop: { subject: { t: 1, x: 1.2, y: 0.5 } } as never }), edit({ key: "V1:30", crop: { subject: "here" } as never })])).toEqual([]);
   });
 
   it("an edge pulled out shows more of the take with its voice, and the rest moves later", () => {

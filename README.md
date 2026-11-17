@@ -70,6 +70,8 @@ New edit starts from one of three places:
 - **Short videos from a long recording**: a podcast or a talk goes in, and the parts that stand on their own come out,
   each cut as a short video of its own: vertical (or 4:5, 1:1), the picture following whoever is talking. In Review,
   Reframe moves the frame on a shot or sets who it follows, and the exported timelines carry the moving frame.
+  Footage with no faces (game capture, a product, sport) follows the subject its description names, or the one you
+  click in Review, on a computer with an NVIDIA graphics card; without one the frame stays in the middle.
 
 **Editing styles** and **Animation styles** keep how you like your videos cut and your text animated. Make one by
 telling the assistant about it, with examples, or with a form.
