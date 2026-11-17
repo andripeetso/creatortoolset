@@ -374,6 +374,50 @@ describe("ReviewEdits panel", () => {
     }
   });
 
+  it("with the Mac app's places, an edit's library clips play from where this computer has them, the rest by path", async () => {
+    const voiced: TimelineView = { ...view, tracks: [
+      { ...view.tracks[0], items: view.tracks[0].items.map((i) => ({ ...i, src: "cam", ins: 2 + i.rec / 25, zoom: 1.25 })) },
+      { id: "A1", name: "A1", items: [{ key: "A1:0", track: "A1", rec: 0, len: 200, label: "Voice", src: "vo", ins: 2 }] },
+    ] };
+    const footage = { key: "smb://office-nas/footage", name: "footage", server: "office-nas" };
+    let vo: object = { state: "here", path: "/Volumes/footage-1/VO/take 1.wav", url: "ctlocal://media/vo" };
+    const check = vi.fn(async (m: string) => (m.startsWith("places:check:") ? { versions: { vo } } : {}));
+    (window as unknown as { webkit: object }).webkit = { messageHandlers: {
+      thisMac: { postMessage: check },
+      mediaAccess: { postMessage: async () => ({ granted: ["/Volumes/Shoot"] }) },
+    } };
+    document.documentElement.dataset.macLocalFiles = "3";
+    document.documentElement.dataset.macPlaces = "1";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url === "/api/library" ? Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: {} }] }) : new Response("x", { status: 206 })));
+    const settle = () => act(async () => {
+      for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+    });
+    try {
+      // "vo" is a library clip (the answer knows it); "cam" is looked for where its path says, in an allowed folder
+      const sources = vi.fn(async () => ({ vo: "/Volumes/footage/VO/take 1.wav", cam: "/Volumes/Shoot/A001.mov" }));
+      const longer = { id: "c1", data: { edits: [{ key: "A1:0", label: "Voice", tail: 25 }, { key: "V1:100", label: "Shot two", tail: 25 }] } };
+      const { bridge } = await mount([longer], undefined, { timeline: async () => voiced }, { sources });
+      await settle();
+      expect(check).toHaveBeenCalledWith('places:check:{"library":"lib","versions":["vo","cam"]}');
+      expect((bridge.plan() as ReviewPlayPlan).sound).toEqual([{ src: "ctlocal://media/vo", at: 0, frames: 225, offset: 2 }]);
+      const cam = `ctlocal://media/${btoa("/Volumes/Shoot/A001.mov").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+      expect((bridge.plan() as ReviewPlayPlan).picture?.[0]?.src).toBe(cam);
+      // the share goes away: the cut plays as rendered, and one line says where its original is
+      vo = { state: "away", root: footage };
+      await act(async () => void window.dispatchEvent(new CustomEvent("mac-places", { detail: { at: 1 } })));
+      await settle();
+      expect((bridge.plan() as ReviewPlayPlan).sound).toBeUndefined();
+      expect(host.textContent).toContain("1 of 1 originals on footage (office-nas), which isn't connected");
+      expect(button("Play edits from the originals")).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      delete (window as unknown as { webkit?: object }).webkit;
+      delete document.documentElement.dataset.macLocalFiles;
+      delete document.documentElement.dataset.macPlaces;
+    }
+  });
+
   it("unmounting clears the plan the player follows", async () => {
     const { bridge } = await mount([{ id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } }]);
     expect(bridge.plan()).not.toBeNull();

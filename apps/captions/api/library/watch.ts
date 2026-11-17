@@ -12,6 +12,7 @@ import { ensureLibrary, librariesHere, libraryChanged, libraryRole } from "./acc
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
+import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine } from "../lib/devices";
 import { libraryPath, parseStorageFile, storageFilePath } from "../lib/storage";
@@ -120,7 +121,8 @@ export async function copyTarget(source: string, to: string, data: string): Prom
 }
 
 function status(libraryId: string): WatchStatus {
-  const folders = foldersOf(libraryId).map((f) => ({
+  // a Finals folder is not one of the library's footage folders (Settings → Folders has it): not listed here
+  const folders = foldersOf(libraryId).filter((f) => !f.projects).map((f) => ({
     ...f,
     found: false,
     ...(walked.get(`${libraryId}\0${f.path}`) ?? { files: 0, adding: 0 }),
@@ -216,8 +218,9 @@ watchApp.put("/:id/watch", async (c) => {
   }
   const body = (await c.req.json().catch(() => null)) as { folders?: unknown } | null;
   if (!Array.isArray(body?.folders) || body.folders.length > MAX_FOLDERS) return c.json({ error: `A list of up to ${MAX_FOLDERS} folders`, code: "invalid" }, 400);
-  const folders: WatchFolder[] = [];
   const stored = foldersOf(libraryId);
+  // the Finals folder is not on the list the page sends (status): it stays as it is
+  const folders: WatchFolder[] = stored.filter((g) => g.projects);
   for (const raw of body.folders) {
     // a folder already on the list, unchanged, stays as it is: a copied camera card that was taken out is not refused
     const r = (raw ?? {}) as Partial<WatchFolder>;
@@ -408,6 +411,52 @@ export async function addWatchFolder(username: string, folderPath: string, libra
   return null;
 }
 
+/** The Workshop project a file in a Finals folder belongs to: the one whose subfolder holds it; null when none does. */
+const finalsProjectIn = (f: WatchFolder, file: string): string | null => {
+  const [dir, ...rest] = path.relative(f.path, file).split(path.sep);
+  return f.projects && dir && rest.length && Object.hasOwn(f.projects, dir) ? f.projects[dir]! : null;
+};
+
+/** The Workshop project a library file came in for from a Finals folder (its version's place on this disk); null for any other. */
+export function finalsProjectOf(libraryId: string, file: string): string | null {
+  for (const f of foldersOf(libraryId)) {
+    const id = f.projects ? finalsProjectIn(f, file) : null;
+    if (id) return id;
+  }
+  return null;
+}
+
+/**
+ * A Workshop project's folder in the Finals folder `root` on this disk: made when missing, and read from now on, its
+ * files into the library's Finals (`collectionId`). One watch entry per Finals folder, listing its projects'
+ * subfolders; the 20-folder limit is for footage folders. The subfolder's real path, or null when it can't be read here
+ * (the reason is logged).
+ */
+export async function watchFinals(username: string, libraryId: string, root: string, dir: string, session: string, collectionId: string): Promise<string | null> {
+  const refused = (why: string) => (console.warn(`[library] finals folder ${root}: ${why}`), null);
+  if (!watchAllowed(username)) return null;
+  try {
+    await mkdir(path.join(expandHome(root), dir), { recursive: true });
+  } catch (e) {
+    return refused(e instanceof Error ? e.message : String(e));
+  }
+  const real = await realpath(expandHome(root));
+  const current = foldersOf(libraryId);
+  const had = current.find((g) => g.path === real);
+  if (had && !had.projects) return refused("it is a footage folder of this library");
+  if (had?.projects?.[dir] !== session) {
+    let entry = had;
+    if (!entry) {
+      const f = await checkFolder(libraryId, { path: real, mode: "reference", collectionId }, username);
+      if (typeof f === "string") return refused(f);
+      entry = f;
+    }
+    writeWatch(libraryId, [...current.filter((g) => g !== had), { ...entry, projects: { ...entry.projects, [dir]: session } }]);
+    scanSoon();
+  }
+  return path.join(real, dir);
+}
+
 /** Stops watching a folder in any of the account's libraries (Settings → Devices: forget). The files already in the Library stay. */
 export async function removeWatchFolder(username: string, folderPath: string, keep?: ReadonlySet<string>): Promise<void> {
   const p = expandHome(folderPath);
@@ -471,10 +520,12 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
     }
     const dup = db()
       .prepare(
-        `SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL ORDER BY v.created_at LIMIT 1`,
+        `SELECT v.id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL ORDER BY v.state = 'missing' DESC, v.created_at LIMIT 1`,
       )
-      .get(libraryId, sha256) as { id: string } | undefined;
+      .get(libraryId, sha256) as { id: string; state: string; source_key: string; source_path: string | null } | undefined;
+    // a referenced file gone from its path, here now (moved or renamed): it reads it here, and refreshMissing brings it back
+    if (dup?.state === "missing" && dup.source_path && f.mode === "reference") await pointSource(dup.id, dup.source_key, file);
     if (dup) return dup.id; // already in the library (a browser upload of it, or the same file in another folder)
 
     const prior = priorVersion
@@ -573,6 +624,8 @@ async function scanFolders(libraryId: string, now: number): Promise<number> {
     const folderKey = `${libraryId}\0${f.path}`;
     try {
       files = await filesIn(f.path);
+      // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
+      if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {
       walked.delete(folderKey);
       continue; // unplugged or unreadable: its referenced files turn missing in refreshMissing

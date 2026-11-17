@@ -131,6 +131,9 @@ export interface LibrarySettings {
    * A stored `true` / `false` (before 2026-11-15) reads as "all" / "none".
    */
   upload: LibraryUpload;
+  /** The same for a final (a file that goes into Finals, from a project's folder in the Finals folder): "all" when unset,
+   *  so a phone can download the finished file to post it. */
+  finalsUpload?: LibraryUpload;
   /** how files come in, asked on the first add (absent: not asked yet): used where they are, or copied into `copyTo` */
   importMode?: ImportMode;
   /** the folder copies go into (a path on the person's computer); absent: the Mac's default (~/Movies/Creator Toolset/<library>) */
@@ -419,6 +422,8 @@ export interface WatchFolder {
   copyTo?: string;
   collectionId?: string; // a manual folder the files go into
   addedBy: string; // the owner who added it; imports are theirs
+  /** a Finals folder: only these subfolders are read, each a Workshop project's (folder name → project id) */
+  projects?: Record<string, string>;
 }
 
 /** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */

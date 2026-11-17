@@ -24,6 +24,7 @@ import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
+import { placesApp } from "./places";
 import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -50,6 +51,7 @@ libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
 libraryApp.route("/offline", offlineApp); // GET/POST /offline: Available offline (api/work/offline.ts)
 libraryApp.route("/", locateApp); // GET, POST /:id/locate
+libraryApp.route("/", placesApp); // GET, POST /:id/places, GET /:id/places/gone, /:id/places/moves
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
@@ -178,6 +180,9 @@ export function recordVersion(
   }
   const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
   if (roll) fileRoll(d, assetId, roll);
+  // uploaded into Finals (a project's final, AddFinalDialog): finished from the start, never footage in the Media Library
+  else if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(o.collectionId))
+    fileRoll(d, assetId, "none");
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;
@@ -476,7 +481,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
-    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename)
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
@@ -732,6 +737,7 @@ const settingsOf = (json: string): LibrarySettings => {
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
     upload: uploadOf(s.upload),
+    finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
     ...(typeof s.copyTo === "string" && s.copyTo ? { copyTo: s.copyTo } : {}),
     ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
@@ -766,7 +772,7 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
 // (a video is filed by its description) and files what is in no folder yet
@@ -786,6 +792,7 @@ libraryApp.patch("/:id", async (c) => {
   }
   const s = b?.settings ?? {};
   if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
   if (Array.isArray(s.places)) {
@@ -831,7 +838,7 @@ libraryApp.post("/", async (c) => {
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
     .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS, upload: "none" } };
+  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS, upload: "none", finalsUpload: "all" } };
   return c.json(created, 201);
 });
 
