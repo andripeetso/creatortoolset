@@ -71,21 +71,21 @@ async function send(user: string, ws: string, filename: string, bytes: string) {
   return { id, finish: () => call(user, `/api/library/uploads/${id}/finish`, ws, { method: "POST" }) };
 }
 
-/** Every file name the workspace's Media Library lists. */
-async function listed(ws: string): Promise<string> {
+/** The titles of every clip the workspace's Media Library lists. */
+async function listed(ws: string): Promise<string[]> {
   const { libraries } = (await (await call("ana", "/api/library", ws)).json()) as { libraries: { id: string }[] };
-  const pages = await Promise.all(libraries.map(async (l) => (await call("ana", `/api/library/${l.id}/assets`, ws)).json()));
-  return JSON.stringify(pages);
+  const pages = await Promise.all(libraries.map(async (l) => (await (await call("ana", `/api/library/${l.id}/assets`, ws)).json()) as { items: { title: string }[] }));
+  return pages.flatMap((p) => p.items.map((i) => i.title));
 }
 const libraryOf = async (ws: string) => ((await (await call("ana", "/api/library", ws)).json()) as { libraries: { id: string }[] }).libraries[0]!.id;
 
 it("files a phone upload in its workspace's own library: never listed in the other workspace", async () => {
   expect((await (await send("ana", CLIMBERS, "climbers.mov", "bbbb")).finish()).status).toBe(200);
   expect((await (await send("ana", TINY, "tiny.mov", "aaaa")).finish()).status).toBe(200);
-  expect(await listed(TINY)).toContain("tiny.mov");
-  expect(await listed(TINY)).not.toContain("climbers.mov");
-  expect(await listed(CLIMBERS)).toContain("climbers.mov");
-  expect(await listed(CLIMBERS)).not.toContain("tiny.mov");
+  expect(await listed(TINY)).toContain("tiny");
+  expect(await listed(TINY)).not.toContain("climbers");
+  expect(await listed(CLIMBERS)).toContain("climbers");
+  expect(await listed(CLIMBERS)).not.toContain("tiny");
 });
 
 it("answers the target per workspace, from the plug-in that keeps a workspace's uploads", async () => {
@@ -123,7 +123,7 @@ it("refuses a workspace the account can't see or may only look at: nothing lands
   expect((await mine.finish()).status).toBe(200);
   const later = await send("bo", TINY, "bo2.mov", "dddd");
   expect((await call("bo:read", `/api/library/uploads/${later.id}/finish`, TINY, { method: "POST" })).status).toBe(404);
-  expect(await listed(TINY)).toContain("bo.mov");
+  expect(await listed(TINY)).toContain("bo");
 });
 
 it("refuses another workspace's library by id when the request names a workspace, and goes on as before when it names none", async () => {
