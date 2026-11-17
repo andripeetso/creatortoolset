@@ -40,6 +40,14 @@ final class CatalogRulesTests: XCTestCase {
         XCTAssertEqual(after(.catalogPatch, 403, body: ["error": "your role is read-only"]), .failed("your role is read-only"))
     }
 
+    func testARefusedUploadFailsWithTheServersLine() {
+        let line = "This library takes proxies only. Your computer makes the proxy and sends that."
+        let refused: [String: Any] = ["error": line, "code": "upload_refused", "message": line]
+        XCTAssertEqual(after(.catalogPatch, 409, body: refused), .failed(line))
+        XCTAssertEqual(after(.catalogComplete, 409, body: refused), .failed(line))
+        XCTAssertEqual(after(.catalogComplete, 409), .resync)   // a plain 409 is still a wait
+    }
+
     func testDirectCompleteReportsTheServersFingerprint() {
         XCTAssertEqual(after(.catalogComplete, 200, body: ["sha256": "abc", "duplicate_of": NSNull()]), .finished(sha256: "abc", duplicate: false))
         XCTAssertEqual(after(.catalogComplete, 200, body: ["sha256": "abc", "duplicate_of": 12]), .finished(sha256: "abc", duplicate: true))

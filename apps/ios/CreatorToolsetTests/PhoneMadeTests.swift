@@ -99,6 +99,13 @@ final class PhoneMadeTests: XCTestCase {
         XCTAssertEqual(item.filename, "Cartwheel.mp4")
         let onDisk = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: AppFiles.upload(copied).path)[.size] as? Int64)
         XCTAssertEqual(item.size, onDisk)
+        // the proof: the SHA-256 of the bytes this upload sends (the copy), lowercase hex
+        let proof = try XCTUnwrap(proxy["sha256"] as? String)
+        let sent = try await Exporter.sha256(of: AppFiles.upload(copied))
+        let heavyPrint = try await Exporter.sha256(of: heavy)
+        XCTAssertEqual(proof, sent)
+        XCTAssertNotNil(proof.wholeMatch(of: /[0-9a-f]{64}/))
+        XCTAssertNotEqual(proof, heavyPrint)
         // asked again (a retry), it sends the same and makes no second copy
         let again = await engine.made(copied, proxies: true)
         XCTAssertEqual((again["proxy"] as? [String: Any])?["size"] as? Int64, size)

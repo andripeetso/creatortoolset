@@ -244,6 +244,8 @@ final class UploadEngine: ObservableObject {
             perform(.signedOut, id)
         } catch APIError.server(let status, let message) where status == 413 || status == 507 || status == 404 {
             fail(id, message)
+        } catch APIError.refused(let line) {
+            fail(id, line)
         } catch {
             perform(.retryLater(error.localizedDescription), id)
         }
@@ -344,7 +346,12 @@ final class UploadEngine: ObservableObject {
             if let picture = await PhoneMade.cardPicture(named, duration: original.probe.duration) { json["thumb"] = picture.base64EncodedString() }
             try? FileManager.default.removeItem(at: named)
         }
-        if original.proxy { json["proxy"] = ["size": original.size, "probe": original.probe.json] as [String: Any] }
+        if original.proxy {
+            var proof: [String: Any] = ["size": original.size, "probe": original.probe.json]
+            // the bytes this upload sends (the copy, in the file's place now): the server checks what it receives against it
+            proof["sha256"] = try? await Exporter.sha256(of: file)
+            json["proxy"] = proof
+        }
         return json
     }
 

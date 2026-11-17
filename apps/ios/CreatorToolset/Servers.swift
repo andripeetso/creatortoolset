@@ -94,6 +94,9 @@ enum APIError: LocalizedError, Equatable {
     case server(Int, String)
     /// No answer: no connection, or the server is down.
     case offline
+    /// The library's Upload setting turned the file away (409 `upload_refused`): its line is shown as it is, and the
+    /// upload is never tried again by itself.
+    case refused(String)
 
     /// The HTTP status: 401 signed out, 0 no answer.
     var status: Int {
@@ -101,7 +104,14 @@ enum APIError: LocalizedError, Equatable {
         case .signedOut: return 401
         case .server(let status, _): return status
         case .offline: return 0
+        case .refused: return 409
         }
+    }
+
+    /// The server's line when an answer is its upload refusal (`api/library/upload-gate.ts`), else nil.
+    static func refusal(_ status: Int, _ json: [String: Any]?) -> String? {
+        guard status == 409, json?["code"] as? String == "upload_refused" else { return nil }
+        return json?["message"] as? String ?? json?["error"] as? String
     }
 
     var message: String { errorDescription ?? "" }
@@ -114,6 +124,7 @@ enum APIError: LocalizedError, Equatable {
         case .signedOut: return "Signed out. Sign in again in More → Computers."
         case .server(_, let message): return message
         case .offline: return "No connection to the server"
+        case .refused(let line): return line
         }
     }
 }
@@ -180,7 +191,12 @@ struct API {
             await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired(cookie) } }
             throw APIError.signedOut
         }
-        guard (200..<300).contains(status) else { throw APIError.server(status, Self.message(data, status: status)) }
+        guard (200..<300).contains(status) else {
+            if let line = APIError.refusal(status, try? JSONSerialization.jsonObject(with: data) as? [String: Any]) {
+                throw APIError.refused(line)
+            }
+            throw APIError.server(status, Self.message(data, status: status))
+        }
         return data
     }
 
