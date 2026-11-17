@@ -4,11 +4,12 @@ import { deviceOf, listDevices, setDeviceLooks } from "../lib/devices";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import type { DeviceJobSlot } from "../lib/plugin";
 import { libraryChanged } from "./access";
-import { libraryDb } from "./db";
+import { libraryDb, libraryLookLevel } from "./db";
 import { defer, extendLease, finishJob, firstClips } from "./jobs";
 import { SHEET_STRETCHES } from "./look";
 import { MAC_WAITS, SHEET_FORMAT, type LookSheet } from "./shots";
-import { parseSignal, takeSignal } from "./stretches";
+import { parseSignal, storeStretches, stretchLevelOf, takeSignal } from "./stretches";
+import type { LookLevel } from "../../contracts/library";
 
 /**
  * Shot descriptions of a file kept on a Mac with nothing uploaded (tasks/flywheel/PLAN.md 2.11, D5). Its look job waits
@@ -35,9 +36,12 @@ export const TOO_BIG = "This video is too long to describe shot by shot: its she
 
 type Sheet = LookSheet & { ph: string[] };
 /** The looks Macs hold now, by job id: the Mac, the version, its length, and the sheets sent so far and their bytes. */
-const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; sheets: Sheet[]; bytes: number }>();
+const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; level: LookLevel; sheets: Sheet[]; bytes: number }>();
 /** The sheets a Mac finished sending, by version, until the look lane takes them for its AI call. */
 const sent = new Map<string, LookSheet[]>();
+
+/** Whether a Mac sent the sheets of `versionId` and the look lane has not taken them yet. */
+export const macSheetsWaiting = (versionId: string): boolean => sent.has(versionId);
 
 /** The sheets a Mac sent for `versionId`, now the caller's (the look lane's); null when none came. */
 export function takeMacSheets(versionId: string): LookSheet[] | null {
@@ -96,7 +100,10 @@ export const macLookJob: DeviceJobSlot = {
     // the lane's claim that parked it counted this try
     db.prepare("UPDATE jobs SET state = 'running', lease_until = ?, started_at = ?, error = NULL WHERE id = ?").run(now + LEASE_S * 1000, now, r.id);
     const duration = Number((JSON.parse(r.probe ?? "null") as { duration?: number } | null)?.duration) || 0;
-    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, sheets: [], bytes: 0 });
+    // stretches found at another level than the library's are found again: the Mac reads the picture (none sent)
+    const level = libraryLookLevel(r.library_id);
+    if (stretchLevelOf(db, r.version_id) !== level) storeStretches(db, r.version_id, [], level);
+    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0 });
     libraryChanged(r.library_id);
     const stretches = (db.prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(r.version_id) as { a: number; b: number }[]).map((s) => [s.a, s.b]);
     return {
@@ -120,7 +127,7 @@ export const macLookJob: DeviceJobSlot = {
       if (typeof x === "string") return { error: x, status: 400 };
       h.sheets = [];
       h.bytes = 0;
-      return { reply: { stretches: takeSignal(db, h.versionId, h.duration, x).map(({ seg, a, b }) => ({ seg, a, b })) } };
+      return { reply: { stretches: takeSignal(db, h.versionId, h.duration, x, h.level).map(({ seg, a, b }) => ({ seg, a, b })) } };
     }
     if (b.sheet !== undefined) {
       const sheet = parseSheet(b.sheet);

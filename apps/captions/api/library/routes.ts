@@ -16,8 +16,9 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
+import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
@@ -743,6 +744,8 @@ const settingsOf = (json: string): LibrarySettings => {
     ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
+    lookLevel: lookLevelOf(s.lookLevel),
+    lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
   };
 };
 
@@ -792,6 +795,14 @@ libraryApp.patch("/:id", async (c) => {
   }
   const s = b?.settings ?? {};
   if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
+  // (All clips → Shot descriptions), or an edit asks for its files
+  if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
+  if (s.lookBudget === null || (typeof s.lookBudget === "number" && Number.isFinite(s.lookBudget) && s.lookBudget >= 0 && s.lookBudget <= 1_000_000)) {
+    put("lookBudget", s.lookBudget === null ? null : Math.round(s.lookBudget * 100) / 100);
+    releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
+    libraryChanged(libraryId);
+  }
   if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
@@ -838,7 +849,7 @@ libraryApp.post("/", async (c) => {
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
     .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS, upload: "none", finalsUpload: "all" } };
+  const created: LibrarySummary = { id, name, storage: "local", settings: settingsOf("{}") };
   return c.json(created, 201);
 });
 

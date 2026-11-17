@@ -183,11 +183,15 @@ export async function workspaceOf(db: DatabaseSync, versionId: string): Promise<
 
 /** The id of the workspace a version's library is in (as workspaceOf reads it), or undefined when its owner has none. */
 export async function workspaceIdOf(db: DatabaseSync, versionId: string): Promise<string | undefined> {
-  const row = db
-    .prepare(
-      "SELECT l.workspace_id AS home, json_extract(l.settings, '$.projectId') AS ws FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?",
-    )
-    .get(versionId) as { home: string; ws: string | null } | undefined;
+  const lib = db.prepare("SELECT a.library_id AS id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { id: string } | undefined;
+  return lib ? libraryWorkspaceId(db, lib.id) : undefined;
+}
+
+/** The workspace a library belongs to (its projectId, else its owner's first), as workspaceIdOf reads it for a version. */
+export async function libraryWorkspaceId(db: DatabaseSync, libraryId: string): Promise<string | undefined> {
+  const row = db.prepare("SELECT workspace_id AS home, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as
+    | { home: string; ws: string | null }
+    | undefined;
   if (!row) return undefined;
   const owner = [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === row.home) ?? row.home;
   const of = await projectOf({ username: owner } as SessionUser);
