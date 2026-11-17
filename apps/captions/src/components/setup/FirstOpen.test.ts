@@ -25,4 +25,11 @@ describe("the setup card over a tool", () => {
     expect(opensCard({ ...base, inSetup: true, view: view(null) })).toBe(false);
     expect(opensCard({ ...base, view: null })).toBe(false);
   });
+
+  it("does not open by itself over a draft's timeline, where editing by hand needs none of it", () => {
+    const editor = { ...base, tool: "editor" as const, view: view(null) };
+    expect(opensCard({ ...editor, path: "/editor/e1/Tiny_V1A_D1" })).toBe(false);
+    expect(opensCard({ ...editor, path: "/editor/e1" })).toBe(true);
+    expect(opensCard({ ...editor, path: "/editor/p/f1" })).toBe(true);
+  });
 });
