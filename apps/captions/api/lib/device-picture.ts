@@ -9,8 +9,8 @@ import { hostedMode } from "./env";
  * and a typed search into one in the same space, so a search finds what the footage shows, not only its words. Where
  * the server runs on the person's own computer (deviceTranscribes), and on a server whose admin turns it on
  * (LIBRARY_PICTURES=1); never on a hosted server, whose processor every account shares: an hour of footage has some
- * 840 shots, and each takes about 0.3 s of a busy 32-core processor (measured on public-domain films), minutes of a
- * shared server's time per hour of every account's footage. The pictures go in at PICTURE_PX square; the text model reads
+ * 880 shots, and two cores of a busy desktop processor took about 2 minutes for them (0.13 s a shot, 1.2 GB held;
+ * measured on 2 hours of public-domain films), minutes of a shared server per hour of every account's footage. The pictures go in at PICTURE_PX square; the text model reads
  * up to 64 tokens. Vision and text are two models, loaded on their own and given back when idle or before a transcript.
  */
 
