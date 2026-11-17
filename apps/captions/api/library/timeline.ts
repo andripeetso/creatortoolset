@@ -172,23 +172,21 @@ const AGY_LABEL = `${LOOK_LABEL} (Antigravity)`;
  */
 function onAntigravity(actor: string | null): boolean {
   const key = watchKey(actor);
-  return !!parkedOf(key) && creditChoice("GEMINI_API_KEY", key) === "antigravity" && !!antigravityRoute(actor);
+  return !!parkedOf(key) && creditChoice("GEMINI_API_KEY", key, actor) === "antigravity" && !!antigravityRoute(actor);
 }
 
 /**
- * `username` picked what happens to the timelines waiting on their Gemini credit (`owners`: whom the key serves, chooseCredit):
- * on Antigravity, those waits end now (the sweep asks them again); without, Timelines are switched off in the libraries
+ * `username` picked what happens to their own timelines waiting on their Gemini credit (chooseCredit; a key's other
+ * owners pick for theirs): on Antigravity, those waits end now (the sweep asks them again); without, Timelines are switched off in the libraries
  * `username` owns that hold one. Answers those libraries.
  */
-export function creditWaitsChosen(db: DatabaseSync, owners: string[], username: string, choice: CreditChoice): string[] {
-  if (!owners.length) return [];
-  const marks = owners.map(() => "?").join(", ");
+export function creditWaitsChosen(db: DatabaseSync, username: string, choice: CreditChoice): string[] {
   const rows = db
     .prepare(
       `SELECT t.version_id AS v, a.library_id AS lib FROM timelines t JOIN asset_versions v ON v.id = t.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE t.error LIKE ? AND v.created_by IN (${marks})`,
+       WHERE t.error LIKE ? AND v.created_by = ?`,
     )
-    .all(`${CREDIT_GONE}%`, ...owners) as { v: string; lib: string }[];
+    .all(`${CREDIT_GONE}%`, username) as { v: string; lib: string }[];
   if (choice === "antigravity") {
     for (const r of rows) {
       db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(r.v);
@@ -228,7 +226,7 @@ export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | 
   // a picture-only timeline is made again with its sound once the library watches on a Gemini key that has credit
   return (
     t.level !== libraryLookLevel(r.library_id) ||
-    (t.model === "antigravity" && libraryWatchModel(db, r.library_id) !== "antigravity" && creditChoice("GEMINI_API_KEY", watchKey(actor)) !== "antigravity")
+    (t.model === "antigravity" && libraryWatchModel(db, r.library_id) !== "antigravity" && creditChoice("GEMINI_API_KEY", watchKey(actor), actor) !== "antigravity")
   );
 }
 

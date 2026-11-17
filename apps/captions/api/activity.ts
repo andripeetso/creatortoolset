@@ -284,9 +284,8 @@ export function activityApp(plugins: ServerPlugin[]) {
     const user = c.get("user");
     const [{ chooseCredit }, timeline, { libraryDb }] = await Promise.all([import("./credits"), import("./library/timeline"), import("./library/db")]);
     if (choice === "antigravity" && !timeline.antigravityRoute(user.username)) return c.json({ error: "Needs Antigravity in Settings → Providers", code: "needs_antigravity" }, 409);
-    const owners = chooseCredit("GEMINI_API_KEY", user.username, choice);
-    if (!owners.length) return c.json({ error: "Not found", code: "not_found" }, 404);
-    return c.json({ libraries: timeline.creditWaitsChosen(libraryDb(), owners, user.username, choice) });
+    if (!chooseCredit("GEMINI_API_KEY", user.username, choice)) return c.json({ error: "Not found", code: "not_found" }, 404);
+    return c.json({ libraries: timeline.creditWaitsChosen(libraryDb(), user.username, choice) });
   });
   app.get("/menu", async (c) => {
     c.header("Cache-Control", "no-store");

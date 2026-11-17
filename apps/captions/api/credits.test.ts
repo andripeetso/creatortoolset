@@ -116,21 +116,36 @@ describe("a choice while the credit is out", () => {
       expect(labels(false)).toEqual(["Top up", "Continue without"]);
       expect(labels(true)).toEqual(["Top up", "Use Antigravity until then", "Continue without"]);
       expect(creditRows("local")[0]!.choices![0]).toEqual({ label: "Top up", url: "https://aistudio.google.com/billing" });
-      expect(chooseCredit("GEMINI_API_KEY", "someone", "without")).toEqual([]);
-      expect(chooseCredit("GEMINI_API_KEY", "local", "antigravity")).toEqual(["local"]);
-      expect(creditChoice("GEMINI_API_KEY", "gk-test")).toBe("antigravity");
+      expect(chooseCredit("GEMINI_API_KEY", "someone", "without")).toBe(false);
+      expect(chooseCredit("GEMINI_API_KEY", "local", "antigravity")).toBe(true);
+      expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBe("antigravity");
       expect(creditRows("local", true)[0]).toMatchObject({ detail: "Timelines are made on Antigravity, picture only, until it is topped up" });
       expect(labels(true)).toEqual(["Top up", "Continue without"]);
       creditOut("GEMINI_API_KEY", "gk-test", "Media Library timelines", t0 + 25 * 3600_000);
-      expect(creditChoice("GEMINI_API_KEY", "gk-test")).toBe("antigravity");
+      expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBe("antigravity");
       // without: nothing waits on them any more
       chooseCredit("GEMINI_API_KEY", "local", "without");
       expect(creditRows("local", true)).toEqual([]);
       creditBack("GEMINI_API_KEY", "gk-test");
-      expect(creditChoice("GEMINI_API_KEY", "gk-test")).toBeUndefined();
+      expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBeUndefined();
     } finally {
       creditBack("GEMINI_API_KEY", "gk-test");
       saveMyKey("local", "GEMINI_API_KEY", null);
+    }
+  });
+
+  it("a key with two owners: each one's pick is their own", () => {
+    creditGone.set("GEMINI_API_KEY:gk-two", { name: "GEMINI_API_KEY", stopped: "Media Library timelines", owners: ["local", "other"], at: Date.now() });
+    try {
+      chooseCredit("GEMINI_API_KEY", "local", "antigravity");
+      expect(creditChoice("GEMINI_API_KEY", "gk-two", "local")).toBe("antigravity");
+      expect(creditChoice("GEMINI_API_KEY", "gk-two", "other")).toBeUndefined();
+      expect(creditRows("other", true)[0]?.choices?.map((c) => c.label)).toEqual(["Top up", "Use Antigravity until then", "Continue without"]);
+      chooseCredit("GEMINI_API_KEY", "local", "without");
+      expect(creditRows("local", true)).toEqual([]);
+      expect(creditRows("other", true)).toHaveLength(1);
+    } finally {
+      creditBack("GEMINI_API_KEY", "gk-two");
     }
   });
 

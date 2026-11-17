@@ -56,11 +56,12 @@ const DAY = 24 * 3600_000;
  * most (an inbox note: the Mac app shows it) and sees it on Home's Activity until a call on the key works again.
  * ponytail: in memory; a restart forgets, and the next failed call tells again
  */
-export const creditGone = new Map<string, { name: MyKeyEnv; stopped: string; owners: string[]; at: number; choice?: CreditChoice }>();
+export const creditGone = new Map<string, { name: MyKeyEnv; stopped: string; owners: string[]; at: number; choices?: Record<string, CreditChoice> }>();
 
 /**
  * What an owner picked for the work that waits until the credit is back (Gemini only, Home's Activity): its timelines on
- * Antigravity, picture only, or none (Timelines off in those libraries). Kept until a call on the key works again.
+ * Antigravity, picture only, or none (Timelines off in those libraries). Each owner's own (a server key serves several),
+ * kept until a call on the key works again.
  */
 export type CreditChoice = "antigravity" | "without";
 
@@ -87,18 +88,19 @@ export function creditOut(name: MyKeyEnv, key: string, stopped: string, now = Da
     .catch(() => {});
 }
 
-/** What `key`'s owners picked while its credit is out (CreditChoice), if anything. */
-export const creditChoice = (name: MyKeyEnv, key: string): CreditChoice | undefined => (key ? creditGone.get(`${name}:${key}`)?.choice : undefined);
+/** What `actor` picked while `key`'s credit is out (CreditChoice), if anything. */
+export const creditChoice = (name: MyKeyEnv, key: string, actor: string | null): CreditChoice | undefined =>
+  key && actor ? creditGone.get(`${name}:${key}`)?.choices?.[actor] : undefined;
 
-/** `username` picked `choice` for `name`'s keys of theirs that are out of credit: the owners those keys serve (none: it is not theirs). */
-export function chooseCredit(name: MyKeyEnv, username: string, choice: CreditChoice): string[] {
-  const owners = new Set<string>();
+/** `username` picked `choice` for `name`'s keys of theirs that are out of credit; false when none is theirs. */
+export function chooseCredit(name: MyKeyEnv, username: string, choice: CreditChoice): boolean {
+  let any = false;
   for (const g of creditGone.values())
     if (g.name === name && g.owners.includes(username)) {
-      g.choice = choice;
-      g.owners.forEach((o) => owners.add(o));
+      g.choices = { ...g.choices, [username]: choice };
+      any = true;
     }
-  return [...owners];
+  return any;
 }
 
 /** A call on `key` worked: its credit is back, its warning goes. */
@@ -120,8 +122,8 @@ function choicesOf(name: MyKeyEnv, choice: CreditChoice | undefined, antigravity
 }
 
 /** What a key's row says: what stopped, or what runs instead since its owner picked it. */
-const detailOf = (g: { name: MyKeyEnv; stopped: string; choice?: CreditChoice }) =>
-  g.choice === "antigravity"
+const detailOf = (g: { name: MyKeyEnv; stopped: string }, choice: CreditChoice | undefined) =>
+  choice === "antigravity"
     ? "Timelines are made on Antigravity, picture only, until it is topped up"
     : g.name === "GEMINI_API_KEY"
       ? `${g.stopped} wait · the rest carries on without Gemini`
@@ -130,12 +132,12 @@ const detailOf = (g: { name: MyKeyEnv; stopped: string; choice?: CreditChoice })
 /** Home's Activity rows for `username`: each of their keys out of credit, waiting on them, with what they can do (choicesOf); one they let go on without (Continue without) waits no more. */
 export const creditRows = (username: string, antigravity = false): ActivityRow[] =>
   [...creditGone.values()]
-    .filter((g) => g.owners.includes(username) && g.choice !== "without")
+    .filter((g) => g.owners.includes(username) && g.choices?.[username] !== "without")
     .map((g) => ({
       id: `credit:${g.name}`,
       title: `${serviceName(g.name)}: out of credit`,
-      detail: detailOf(g),
+      detail: detailOf(g, g.choices?.[username]),
       state: "ready",
       href: "/settings/keys",
-      choices: choicesOf(g.name, g.choice, antigravity),
+      choices: choicesOf(g.name, g.choices?.[username], antigravity),
     }));

@@ -476,7 +476,8 @@ describe("Antigravity", () => {
       expect(model(v).error).toMatch(/^The Gemini credit ran out/);
       expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
       // picked: the wait ends now, and the watch goes to Antigravity
-      creditWaitsChosen(libraryDb(), chooseCredit("GEMINI_API_KEY", "local", "antigravity"), "local", "antigravity");
+      chooseCredit("GEMINI_API_KEY", "local", "antigravity");
+      creditWaitsChosen(libraryDb(), "local", "antigravity");
       expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
       await watchAfter(libraryDb(), v, async () => file, "local");
       expect(model(v)).toEqual({ model: "antigravity", error: null });
@@ -496,14 +497,28 @@ describe("Antigravity", () => {
     }
   });
 
+  it("a key two people share: one person's pick moves only their own waiting videos", async () => {
+    const { creditWaitsChosen } = await import("./timeline");
+    const { v: mine } = await seed("credit-mine");
+    const { v: theirs } = await seed("credit-theirs");
+    libraryDb().prepare("UPDATE asset_versions SET created_by = 'other' WHERE id = ?").run(theirs);
+    storeTimelineError(mine);
+    storeTimelineError(theirs);
+    const at = (id: string) => (libraryDb().prepare("SELECT at FROM timelines WHERE version_id = ?").get(id) as { at: number }).at;
+    const was = at(theirs);
+    creditWaitsChosen(libraryDb(), "local", "antigravity");
+    expect(at(mine)).toBe(0);
+    expect(at(theirs)).toBe(was);
+  });
+
   it("Continue without: Timelines go off in the person's libraries with a video waiting on the credit", async () => {
     const { creditWaitsChosen } = await import("./timeline");
     const { librarySetting } = await import("./db");
     const { v } = await seed("credit-without");
     storeTimelineError(v);
     try {
-      expect(creditWaitsChosen(libraryDb(), ["local"], "someone", "without")).toEqual([]);
-      expect(creditWaitsChosen(libraryDb(), ["local"], "local", "without")).toEqual(["lib_t"]);
+      expect(creditWaitsChosen(libraryDb(), "someone", "without")).toEqual([]);
+      expect(creditWaitsChosen(libraryDb(), "local", "without")).toEqual(["lib_t"]);
       expect(librarySetting("lib_t", "timeline")).toBe(false);
       expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(false);
     } finally {
