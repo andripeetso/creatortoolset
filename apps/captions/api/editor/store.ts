@@ -28,6 +28,7 @@ import { ownedTeamWithMembers } from "../lib/workspaces";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
+import { libraryHasSounds } from "../library/sfx";
 import { pluginsOffIn } from "../lib/plugin-workspaces";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { findUser, pictureOf, type SessionUser } from "../users";
@@ -378,7 +379,10 @@ const BUILT_IN_ITEMS: Record<EditSlot, EditItem[]> = {
   designSystem: [{ id: "plain", title: "Plain", from: null }],
   grade: [{ id: "none", title: "No grade", from: null }],
   voiceMix: [{ id: "level", title: "Level only", from: null }],
-  sfxSet: [{ id: "none", title: "No sound effects", from: null }],
+  sfxSet: [
+    { id: "library", title: "From my library", from: null },
+    { id: "none", title: "No sound effects", from: null },
+  ],
 };
 
 /**
@@ -451,9 +455,11 @@ export async function editorDefaults(username: string, workspace?: string): Prom
   }
   const chosen = await chosenDefaults(username, workspace);
   const bundle = { ...BUILT_IN_BUNDLE };
+  // sound effects: "From my library" is the default once the workspace's library has some; the built-in is "No sound effects"
+  const sfxDefault = (await libraryHasSounds(username, workspace)) ? "library" : BUILT_IN_BUNDLE.sfxSet;
   for (const slot of EDIT_SLOTS) {
     const candidates = [chosen[slot], ...packs.map((p) => p.editorDefaults?.[slot])];
-    bundle[slot] = candidates.find((id): id is string => !!id && items[slot].some((i) => i.id === id)) ?? BUILT_IN_BUNDLE[slot];
+    bundle[slot] = candidates.find((id): id is string => !!id && items[slot].some((i) => i.id === id)) ?? (slot === "sfxSet" ? sfxDefault : BUILT_IN_BUNDLE[slot]);
   }
   return { bundle, chosen, items };
 }

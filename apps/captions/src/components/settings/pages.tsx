@@ -15,6 +15,7 @@ import { ComputersSection } from "./ComputersSection";
 import { FoldersSection, StorageSection } from "./FoldersSection";
 import { WorkspaceDetailsSection } from "./WorkspaceDetailsSection";
 import { MediaLibrarySection } from "./MediaLibrarySection";
+import { SoundEffectsSection } from "./SoundEffectsSection";
 import { ServersSection } from "./ServersSection";
 import { GeneralSection } from "./GeneralSection";
 import { ToolsSection } from "./ToolsSection";
@@ -35,6 +36,7 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   storage: StorageSection,
   workspace: WorkspaceDetailsSection,
   library: MediaLibrarySection,
+  "sound-effects": SoundEffectsSection,
   providers: ProvidersSection,
   voice: VoiceSection,
   devices: ComputersSection,

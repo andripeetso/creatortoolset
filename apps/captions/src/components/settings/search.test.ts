@@ -7,7 +7,7 @@ import { SETTINGS_SEARCH_INDEX, searchSettings } from "./search";
 
 /** The sections of a full install (every page), with their titles, the way SettingsPage builds them. */
 const ALL = new Map<string, string>([
-  ["general", "General"], ["appearance", "Appearance"], ["tools", "Tools"], ["folders", "Folders"], ["storage", "Storage"], ["library", "Media Library"], ["providers", "Providers"], ["voice", "Voice"],
+  ["general", "General"], ["appearance", "Appearance"], ["tools", "Tools"], ["folders", "Folders"], ["storage", "Storage"], ["library", "Media Library"], ["sound-effects", "Sound effects"], ["providers", "Providers"], ["voice", "Voice"],
   ["devices", "Computers"], ["automations", "Scheduled tasks"], ["memory", "Memory"], ["usage", "Usage"], ["connectors", "Social accounts"],
   ["keys", "API keys"], ["own-ai", "Headless access"], ["servers", "Servers"], ["team", "Team"], ["admin", "Admin"],
   ["account", "Account"],

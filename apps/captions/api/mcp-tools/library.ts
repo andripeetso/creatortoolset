@@ -1,4 +1,5 @@
 import type { AssetDetail, Collection, ShareCreated } from "../../contracts/library";
+import { SFX_TYPES } from "../../contracts/sfx";
 import { pick, str, ToolError, when, type Args, type ToolContext, type ToolModule } from "./types";
 
 // The Media Library's tools for one clip: read it, change its words, file it in a folder, share it. Search, the folder
@@ -75,8 +76,20 @@ export const libraryTools: ToolModule = {
         "A share link to one clip or one folder (its id) for people without an account: they can watch, and with download: true also download the files. days = how long the link lasts (default 7, max 90). The user is asked first. Make one only when the user asks for a link to share.",
       inputSchema: { type: "object", properties: { clip: str, folder: str, download: { type: "boolean" }, days: { type: "integer" } } },
     },
+    {
+      name: "find_sound_effects",
+      description:
+        "Add free sound effects (CC0, with their source and licence) to the Media Library's Sound effects folder. type: whoosh, swipe, pop, click, hit, riser, ding, glitch, typing, camera, paper, notification or transition. words: what it should sound like. count: how many (5 by default, 10 at most). Answers the sounds added and the matches already there.",
+      inputSchema: {
+        type: "object",
+        properties: { type: { type: "string", enum: [...SFX_TYPES] }, words: str, count: { type: "integer" } },
+      },
+    },
   ],
   handlers: {
+    find_sound_effects: async (a, ctx) => {
+      return ctx.json<Args>("/api/sfx/find", "POST", pick(a, ["type", "words", "count"]));
+    },
     media_get: async (a, ctx) => {
       const id = idOf(a.id, "the clip's id");
       const lib = await home(ctx);
