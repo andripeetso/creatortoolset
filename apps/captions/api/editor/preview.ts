@@ -20,7 +20,7 @@ import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
 import { sayFor } from "./progress";
 import { followPicked, HELD_NOTE } from "./subject";
-import { renderPlanPreview } from "./plan-render";
+import { renderPlanPreview, sfxMix } from "./plan-render";
 import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -178,10 +178,15 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
     if (!list.length) throw new Error("The draft has no speaker shots");
     const listFile = path.join(parts, "list.txt");
     await writeFile(listFile, list.join("\n"));
+    // the sound effects on A3 mix under the speaker's sound (sfxMix); with none the sound is levelled as before
+    const sfx = sfxMix(tl, files, 1, "[0:a]");
     await ffmpegTo(out, [
       "-f", "concat", "-safe", "0", "-i", listFile,
-      "-c:v", "copy",
-      "-af", "loudnorm=I=-14:TP=-1:LRA=11", "-ar", "48000",
+      ...(sfx?.inputs ?? []),
+      ...(sfx
+        ? ["-filter_complex", `${sfx.filter};[sfxm]loudnorm=I=-14:TP=-1:LRA=11[a]`, "-map", "0:v", "-map", "[a]"]
+        : ["-af", "loudnorm=I=-14:TP=-1:LRA=11"]),
+      "-c:v", "copy", "-ar", "48000",
       "-c:a", "aac", "-b:a", "192k",
       "-movflags", "+faststart",
     ]);
