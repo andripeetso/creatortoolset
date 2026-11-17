@@ -22,7 +22,7 @@ export function PackDetailView({ id, installed, reload }: { id: string; installe
     catalogPack(id).catch((e) => {
       if (!(e instanceof CatalogError && e.reason)) throw new Error(msg(e));
       forgetCached(key);
-      throw new Error(`Pulled from the community: ${e.reason}`);
+      throw new Error(`Removed from Community: ${e.reason}`);
     }),
   );
   if (error && !detail)
@@ -62,13 +62,13 @@ export function PackDetailView({ id, installed, reload }: { id: string; installe
         <PackActions id={id} name={entry.name} installed={installed} latest={entry.version} reload={reload} />
       </div>
       <section className="mt-5">
-        <h3 className="text-xs font-medium text-foreground">Where it goes</h3>
+        <h3 className="text-xs font-medium text-foreground">Places</h3>
         <div className="mt-2">
           <WhereItGoes pack={pack} />
         </div>
       </section>
       <section className="mt-5 rounded-lg border border-border p-4">
-        <h3 className="text-xs font-medium text-foreground">What it adds</h3>
+        <h3 className="text-xs font-medium text-foreground">Contents</h3>
         <div className="mt-1 text-xs text-muted-foreground">
           <ContentsSummary pack={pack} />
         </div>

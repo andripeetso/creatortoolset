@@ -4,6 +4,7 @@
 // are in now, and each missing file is looked for under it by the end of its path; the first one found gives the
 // folder change for the rest. What was found is kept per version in this browser, so it isn't asked again.
 
+import { applyMove, derivedMove, type PathMove } from "@contracts/places";
 import { allGranted, askMediaFolder, commonFolder, listMediaFolders, localMediaUrl } from "@/lib/local-files";
 
 export type Exists = (path: string) => Promise<boolean>;
@@ -29,17 +30,14 @@ export function candidates(path: string, folder: string): string[] {
 /** Missing files found under `folder`: { [path]: where it is }. A folder change that found one goes first for the next. */
 export async function relink(missing: string[], folder: string, exists: Exists): Promise<Record<string, string>> {
   const found: Record<string, string> = {};
-  const moves: [string, string][] = [];
+  const moves: PathMove[] = [];
   for (const p of missing) {
-    const tries = [...moves.filter(([from]) => p.startsWith(from)).map(([from, to]) => to + p.slice(from.length)), ...candidates(p, folder)];
+    const tries = [...moves.flatMap((m) => applyMove(p, m) ?? []), ...candidates(p, folder)];
     for (const c of new Set(tries)) {
       if (!(await exists(c))) continue;
       found[p] = c;
-      // the part both end with, from a "/": the rest of each is the folder change
-      let k = 0;
-      while (k < Math.min(p.length, c.length) && p[p.length - 1 - k] === c[c.length - 1 - k]) k++;
-      const cut = p.slice(p.length - k).indexOf("/");
-      if (cut >= 0) moves.unshift([p.slice(0, p.length - k + cut), c.slice(0, c.length - k + cut)]);
+      const m = derivedMove(p, c);
+      if (m) moves.unshift(m);
       break;
     }
   }

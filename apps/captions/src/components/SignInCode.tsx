@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, KeyRound } from "lucide-react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
@@ -31,14 +31,14 @@ function Qr({ uri }: { uri: string }) {
   useEffect(() => {
     void QRCode.toDataURL(uri, { margin: 1, width: 176 }).then(setSrc);
   }, [uri]);
-  return src ? <img src={src} alt="QR code for your authenticator app" className="size-44 rounded-lg bg-white" /> : <div className="size-44" />;
+  return src ? <img src={src} alt="QR code for the authenticator app" className="size-44 rounded-lg bg-white" /> : <div className="size-44" />;
 }
 
 function RecoveryCodes({ codes }: { codes: string[] }) {
   const copy = () =>
     navigator.clipboard.writeText(codes.join("\n")).then(
       () => toast.success("Recovery codes copied"),
-      () => toast.error("Couldn't copy them. Select them and copy instead."),
+      () => toast.error("Could not copy them. Select them and copy instead."),
     );
   return (
     <div className="space-y-2">
@@ -81,7 +81,7 @@ export function CodeStep({ step, setup, onDone, onExpired }: { step: string; set
       if (r.ok && r.d.recovery) setDone({ user: r.d.user ?? null, recovery: r.d.recovery });
       else if (r.ok) onDone(r.d.user ?? null);
       else if (r.d.code === "STEP_EXPIRED") onExpired(r.d.error ?? "");
-      else setError(r.d.error || "That didn't work");
+      else setError(r.d.error || "Could not check the code");
     } catch {
       setError("Could not reach the server");
     } finally {
@@ -95,7 +95,7 @@ export function CodeStep({ step, setup, onDone, onExpired }: { step: string; set
         <ToolsetLogo className="h-11 w-11" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
-          <p className="text-sm text-zinc-500">{done ? "Recovery codes" : setup ? "Set up a sign-in code" : "Code from your authenticator app"}</p>
+          <p className="text-sm text-zinc-500">{done ? "Recovery codes" : setup ? "Set up a sign-in code" : "Code from the authenticator app"}</p>
         </div>
       </div>
       {done ? (
@@ -162,15 +162,19 @@ export function SignInCodeRow() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const asked = useRef(0);
   const open = async (which: "on" | "off") => {
+    const mine = ++asked.current;
     setCode("");
     setError(null);
     setSecret(null);
     setDialog(which);
     if (which === "off") return;
-    const r = await post<Secret>("/api/auth/code/new", {});
-    if (r.ok) setSecret(r.d);
-    else setError(r.d.error || "Could not start it");
+    const r = await post<Secret>("/api/auth/code/new", {}).catch(() => null);
+    // closed and opened again meanwhile: that one's answer is the dialog's
+    if (mine !== asked.current) return;
+    if (r?.ok) setSecret(r.d);
+    else setError(r?.d.error || "Could not start it");
   };
   const submit = async () => {
     setBusy(true);
@@ -204,7 +208,7 @@ export function SignInCodeRow() {
         onOpenChange={(o) => !o && setDialog(null)}
         title="Sign-in code"
         submitLabel="Turn on"
-        submitDisabled={!secret || !code.trim()}
+        submitDisabled={!secret}
         busy={busy}
         error={error}
         onSubmit={submit}
@@ -213,19 +217,18 @@ export function SignInCodeRow() {
           {secret ? <Qr uri={secret.uri} /> : <div className="size-44" />}
           <p className="select-text text-center font-mono text-xs text-muted-foreground">{secret ? grouped(secret.secret) : " "}</p>
         </div>
-        <Input aria-label="Code" placeholder="6-digit code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+        <Input aria-label="Code" placeholder="6-digit code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus required />
       </FormDialog>
       <FormDialog
         open={dialog === "off"}
         onOpenChange={(o) => !o && setDialog(null)}
         title="Turn off sign-in code"
         submitLabel="Turn off"
-        submitDisabled={!s.mac && !code.trim()}
         busy={busy}
         error={error}
         onSubmit={submit}
       >
-        {!s.mac && <Input aria-label="Code" placeholder="Code or recovery code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />}
+        {!s.mac && <Input aria-label="Code" placeholder="Code or recovery code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus required />}
       </FormDialog>
       <Dialog open={!!recovery} onOpenChange={(o) => !o && setRecovery(null)}>
         <DialogContent aria-describedby={undefined} className="sm:max-w-md">

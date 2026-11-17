@@ -145,7 +145,7 @@ describe.skipIf(rootReplaced)("AI Editor: edits shared in their workspace", () =
       await call("bo", "POST", `/api/editor/${anas}/run`, { from: "analyze" });
       updateMember(workspaceOf("ana")!, "bo", "owner", { workspaces: [] });
       await drain();
-      expect((await json<Edit>(call("ana", "GET", `/api/editor/${anas}`))).jobs.find((j) => j.kind === "analyze")).toMatchObject({ state: "failed", error: expect.stringMatching(/no longer yours/) });
+      expect((await json<Edit>(call("ana", "GET", `/api/editor/${anas}`))).jobs.find((j) => j.kind === "analyze")).toMatchObject({ state: "failed", error: expect.stringMatching(/cannot be read by this account/) });
       expect(await listed("bo")).toEqual([]);
     } finally {
       updateMember(workspaceOf("ana")!, "bo", "owner", { workspaces: [FIRST] });

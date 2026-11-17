@@ -43,10 +43,10 @@ export interface AppTool {
 
 const APP_TOOLS: { id: string; title: string; href: string; gate?: string }[] = [
   { id: "home", title: "Home", href: "/" },
-  { id: "workshop", title: "Workshop", href: "/workshop", gate: "workshop" },
+  { id: "workshop", title: "Content Workshop", href: "/workshop", gate: "workshop" },
   { id: "editor", title: "AI Editor", href: "/editor", gate: "editor" },
   { id: "finals", title: "Finals", href: "/finals", gate: "media" },
-  { id: "analyzer", title: "Analyzer", href: "/analyzer", gate: "instagram" },
+  { id: "analyzer", title: "Content Analyzer", href: "/analyzer", gate: "instagram" },
 ];
 
 /** The Go menu's tools this account may use, in menu order. */
@@ -179,7 +179,7 @@ async function appWork(user: SessionUser): Promise<AppWork> {
     : [];
   const u = user.username;
   const [analyzer, notes, enhance, review, guides, captioning, knowledge] = await Promise.all([
-    soft(may(user, "instagram"), async () => (await import("./instagram")).analyzerWork(u)),
+    soft(may(user, "instagram"), async () => (await import("./instagram")).analyzerWork(u, here)),
     soft(may(user, "notes"), async () => (await import("./clips")).notesWork(u, here)),
     soft(may(user, "enhance"), async () => (await import("./enhance")).enhancing(u, here)),
     soft(may(user, "review"), async () => (await import("./review")).reviewWork(u)),
@@ -195,7 +195,7 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 const STEP: Record<string, [string, string]> = {
   files: ["file", "files"],
   transcript: ["transcript", "transcripts"],
-  describe: ["AI description", "AI descriptions"],
+  describe: ["description", "descriptions"],
   embed: ["search entry", "search entries"],
 };
 
@@ -217,7 +217,7 @@ export function appRows(w: AppWork): ActivityRow[] {
     if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share });
     for (const x of p.waiting) {
       const [one, many] = STEP[x.step] ?? ["file", "files"];
-      const what = `${count(x.count, one, many)} ${x.count === 1 ? "waits" : "wait"}`;
+      const what = `${count(x.count, one, many)} paused`;
       if (x.limit) add("limit", what, { reason: x.missing });
       else {
         const { text, href } = waitingLine(x);
@@ -228,7 +228,7 @@ export function appRows(w: AppWork): ActivityRow[] {
   for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "AI Editor", state: "working", href: `/editor/${e.id}` });
   // the other tools: the thing worked on, the tool and what it does; how far, when the tool knows and it is not waiting
   const work = (id: string, title: string, tool: string, doing: string, href: string, x: { waits?: boolean; progress?: number } = {}) =>
-    rows.push({ id, title, detail: `${tool} · ${x.waits ? "waits its turn" : doing}`, state: "working", href, ...(!x.waits && x.progress !== undefined ? { progress: x.progress } : {}) });
+    rows.push({ id, title, detail: `${tool} · ${x.waits ? "queued" : doing}`, state: "working", href, ...(!x.waits && x.progress !== undefined ? { progress: x.progress } : {}) });
   const ANALYZER = { post: ["reading the post", "/instagram/"], account: ["pulling the account", "/instagram/accounts/"], ideas: ["finding ideas", "/instagram"] } as const;
   for (const a of w.analyzer ?? []) {
     const [doing, page] = ANALYZER[a.kind];
@@ -246,7 +246,7 @@ export function appRows(w: AppWork): ActivityRow[] {
     rows.push({
       id: `export:${j.id}`,
       title: j.filename,
-      detail: running ? `Exporting · ${pct(j.progress)}` : "Export · waits its turn",
+      detail: running ? `Exporting · ${pct(j.progress)}` : "Export · queued",
       state: "working",
       href: j.projectId ? `/captions?project=${encodeURIComponent(j.projectId)}` : "/captions",
       ...(running ? { progress: j.progress } : {}),

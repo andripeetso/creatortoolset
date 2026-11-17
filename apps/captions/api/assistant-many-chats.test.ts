@@ -187,7 +187,7 @@ describe("many chats", () => {
     expect(jobs.map((j) => /Chat (\d)/.exec(j.user)![1]).sort()).toEqual(["0", "1", "2"]);
     const fourth = p.claim();
     expect(await stillWaiting(fourth)).toBe(true);
-    expect((await p.chat(ids[3]!)).messages.at(-1)!.wait).toEqual({ for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are answering` });
+    expect((await p.chat(ids[3]!)).messages.at(-1)!.wait).toEqual({ for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are working` });
     const list = await p.chats();
     for (const id of ids) expect(list.find((c) => c.id === id)).toMatchObject({ working: true, count: 2 });
     await p.answer(byText(jobs, "Chat 1").id, "One done.");

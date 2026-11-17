@@ -239,7 +239,6 @@ export function AddProviderDialog({
       submitLabel="Add provider"
       onSubmit={submit}
       busy={busy}
-      submitDisabled={!driver}
       error={error ?? catalogError}
     >
       <ToolGrid

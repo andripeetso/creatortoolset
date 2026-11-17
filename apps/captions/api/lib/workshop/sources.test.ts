@@ -37,6 +37,9 @@ describe("a project's material (Write it for me, and the files it keeps)", () =>
     // the folder the Mac reads them in, or a "./", is not part of the name
     expect(parseDraft('{"notes":"x","files":[{"file":"material/kit/privacy.md","keep":false},{"file":"./kit/README.md","keep":false}]}', names).files.filter((f) => !f.keep).map((f) => f.file)).toEqual(["kit/README.md", "kit/privacy.md"]);
     expect(() => parseDraft('{"files":[]}', names)).toThrow();
+    // what the material says two ways comes back as sentences; anything else in the list is dropped
+    expect(d.unsure).toEqual([]);
+    expect(parseDraft('{"notes":"x","unsure":["A says 1, B says 2.", 3, " "]}', names).unsure).toEqual(["A says 1, B says 2."]);
   });
 
   it("a folder kept as one source: each file under its path, its section's lines exact, filed only when every file says what it is", () => {

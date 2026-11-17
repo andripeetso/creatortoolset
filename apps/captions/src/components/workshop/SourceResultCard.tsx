@@ -89,9 +89,9 @@ export function SourceResultCard({
             </span>
           ) : null}
         </p>
-        <p className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-foreground">{headlineOf(hit) || <span className="text-muted-foreground">No caption</span>}</p>
+        <p className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-foreground">{headlineOf(hit) || <span className="text-muted-foreground">No post description</span>}</p>
         {plain ? null : (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1" title="Where each search term was found — idea, then on-screen, then transcript, then caption">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1" title="Where each search term was found">
           {hit.matches.map((m) => (
             <span
               key={m.term}
@@ -111,7 +111,7 @@ export function SourceResultCard({
             </span>
           ))}
           {hit.matches.length === 0 ? <span className="text-[10px] text-zinc-600">similar wording</span> : null}
-          {hit.commentsOnly ? <span className="text-[10px] text-zinc-500">only the comments mention it</span> : null}
+          {hit.commentsOnly ? <span className="text-[10px] text-zinc-500">in the comments only</span> : null}
         </div>
         )}
         {usedIn?.length ? (

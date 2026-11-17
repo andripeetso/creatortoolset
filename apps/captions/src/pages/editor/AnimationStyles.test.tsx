@@ -107,9 +107,9 @@ describe("The animation style sheet", () => {
   it("a saved style shows what was liked and what was added, each with its ×, and says nothing else", async () => {
     await tab([blue], blue);
     expect([...document.querySelectorAll("form h3")].map((h) => h.textContent)).toEqual(["Made & liked", "Inspirations"]);
-    expect(document.querySelectorAll('form [aria-label="Take this picture out"]')).toHaveLength(2);
+    expect(document.querySelectorAll('form [aria-label="Remove this picture"]')).toHaveLength(2);
     expect(document.querySelector("form p")).toBeNull(); // no line of explanation
-    act(() => (document.querySelector('[aria-label="Inspirations"] [aria-label="Take this picture out"]') as HTMLElement).click());
+    act(() => (document.querySelector('[aria-label="Inspirations"] [aria-label="Remove this picture"]') as HTMLElement).click());
     await flush();
     expect(sent.at(-1)).toMatchObject({ method: "DELETE", url: "/api/editor/animation-styles/a_1/pictures/p_2" });
   });
@@ -124,7 +124,7 @@ describe("The animation style sheet", () => {
     act(() => void input.dispatchEvent(new Event("change", { bubbles: true })));
     await flush();
     expect(sent).toEqual([]); // nothing is sent before Save
-    expect(document.querySelectorAll('form [aria-label="Take this picture out"]')).toHaveLength(1); // the text file is no picture
+    expect(document.querySelectorAll('form [aria-label="Remove this picture"]')).toHaveLength(1); // the text file is no picture
     await save("animation-name");
     expect(sent).toEqual([
       { method: "POST", url: "/api/editor/animation-styles", body: { name: "Paper", brief: "Torn paper, warm light." } },

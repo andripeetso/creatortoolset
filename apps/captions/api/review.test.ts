@@ -603,11 +603,15 @@ describe("plug-in data and edit references", () => {
     const place = async () => {};
     const added = await addVersion(undefined, {
       owner: "owner", name: "Draft.mp4", mime: "video/mp4", bytes: 1, edit: { project: "tiny-proj", draft: "Main" },
+      local: "/Users/tiny/Shoot/drafts/Main.preview.mp4",
     }, place);
     const id = added!.meta.id;
-    expect((await read(app.request(`/assets/${id}`))).asset.versions[0].edit).toEqual({ project: "tiny-proj", draft: "Main" });
+    const mine = (await read(app.request(`/assets/${id}`))).asset.versions[0];
+    expect(mine.edit).toEqual({ project: "tiny-proj", draft: "Main" });
+    expect(mine.local).toBe("/Users/tiny/Shoot/drafts/Main.preview.mp4");   // the Mac app's Show in Finder
     const token = (await read(app.request(`/assets/${id}`, patch({ share: { enabled: true } })))).share.token;
     const shared = await read(app.request(`/s/${token}`));
     expect(shared.asset.versions[0]).not.toHaveProperty("edit");
+    expect(shared.asset.versions[0]).not.toHaveProperty("local");   // a path on someone's computer stays private
   });
 });

@@ -268,13 +268,11 @@ export function ClipSourceModal({
             ) : null}
             {clip === null ? (
               <p className="text-[11px] text-muted-foreground">
-                Clip details aren’t available here. Open the clip page for
-                takeaways and the action plan.
+                Could not load the clip’s details
               </p>
             ) : clip && blocks.length === 0 && chapters.length === 0 ? (
               <p className="text-[11px] text-muted-foreground">
-                No takeaways or action plan on this clip yet. Open the clip
-                page to generate them.
+                No takeaways or action plan
               </p>
             ) : null}
             {chapters.length > 0 ? (

@@ -10,8 +10,11 @@ import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
 import { loudest, peaks } from "@/lib/waveform";
-import { allGranted, localMediaFiles, localMediaUrl } from "@/lib/local-files";
+import { allGranted, askMediaFolder, localMediaFiles, localMediaUrl } from "@/lib/local-files";
 import { findOriginals, openOriginals, type Originals } from "@/lib/relink";
+import { rootName, useHere } from "@/lib/here";
+import { listLibraries } from "@/lib/library";
+import { macPlaces } from "@/lib/thisMac";
 import {
   cameraIn,
   clampCrop,
@@ -151,21 +154,41 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   useEffect(() => () => camAsk.current?.abort(), []);
   // the edit's recordings on this computer (source key to path: an AI edit's from the plug-in, an imported timeline's
   // from its file; managers only) and the ones the Mac app plays (lib/relink.ts): with every voice clip's file found,
-  // the timeline's edits play with their real sound (a voice pulled out plays its words)
+  // the timeline's edits play with their real sound (a voice pulled out plays its words). An AI edit's sources are
+  // library clips (their keys are version ids): in a Mac app that checks where originals are (lib/here.ts), the ones it
+  // answers for play from where this computer has them, asked again as disks come and go; the rest by path, as before.
+  const [paths, setPaths] = useState<Record<string, string> | null>(null);
+  const [libraries, setLibraries] = useState<string[] | null>(null);
   const [originals, setOriginals] = useState<Originals | null>(null);
   const store = () => `${asset.id}.${version.n}`; // what was found here, per version
   useEffect(() => {
     const sources = edit ? hooks.sources && ((s: AbortSignal) => hooks.sources!(edit, s)) : () => api.timelineSources(version.n);
     if (!manage || !sources || !localMediaFiles()) return;
     const ctl = new AbortController();
-    sources(ctl.signal).then(async (paths) => {
-      if (!Object.keys(paths).length || ctl.signal.aborted) return;
-      const o = await openOriginals(paths, store());
-      if (!ctl.signal.aborted) setOriginals(o);
+    const libs = edit && macPlaces() ? listLibraries().then((ls) => ls.map((l) => l.id), () => []) : [];
+    Promise.all([sources(ctl.signal), libs]).then(([p, l]) => {
+      if (!Object.keys(p).length || ctl.signal.aborted) return;
+      setLibraries(l.length ? l : null);
+      setPaths(p);
     }, () => {});
     return () => ctl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per edit
   }, [edit?.project, edit?.draft, manage]);
+  const [here, hereAgain] = useHere(libraries, paths ? Object.keys(paths) : []);
+  const waiting = !!libraries && !here;
+  useEffect(() => {
+    if (!paths || waiting) return;
+    let gone = false;
+    void openOriginals(Object.fromEntries(Object.entries(paths).filter(([s]) => !here?.[s])), store()).then((o) => !gone && setOriginals(o));
+    return () => {
+      gone = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once the library's answer is in
+  }, [paths, waiting]);
+  const placed = Object.entries(here ?? {}).flatMap(([s, c]) => (c.state === "here" && c.url ? [[s, c] as const] : []));
+  const found: Record<string, string> = { ...originals?.found, ...Object.fromEntries(placed.map(([s, c]) => [s, c.path])) };
+  const urls: Record<string, string> = Object.fromEntries(placed.map(([s, c]) => [s, c.url]));
+  const urlOf = (s: string) => urls[s] ?? localMediaUrl(found[s]);
   const allowOriginals = async () => {
     if (originals) setOriginals(await findOriginals(originals, store()));
   };
@@ -259,7 +282,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           setCrop(null);
           await reload(); // the next version: the panel starts again on it
           setTheir(null);
-        }, (e: Error) => !ctl.signal.aborted && setTheir({ error: e.message || "Couldn't make the next version" }));
+        }, (e: Error) => !ctl.signal.aborted && setTheir({ error: e.message || "Could not make the next version" }));
       return;
     }
     if (!own) return;
@@ -269,7 +292,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
         ownEdit.set(e);
         setHist(freshHist(EMPTY_PENDING));
         setCrop(null);
-      }, (e: Error) => toast.error(e.message || "Couldn't make the next version"))
+      }, (e: Error) => toast.error(e.message || "Could not make the next version"))
       .finally(() => setMaking(false));
   };
 
@@ -282,7 +305,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     setCam({});
     camera(edit, ctl.signal).then(
       (url) => !ctl.signal.aborted && setCam({ url }),
-      (e: Error) => !ctl.signal.aborted && setCam({ error: e.message || "Couldn't get the camera frame" }),
+      (e: Error) => !ctl.signal.aborted && setCam({ error: e.message || "Could not get the camera frame" }),
     );
   };
 
@@ -299,31 +322,38 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   // and holds; a version without stems (an imported timeline) plays every audio lane from its files
   const soundLanes = version.stems ? ["A1"] : (view?.tracks ?? []).filter((t) => t.id[0] === "A").map((t) => t.id);
   // the voice clips' files: all found = played from them; else the header offers to find them
-  const voiceFiles = [...new Set((view?.tracks.find((t) => t.id === "A1")?.items ?? []).flatMap((i) => i.src && originals?.paths[i.src] ? [i.src] : []))];
-  const filesFound = voiceFiles.filter((s) => originals?.found[s]).length;
+  const voiceFiles = [...new Set((view?.tracks.find((t) => t.id === "A1")?.items ?? []).flatMap((i) => i.src && paths?.[i.src] ? [i.src] : []))];
+  const filesFound = voiceFiles.filter((s) => found[s]).length;
   const originalsOn = voiceFiles.length > 0 && filesFound === voiceFiles.length;
-  const sound = view && plan && originals && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
+  // what this computer said of the voice clips that are library clips: one folder to allow, or why they don't play
+  const voiceHere = voiceFiles.flatMap((s) => here?.[s] ?? []);
+  const access = voiceHere.find((c) => c.state === "here" && c.needs === "access");
+  const off = voiceHere.filter((c) => c.state === "away" || c.state === "gone");
+  const offLine = off[0] && `${off.length} of ${voiceFiles.length} originals ${
+    off[0].state === "gone" ? "missing here" : off[0].root ? `on ${rootName(off[0].root)}, which isn't connected` : "not connected"}`;
+  const lost = voiceFiles.filter((s) => !found[s] && !here?.[s]);
+  const sound = view && plan && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
     ...soundPieces(splitView(view, playEdits), playEdits, plan, soundLanes)
-      .filter((p) => originals.found[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.found[p.src]) })),
+      .filter((p) => found[p.src]).map((p) => ({ ...p, src: urlOf(p.src) })),
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
   ] : null;
   // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
-  const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!, (s) => !!originals!.found[s])
-    .filter((p) => originals!.found[p.src])
+  const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!, (s) => !!found[s])
+    .filter((p) => found[p.src])
     .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
       const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
-      return { src: localMediaUrl(originals!.found[src]), at, frames, offset, x: box.x, y: box.y, s: box.s };
+      return { src: urlOf(src), at, frames, offset, x: box.x, y: box.y, s: box.s };
     }) : null;
   // each sound clip's own waveform from its file, once the files are found: the timeline draws a clip and what its
   // edges are pulled out to from it (`waves[item.key]`, the file from its first second), so a stretched edge shows the
   // words that are really there. Sound files only: a camera file would be decoded whole for its sound.
   const audioFile = (p: string) => /\.(wav|aif|aiff|m4a|mp3|flac|caf)$/i.test(p);
-  const waveFiles = originalsOn && originals ? Object.entries(originals.found).filter(([, p]) => audioFile(p)) : [];
+  const waveFiles = originalsOn ? Object.entries(found).filter(([, p]) => audioFile(p)) : [];
   const waveKey = JSON.stringify(waveFiles);
   useEffect(() => {
     if (!waveFiles.length || !view) return void setClipWaves(null);
     let gone = false;
-    Promise.all(waveFiles.map(([src, p]) => peaks(localMediaUrl(p)).then((d): [string, Float32Array] => [src, d], () => null)))
+    Promise.all(waveFiles.map(([src]) => peaks(urlOf(src)).then((d): [string, Float32Array] => [src, d], () => null)))
       .then((got) => {
         if (gone) return;
         const bySrc = Object.fromEntries(got.filter((g): g is [string, Float32Array] => !!g));
@@ -428,46 +458,52 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-          {own || theirs ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
-          {originals && voiceFiles.length > 0 && !originalsOn && (
+          {!own && !theirs && !manage && "Click a clip to comment on it"}
+          {originals && lost.length > 0 && (
             <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
-              title="Your edits play with the real sound from the original recordings: allow their folder, or the folder they are in now">
-              {originals.tried || voiceFiles.some((s) => allGranted([originals.paths[s]], originals.folders))
+              title="Edits play with the sound of the original recordings: allow their folder, or the folder they are in now">
+              {originals.tried || lost.some((s) => allGranted([paths![s]], originals.folders))
                 ? "Find the original files" : "Play edits from the originals"}
             </button>
           )}
+          {access && (
+            <button onClick={() => void askMediaFolder(access.folder).then(hereAgain)} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800">
+              Allow access to {access.root?.name ?? access.folder.split("/").filter(Boolean).pop() ?? access.folder}
+            </button>
+          )}
+          {offLine && <span>{offLine}</span>}
           {originals?.tried && !originalsOn && voiceFiles.length > 0 && <span>{filesFound} of {voiceFiles.length} files found</span>}
         </div>
         {((own && ownEdit.data && !working) || (theirs && !(their && "line" in their))) && planEdits.length > 0 && !crop && (
           <button type="button" disabled={making || !!hole} onClick={makeNext}
-            title={hole ? "A placeholder goes with a comment: send it or drop it first" : "Cut the next version from these timeline edits as you made them, with no AI"}
+            title={hole ? "A placeholder goes with a comment: send it or remove it first" : "Cut the next version from these timeline edits exactly as they are"}
             className="ml-auto rounded-full bg-violet-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-violet-500 disabled:opacity-40">
             {making ? "Starting…" : "Make the next version"}
           </button>
         )}
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}
-            title="Play your timeline edits and placeholders on this cut (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
+            title="Play the timeline edits and placeholders on this version (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
             className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${previewOn ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-300"}`}>
             {previewOn ? "Edits shown" : "Edits hidden"}
           </button>
         )}
       </div>
       {own && working && (
-        <div className="text-[11px] text-violet-300">Making the next version{doing(working.line)} It shows up here when it is ready.</div>
+        <div className="text-[11px] text-violet-300">Making the next version{doing(working.line)}</div>
       )}
       {their && "line" in their && (
-        <div className="text-[11px] text-violet-300">Making the next version{doing(their.line)} It shows up here when it is ready.</div>
+        <div className="text-[11px] text-violet-300">Making the next version{doing(their.line)}</div>
       )}
       {their && "error" in their && (
-        <div role="alert" className="text-[11px] text-rose-400">The next version wasn't made: {their.error}</div>
+        <div role="alert" className="text-[11px] text-rose-400">Could not make the next version: {their.error}</div>
       )}
       {own && failed && (
         <div className="flex items-center gap-2 text-[11px] text-rose-400">
-          <span className="min-w-0 flex-1">The next version wasn't made: {failed.error}</span>
+          <span className="min-w-0 flex-1">Could not make the next version: {failed.error}</span>
           <button type="button" onClick={() => retryJob(own.edit, failed.id).then(ownEdit.set, (e: Error) => toast.error(e.message))}
             className="shrink-0 rounded border border-rose-400/50 px-1.5 py-0.5 text-rose-200 hover:bg-rose-950">
-            Try again
+            Retry
           </button>
         </div>
       )}
@@ -476,11 +512,6 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           Footage left out: {ownEdit.data.coverage.left.map((l) => `${l.title} (${l.why})`).join(", ")}
         </div>
       )}
-      {/* the shots the look before Review found still don't hold up in this version, the app's own edit or a plug-in's (nothing when it passed);
-          shot 0 is no shot: the line of a look or a fix that could not be made, and why */}
-      {(own?.fails ?? edit?.fails)?.map((f) => (
-        <div key={f.n} className="text-[11px] text-amber-300">{f.n ? `Shot ${f.n}: ` : ""}{f.why}</div>
-      ))}
       {sentEdits.length > 0 && (
         <div className="text-[11px] text-zinc-500">
           {sentEdits.length} edit{sentEdits.length === 1 ? "" : "s"} already sent with an open comment, shown until it is resolved
@@ -507,7 +538,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       )}
       {crop && !cam.url && (
         <div className={cam.error ? "text-[11px] text-rose-400" : "text-[11px] text-zinc-500"}>
-          {cam.error ?? "Getting the whole camera frame from the Mac…"}
+          {cam.error ?? "Getting the whole camera frame…"}
         </div>
       )}
       {hole && (
@@ -515,7 +546,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           <span className="min-w-0 flex-1 truncate">
             Placeholder on {hole.track} · {secs(hole.rec / fps)} → {secs((hole.rec + hole.len) / fps)}
           </span>
-          <button aria-label="Drop the placeholder" onClick={() => setHole(null)}
+          <button aria-label="Remove the placeholder" onClick={() => setHole(null)}
             className="rounded px-1 text-amber-400 hover:text-zinc-50">×</button>
         </div>
       )}

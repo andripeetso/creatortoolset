@@ -24,8 +24,8 @@ export function JobsDock({ post }: { post: InstagramPost }) {
   const downloaded = post.slides.filter((s) => s.bytes > 0).length;
   const detail =
     running?.id === "media" && post.slides.length
-      ? `Media ${downloaded}/${post.slides.length}`
-      : running?.label ?? (post.step === "queued" ? "Waiting in the queue" : "Working");
+      ? `Downloading ${downloaded} of ${post.slides.length}`
+      : running?.label ?? (post.step === "queued" ? "Waiting" : "Working");
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">

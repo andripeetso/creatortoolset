@@ -91,7 +91,7 @@ export interface JobGroup {
 }
 
 export const JOB_GROUPS: JobGroup[] = [
-  { id: "info", label: "Info", hint: "Caption, creator, date", types: ["info"], locked: true },
+  { id: "info", label: "Info", hint: "Post description, creator, date", types: ["info"], locked: true },
   { id: "stats", label: "Stats", hint: "Plays, likes, comments + a snapshot", types: ["stats"] },
   { id: "media", label: "Media", hint: "Every slide downloaded", types: ["media"], locked: true },
   {
@@ -101,11 +101,11 @@ export const JOB_GROUPS: JobGroup[] = [
     types: ["transcript", "vision"],
   },
   { id: "comments", label: "Comments", hint: "Public comments with replies", types: ["comments"] },
-  { id: "tags", label: "Tags", hint: "AI topic / format / hook tags", types: ["tags"] },
+  { id: "tags", label: "Tags", hint: "Topic, format and hook tags", types: ["tags"] },
   {
     id: "idea",
     label: "Idea",
-    hint: "Grand idea plus a takeaway one-liner",
+    hint: "The idea and a one-line takeaway",
     types: ["idea"],
   },
 ];
@@ -466,21 +466,21 @@ export function ideaStatusOf(status: IdeaStatus | undefined): IdeaStatus {
 }
 
 export const SAVED_FOR: { id: SavedFor; label: string; hint: string }[] = [
-  { id: "content", label: "Content", hint: "You might remake this idea" },
-  { id: "format", label: "Format", hint: "You're keeping the layout, not the topic" },
+  { id: "content", label: "Content", hint: "The idea, to remake" },
+  { id: "format", label: "Format", hint: "The layout, not the topic" },
 ];
 
 /** The third "Kept for" choice. It replaces content / format rather than adding to them. */
 export const KNOWHOW = {
   label: "Know-how",
-  hint: "Strategy, reference, other: just saved, never indexed, in its own list",
+  hint: "Strategy, reference, other: only saved, in its own list",
 };
 
 export const TAG_KINDS: { id: TagKind; label: string }[] = [
   { id: "format", label: "Format" },
   { id: "topic", label: "Topic" },
   { id: "hook", label: "Hook" },
-  { id: "cta", label: "CTA" },
+  { id: "cta", label: "Call to action" },
   { id: "audience", label: "Audience" },
   { id: "custom", label: "Tag" },
 ];
@@ -1067,7 +1067,7 @@ export const ingestPosts = (
 
 export const ingestPost = async (url: string) => {
   const { posts, errors } = await ingestPosts([url]);
-  if (!posts[0]) throw new Error(errors[0]?.error || "Ingest failed");
+  if (!posts[0]) throw new Error(errors[0]?.error || "Could not save the post");
   return posts[0];
 };
 
@@ -1177,9 +1177,9 @@ export type FindField = "idea" | "slides" | "transcript" | "caption" | "comments
 /** Where a word comes from decides its value: idea, on-screen, speech, then caption. */
 export const FIND_FIELD_LABELS: Record<FindField, string> = {
   idea: "idea",
-  slides: "on-screen",
+  slides: "on-screen text",
   transcript: "transcript",
-  caption: "description",
+  caption: "post description",
   comments: "comments",
 };
 
@@ -1420,13 +1420,13 @@ export const KIND_FILTERS: { id: PostKind; label: string }[] = [
 ];
 
 export const PROCESS_STEPS: { id: PostStep; label: string }[] = [
-  { id: "queued", label: "Waiting in the queue" },
-  { id: "resolve", label: "Resolving the link" },
-  { id: "info", label: "Reading post details" },
+  { id: "queued", label: "Waiting" },
+  { id: "resolve", label: "Opening the link" },
+  { id: "info", label: "Reading the post" },
   { id: "download", label: "Downloading" },
   { id: "thumbs", label: "Preparing previews" },
-  { id: "transcribe", label: "Transcribing videos" },
+  { id: "transcribe", label: "Transcribing" },
   { id: "vision", label: "Reading the slides" },
-  { id: "comments", label: "Collecting comments" },
-  { id: "idea", label: "Distilling the idea" },
+  { id: "comments", label: "Loading comments" },
+  { id: "idea", label: "Writing the idea" },
 ];

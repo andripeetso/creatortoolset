@@ -12,6 +12,10 @@ vi.mock("../ai-complete", async (real) => {
   return { ...m, aiFor: vi.fn(() => ({ only: ["mac"] })) };
 });
 vi.mock("../ai-vision", () => ({ completeVisionWithFallback: vi.fn() }));
+vi.mock("../work/offline", async (real) => {
+  const m = await real<typeof import("../work/offline")>();
+  return { ...m, mayRead: vi.fn(m.mayRead) };
+});
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
@@ -25,7 +29,8 @@ const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { searchApp, searchLibrary } = await import("./search");
 const { stretchesOf, setUserLine } = await import("./stretches");
-const { BUDGET_WAITS, LOOK_LABEL, lookFromSheets, lookStamp, MAC_WAITS, queueLook, redoLook, releaseBudget, sheetHashes, sweepLook } = await import("./shots");
+const { mayRead } = await import("../work/offline");
+const { BUDGET_WAITS, LOOK_LABEL, lookFromSheets, lookStamp, MAC_WAITS, NO_ACCESS, queueLook, redoLook, releaseBudget, sheetHashes, sweepLook } = await import("./shots");
 const { libraryWorkspaceId } = await import("./describe");
 const { storeStretches } = await import("./stretches");
 const { lookPrompt, RULE, samePicture, stretchSheet } = await import("./look");
@@ -253,9 +258,9 @@ describe("which clips get a look", () => {
 
 describe("the background index", () => {
   /** Runs the sweep until it queues nothing more. */
-  const sweepAll = () => {
+  const sweepAll = async (now = Date.now()) => {
     let n = 0;
-    while (sweepLook(libraryDb())) n++;
+    while (await sweepLook(libraryDb(), now)) n++;
     return n;
   };
 
@@ -269,14 +274,35 @@ describe("the background index", () => {
     enqueueJob(d, "lib_s", mac, "look", "local");
     await runLooks(); // the Mac's look parks, waiting for it
     vi.mocked(completeVisionWithFallback).mockReset();
-    sweepAll();
+    await sweepAll();
     expect(job(missed)).toMatchObject({ state: "queued" });
     expect(job(talking)).toBeUndefined();
     expect(job(busy)).toBeUndefined(); // its description queues its look itself
     expect(job(mac)).toMatchObject({ state: "needs_key", error: MAC_WAITS });
-    expect(sweepLook(d)).toBe(false); // nothing left: the lane idles
+    expect(await sweepLook(d)).toBe(false); // nothing left: the lane idles
     // the earlier tests' clips the sweep queued too, and these: the next tests start from an empty queue
     d.prepare("DELETE FROM jobs WHERE (kind = 'look' AND state = 'queued') OR version_id IN (?, ?)").run(busy, mac);
+  });
+
+  it("an uploader who lost the clip between queue and run gets nothing read or asked; with access again, the sweep queues it and it runs", async () => {
+    const d = libraryDb();
+    const v = await seed("ast-acc-01");
+    await sweepAll(); // queued: the uploader sees it
+    expect(job(v)).toMatchObject({ state: "queued" });
+    vi.mocked(completeVisionWithFallback).mockImplementation(answerAll());
+    vi.mocked(mayRead).mockResolvedValue(false); // access taken away before the lane runs it
+    await runLooks();
+    expect(job(v)).toMatchObject({ state: "needs_key", error: NO_ACCESS });
+    expect(completeVisionWithFallback).not.toHaveBeenCalled();
+    expect(stretchesOf(d, v)).toEqual([]); // no picture read either
+    const later = Date.now() + 11 * 60_000;
+    expect(await sweepLook(d, later)).toBe(false); // still no access: the sweep leaves it
+    vi.mocked(mayRead).mockImplementation((await vi.importActual<typeof import("../work/offline")>("../work/offline")).mayRead);
+    await sweepAll(later + 11 * 60_000);
+    expect(job(v)).toMatchObject({ state: "queued" });
+    await runLooks();
+    expect(job(v)?.state).toBe("done");
+    expect(stretchesOf(d, v).every((r) => r.text)).toBe(true);
   });
 
   it("a spent monthly budget holds looks, saying so; raised, they run", async () => {

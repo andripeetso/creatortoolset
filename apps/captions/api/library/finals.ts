@@ -92,7 +92,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
       const row = d
         .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL")
         .get(source.versionId, input.libraryId) as { asset_id: string } | undefined;
-      if (!row) return { ok: false, code: "not_found", error: "That video is not in the library" };
+      if (!row) return { ok: false, code: "not_found", error: "That video is not in the Media Library" };
       if (!(await mayWrite(input.owner, input.libraryId, row.asset_id, source.versionId))) return { ok: false, code: "no_access", error: "Not allowed" };
       assetId = row.asset_id;
       versionId = source.versionId;

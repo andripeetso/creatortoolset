@@ -12,8 +12,8 @@ import type { ProvidersView } from "@contracts/providers";
 const STORAGE = "/api/devices/storage";
 const DEFAULT_LIBRARY_DISK = "~/Movies";
 const ROWS: { role: SourceRole; name: string; why: string }[] = [
-  { role: "footage", name: "Footage", why: "Video you film. Read where it is; nothing is moved." },
-  { role: "music", name: "Music", why: "Music you own. Read where it is; nothing is moved." },
+  { role: "footage", name: "Footage", why: "Video you film." },
+  { role: "music", name: "Music", why: "Music you own." },
 ];
 
 async function send(url: string, method: string, body?: unknown): Promise<void> {
@@ -78,7 +78,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
       setTyping(null);
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't add that folder. Check the path, then try again.");
+      setError(e instanceof Error ? e.message : "Could not add the folder: check the path");
     } finally {
       setBusy(false);
     }
@@ -103,13 +103,13 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
       <div className="space-y-4">
         {hostedError ? (
           <div className="space-y-2 text-sm">
-            <p className="text-muted-foreground">Couldn't reach your computers.</p>
+            <p className="text-muted-foreground">Could not load computers</p>
             <Button variant="outline" size="sm" onClick={loadHosted}>
-              Try again
+              Retry
             </Button>
           </div>
         ) : !providers || !me ? (
-          <p className="text-sm text-muted-foreground">Looking for your computers…</p>
+          <p className="text-sm text-muted-foreground">Loading computers…</p>
         ) : (
           <Storage devices={own} storage={storage} onChanged={() => void reload()} />
         )}
@@ -150,7 +150,6 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
               id={`ct-folder-path-${role}`}
               value={customPath}
               onChange={(e) => setCustomPath(e.target.value)}
-              placeholder="/Volumes/Drive/Footage"
               className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-sm"
             />
             <div className="flex items-center justify-end gap-2">
@@ -165,7 +164,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
         ) : (
           <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setTyping(role); setCustomPath(""); setError(null); }}>
             <Plus className="size-3.5" />
-            Type a folder path
+            Add folder
           </Button>
         )}
       </section>
@@ -195,7 +194,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
             </Button>
           ) : (
             <Button variant="ghost" disabled={busy} onClick={onNext}>
-              Skip for now
+              Skip
             </Button>
           ),
           actions,

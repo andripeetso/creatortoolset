@@ -92,9 +92,9 @@ describe("buildPackage", () => {
 
   it("refuses another account's step and a draft that names someone else's footage", async () => {
     // a step of an edit the account can't see, asked for in its name
-    await expect(buildPackage(held(EDIT, "v1", "critique", "dev_x", "other"), { id: "dev_x", owner: "other" })).rejects.toThrow(/no longer yours/);
+    await expect(buildPackage(held(EDIT, "v1", "critique", "dev_x", "other"), { id: "dev_x", owner: "other" })).rejects.toThrow(/cannot be read by this account/);
     await expect(buildPackage(held(EDIT, "v1", "draft", "dev_x"), { id: "dev_x", owner: "other" })).rejects.toThrow(/not this computer's account/);
-    await expect(buildPackage(held(THEIRS, "v1", "preview"), me)).rejects.toThrow(/no longer yours/);
+    await expect(buildPackage(held(THEIRS, "v1", "preview"), me)).rejects.toThrow(/cannot be read by this account/);
   });
 });
 

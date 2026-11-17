@@ -64,7 +64,7 @@ export function parseJsonObject(text: string): Record<string, unknown> {
   const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = stripped.indexOf("{");
   const end = stripped.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("no JSON in the answer");
+  if (start < 0 || end <= start) throw new Error("The AI’s answer could not be read");
   return JSON.parse(stripped.slice(start, end + 1)) as Record<string, unknown>;
 }
 
@@ -79,7 +79,7 @@ export function parseVisionPayload(text: string): VisionPayload {
   const kind = str(obj.text_kind ?? obj.textKind, 20).toLowerCase();
   const textKind: TextKind | undefined = kind === "none" || kind === "captions" || kind === "text" ? kind : undefined;
   if (!description && !onScreenText) {
-    throw new Error("the model returned neither text nor a description");
+    throw new Error("The AI’s answer had no text and no description");
   }
   return { onScreenText, description, ...(hook ? { hook } : {}), ...(textKind ? { textKind } : {}) };
 }

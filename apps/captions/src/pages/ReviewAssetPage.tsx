@@ -18,6 +18,7 @@ import {
   Clock,
   Columns2,
   Download,
+  FolderOpen,
   Layers,
   Loader2,
   Maximize,
@@ -85,6 +86,9 @@ import {
 import { undoable } from "@/lib/undo";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { cn } from "@/lib/utils";
+import { createPortal } from "react-dom";
+import { useChatShown } from "@/lib/chat-mode";
+import { useFeedback } from "@/lib/review-feedback";
 import { cornerTaken } from "@/lib/dock-place";
 import { useCachedLoad } from "@/lib/local-cache";
 import { fmtBytes } from "@/lib/exports";
@@ -105,6 +109,7 @@ import { payloadError } from "@contracts/review-payload";
 import { canChange, useMe } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { webPlugins } from "@/plugins.gen";
+import { canReveal, revealReviewFile } from "./library/clip";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
 const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-fuchsia-600", "bg-teal-600"];
@@ -166,7 +171,7 @@ export default function ReviewAssetPage() {
       <div className="flex h-dvh items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400">
         {loadError ? (
           <p>
-            {token || ptoken ? "This review link is off or doesn't exist." : loadError}
+            {token || ptoken ? "This review link is turned off or not found. Ask the person who shared it for a new link." : loadError}
             <br />
             <Link to="/" className="mt-3 inline-block text-violet-400 hover:underline">
               Creator Toolset
@@ -443,7 +448,10 @@ function Review({
       else if (k === "arrowright") step(e.shiftKey ? Math.max(1, Math.round(fps || 30)) : 1);
       else if (k === "m") setMuted((m) => !m);
       else if (k === "f") void fullscreen();
-      else if (k === "c" || k === "enter") composerBox.current?.focus();
+      else if (k === "c" || k === "enter") {
+        if (!composerBox.current) useFeedback.setState({ on: true }); // beside the chats: the box opens in feedback mode, focused
+        composerBox.current?.focus();
+      }
       // Tab = straight into the comment box; Shift+Tab, menus and dialogs keep Tab's own job
       else if (k === "tab" && !e.shiftKey && composerBox.current
         && !(e.target as HTMLElement | null)?.closest?.("[role=menu], [role=dialog], [role=alertdialog], [role=listbox]")) {
@@ -492,6 +500,17 @@ function Review({
     .filter((c) => !c.parentId)
     .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity) || a.createdAt - b.createdAt);
   const shown = threads.filter((c) => (filter === "all" ? true : filter === "done" ? c.resolved : !c.resolved));
+  // beside the chats the comments column goes, and the comment box moves into the chat's place in feedback mode
+  // (owner, 2026-11-16; lib/review-feedback)
+  const besideChat = useChatShown();
+  const feedback = useFeedback();
+  const offered = besideChat && !locked;
+  useEffect(() => {
+    if (!offered) return;
+    useFeedback.setState({ count: threads.length });
+    return () => useFeedback.setState({ count: null });
+  }, [offered, threads.length]);
+  const place = (box: React.ReactNode) => (!besideChat ? box : feedback.on && feedback.slot ? createPortal(box, feedback.slot) : null);
   const replies = (id: string) => all.filter((c) => c.parentId === id).sort((a, b) => a.createdAt - b.createdAt);
   const sel = threads.find((c) => c.id === selected);
   const frameTol = fps ? 1 / fps : 0.05;
@@ -632,7 +651,7 @@ function Review({
     patchComments((l) => l.map((x) => (x.id === id ? c : x)));
   };
   const remove = async (id: string) => {
-    if (!(await confirmDialog({ title: "Delete this comment?", body: "Its replies go with it.", ok: "Delete", danger: true, deleting: true }))) return;
+    if (!(await confirmDialog({ title: "Delete this comment?", body: "Its replies are deleted too.", ok: "Delete", danger: true, deleting: true }))) return;
     await api.deleteComment(id);
     patchComments((l) => l.filter((x) => x.id !== id && x.parentId !== id));
   };
@@ -784,7 +803,7 @@ function Review({
           onClose={() => setScreenEditor(false)}
           actions={[
             {
-              label: "Make video",
+              label: "Make the next version",
               primary: true,
               title: "Renders it on this computer and adds it to this video as the next version",
               run: async ({ blob, name }, progress) => {
@@ -808,24 +827,24 @@ function Review({
               <div className="absolute z-30 hidden items-center gap-1 text-xs text-zinc-300 sm:flex"
                 style={{ left: (rulers ? RULER : 0) + 8, top: (rulers ? RULER : 0) + 8 }}>
                 <div className="flex items-center rounded-md bg-zinc-950/80 shadow" title="Zoom into the picture: ⌥ + scroll or pinch over it, drag to move it">
-                  <button aria-label="Zoom the picture out" title="Zoom out" onClick={() => zoomPic(1 / 1.5)} disabled={pic.z <= 1}
+                  <button aria-label="Zoom out" title="Zoom out" onClick={() => zoomPic(1 / 1.5)} disabled={pic.z <= 1}
                     className="rounded-l-md px-2 py-1 hover:bg-zinc-800 disabled:opacity-30">−</button>
                   <button onClick={() => setPic({ z: 1, x: 0, y: 0 })} title="Fit the picture"
                     className="w-12 py-1 text-center tabular-nums hover:bg-zinc-800">{Math.round(pic.z * 100)}%</button>
-                  <button aria-label="Zoom the picture in" title="Zoom in" onClick={() => zoomPic(1.5)} disabled={pic.z >= 8}
+                  <button aria-label="Zoom in" title="Zoom in" onClick={() => zoomPic(1.5)} disabled={pic.z >= 8}
                     className="px-2 py-1 hover:bg-zinc-800 disabled:opacity-30">+</button>
-                  <button aria-label="Reset the view" title="Reset the view: fit the picture" onClick={() => setPic({ z: 1, x: 0, y: 0 })}
+                  <button aria-label="Fit the picture" title="Fit the picture" onClick={() => setPic({ z: 1, x: 0, y: 0 })}
                     disabled={pic.z === 1} className="rounded-r-md px-2 py-1.5 hover:bg-zinc-800 disabled:opacity-30">
                     <RotateCcw className="h-3 w-3" />
                   </button>
                 </div>
                 <button aria-pressed={rulers} onClick={() => setRulers((r) => !r)}
-                  title={rulers ? "Hide the rulers and guides" : "Rulers: drag out of one for a guide (kept for you)"}
+                  title={rulers ? "Hide rulers and guides" : "Show rulers"}
                   className={cn("rounded-md px-2 py-1.5 shadow", rulers ? "bg-violet-600 text-white" : "bg-zinc-950/80 hover:bg-zinc-800")}>
                   <Ruler className="h-3 w-3" />
                 </button>
                 {rulers && guides.length > 0 && (
-                  <button onClick={() => setGuides([])} title="Take every guide away"
+                  <button onClick={() => setGuides([])}
                     className="rounded-md bg-zinc-950/80 px-2 py-1 shadow hover:bg-zinc-800">Clear guides</button>
                 )}
               </div>
@@ -839,7 +858,7 @@ function Review({
                 <span className="block h-[30dvh] overflow-hidden rounded bg-zinc-900 opacity-40" style={{ aspectRatio: `${version.width || 9} / ${version.height || 16}` }}>
                   <Picture src={api.media(version, "thumb")} alt="" className="h-full w-full object-contain" />
                 </span>
-                V{version.n}'s video was deleted to save space. Its comments are still here.
+                V{version.n}'s video was deleted to save space.
               </div>
             ) : version.status === "ready" ? (
               <div ref={wrap} className={cn("relative", "overflow-hidden", pic.z > 1 && !drawMode && "cursor-grab active:cursor-grabbing")}
@@ -932,11 +951,11 @@ function Review({
                 <span className="h-1 w-48 overflow-hidden rounded-full bg-zinc-800">
                   <span className="block h-full bg-violet-500 transition-[width] duration-500" style={{ width: `${Math.round(version.progress * 100)}%` }} />
                 </span>
-                Preparing video for review · {Math.round(version.progress * 100)}%
+                Preparing · {Math.round(version.progress * 100)}%
               </div>
             ) : (
               <p className="flex max-w-md items-center gap-2 px-6 text-sm text-red-400">
-                <TriangleAlert className="h-4 w-4 shrink-0" /> {version.error || "This version failed to process"}
+                <TriangleAlert className="h-4 w-4 shrink-0" /> {version.error || "Could not prepare this version. Upload it again."}
               </p>
             )}
           </div>
@@ -1017,14 +1036,14 @@ function Review({
               muted={muted || editSound.live}
               onLive={setVoiceLive}
               save={version.edit && !locked ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
-                () => "Kept for this edit: the AI Editor cuts it again with this voice, back here as the next version.") : undefined}
+                () => "Making the next version with this voice") : undefined}
             />
           )}
 
         </div>
 
         {/* ---------- comments ---------- */}
-        <aside className="flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l">
+        <aside className={cn("flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l", besideChat && "hidden")}>
           <div className={cn("flex items-center gap-1 border-b border-zinc-900 px-3 py-2 text-xs")}>
             {(["all", "open", "done"] as const).map((f) => (
               <button
@@ -1043,7 +1062,7 @@ function Review({
           <div className="clears-bubble min-h-0 flex-1 overflow-y-scroll px-3 py-2">
             {shown.length === 0 ? (
               <p className="px-2 py-10 text-center text-sm text-zinc-600">
-                {threads.length ? "Nothing here." : "No comments yet. Pause on a frame and write one below."}
+                {threads.length ? `No ${filter} comments` : "No comments"}
               </p>
             ) : (
               shown.map((c) => (
@@ -1068,7 +1087,7 @@ function Review({
 
           {/* composer: drop (anywhere on the page) or paste images and videos in as references */}
           {/* in the window's bottom right corner: the assistant's bubble sits above this box, not over Send (dock-place.ts) */}
-          {!locked && <div ref={cornerTaken} className={cn("border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
+          {!locked && place(<div ref={cornerTaken} className={cn(!besideChat && "border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
             {guest && (
               <input
                 id="review-name"
@@ -1117,7 +1136,7 @@ function Review({
                 <span className="min-w-0 flex-1 truncate">
                   {anchors.length > 1 ? `About ${anchors.length} clips: ${anchors.map((a) => a.label).join(", ")}` : `About ${anchor.label} (${anchor.track})`}
                 </span>
-                <button aria-label={anchors.length > 1 ? "Not about these clips" : "Not about this clip"} onClick={() => setAnchor(null)} className="rounded px-1 text-violet-300 hover:text-zinc-50">×</button>
+                <button aria-label={anchors.length > 1 ? "Remove clips" : "Remove clip"} onClick={() => setAnchor(null)} className="rounded px-1 text-violet-300 hover:text-zinc-50">×</button>
               </div>
             )}
             <textarea
@@ -1130,6 +1149,7 @@ function Review({
                 attach([...e.clipboardData.files]);
               }}
               onFocus={pause}
+              autoFocus={besideChat}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -1140,7 +1160,7 @@ function Review({
                 }
               }}
               rows={3}
-              placeholder={dropping ? "Drop to attach it to this comment" : drawMode ? "Draw on the frame, then say what to change" : "Leave a comment…"}
+              placeholder={dropping ? "Drop to attach it to this comment" : drawMode ? "Draw on the frame, then say what to change" : "Write a comment"}
               className="[field-sizing:content] min-h-20 max-h-[50vh] w-full resize-none rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-violet-500"
             />
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1162,7 +1182,7 @@ function Review({
                   setRangeOut(null);
                   setRangeIn((r) => (r === null ? (video.current?.currentTime ?? time) : null));
                 }}
-                title="Range: starts here, ends where the playhead is when you post"
+                title="Range: starts here, ends at the playhead when the comment is sent"
               >
                 <MoveHorizontal className="h-3.5 w-3.5" /> Range
               </Chip>
@@ -1177,7 +1197,7 @@ function Review({
                 <PenLine className="h-3.5 w-3.5" />
               </Chip>
               <Chip on={false} onClick={() => refInput.current?.click()}
-                title="Attach an image or video to show what you mean (or paste or drop one); the AI reads it too">
+                title="Attach an image or video (or paste or drop one)">
                 <Paperclip className="h-3.5 w-3.5" />
               </Chip>
               <input
@@ -1196,7 +1216,7 @@ function Review({
                   {COLORS.map((c) => (
                     <button
                       key={c}
-                      aria-label={`Color ${c}`}
+                      aria-label={`Colour ${c}`}
                       onClick={() => setColor(c)}
                       className={cn("h-5 w-5 rounded-full border-2", color === c ? "border-white" : "border-transparent")}
                       style={{ background: c }}
@@ -1227,7 +1247,7 @@ function Review({
             <p className="mt-1.5 hidden text-[11px] text-zinc-600 lg:block">
               Space play · J/K/L or 1/2/3 shuttle · ←/→ frame · Shift ←/→ second · C comment
             </p>
-          </div>}
+          </div>)}
         </aside>
       </div>
     </div>
@@ -1235,6 +1255,10 @@ function Review({
 }
 
 // ---------- header: title, versions, approval, share ----------
+
+// ponytail: a file made on a Linux helper (/home/…) is never on this Mac, so it keeps Download; a cut made on another
+// Mac still gets Show in Finder, which downloads when the file is not here. Name the computer on the version if that bites.
+const MAC_PATH = /^\/(Users|Volumes)\//;
 
 function Header({
   view,
@@ -1390,7 +1414,7 @@ function Header({
               <span className="w-7 font-medium">V{v.n}</span>
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{v.name}</span>
               {v.captioned && <CC />}
-              {v.removed && <span className="text-[10px] text-zinc-500" title="Video deleted to save space">no file</span>}
+              {v.removed && <span className="text-[10px] text-zinc-500" title="Video deleted to save space">No file</span>}
               <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
                 <MessageSquare className="h-3 w-3" />
                 {comments.filter((c) => c.version === v.n && !c.parentId).length}
@@ -1401,7 +1425,7 @@ function Header({
           {manage && !locked && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => fileInput.current?.click()}>Upload new version…</DropdownMenuItem>
+              <DropdownMenuItem disabled={uploadPct !== null} onClick={() => fileInput.current?.click()}>Upload new version…</DropdownMenuItem>
             </>
           )}
         </DropdownMenuContent>
@@ -1434,7 +1458,7 @@ function Header({
             title="OTIO, FCP 7 XML, FCPXML or EDL. Resolve: File → Export → Timeline. Premiere: File → Export → Final Cut Pro XML. Final Cut: File → Export XML (pick Info.fcpxml inside the .fcpxmld)."
             className="rounded px-1 text-xs text-violet-300 hover:bg-zinc-900 hover:text-violet-200"
           >
-            {version.timelineFile ? "Replace timeline" : "Add timeline file"}
+            {version.timelineFile ? "Change timeline file" : "Add timeline file"}
           </button>
           {timelineError && <span className="text-xs text-red-400">{timelineError}</span>}
           <input
@@ -1470,7 +1494,23 @@ function Header({
 
       <div className="ml-auto flex items-center gap-2">
         <ApprovalControl asset={asset} manage={manage} locked={locked} approve={approve} />
-        {asset.download && version.status !== "error" && !version.removed && (
+        {version.local && MAC_PATH.test(version.local) && canReveal() && version.status !== "error" ? (
+          // made on a computer: its own file, shown in Finder when it is on this Mac (else Review's copy downloads)
+          <button
+            type="button"
+            onClick={() =>
+              void revealReviewFile(asset.id, version.n, version.local!).then((problem) => {
+                if (!problem) return;
+                setError(`${problem}: downloading Review's copy`);
+                if (asset.download) location.assign(api.media(version, "download"));
+              })
+            }
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+            title="Show in Finder"
+          >
+            <FolderOpen className="h-4 w-4" />
+          </button>
+        ) : asset.download && version.status !== "error" && !version.removed && (
           <a
             href={api.media(version, "download")}
             download
@@ -1509,12 +1549,12 @@ function Header({
               {!locked && <DropdownMenuItem
                 className="text-red-400"
                 onClick={async () => {
-                  if (!(await confirmDialog({ title: `Move “${asset.name}” to the trash?`, body: "You can restore it for 30 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
+                  if (!(await confirmDialog({ title: `Move “${asset.name}” to the trash?`, body: "It can be restored for 30 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
                   await deleteReviewAsset(asset.id);
                   navigate(libraryPath);
                 }}
               >
-                <Trash2 /> Delete video
+                <Trash2 /> Move to trash
               </DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1544,7 +1584,7 @@ function CaptionStudioButton({ asset, n, next }: { asset: ReviewAsset; n: number
         size="sm"
         variant={next ? "default" : "outline"}
         disabled={busy}
-        title="Open this version in Caption Studio. Same file, no upload."
+        title="Open this version in Caption Studio"
         className={cn(
           "h-7 text-xs",
           next ? "bg-emerald-600 text-white hover:bg-emerald-500" : "border-zinc-800 bg-transparent",
@@ -1560,9 +1600,9 @@ function CaptionStudioButton({ asset, n, next }: { asset: ReviewAsset; n: number
               next &&
               old.length &&
               (await confirmDialog({
-                title: `V${n} is approved. Delete the video files of ${old.map((x) => `V${x.n}`).join(", ")}?`,
-                body: `${fmtBytes(old.reduce((sum, x) => sum + x.bytes, 0))}. Their comments and thumbnails stay.`,
-                ok: "Delete old files",
+                title: `Delete the video files of ${old.map((x) => `V${x.n}`).join(", ")} now that V${n} is approved?`,
+                body: `Frees ${fmtBytes(old.reduce((sum, x) => sum + x.bytes, 0))}; their comments and thumbnails are kept.`,
+                ok: "Delete files",
                 danger: true,
               }))
             ) {
@@ -1577,7 +1617,7 @@ function CaptionStudioButton({ asset, n, next }: { asset: ReviewAsset; n: number
         }}
       >
         {busy ? <Loader2 className="animate-spin" /> : <Captions />}
-        {busy ? "Preparing…" : next ? "Caption it" : "Caption Studio"}
+        {busy ? "Preparing…" : "Caption Studio"}
       </Button>
     </>
   );
@@ -1611,26 +1651,22 @@ function CaptionsMenu({
   const tick = (on: boolean) => on && <Check className="ml-auto h-3.5 w-3.5" />;
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>V{n}: captions burned in?</DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger>V{n} captions</DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-72">
         <DropdownMenuItem onClick={() => void mark({ captioned: false })}>
-          No, not captioned {tick(!version.captioned)}
+          Not burned in {tick(!version.captioned)}
         </DropdownMenuItem>
         {sources.map((v) => (
           <DropdownMenuItem key={v.n} onClick={() => void mark({ captioned: true, madeFrom: v.n })}>
             <span className="min-w-0 truncate">
-              Yes, made from V{v.n} <span className="text-xs text-muted-foreground">{v.name}</span>
+              Burned in, made from V{v.n} <span className="text-xs text-muted-foreground">{v.name}</span>
             </span>
             {tick(!!version.captioned && version.madeFrom === v.n)}
           </DropdownMenuItem>
         ))}
         <DropdownMenuItem onClick={() => void mark({ captioned: true })}>
-          Yes, no version without captions here {tick(!!version.captioned && !version.madeFrom)}
+          Burned in, no version without captions {tick(!!version.captioned && !version.madeFrom)}
         </DropdownMenuItem>
-        <DropdownMenuLabel className="text-[11px] font-normal leading-snug text-muted-foreground">
-          To link its version without captions, add that file to this stack: upload it here as a new version, or drag
-          its card onto this one in Review.
-        </DropdownMenuLabel>
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );
@@ -1849,8 +1885,10 @@ function Thread({
     },
     edit: editingId === x.id ? { text: editText, set: setEditText, save: saveEdit, cancel: () => setEditingId(null) } : null,
   });
+  const sending = useRef(false);
   const send = async () => {
-    if (!body.trim()) return;
+    if (!body.trim() || sending.current) return;
+    sending.current = true;
     try {
       if (await onReply(body.trim())) {
         setBody("");
@@ -1858,6 +1896,8 @@ function Thread({
       }
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      sending.current = false;
     }
   };
   return (
@@ -1889,7 +1929,7 @@ function Thread({
               } else if (e.key === "Escape") setReplying(false);
             }}
             rows={2}
-            placeholder="Reply…"
+            placeholder="Write a reply"
             className="[field-sizing:content] min-h-16 max-h-60 w-full resize-none rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm outline-none focus:border-violet-500"
           />
           {error && <p className="text-xs text-red-400">{error}</p>}

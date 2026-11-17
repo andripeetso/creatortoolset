@@ -72,7 +72,7 @@ describe("a graphics-card run that goes quiet", () => {
     await vi.advanceTimersByTimeAsync(STALL_MS - 1);
     expect(settled).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(settled).toHaveBeenCalledWith("failed", "The graphics card stopped answering");
+    expect(settled).toHaveBeenCalledWith("failed", "The graphics card stopped responding");
     expect(worker.terminate).toHaveBeenCalled();
   });
 

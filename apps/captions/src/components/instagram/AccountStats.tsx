@@ -478,7 +478,7 @@ export function AccountStats({
       ) : null}
 
       {audience.some(([, rows]) => rows?.length) ? (
-        <StatsSection title="Who you reached this month">
+        <StatsSection title="Audience this month">
           <div className="grid gap-5 sm:grid-cols-3">
             {audience.map(([title, rows, country]) =>
               rows?.length ? <Shares key={title} title={title} rows={rows} country={country} /> : null,

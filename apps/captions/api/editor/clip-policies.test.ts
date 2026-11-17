@@ -120,7 +120,7 @@ describe.skipIf(rootReplaced)("AI Editor: a teammate's edits ask the library's p
       // the owner puts the raw take in as the song before the step runs
       expect((await call("ana", "PATCH", `/api/editor/${fays}`, { song: "ver_raw" })).status).toBe(200);
       await drain();
-      expect(lastJob(fays, "bo")).toMatchObject({ state: "failed", error: expect.stringMatching(/no longer yours/) });
+      expect(lastJob(fays, "bo")).toMatchObject({ state: "failed", error: expect.stringMatching(/cannot be read by this account/) });
       expect((await call("fay", "POST", `/api/editor/${fays}/run`, {})).status).toBe(200);
       await drain();
       expect(lastJob(fays, "fay").state).toBe("done");

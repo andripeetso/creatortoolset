@@ -53,7 +53,7 @@ const FORMATS: {
     id: "mp4",
     tab: "video",
     name: "MP4 · H.264 captioned",
-    desc: "Finished video with captions burned in — ready to post.",
+    desc: "The video with the captions burned in.",
     alpha: false,
     server: true,
     burn: true,
@@ -62,7 +62,7 @@ const FORMATS: {
     id: "hevc",
     tab: "video",
     name: "MP4 · H.265 captioned",
-    desc: "Same, ~35% smaller file, slower render.",
+    desc: "The same video in a smaller file; slower to export.",
     alpha: false,
     server: true,
     burn: true,
@@ -71,7 +71,7 @@ const FORMATS: {
     id: "srt",
     tab: "captions",
     name: "SRT subtitles",
-    desc: "Closed-caption sidecar for YouTube, players, NLEs.",
+    desc: "Captions as a file for YouTube and video players.",
     alpha: false,
     server: false,
   },
@@ -87,7 +87,7 @@ const FORMATS: {
     id: "ass",
     tab: "captions",
     name: "ASS subtitle file",
-    desc: "Full styling + karaoke, for advanced pipelines.",
+    desc: "Captions with their style and word highlight.",
     alpha: false,
     server: false,
   },
@@ -95,7 +95,7 @@ const FORMATS: {
     id: "mov",
     tab: "captions",
     name: "MOV · ProRes 4444",
-    desc: "Transparent captions for Premiere / Resolve / FCP. Large file.",
+    desc: "Transparent captions for Premiere, Resolve or Final Cut; a large file.",
     alpha: true,
     server: true,
   },
@@ -103,7 +103,7 @@ const FORMATS: {
     id: "webm",
     tab: "captions",
     name: "WebM · VP9",
-    desc: "Transparent captions, small file. For web & Chrome.",
+    desc: "Transparent captions in a small file, for the web.",
     alpha: true,
     server: true,
   },
@@ -111,7 +111,7 @@ const FORMATS: {
     id: "png",
     tab: "captions",
     name: "PNG sequence (ZIP)",
-    desc: "One transparent PNG per frame. Universal fallback.",
+    desc: "One transparent PNG per frame.",
     alpha: true,
     server: true,
   },
@@ -128,7 +128,7 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
   if (jobs.length === 0) {
     return (
       <p className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-8 text-center text-xs text-zinc-500">
-        No exports yet — rendered files show up here.
+        No exports
       </p>
     );
   }
@@ -163,9 +163,9 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
                   title={j.status === "error" ? j.error : undefined}
                 >
                   {FORMAT_LABELS[j.format] ?? j.format}
-                  {j.status === "queued" && " — waiting to render…"}
+                  {j.status === "queued" && " · waiting"}
                   {j.status === "running" &&
-                    ` — rendering ${Math.round(j.progress * 100)}%`}
+                    ` · exporting ${Math.round(j.progress * 100)}%`}
                   {j.status === "done" && (
                     <>
                       {j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""} ·{" "}
@@ -186,7 +186,7 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
               )}
               <button
                 onClick={() => void cancelExport(j.id)}
-                title={active ? "Cancel export" : "Delete from server"}
+                title={active ? "Stop export" : "Delete export"}
                 className="shrink-0 rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
               >
                 {active ? (
@@ -200,7 +200,7 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
         })}
       </div>
       <p className="mt-2.5 text-center text-[11px] leading-4 text-zinc-500">
-        Exports stay downloadable for 24 hours, then are cleaned up automatically.
+        Exports are kept for 24 hours.
       </p>
     </>
   );
@@ -295,12 +295,12 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const sourceRecoverable =
     sourcePreparing || activeClip?.uploadState === "error";
   const burnBlockerLabel = renderWhenReady
-    ? "Waiting for video — export will start automatically…"
+    ? "Waiting for the source video…"
     : activeClip?.uploadState === "error"
-      ? "Retry the video upload to enable export"
+      ? "Retry upload and export"
       : sourcePreparing
-        ? "Render when the video is ready"
-        : "Attach the source video to enable export";
+        ? "Export when uploaded"
+        : "Needs the source video";
   // the active clip's render dimensions (original resolution, not proxy)
   const activeDims = {
     width: useStudio((s) => s.sourceWidth || s.videoWidth),
@@ -351,7 +351,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       if (!retainClipSourceFile(activeClipId, f)) {
-        throw new Error("Could not attach the source to this clip.");
+        throw new Error("Could not upload the source video");
       }
       retryClipUpload(activeClipId);
       setRenderLocation("local");
@@ -421,7 +421,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
       const file = getClipSnapshot(clipId)?.file;
       if (!file) {
         throw new Error(
-          "The original video is no longer available on this device. Choose Cloud background render or attach the source again.",
+          "The source video is not on this computer; export on the server or upload it again",
         );
       }
       setLocalProgress(0);
@@ -503,7 +503,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
           continue;
         }
         if (selected.burn && !clip.hasOriginal) {
-          skipped.push(`${clip.name} (no source in cloud storage)`);
+          skipped.push(`${clip.name} (source video not on the server)`);
           continue;
         }
         const id = await exportOne(clip.id, named(clip.name), files);
@@ -556,7 +556,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     if (!renderWhenReady) return;
     if (activeClip?.uploadState === "error") {
       setRenderWhenReady(false);
-      setError(activeClip.uploadError || "Video upload failed");
+      setError(activeClip.uploadError || "Could not upload the source video");
       return;
     }
     if (!cloudBurnReady) return;
@@ -671,7 +671,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
           {selected.burn && !batch && (
             <div className="mb-3">
               <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                Render using
+                Export on
               </p>
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-zinc-900 p-1">
                 <button
@@ -692,7 +692,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                   <Laptop className="h-3.5 w-3.5" />
                   {localCodecSupported === false
                     ? "Unavailable for this codec"
-                    : "This device · no upload"}
+                    : "This computer"}
                 </button>
                 <button
                   type="button"
@@ -707,13 +707,12 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                       : "text-zinc-400 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35"
                   }`}
                 >
-                  <CloudUpload className="h-3.5 w-3.5" /> Cloud background
+                  <CloudUpload className="h-3.5 w-3.5" /> Server
                 </button>
               </div>
               {renderLocation === "local" && (
                 <p className="mt-1.5 text-pretty text-center text-[11px] leading-4 text-emerald-400/80">
-                  Uses the original file already on this device. The source
-                  upload is not required.
+                  Exports from the file on this computer.
                 </p>
               )}
             </div>
@@ -725,21 +724,21 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                 <span className="flex items-center justify-between gap-2">
                   <span
                     className="min-w-0 truncate whitespace-nowrap text-zinc-400"
-                    title="Source video is in cloud storage and renders at full quality"
+                    title="The source video is on the server"
                   >
-                    Cloud source ·{" "}
+                    Source video on the server ·{" "}
                     {((activeClip?.originalBytes ?? 0) / 1e6).toFixed(
                       (activeClip?.originalBytes ?? 0) < 10e6 ? 1 : 0,
                     )}{" "}
-                    MB · Full-quality renders
+                    MB
                   </span>
                   {editable && (
                     <button
                       onClick={removeOriginal}
-                      title="Delete the source from cloud storage (captions stay editable; re-attach anytime)"
+                      title="Delete the source video from the server"
                       className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
                     >
-                      <Trash2 className="h-3 w-3" /> Free up space
+                      <Trash2 className="h-3 w-3" /> Delete
                     </button>
                   )}
                 </span>
@@ -747,8 +746,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                 <span className="flex items-center justify-between gap-3">
                   <span className="min-w-0 text-amber-300">
                     <span className="block">
-                      Video upload failed — cloud export needs the source in
-                      cloud storage.
+                      Could not upload the source video
                     </span>
                     {activeClip.uploadError && (
                       <span
@@ -778,10 +776,10 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                         <CloudUpload className="h-3 w-3 animate-pulse text-violet-400" />
                       )}
                       {activeClip?.uploadState === "processing"
-                        ? "Upload complete — preparing the video for export…"
+                        ? "Preparing the video for export…"
                         : activeClip?.uploadState === "uploading"
-                          ? "Uploading source video directly to cloud storage…"
-                          : "Waiting to save the source video…"}
+                          ? "Uploading source video…"
+                          : "Waiting to upload the source video…"}
                     </span>
                     {activeClip?.uploadState === "uploading" && (
                       <span className="shrink-0 text-zinc-500">
@@ -806,19 +804,17 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                     />
                   </span>
                   <span className="mt-1.5 block text-[11px] text-zinc-500">
-                    You can queue the render now; it will start automatically
-                    when the video is ready.
+                    Export can be started now and begins when the video is uploaded.
                   </span>
                 </span>
               ) : !serverProjectReady ? (
                 <span className="text-zinc-500">
-                  The cloud project record is still being created. Your edits
-                  and source remain saved on this device.
+                  The project is still being saved to the server.
                 </span>
               ) : (
                 <span className="flex items-center justify-between gap-2">
                   <span className="text-zinc-400">
-                    Source video is not in cloud storage — attach it to render.
+                    Source video is not on the server
                   </span>
                   {editable && (
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-800">
@@ -828,7 +824,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                       </>
                     ) : (
                       <>
-                        <Upload className="h-3 w-3" /> Attach video
+                        <Upload className="h-3 w-3" /> Upload video
                       </>
                     )}
                     <input
@@ -850,8 +846,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
           {selected.burn && batch && (
             <p className="mb-4 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-xs text-zinc-400">
-              Each clip renders from its own source in cloud storage — clips
-              without one are skipped.
+              Clips with no source video on the server are skipped.
             </p>
           )}
 
@@ -863,12 +858,12 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                     {
                       id: "native",
                       name: "Fast",
-                      hint: "Fast server render. Best for built-in styles; minor visual differences are possible.",
+                      hint: "Faster; small differences from the preview are possible.",
                     },
                     {
                       id: "wysiwyg",
-                      name: "Pixel-perfect",
-                      hint: "Exactly what you saw in the editor, every pixel. Slower — use it when it has to be dead-on.",
+                      name: "Exact",
+                      hint: "Matches the preview exactly; slower.",
                     },
                   ] as const
                 ).map((e) => (
@@ -888,8 +883,8 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
               </div>
               <p className="mt-1.5 text-pretty text-center text-[11px] leading-4 text-zinc-500">
                 {engine === "native"
-                  ? "Fast server render. Best for built-in styles; minor visual differences are possible."
-                  : "Exactly what you saw in the editor, every pixel. Slower — use it when it has to be dead-on."}
+                  ? "Faster; small differences from the preview are possible."
+                  : "Matches the preview exactly; slower."}
               </p>
             </div>
           )}
@@ -914,10 +909,9 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
           {format === "mov" && !batch && activeDims.duration > 60 && (
             <p className="mb-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-              ProRes 4444 is a mezzanine codec (~2 MB/s). A{" "}
-              {Math.round(activeDims.duration)}s export will be roughly{" "}
-              {Math.round(activeDims.duration * 2)} MB. Use WebM if you want a
-              small alpha file.
+              A{" "}
+              {Math.round(activeDims.duration)}s ProRes 4444 export is about{" "}
+              {Math.round(activeDims.duration * 2)} MB; WebM is the small transparent format.
             </p>
           )}
 
@@ -985,7 +979,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 {useLocalRender
-                  ? `Rendering on this device · ${Math.round(localProgress * 100)}%`
+                  ? `Exporting on this computer · ${Math.round(localProgress * 100)}%`
                   : "Starting export…"}
               </>
             ) : batch ? (
@@ -996,7 +990,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
             ) : selected.burn && !burnReady ? (
               <>{burnBlockerLabel}</>
             ) : useLocalRender ? (
-              <>Export {format === "hevc" ? "H.265" : "H.264"} on this device</>
+              <>Export {format === "hevc" ? "H.265" : "H.264"} on this computer</>
             ) : (
               <>Export {selected.name}</>
             )}
@@ -1004,16 +998,12 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
           {selected.server && !useLocalRender && (
             <p className="mt-2.5 text-center text-[11px] leading-4 text-zinc-500">
-              Renders in the background — keep editing while progress shows in
-              the corner. The file downloads automatically and stays available
-              for 24 hours, even if you close this tab.
+              The file downloads when the export is finished and is kept for 24 hours.
             </p>
           )}
           {useLocalRender && (
             <p className="mt-2.5 text-pretty text-center text-[11px] leading-4 text-zinc-500">
-              Renders directly from the original file on this device. Keep this
-              tab open until the MP4 is finished; cloud upload progress does not
-              affect it.
+              Keep this tab open until the export is finished.
             </p>
           )}
         </div>

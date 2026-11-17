@@ -8,6 +8,7 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
+import { mayRead } from "../work/offline";
 import { contextStamp, stampOf, workspaceContext } from "../lib/workshop/context";
 import { blobs, libraryLookBudget, libraryLookLevel, librarySetting } from "./db";
 import { libraryWorkspaceId, WORKSPACE_MAX, whoFor, workspaceIdOf } from "./describe";
@@ -44,6 +45,20 @@ export const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
 export const MAC_WAITS = "Waits for the Mac this file is on to read its picture";
 /** Why a look waits for its library's monthly budget (lookBudgetWaits; estimate.ts progress shows it, worker.ts holds it). */
 export const BUDGET_WAITS = "This month's budget for shot descriptions is spent. Raise it in the Media Library's settings, or they continue next month.";
+/** Why a look parks when the account it runs as may no longer see the clip (lookAllowed): the sweep queues it again once they may. */
+export const NO_ACCESS = "The person this runs as no longer sees this clip";
+
+/**
+ * Whether `actor` may still see the version's clip (work/offline.ts mayRead: its library and its source's policies). A
+ * look runs as its clip's uploader, on their AI and with the workspace's context, and is queued long before it runs:
+ * the sweep asks before queueing and the look lane again before it reads a picture or asks an AI (worker.ts).
+ */
+export async function lookAllowed(db: DatabaseSync, versionId: string, actor: string | null): Promise<boolean> {
+  if (!actor) return false;
+  const r = db.prepare("SELECT a.id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { id: string; library_id: string } | undefined;
+  return !!r && (await mayRead(actor, r.library_id, r.id, versionId));
+}
+
 /** The calls one account's shot descriptions make at once on its own Anthropic key (as the library's descriptions: worker.ts LANES ai). */
 export const LOOK_KEY_CALLS = 6;
 
@@ -105,11 +120,12 @@ const SWEEP_AGAIN_MS = 10 * 60_000;
  * Shot descriptions as a constant background index: the next video that should have them and has no look queued,
  * running, done or failed (a file described before shot descriptions came, a library that turned them on, one that
  * missed its turn), newest first, gets its look queued as its uploader. A look parked for a missing AI is queued again
- * once that AI is there. A video with any step still queued or running waits: its description queues its look itself
- * (worker.ts). The look lane calls this when it has nothing to do. True when it queued one.
+ * once that AI is there, or once its uploader may see the clip again. A video whose uploader may not see it (lookAllowed)
+ * is skipped. A video with any step still queued or running waits: its description queues its look itself (worker.ts).
+ * The look lane calls this when it has nothing to do. True when it queued one.
  * ponytail: one indexed scan of the library per idle turn; a "needs a look" flag kept by the jobs if libraries grow past 100k videos
  */
-export function sweepLook(db: DatabaseSync, now = Date.now()): boolean {
+export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boolean> {
   const rows = db
     .prepare(
       `SELECT v.id, v.created_by AS actor, j.state FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
@@ -125,6 +141,7 @@ export function sweepLook(db: DatabaseSync, now = Date.now()): boolean {
     if ((swept.get(r.id) ?? 0) > now) continue;
     swept.set(r.id, now + SWEEP_AGAIN_MS);
     if (r.state && aiFor(whoFor(r.actor), "analyzer", LOOK_LABEL).off) continue;
+    if (!(await lookAllowed(db, r.id, r.actor))) continue;
     if (queueLook(db, r.id, r.actor)) return true;
   }
   return false;

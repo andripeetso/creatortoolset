@@ -199,7 +199,7 @@ On your Mac:
    sign-in; ⌥⌘1…⌥⌘9 switch between them. **Servers → Run your own server…** has the short form of this guide,
    with a check for HTTPS, the health call and the sign-in.
 3. Sign in to your server in the app's window.
-4. Turn on **Use this Mac for my AI**. This pairs the Mac with your account once.
+4. Turn on **AI on this Mac**. This adds the Mac to your account once.
 5. In the site: **Settings → Providers → Add provider** shows the install and sign-in commands for Claude
    Code and Codex when that Mac doesn't have them yet. Run them once in Terminal on that Mac, then pick
    **Test now** in the provider's menu.
@@ -275,6 +275,19 @@ docker compose exec app node scripts/doctor.mjs
 
 Read what is coming before you update: `git fetch && git log --oneline HEAD..origin/main` lists the new commits.
 Back up first (step 9). To go back, check out the previous commit and run the same `build` and `up -d`.
+
+To update from the app instead, run the updater from cron on the machine (as a user that may run Docker):
+
+```sh
+*/5 * * * * CT_UPDATE_HOUR=4 /opt/creator-toolset/apps/captions/scripts/server-update.sh >> /var/log/creator-toolset-update.log 2>&1
+```
+
+An admin then sees how many changes are waiting in Settings → Storage → Update, with **Update now**. With
+`CT_UPDATE_HOUR` (0 to 23, the machine's clock) the server also updates in that hour each night; leave it out to
+update only on the button. An update never cuts work the server is doing: the server takes no new job, and the
+restart comes once the running ones are done, however long that takes (Settings says "Waiting for running work").
+Then it is the steps above. A build that fails is left alone until an admin presses Retry or a newer change arrives.
+There is no automatic way back: see above.
 
 An update restarts the app. What that does to work in progress:
 

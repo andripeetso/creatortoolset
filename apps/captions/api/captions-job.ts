@@ -82,7 +82,7 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
   const call = routesAs(user);
   const ask = async <T>(route: string, method?: string, body?: unknown) => {
     const r = await call<T>(route, method, body);
-    if (!r.ok) throw new Error(r.body.error || `${route} could not answer`);
+    if (!r.ok) throw new Error(r.body.error || "The server could not make the captions");
     return r.body;
   };
   // the editing copy first: the transcript never runs beside its encode. What ffmpeg said goes to the log, not the chat
@@ -117,7 +117,7 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
         engine = "device";
         note = `${r.body.why}: written on this computer`;
       } else if (!r.ok) {
-        throw new Error(r.body.code === "USE_BROWSER" ? `${r.body.why}. On the project's page, Transcribe runs in the browser` : r.body.error || "/api/transcribe could not answer");
+        throw new Error(r.body.code === "USE_BROWSER" ? `${r.body.why}. On the project's page, Transcribe runs in the browser` : r.body.error || "The server could not transcribe it");
       } else {
         heard = r.body.words;
         note = r.body.note;

@@ -14,7 +14,7 @@ export function InlinePicture({ alt, url, disabled, onRemove }: { alt: string; u
   }, [open]);
   return (
     <figure className="group relative my-2 w-fit max-w-[50%]">
-      <button type="button" onClick={() => setOpen(true)} title="Open the picture" className="block overflow-hidden rounded-lg border border-border bg-muted hover:border-foreground/30">
+      <button type="button" onClick={() => setOpen(true)} title="Open picture" className="block overflow-hidden rounded-lg border border-border bg-muted hover:border-foreground/30">
         <img src={url} alt={alt} loading="lazy" className="block max-h-44 max-w-full object-contain" />
       </button>
       {alt ? <figcaption className="mt-1 text-[11px] text-muted-foreground">{alt}</figcaption> : null}
@@ -22,7 +22,7 @@ export function InlinePicture({ alt, url, disabled, onRemove }: { alt: string; u
         type="button"
         disabled={disabled}
         onClick={onRemove}
-        title="Take this picture out of the text"
+        title="Remove picture"
         aria-label="Remove picture"
         className="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1 text-white opacity-0 hover:bg-black/80 group-hover:opacity-100 focus:opacity-100 disabled:hidden"
       >

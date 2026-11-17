@@ -188,6 +188,10 @@ async function jobPersist(job: Job): Promise<void> {
   announceSoon(job.owner, "exports");
 }
 
+/** Renders read at boot as done with a send to Finals that never ended: the restart cut it off (resumeFinalsSends). */
+const cutOff: Job[] = [];
+const onItsWay = (finals: Job["finals"]) => finals?.status === "waiting" || finals?.status === "sending";
+
 /** Load persisted jobs once at boot; renders killed by a restart → error. */
 const loaded = (async () => {
   await mkdir(EXPORTS_DIR, { recursive: true }).catch(() => {});
@@ -209,9 +213,10 @@ const loaded = (async () => {
         job.status = move(EXPORT_MOVES, job.status, "error", "export job");
         job.error = "Interrupted by a server restart — export again.";
         job.finishedAt = Date.now();
+        if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
         await persist(job);
         chatHears(job);
-      }
+      } else if (job.status === "done" && onItsWay(job.finals)) cutOff.push(job);
       // jobs persisted before the engine field existed are DOM renders
       if (!job.engine) job.engine = "wysiwyg";
       jobs.set(id, job);
@@ -247,7 +252,7 @@ export async function deleteExportsForProject(
 export const EXPORTS_KEEP_DAYS = KEEP_HOURS / 24;
 // a render on its way to Finals is still being read: it stays until that ends
 const finishedOf = (owner: string) =>
-  [...jobs.values()].filter((j) => j.owner === owner && j.status !== "queued" && j.status !== "running" && j.finals?.status !== "waiting" && j.finals?.status !== "sending");
+  [...jobs.values()].filter((j) => j.owner === owner && j.status !== "queued" && j.status !== "running" && !onItsWay(j.finals));
 /** The folders of an account's finished renders (Settings → Storage counts them). */
 export async function finishedExportDirs(owner: string): Promise<string[]> {
   await loaded;
@@ -307,7 +312,7 @@ async function runRenderedFfmpeg(
   args: string[],
 ): Promise<void> {
   const renderer = await createCaptionFrameRenderer(spec, () => {
-    job.note = "Downloading the export browser (196 MB)…";
+    job.note = "Preparing the Exact export (196 MB download)…";
     void jobPersist(job);
   });
   if (job.note) {
@@ -750,9 +755,10 @@ async function runJob(job: Job): Promise<void> {
   } catch (e) {
     // cancelled — dir is gone, don't resurrect; a job already done keeps its file
     if (!jobs.has(job.id) || !canMove(EXPORT_MOVES, job.status, "error")) return;
-    job.status = "error";
+    job.status = move(EXPORT_MOVES, job.status, "error", "export job");
     job.error = e instanceof Error ? e.message : String(e);
     job.finishedAt = Date.now();
+    if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
     await jobPersist(job);
     if (job.params.chat) console.warn(`[exports] ${job.id} failed: ${job.error}`);
     chatHears(job);
@@ -761,6 +767,7 @@ async function runJob(job: Job): Promise<void> {
 
 /** One-click Send to Finals: the finished render goes into the owner's library and its Finals piece. Never throws; the outcome is on the job. */
 async function sendToFinals(job: Job): Promise<void> {
+  if (job.finals?.status === "sending") return; // one send at a time: the older Save to Content can ask while the job's own send runs
   job.finals = { status: "sending" };
   let out: FinalsOutcome;
   try {
@@ -784,6 +791,28 @@ async function sendToFinals(job: Job): Promise<void> {
     ? { status: "sent", pieceId: out.pieceId }
     : { status: out.code === "refused" ? "refused" : "error", error: out.error };
   await jobPersist(job);
+}
+
+/**
+ * After a restart (boot.ts, once the plug-ins and their Finals guards are loaded): a finished render whose send to
+ * Finals was cut off is sent again, once, and its chat hears the end it never got. Finals knows a file by its hash
+ * (addToFinals), so one that had arrived is linked again, never filed twice. Not part of the load: nothing waits for it.
+ */
+export async function resumeFinalsSends(): Promise<void> {
+  await loaded;
+  for (const job of cutOff.splice(0)) {
+    if (!jobs.has(job.id)) continue; // deleted since
+    // in a deploy's reload the process before this one may have ended the send itself, after this one read the job
+    const now = await readFile(path.join(jobDir(job.id), "job.json"), "utf-8").then((t) => (JSON.parse(t) as Job).finals, () => job.finals);
+    if (onItsWay(now)) {
+      job.finals = { status: "waiting" };
+      await sendToFinals(job);
+    } else {
+      job.finals = now;
+      announceSoon(job.owner, "exports");
+    }
+    chatHears(job);
+  }
 }
 
 /* ---- routes ---- */
@@ -1109,7 +1138,7 @@ exportsApp.post("/:id/library", async (c) => {
   if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
   if (job.status !== "done") return c.json({ error: "Not ready" }, 409);
   if (user.role !== "admin" && user.off.includes("media")) return c.json({ error: "Not found" }, 404); // as boot.ts TOOL_GATES
-  if (job.ext === "zip") return c.json({ error: "A PNG sequence can't go in the library" }, 400);
+  if (job.ext === "zip") return c.json({ error: "A PNG sequence cannot be sent to the Media Library" }, 400);
   const p = outPath(job);
   if (!existsSync(p)) return c.json({ error: "File expired" }, 410);
   const body = (await c.req.json().catch(() => null)) as { libraryId?: unknown } | null;
@@ -1121,7 +1150,7 @@ exportsApp.post("/:id/library", async (c) => {
     clip?.libraryVersionId ? [clip.libraryVersionId] : [],
     typeof body?.libraryId === "string" ? body.libraryId : undefined,
   );
-  if (!saved) return c.json({ error: "There is no Media Library to save into", code: "not_found" }, 404);
+  if (!saved) return c.json({ error: "Needs a Media Library", code: "not_found" }, 404);
   if ("error" in saved) return c.json(saved, 507);
   return c.json(saved);
 });
@@ -1133,8 +1162,8 @@ exportsApp.post("/:id/content", async (c) => {
   const user = c.get("user");
   const job = jobs.get(c.req.param("id"));
   if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
-  if (user.role !== "admin") return c.json({ error: "Only admins can save to Content" }, 403);
-  if (job.kind !== "burn" || job.status !== "done" || !job.owner) return c.json({ error: "Only a finished captioned export can be saved" }, 409);
+  if (user.role !== "admin") return c.json({ error: "Only an admin can send an export to Finals" }, 403);
+  if (job.kind !== "burn" || job.status !== "done" || !job.owner) return c.json({ error: "Only a finished export with captions can be sent to Finals" }, 409);
   if (!existsSync(outPath(job))) return c.json({ error: "File expired" }, 410);
   const small = belowHd(job.params.width, job.params.height);
   if (small) return c.json({ error: small }, 409);

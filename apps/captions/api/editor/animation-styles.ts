@@ -49,7 +49,7 @@ const KIND = {
 export const briefNotTyped = (kind: StyleKind) =>
   `The description was not saved: it is not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave brief out: they write it on the style's sheet (${KIND[kind].place}).`;
 export const BRIEF_NOT_TYPED = briefNotTyped("animation");
-const FULL = `A style keeps ${MAX_INSPIRATIONS} inspirations. Take one out first.`;
+const FULL = `A style keeps at most ${MAX_INSPIRATIONS} inspirations: remove one first`;
 
 const dirOf = (username: string, styleId: string) => path.join(env.dataDir, "editor-styles", username, styleId);
 
@@ -92,7 +92,7 @@ export function createAnimation(username: string, body: Record<string, unknown>,
   const style: AnimationStyle = { id: randomUUID(), name: given.name, brief: given.brief ?? "", pictures: [], ...(projectId ? { projectId } : {}), createdAt: now, updatedAt: now };
   return change(username, (f) => {
     const list = (f[kind] ??= []);
-    if (list.length >= KIND[kind].most) return `You have ${KIND[kind].most} ${KIND[kind].many}, the most an account keeps. Delete one first.`;
+    if (list.length >= KIND[kind].most) return `An account keeps at most ${KIND[kind].most} ${KIND[kind].many}: delete one first`;
     list.push(style);
     return style;
   });

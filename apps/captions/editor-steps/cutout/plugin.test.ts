@@ -110,11 +110,13 @@ describe("the cut-out plug-in", () => {
     expect(await held(anaMac.token, NEW)).toBe(204);   // ana's Mac app is on and lists the cut-out
     const photo = png(5000, 7);
     const r = await reply("ana", anaMac, NEW, "Cut the ball out of this", [{ name: "ball.png", type: "image/png", data: photo.toString("base64") }]);
-    expect(r.job.user).toContain("attached/01-ball.png");
+    // the path the AI is told is the picture's for the whole chat: attached/<message>/01-<name>
+    const pic = /attached\/[^/]{8}\/01-ball\.png/.exec(r.job.user)?.[0];
+    expect(pic).toBeTruthy();
     // the Mac holds its next poll while the AI works: the cut-out is said on it at once
     const told = poll(anaMac.token, NEW);
     await tick();
-    const called = r.rpc("tools/call", { name: "picture_cutout", arguments: { picture: "attached/01-ball.png" } });
+    const called = r.rpc("tools/call", { name: "picture_cutout", arguments: { picture: pic } });
     expect(await (await told).json()).toEqual(EDITOR_HINT);
     const step = (await claim(anaMac.token))!;
     expect(step.kind).toBe(CUTOUT_KIND);
@@ -132,10 +134,22 @@ describe("the cut-out plug-in", () => {
     expect(mine.headers.get("content-type")).toBe("image/png");
     expect(Buffer.from(await mine.arrayBuffer()).equals(made)).toBe(true);
     expect((await app.request(href, { headers: { cookie: await cookieOf("cleo") } })).status).toBe(404);
-    // a name the reply's message has no picture for
-    const none = await r.rpc("tools/call", { name: "picture_cutout", arguments: { picture: "attached/02-ball.png" } });
-    expect([none.isError, none.content![0]!.text]).toEqual([true, "attached/02-ball.png isn't a picture of the message you are answering: ask for it again."]);
+    // a name the chat has no picture for
+    const missing = pic!.replace("/01-", "/02-");
+    const none = await r.rpc("tools/call", { name: "picture_cutout", arguments: { picture: missing } });
+    expect([none.isError, none.content![0]!.text]).toEqual([true, `${missing} isn't a picture of this chat: ask for it again.`]);
     await r.end();
+    // a later message: the earlier message's picture, asked for by its path, is that one and not the newest
+    const r2 = await reply("ana", anaMac, NEW, "And this cup", [{ name: "cup.png", type: "image/png", data: png(4000, 3).toString("base64") }]);
+    const told2 = poll(anaMac.token, NEW);
+    await tick();
+    const again = r2.rpc("tools/call", { name: "picture_cutout", arguments: { picture: pic } });
+    expect(await (await told2).json()).toEqual(EDITOR_HINT);
+    const step2 = (await claim(anaMac.token))!;
+    expect(Buffer.from(await (await picture(anaMac.token, step2.id)).arrayBuffer()).equals(photo)).toBe(true);
+    await send(anaMac.token, step2.id, made);
+    expect((await again).isError).toBeFalsy();
+    await r2.end();
   });
 
   it("says what is missing in the app's words: a Mac, or a Mac app new enough", async () => {

@@ -192,7 +192,7 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
   // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
   const failed =
     mac.problem ??
-    (mac.account.state === "error" ? mac.account.message || "The sign-in didn't work. Try again." : mac.account.state === "unreachable" ? "Couldn't reach the account server. Try again." : null);
+    (mac.account.state === "error" ? mac.account.message || "Could not sign in. Try again." : mac.account.state === "unreachable" ? "Could not reach the account server. Try again." : null);
   useEffect(() => {
     if (failed) toast.error(failed);
   }, [failed]);
@@ -339,6 +339,8 @@ function SignInNameRow({ login, onSaved }: { login: string; onSaved: (login: str
   const [busy, setBusy] = useState(false);
   const problem = signInNameProblem(value);
   const save = async () => {
+    // the field is marked and says why under it
+    if (problem) return;
     setBusy(true);
     setError(null);
     try {
@@ -377,14 +379,13 @@ function SignInNameRow({ login, onSaved }: { login: string; onSaved: (login: str
         onOpenChange={setOpen}
         title="Sign-in name"
         submitLabel="Save"
-        submitDisabled={!value.trim() || !!problem || !password}
         busy={busy}
         error={error}
         onSubmit={save}
       >
-        <Input aria-label="New sign-in name" placeholder="New sign-in name" value={value} maxLength={24} autoFocus onChange={(e) => setValue(e.target.value)} />
+        <Input aria-label="New sign-in name" placeholder="New sign-in name" value={value} maxLength={24} autoFocus required aria-invalid={!!problem} onChange={(e) => setValue(e.target.value)} />
         {problem && <p className="text-xs text-muted-foreground">{problem}</p>}
-        <Input type="password" autoComplete="current-password" aria-label="Current password" placeholder="Current password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Input type="password" autoComplete="current-password" aria-label="Current password" placeholder="Current password" value={password} required onChange={(e) => setPassword(e.target.value)} />
       </FormDialog>
     </>
   );

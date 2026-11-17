@@ -202,3 +202,13 @@ describe("AI Editor preview", () => {
     expect(m.versions[0]!.draft).toMatchObject({ edit: made.id, name: "v1", by: "mem-c" });
   }, 60_000);
 });
+
+describe("saidWords", () => {
+  it("says what the look before Review left in the chat's words, nothing when the cut passed", async () => {
+    const { saidWords } = await import("./preview");
+    expect(saidWords([])).toBe("");
+    expect(saidWords([{ n: 37, why: "same fight again, ends early" }])).toBe("I couldn't fix shot 37 (same fight again, ends early).");
+    expect(saidWords([{ n: 3, why: "dark" }, { n: 5, why: "shaky" }, { n: 9, why: "too long" }, { n: 0, why: "The look could not be made" }]))
+      .toBe("I couldn't fix shot 3 (dark), shot 5 (shaky) and shot 9 (too long). The look could not be made.");
+  });
+});

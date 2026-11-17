@@ -53,7 +53,7 @@ const PLAIN_MEDIA_FIELDS = MEDIA_FIELDS.split(",insights")[0]!;
 const COMMENT_FIELDS =
   "id,text,username,like_count,timestamp,replies.limit(25){id,text,username,like_count,timestamp}";
 export const GRAPH_MISSING_MSG =
-  "Connect your Instagram account (Settings → Social accounts) with its login to read it";
+  "Needs an Instagram account connected in Settings → Social accounts";
 export const MINE_CATALOG_CAP = Math.max(1, Math.floor(Number(process.env.INSTAGRAM_MINE_CATALOG_CAP) || 500));
 
 type Rec = Record<string, unknown>;
@@ -297,7 +297,7 @@ export async function fetchMineProfile(opts: {
   const creds = requireCreds();
   const raw = await graphGet(creds.userId, { fields: PROFILE_FIELDS }, opts);
   const info = isRec(raw) ? profileFromGraph(raw) : null;
-  if (!info) throw new InstagramError("Graph returned no profile for this account", "GRAPH", false);
+  if (!info) throw new InstagramError("Instagram returned no profile for this account", "GRAPH", false);
   return info;
 }
 
@@ -741,7 +741,7 @@ export async function fetchBusinessDiscovery(
 ): Promise<{ profile: ProfileInfo; items: CatalogItem[] }> {
   if (!businessDiscoveryOn()) throw new InstagramError(BD_OFF_MSG, "GRAPH", false);
   const name = handle.trim().replace(/^@/, "");
-  if (!/^[A-Za-z0-9._]{1,30}$/.test(name)) throw new InstagramError("That is not an Instagram handle", "FAILED", false);
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(name)) throw new InstagramError("Not an Instagram username", "FAILED", false);
   const creds = requireCreds();
   const raw = await graphGet(creds.userId, { fields: bdFields(name) }, opts);
   const out = businessDiscoveryFromGraph(raw);
@@ -786,9 +786,9 @@ async function graphBatch(
       signal: requestSignal(opts.signal),
     });
   } catch (e) {
-    if (opts.signal?.aborted) throw new InstagramError("Cancelled", "CANCELLED", false);
+    if (opts.signal?.aborted) throw new InstagramError("Stopped", "CANCELLED", false);
     throw new InstagramError(
-      `Graph request failed: ${e instanceof Error ? e.message : String(e)}`,
+      `Could not reach Instagram: ${e instanceof Error ? e.message : String(e)}`,
       "FAILED",
       true,
     );
@@ -799,7 +799,7 @@ async function graphBatch(
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    throw new InstagramError("Graph returned a non-JSON response", "GRAPH", true);
+    throw new InstagramError("Instagram sent an answer that could not be read", "GRAPH", true);
   }
   if (!Array.isArray(parsed)) return [];
   return parsed.map((row) => {
@@ -818,9 +818,9 @@ async function graphFetch(url: URL, opts: { signal?: AbortSignal; fetchImpl?: ty
   try {
     return await fetchImpl(url, { signal: requestSignal(opts.signal) });
   } catch (e) {
-    if (opts.signal?.aborted) throw new InstagramError("Cancelled", "CANCELLED", false);
+    if (opts.signal?.aborted) throw new InstagramError("Stopped", "CANCELLED", false);
     throw new InstagramError(
-      `Graph request failed: ${e instanceof Error ? e.message : String(e)}`,
+      `Could not reach Instagram: ${e instanceof Error ? e.message : String(e)}`,
       "FAILED",
       true,
     );
@@ -831,7 +831,7 @@ async function readGraphResponse(res: Response): Promise<unknown> {
   const body = await res.text().catch(() => "");
   if (res.status === 429) {
     throw new InstagramError(
-      "Meta is rate limiting Graph — try again in a few minutes",
+      "Meta’s rate limit is reached: retry in a few minutes",
       "RATE_LIMIT",
       true,
     );
@@ -842,7 +842,7 @@ async function readGraphResponse(res: Response): Promise<unknown> {
   try {
     return JSON.parse(body) as unknown;
   } catch {
-    throw new InstagramError("Graph returned a non-JSON response", "GRAPH", true);
+    throw new InstagramError("Instagram sent an answer that could not be read", "GRAPH", true);
   }
 }
 

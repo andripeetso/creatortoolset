@@ -186,6 +186,10 @@ final class EditThreadModel: ObservableObject {
     /// Sent from this screen to a server that doesn't say which edit a message is about.
     private var mine: Set<String> = []
     private var loading = false
+    /// Another read was asked for while one ran: it reads once more.
+    private var again = false
+    /// Counts send()'s answers: a chat read that began before one is older than it.
+    private var sends = 0
 
     init(id: String) { self.id = id }
 
@@ -217,22 +221,29 @@ final class EditThreadModel: ObservableObject {
     var feed: [EditFeed.Item] { edit.map { EditFeed.items($0, chat: messages) } ?? [] }
 
     func load() async {
-        guard !loading else { return }
+        guard !loading else {
+            again = true
+            return
+        }
         guard let api = ToolsetAPI.current else {
             error = "Not signed in"
             return
         }
         loading = true
         defer { loading = false }
-        do {
-            async let talk: EditorChat? = try? api.get("/api/editor/chat?edit=\(id)")
-            let fresh: EditorProject = try await api.get("/api/editor/\(id)")
-            if fresh != edit { edit = fresh }
-            if let said = await talk, said != chat { chat = said }
-            error = nil
-        } catch {
-            if edit == nil { self.error = error.localizedDescription }
-        }
+        repeat {
+            again = false
+            let before = sends
+            do {
+                async let talk: EditorChat? = try? api.get("/api/editor/chat?edit=\(id)")
+                let fresh: EditorProject = try await api.get("/api/editor/\(id)")
+                if fresh != edit { edit = fresh }
+                if let said = await talk, before == sends, said != chat { chat = said }
+                error = nil
+            } catch {
+                if edit == nil { self.error = error.localizedDescription }
+            }
+        } while again
     }
 
     /// True when the message went.
@@ -244,6 +255,7 @@ final class EditThreadModel: ObservableObject {
             let answer = try JSONDecoder().decode(EditorChat.self, from: try await api.send("/api/editor/chat", json: ["text": text, "edit": id]))
             if let sent = answer.messages.last(where: { $0.role == "user" && $0.text == text }), sent.edit == nil { mine.insert(sent.id) }
             chat = answer
+            sends += 1
             notice = nil
             return true
         } catch {

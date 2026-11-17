@@ -71,8 +71,8 @@ describe("where a pack goes", () => {
     const c = { instructions: ["workshop.write" as const], frameworks: 3, captionStyles: 2, designSystems: 1 };
     expect(destinations(c).map((x) => `${x.stage} ${x.tool} › ${x.spot}`)).toEqual([
       "Plan Content Workshop › A piece's Shape menu",
-      "Plan Content Workshop › Every message to the AI on a piece",
-      "Make Caption Studio › The style list when you caption a video",
+      "Plan Content Workshop › Writing and editing a piece",
+      "Make Caption Studio › The caption style list",
     ]);
     expect(toolLine(c)).toBe("Plan · Content Workshop, Make · Caption Studio");
   });

@@ -64,6 +64,11 @@ import {
  */
 
 export const clipsApp = new Hono<{ Variables: AuthVars }>();
+// the restart pass runs before the first request, so no read ever has to tidy a stale state
+clipsApp.use("*", async (_c, next) => {
+  await resumeStoppedClips();
+  await next();
+});
 
 const CLIPS_DIR = path.join(env.dataDir, "clips");
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
@@ -99,8 +104,9 @@ async function finishUpload(
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  await persist(meta);
+  // in `active` before it is on disk: a note is `processing` outside it only when a restart stopped it
   enqueue(meta, user);
+  await persist(meta);
   return meta;
 }
 
@@ -176,8 +182,9 @@ const children = new Map<string, ReturnType<typeof spawn>>();
 const writeQ = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Set<BlockKind>>();
 
-// a note's card runs while it is made (assistant.ts sweepWork); readMeta resumes one a restart cut off, as a page read does
+// a note's card runs while it is made (assistant.ts sweepWork); one a restart cut off is picked up first, as before a page read
 void import("./assistant").then(({ checkWork }) => checkWork("notes", async (id) => {
+  await resumeStoppedClips();
   const noteId = id.slice("notes:".length);
   const meta = active.has(noteId) ? null : await readMeta(noteId);
   if (active.has(noteId)) return null;
@@ -328,13 +335,6 @@ async function readMeta(id: string): Promise<Meta | null> {
     const meta: Meta = JSON.parse(
       await readFile(path.join(sesDir(id), "meta.json"), "utf-8"),
     );
-    if (meta.status === "processing" && !active.has(id)) {
-      if (!resumeJob(meta)) {
-        meta.status = "error";
-        meta.error = "Processing stopped several times when the server restarted. Try again.";
-      }
-      await persist(meta);
-    }
     return active.get(id) ?? meta;
   } catch {
     return null;
@@ -630,10 +630,10 @@ async function generateBlock(
     return { id: "chapters", kind: "chapters", chapters: meta.chapters };
   }
   if (!anyAiConfigured(meta.owner)) {
-    throw new AiProviderError("AI is not configured", "FAILED", false);
+    throw new AiProviderError("Needs an AI provider", "FAILED", false);
   }
   const words = await loadWords(meta.id);
-  if (!words.length) throw new Error("No transcript to generate from");
+  if (!words.length) throw new Error("Needs a transcript");
   const ai = aiFor(meta.owner, "notes", "Video Notes");
   const user = await noteMaterial(meta, words);
 
@@ -878,8 +878,22 @@ function resumeJob(meta: Meta): boolean {
   return true;
 }
 
-/** At start: every note a restart stopped picks up again, without anyone opening it. */
-export const resumeStoppedClips = () => clipMetas(() => false).then(() => undefined);
+/**
+ * Once, at start (boot.ts) and before the first request (the middleware awaits it), so no read has to: every note a
+ * restart stopped picks up again without anyone opening it, or fails when it has been started again too often.
+ */
+let resumed: Promise<void> | undefined;
+export function resumeStoppedClips(): Promise<void> {
+  return (resumed ??= (async () => {
+    for (const meta of await clipMetas((m) => m.status === "processing" && !active.has(m.id))) {
+      if (!resumeJob(meta)) {
+        meta.status = "error";
+        meta.error = "Processing stopped when the server restarted";
+      }
+      await persist(meta);
+    }
+  })().catch((e) => console.warn("[clips] resume:", e)));
+}
 
 function enqueue(meta: Meta, user: SessionUser): void {
   active.set(meta.id, meta);
@@ -1117,7 +1131,8 @@ clipsApp.post("/:id/retry", async (c) => {
   const user = c.get("user");
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (meta.status === "processing") {
+  // still in `active` with its run over: that run is at its last save, and its end would take a new run's place away
+  if (meta.status === "processing" || active.has(meta.id)) {
     return c.json({ error: "Already processing" }, 409);
   }
   meta.resumes = undefined;
@@ -1290,7 +1305,7 @@ clipsApp.post("/:id/cleanup", async (c) => {
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (!anyAiConfigured(user)) {
-    return c.json({ error: "AI is not configured" }, 400);
+    return c.json({ error: "Needs an AI provider" }, 400);
   }
   const file = await loadTranscript(meta.id);
   if (!file.words.length) {
@@ -1368,6 +1383,7 @@ clipsApp.delete("/:id", async (c) => {
   const meta = await ownedMeta(id, c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   cancel(id);
-  await rm(sesDir(id), { recursive: true, force: true });
+  // retried: a save of its run that lands while the folder goes would leave the folder behind, marked processing
+  await rm(sesDir(id), { recursive: true, force: true, maxRetries: 3 });
   return c.json({ ok: true });
 });

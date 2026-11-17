@@ -198,10 +198,10 @@ function TabConflictBanner() {
   if (!tabConflict) return null;
   return (
     <span
-      title="Caption Studio is open in another browser tab. Both tabs autosave — the stale one silently overwrites the fresh one's work (transcripts, applies). Close one of them."
+      title="Caption Studio is open in another tab, and each tab's saves overwrite the other's"
       className="flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-400"
     >
-      <TriangleAlert className="h-3 w-3" /> Open in 2 tabs — saves collide
+      <TriangleAlert className="h-3 w-3" /> Open in 2 tabs · close one
     </span>
   );
 }
@@ -425,7 +425,7 @@ export default function Home() {
           )}
           <button
             onClick={() => setHelpOpen(true)}
-            title="Shortcuts & tips (?)"
+            title="Shortcuts (?)"
             className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <CircleHelp className="h-4 w-4" />

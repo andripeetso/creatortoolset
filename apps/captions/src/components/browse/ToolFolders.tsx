@@ -70,7 +70,7 @@ function ShareItems({ state, f }: { state: ToolFoldersState; f: ToolFolder }) {
   if (!state.shareable) return null;
   return (
     <>
-      <ContextMenuItem onClick={() => void state.share(f)}>{f.share ? "Copy share link" : "Share…"}</ContextMenuItem>
+      <ContextMenuItem onClick={() => void state.share(f)}>{f.share ? "Copy link" : "Share…"}</ContextMenuItem>
       {f.share && <ContextMenuItem onClick={() => void state.unshare(f)}>Stop sharing</ContextMenuItem>}
     </>
   );

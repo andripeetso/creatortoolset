@@ -711,7 +711,9 @@ export function packFor(r: Req, keepsBlobs: boolean) {
   for (const [k, v] of blobs) if (now - v.at > BLOB_KEEP_MS) blobs.delete(k);
   const files: Record<string, string> = {};
   for (const [path, text] of Object.entries(p.files)) {
-    if (text.length < BLOB_MIN || text.startsWith("base64:")) {
+    // a picture or PDF ("base64:", written as bytes on the Mac) goes as a hash whatever its size: a Workshop chat sends
+    // every one of its pictures on every turn, and the Mac keeps each after the first fetch
+    if (text.length < BLOB_MIN && !text.startsWith("base64:")) {
       files[path] = text;
       continue;
     }

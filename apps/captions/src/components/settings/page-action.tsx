@@ -4,6 +4,9 @@ import { createPortal } from "react-dom";
 /** The header's action slot (SettingsPage sets the element). Null outside Settings. */
 export const PageActionContext = createContext<HTMLElement | null>(null);
 
+/** The title the header prints after "Settings ›" (SettingsPage sets it): a Section named the same prints no title. Null outside Settings. */
+export const PageTitleContext = createContext<string | null>(null);
+
 /**
  * An action for the page's header, right of the breadcrumb (e.g. a period picker on Usage). It draws into the header
  * while its page is open, and draws nothing where there is no header.

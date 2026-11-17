@@ -123,7 +123,7 @@ captionLayoutApp.post("/auto", async (c) => {
     c.json({ words, cues: layout(words, inp), fixes, cadenceApplied: false, cadenceFit: null, aiError });
 
   if (!anyAiConfigured(user)) return plain(null);
-  if (!mayUse(user)) return plain("The AI caption pass is locked for your account");
+  if (!mayUse(user)) return plain("Match cadence is locked for this account");
 
   const opts = { signal: c.req.raw.signal, provider: providerFor(user) };
   try {

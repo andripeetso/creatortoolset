@@ -92,22 +92,21 @@ export function prepareFirst(versionId: string, now = Date.now()): void {
 /** The clips prepareFirst named in the last ten minutes. */
 export const firstClips = (now = Date.now()): string[] => [...waitedOn].filter(([, at]) => now - at <= WAITED_MS).map(([v]) => v);
 
-/** Records the outcome of a claimed job: done, back in the queue after a backoff, or failed after MAX_ATTEMPTS. */
+/**
+ * Records the outcome of a claimed job: done, back in the queue after a backoff, or failed after MAX_ATTEMPTS.
+ * A try that did not work, a park and a defer change only a job that is still running: one stopped, removed or taken
+ * back while its step was out stays as it is (a late answer never puts a stopped job back in the queue).
+ */
 export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs"): void {
   if (ok) {
     db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ?`).run(now, id);
     return;
   }
-  const { attempts } = db.prepare(`SELECT attempts FROM ${table} WHERE id = ?`).get(id) as { attempts: number };
-  if (attempts >= MAX_ATTEMPTS) {
-    db.prepare(`UPDATE ${table} SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?`).run(error ?? "failed", id);
-  } else {
-    db.prepare(`UPDATE ${table} SET state = 'queued', lease_until = NULL, error = ?, run_after = ? WHERE id = ?`).run(
-      error ?? "failed",
-      now + BACKOFF_MS * attempts,
-      id,
-    );
-  }
+  db.prepare(
+    `UPDATE ${table} SET state = CASE WHEN attempts >= ? THEN 'failed' ELSE 'queued' END, lease_until = NULL, error = ?,
+       run_after = CASE WHEN attempts >= ? THEN run_after ELSE ? + ? * attempts END
+     WHERE id = ? AND state = 'running'`,
+  ).run(MAX_ATTEMPTS, error ?? "failed", MAX_ATTEMPTS, now, BACKOFF_MS, id);
 }
 
 /** Puts running jobs whose lease ran out back in the queue (or fails them after MAX_ATTEMPTS). Returns how many. */
@@ -125,7 +124,7 @@ export function requeueExpired(db: DatabaseSync, now = Date.now(), table: JobTab
 
 /** A claimed job its actor has no key or AI route for: parked as needs_key (not failed) until someone queues it again. */
 export function parkJob(db: DatabaseSync, id: number, why: string, table: JobTable = "jobs"): void {
-  db.prepare(`UPDATE ${table} SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ?`).run(why, id);
+  db.prepare(`UPDATE ${table} SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'`).run(why, id);
 }
 
 /** A long step's heartbeat: a running job's lease runs `seconds` from now, so requeueExpired leaves it alone. */
@@ -135,7 +134,7 @@ export function extendLease(db: DatabaseSync, id: number, seconds: number, now =
 
 /** A claimed job that waits on something else (a transcript): back in the queue after `seconds`, the attempt not counted. */
 export function defer(db: DatabaseSync, id: number, seconds: number, now = Date.now(), table: JobTable = "jobs"): void {
-  db.prepare(`UPDATE ${table} SET state = 'queued', lease_until = NULL, attempts = MAX(attempts - 1, 0), run_after = ? WHERE id = ?`).run(
+  db.prepare(`UPDATE ${table} SET state = 'queued', lease_until = NULL, attempts = MAX(attempts - 1, 0), run_after = ? WHERE id = ? AND state = 'running'`).run(
     now + seconds * 1000,
     id,
   );

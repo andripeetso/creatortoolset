@@ -185,11 +185,11 @@ describe("Content Analyzer home", () => {
     expect(host.textContent).not.toContain("Collect posts you like");
   });
 
-  it("offers no Try again on a failed post while posts can't be read, and no line of text about setup: the card over the tool says that", async () => {
+  it("offers no Retry on a failed post while posts can't be read, and no line of text about setup: the card over the tool says that", async () => {
     server.canRead = false;
     const host = await mount(page("/instagram"));
-    expect(host.textContent).toContain("Couldn’t download");
-    expect(host.textContent).not.toContain("Try again");
+    expect(host.textContent).toContain("Could not download");
+    expect(host.textContent).not.toContain("Retry");
     expect(host.textContent).not.toMatch(/Can’t read|Set up/);
   });
 
@@ -197,7 +197,7 @@ describe("Content Analyzer home", () => {
     server.accounts = [];
     server.posts = [];
     const host = await mount(page("/instagram"));
-    expect(host.textContent).toContain("Collect posts you like. The AI works out the idea in each one. You rank them.");
+    expect(host.textContent).toContain("Collect posts you like, rank them, find what works.");
     expect(host.querySelector('[aria-label="Status"]')).toBeNull();
     expect(host.textContent).not.toContain("Add your account");
   });
@@ -239,18 +239,18 @@ describe("Post card", () => {
     expect(host.textContent).toContain("To make");
   });
 
-  it("a failed download says so in plain words, with Try again and no raw error", async () => {
+  it("a failed download says so in plain words, with Retry and no raw error", async () => {
     const onRetry = vi.fn(async () => {});
     const host = await card(failed, onRetry);
-    expect(host.textContent).toContain("Couldn’t download");
+    expect(host.textContent).toContain("Could not download");
     expect(host.textContent).not.toMatch(/ETIMEDOUT|fetch failed|Download failed|Failed/);
-    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Try again")!;
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Retry")!;
     await act(async () => again.click());
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("Post card, Try again refused", () => {
+describe("Post card, Retry refused", () => {
   it("says it couldn't, in plain words, never the server's reason", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -265,10 +265,10 @@ describe("Post card, Try again refused", () => {
         </MemoryRouter>,
       ),
     );
-    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Try again")!;
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Retry")!;
     await act(async () => again.click());
     expect(onRetry).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain("Couldn’t try again");
+    expect(host.textContent).toContain("Could not retry");
     expect(host.textContent).not.toMatch(/Apify|token/);
   });
 });
@@ -294,6 +294,6 @@ describe("Queue chip", () => {
     };
     const host = await chip();
     expect(host.textContent).toBe("Queue");
-    expect(host.querySelector('[aria-label="Something failed"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Failed"]')).not.toBeNull();
   });
 });

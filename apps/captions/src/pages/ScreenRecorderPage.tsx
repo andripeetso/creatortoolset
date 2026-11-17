@@ -27,7 +27,7 @@ const PHASE: Partial<Record<RecorderPhase, string>> = {
 const SHARES: { dest: ShareDest; label: string }[] = [
   { dest: "review", label: "Send to Review" },
   { dest: "notes", label: "Send to Video Notes" },
-  { dest: "guide", label: "Make a guide" },
+  { dest: "guide", label: "Send to Guide Builder" },
 ];
 
 const duration = (ms: number) => {
@@ -164,7 +164,7 @@ export default function ScreenRecorderPage() {
         <ToolIntro icon={ScreenShare} title="Screen Recorder" line="Record your screen, a window or an area, with your camera and voice" className="mt-4" />
         {!inApp ? (
           <section className="rounded-xl border border-zinc-800 p-6">
-            <h2 className="text-base font-semibold">Screen recording runs in the Mac app</h2>
+            <h2 className="text-base font-semibold">Needs the Mac app</h2>
             <p className="mt-1 text-sm text-zinc-400">Open this page in Creator Toolset for Mac (macOS 15 or later).</p>
           </section>
         ) : (
@@ -198,7 +198,7 @@ export default function ScreenRecorderPage() {
                 className="mx-auto mt-10 flex w-full max-w-lg flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-800 px-6 py-16 text-center hover:border-violet-500/60"
               >
                 <ScreenShare className="h-10 w-10 text-zinc-600" />
-                <span className="text-base font-medium text-zinc-200">Make your first recording</span>
+                <span className="text-base font-medium text-zinc-200">New recording</span>
                 {shortcut && <kbd className="rounded border border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400">{shortcut}</kbd>}
               </button>
             ) : (
@@ -219,7 +219,7 @@ export default function ScreenRecorderPage() {
                 }}
                 view={{ value: view, onChange: setView }}
               />
-              {listed.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+              {listed.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches</p>}
               {view === "list" ? (
                 <div className="flex flex-col gap-1.5">
                   {listed.map((r) => (

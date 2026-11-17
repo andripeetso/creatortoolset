@@ -388,7 +388,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       await until("the claim refused it", () => jobRow(job.id)?.state !== "queued");
       await sleep(300); // a few more claims: none hands it out
       await finish([boMac], [worker]);
-      expect(jobRow(job.id)).toMatchObject({ state: "failed", error: "Some footage is gone or no longer yours to read" });
+      expect(jobRow(job.id)).toMatchObject({ state: "failed", error: "Some footage was deleted or cannot be read by this account" });
       expect(existsSync(srv.keptPath(job.id))).toBe(false);
       expect(hits.slice(at.hits).filter((h) => h.who === "bo-mac" && !h.path.endsWith("/work/claim"))).toEqual([]);
       expect(ranBy(bos, "preview", at)).toEqual([]);

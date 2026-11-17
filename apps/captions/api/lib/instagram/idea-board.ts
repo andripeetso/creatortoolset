@@ -85,9 +85,9 @@ export function parseIdeaBoard(text: string, allowedIds: string[]): Omit<Library
   const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = stripped.indexOf("{");
   const end = stripped.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("no JSON in the answer");
+  if (start < 0 || end <= start) throw new Error("The AI’s answer could not be read");
   const obj = JSON.parse(stripped.slice(start, end + 1)) as { ideas?: unknown };
-  if (!Array.isArray(obj.ideas)) throw new Error("the model returned no ideas");
+  if (!Array.isArray(obj.ideas)) throw new Error("The AI’s answer had no ideas");
   const allowed = new Set(allowedIds);
   const used = new Set<string>();
   const out: Omit<LibraryIdea, "id">[] = [];
@@ -104,7 +104,7 @@ export function parseIdeaBoard(text: string, allowedIds: string[]): Omit<Library
     if (!postIds.length) continue;
     out.push({ title, description, postIds });
   }
-  if (!out.length) throw new Error("the model returned no usable ideas");
+  if (!out.length) throw new Error("The AI’s answer had no ideas");
   return out;
 }
 

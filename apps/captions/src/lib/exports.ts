@@ -189,7 +189,7 @@ export async function startExport(payload: {
   });
   if (!res.ok) {
     const j = await res.json().catch(() => null);
-    throw new Error(j?.error || `Export failed (${res.status})`);
+    throw new Error(j?.error || "Could not start the export");
   }
   const job: ExportJob = await res.json();
   useExports.setState((s) => ({ jobs: [job, ...s.jobs.filter((x) => x.id !== job.id)] }));
@@ -202,7 +202,7 @@ export async function startExport(payload: {
 export async function saveExportToLibrary(id: string): Promise<"saved" | "already"> {
   const res = await fetch(`/api/exports/${id}/library`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   const data = (await res.json().catch(() => ({}))) as { error?: string; duplicateOf?: string };
-  if (!res.ok) throw new Error(data.error || "Couldn't save it to the library");
+  if (!res.ok) throw new Error(data.error || "Could not send it to the Media Library");
   return data.duplicateOf ? "already" : "saved";
 }
 

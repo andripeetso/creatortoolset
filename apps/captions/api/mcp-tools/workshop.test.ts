@@ -244,6 +244,12 @@ describe("workshop_project_update", () => {
     expect(String(drafted.mock.calls[0]![1])).toContain("Workspace: Puppy school");
     expect(String(drafted.mock.calls[0]![1])).toContain("new dog owners, our classes, our site");
     expect(out.value!.project).toMatchObject({ id, name: "Puppy school", instructions: "For new dog owners. Classes at puppyschool.example." });
+    // a second draft adds to what is there: the saved instructions go with what was said now, each named as what it is
+    const again = vi.mocked(completeWithFallback).mockResolvedValueOnce({ notes: "For new dog owners. Classes at puppyschool.example. Open on Sundays.", files: [] } as never);
+    await tool(key, "workshop_project_update", { project: id, draft_from: "we open on Sundays now" });
+    const asked = String(again.mock.calls.at(-1)![1]);
+    expect(asked).toContain("The workspace's instructions as they stand:\nFor new dog owners. Classes at puppyschool.example.");
+    expect(asked).toContain("What they said about it now:\nwe open on Sundays now");
   });
 });
 

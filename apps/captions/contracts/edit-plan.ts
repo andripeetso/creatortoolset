@@ -185,7 +185,8 @@ export interface Coverage {
  */
 export interface Critique {
   ok: boolean;
-  fails: { n: number; why: string }[];
+  /** `at`, `dur`: the shot's place in the cut, seconds (older looks have none), so Review marks it on the timeline */
+  fails: { n: number; why: string; at?: number; dur?: number }[];
   /** 1: the first cut; 2: after the one fix round */
   round: number;
 }

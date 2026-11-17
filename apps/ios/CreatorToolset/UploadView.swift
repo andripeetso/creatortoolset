@@ -103,8 +103,7 @@ enum UploadFakes {
             guard assets.indices.contains(n) else { return nil }
             var made = UploadItem(asset: assets[n].localIdentifier, filename: "IMG_010\(n).MOV", isVideo: assets[n].mediaType == .video,
                                   capturedAt: assets[n].creationDate, server: server,
-                                  id: UUID(uuidString: "00000000-0000-0000-0000-00000000000\(n)")!)
-            made.state = state
+                                  id: UUID(uuidString: "00000000-0000-0000-0000-00000000000\(n)")!, state: state)
             made.size = 100_000_000
             made.sent = sent
             made.note = note

@@ -179,16 +179,56 @@ export function setVersionKept(doc: Document, versionId: string, kept: boolean, 
 
 export interface ApplyResult {
   blockIds: string[];
-  skipped: Array<{ op: EditOp; reason: "missing" | "empty" | "full" | "locked" }>;
+  skipped: Array<{ op: EditOp; reason: "missing" | "empty" | "full" | "locked" | "edited" }>;
+}
+
+/**
+ * A page two hands changed at once (notes, a reel script), line by line: `theirs` and `mine` both started from `base`.
+ * Changes to different lines both stay; where they meet, `mine` stays whole.
+ */
+// ponytail: one changed stretch each (first changed line to last). A full diff3 if two far-apart edits by one hand
+// must merge with the other's between them.
+export function mergePage(base: string, theirs: string, mine: string): string {
+  if (mine === base) return theirs;
+  if (theirs === base) return mine;
+  const b = base.split("\n");
+  const t = theirs.split("\n");
+  const m = mine.split("\n");
+  /** How many lines `x` shares with the base at its start and at its end: the stretch between is what changed. */
+  const same = (x: string[]) => {
+    let head = 0;
+    while (head < b.length && head < x.length && b[head] === x[head]) head++;
+    let tail = 0;
+    while (tail < b.length - head && tail < x.length - head && b[b.length - 1 - tail] === x[x.length - 1 - tail]) tail++;
+    return { head, tail };
+  };
+  const T = same(t);
+  const M = same(m);
+  if (b.length - T.tail <= M.head) return [...t.slice(0, t.length - T.tail), ...b.slice(b.length - T.tail, M.head), ...m.slice(M.head)].join("\n");
+  if (b.length - M.tail <= T.head) return [...m.slice(0, m.length - M.tail), ...b.slice(b.length - M.tail, T.head), ...t.slice(T.head)].join("\n");
+  return mine;
+}
+
+/** Put `item` into `out` after the nearest item before `list[i]` that `out` still has (first when it has none). */
+function placeAfter<T extends { id?: string }>(out: T[], list: Array<{ id: string }>, i: number, item: T) {
+  let at = -1;
+  for (let j = i - 1; j >= 0 && at < 0; j--) at = out.findIndex((o) => o.id === list[j]!.id);
+  out.splice(at + 1, 0, item);
 }
 
 /**
  * Apply the model's operations. Any block may change — the author's
  * wording is a signal the prompt carries, not a lock. Unknown ids are
  * skipped, not fatal.
+ *
+ * `since` is when the turn read the piece (`read`, its blocks then). The author can type while a turn writes: what
+ * they changed after that read is theirs, so a replace or delete on it is refused ("edited"). A page (notes, a reel
+ * script) is one block, so there the turn's lines go in around theirs (`mergePage`).
  */
-export function applyEdits(doc: Document, edits: EditOp[], opts: { now?: number } = {}): ApplyResult {
+export function applyEdits(doc: Document, edits: EditOp[], opts: { now?: number; since?: number; read?: Block[] } = {}): ApplyResult {
   const now = opts.now ?? Date.now();
+  const since = opts.since;
+  const theirs = (x?: { author: "ai" | "user"; at: number }) => since !== undefined && !!x && x.author === "user" && x.at > since;
   const touched: string[] = [];
   const skipped: ApplyResult["skipped"] = [];
   const take = (text: string) => clip(text, blockLimit(doc.kind));
@@ -198,6 +238,10 @@ export function applyEdits(doc: Document, edits: EditOp[], opts: { now?: number 
   for (const e of edits) {
     if (e.op === "set_caption" || e.op === "set_pinned") {
       const key: CompanionKey = e.op === "set_caption" ? "caption" : "pinned";
+      if (theirs(doc[key])) {
+        skipped.push({ op: e, reason: "edited" });
+        continue;
+      }
       const text = clip(e.text).slice(0, MAX_COMPANION_CHARS);
       if (text) doc[key] = { text, author: "ai", at: now };
       else delete doc[key];
@@ -227,6 +271,10 @@ export function applyEdits(doc: Document, edits: EditOp[], opts: { now?: number 
       }
       const hooks = doc.hooks!;
       const target = hooks[at]!;
+      if (theirs(target)) {
+        skipped.push({ op: e, reason: "edited" });
+        continue;
+      }
       if (e.op === "delete") {
         hooks.splice(at, 1);
         if (!hooks.length) delete doc.hooks;
@@ -266,6 +314,19 @@ export function applyEdits(doc: Document, edits: EditOp[], opts: { now?: number 
     const target = doc.blocks[at]!;
     if ((e.op === "replace" || e.op === "delete") && doc.locked?.includes(target.id)) {
       skipped.push({ op: e, reason: "locked" });
+      continue;
+    }
+    if ((e.op === "replace" || e.op === "delete") && theirs(target)) {
+      const was = e.op === "replace" && isPageKind(doc.kind) ? opts.read?.find((b) => b.id === target.id)?.text : undefined;
+      const merged = was === undefined || e.op !== "replace" ? target.text : take(mergePage(was, take(e.text), target.text));
+      if (merged === target.text) {
+        skipped.push({ op: e, reason: "edited" });
+        continue;
+      }
+      // both hands are in it now; it stays the author's, so taking the turn back out never takes their lines with it
+      target.text = merged;
+      target.at = now;
+      touched.push(target.id);
       continue;
     }
     if (e.op === "replace") {
@@ -318,9 +379,111 @@ export function revert(doc: Document, versionId: string, now = Date.now()): bool
   return true;
 }
 
+/**
+ * Take a turn's edits back out (a Stop, a failure): the piece as `versionId` had it, with what the author wrote since
+ * the turn read it (`since`) left in place. With nothing of theirs since, this is `revert`.
+ */
+export function undoTurn(doc: Document, versionId: string, since: number, now = Date.now()): boolean {
+  const v = doc.versions.find((x) => x.id === versionId);
+  if (doc.kind === "notes" || !v) return false;
+  const theirs = (x?: { author: "ai" | "user"; at: number }) => !!x && x.author === "user" && x.at > since;
+  const gone = new Set((doc.userEdits ?? []).filter((e) => e.at > since && e.to === undefined).map((e) => e.blockId));
+  if (!gone.size && ![...doc.blocks, ...(doc.hooks ?? []), doc.caption, doc.pinned].some(theirs)) return revert(doc, versionId, now);
+  const back = (cur: Block[], was: Block[]) => {
+    const before = new Map(was.map((b) => [b.id, b]));
+    // theirs stays, the rest is as it was, what the turn added goes
+    const out = cur.flatMap((b) => (theirs(b) ? [b] : before.has(b.id) ? [{ ...before.get(b.id)! }] : []));
+    // what the turn deleted comes back where it was
+    was.forEach((b, i) => {
+      if (!gone.has(b.id) && !out.some((o) => o.id === b.id)) placeAfter(out, was, i, { ...b });
+    });
+    return out;
+  };
+  doc.blocks = back(doc.blocks, v.blocks);
+  const hooks = back(doc.hooks ?? [], v.hooks ?? []);
+  if (hooks.length) doc.hooks = hooks;
+  else delete doc.hooks;
+  for (const key of COMPANION_KEYS) {
+    if (theirs(doc[key]) || gone.has(key)) continue;
+    const was = v[key];
+    if (was) doc[key] = { ...was };
+    else delete doc[key];
+  }
+  doc.dirty = true;
+  delete doc.headVersion;
+  doc.updatedAt = now;
+  return true;
+}
+
 export interface EditorBlock {
   id?: string;
   text: string;
+}
+
+/** The text an editor saves. */
+export interface EditorSave {
+  blocks?: EditorBlock[];
+  hooks?: EditorBlock[];
+  caption?: string;
+  pinned?: string;
+}
+
+/** What the editor's save was typed on: the piece as the editor last had it. */
+export type EditBase = EditorSave & { blocks: EditorBlock[] };
+
+/**
+ * The author's list was typed on `base`, and the piece may have moved on since (a turn writing while they type).
+ * What they left as it was takes the piece's text of now, what they changed stays theirs, and a slide the AI added
+ * since stays. On a page (one block) both hands' lines stay (`mergePage`). `replaced` is called when their text
+ * takes the place of something the AI wrote since, which they may never have seen.
+ */
+function rebaseList(mine: EditorBlock[], base: EditorBlock[], cur: Block[], page: boolean, replaced: () => void): EditorBlock[] {
+  const was = new Map(base.map((b) => [b.id, b.text]));
+  const now = new Map(cur.map((b) => [b.id, b]));
+  const out: EditorBlock[] = [];
+  // compared as the piece keeps text (trimmed): a line break typed at the end is not a change to the lines before it
+  const tidy = (t: string) => clip(t, Infinity);
+  for (const b of mine) {
+    const before = b.id && was.has(b.id) ? tidy(was.get(b.id)!) : undefined;
+    const c = b.id ? now.get(b.id) : undefined;
+    if (before === undefined) out.push(b);
+    else if (!c) {
+      // deleted since: it stays gone unless they wrote on it
+      if (before !== tidy(b.text)) out.push(b);
+    } else if (before === tidy(b.text)) out.push({ id: c.id, text: c.text });
+    else {
+      const text = page ? mergePage(before, c.text, b.text) : b.text;
+      if (text === b.text && c.author === "ai" && c.text !== before) replaced();
+      out.push({ id: c.id, text });
+    }
+  }
+  // A slide of their own that the list does not know is one this editor saved a moment ago without an id: the list
+  // carries it again, so only the AI's are put back.
+  cur.forEach((c, i) => {
+    if (c.author === "ai" && !was.has(c.id) && !out.some((o) => o.id === c.id)) placeAfter(out, cur, i, { id: c.id, text: c.text });
+  });
+  return out;
+}
+
+/**
+ * An editor's save, moved onto the piece as it is now (see `rebaseList`). A post description they did not touch is
+ * left out. When their text takes the place of something the AI wrote since, that text is kept as a version first.
+ */
+export function onBase(doc: Document, base: EditBase, mine: EditorSave, now = Date.now()): EditorSave {
+  const out: EditorSave = { blocks: mine.blocks, hooks: mine.hooks, caption: mine.caption, pinned: mine.pinned };
+  let lost = false;
+  const replaced = () => {
+    lost = true;
+  };
+  if (mine.blocks) out.blocks = rebaseList(mine.blocks, base.blocks, doc.blocks, isPageKind(doc.kind), replaced);
+  if (mine.hooks && base.hooks) out.hooks = rebaseList(mine.hooks, base.hooks, doc.hooks ?? [], false, replaced);
+  for (const key of COMPANION_KEYS) {
+    if (base[key] === undefined) continue;
+    if (mine[key] === base[key]) delete out[key];
+    else if (mine[key] !== undefined && doc[key]?.author === "ai" && doc[key]!.text !== base[key]) replaced();
+  }
+  if (lost) snapshot(doc, "what the AI wrote, before your edit took its place", now);
+  return out;
 }
 
 function recordEdit(doc: Document, edit: UserEdit) {
@@ -428,11 +591,15 @@ export function userEdit(
   return [...changed, ...removed.map((b) => b.id)];
 }
 
-/** A turn has read the author's edits: keep a few as a reminder, mark them seen. */
-export function markEditsSeen(doc: Document): void {
+/**
+ * A turn has read the author's edits: keep a few as a reminder, mark them seen. Edits made after the turn read the
+ * piece (`upTo`) were not read: they stay for the next turn.
+ */
+export function markEditsSeen(doc: Document, upTo = Infinity): void {
   if (!doc.userEdits?.length) return;
-  for (const e of doc.userEdits) e.seen = true;
-  doc.userEdits = doc.userEdits.slice(-KEEP_SEEN_EDITS);
+  for (const e of doc.userEdits) if (e.at <= upTo) e.seen = true;
+  const reminder = doc.userEdits.filter((e) => e.seen).slice(-KEEP_SEEN_EDITS);
+  doc.userEdits = doc.userEdits.filter((e) => !e.seen || reminder.includes(e));
 }
 
 /**

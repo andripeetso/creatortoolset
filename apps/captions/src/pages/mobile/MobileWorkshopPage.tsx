@@ -89,12 +89,12 @@ export default function MobileWorkshopPage() {
           </div>
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">Content Workshop</h1>
-            <p className="text-sm text-zinc-500">Read, or jot a project</p>
+            <p className="text-sm text-zinc-500">Read projects and change pieces</p>
           </div>
         </div>
 
         <DesktopHint>
-          Search, sources and drafts are on your desktop. On your phone you can read a project and ask the AI to change it.
+          Search, sources and drafts are in the Content Workshop on a computer.
         </DesktopHint>
 
         <section>
@@ -107,7 +107,7 @@ export default function MobileWorkshopPage() {
             </div>
           ) : sessions.length === 0 ? (
             <p className="py-6 text-center text-sm text-zinc-600">
-              No projects yet. Start one on your desktop, then read it here.
+              No projects
             </p>
           ) : (
             <ul className="flex flex-col gap-1.5">
@@ -228,17 +228,17 @@ export function MobileWorkshopSessionPage() {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      setError("Couldn't copy");
+      setError("Could not copy");
     }
   };
 
   return (
     <div className={shell}>
-      <MobileChrome home={home} backTo="/workshop" backLabel="Workshop" />
+      <MobileChrome home={home} backTo="/workshop" backLabel="Content Workshop" />
       <div className="mx-auto flex w-full max-w-md flex-col gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-          <p className="mt-1 text-sm text-zinc-500">Ask the AI to change the open piece</p>
+          <p className="mt-1 text-sm text-zinc-500">Ask for changes to the open piece</p>
         </div>
 
         {shownError && <p className="text-xs text-red-400">{shownError}</p>}
@@ -250,7 +250,7 @@ export function MobileWorkshopSessionPage() {
           </div>
         ) : docs.length === 0 && !shownError ? (
           <p className="py-10 text-center text-sm text-zinc-600">
-            Nothing written yet. Open this project on your desktop to draft.
+            No pieces
           </p>
         ) : (
           <>
@@ -303,11 +303,11 @@ export function MobileWorkshopSessionPage() {
                 {m.status === "thinking" ? (
                   <span className="flex items-center gap-2 text-zinc-400">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    {m.stage ? STAGE_LABELS[m.stage] : "Thinking"}
+                    {m.stage ? STAGE_LABELS[m.stage] : "Working"}
                     {m.provider ? ` · ${m.provider}` : ""}
                   </span>
                 ) : m.role === "assistant" ? (
-                  <MarkdownBody source={m.text || (m.error ? "" : "Done.")} media={false} />
+                  <MarkdownBody source={m.text || (m.error ? "" : "Done")} media={false} />
                 ) : (
                   <p className="whitespace-pre-wrap">{m.text}</p>
                 )}

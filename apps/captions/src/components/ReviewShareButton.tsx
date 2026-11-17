@@ -38,7 +38,7 @@ export function ReviewShareButton({
       <PopoverContent align="end" className="w-80">
         <p className="text-sm font-medium">Review link</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Anyone with the link can watch {what} and comment. No account needed.
+          Anyone with the link can watch {what} and comment.
         </p>
         {share ? (
           <>
@@ -74,7 +74,7 @@ export function ReviewShareButton({
             <button
               className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:underline"
               onClick={() => {
-                void confirmDialog({ title: "Make a new link?", body: "The old one stops working.", ok: "Make a new link" }).then((yes) => {
+                void confirmDialog({ title: "Reset the link?", body: "The current link stops working.", ok: "Reset" }).then((yes) => {
                   if (yes) void update({ reset: true });
                 });
               }}

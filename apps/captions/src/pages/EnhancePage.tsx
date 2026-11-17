@@ -226,8 +226,8 @@ function workingNote(s: EnhanceSession, avail: EnhanceAvailability | null): stri
   const working = ENGINES.find((e) => e.key === now)?.working;
   if (working) return pass + working(s, avail);
 
-  if (now === "nvidia") return pass + "About half a minute a minute of audio — you can already listen to the original below.";
-  return pass + "Usually seconds — you can already listen to the original below.";
+  if (now === "nvidia") return pass + "About half a minute for each minute of audio.";
+  return pass + "Usually a few seconds.";
 }
 
 const label =
@@ -371,7 +371,7 @@ function SessionView({
         {editable && (
           <button
             onClick={remove}
-            title="Delete this file from the server"
+            title="Delete file"
             className="rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-red-400"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -418,7 +418,7 @@ function SessionView({
                 onClick={stop}
                 className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
               >
-                Cancel
+                Stop
               </button>
             )}
           </div>
@@ -435,7 +435,7 @@ function SessionView({
               onClick={retry}
               className="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
             >
-              <RotateCcw className="h-3 w-3" /> Try again
+              <RotateCcw className="h-3 w-3" /> Retry
             </button>
           )}
         </div>
@@ -446,7 +446,7 @@ function SessionView({
         !isEnhancing(session) && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5">
             <span className="text-xs text-zinc-400">
-              Enhancement was cancelled.
+              Enhancement stopped
             </span>
             <button
               onClick={retry}
@@ -475,7 +475,7 @@ function SessionView({
                 onClick={() => downloadEnhanced(session, "video", mix)}
                 className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3.5 py-2 text-xs text-zinc-200 hover:bg-zinc-800"
               >
-                <Film className="h-3.5 w-3.5" /> Video with clean audio (.
+                <Film className="h-3.5 w-3.5" /> Video with enhanced audio (.
                 {session.videoOutExt})
               </button>
             )}
@@ -569,7 +569,7 @@ export default function EnhancePage() {
       <div className="w-[560px] max-w-[92%]">
         {openingSession ? (
           // the project's final frame, empty: the same width as the editor, so nothing moves when it arrives
-          <div aria-busy="true" aria-label="Opening audio project" className="w-full">
+          <div aria-busy="true" aria-label="Opening file" className="w-full">
             <div className="h-40 w-full rounded-xl bg-zinc-900" />
             <div className="mt-4 h-5 w-1/3 rounded bg-zinc-900" />
           </div>
@@ -625,8 +625,8 @@ export default function EnhancePage() {
               ) : (
                 <>
                   <DropZoneText
-                    title="Drop an audio or video file, or click to browse"
-                    hint="Enhanced automatically the moment it lands — the original is never changed"
+                    title="Drop an audio or video file, or click to upload"
+                    hint="Enhancement starts on upload"
                   />
                 </>
               )}
@@ -650,7 +650,7 @@ export default function EnhancePage() {
 
             {sessions.length > 0 && (
               <div className="mt-8">
-                <h2 className={label}>Your files</h2>
+                <h2 className={label}>Files</h2>
                 <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
                   {sessions.map((s) => (
                     <div

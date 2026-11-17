@@ -199,7 +199,7 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       continue;
     }
     const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
-    if (!row) throw new Error("Some footage is gone from the library");
+    if (!row) throw new Error("Some footage was not found in the Media Library");
     if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
     out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
   }
@@ -231,6 +231,12 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
  * own line), that the look or its fix could not be made and why. Nothing for a cut that passed, or was never due one.
  */
 export const saidOf = (d: Pick<DraftFile, "critique" | "unchecked">): Critique["fails"] => [...(d.critique?.fails ?? []), ...(d.unchecked ? [{ n: 0, why: d.unchecked }] : [])];
+/** saidOf in the chat's words, said with the cut being ready (owner, 2026-11-16: in the chat, not as lines on the Review page). */
+export function saidWords(fails: Critique["fails"]): string {
+  const shots = fails.filter((f) => f.n).map((f) => `shot ${f.n} (${f.why})`);
+  const list = shots.length > 1 ? `${shots.slice(0, -1).join(", ")} and ${shots.at(-1)}` : shots[0];
+  return [list ? `I couldn't fix ${list}.` : "", ...fails.filter((f) => !f.n).map((f) => f.why.replace(/\.?$/, "."))].filter(Boolean).join(" ");
+}
 
 /**
  * The rendered preview into Review as the next version of the draft's Review video, with the timeline it was cut from.
@@ -265,7 +271,7 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
-  if (!added) throw new Error("Review did not take the preview");
+  if (!added) throw new Error("Could not file the preview in Review");
   // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)
   await saveFiled(edit.id, added.meta.id, added.n, { variant, timeline });
   const db = libraryDb();
@@ -284,9 +290,9 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
 export async function fileStep({ edit, job, variant }: StepContext): Promise<void> {
   const p = readStep(edit.id, "review")?.[variant];
   const d = readDraft(edit.id, variant);
-  if (!p || !d) throw new Error("No preview in Review yet");
+  if (!p || !d) throw new Error("No preview in Review");
   const v = (await readMeta(p.assetId))?.versions.find((x) => x.n === p.n);
-  if (!v) throw new Error("The preview is gone from Review");
+  if (!v) throw new Error("Preview not found in Review");
   if (v.status === "processing") throw new Waiting(10);
   if (v.status === "error") throw new Error(`Review could not read the preview: ${v.error ?? "unknown error"}`);
   await toLibrary(p.assetId); // Review mirrors it right after it is ready; this makes sure it has

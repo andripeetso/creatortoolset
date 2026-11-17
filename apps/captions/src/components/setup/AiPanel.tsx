@@ -109,12 +109,12 @@ export function rowView(id: string, row: Known | undefined, result: ConnectResul
   const name = nameOf(id);
   const ours = !!aiOf(id); // installs and signs in from here
   const size = aiOf(id)?.size;
-  if (phase === "installing") return { line: `Installing what ${name} needs on this Mac${size ? ` (${size})` : ""}. This can take a few minutes.`, button: working("Installing…") };
-  if (phase === "updating") return { line: `Updating what ${name} needs on this Mac. This can take a few minutes.`, button: working("Updating…") };
+  if (phase === "installing") return { line: `Installing what ${name} needs on this Mac${size ? ` (${size})` : ""}, which can take a few minutes.`, button: working("Installing…") };
+  if (phase === "updating") return { line: `Updating what ${name} needs on this Mac, which can take a few minutes.`, button: working("Updating…") };
   // a sign-in that asks for a code on the vendor's page (Meta's): the code is the line
-  if (phase === "signingIn") return { line: code ? `Confirm this code on Meta's page: ${code}` : "Finish signing in in your browser.", button: working("Signing in…") };
+  if (phase === "signingIn") return { line: code ? `Confirm this code on Meta's page: ${code}` : "Finish signing in in the browser.", button: working("Signing in…") };
   if (phase === "connecting") return { line: usesOf(id), button: working("Connecting…") };
-  if (phase === "timedOut") return { line: "Still not signed in. Finish in your browser, or sign in again.", button: SIGN_IN };
+  if (phase === "timedOut") return { line: "Not signed in: finish in the browser, or sign in again.", button: SIGN_IN };
   if (result?.state === "mac" || result?.state === "unsupported")
     return { line: result.message ?? "Open the Creator Toolset Mac app to connect this.", button: null };
   if (result?.state === "signin")
@@ -122,10 +122,10 @@ export function rowView(id: string, row: Known | undefined, result: ConnectResul
   // the account has no plan for this AI: the line says what it needs, and no Try again (coming back to the window after
   // a while clears it, so a plan bought meanwhile connects from the row's Connect)
   if (result?.state === "plan") return { line: result.message ?? "", button: null, raw: withoutCommands(result.raw) };
-  if (result && result.state !== "ready") return { line: result.message ?? "It didn't connect. Try again.", button: { label: "Try again" }, raw: withoutCommands(result.raw) };
+  if (result && result.state !== "ready") return { line: result.message ?? "Could not connect", button: { label: "Retry" }, raw: withoutCommands(result.raw) };
   if (isConnected(row, result)) {
     // signed out since it was connected: the button signs in again
-    if (row?.signedIn === false && result?.state !== "ready") return { line: "Signed out since last time.", button: ours ? SIGN_IN : CONNECT };
+    if (row?.signedIn === false && result?.state !== "ready") return { line: "Signed out", button: ours ? SIGN_IN : CONNECT };
     // a plan at its limit is connected; the line says when it resets. Else the plan, when the AI names it
     const plan = PLANS.find((p) => p.id === row?.plan)?.label;
     return { line: result?.message ?? (plan ? `${plan} plan` : ""), button: null, connected: true };
@@ -151,8 +151,8 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
   const selectCls = "h-8 rounded-md border border-input bg-background px-2 text-sm";
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-sm">Answers in the app</span>
-      <select aria-label="AI that answers in the app" className={selectCls} value={current ? cur.instance : ""} onChange={(e) => pickAi(e.target.value)}>
+      <span className="text-sm">Used in the app</span>
+      <select aria-label="AI used in the app" className={selectCls} value={current ? cur.instance : ""} onChange={(e) => pickAi(e.target.value)}>
         {!current && <option value="">Pick one</option>}
         {options.map((i) => (
           <option key={i.id} value={i.id}>
@@ -200,7 +200,7 @@ function AgentRow({ id, row, result, phase, code, unread, onConnect }: { id: str
             {/* only when something went wrong: the program's version and its own words */}
             {v.raw && (
               <details className="pt-0.5">
-                <summary className="cursor-pointer">What it said</summary>
+                <summary className="cursor-pointer">Details</summary>
                 <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{[row?.version, v.raw].filter(Boolean).join("\n")}</pre>
               </details>
             )}
@@ -360,14 +360,14 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
       const install = async (phase: "installing" | "updating") => {
         setPhase(phase);
         const r = await postJson<SignInResult>("/api/setup/ai/install", { id }, INSTALL_TIMEOUT_MS);
-        if (!r?.ok) await end(failed(r?.message ?? "Couldn't reach this computer. Try again.", r?.raw));
+        if (!r?.ok) await end(failed(r?.message ?? "Could not reach this computer", r?.raw));
         return !!r?.ok;
       };
       // the vendor's own sign-in opens in the browser: the row looks every few seconds, then connects by itself
       const signIn = async () => {
         setPhase("signingIn");
         const started = await postJson<SignInResult>("/api/setup/ai/signin", { id });
-        if (!started?.ok) return end(failed(started?.message ?? "Couldn't open the sign-in. Try again."));
+        if (!started?.ok) return end(failed(started?.message ?? "Could not open the sign-in"));
         setCodes((s) => ({ ...s, [id]: started.code }));
         const since = Date.now();
         const next = { ...did, signedIn: true };
@@ -397,7 +397,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
       for (;;) {
         setPhase("connecting");
         const device = await thisMacFor();
-        const r = (await postJson<ConnectResult>("/api/setup/ai/connect", { id, device })) ?? failed("It took too long or couldn't be reached. Try again.");
+        const r = (await postJson<ConnectResult>("/api/setup/ai/connect", { id, device })) ?? failed("Timed out or could not be reached");
         const step = nextStep(r.state, did);
         if (step === "install" || step === "update") {
           if (!(await install(step === "install" ? "installing" : "updating"))) return;
@@ -407,8 +407,8 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
         if (step === "signin") return signIn();
         // signed out before any sign-in is the row's state (Sign in), never a failure. Still signed out after this press's
         // own sign-in is one: said plainly, with the program's words under Details
-        if (r.state === "signin" && aiOf(id)) return end(failed("The sign-in didn't finish. Try again.", r.raw));
-        return end(r.state === "missing" ? failed(r.message ?? "It didn't install. Try again.", r.raw) : r);
+        if (r.state === "signin" && aiOf(id)) return end(failed("The sign-in was not finished", r.raw));
+        return end(r.state === "missing" ? failed(r.message ?? "Could not install", r.raw) : r);
       }
     },
     [refresh, loadProviders],

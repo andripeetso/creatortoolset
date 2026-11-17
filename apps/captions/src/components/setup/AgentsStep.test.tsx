@@ -16,7 +16,7 @@ it("shows one section per picked computer: this computer's panel first, then the
   expect(html.indexOf("Studio Mac")).toBeLessThan(html.indexOf("MINE-PANEL"));
   expect(html.indexOf("MINE-PANEL")).toBeLessThan(html.indexOf("Workshop PC"));
   expect(html).toContain("Claude Code");
-  expect(html).toContain("Nothing reported yet.");
+  expect(html).toContain("No AI providers reported");
 });
 
 it("shows no computer-name heading for this computer when it is the only one listed", () => {
@@ -71,7 +71,7 @@ it("never shows an API key on this step", () => {
 it("on a hosted server it lists the account's computers, and says so when none is connected", () => {
   expect(render({ hosted: true, picked: new Set() })).toContain("Workshop PC");
   const none = render({ hosted: true, others: [], picked: new Set() });
-  expect(none).toContain("No computer is connected yet");
+  expect(none).toContain("No computers. Download");
   expect(none).not.toContain("No computer is picked");
   expect(none).not.toContain("MINE-PANEL");
 });

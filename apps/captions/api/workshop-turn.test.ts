@@ -178,10 +178,44 @@ describe("a turn's edits", () => {
 
     expect(done.status).toBe("done");
     expect(done.text).toBe("Rewrote the second slide.");
-    expect(done.notes).toContain("Left slide 1 as you locked it.");
+    expect(done.notes).toContain("Locked and not changed: slide 1.");
     expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["Hook for the piece", "Changed second slide"]);
     expect(done.edits?.blockIds).toEqual(["b2"]);
     expect(done.edits?.versionAfter).toBeTruthy();
+  });
+
+  it("leaves the slide the author changed while it wrote, says so, and a save typed on the older copy keeps what it wrote", async () => {
+    const { id, docId } = seed(["Hook for the piece", "Second slide", "Third slide"]);
+    let finish!: () => void;
+    const gate = new Promise<void>((r) => (finish = r));
+    let begun!: () => void;
+    const started = new Promise<void>((r) => (begun = r));
+    mocked.mockImplementationOnce((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown) => {
+      begun();
+      await gate;
+      const edits = [{ op: "replace", id: "b1", text: "A sharper hook" }, { op: "replace", id: "b2", text: "The AI's second slide" }, { op: "insert_after", id: "b2", text: "A new slide" }];
+      return { result: parse(answer({ reply: "Sharper now.", edits })), provider: "Claude (Mac)" };
+    }) as never);
+    const save = (blocks: object[], base: object[]) => call("PATCH", `/api/workshop/sessions/${id}/docs/${docId}`, { blocks, base: { blocks: base } });
+    const shown = (await docOf(id, docId)).blocks.map((b) => ({ id: b.id, text: b.text }));
+    const typed = shown.map((b) => (b.id === "b2" ? { ...b, text: "My second slide" } : b));
+    const { body } = await send(id, docId, "Make it sharper.");
+    try {
+      await started;
+      await new Promise((r) => setTimeout(r, 5));
+      // the piece is open while the turn is with the model: they type in slide 2
+      expect((await save(typed, shown)).status).toBe(200);
+      finish();
+      const done = await settled(id, body.reply!.id);
+      expect(done.notes).toContain("You changed slide 2 while this was being written, so it was left as you wrote it.");
+      expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["A sharper hook", "My second slide", "A new slide", "Third slide"]);
+      // their editor still shows the copy from before the turn: its next save changes slide 3 and nothing else
+      await save(typed.map((b) => (b.id === "b3" ? { ...b, text: "My third slide" } : b)), typed);
+      expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["A sharper hook", "My second slide", "A new slide", "My third slide"]);
+    } finally {
+      finish();
+      await settled(id, body.reply!.id).catch(() => {});
+    }
   });
 
   it("keeps set_caption as the caption of a new document and turns the replaced slide into a new slide", async () => {
@@ -341,6 +375,42 @@ describe("stop and the Mac fallback", () => {
     expect((await call("POST", `/api/workshop/sessions/${id}/chat/${body.reply!.id}/stop`)).status).toBe(404);
   });
 
+  it("the next turn answers a stopped message with its pictures, and every picture of the chat stays in the folder", async () => {
+    const { id, docId } = seed(["Piece"]);
+    let started!: () => void;
+    const begun = new Promise<void>((r) => (started = r));
+    mocked.mockImplementationOnce((async (_s: string, _u: string, signal: AbortSignal) => {
+      started();
+      return await new Promise((_, reject) => signal.addEventListener("abort", () => reject(new MacClaudeError("Stopped", "stopped"))));
+    }) as never);
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
+    const slides = await send(id, docId, "the conclusion slide, you tell me", { images: [{ name: "1.jpg", type: "image/jpeg", data: jpeg }] });
+    await begun;
+    await call("POST", `/api/workshop/sessions/${id}/chat/${slides.body.reply!.id}/stop`);
+    await settled(id, slides.body.reply!.id);
+
+    const seen: Array<{ user: string; files: Record<string, string> }> = [];
+    const hear = () =>
+      mocked.mockImplementationOnce((async (_s: string, user: string, _sig: unknown, parse: (t: string) => unknown, _h: unknown, opts: { mac: { files: Record<string, string> } }) => {
+        seen.push({ user, files: opts.mac.files });
+        return { result: parse(answer({ reply: "Looked at it.", edits: [] })), provider: "Claude (Mac)" };
+      }) as never);
+    const dir = `attached/${slides.body.ask!.id.slice(0, 8)}/`;
+    hear();
+    const next = await send(id, docId, "you stopped?");
+    await settled(id, next.body.reply!.id);
+    expect(seen[0]!.files[`${dir}01-1.jpg`]).toBe(`base64:${jpeg}`);
+    expect(seen[0]!.user).toContain("never got your reply");
+    expect(seen[0]!.user).toContain(`picture 1.jpg: read ${dir}01-1.jpg`);
+
+    // answered now: the turn after that no longer asks again, and the picture is still there for it
+    hear();
+    const third = await send(id, docId, "update the slides from those pictures");
+    await settled(id, third.body.reply!.id);
+    expect(seen[1]!.files[`${dir}01-1.jpg`]).toBe(`base64:${jpeg}`);
+    expect(seen[1]!.user).not.toContain("never got your reply");
+  });
+
   it("a turn the provider didn't finish ends with a message and runs nowhere else", async () => {
     const { id, docId } = seed(["Piece"]);
     mocked.mockImplementationOnce((async () => {
@@ -481,11 +551,11 @@ describe("attached library clips the caller can't see", () => {
 
     const clip = await send(id, docId, "", { library: [{ assetId: "ast-bo-0001", versionId: "v-bo-0001" }] });
     expect(clip.status).toBe(404);
-    expect(clip.body.error).toBe("A library clip is gone, or not in your library");
+    expect(clip.body.error).toBe("A Media Library clip was not found");
 
     const external = await send(id, docId, "", { library: [{ refId: "ext_0123456789abcdef" }] });
     expect(external.status).toBe(404);
-    expect(external.body.error).toBe("A library clip is gone, or not in your library");
+    expect(external.body.error).toBe("A Media Library clip was not found");
     expect(mocked).not.toHaveBeenCalled(); // refused before any model call
   });
 });

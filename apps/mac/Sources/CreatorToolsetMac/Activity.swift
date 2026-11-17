@@ -289,7 +289,7 @@ private struct MoreMenu: View {
         if shell.runsHere, let line = shell.serverLine {
             Text(line)
         }
-        Toggle("Use this Mac for my AI", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
+        Toggle("AI on this Mac", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
         if Recorder.available { Menu("Screen Recordings") { RecordingMenu(recorder: shell.recorder) } }
         Divider()
         Menu("Servers") { ServersMenu(shell: shell) }
@@ -330,7 +330,7 @@ enum LoginItem {
     @MainActor static func explainOnce() {
         let a = NSAlert()
         a.messageText = "Creator Toolset opens when you log in"
-        a.informativeText = "It waits in the menu bar, so your AI and recordings are ready. Turn this off any time in This Mac."
+        a.informativeText = "It stays in the menu bar, so AI and recordings are ready. Turn this off any time in This Mac."
         a.addButton(withTitle: "OK")
         a.addButton(withTitle: "Turn Off")
         if a.runModal() == .alertSecondButtonReturn { set(false) }

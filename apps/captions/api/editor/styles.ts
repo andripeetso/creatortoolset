@@ -178,7 +178,7 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     out.grade = body.grade as string | null;
   }
   if (body.brollCollectionId !== undefined) {
-    if (body.brollCollectionId !== null && (typeof body.brollCollectionId !== "string" || !folderOk(username, body.brollCollectionId))) return "No such folder in your Media Library";
+    if (body.brollCollectionId !== null && (typeof body.brollCollectionId !== "string" || !folderOk(username, body.brollCollectionId))) return "Folder not found in the Media Library";
     out.brollCollectionId = body.brollCollectionId as string | null;
   }
   if (body.steps !== undefined) {
@@ -187,7 +187,7 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     out.steps = steps;
   }
   if (body.animation !== undefined) {
-    if (body.animation !== null && !read(username).animation?.some((a) => a.id === body.animation)) return "No such animation style";
+    if (body.animation !== null && !read(username).animation?.some((a) => a.id === body.animation)) return "Animation style not found";
     out.animation = body.animation as string | null;
   }
   // one of the person's skills, by id; one that is not there (or is switched off) when an edit's script step runs adds nothing
@@ -249,7 +249,7 @@ export function createStyle(username: string, body: Record<string, unknown>, fro
   const now = Date.now();
   const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
   return change(username, (f) => {
-    if (f.editing.length >= MAX_EDITING_STYLES) return `You have ${MAX_EDITING_STYLES} editing styles, the most an account keeps. Delete one first.`;
+    if (f.editing.length >= MAX_EDITING_STYLES) return `An account keeps at most ${MAX_EDITING_STYLES} editing styles: delete one first`;
     f.editing.push(style);
     if (first) {
       f.last = style.id;

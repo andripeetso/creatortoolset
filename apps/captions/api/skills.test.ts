@@ -393,7 +393,7 @@ describe("what a skill may hold", () => {
   it("an account keeps thirty", async () => {
     await clear();
     for (let i = 1; i <= SKILL_LIMITS.perAccount; i++) await add({ name: `Kept ${i}`, when: `When ${i}`, body: "x" });
-    expect((await call(me, "/api/skills", "POST", { name: "One more", when: "Never", body: "x" })).body).toEqual({ error: "An account keeps up to 30 skills. Remove one first." });
+    expect((await call(me, "/api/skills", "POST", { name: "One more", when: "Never", body: "x" })).body).toEqual({ error: "An account keeps up to 30 skills. Delete one first." });
     expect((await call(me, "/api/skills", "POST", { name: "kept 1!", when: "Again", body: "x" })).status).toBe(400);
     expect(await mine()).toHaveLength(SKILL_LIMITS.perAccount);
   });

@@ -94,24 +94,30 @@ it("an old field the instructions have no room for stays in its field", async ()
   done();
 });
 
-it("Settings → Details: no accounts block, and Save is on only while something changed", async () => {
+it("Settings → Details: no accounts block, and Save is never off: an empty name is the field's to say", async () => {
   const { host, done } = await saveOf({ ...old, audience: "", voice: "", cta: "" }, true);
   expect(host.textContent).toContain("Details");
   expect(host.textContent).toContain("Context files");
   expect(host.textContent).not.toContain("Social accounts");
   const save = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
   expect(save.textContent).toBe("Save");
-  expect(save.disabled).toBe(true);
+  expect(save.disabled).toBe(false);
   const name = host.querySelector<HTMLInputElement>("input[required]")!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "");
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // still on with no name: the field is required, so the browser says so there and nothing is sent
+  expect(save.disabled).toBe(false);
+  expect(name.validity.valueMissing).toBe(true);
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Tiny");
     name.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  expect(save.disabled).toBe(false);
   // a dropped file is saved once: after the save it is the workspace's own, and the box is empty again
   await drop(host.querySelector("#project-notes")!, [new File(["x"], "about.md", { type: "text/markdown" })]);
   await act(async () => void host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   expect(host.querySelector('[aria-label="Remove about.md"]')).toBeNull();
-  expect(save.disabled).toBe(true);
+  expect(save.disabled).toBe(false);
   done();
 });
