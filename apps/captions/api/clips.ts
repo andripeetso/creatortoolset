@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -22,8 +21,8 @@ import {
   completeWithFallback,
   aiFor,
 } from "./ai-complete";
-import { ffmpegCommand } from "./ffmpeg-runtime";
-import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
+import { deviceStatus, deviceTranscribes, transcribeOnDevice } from "./lib/device-transcribe";
+import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
 import { env } from "./lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { videoLanguages } from "./lib/video-languages";
@@ -51,9 +50,10 @@ import {
 } from "./transcribe";
 
 /**
- * Clips — a Loom-style screen recorder inside Creator Toolset.
+ * Clips — a screen recorder inside Creator Toolset.
  * Recordings live at $DATA_DIR/clips/<id>/, fully separate from caption
- * projects. After upload the server transcribes (Deepgram, when unlocked)
+ * projects. After upload a computer makes the picture, the length and the sound (a computer task, api/work/tasks/clips.ts,
+ * the one road of work/tasks.ts); the server then has the sound transcribed (Deepgram, when unlocked, on the owner's key)
  * and titles/summarizes (same AI keys as caption cadence).
  *
  * Layout:
@@ -73,7 +73,7 @@ clipsApp.use("*", async (_c, next) => {
 const CLIPS_DIR = path.join(env.dataDir, "clips");
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const sesDir = (id: string) => path.join(CLIPS_DIR, id);
-const recordingPath = (id: string) => path.join(sesDir(id), "recording");
+export const recordingPath = (id: string) => path.join(sesDir(id), "recording");
 const transcriptPath = (id: string) => path.join(sesDir(id), "transcript.json");
 const thumbPath = (id: string) => path.join(sesDir(id), "thumb.jpg");
 const wavPath = (id: string) => path.join(sesDir(id), "audio.wav");
@@ -178,7 +178,6 @@ interface Meta {
 }
 
 const active = new Map<string, Meta>();
-const children = new Map<string, ReturnType<typeof spawn>>();
 const writeQ = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Set<BlockKind>>();
 
@@ -355,6 +354,12 @@ async function ownedMeta(id: string, user: SessionUser): Promise<Meta | null> {
   return meta && canSee(meta, user) ? meta : null;
 }
 
+/** "Waits for one of your computers…" while the note's task has no computer to take it. */
+const waitLine = (m: Meta): string | undefined => {
+  const t = m.status === "processing" ? taskFor(NOTES_TASK, m.id) : undefined;
+  return t && taskWaitLine(t);
+};
+
 /** `writingBefore`: the sections being written before `m` was read from disk (GET /:id). */
 const publicMeta = (m: Meta, writingBefore: Iterable<BlockKind> = []) => {
   const nested = m.blocks?.find((b) => b.kind === "chapters")?.chapters;
@@ -371,73 +376,9 @@ const publicMeta = (m: Meta, writingBefore: Iterable<BlockKind> = []) => {
     hasTranscript: existsSync(transcriptPath(m.id)),
     hasThumb: existsSync(thumbPath(m.id)),
     // a transcript being made on this computer says what it is doing (the speech model's first download, listening)
-    ...(deviceStatus(m.id) ? { note: deviceStatus(m.id) } : {}),
+    ...(deviceStatus(m.id) ? { note: deviceStatus(m.id) } : waitLine(m) ? { note: waitLine(m) } : {}),
   };
 };
-
-function probe(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve) => {
-    const p = spawn("ffprobe", ["-v", "error", ...args, file]);
-    let out = "";
-    const kill = setTimeout(() => {
-      p.kill("SIGKILL");
-      resolve(out.trim());
-    }, 15_000);
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => {
-      clearTimeout(kill);
-      resolve(out.trim());
-    });
-    p.on("error", () => {
-      clearTimeout(kill);
-      resolve("");
-    });
-  });
-}
-
-export const probeDuration = async (f: string) =>
-  Number(
-    await probe(f, ["-show_entries", "format=duration", "-of", "csv=p=0"]),
-  ) || 0;
-
-const probeHasAudio = async (f: string) =>
-  (
-    await probe(f, [
-      "-select_streams",
-      "a:0",
-      "-show_entries",
-      "stream=codec_name",
-      "-of",
-      "csv=p=0",
-    ])
-  ).length > 0;
-
-function runFfmpeg(id: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegCommand(), [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-y",
-      ...args,
-    ]);
-    children.set(id, p);
-    let err = "";
-    p.stderr.on("data", (d) => {
-      err += d.toString();
-      if (err.length > 4000) err = err.slice(-4000);
-    });
-    p.on("error", (e) => {
-      children.delete(id);
-      reject(e);
-    });
-    p.on("close", (code) => {
-      children.delete(id);
-      if (code === 0) resolve();
-      else reject(new Error(err.trim() || `ffmpeg exited ${code}`));
-    });
-  });
-}
 
 function parseJsonObject(text: string): Record<string, unknown> {
   const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -717,45 +658,71 @@ function crawlProgress(meta: Meta, hi: number): () => void {
   return () => clearInterval(t);
 }
 
+/** A note's computer task (api/work/tasks/clips.ts): its picture, length and sound, made where its recording is. */
+export const NOTES_TASK = "notes";
+/** What the task is asked for: the sound for the words, in the speech model's form ("device") or for a provider ("wav"). */
+export type NoteInput = { sound: "wav" | "device" | null };
+/** What it made beside thumb.jpg and `sound`: the length, and whether the recording has sound at all. */
+export type NoteMade = { duration: number; audio: boolean };
+
+/** The account a note's work runs as: its owner, or the one local account of an install without sign-in. */
+function ownerSession(meta: Meta): SessionUser | null {
+  const rec = meta.owner ? findUser(meta.owner) : null;
+  return rec ? sessionOf(rec) : !env.appSecret ? LOCAL_USER : null;
+}
+
+/**
+ * Starts a note's processing: the picture, length and sound are a computer task (the server runs it itself only on This
+ * Mac or with its video work on, work/tasks.ts); noteFiled takes it from there. While no computer can take it the note
+ * waits, its page saying so (publicMeta's note).
+ */
 async function processClip(id: string, user: SessionUser): Promise<void> {
   const meta = active.get(id);
   if (!meta) return;
-  const src = recordingPath(id);
+  meta.step = "thumbnail";
+  meta.progress = 0.08;
+  await jobPersist(meta);
+  // no key: a server on its owner's computer transcribes by itself (lib/device-transcribe.ts); a lock stays a lock
+  const onDevice = userMayCloudTranscribe(user) && !!cloudTranscribeBlock(user) && deviceTranscribes();
+  const sound = onDevice ? "device" : cloudTranscribeBlock(user) ? null : "wav";
+  try {
+    await startTask<NoteInput, NoteMade>(NOTES_TASK, id, meta.owner ?? user.username, meta.projectId ?? null, { sound });
+  } catch (e) {
+    await noteFailed(id, e instanceof Error ? e.message : String(e)); // a failed run already said so: this one changes nothing
+  }
+}
+
+/** The task's result, on the server: the picture and the sound filed, then the words and the notes written here. */
+export async function noteFiled(id: string, made: NoteMade, files: Record<string, string>): Promise<void> {
+  const meta = active.get(id) ?? (await readMeta(id));
+  if (!meta || meta.status !== "processing") return; // deleted, or failed meanwhile
+  active.set(id, meta);
+  if (made.duration) meta.duration = made.duration;
+  if (files["thumb.jpg"]) await keep(files["thumb.jpg"], thumbPath(id));
+  if (files.sound) await keep(files.sound, wavPath(id));
+  const user = ownerSession(meta);
+  if (!user) return noteFailed(id, "The note's account is gone");
+  void noteText(meta, user, !!files.sound);
+}
+
+/** The task failed for good: the note shows why. */
+export async function noteFailed(id: string, error: string): Promise<void> {
+  const meta = active.get(id) ?? (await readMeta(id));
+  if (!meta || meta.status !== "processing") return;
+  meta.status = "error";
+  meta.error = error;
+  await jobPersist(meta);
+  await noteEnded(meta);
+}
+
+/** The words (the sound the task made, heard on the owner's key or by this computer's speech model) and the notes. */
+async function noteText(meta: Meta, user: SessionUser, heard: boolean): Promise<void> {
+  const id = meta.id;
   let stopCrawl = () => {};
   try {
-    meta.step = "thumbnail";
-    meta.progress = 0.08;
-    await jobPersist(meta);
-    const duration = await probeDuration(src);
-    if (duration) meta.duration = duration;
-    const dur = Math.max(0, meta.duration);
-    const ss = dur > 2 ? "1" : "0";
-    await runFfmpeg(id, [
-      "-ss",
-      ss,
-      "-i",
-      src,
-      "-frames:v",
-      "1",
-      "-q:v",
-      "4",
-      thumbPath(id),
-    ]).catch(() => {});
-
-    // no key: a server on its owner's computer transcribes by itself (lib/device-transcribe.ts); a lock stays a lock
     const onDevice = userMayCloudTranscribe(user) && !!cloudTranscribeBlock(user) && deviceTranscribes();
-    const canTranscribe = onDevice || !cloudTranscribeBlock(user);
     let words: Word[] = [];
-    if (canTranscribe && (await probeHasAudio(src))) {
-      meta.step = "audio";
-      meta.progress = 0.22;
-      await jobPersist(meta);
-      await runFfmpeg(id, [
-        "-i",
-        src,
-        ...(onDevice ? DEVICE_AUDIO : ["-vn", "-ac", "1", "-ar", "16000", "-f", "wav"]),
-        wavPath(id),
-      ]);
+    if (heard) {
       meta.step = "transcribe";
       meta.progress = 0.38;
       await jobPersist(meta);
@@ -840,23 +807,26 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     await jobPersist(meta);
   } finally {
     stopCrawl();
-    // a note the assistant started from a dropped file: its card in the chat ends, and the chat says so (a stopped one says nothing)
-    if (meta.status !== "processing" && meta.owner) {
-      // ffmpeg's own words can run to pages: the chat gets their last line, the note's page keeps all of them
-      const why = (meta.error ?? "").trim().split("\n").at(-1)!.slice(0, 160);
-      workEnded(
-        meta.owner,
-        `notes:${id}`,
-        meta.status === "ready"
-          ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up", "Show me"] }
-          : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}`, choices: ["Show me"] },
-      );
-    }
-    active.delete(id);
-    children.get(id)?.kill("SIGKILL");
-    children.delete(id);
-    await rm(wavPath(id), { force: true }).catch(() => {});
+    await noteEnded(meta);
   }
+}
+
+/** A note's processing is over (ready, failed or deleted): the chat's card ends, and its sound goes. */
+async function noteEnded(meta: Meta): Promise<void> {
+  // a note the assistant started from a dropped file: its card in the chat ends, and the chat says so (a stopped one says nothing)
+  if (meta.status !== "processing" && meta.owner) {
+    // an encoder's own words can run to pages: the chat gets their last line, the note's page keeps all of them
+    const why = (meta.error ?? "").trim().split("\n").at(-1)!.slice(0, 160);
+    workEnded(
+      meta.owner,
+      `notes:${meta.id}`,
+      meta.status === "ready"
+        ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up", "Show me"] }
+        : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}`, choices: ["Show me"] },
+    );
+  }
+  if (active.get(meta.id) === meta) active.delete(meta.id);
+  await rm(wavPath(meta.id), { force: true }).catch(() => {});
 }
 
 /** The most times a restart starts a note's processing again: a file that takes the server down doesn't do it forever. */
@@ -869,8 +839,7 @@ const MAX_RESUMES = 3;
 // ponytail: starts over from the thumbnail, so a long transcription is done again; keep the words heard so far if that hurts
 function resumeJob(meta: Meta): boolean {
   if ((meta.resumes ?? 0) >= MAX_RESUMES) return false;
-  const rec = meta.owner ? findUser(meta.owner) : null;
-  const user = rec ? sessionOf(rec) : !env.appSecret ? LOCAL_USER : null;
+  const user = ownerSession(meta);
   if (!user) return false;
   meta.resumes = (meta.resumes ?? 0) + 1;
   console.log(`[clips] ${meta.id}: processing again after a restart (${meta.resumes}/${MAX_RESUMES})`);
@@ -880,12 +849,18 @@ function resumeJob(meta: Meta): boolean {
 
 /**
  * Once, at start (boot.ts) and before the first request (the middleware awaits it), so no read has to: every note a
- * restart stopped picks up again without anyone opening it, or fails when it has been started again too often.
+ * restart stopped picks up again without anyone opening it, or fails when it has been started again too often. One
+ * whose task still waits for a computer (or one holds it) keeps waiting: the task outlives a restart.
  */
 let resumed: Promise<void> | undefined;
 export function resumeStoppedClips(): Promise<void> {
   return (resumed ??= (async () => {
     for (const meta of await clipMetas((m) => m.status === "processing" && !active.has(m.id))) {
+      const t = taskFor(NOTES_TASK, meta.id)?.state;
+      if (t === "queued" || t === "running") {
+        active.set(meta.id, meta);
+        continue;
+      }
       if (!resumeJob(meta)) {
         meta.status = "error";
         meta.error = "Processing stopped when the server restarted";
@@ -907,8 +882,7 @@ function enqueue(meta: Meta, user: SessionUser): void {
 /** Stops a clip's work; a workspace being deleted stops its clips' too (lib/workspace-delete.ts). */
 export function cancel(id: string): void {
   active.delete(id);
-  children.get(id)?.kill("SIGKILL");
-  children.delete(id);
+  dropTask(NOTES_TASK, id);
 }
 
 async function streamFile(

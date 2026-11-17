@@ -37,8 +37,7 @@ const DECODERS: Record<string, string> = {
   // AI Editor steps: placeOf puts a step that reads video or sound on a computer; the server takes it only through
   // serverMayTake (work/place.ts mayRunHere)
   "api/editor/analyze.ts": "mayRunHere (placeOf)",
-  "api/editor/animation-styles.ts": "OPEN P3d; unverified",
-  "api/editor/cards/step.ts": "OPEN P3d: tiles the drawn cards (pictures, no footage)",
+  "api/editor/animation-styles.ts": "pictures only (decision 14): a style's pictures made small, the cards' look sheet tiled from the stills a Mac drew",
   "api/editor/critique.ts": "mayRunHere (placeOf)",
   "api/editor/eyeline.ts": "mayRunHere (placeOf)",
   "api/editor/generate.ts": "mayRunHere (placeOf)",
@@ -60,8 +59,7 @@ const DECODERS: Record<string, string> = {
   "api/alpha-video.ts": "OPEN P3b",
   "api/caption-frames.ts": "OPEN P3b: headless browser",
   "api/review.ts": "serving (decision 5): the upload transcode; frames P3c",
-  "api/clips.ts": "OPEN P3d",
-  "api/enhance.ts": "OPEN P3d",
+  "api/enhance.ts": "OPEN: a plug-in engine's host (runStep, finish) and the download's blend at a strength",
   "api/instagram.ts": "OPEN P3e",
   "api/connect/connector.ts": "OPEN P3e",
   "api/lib/connectors/prints.ts": "OPEN P3e",
@@ -76,6 +74,8 @@ const DECODERS: Record<string, string> = {
   "api/work/library.ts": "a computer's own work (the work package)",
   "api/work/look.ts": "a computer's own work (the work package)",
   "api/work/computer.ts": "a computer's own runner (CT_WORKER)",
+  "api/work/tasks/clips.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/enhance.ts": "computer task (work/tasks.ts mayRunHere)",
   // not video work: AI programs, tools, the app itself
   "api/ffmpeg-runtime.ts": "finds the ffmpeg build",
   "api/lib/helper-check.ts": "the helper's own check",

@@ -163,7 +163,7 @@ export function lagOf(x: Float32Array, y: Float32Array): number {
   return r > 0.5 ? lag * hop : DEFAULT_LAG;
 }
 
-function enhancePiece(key: string, wav: Buffer, signal?: AbortSignal): Promise<Buffer> {
+export function enhancePiece(key: string, wav: Buffer, signal?: AbortSignal): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const client = http2.connect(HOST);
     const fail = (e: Error) => {
@@ -212,10 +212,11 @@ function enhancePiece(key: string, wav: Buffer, signal?: AbortSignal): Promise<B
 
 /**
  * Mono 48 kHz samples -> NVIDIA Studio Voice, as long as the input and
- * lined up with it. `onPiece(done, total)` after each 5-minute piece.
+ * lined up with it. `onPiece(done, total)` after each 5-minute piece. `key`: the key, or the call that sends a
+ * piece (a computer's sound goes through the server, which holds the key: work/tasks/enhance.ts).
  */
 export async function studioVoice(
-  key: string,
+  key: string | ((wav: Buffer) => Promise<Buffer>),
   x: Float32Array,
   signal?: AbortSignal,
   onPiece?: (done: number, total: number) => void,
@@ -225,7 +226,8 @@ export async function studioVoice(
   for (let a = 0, k = 0; a < x.length; a += PIECE, k++) {
     const lo = Math.max(0, a - PAD);
     const hi = Math.min(x.length, a + PIECE + PAD);
-    const got = readWav(await enhancePiece(key, wav16(x.subarray(lo, hi)), signal));
+    const piece = wav16(x.subarray(lo, hi));
+    const got = readWav(await (typeof key === "string" ? enhancePiece(key, piece, signal) : key(piece)));
     if (got.sr !== SR) throw new Error(`NVIDIA answered at ${got.sr} Hz, not ${SR}`);
     const lag = lagOf(x.subarray(lo, hi), got.x);
     const keep = Math.min(PIECE, x.length - a);

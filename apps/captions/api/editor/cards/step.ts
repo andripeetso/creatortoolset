@@ -14,9 +14,8 @@ import { libraryDb } from "../../library/db";
 import { whoFor } from "../../library/describe";
 import { enqueueJob } from "../../library/jobs";
 import { probe } from "../../library/media/probe";
-import { ffmpeg } from "../../library/media/run";
 import { Waiting } from "../analyze";
-import { findAnimation, fitJpeg, pictureFile } from "../animation-styles";
+import { findAnimation, fitJpeg, pictureFile, tilePictures } from "../animation-styles";
 import type { StepContext } from "../engine";
 import { previewSize } from "../preview";
 import { ownerOf, readDraft, readStep, saveDraft } from "../store";
@@ -140,7 +139,7 @@ export async function lookSheet(editId: string, variant: string, ids: string[], 
     const order = columns ? STILLS.flatMap((s) => ids.map((id) => [id, s] as const)) : ids.flatMap((id) => STILLS.map((s) => [id, s] as const));
     for (const [n, [id, s]] of order.entries()) await symlink(cardFile(editId, variant, id, s)!, path.join(dir, `${String(n + 1).padStart(3, "0")}.png`));
     const h = Math.round((height * 540) / width / 2) * 2;
-    await ffmpeg(["-framerate", "1", "-i", path.join(dir, "%03d.png"), "-vf", `scale=540:${h},tile=${columns ? ids.length : 3}x${columns ? 3 : ids.length}`, "-frames:v", "1", path.join(dir, "sheet.png")]);
+    await tilePictures(dir, path.join(dir, "sheet.png"), h, columns ? ids.length : 3, columns ? 3 : ids.length);
     await fitJpeg(path.join(dir, "sheet.png"), path.join(dir, "sheet.jpg"), SHEET_MAX_SIDE, SHEET_MAX_BYTES);
     return { image: { jpegBase64: (await readFile(path.join(dir, "sheet.jpg"))).toString("base64") }, columns };
   } finally {
