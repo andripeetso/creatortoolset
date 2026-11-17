@@ -13,7 +13,7 @@ import { DocumentEditor } from "@/components/workshop/DocumentEditor";
 import { DocumentTabs } from "@/components/workshop/DocumentTabs";
 import { ExportMarkdown } from "@/components/workshop/ExportMarkdown";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
-import { useAskFinal } from "@/components/workshop/AddFinalDialog";
+import { AddFinalButton } from "@/components/workshop/AddFinalDialog";
 import { DeskControls, WorkshopDesk } from "@/components/workshop/WorkshopDesk";
 import { SelectedSourcesStrip } from "@/components/workshop/SelectedSourcesStrip";
 import { SelectionToContext } from "@/components/workshop/SelectionToContext";
@@ -624,7 +624,6 @@ export default function WorkshopSessionPage() {
       fail(e);
     }
   };
-  const [askFinal, finalDialog] = useAskFinal();
   const setStatus = (status: SessionStatus) => {
     if (!session) return;
     const id = session.id;
@@ -635,21 +634,19 @@ export default function WorkshopSessionPage() {
       patchSummary(id, { status: to });
       return patchSession(id, { status: to });
     };
-    put(status).then(() => {
-      if (was === status) return;
-      askFinal(id, session.title, status);
-      undoable(`set to ${sessionStatusLabel(status)}`, async () => {
-        for (const s of statusSteps(status, was)) await put(s);
-      });
-    }, fail);
+    put(status).then(
+      () =>
+        was !== status &&
+        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+          for (const s of statusSteps(status, was)) await put(s);
+        }),
+      fail,
+    );
   };
   const setPosted = (posted: SessionPatch["posted"]) => {
     if (!session) return;
     patchSession(session.id, { posted })
-      .then((m) => {
-        setSession((s) => (s ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s));
-        askFinal(m.id, m.title, m.status);
-      })
+      .then((m) => setSession((s) => (s ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s)))
       .catch(fail);
   };
 
@@ -1085,8 +1082,8 @@ export default function WorkshopSessionPage() {
         }
       >
         {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} readOnly={readOnly} /> : null}
+        {session && !readOnly ? <AddFinalButton id={session.id} title={session.title} status={session.status} /> : null}
         {session ? <SessionStatusSelect value={session.status} onChange={setStatus} readOnly={readOnly} /> : <Ghost className="h-8 w-[107px]" />}
-        {finalDialog}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
         {!chatMode && <DeskControls layout={desk} onChange={setDesk} />}

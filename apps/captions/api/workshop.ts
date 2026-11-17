@@ -90,7 +90,7 @@ import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } f
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
-import { addToFinals, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
+import { addToFinals, finalsCollectionId, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
 import { probe as probeMedia } from "./library/media/probe";
 import { libraryDb } from "./library/db";
 import { ensureLibrary, libraryRole } from "./library/access";
@@ -3261,11 +3261,13 @@ export async function describeVersion(
 
 /** Whether a final video is in Finals for this session yet (a library piece, or one a plug-in keeps), and the library a
  *  final the user drops goes to (null: no Media Library for this account). The Workshop asks for the final at Ready to post. */
-export async function sessionFinals(meta: SessionMeta): Promise<{ linked: boolean; libraryId: string | null }> {
+export async function sessionFinals(meta: SessionMeta): Promise<{ linked: boolean; libraryId: string | null; finalsId: string | null }> {
   const mainId = (await mainPiece(meta.id))?.id;
   const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
   const linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
-  return { linked, libraryId: await ensureLibrary(meta.owner, meta.projectId ?? "") };
+  const libraryId = await ensureLibrary(meta.owner, meta.projectId ?? "");
+  // the upload goes straight into Finals, so the Media Library never lists it as footage
+  return { linked, libraryId, finalsId: libraryId ? finalsCollectionId(libraryId) : null };
 }
 
 workshopApp.get("/sessions/:id/finals", async (c) => {

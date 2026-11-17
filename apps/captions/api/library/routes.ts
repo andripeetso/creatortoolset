@@ -178,6 +178,9 @@ export function recordVersion(
   }
   const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
   if (roll) fileRoll(d, assetId, roll);
+  // uploaded into Finals (a project's final, AddFinalDialog): finished from the start, never footage in the Media Library
+  else if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(o.collectionId))
+    fileRoll(d, assetId, "none");
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;

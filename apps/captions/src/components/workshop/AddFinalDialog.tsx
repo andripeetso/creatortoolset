@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -6,7 +6,7 @@ import { uploadFile } from "@/lib/library";
 import { getSessionFinals, putFinal, type SessionStatus } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 
-type Ask = { id: string; title: string; libraryId: string };
+type Ask = { id: string; title: string; libraryId: string; finalsId?: string };
 
 /**
  * A project set to Ready to post or Published with no final video in Finals: the finished file is asked for, made
@@ -17,11 +17,49 @@ export function useAskFinal(): [(id: string, title: string, status: SessionStatu
   const ask = (id: string, title: string, status: SessionStatus | undefined) => {
     if (status !== "toPost" && status !== "published") return;
     getSessionFinals(id).then(
-      (f) => !f.linked && f.libraryId && setOpen({ id, title, libraryId: f.libraryId }),
+      (f) => !f.linked && f.libraryId && setOpen({ id, title, libraryId: f.libraryId, finalsId: f.finalsId ?? undefined }),
       () => {},
     );
   };
   return [ask, open && <AddFinalDialog key={open.id} ask={open} onClose={() => setOpen(null)} />];
+}
+
+/** On a project that is ready to post or published with no final video yet: the button that asks for it (a project set
+ *  to Published before, or a "Not now"). Moved there while open, by the person or the chat, it asks at once. Nothing
+ *  while it has one, or when there is no Media Library. */
+export function AddFinalButton({ id, title, status }: { id: string; title: string; status: SessionStatus | undefined }) {
+  const [ask, setAsk] = useState<Ask | null>(null);
+  const [open, setOpen] = useState(false);
+  const due = status === "toPost" || status === "published";
+  const was = useRef(status);
+  useEffect(() => {
+    const arrived = due && was.current !== "toPost" && was.current !== "published";
+    was.current = status;
+    if (!due || open) return;
+    let live = true;
+    getSessionFinals(id).then((f) => {
+      if (!live) return;
+      const next = !f.linked && f.libraryId ? { id, title, libraryId: f.libraryId, finalsId: f.finalsId ?? undefined } : null;
+      setAsk(next);
+      if (next && arrived) setOpen(true);
+    }, () => {});
+    return () => {
+      live = false;
+    };
+  }, [id, title, status, due, open]);
+  if (!due || !ask) return null;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="h-7 shrink-0 rounded-md border border-zinc-700 px-2 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50"
+      >
+        Add final video
+      </button>
+      {open && <AddFinalDialog ask={ask} onClose={() => setOpen(false)} />}
+    </>
+  );
 }
 
 function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
@@ -42,7 +80,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
     setSent(0);
     setStage("upload");
     try {
-      const up = await uploadFile(ask.libraryId, f, (n) => setSent(n), undefined, undefined, { signal: ctl.signal });
+      const up = await uploadFile(ask.libraryId, f, (n) => setSent(n), ask.finalsId, undefined, { signal: ctl.signal });
       const id = up.assetId ?? up.duplicateOf;
       if (!id) throw new Error("The upload did not finish");
       setStage("finals");

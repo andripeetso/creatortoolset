@@ -426,7 +426,7 @@ export const patchSession = (id: string, patch: SessionPatch) =>
   fetch(`/api/workshop/sessions/${id}`, jsonInit(patch, "PATCH")).then((r) => json<SessionMeta>(r));
 /** Whether this project has a final video in Finals yet, and the library a dropped final goes to (null: no Media Library). */
 export const getSessionFinals = (id: string) =>
-  fetch(`/api/workshop/sessions/${id}/finals`).then((r) => json<{ linked: boolean; libraryId: string | null }>(r));
+  fetch(`/api/workshop/sessions/${id}/finals`).then((r) => json<{ linked: boolean; libraryId: string | null; finalsId: string | null }>(r));
 /** A library video (one just uploaded) into Finals as this project's final. Asked again while the library reads its size. */
 export async function putFinal(id: string, assetId: string): Promise<void> {
   // ponytail: five minutes of asking; past that the video stays in the library to link from Finals
