@@ -5,9 +5,9 @@ import AppKit
 import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
-/// "dropped" is answered by the window itself (AppWebView.dragItems). One more has parts of its own:
-/// "install:<claude|codex>:<key>" (installAsk), and the Media Library's "import:…" (Import.swift).
-let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect"]
+/// "dropped" is answered by the window itself (AppWebView.dragItems). These have parts of their own:
+/// "install:<claude|codex>:<key>" (installAsk), "ai-install:<id>" (aiInstallAsk), and the Media Library's "import:…" (Import.swift).
+let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "ai-install-progress"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -201,5 +201,93 @@ extension Shell {
             // Settings → Computers → Shared drives (Places.swift)
             "shares": Places.connectOn,
         ]
+    }
+}
+
+/// "ai-install:<claude|codex|gemini|antigravity>" from Settings → Providers on a server that is not this Mac: the AI's
+/// id; nil for anything else. "ai-install-progress" (in thisMacAsks) answers { done, total } while it runs.
+func aiInstallAsk(_ ask: String) -> String? {
+    guard ask.hasPrefix("ai-install:") else { return nil }
+    let id = String(ask.dropFirst("ai-install:".count))
+    return ["claude", "codex", "gemini", "antigravity"].contains(id) ? id : nil
+}
+
+/// The JSON lines the install program printed (apps/captions api/install-bin.ts): the last { done, total }, and the
+/// page's reply from its last { ok, message } ({ ok } or { ok: false, problem }; nil while there is none).
+func aiInstallOutput(_ text: String) -> (progress: [String: Any]?, reply: [String: Any]?) {
+    var progress: [String: Any]?, reply: [String: Any]?
+    for line in text.split(separator: "\n") {
+        guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+        if let ok = o["ok"] as? Bool {
+            reply = ok ? ["ok": true] : ["ok": false, "problem": o["message"] as? String ?? "Could not install it."]
+        } else if o["done"] != nil, o["total"] != nil {
+            progress = ["done": o["done"]!, "total": o["total"]!]
+        }
+    }
+    return (progress, reply)
+}
+
+/// Installs an AI on this Mac with the server's own installer (server/dist/install.js on the bundled node), for a window
+/// on another server: this Mac's server is not running then. One install at a time.
+final class AiInstall: @unchecked Sendable {
+    static let shared = AiInstall()
+    private let lock = NSLock()
+    private var output = ""
+    private var running = false
+
+    /// { done, total } of the install running now (Antigravity's download); 0 of 0 when none runs.
+    var progress: [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        return running ? (aiInstallOutput(output).progress ?? ["done": 0, "total": 0]) : ["done": 0, "total": 0]
+    }
+
+    func run(_ id: String, folder: URL, done: @escaping ([String: Any]) -> Void) {
+        lock.lock()
+        if running { lock.unlock(); return done(["ok": false, "problem": "An install is running. Try again when it ends."]) }
+        running = true
+        output = ""
+        lock.unlock()
+        let p = Process()
+        p.executableURL = folder.appendingPathComponent("bin/node")
+        p.arguments = ["dist/install.js", id]
+        p.currentDirectoryURL = folder
+        var env = ProcessInfo.processInfo.environment.filter { ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL"].contains($0.key) }
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        env["NODE_ENV"] = "production"
+        env["CT_LOCAL"] = "1"
+        env["CT_APP_FOLDER"] = appSupport.path   // where Antigravity and the managed Node.js go, as for the server (Server.swift)
+        p.environment = env
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard let self, !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            self.lock.lock()
+            self.output += String(decoding: data, as: UTF8.self)
+            self.lock.unlock()
+        }
+        p.terminationHandler = { [weak self] _ in
+            guard let self else { return }
+            // what is still in the pipe comes in before the answer is read
+            let rest = pipe.fileHandleForReading.readDataToEndOfFile()
+            pipe.fileHandleForReading.readabilityHandler = nil
+            self.lock.lock()
+            self.output += String(decoding: rest, as: UTF8.self)
+            let reply = aiInstallOutput(self.output).reply ?? ["ok": false, "problem": "Could not install it. Try again."]
+            self.running = false
+            self.lock.unlock()
+            DispatchQueue.main.async { done(reply) }
+        }
+        do {
+            try p.run()
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            lock.lock(); running = false; lock.unlock()
+            done(["ok": false, "problem": "Could not start the installer."])
+        }
     }
 }

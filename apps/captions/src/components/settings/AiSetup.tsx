@@ -26,8 +26,8 @@ export const SIGN_IN: Partial<Record<Driver, string>> = { codex: "codex login", 
 /** The install and sign-in lines for one tool, on its detail page and in the Add provider dialog, when the computer doesn't have it. */
 export function InstallHelp({ driver }: { driver: Driver }) {
   const tool = TOOLS[driver];
-  // Antigravity: the Mac app's own server downloads it (Settings → Providers on This Mac); every server then uses that copy
-  if (driver === "antigravity") return <p className="text-xs text-muted-foreground">Not installed. Install it on This Mac in the Mac app, under Settings → Providers.</p>;
+  // Antigravity: the Mac app downloads it (Settings → Providers, Install, on any server opened in the Mac app on that computer)
+  if (driver === "antigravity") return <p className="text-xs text-muted-foreground">Not installed. Install it from the Mac app on its computer, under Settings → Providers.</p>;
   if (!tool) {
     return <p className="text-xs text-muted-foreground">Not installed on its computer.</p>;
   }

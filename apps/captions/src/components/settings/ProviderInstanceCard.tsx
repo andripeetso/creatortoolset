@@ -17,9 +17,10 @@ export interface ProviderStatus {
 }
 
 /**
- * One AI's status line, the first that applies: switched off (nothing: the switch says it), a tool the Mac app can't run,
- * a computer that is offline, the tool not installed there, a failed check, signed out, signed in (its plan, else
- * nothing). `report` = the computer has reported at all; `found` = what it reported for this tool.
+ * One AI's status line, the first that applies: the tool not installed on its online computer (on or off: it can't be
+ * switched on before it is installed), switched off (nothing: the switch says it), a tool the Mac app can't run, a
+ * computer that is offline, a failed check, signed out, signed in (its plan, else nothing). `report` = the computer has
+ * reported at all; `found` = what it reported for this tool.
  */
 export function providerStatus(o: {
   enabled: boolean;
@@ -31,10 +32,10 @@ export function providerStatus(o: {
   reportAt?: number;
   check?: ProviderCheck;
 }): ProviderStatus {
+  if (o.runs && o.online && o.report && !o.found?.installed) return { tone: "attention", text: "Not installed", action: "install" };
   if (!o.enabled) return { tone: "neutral", text: "" };
   if (!o.runs) return { tone: "neutral", text: "Not supported by the Mac app" };
   if (!o.online) return { tone: "neutral", text: "Computer offline" };
-  if (o.report && !o.found?.installed) return { tone: "attention", text: "Not installed", action: "install" };
   const answeredSinceReport = !!o.check?.ok && (o.reportAt === undefined || o.check.at >= o.reportAt);
   if (o.found?.signedIn === false && !answeredSinceReport) return { tone: "attention", text: "Needs sign-in", action: "sign-in" };
   if (o.check && !o.check.ok) {
@@ -93,7 +94,8 @@ export const PROVIDER_ROW = "h-[4.5rem]";
 
 /**
  * A provider's row in the list: its logo, name and version, one status line, the button its status needs, and the
- * on/off switch. The name is the link to its detail. `onToggle` absent = a read-only row (the team's AI).
+ * on/off switch (none while it is not installed: Install takes its place). The name is the link to its detail.
+ * `onToggle` absent = a read-only row (the team's AI).
  */
 export function ProviderInstanceCard({
   inst,
@@ -136,7 +138,7 @@ export function ProviderInstanceCard({
         <div className="relative z-10 flex items-center gap-2">
           {/* the chosen AI's button is in its settings beside the list (from `lg`, where both are on screen) */}
           {action && <span className={cn("flex items-center", selected && "lg:hidden")}>{action}</span>}
-          {onToggle && <Switch checked={inst.enabled} onCheckedChange={onToggle} aria-label={`Use ${inst.name}`} />}
+          {onToggle && status.action !== "install" && <Switch checked={inst.enabled} onCheckedChange={onToggle} aria-label={`Use ${inst.name}`} />}
         </div>
       }
     />

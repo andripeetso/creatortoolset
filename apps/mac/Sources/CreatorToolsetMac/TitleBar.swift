@@ -401,7 +401,7 @@ extension AppWebView {
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".
     fileprivate func thisMac(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
-              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask) || isImportAsk(ask) || isPlacesAsk(ask) || isEditorAsk(ask),
+              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || aiInstallAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask) || isImportAsk(ask) || isPlacesAsk(ask) || isEditorAsk(ask),
               let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }
