@@ -155,12 +155,12 @@ export function deviceForToken(authorization: string | undefined): Device | null
 export function pairDevice(owner: string, name: string, version?: string, machineId?: string): { device: Device; token: string; replaced: string[] } {
   const token = `ctd_${randomBytes(32).toString("base64url")}`;
   const mid = machineId && /^[\w-]{8,80}$/.test(machineId) ? machineId : undefined;
-  const same = mid && (all().find((x) => x.owner === owner && x.machineId === mid) ?? all().find((x) => x.owner === owner && x.name === name && !x.machineId));
-  if (same) {
-    Object.assign(same, { name, tokenHash: sha(token), machineId: mid, ...(version ? { version } : {}) });
+  const known = mid && (all().find((x) => x.owner === owner && x.machineId === mid) ?? all().find((x) => x.owner === owner && x.name === name && !x.machineId));
+  if (known) {
+    Object.assign(known, { name, tokenHash: sha(token), machineId: mid, ...(version ? { version } : {}) });
     persist();
     tell(owner);
-    return { device: strip(same), token, replaced: [] };
+    return { device: strip(known), token, replaced: [] };
   }
   const same = mid ? [] : all().filter((x) => x.owner === owner && x.name === name && !x.machineId);
   const d: Stored = {
