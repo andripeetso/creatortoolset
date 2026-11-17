@@ -8,7 +8,8 @@ import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { readerOf } from "./reader";
-import { ensureLibrary, givenLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
+import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
+import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
@@ -432,7 +433,8 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
 // only then). With the sha256: the clip it is, by the same check an upload's finish makes.
 libraryApp.post("/:id/uploads/check", async (c) => {
   const libraryId = c.req.param("id");
-  if (!(await mayAdd(c.get("user"), libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const user = c.get("user");
+  if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown } | null;
   const size = Number(b?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
@@ -442,15 +444,28 @@ libraryApp.post("/:id/uploads/check", async (c) => {
   return c.json(dup ? { duplicateOf: dup.id } : {});
 });
 
+/**
+ * POST /api/library/here/uploads { filename, size } → the same as /:id/uploads, into the own library of the workspace this
+ * request works in (upload-target.ts): the phone's upload, which never names a library. The rest of it is the same
+ * upload at /uploads/:uploadId (PATCH, finish), which asks mayAdd again. 409 where a plug-in keeps the workspace's uploads.
+ */
+libraryApp.post("/here/uploads", async (c) => {
+  const t = await uploadTarget(c.get("user"));
+  if ("error" in t) return c.json({ ...t, code: "forbidden" }, 403);
+  if (!t.libraryId) return c.json({ error: "This workspace's uploads go somewhere else", code: "conflict", target: t.target }, 409);
+  return startUpload(c, t.libraryId);
+});
 // POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice?, quick?, send? } → 201 { id, offset, chunkSize }
 // fromPath / fromDevice: where the file is on the Mac it is sent from (a library that keeps only proxies keeps that place)
 // send (with quick, the Mac's quickPrint): a video on the caller's own computer whose worker takes library jobs is not
 // uploaded by the page: 200 { assetId, versionId, sent: true } | { duplicateOf }, and that computer makes the proxy and
 // the small files and sends them, the original too only to a library that keeps originals (derived.ts sendLater)
-libraryApp.post("/:id/uploads", async (c) => {
+libraryApp.post("/:id/uploads", (c) => startUpload(c, c.req.param("id")));
+
+async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: string): Promise<Response> {
   const user = c.get("user");
-  const libraryId = c.req.param("id");
-  if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  // with a workspace named, only that workspace's libraries (a cross-brand id is refused); with none, as before
+  if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
@@ -526,7 +541,7 @@ libraryApp.post("/:id/uploads", async (c) => {
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
-});
+}
 
 /**
  * POST /api/library/:id/in-place { path, size, collectionId?, again? } → { assetId, versionId } | { duplicateOf } |
@@ -540,7 +555,7 @@ libraryApp.post("/:id/uploads", async (c) => {
 libraryApp.post("/:id/in-place", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!libraryRole(user.username, libraryId) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer: upload the file", code: "forbidden" }, 403);
   const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown };
   const given = typeof body.path === "string" ? body.path : "";
@@ -595,7 +610,7 @@ libraryApp.post("/:id/in-place", async (c) => {
 libraryApp.post("/:id/on-mac", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   if (x.collectionId) {

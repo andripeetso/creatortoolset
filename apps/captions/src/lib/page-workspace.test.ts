@@ -23,4 +23,15 @@ describe("leaveFor: where a page goes when the workspace changes", () => {
     expect(leaveFor("/clips/f/token")).toBeNull();
     expect(leaveFor("/reviewers")).toBeNull();
   });
+  it("a plug-in's page of one workspace's things goes where the plug-in says, ahead of the tools", () => {
+    const pages = [{ path: /^\/footage(\/|$)/, to: "/library" }, { path: /^\/editor\/plugged\//, to: "/editor/plugged" }];
+    expect(leaveFor("/footage", "", pages)).toBe("/library");
+    expect(leaveFor("/footage", "?clip=c1", pages)).toBe("/library");
+    expect(leaveFor("/footage/c1", "", pages)).toBe("/library");
+    expect(leaveFor("/editor/plugged/e1", "", pages)).toBe("/editor/plugged");
+    // its own landing page stays; the other pages are the tools' as before
+    expect(leaveFor("/editor/plugged", "", [{ path: /^\/editor\/plugged/, to: "/editor/plugged" }])).toBeNull();
+    expect(leaveFor("/review/v1", "", pages)).toBe("/review");
+    expect(leaveFor("/footage")).toBeNull();
+  });
 });
