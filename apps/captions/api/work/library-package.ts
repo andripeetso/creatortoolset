@@ -24,7 +24,7 @@ import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { deviceForToken, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
-import { libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "../library/db";
+import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { claimJob, enqueueJob, extendLease, finishJob, type JobRow } from "../library/jobs";
@@ -177,7 +177,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(at && "path" in at ? { path: at.path } : {}),
     ...(r.proxy && job.kind !== "proxy" && job.kind !== "send" ? { proxy: { bytes: r.proxy_bytes ?? 0 } } : {}),
   };
-  const upload = libraryUpload(r.library_id);
+  const upload = versionUpload(r.id);
   const send = job.kind === "send" && upload !== "none";
   return {
     v: WORK_V,
@@ -255,7 +255,7 @@ export async function acceptLibraryFile(jobId: number, deviceId: string, name: s
   const job = heldBy(jobId, deviceId);
   if (!job || !NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile)) return false;
   // the original only to a library that keeps originals: a proxies-only library never gets one
-  if (name === "original" && libraryUpload(job.library_id) !== "all") return false;
+  if (name === "original" && (!job.version_id || versionUpload(job.version_id) !== "all")) return false;
   const cap = name === "original" ? (rowOf(job.version_id)?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
   await mkdir(incoming(jobId), { recursive: true });
   const out = path.join(incoming(jobId), name);

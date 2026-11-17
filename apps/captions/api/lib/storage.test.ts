@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { connectFor, sourcesOf, type Disk, type StorageFolder } from "../../contracts/storage";
+import { connectFor, finalsDirName, finalsFolderOf, sourcesOf, type Disk, type StorageFolder } from "../../contracts/storage";
 import { canReach, folderFor, hostPath, isInside, mountOf, withMounts, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
 
 // Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
@@ -177,6 +177,23 @@ describe("where the files are: the library and its files", () => {
     expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "pc")).toBe(true);
     expect(hostPath("/Mnt/CT/Footage/a.mp4", [lib], "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
     expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "laptop")).toBe(false);
+  });
+});
+
+describe("the Finals folder", () => {
+  const lib: StorageFolder = { id: "lib", role: "library", name: "Creator Toolset", origin: { host: "mac", path: "~/Creator Toolset" }, make: true, createdAt: 0, reach: { pc: { path: "/Mnt/CT", at: 1 } } };
+  it("is the Library's Finished/ until one is chosen, and the chosen one after", () => {
+    expect(finalsFolderOf([lib])).toMatchObject({ id: "lib:finals", role: "finals", origin: { path: "~/Creator Toolset/Finished" }, reach: { pc: { path: "/Mnt/CT/Finished" } } });
+    const own: StorageFolder = { ...lib, id: "fin", role: "finals", name: "Finals", origin: { host: "mac", path: "/Volumes/Drive/Finals" }, reach: {} };
+    expect(finalsFolderOf([lib, own])?.id).toBe("fin");
+    expect(finalsFolderOf([])).toBeUndefined();
+    // the Library's own Finished/ is no footage or music source
+    expect(sourcesOf([lib]).map((f) => f.role)).toEqual(["footage", "music"]);
+  });
+  it("names a project's folder by its title, safe as a file name", () => {
+    expect(finalsDirName("Tiny Acrobatics: rolls / v2?")).toBe("Tiny Acrobatics rolls v2");
+    expect(finalsDirName("..hidden. ")).toBe("hidden");
+    expect(finalsDirName("  ")).toBe("Untitled");
   });
 });
 

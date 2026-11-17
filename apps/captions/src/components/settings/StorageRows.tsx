@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, connectFor, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, connectFor, finalsFolderOf, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
+import { chooseFolderOnMac, macImports } from "@/lib/thisMac";
 import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, inWorkspace, moveItems, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
@@ -197,6 +198,9 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
       {[...each, ...rest].map((r, i) => (
         <LibraryRow key={r.library?.id ?? r.id ?? "own"} first={i === 0} workspace={r.id} tagged={!!w?.all} library={r.library} {...shared} />
       ))}
+      {each.map((r, i) => (
+        <FinalsRow key={r.id ?? "own"} first={i === 0} workspace={r.id} w={w} here={storage.here} folders={w?.all ? storage.folders.filter((f) => f.workspace === r.id) : storage.folders} {...shared} />
+      ))}
       {STORAGE_ROLES.map((r) => (
         <SourceRows key={r.value} role={r.value} storage={storage} w={w} {...shared} />
       ))}
@@ -287,6 +291,33 @@ function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, works
         </>
       )}
     </FormDialog>
+  );
+}
+
+/**
+ * Finals: where each Workshop project's finished video goes, a folder per project, read into Finals (one per workspace;
+ * the Library's Finished/ until another is chosen). Change applies from then on and moves nothing.
+ */
+function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, onChanged }: {
+  folders: StorageFolder[]; workspace: string | null; first: boolean; w?: SettingsWorkspace; here?: string[]; devices: Computer[]; serverDisks: Disk[]; onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const f = finalsFolderOf(folders);
+  return (
+    <>
+      <Row
+        id={first ? "finals-folder" : undefined}
+        title="Finals"
+        description={f ? whereOf(f, devices) : undefined}
+        status={w?.all ? <WorkspaceTag id={workspace} /> : undefined}
+        control={
+          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+            {f ? "Change" : "Add folder"}
+          </Button>
+        }
+      />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role="finals" devices={devices} serverDisks={serverDisks} here={here} w={w && { ...w, id: workspace, many: false }} onChanged={onChanged} />
+    </>
   );
 }
 
@@ -434,7 +465,7 @@ export function ConnectDialog({ folder, computer, onClose, onUsed }: { folder: S
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
  */
 function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
-  open: boolean; onOpenChange: (o: boolean) => void; role: SourceRole; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace; onChanged: () => void;
+  open: boolean; onOpenChange: (o: boolean) => void; role: AddFolderBody["role"]; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
   // `here`: the computers that are the machine this server runs on. A folder added on one joins the Media Library,
   // which transcribes and describes every clip, so a big one shows what that takes before it is added
@@ -469,7 +500,8 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
       }
     };
     try {
-      if (here.includes(host)) await big.check(p, add, { music: role === "music" });
+      // a Finals folder is read project by project, never taken in whole
+      if (role !== "finals" && here.includes(host)) await big.check(p, add, { music: role === "music" });
       else await add();
     } finally {
       setBusy(false);
@@ -477,7 +509,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   };
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "music" ? "Add music folder" : "Add footage folder"} submitLabel="Add folder" onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : role === "music" ? "Add music folder" : "Add footage folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
       {devices.length === 0 ? (
         <Status tone="attention">Needs a computer</Status>
       ) : (
@@ -487,7 +519,13 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
           )}
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
           <DriveSelect disks={disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Volumes/Drive/Footage" aria-label="Folder path" required />
+          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "finals" ? "/Volumes/Drive/Finals" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
+          {/* chosen in the Mac app's picker, the Mac app may copy a dropped final into it */}
+          {role === "finals" && macImports() && (
+            <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => void chooseFolderOnMac().then((p) => p && setPath(p))}>
+              Choose folder
+            </Button>
+          )}
         </>
       )}
       {big.dialog}
