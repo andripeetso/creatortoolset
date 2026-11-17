@@ -10,6 +10,8 @@ import Foundation
 // the file must also be a video, sound or picture file (by its real path), with no folder to grant first: showing it in Finder
 // reads none of it (owner, 2026-11-17: asking for a folder on Show in Finder is "ridiculous"). Missing and refused get
 // the same answer.
+// A copy of the library (`reveal:{"library","copy","path"}`, Settings → Media Library → Copies; LibraryCopyJob.swift): the
+// page names the folder, and it is shown only when it is an existing folder whose marker is that copy's.
 
 func isRevealAsk(_ ask: String) -> Bool { ask.hasPrefix("reveal:") }
 
@@ -33,8 +35,45 @@ func reviewRevealAsk(_ ask: String) -> (asset: String, n: Int)? {
     return (asset, n)
 }
 
+/// A copy's folder in a reveal ask (`reveal:{"library","copy","path"}`); nil when it is not one.
+func copyRevealAsk(_ ask: String) -> (library: String, copy: String, path: String)? {
+    guard isRevealAsk(ask),
+          let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst("reveal:".count).utf8))) as? [String: Any],
+          let library = json["library"] as? String, let copy = json["copy"] as? String, let path = json["path"] as? String,
+          !library.isEmpty, !copy.isEmpty, !path.isEmpty
+    else { return nil }
+    return (library, copy, path)
+}
+
 enum Reveal {
     static let problem = "That file isn't on this Mac."
+    static let folderProblem = "Folder not found on this Mac"
+
+    /// The real path of a copy's folder, or nil: an absolute path with no `.`/`..` parts, an existing folder, its marker
+    /// that copy's. A folder on a network disk that doesn't answer is not shown.
+    static func copyFolder(_ path: String, library: String, copy: String) -> String? {
+        let parts = path.split(separator: "/")
+        guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return nil }
+        return Places.shared.guarded(path) { () -> String? in
+            guard let real = realPath(path) else { return nil }
+            var directory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: real, isDirectory: &directory), directory.boolValue,
+                  let marker = LibraryCopyJob.readMarker(URL(fileURLWithPath: real)).marker,
+                  marker.copy == copy, marker.library == library
+            else { return nil }
+            return real
+        } ?? nil
+    }
+
+    /// Shows a copy's folder selected in Finder; the reply is { ok: true } or { ok: false, problem }.
+    @MainActor static func answerCopy(_ path: String, library: String, copy: String) async -> [String: Any] {
+        let real = await withCheckedContinuation { c in
+            DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: copyFolder(path, library: library, copy: copy)) }
+        }
+        guard let real else { return ["ok": false, "problem": folderProblem] }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: real)])
+        return ["ok": true]
+    }
 
     /// The real path to show, or nil when it may not be shown. `anyFile`: any existing file (the server on this Mac named
     /// it); else only a video, sound or picture file. A file on a network disk that doesn't answer is not shown.

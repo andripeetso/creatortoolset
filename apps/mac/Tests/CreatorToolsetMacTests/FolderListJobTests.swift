@@ -35,6 +35,12 @@ final class FolderListJobTests: XCTestCase {
         XCTAssertNotNil(FolderListJob.refused("relative/path", drive: false))
     }
 
+    func testAddCopysBrowserListsTheDisks() {
+        XCTAssertNil(FolderListJob.refused("/", drive: true, browse: true))
+        XCTAssertNil(FolderListJob.refused("/Volumes", drive: true, browse: true))
+        XCTAssertNil(FolderListJob.refused(FileManager.default.homeDirectoryForCurrentUser.path, drive: true, browse: true))
+    }
+
     func testALockedFolderIsSaidToBeUnreadableNeverShownEmpty() throws {
         let root = try folder()
         let locked = root.appendingPathComponent("FOOTAGE")

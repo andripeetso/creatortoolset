@@ -1,6 +1,7 @@
 import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
 import { applyNeedWays, isPluginGateId, isTool, TOOL_NAMES, type Have, type NeedWay, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
+import type { CopyItem, LibraryCopy } from "../../contracts/library";
 import type { EditFlag, FootageTarget, Timeline } from "../../contracts/editor";
 import type { StepInfo } from "../../contracts/editor-steps";
 import { DRIVERS, type DriverKind, type ProviderPreset } from "../../contracts/providers";
@@ -9,7 +10,7 @@ import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { StorageFolder, UploadRelayTus } from "../../contracts/storage";
-import { CARDS_DRAW_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
+import { CARDS_DRAW_KIND, COPY_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
 import type { SessionUser } from "../users";
 import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, SLOT_TOOL, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
 
@@ -134,6 +135,8 @@ export interface ServerPlugin {
   // What the plug-in keeps in a workspace (its own AI Editor edits, say), deleted with the workspace
   // (api/lib/workspace-delete.ts): the delete confirm counts them and the delete removes them, with the app's files for them.
   workspaceStores?: WorkspaceStore[];
+  // Files the plug-in adds to every copy of a library, and copies its own copier keeps (api/library/copies.ts).
+  copySource?: CopySource;
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
@@ -386,12 +389,26 @@ export function pluginServerWork(q: { account: string | null; workspace: string 
 }
 
 export const pluginDeviceJobs = (): DeviceJobSlot[] => loaded.flatMap((p) => p.deviceJobs ?? []);
+export const pluginCopySources = (): CopySource[] => loaded.flatMap((p) => (p.copySource ? [p.copySource] : []));
+
+/**
+ * A plug-in's part in the Media Library's copies (Settings → Media Library → Copies; api/library/copies.ts). `items` is
+ * read on every claim and long poll, so it answers from the plug-in's own cache, never the network.
+ */
+export interface CopySource {
+  // the files of `libraryId` that go to each of its copies besides the library's own versions
+  items: (libraryId: string) => CopyItem[];
+  // the bytes of `key` for `owner` (the library's owner), Range passed on from `req`; null when not theirs to download
+  open: (owner: string, key: string, req: Request) => Promise<Response | null>;
+  // copies kept by a copier the app does not run, shown read-only beside the library's own
+  rows?: (libraryId: string) => Promise<LibraryCopy[]>;
+}
 export const pluginStorageFolders = async (username: string): Promise<StorageFolder[]> =>
   (await Promise.all(loaded.map((p) => p.storageFolders?.(username).catch(() => []) ?? []))).flat();
 
 /** Refuses a device job kind that is not lowercase words, is one of the app's own, or that two plug-ins both declare. */
 function checkDeviceJobs(plugins: ServerPlugin[]): void {
-  const seen = new Set<string>([CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND]);
+  const seen = new Set<string>([COPY_KIND, CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND]);
   for (const plugin of plugins) {
     for (const j of plugin.deviceJobs ?? []) {
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(j.kind)) throw new Error(`plug-in ${plugin.id}: device job "${j.kind}" is not lowercase words and dashes`);

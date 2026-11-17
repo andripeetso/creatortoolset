@@ -556,6 +556,8 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
 - `Sources/CreatorToolsetMac/ClaudeRun.swift`: one Claude run (the process, streaming, the answer).
 - `Sources/CreatorToolsetMac/MacReport.swift`: the CLIs and config folders the Mac reports.
 - `Sources/CreatorToolsetMac/CardJobs.swift`: one card step (the read, each card, the upload, done or fail, the lease).
+- `Sources/CreatorToolsetMac/LibraryCopyJob.swift`: a copy of the Media Library in a folder on this Mac (Settings →
+  Media Library → Copies): its marker, one file at a time, older versions into `.versions/`, nothing ever deleted.
 - `Sources/CreatorToolsetMac/KitRunner.swift`: the web view a card's script is shut in, its time limit and its frames.
 - `Sources/CreatorToolsetMac/CardClip.swift`: a card's frames as an H.264 clip and three stills.
 - `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop,

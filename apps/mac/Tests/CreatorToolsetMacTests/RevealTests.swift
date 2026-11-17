@@ -19,6 +19,23 @@ final class RevealTests: XCTestCase {
 
     private func path(_ relative: String) -> String { root.appendingPathComponent(relative).path }
 
+    func testACopysFolderIsShownOnlyWithItsOwnMarker() throws {
+        let folder = root.appendingPathComponent("Copy of the library")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        XCTAssertNil(Reveal.copyFolder(folder.path, library: "lib", copy: "cp1"), "no marker")
+        try LibraryCopyJob.writeMarker(CopyMarker(library: "lib", copy: "cp1", files: [:]), folder)
+        XCTAssertNotNil(Reveal.copyFolder(folder.path, library: "lib", copy: "cp1"))
+        XCTAssertNil(Reveal.copyFolder(folder.path, library: "lib", copy: "cp2"), "another copy's marker")
+        XCTAssertNil(Reveal.copyFolder(path("gone"), library: "lib", copy: "cp1"))
+        XCTAssertNil(Reveal.copyFolder(path("secret.txt"), library: "lib", copy: "cp1"), "a file is not a folder")
+        XCTAssertNil(Reveal.copyFolder("Copy of the library", library: "lib", copy: "cp1"), "relative")
+
+        let ask = #"reveal:{"library":"lib","copy":"cp1","path":"/Volumes/Tiny Acrobatics/Copy"}"#
+        XCTAssertEqual(copyRevealAsk(ask)?.path, "/Volumes/Tiny Acrobatics/Copy")
+        XCTAssertNil(revealAsk(ask), "not a clip's ask")
+        XCTAssertNil(copyRevealAsk(#"reveal:{"library":"lib","asset":"a1"}"#))
+    }
+
     func testAServerElsewhereShowsAnExistingMediaFileWithNoFolderGranted() throws {
         XCTAssertNotNil(Reveal.check(path("Footage/Day 1/A001.MOV"), anyFile: false))
         XCTAssertNotNil(Reveal.check(path("Footagebar/B001.MOV"), anyFile: false))

@@ -2,7 +2,8 @@
 
 A Linux computer of yours (with or without an NVIDIA graphics card) turns speech into text for your Creator Toolset
 server, with models it downloads itself. Today it makes the Media Library's transcripts when Settings → AI → Voice
-runs them on your computers.
+runs them on your computers, and it keeps copies of your Media Library in a folder on it (Settings → Media Library →
+Copies).
 
 The server hands these files out itself, at `<server>/helper/`, so the computer needs nothing but the server's
 address.
@@ -24,6 +25,31 @@ virtual environment (with CUDA 12's cuBLAS and cuDNN when `nvidia-smi` is there)
 By hand: copy `helper.py` and `requirements.txt`, make a virtual environment with them, then
 `python helper.py pair <server> <code>` and `python helper.py run`.
 
+## Docker (a NAS that keeps a copy)
+
+On a NAS (a TrueNAS custom app, or any Docker host) the helper keeps copies of your Media Library and nothing else:
+the image has the standard library only, no speech models. Build it from this folder's `Dockerfile` and `helper.py`:
+
+```sh
+mkdir helper && cd helper && curl -fsSL -O <server>/helper/Dockerfile -O <server>/helper/helper.py
+docker build -t creator-toolset-helper .
+docker run -d --restart unless-stopped --name creator-toolset-helper \
+  -e CT_SERVER=<server> -e CT_PAIR_CODE=<code> \
+  -v /mnt/tank/helper:/data -v /mnt/tank/library-copy:/copies creator-toolset-helper
+```
+
+It runs as user and group 568 (the TrueNAS apps user), never root, so the copy's files belong to that user. Another
+user: `docker build --build-arg PUID=1000 --build-arg PGID=1000 .`, or `docker run --user 1000:1000`. Both folders must
+be writable by it.
+
+`/data` keeps its token (`config.json`, mode 0600): the code is used once, on the first start. Make it a bind mount
+of a folder on the host as above: with no mount, or an anonymous volume, the pairing is lost each time the container
+is made again (an update), and the code no longer works. Mount the dataset the copy goes in at `/copies`. When the
+dataset is not mounted the copy finds no marker there and asks to be reconnected; it never writes into the empty
+folder under it. Then in Creator Toolset: Settings → Media Library → Copies → Add copy → this computer →
+`/copies`. Once the computer is removed in Settings → Devices the helper exits (status 3) on each start: stop the
+container, empty `/data` and start it again with a new code.
+
 ## What it does
 
 - Keeps a long poll open to the server, also while it downloads or transcribes (a computer silent for 40 s is offline).
@@ -32,6 +58,13 @@ By hand: copy `helper.py` and `requirements.txt`, make a virtual environment wit
 - Runs Whisper (large-v3 turbo, large-v3) with faster-whisper: on the graphics card in float16, else on the CPU in int8.
   Parakeet TDT 0.6B v3 (English) with onnx-asr, on the CPU.
 - Sends back the words with their times. One transcript at a time.
+- A copy: one file at a time, each written as `.<name>.<computer id>.partial`, checked on the disk against the
+  library's size and checksum and renamed. A newer version moves the older one into `.versions/`; a file of yours in
+  the way stays and the new one goes beside it as `<name> 2`. `.creatortoolset-copy.json` at the folder's top says
+  which copy it is (without it, or on another disk than when the job began, the copy asks to be reconnected);
+  `.creatortoolset-copy.lock` keeps a second computer out. A Mac and a helper read and write the same folder the same
+  way. Nothing in the folder is ever deleted but this computer's own partials. Copies need no speech libraries.
+- Sends an original it holds to the server when another computer's copy needs it.
 
 ## Logs, stop, remove
 
