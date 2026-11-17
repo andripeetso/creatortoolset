@@ -104,7 +104,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
   await reportLeftover(o).catch((e) => console.warn("[work] leftover step:", e));
   let idleSince = Date.now();
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
-    // a look of a file on a share this computer connects (look.ts): Linux only, a Mac's app takes its own
+    // a look of a file on a share this computer connects (look.ts): a Linux library worker only
     if (looksHere() && (await claimLook(c).catch((e) => void console.warn("[work] look:", e instanceof Error ? e.message : e)))) {
       idleSince = Date.now();
       continue;

@@ -22,8 +22,11 @@ import { machineDisks } from "./disks";
  * ponytail: no kept sheets (the Mac's `looks`), add them if re-describes of long files from here get frequent
  */
 
-/** A Mac takes its looks in the app itself: only a Linux computer's worker claims them. */
-export const looksHere = (): boolean => process.platform === "linux";
+/**
+ * Only a Linux computer's worker run for library work (CT_WORKER_KINDS=library, its service file) claims looks: a Mac
+ * takes them in its app, and a claim on the device road declares the device's kinds, which would replace the app's.
+ */
+export const looksHere = (): boolean => process.platform === "linux" && (process.env.CT_WORKER_KINDS ?? "").split(",").includes("library");
 
 /** The videos a look reads (the extension of the file itself, after its links). */
 const VIDEO = /\.(mp4|m4v|mov|mkv|webm|avi|mpe?g|mts|m2ts|mxf|wmv|3gp|flv|dv)$/i;

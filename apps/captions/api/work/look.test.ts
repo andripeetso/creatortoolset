@@ -20,7 +20,6 @@ const dir = mkdtempSync(path.join(scratch, "work-look-"));
 process.env.DATA_DIR = path.join(dir, "data");
 mkdirSync(process.env.DATA_DIR);
 process.env.LIBRARY_SCRATCH_DIR = path.join(dir, "data", "scratch");
-process.env.CT_CUT_MODEL = "0";
 delete process.env.APP_SECRET;
 delete process.env.ANTHROPIC_API_KEY;
 
