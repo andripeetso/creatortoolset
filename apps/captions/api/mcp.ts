@@ -664,7 +664,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (out.status === "toPost" || out.status === "published") {
         const finals = await ws(`/sessions/${a.session}/finals`).catch(() => null);
         if (finals && !finals.linked && finals.libraryId)
-          out.final = "No final video is in Finals for this project. Ask the user for the finished file; when they drop it in the chat, use_file to: library, then finals_link_session with its version_id.";
+          out.final = isJob(auth)
+            ? "No final video is in Finals for this project. Ask the user for the finished file; when they drop it in the chat, use_file to: library, then finals_link_session with its version_id."
+            : // an outside app (ChatGPT, Claude) keeps a dropped file to itself: the app's own page takes it
+              "No final video is in Finals for this project. Ask the user for the finished file: they add it with Add final video on the project's page in Creator Toolset.";
       }
       return out;
     },
