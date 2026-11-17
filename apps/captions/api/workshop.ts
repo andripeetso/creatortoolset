@@ -3259,15 +3259,52 @@ export async function describeVersion(
   return true;
 }
 
-/** Link a Media Library Finals piece to this session (Finals' "Workshop session" link). The account must own both. */
+/** Whether a final video is in Finals for this session yet (a library piece, or one a plug-in keeps), and the library a
+ *  final the user drops goes to (null: no Media Library for this account). The Workshop asks for the final at Ready to post. */
+export async function sessionFinals(meta: SessionMeta): Promise<{ linked: boolean; libraryId: string | null }> {
+  const mainId = (await mainPiece(meta.id))?.id;
+  const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
+  const linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
+  return { linked, libraryId: await ensureLibrary(meta.owner, meta.projectId ?? "") };
+}
+
+workshopApp.get("/sessions/:id/finals", async (c) => {
+  const meta = await ownedSession(c.req.param("id"), c.get("user"));
+  return meta ? c.json(await sessionFinals(meta)) : c.json({ error: "Not found" }, 404);
+});
+
+/** Link a Media Library Finals piece to this session (Finals' "Workshop session" link), or put a library video in Finals
+ *  as this session's final (`assetId` or `versionId`: a file the user dropped when it went to Ready to post). The account must own both.
+ *  202 while the library still reads the new file (no size yet): ask again. */
 workshopApp.post("/sessions/:id/finals", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  const body = (await c.req.json().catch(() => null)) as { pieceId?: unknown; docId?: unknown } | null;
-  if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
-  const docId = typeof body.docId === "string" ? body.docId : undefined;
+  const body = (await c.req.json().catch(() => null)) as { pieceId?: unknown; assetId?: unknown; versionId?: unknown; docId?: unknown } | null;
+  const docId = typeof body?.docId === "string" ? body.docId : undefined;
   if (docId && !(await readDoc(meta.id, docId))) return c.json({ error: "No such piece of this project" }, 404);
+  const video = [body?.assetId, body?.versionId].find((x): x is string => typeof x === "string" && !!x);
+  if (video) {
+    // a library video (its current version) or one version of it (what the chat's use_file gave)
+    const row = libraryDb()
+      .prepare(
+        `SELECT a.library_id AS lib, a.title, v.id AS version, v.state, json_extract(v.probe, '$.width') AS w, json_extract(v.probe, '$.height') AS h
+           FROM assets a JOIN asset_versions v ON v.asset_id = a.id
+          WHERE a.trashed_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
+      )
+      .get(video, video) as { lib: string; title: string | null; version: string; state: string; w: number | null; h: number | null } | undefined;
+    if (!row || libraryRole(user.username, row.lib) !== "owner") return c.json({ error: "No such video of yours" }, 404);
+    if (row.state === "failed" || row.state === "missing") return c.json({ error: "The library could not read this video" }, 409);
+    if (!row.w || !row.h) return c.json({ waiting: true }, 202);
+    const out = await addToFinals(
+      { owner: user.username, libraryId: row.lib, label: meta.title || "Untitled", item: row.title, kind: "export", width: row.w, height: row.h },
+      { versionId: row.version },
+    );
+    if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+    linkFinalsPiece(out.pieceId, meta.id, docId, user.username);
+    return c.json({ linked: true, pieceId: out.pieceId });
+  }
+  if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
   return linkFinalsPiece(body.pieceId, meta.id, docId, user.username) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
 });
 

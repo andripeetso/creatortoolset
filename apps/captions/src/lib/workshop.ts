@@ -424,6 +424,19 @@ export const getSession = (id: string) =>
   fetch(`/api/workshop/sessions/${id}`).then((r) => json<SessionRecord>(r));
 export const patchSession = (id: string, patch: SessionPatch) =>
   fetch(`/api/workshop/sessions/${id}`, jsonInit(patch, "PATCH")).then((r) => json<SessionMeta>(r));
+/** Whether this project has a final video in Finals yet, and the library a dropped final goes to (null: no Media Library). */
+export const getSessionFinals = (id: string) =>
+  fetch(`/api/workshop/sessions/${id}/finals`).then((r) => json<{ linked: boolean; libraryId: string | null }>(r));
+/** A library video (one just uploaded) into Finals as this project's final. Asked again while the library reads its size. */
+export async function putFinal(id: string, assetId: string): Promise<void> {
+  // ponytail: five minutes of asking; past that the video stays in the library to link from Finals
+  for (let i = 0; i < 150; i++) {
+    const r = await fetch(`/api/workshop/sessions/${id}/finals`, jsonInit({ assetId }));
+    if (r.status !== 202) return void (await json(r));
+    await new Promise((done) => setTimeout(done, 2000));
+  }
+  throw new Error("The library is still reading this video. It is in the Media Library: link it from Finals.");
+}
 export const deleteSession = (id: string) =>
   fetch(`/api/workshop/sessions/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
 /** The menu's Duplicate: a copy under a new id (not the chat or share links). */
