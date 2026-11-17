@@ -20,19 +20,15 @@ export function stretchesOf(db: DatabaseSync, versionId: string): Stretch[] {
     tags: string;
     text: string;
     ph: string | null;
+    quality: number | null;
+    flaws: string | null;
     source: string;
     stamp: string | null;
   }[];
   const out: Stretch[] = [];
   for (const r of rows) {
     if (out.length && out[out.length - 1]!.seg === r.seg) continue;
-    let tags: string[] = [];
-    try {
-      const t = JSON.parse(r.tags) as unknown;
-      if (Array.isArray(t)) tags = t.filter((x): x is string => typeof x === "string");
-    } catch {
-      /* a bad tags cell reads as none */
-    }
+    const tags = listOf(r.tags);
     out.push({
       versionId: r.version_id,
       seg: r.seg,
@@ -44,6 +40,8 @@ export function stretchesOf(db: DatabaseSync, versionId: string): Stretch[] {
       tags,
       text: r.text,
       ph: r.ph ?? "",
+      quality: r.quality,
+      flaws: listOf(r.flaws),
       source: r.source === "user" ? "user" : "ai",
       stamp: r.stamp ?? "",
     });
@@ -51,12 +49,25 @@ export function stretchesOf(db: DatabaseSync, versionId: string): Stretch[] {
   return out;
 }
 
-/** A video's stretches as found in its picture (look.ts shotsOf), each with the picture hash of its middle frame. */
+/** A JSON list of words from a cell; a bad or empty cell reads as none. */
+function listOf(cell: string | null): string[] {
+  try {
+    const t = JSON.parse(cell ?? "[]") as unknown;
+    return Array.isArray(t) ? t.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A video's stretches as found in its picture (look.ts shotsOf), each with the picture hash of its middle frame and,
+ * when the read measured it, how well it is taken. */
 export interface FoundStretch {
   a: number;
   b: number;
   motion: number;
   ph?: string | null;
+  quality?: number;
+  flaws?: string[];
 }
 
 /** One line for a stretch, checked (look.ts ratedLine) and with the hash of its middle frame when the writer has it. */
@@ -80,9 +91,9 @@ export function storeStretches(db: DatabaseSync, versionId: string, found: Found
     db.prepare("DELETE FROM stretches WHERE version_id = ? AND source = 'ai'").run(versionId);
     db.prepare("UPDATE asset_versions SET look_level = ? WHERE id = ?").run(level === "standard" ? null : level, versionId);
     db.prepare("DELETE FROM pictures WHERE version_id = ? AND seg >= 0").run(versionId);
-    const add = db.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, ph, source, created_at) VALUES (?, ?, ?, ?, ?, ?, 'ai', ?)");
+    const add = db.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, ph, quality, flaws, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ai', ?)");
     const now = Date.now();
-    found.forEach((s, seg) => add.run(versionId, seg, s.a, s.b, s.motion, s.ph || null, now));
+    found.forEach((s, seg) => add.run(versionId, seg, s.a, s.b, s.motion, s.ph || null, s.quality ?? null, s.flaws?.length ? JSON.stringify(s.flaws) : null, now));
     indexStretches(db, versionId);
     db.exec("COMMIT");
   } catch (e) {
@@ -112,15 +123,15 @@ export function storeLines(db: DatabaseSync, versionId: string, stamp: string, l
 
 /**
  * The person's own line for a stretch, which wins over the AI's (stretchesOf); empty removes it and the AI's shows
- * again. It keeps the AI's action, tags and picture hash: the person corrects the words. False when there is no such stretch.
+ * again. It keeps the AI's action, tags, picture hash and quality: the person corrects the words. False when there is no such stretch.
  */
 export function setUserLine(db: DatabaseSync, versionId: string, seg: number, text: string): boolean {
   const t = text.trim().replace(/\s+/g, " ").slice(0, STRETCH_TEXT_MAX);
   if (!db.prepare("SELECT 1 FROM stretches WHERE version_id = ? AND seg = ? AND source = 'ai'").get(versionId, seg)) return false;
   if (t)
     db.prepare(
-      `INSERT OR REPLACE INTO stretches (version_id, seg, a, b, motion, action, clear, tags, text, ph, source, stamp, created_at)
-       SELECT version_id, seg, a, b, motion, action, clear, tags, ?, ph, 'user', NULL, ? FROM stretches WHERE version_id = ? AND seg = ? AND source = 'ai'`,
+      `INSERT OR REPLACE INTO stretches (version_id, seg, a, b, motion, action, clear, tags, text, ph, quality, flaws, source, stamp, created_at)
+       SELECT version_id, seg, a, b, motion, action, clear, tags, ?, ph, quality, flaws, 'user', NULL, ? FROM stretches WHERE version_id = ? AND seg = ? AND source = 'ai'`,
     ).run(t, Date.now(), versionId, seg);
   else db.prepare("DELETE FROM stretches WHERE version_id = ? AND seg = ? AND source = 'user'").run(versionId, seg);
   indexStretches(db, versionId);

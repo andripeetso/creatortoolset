@@ -71,6 +71,12 @@ export interface PictureRead {
   junk?: string[];
   /** where each frame changed from LAG_S before: CX×CY cells (row by row), mean |Δ| × 4, frames one after another */
   maps?: Uint8Array;
+  /** how the picture is taken (qualityOf): each frame's bright end (its HI_PCT grey, 0..1), its move from the frame
+   * before (across, down: shares of the frame, two a frame), and its blur SHARP_FPS a second (blurOf; -1 where the
+   * frame has too little detail to tell) */
+  hi?: Float32Array;
+  shift?: Float32Array;
+  blur?: Float32Array;
 }
 
 /** Which CX×CY cells of a FW×FH grey frame are flat (their 4×4 pixels spread under 3 grey levels): 1 = flat. */
@@ -136,7 +142,10 @@ export function looks(g: ArrayLike<number>, w: number, h: number, chroma?: Array
 export const junkOf = ({ luma, detail, panels, tint = 0 }: { luma: number; detail: number; panels: number; tint?: number }) =>
   luma < DARK ? "dark" : detail < FLAT ? "flat" : panels >= UI_PANELS && tint < UI_TINT ? "ui" : "";
 
-/** Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before. */
+/**
+ * Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before; from
+ * the same decode, each frame SW×SH grey for its move (shiftOf) and SHARP_FPS frames a second SHARP_W across for blur.
+ */
 export async function readPicture(src: string, fps: number, signal?: AbortSignal): Promise<PictureRead> {
   const rate = fps > 0 ? Math.min(fps, MAX_READ_FPS) : 25;
   const L = Math.max(1, Math.round(LAG_S * rate));
@@ -144,11 +153,42 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
   return ffmpegSlot(
     () =>
       new Promise((resolve, reject) => {
+        const sharp = `scale='if(gte(iw,ih),${SHARP_W},-2)':'if(gte(iw,ih),-2,${SHARP_W})':flags=area,format=gray`;
         const p = spawn(
           ffmpegCommand(),
-          ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn", "-vf", `fps=${rate},scale=${FW}:${FH}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"],
-          { signal },
+          [
+            ...["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn"],
+            ...["-filter_complex", `[0:v]fps=${rate},split=3[a][b][c];[a]scale=${FW}:${FH}:flags=area,format=rgb24[o1];[b]scale=${SW}:${SH}:flags=area,format=gray[o2];[c]fps=${SHARP_FPS},${sharp}[o3]`],
+            ...["-map", "[o1]", "-f", "rawvideo", "pipe:1", "-map", "[o2]", "-f", "rawvideo", "pipe:3", "-map", "[o3]", "-c:v", "pgm", "-f", "image2pipe", "pipe:4"],
+          ],
+          { signal, stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"] },
         );
+        // the move and the blur, read as they come
+        const hi: number[] = [];
+        const shift: number[] = [];
+        const blur: number[] = [];
+        let small: Buffer = Buffer.alloc(0);
+        let before: Buffer | undefined;
+        (p.stdio[3] as NodeJS.ReadableStream).on("data", (d: Buffer) => {
+          small = small.length ? Buffer.concat([small, d]) : d;
+          while (small.length >= SW * SH) {
+            const f = small.subarray(0, SW * SH);
+            const [x, y] = before ? shiftOf(before, f, SW, SH) : [0, 0];
+            shift.push(x, y);
+            before = Buffer.from(f);
+            small = small.subarray(SW * SH);
+          }
+          small = Buffer.from(small);
+        });
+        let pgm: Buffer = Buffer.alloc(0);
+        (p.stdio[4] as NodeJS.ReadableStream).on("data", (d: Buffer) => {
+          pgm = pgm.length ? Buffer.concat([pgm, d]) : d;
+          for (let f = pgmFrame(pgm); f; f = pgmFrame(pgm)) {
+            blur.push(blurOf(f.g, f.w, f.h));
+            pgm = pgm.subarray(f.end);
+          }
+          pgm = Buffer.from(pgm);
+        });
         const ring: Buffer[] = []; // the last L+1 frames
         const flats: Uint8Array[] = []; // and which of their cells are flat
         const step: number[] = [];
@@ -170,7 +210,7 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
         };
         let carry = Buffer.alloc(0);
         let err = "";
-        p.stdout.on("data", (d: Buffer) => {
+        p.stdout!.on("data", (d: Buffer) => {
           let buf = carry.length ? Buffer.concat([carry, d]) : d;
           while (buf.length >= 3 * size) {
             const [f, tint] = grey(buf.subarray(0, 3 * size));
@@ -184,6 +224,7 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
             const back = ring.length > L ? ring[ring.length - 1 - L]! : undefined;
             lag.push(back ? diff(f, back) : 0);
             junk.push(junkOf(looks(f, FW, FH, tint)));
+            hi.push(brightEnd(f));
             // where it moves: change in a cell with texture (a flat panel flipping from white to black is no action)
             const flat = flatCells(f);
             const backFlat = ring.length > L ? flats[flats.length - 1 - L]! : undefined;
@@ -203,13 +244,23 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
           }
           carry = Buffer.from(buf);
         });
-        p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
+        p.stderr!.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
         p.on("error", reject);
         p.on("close", (code) => {
           if (code !== 0) return reject(new Error(err.trim() || `ffmpeg exited ${code}`));
           const all = new Uint8Array(maps.length * CX * CY);
           maps.forEach((m, i) => all.set(m, i * CX * CY));
-          resolve({ fps: rate, step: Float32Array.from(step), cut: Float32Array.from(cut), lag: Float32Array.from(lag), junk, maps: all });
+          resolve({
+            fps: rate,
+            step: Float32Array.from(step),
+            cut: Float32Array.from(cut),
+            lag: Float32Array.from(lag),
+            junk,
+            maps: all,
+            hi: Float32Array.from(hi),
+            shift: Float32Array.from(shift),
+            blur: Float32Array.from(blur),
+          });
         });
       }),
   );
@@ -220,6 +271,118 @@ export const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s[s.length >> 1]!;
 };
+
+/** How a picture is taken is read on frames this size: SW×SH grey for its move, SHARP_W on the long side for blur
+ * (about what a phone shows), SHARP_FPS of them a second. */
+export const SW = 160;
+export const SH = 90;
+export const SHARP_W = 960;
+export const SHARP_FPS = 2;
+/** A frame's bright end: the grey this share of it is darker than */
+const HI_PCT = 0.95;
+/** The farthest a frame's move is looked for between two frames, in SW×SH pixels (a fast pan moves further: it is no shake) */
+const SHIFT_MAX = 8;
+
+/** The grey HI_PCT of a grey frame (0..255 values) is darker than, 0..1. */
+export function brightEnd(g: ArrayLike<number>): number {
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < g.length; i++) hist[g[i]!]!++;
+  let n = 0;
+  for (let v = 0; v < 256; v++) if ((n += hist[v]!) >= HI_PCT * g.length) return v / 255;
+  return 1;
+}
+
+/** One PGM frame (binary, 8-bit) at the start of `buf`: its grey, size and where the next starts; null until whole. */
+export function pgmFrame(buf: Buffer): { g: Buffer; w: number; h: number; end: number } | null {
+  const m = /^P5\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(buf.subarray(0, 40).toString("latin1"));
+  if (!m) return null;
+  const [w, h] = [Number(m[1]), Number(m[2])];
+  const end = m[0].length + w * h;
+  return buf.length < end ? null : { g: buf.subarray(m[0].length, end), w, h, end };
+}
+
+/**
+ * How much the picture moved between two SW×SH grey frames, across and down as shares of the frame: the offset that
+ * best lines up their column and row means (a frame's projections), to a tenth of a pixel. The whole picture moving
+ * reads as a move; one thing moving in a still frame barely does.
+ */
+export function shiftOf(a: ArrayLike<number>, b: ArrayLike<number>, w: number, h: number): [number, number] {
+  const prof = (f: ArrayLike<number>) => {
+    const cols = new Float64Array(w);
+    const rows = new Float64Array(h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) (cols[x] += f[y * w + x]! / h), (rows[y] += f[y * w + x]! / w);
+    return [cols, rows] as const;
+  };
+  const [ca, ra] = prof(a);
+  const [cb, rb] = prof(b);
+  const best = (p: Float64Array, q: Float64Array) => {
+    const n = p.length;
+    const cost = (d: number) => {
+      let s = 0;
+      for (let i = SHIFT_MAX; i < n - SHIFT_MAX; i++) s += Math.abs(p[i]! - q[i + d]!);
+      return s;
+    };
+    const cs = Array.from({ length: 2 * SHIFT_MAX + 1 }, (_, k) => cost(k - SHIFT_MAX));
+    // from no move outwards: a picture with nothing to line up (a plain sky, all ties) has not moved
+    let k = SHIFT_MAX;
+    for (let r = 1; r <= SHIFT_MAX; r++) for (const j of [SHIFT_MAX - r, SHIFT_MAX + r]) if (cs[j]! < cs[k]!) k = j;
+    // the parabola through the best and its neighbours: the move between pixels
+    const [l, c, r] = [cs[k - 1], cs[k]!, cs[k + 1]];
+    const sub = l !== undefined && r !== undefined && l + r - 2 * c > 0 ? (0.5 * (l - r)) / (l + r - 2 * c) : 0;
+    return (k - SHIFT_MAX + sub) / n;
+  };
+  return [best(ca, cb), best(ra, rb)];
+}
+
+/** A frame's blur is read in BLUR_GX×BLUR_GY blocks; a block whose mean step between neighbours (0..255) is under
+ * BLUR_DETAIL has too little detail to tell. The frame's blur is its sharp end: the BLUR_PCT share of its blocks with
+ * detail is sharper (a sharp subject on a soft background is a sharp picture). */
+const BLUR_GX = 8;
+const BLUR_GY = 6;
+const BLUR_DETAIL = 1;
+const BLUR_PCT = 0.1;
+
+/**
+ * How blurry a grey frame is, 0 sharp … 1 a smear, or -1 when under three of its blocks have detail enough to tell (a
+ * flat picture; a sharp face or sky on its own measured as a smear when that frame counted as one).
+ * Each block's: how little blurring it again (a 9-pixel box) takes away from the steps between neighbours, the blurrier
+ * of across and down (a sharp picture loses most of its steps, a blurry one little).
+ */
+export function blurOf(g: ArrayLike<number>, w: number, h: number): number {
+  const nb = BLUR_GX * BLUR_GY;
+  // per block: the steps between neighbours, and what blurring again (a 9-pixel box) leaves of them, across and down
+  const [fx, vx, fy, vy] = [new Float64Array(nb), new Float64Array(nb), new Float64Array(nb), new Float64Array(nb)];
+  const bx = Uint8Array.from({ length: w }, (_, x) => Math.min(BLUR_GX - 1, Math.floor((x * BLUR_GX) / w)));
+  const by = Uint8Array.from({ length: h }, (_, y) => Math.min(BLUR_GY - 1, Math.floor((y * BLUR_GY) / h)));
+  const P = new Float64Array(Math.max(w, h) + 1);
+  // one line of n pixels from `start`, `stride` apart; `block(i)`: the block pixel i is in
+  const line = (start: number, stride: number, n: number, F: Float64Array, V: Float64Array, row: number, across: boolean) => {
+    for (let i = 0; i < n; i++) P[i + 1] = P[i]! + g[start + i * stride]!;
+    let bPrev = (P[Math.min(n - 1, 4) + 1]! - P[0]!) / (Math.min(n - 1, 4) + 1);
+    for (let i = 1; i < n; i++) {
+      const lo = i > 4 ? i - 4 : 0;
+      const hi = i + 4 < n ? i + 4 : n - 1;
+      const box = (P[hi + 1]! - P[lo]!) / (hi - lo + 1);
+      const dF = Math.abs(g[start + i * stride]! - g[start + (i - 1) * stride]!);
+      const dB = Math.abs(box - bPrev);
+      bPrev = box;
+      const k = across ? by[row]! * BLUR_GX + bx[i]! : by[i]! * BLUR_GX + bx[row]!;
+      F[k] += dF;
+      if (dF > dB) V[k] += dF - dB;
+    }
+  };
+  for (let y = 0; y < h; y++) line(y * w, 1, w, fx, vx, y, true);
+  for (let x = 0; x < w; x++) line(x, w, h, fy, vy, x, false);
+  const blocks: number[] = [];
+  const area = (w / BLUR_GX) * (h / BLUR_GY);
+  for (let k = 0; k < nb; k++) if (Math.min(fx[k]!, fy[k]!) / area >= BLUR_DETAIL) blocks.push(Math.max((fx[k]! - vx[k]!) / fx[k]!, (fy[k]! - vy[k]!) / fy[k]!));
+  if (blocks.length < 3) return -1;
+  blocks.sort((p, q) => p - q);
+  // the BLUR_PCT point, between blocks as a percentile is
+  const at = BLUR_PCT * (blocks.length - 1);
+  const lo = Math.floor(at);
+  return blocks[lo]! + (blocks[Math.min(lo + 1, blocks.length - 1)]! - blocks[lo]!) * (at - lo);
+}
 
 /** The frames where a new shot starts (hard cuts), from `read`. */
 export function cutsOf({ fps, cut: step }: PictureRead): number[] {
@@ -282,7 +445,57 @@ export function shotsOf(read: PictureRead, dur: number, level: LookLevel = "stan
     b: k === per.length - 1 ? dur : r2(all[k + 1]! / read.fps),
     motion: r2(Math.min(1, m / most)),
     ...pictureOf(read, all[k]!, all[k + 1]!, hud),
+    ...qualityOf(read, all[k]!, all[k + 1]!),
   }));
+}
+
+/**
+ * How well a shot is taken. Each measure's OK is where the score starts to drop, its BAD where the shot is named for it
+ * (a flaw). Set on 2026-11-16 on 60 well-rated 8-second clips of everyday footage (people, pets, nature, sport), each
+ * also made mildly and strongly blurred (a Gaussian of 1.2 and 2.5 px at 960 wide), darkened (half and a quarter of the
+ * light, with sensor-like noise) and shaken (a hand's 3-9 Hz jitter of 0.6% and 1.5% of the frame):
+ * - Blur: the frame's sharp end (blurOf), the shot's median. Of two takes of the same scene the blurred one always
+ *   scored worse (60 of 60), but across scenes it only partly tells: at BAD, 3% of good clips, 17% of mildly and 45% of
+ *   strongly blurred ones are named blurry. A sharp face or sky with little texture reads softer than it is.
+ * - Dark: its bright end (brightEnd), the median. At BAD, no good clip, 75% of half-light and all quarter-light ones.
+ * - Shake: the median change of the whole picture's move from one frame to the next (shares of the frame, at 30 frames a
+ *   second), so a pan or a walk, which moves evenly, is no shake. At BAD, 3% of good clips (handheld ones), 35% of the
+ *   mild and all of the strong jitter.
+ * None moves another: blur, dark and shake each separate their own defect only.
+ */
+export const BLUR_OK = 0.45;
+export const BLUR_BAD = 0.55;
+export const HI_OK = 0.5;
+export const HI_BAD = 0.4;
+export const SHAKE_OK = 0.003;
+export const SHAKE_BAD = 0.005;
+/** What a shot is named for when a measure reaches its BAD, in the words the editor's check gives as its reason */
+export const FLAWS = ["blurry", "too dark", "shaky"] as const;
+export type Flaw = (typeof FLAWS)[number];
+
+/** A measure's share of the way from fine (0) past BAD (0.5) to twice as far (1). */
+const severity = (v: number, ok: number, bad: number) => Math.max(0, Math.min(1, (0.5 * (v - ok)) / (bad - ok)));
+
+/** What frames [a, b) measure (qualityOf): blur, the bright end and shake, each the shot's median; null when the read
+ * has no measures, a measure null when the shot is too short or flat to tell. */
+export function measuresOf(read: PictureRead, a: number, b: number): { blur: number | null; hi: number | null; shake: number | null } | null {
+  const { hi, shift, blur, fps } = read;
+  if (!hi?.length || !shift || !blur) return null;
+  const end = Math.min(b, hi.length);
+  const blurs: number[] = [];
+  for (let k = Math.ceil((a / fps) * SHARP_FPS); k < blur.length && (k / SHARP_FPS) * fps < end; k++) if (blur[k]! >= 0) blurs.push(blur[k]!);
+  const jolts: number[] = [];
+  for (let i = a + 2; i < Math.min(end, shift.length / 2); i++) jolts.push(Math.hypot(shift[2 * i]! - shift[2 * i - 2]!, shift[2 * i + 1]! - shift[2 * i - 1]!) * (fps / 30) ** 2);
+  return { blur: blurs.length ? median(blurs) : null, hi: end > a ? median(Array.from(hi.subarray(a, end))) : null, shake: jolts.length >= 3 ? median(jolts) : null };
+}
+
+/** The quality of frames [a, b): 1 well taken … 0 far past a flaw, and its flaws; nothing when the read has no measures. */
+export function qualityOf(read: PictureRead, a: number, b: number): Pick<IndexShot, "quality" | "flaws"> {
+  const m = measuresOf(read, a, b);
+  if (!m) return {};
+  const sev = [m.blur === null ? 0 : severity(m.blur, BLUR_OK, BLUR_BAD), m.hi === null ? 0 : severity(m.hi, HI_OK, HI_BAD), m.shake === null ? 0 : severity(m.shake, SHAKE_OK, SHAKE_BAD)];
+  const flaws = FLAWS.filter((_, k) => sev[k]! >= 0.5);
+  return { quality: Math.round((1 - Math.max(...sev)) * 100) / 100, ...(flaws.length ? { flaws } : {}) };
 }
 
 /** The HUD of what was read: the CX×CY cells that change under 2 grey levels over LAG_S in STEADY of the frames whose
