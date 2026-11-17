@@ -255,11 +255,11 @@ export function appRows(w: AppWork): ActivityRow[] {
   return rows;
 }
 
-/** The app's rows for this account; none for visitors, and none (said in the log) when reading them fails. */
+/** The app's rows for this account, then its keys out of credit (credits.ts); none for visitors, and none (said in the log) when reading them fails. */
 async function appActivity(user: SessionUser): Promise<ActivityRow[]> {
   if (user.role === "visitor") return [];
   try {
-    return appRows(await appWork(user));
+    return [...appRows(await appWork(user)), ...(await import("./credits")).creditRows(user.username)];
   } catch (err) {
     console.warn(`[activity] ${err instanceof Error ? err.message : String(err)}`);
     return [];

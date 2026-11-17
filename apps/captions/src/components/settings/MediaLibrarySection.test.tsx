@@ -38,7 +38,7 @@ const patches: unknown[] = [];
 /** each request with the workspace it named */
 const asked: Array<[string, string | null]> = [];
 let serverHere = false;
-let freeTier = false;
+let stopped: "free" | "credit" | null = null;
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -46,7 +46,7 @@ beforeEach(() => {
   patches.length = 0;
   asked.length = 0;
   serverHere = false;
-  freeTier = false;
+  stopped = null;
   // the Mac app with the server elsewhere: every section shows
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -67,7 +67,7 @@ beforeEach(() => {
         steps: [],
         lookSpent: 4.2,
         timelineKey: true,
-        ...(freeTier ? { timelineFreeTier: true } : {}),
+        ...(stopped ? { timelineStopped: stopped } : {}),
         timelineModels: [
           { model: "gemini-3.8-flash", usd: 0.42 },
           { model: "gemini-3.5-flash-lite", usd: 0.16 },
@@ -202,11 +202,19 @@ describe("the Media Library's settings", () => {
   });
 
   it("Timelines say once when the Gemini key is on Google's free tier", async () => {
-    freeTier = true;
+    stopped = "free";
     await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
     const text = document.body.textContent ?? "";
     expect(text.split("free tier").length - 1).toBe(1);
     expect(text).toContain("The Gemini key is on Google's free tier, about 20 calls a day; billing in Google AI Studio lifts the limit");
+  });
+
+  it("Timelines say once when the Gemini credit ran out", async () => {
+    stopped = "credit";
+    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+    const text = document.body.textContent ?? "";
+    expect(text.split("credit ran out").length - 1).toBe(1);
+    expect(text).not.toContain("Uses the Gemini API key");
   });
 
   it("the upload choice is saved on the library", async () => {

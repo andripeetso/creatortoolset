@@ -4,7 +4,7 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { antigravityRoute, canWatch, freeTierStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
+import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
 import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
@@ -290,7 +290,8 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   }
   out.timelineKey = !!watchKey(username);
   // each model's timeline of an hour at the library's level, so the person picks one with its cost in front of them
-  if (out.timelineKey && freeTierStopped(db, libraryId)) out.timelineFreeTier = true;
+  const stopped = out.timelineKey ? watchStopped(db, libraryId) : null;
+  if (stopped) out.timelineStopped = stopped;
   if (out.timelineKey) out.timelineModels = WATCH_MODELS.filter((m) => m.value !== "antigravity").map((m) => ({ model: m.value, usd: watchUsdPerHour(libraryLookLevel(libraryId), m.value) }));
   if (antigravityRoute(username)) out.timelineAntigravity = true;
   if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);

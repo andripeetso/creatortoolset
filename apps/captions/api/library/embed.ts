@@ -1,3 +1,4 @@
+import { creditBack, creditOut, isOutOfCredits } from "../credits";
 import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit, TimelineEvent } from "../../contracts/library";
 import { DEVICE_EMBED_MODEL, deviceEmbedModelKept, embedOnDevice } from "../lib/device-embed";
@@ -84,7 +85,12 @@ export async function embedTexts(texts: string[], route: EmbedRoute, job?: { key
     body: JSON.stringify({ model: route.model, input: texts }),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!r.ok) throw new Error(`Embeddings ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
+  if (!r.ok) {
+    const said = (await r.text().catch(() => "")).slice(0, 200);
+    if (isOutOfCredits(r.status, said)) creditOut("OPENAI_API_KEY", route.key, "Search by meaning");
+    throw new Error(`Embeddings ${r.status}: ${said}`);
+  }
+  creditBack("OPENAI_API_KEY", route.key);
   const data = (await r.json()) as { data?: { index: number; embedding: number[] }[] };
   const rows = (data.data ?? []).sort((a, b) => a.index - b.index);
   if (rows.length !== texts.length) throw new Error("Embeddings: the answer has the wrong number of vectors");

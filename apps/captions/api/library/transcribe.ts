@@ -1,3 +1,4 @@
+import { creditBack, creditOut, isOutOfCredits } from "../credits";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -139,7 +140,12 @@ async function openai(file: string, key: string, languages?: string[]): Promise<
     headers: { Authorization: `Bearer ${key}` },
     body: form,
   });
-  if (!r.ok) throw new Error(`Transcription ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
+  if (!r.ok) {
+    const said = (await r.text().catch(() => "")).slice(0, 200);
+    if (isOutOfCredits(r.status, said)) creditOut("OPENAI_API_KEY", key, "Media Library transcripts");
+    throw new Error(`Transcription ${r.status}: ${said}`);
+  }
+  creditBack("OPENAI_API_KEY", key);
   const data = (await r.json()) as {
     language?: string;
     segments?: { start: number; end: number; text: string }[];

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { LOOK_LEVELS, watchModelOf, type GeminiModel, type LookLevel, type TimelineEvent, type WatchModel } from "../../contracts/library";
 import { completeWithFallback, type ProviderOpts } from "../ai-complete";
+import { creditBack, creditOut } from "../credits";
 import { keyFor } from "../my-keys";
 import { MacClaudeError, recordUsage, usageIn } from "../lib/mac-claude";
 import { ownSettings, providerSettings, routeForInstance, runFields } from "../lib/providers";
@@ -67,8 +68,9 @@ export const watchTiming = { backoffMs: 60_000, post: longPost };
 /** Watches running now, by version, at most WATCHES_AT_ONCE (watchAfter). */
 export const watching = new Map<string, Promise<void>>();
 /**
- * Keys whose quota ran out (Gemini's 429 with a wait longer than ours), until when and Gemini's words: no call is made
- * on one before then, not the next part's, not another video's (parked).
+ * Keys whose quota ran out (Gemini's 429 with a wait longer than ours) or whose prepaid credit did (CREDIT_GONE, until the
+ * next try RETRY_MS later), until when and Gemini's words: no call is made on one before then, not the next part's, not
+ * another video's (parked).
  * ponytail: in memory; a restart asks once more and is told again
  */
 export const parked = new Map<string, { until: number; said: string }>();
@@ -81,23 +83,28 @@ const WATCHES_AT_ONCE = 3;
 const PARTS_AT_ONCE = 3;
 /** A watch that failed is tried again this long after. */
 export const RETRY_MS = 6 * 3600_000;
+/**
+ * A key's prepaid credit ran out (Google AI Studio's prepay: a 402, or before a 429, "Your prepayment credits are
+ * depleted"). Not Gemini's own "exceeded your current quota": that is a rate or a free tier, said with a wait.
+ */
+const DEPLETED = /prepayment credits|credits are depleted/i;
+/** How a watch stopped by an empty credit starts its error (watchStopped reads it). */
+const CREDIT_GONE = "The Gemini credit ran out";
 /** Caps on an event's words. */
 const WHAT_MAX = 200;
 const NOTE_MAX = 120;
 /**
  * Tokens in a second of footage and out a minute of it (thinking included), by model and level, on an 11:39
- * public-domain NASA video with sound (720p proxy), 2026-11-16/17. Flash-Lite: measured at each level (Light $0.10,
- * Standard $0.14, Detailed $0.22 an hour of footage). 3.8 Flash reads the same tokens in (the same count on all 9 test
- * clips and this one); its out at Standard was measured on the video's first 3 minutes, 1733 a minute, and Light and
- * Detailed are that scaled by Flash-Lite's own ratio between levels (Light $0.46, Standard $0.64, Detailed $0.92).
- * ponytail: 3.8 Flash's Light and Detailed out are scaled, not measured: a free key's 20 calls a day ran out (Google's
- * 503s count too); measure them again once the key has billing on
+ * public-domain NASA video with sound (720p proxy), each level one whole watch through watchVersion, the stretches asked
+ * again included. Flash-Lite, 2026-11-16/17: Light $0.10, Standard $0.14, Detailed $0.22 an hour of footage. 3.8 Flash,
+ * 2026-11-17 on a key with billing on: Light $0.29, Standard $0.38, Detailed $0.81 (its Detailed watch asked a stretch
+ * again, hence the more tokens in). An earlier 1733 out a minute at Standard came from the video's first 3 minutes only.
  */
 const MEASURED: Record<GeminiModel, Record<LookLevel, { inS: number; outMin: number }>> = {
   "gemini-3.8-flash": {
-    light: { inS: 59, outMin: 1349 },
-    standard: { inS: 92, outMin: 1733 },
-    detailed: { inS: 158, outMin: 2206 },
+    light: { inS: 59, outMin: 569 },
+    standard: { inS: 92, outMin: 593 },
+    detailed: { inS: 185, outMin: 1363 },
   },
   "gemini-3.5-flash-lite": {
     light: { inS: 59, outMin: 214 },
@@ -114,14 +121,14 @@ export function watchUsdPerHour(level: LookLevel, model: WatchModel = watchModel
 }
 
 /**
- * Whether the library's last watch was stopped by a free Gemini key's daily quota (Google names the quota
- * "…free_tier…" in its answer), so its Timelines say so once.
+ * What stopped the library's last watch, so its Timelines say so once: a free Gemini key's daily quota (Google names the
+ * quota "…free_tier…" in its answer), or the key's prepaid credit running out.
  */
-export function freeTierStopped(db: DatabaseSync, libraryId: string): boolean {
+export function watchStopped(db: DatabaseSync, libraryId: string): "free" | "credit" | null {
   const t = db
     .prepare("SELECT t.error FROM timelines t JOIN asset_versions v ON v.id = t.version_id JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? ORDER BY t.at DESC LIMIT 1")
     .get(libraryId) as { error: string | null } | undefined;
-  return !!t?.error && /free_tier/.test(t.error);
+  return t?.error?.startsWith(CREDIT_GONE) ? "credit" : t?.error && /free_tier/.test(t.error) ? "free" : null;
 }
 
 /** The model a library's Timelines watch with (contracts WATCH_MODELS). */
@@ -424,9 +431,19 @@ async function askPart(key: string, model: GeminiModel, f: { uri: string; mimeTy
       if (i >= RETRIES) throw new Error(`Gemini watch: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     });
-    if (r?.ok) return answerOf(r, model, a, b, sound);
+    if (r?.ok) {
+      creditBack("GEMINI_API_KEY", key);
+      return answerOf(r, model, a, b, sound);
+    }
     if (r) {
       const e = await failure(r, "watch");
+      // an empty credit: no call on the key until the watch is tried again, and its owner is told (credits.ts)
+      if (r.status === 402 || DEPLETED.test(e.message)) {
+        const said = `${CREDIT_GONE}: ${e.message}`;
+        parked.set(key, { until: Date.now() + RETRY_MS, said });
+        creditOut("GEMINI_API_KEY", key, "Media Library timelines");
+        throw new Error(said);
+      }
       // a quota that asks for a longer wait than ours (measured: a free key's 20 calls a day, "retry in 4h") is not
       // asked again here: the watch fails and is tried again RETRY_MS later
       if ((e.waitS ?? 0) * 1000 > watchTiming.backoffMs * 3 ** i) {
