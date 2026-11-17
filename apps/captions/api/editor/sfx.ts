@@ -1,16 +1,12 @@
 import type { EditPlan } from "../../contracts/edit-plan";
+import { SFX_TYPES, type SfxType } from "../../contracts/sfx";
 import type { TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { libraryDb } from "../library/db";
+import { sfxTypeOf } from "../library/sfx-type";
 import type { ProbeSummary } from "../library/media/probe";
 import { sourceOf } from "./timeline";
 
-/**
- * The sound types the Editor places. Same list as the library's sound types; it moves to contracts/sfx.ts when that
- * file lands on main.
- */
-export const SFX_TYPES = ["whoosh", "swipe", "pop", "click", "hit", "riser", "ding", "glitch", "typing", "camera", "paper", "notification", "transition"] as const;
-export type SfxType = (typeof SFX_TYPES)[number];
 const isType = (x: string): x is SfxType => (SFX_TYPES as readonly string[]).includes(x);
 
 /** Two sounds start at least this far apart: about one every 2 s */
@@ -33,14 +29,9 @@ export interface SfxMoment {
   types: readonly SfxType[];
 }
 
-/**
- * A sound's type: its tag when one is one of the types, else the first word of its file name that is one. Words, not
- * substrings: "whitewash" is not a whoosh.
- */
-export function typeOf(tags: string[], name: string): SfxType | null {
-  const tag = tags.find(isType);
-  if (tag) return tag;
-  return name.toLowerCase().split(/[^a-z]+/).find(isType) ?? null;
+/** A sound's type: its type tag, else what the library's tagger reads from its name and length (a file not tagged yet). */
+export function typeOf(tags: string[], name: string, seconds: number): SfxType | null {
+  return tags.find(isType) ?? sfxTypeOf(name, seconds);
 }
 
 /** The library's sound effects, as the workspace's music is found: tagged `sound effect` or in the Sound effects folder. */
@@ -61,7 +52,7 @@ export function librarySounds(libraryId: string): SfxSound[] {
     const tags = (tagsOf.all(r.id) as Array<{ tag: string }>).map((t) => t.tag);
     const src = sourceOf(r.id, r.title, JSON.parse(r.probe) as ProbeSummary);
     if (src.dur <= 0) continue;
-    out.push({ src, type: typeOf(tags, r.title) });
+    out.push({ src, type: typeOf(tags, r.title, src.dur / src.fps) });
   }
   return out;
 }

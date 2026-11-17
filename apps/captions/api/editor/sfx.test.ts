@@ -23,11 +23,11 @@ const FPS = 30;
 
 describe("a sound's type", () => {
   it("is its tag when the tag is one of the types, else a word of its file name", () => {
-    expect(typeOf(["whoosh"], "Pop 01")).toBe("whoosh");
-    expect(typeOf(["sound effect"], "Soft Whoosh 03")).toBe("whoosh");
-    expect(typeOf([], "metal_hit-2")).toBe("hit");
-    expect(typeOf([], "whitewash")).toBeNull();
-    expect(typeOf([], "rain on a roof")).toBeNull();
+    expect(typeOf(["whoosh"], "Pop 01", 3)).toBe("whoosh");
+    expect(typeOf(["sound effect"], "Soft Whoosh 03", 3)).toBe("whoosh");
+    expect(typeOf([], "metal_hit-2", 3)).toBe("hit");
+    expect(typeOf([], "whitewash", 3)).toBeNull();
+    expect(typeOf([], "rain on a roof", 3)).toBeNull();
   });
 });
 
