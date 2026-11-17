@@ -96,7 +96,7 @@ describe.skipIf(!enabled)("AI Editor in the browser", () => {
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => errors.push(e.message));
     await page.goto(new URL("/editor", base).toString());
-    await page.getByRole("heading", { name: "AI Editor" }).waitFor({ timeout: 60_000 });
+    await page.getByRole("heading", { name: "Editor" }).waitFor({ timeout: 60_000 });
 
     await page.getByRole("button", { name: "New edit" }).first().click();
     await page.getByRole("button", { name: /Tiny Acrobatics take/ }).click();

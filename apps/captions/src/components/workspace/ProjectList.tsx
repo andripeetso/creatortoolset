@@ -5,7 +5,6 @@ import { Loader2, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { PLATFORMS } from "@contracts/connectors";
 import type { LibraryUpload } from "@contracts/library";
 import { setWorkspaceUpload } from "@/lib/library";
@@ -18,11 +17,13 @@ import {
   deleteProject,
   foldProjectInstructions,
   patchProject,
+  workspaceContents,
   type ProjectFields,
   type WorkshopProject,
 } from "@/lib/workshop";
 import { PROJECT_ACCOUNTS_KEY, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
+import { confirmDialog } from "@/lib/dialogs";
 
 /**
  * Create, edit, switch, and delete workspaces (the switcher's Manage workspaces window). `current`: the Content
@@ -126,7 +127,7 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
               onUse={() => void select(p.id)}
               // a workspace the team's owner gave this person (Settings → Team) is used, never changed
               onEdit={me && p.owner !== me ? undefined : () => setEditing(p.id)}
-              onDelete={only || (me && p.owner !== me) ? undefined : () => void run(() => deleteProject(p.id))}
+              onDelete={only || (me && p.owner !== me) ? undefined : () => void run(() => askDelete(p))}
               badge={!only}
             />
           ),
@@ -135,6 +136,19 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
       {made ? <AccountsStep project={projects.find((p) => p.id === made)} id={made} busy={busy} error={error} onClose={() => setMade(null)} /> : null}
     </section>
   );
+}
+
+const listed = new Intl.ListFormat("en-GB");
+
+/** Deleting a workspace deletes everything in it: the confirm names what goes, counted by the list the delete itself uses. */
+async function askDelete(p: WorkshopProject): Promise<void> {
+  const { items, ownFiles } = await workspaceContents(p.id);
+  const body = [
+    items.length ? `This also deletes its ${listed.format(items.map((i) => `${i.n} ${i.what}`))}.` : "",
+    ownFiles ? "Memory shared by all workspaces and the files in your folders stay." : "Memory shared by all workspaces stays.",
+    "This can't be undone.",
+  ];
+  if (await confirmDialog({ title: `Delete ${p.name}?`, body: body.filter(Boolean).join(" "), ok: "Delete workspace", danger: true })) await deleteProject(p.id);
 }
 
 /** Step 2 of a new workspace: its social accounts, on their own. Nothing has to be added: Done closes it either way. */
@@ -212,14 +226,9 @@ function ProjectRow({
         </Button>
       ) : null}
       {onDelete ? (
-        <ConfirmButton
-          label="Delete"
-          confirmLabel="Click again"
-          disabled={busy}
-          onConfirm={onDelete}
-          className="h-8 rounded-md px-3 text-sm text-muted-foreground hover:bg-accent hover:text-red-600 disabled:opacity-50 dark:hover:text-red-400"
-          armedClassName="!bg-red-500/10 !text-red-600 dark:!text-red-400"
-        />
+        <Button size="sm" variant="ghost" onClick={onDelete} disabled={busy} className="text-muted-foreground hover:text-red-600 dark:hover:text-red-400">
+          Delete
+        </Button>
       ) : null}
     </div>
   );

@@ -62,6 +62,21 @@ export interface AssetDetail extends AssetCard {
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
   /** its shot descriptions, in order (a person's own line wins): a video's moments, each with its start and end second */
   shots?: { seg: number; a: number; b: number; text: string; source: "ai" | "user" }[];
+  /** what happens when, from Gemini watching the video with its sound (api/library/timeline.ts); absent without one */
+  timeline?: TimelineEvent[];
+}
+
+/**
+ * One moment of a video's timeline, in order: Gemini watched the video with its sound (api/library/timeline.ts). `sound`:
+ * what the sound adds (a hit, a line, music rising); `change`: what changed from the moment before (a cut, the camera,
+ * the place). Never who anyone is.
+ */
+export interface TimelineEvent {
+  a: number;
+  b: number;
+  what: string;
+  sound?: string;
+  change?: string;
 }
 
 export interface SearchQuery {
@@ -126,6 +141,7 @@ export interface LibrarySettings {
   /** search by picture: what each shot shows, matched with what is typed (api/library/pictures.ts); absent where this server makes no picture vectors */
   pictures?: boolean;
   look: boolean; // the AI writes a line for each shot of a longer video that isn't a talking take (Shot descriptions)
+  timeline: boolean; // with a Gemini key, Gemini watches each of those videos with its sound and writes its timeline (Timelines)
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
   /**
    * What a file added from a computer the server is not on sends to the server: "none" (the default) indexes it where it
@@ -146,7 +162,26 @@ export interface LibrarySettings {
   organize?: Organize;
   /** a big folder came in and the AI organizing was offered (once, either answer) */
   organizeOffered?: boolean;
+  /** how densely shots are described (LOOK_LEVELS); absent: "standard" */
+  lookLevel: LookLevel;
+  /** dollars a month (UTC) shot descriptions may cost in this library's workspace, by the usage tally; null: no cap */
+  lookBudget: number | null;
 }
+
+/**
+ * How densely the library describes shots: a long take is split into pieces of `piece` to `long` seconds, each piece
+ * one line (api/library/look.ts shotsOf). Cost and time follow the count of pieces, about 8 / `long` times Standard's.
+ * The level is part of the lines' stamp (api/library/shots.ts levelVersion), so lines of one level never pass as another's.
+ */
+export type LookLevel = "light" | "standard" | "detailed";
+export const LOOK_LEVELS: readonly { value: LookLevel; label: string; long: number; piece: number }[] = [
+  { value: "light", label: "Light", long: 24, piece: 12 },
+  { value: "standard", label: "Standard", long: 8, piece: 4 },
+  { value: "detailed", label: "Detailed", long: 4, piece: 2 },
+];
+export const lookLevelOf = (v: unknown): LookLevel => (LOOK_LEVELS.some((l) => l.value === v) ? (v as LookLevel) : "standard");
+/** A new library's monthly cap on shot descriptions, in dollars (API-equivalent on an AI provider). */
+export const LOOK_BUDGET_DEFAULT = 20;
 
 export type LibraryUpload = "none" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "proxies", "all"];
@@ -245,6 +280,12 @@ export interface LibraryEstimate {
   proxies?: boolean;
   /** describe on the person's own Anthropic key instead (it runs six at once; a connected AI runs two): when that is faster */
   withApiKey?: { seconds: number; usd: number };
+  /** shot descriptions of one hour of footage at each level (LOOK_LEVELS), on the look's route; absent when it has none */
+  lookLevels?: { level: LookLevel; seconds: number; usd: number }[];
+  /** what shot descriptions cost this month in this library's workspace, in dollars */
+  lookSpent?: number;
+  /** the asker has a Gemini key, so the library's Timelines run (api/library/timeline.ts) */
+  timelineKey?: boolean;
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
@@ -416,7 +457,7 @@ export interface SharedView {
   items: SharedItem[];
 }
 
-/** A watch folder (api/library/watch.ts): a folder on the server's own disk whose new files join the library. */
+/** A watch folder (api/library/timeline.ts): a folder on the server's own disk whose new files join the library. */
 export interface WatchFolder {
   path: string; // absolute, on the server's disk
   mode: "reference" | "copy"; // reference: the file stays where it is; copy: stored in the library like an upload

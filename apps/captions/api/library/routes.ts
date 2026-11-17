@@ -16,8 +16,9 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
+import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
@@ -735,6 +736,7 @@ const settingsOf = (json: string): LibrarySettings => {
   return {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
     look: s.look ?? SETTING_DEFAULTS.look,
+    timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
     ...(picturesHere() ? { pictures: s.pictures ?? SETTING_DEFAULTS.pictures } : {}),
@@ -745,6 +747,8 @@ const settingsOf = (json: string): LibrarySettings => {
     ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
+    lookLevel: lookLevelOf(s.lookLevel),
+    lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
   };
 };
 
@@ -788,12 +792,20 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "embed", "proxy", "pictures"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
   if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
+  // (All clips → Shot descriptions), or an edit asks for its files
+  if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
+  if (s.lookBudget === null || (typeof s.lookBudget === "number" && Number.isFinite(s.lookBudget) && s.lookBudget >= 0 && s.lookBudget <= 1_000_000)) {
+    put("lookBudget", s.lookBudget === null ? null : Math.round(s.lookBudget * 100) / 100);
+    releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
+    libraryChanged(libraryId);
+  }
   if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);

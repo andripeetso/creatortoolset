@@ -262,7 +262,7 @@ describe("indexing and reading by places", () => {
 it("migration 27 keeps where each clip was indexed as that computer's place", () => {
   const file = path.join(dir, "before.db");
   const old = new DatabaseSync(file);
-  const at = 26; // the database as it was before migration 27, the later ones run after it
+  const at = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE version_places")); // migration 27, whatever came after it
   for (const m of MIGRATIONS.slice(0, at)) old.exec(m);
   old.exec(`PRAGMA user_version = ${at};
     INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('l', 'w', 'L', 'local', 0);

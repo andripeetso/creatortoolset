@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
@@ -25,8 +25,9 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
-import { lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, queueLook } from "./shots";
-import { takeMacSheets } from "./mac-look";
+import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
+import { macSheetsWaiting, takeMacSheets, takeWatchCopy } from "./mac-look";
+import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { picturesHere } from "../lib/device-picture";
 import { organizeOnProbe } from "./organize";
@@ -57,8 +58,10 @@ const LEASE_S = 300;
  * started (its ffmpeg runs in a line of its own, media/run.ts). Files: one, since ffmpeg has its own server-wide limit. Transcripts: a key's
  * service takes many, and on this computer they never overlap anyway (device-transcribe.ts). AI: the Mac relay runs
  * two library calls at once per computer (background slots, mac-claude.ts) and queues the rest; an API key takes all six.
- * Shot descriptions: one video at a time, apart from the descriptions, so a long video's calls never hold a clip's
- * description back. Its picture read takes the one ffmpeg slot in one go, a twentieth of a proxy's time or less: a
+ * Shot descriptions: three videos at a time, apart from the descriptions, so a long video's calls never hold a clip's
+ * description back; their AI calls run side by side, at most two at once per account on an AI provider (the background
+ * requests its computer runs; more only queue there) and six on the account's own key, as its descriptions
+ * (shots.ts callsAtOnce). A look waiting for a Mac to read its file holds no place here (mac-look.ts). Its picture read takes the one ffmpeg slot in one go, a twentieth of a proxy's time or less: a
  * 20-minute 720p file in 8 to 48 s (the computer idle to busy; 59 s for 1080p at 60 fps), a real 45-minute one in 41 s
  * (171 s on one thread). Its sheets are runs of under 2 s each (7.8 s a sheet on a heavy 720p file), so other work
  * gets the slot in between.
@@ -70,7 +73,7 @@ export const LANES = [
   { name: "files", kinds: ["proxy", "sprite", "fingerprint"], size: 1 },
   { name: "transcripts", kinds: ["transcribe"], size: 4 },
   { name: "ai", kinds: ["describe", "embed"], size: 6 },
-  { name: "looks", kinds: ["look"], size: 1 },
+  { name: "looks", kinds: ["look"], size: 3 },
 ] as const;
 
 /** A card's own steps: they run before anything else, in any library. */
@@ -80,6 +83,10 @@ export const PICTURES: string[] = [...LANES[0].kinds];
 const EXTRA = new Set(["transcribe", "describe", "look", "fingerprint", "embed", "sprite"]);
 /** The steps that ask the person's AI: a usage limit or a Mac that is off holds them, never fails them. */
 const ON_AI = ["describe", "look"];
+
+/** A look held for its library's monthly budget (shots.ts lookBudgetWaits): it waits, saying so, and asks again in BUDGET_RETRY_S. */
+class BudgetSpent extends Error {}
+const BUDGET_RETRY_S = 10 * 60;
 
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
 
@@ -105,6 +112,7 @@ function waitFor(e: unknown): number {
     return until && until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 15 * 60;
   }
   if (under instanceof MacClaudeError && under.kind === "unclaimed") return 5 * 60;
+  if (e instanceof BudgetSpent) return BUDGET_RETRY_S;
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
 
@@ -276,6 +284,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
       if (e instanceof ModelNotReady || e instanceof ComputerOff) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(e instanceof ComputerOff ? e.message : MODEL_WAITS, job.id);
+      if (e instanceof BudgetSpent) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(BUDGET_WAITS, job.id);
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
@@ -309,6 +318,9 @@ export function startLibraryWorker(): () => void {
           if (!draining()) {
             busy = await tick(Date.now(), lane.kinds);
             if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots();
+            // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook);
+            // then the timelines (timeline.ts sweepWatch): a done look that wants one is queued again
+            if (!busy && lane.name === "looks") busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
           }
         } catch (e) {
           console.error("[library] worker:", e);
@@ -437,6 +449,8 @@ async function run(job: JobRow): Promise<void> {
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
   if (!v) throw new Error("Version not found");
+  // a look runs as its uploader, queued long before: one who may no longer see the clip gets nothing read or asked (shots.ts lookAllowed)
+  if (job.kind === "look" && !(await lookAllowed(db, v.id, job.actor))) throw new NeedsKey(NO_ACCESS);
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
   // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
@@ -446,11 +460,19 @@ async function run(job: JobRow): Promise<void> {
     // sends them the look waits for it, never fails. No AI to ask: it waits for that, and the Mac reads nothing
     if (job.kind === "look") {
       needLookRoute(job.actor);
+      // the sheets a Mac sent are asked about whatever the budget says: they are read, and held only in memory
+      if (!macSheetsWaiting(v.id)) await budgetCheck(db, v.id);
       const sheets = takeMacSheets(v.id);
       if (sheets) {
         // search by picture reads the same sheets now: they are not kept here (a model that fails leaves them without)
         if (picturesHere() && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
-        return void (await lookFromSheets(db, v.id, job.actor, sheets));
+        await lookFromSheets(db, v.id, job.actor, sheets);
+        // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
+        const copy = takeWatchCopy(v.id);
+        if (copy) await watchAfter(db, v.id, async () => copy, job.actor).finally(() => rm(copy, { force: true }));
+        // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
+        else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+        return;
       }
       void wakeEditorPolls(); // the Mac's long poll hears of it at once
       throw new NeedsKey(MAC_WAITS);
@@ -547,14 +569,23 @@ async function run(job: JobRow): Promise<void> {
   } else if (job.kind === "embed") {
     await embedVersion(db, v.id, job.actor);
   } else if (job.kind === "look") {
+    needLookRoute(job.actor);
+    await budgetCheck(db, v.id);
     // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
     await lookVersion(db, v.id, lighter, p, job.actor, dir);
     wakePictures(); // its kept sheets give its shots their picture vectors
+    // with a Gemini key: the timeline, from the same file (timeline.ts); without one nothing more happens
+    await watchAfter(db, v.id, lighter, job.actor);
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }
 
   markReady(db, v.id, p);
+}
+
+/** Holds a look whose library spent its monthly budget (BudgetSpent), before its picture is read or its AI asked. */
+async function budgetCheck(db: ReturnType<typeof libraryDb>, versionId: string): Promise<void> {
+  if (await lookBudgetWaits(db, versionId, firstClips())) throw new BudgetSpent(BUDGET_WAITS);
 }
 
 /** Ready: probed, and the derivatives the probe asked for are there (audio has no thumb). */

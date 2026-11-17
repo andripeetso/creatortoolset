@@ -70,6 +70,8 @@ const STATIC_ROWS = [
   { section: "library", id: "finals-upload", title: "Finals upload", keywords: ["media library", "finals", "upload", "phone", "final video"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
   { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "picture", "ai"] },
+  { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
+  { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
@@ -88,6 +90,7 @@ const STATIC_ROWS = [
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Memory: the rules the assistant keeps from one chat to the next
+  { section: "memory", id: "memory-workspaces", title: "Workspaces", keywords: ["memory", "remember", "workspace", "shared", "each", "separate", "apart", "client"] },
   { section: "memory", id: "memory-rules", title: "Rules", keywords: ["memory", "remember", "rule", "chat", "assistant", "forget", "workspace"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },

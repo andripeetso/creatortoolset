@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
@@ -81,7 +82,7 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   d.exec("BEGIN");
   try {
     if (versions.length) {
-      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "jobs", "version_places"]) {
+      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "timelines", "search_timeline", "jobs", "version_places"]) {
         d.prepare(`DELETE FROM ${t} WHERE version_id IN (${V})`).run(...versions);
       }
       d.prepare(`DELETE FROM derived_from WHERE version_id IN (${V}) OR source_version_id IN (${V})`).run(...versions, ...versions);
@@ -101,6 +102,33 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   // a file indexed on a Mac (on-mac.ts) has no blob here: "mac:<id>" names nothing to delete, and its stills go
   for (const k of keys) if (!k.startsWith("mac:")) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
   for (const k of keys) if (k.startsWith("mac:")) await dropMacFrames(k.slice(4));
+}
+
+/**
+ * Deletes a library for good (its workspace is being deleted, lib/workspace-delete.ts): every asset as deleteAssets does,
+ * its Finals, folders, shares and uploads, then the library. A file indexed in place stays where it is: the library
+ * holds only a link to it, and the link goes.
+ */
+export async function deleteLibrary(id: string): Promise<void> {
+  const d = libraryDb();
+  await deleteAssets((d.prepare("SELECT id FROM assets WHERE library_id = ?").all(id) as { id: string }[]).map((a) => a.id));
+  const covers = (d.prepare("SELECT cover_key AS k FROM pieces WHERE library_id = ? AND cover_key IS NOT NULL").all(id) as { k: string }[]).map((r) => r.k);
+  const folders = "SELECT id FROM collections WHERE library_id = ?";
+  d.exec("BEGIN");
+  try {
+    d.prepare("DELETE FROM pieces WHERE library_id = ?").run(id); // their items and postings cascade
+    for (const t of ["folder_out", "collection_items", "library_grants"]) d.prepare(`DELETE FROM ${t} WHERE collection_id IN (${folders})`).run(id);
+    d.prepare("UPDATE collections SET parent_id = NULL WHERE library_id = ?").run(id);
+    for (const t of ["collections", "shares", "uploads", "jobs", "watch_seen", "usage_daily"]) d.prepare(`DELETE FROM ${t} WHERE library_id = ?`).run(id);
+    d.prepare("DELETE FROM libraries WHERE id = ?").run(id);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+  for (const k of covers) await blobs.delete(k).catch((e) => console.error("[library] library delete:", k, e));
+  // what is left of its files on this server (empty folders, stills); fs.rm unlinks a link, never what it points to
+  await rm(path.join(env.dataDir, "library", "blobs", "libraries", id), { recursive: true, force: true });
 }
 
 /** Runs the purge now and every hour. */

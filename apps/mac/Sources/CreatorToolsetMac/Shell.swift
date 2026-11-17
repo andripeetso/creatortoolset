@@ -178,6 +178,13 @@ final class Shell: NSObject, ObservableObject {
                 }
                 return
             }
+            // Open in <editor> on an AI Editor draft (Editors.swift): the editors this Mac has, and opening one there
+            if ask == "editors" { return done(["editors": Editors.installed().map(\.reply)]) }
+            if isEditorAsk(ask) {
+                guard let open = openEditorAsk(ask) else { return done(["problem": "Could not open the draft"]) }
+                Task { done(await Editors.open(open, site: await self.client())) }
+                return
+            }
             // the Media Library's imports (Import.swift): a copy reads only from this window's recent drops and picks
             if isImportAsk(ask) {
                 return Imports.shared.answer(ask, sources: (self.pickedFiles + (view?.droppedPlaces ?? [])).map(\.path), done: done)
@@ -1113,8 +1120,12 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
         let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            // remembered first: the page asks where they are ("files") as soon as it has them
-            if response == .OK, let self { self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles) }
+            // remembered first: the page asks where they are ("files") as soon as it has them; and granted, so what the
+            // library indexes from them is read here later (MediaFiles.grantPicked)
+            if response == .OK, let self {
+                self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles)
+                MediaFiles.grantPicked(panel.urls)
+            }
             completionHandler(response == .OK ? panel.urls : nil)
         }
         if let window = webView.window {
@@ -1182,6 +1193,11 @@ struct Site {
 
     func post(_ path: String, _ body: [String: Any]) async throws {
         _ = try await send("POST", path, body: body)
+    }
+
+    /// A GET's raw answer (a timeline file).
+    func data(_ path: String) async throws -> Data {
+        try await send("GET", path, body: nil).0
     }
 
     func postData(_ path: String, _ body: [String: Any]) async throws -> Data {

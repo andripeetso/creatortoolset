@@ -5,7 +5,7 @@ import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
 import { ZipFile } from "yazl";
-import { toFcpxml } from "./fcpxml";
+import { toFcp7Xml, toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
 import { notTyped } from "./own-words";
 import { LINK_TTL_S, mediaPaths } from "./media";
@@ -444,14 +444,14 @@ editorApp.get("/:id/drafts/:name", async (c) => {
   return c.json({ ...d, qa: qaOf(d.timeline, others) });
 });
 
-/** The draft for the user's own editor: OTIO, FCPXML, or both in a zip (with download links when the footage is in a bucket). */
+/** The draft for the user's own editor: OTIO, FCPXML, FCP 7 XML (`xml`, Premiere), or all three in a zip (with download links when the footage is in a bucket). */
 editorApp.get("/:id/drafts/:name/export", async (c) => {
   const r = await load(c, true);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
   const format = c.req.query("format") ?? "zip";
-  if (!["otio", "fcpxml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml or zip", code: "invalid" }, 400);
+  if (!["otio", "fcpxml", "xml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml, xml or zip", code: "invalid" }, 400);
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   // (a card is the edit's own file, not footage: TimelineSource.file)
@@ -465,10 +465,12 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
     new Response(body, { headers: { "Content-Type": type, "Content-Disposition": `attachment; filename="${file}"`, "Cache-Control": "no-store" } });
   if (format === "otio") return send(await otio(), `${base}.otio`, "application/json");
   if (format === "fcpxml") return send(toFcpxml(tl, m.files), `${base}.fcpxml`, "application/xml");
+  if (format === "xml") return send(toFcp7Xml(tl, m.files), `${base}.xml`, "application/xml");
   const zip = new ZipFile();
   const at = { mtime: new Date("2000-01-01T00:00:00Z") };
   zip.addBuffer(Buffer.from(await otio()), `${base}/${base}.otio`, at);
   zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
+  zip.addBuffer(Buffer.from(toFcp7Xml(tl, m.files)), `${base}/${base}.xml`, at);
   for (const o of m.own) zip.addFile(o.file, `${base}/media/${o.name}`, at);
   if (m.downloads.length) {
     const hours = LINK_TTL_S / 3600;

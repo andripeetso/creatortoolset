@@ -257,6 +257,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
         onSaved={saved}
         onError={onError}
       />
+      <Timeline detail={detail} now={now} onSeek={seek} />
       {(facts.length > 0 || inFolders.length > 0) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -772,6 +773,40 @@ function ShotLines({
             </div>
           ),
         )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The clip's timeline (api/library/timeline.ts): what happens when, from its picture and sound, each moment a button that
+ * plays from there, the one playing now marked; what the sound adds and what changed, quieter under it. Nothing without one.
+ */
+function Timeline({ detail, now, onSeek }: { detail: AssetDetail | null; now: number; onSeek: (s: number) => void }) {
+  const events = detail?.timeline;
+  if (!events?.length) return null;
+  return (
+    <section aria-label="Timeline" className="flex flex-col gap-1">
+      <span className="text-xs text-zinc-500">Timeline</span>
+      <div className="-mx-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
+        {events.map((e, i) => {
+          const on = now >= e.a && now < Math.max(e.b, e.a + 0.5);
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onSeek(e.a)}
+              aria-current={on ? "true" : undefined}
+              className={cn("flex gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-zinc-500/10", on && "bg-zinc-500/15")}
+            >
+              <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(e.a)}</span>
+              <span className="flex min-w-0 flex-col">
+                <span>{e.what}</span>
+                {(e.sound || e.change) && <span className="text-xs text-zinc-500">{[e.sound, e.change].filter(Boolean).join(" · ")}</span>}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );

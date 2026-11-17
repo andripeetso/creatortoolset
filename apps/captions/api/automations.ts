@@ -76,6 +76,17 @@ function writeAll(username: string, list: Automation[]): void {
   renameSync(tmp, file);
 }
 
+/** The account's tasks for a workspace being deleted (lib/workspace-delete.ts), `pick` by their workspace, and their delete. */
+export function workspaceTasks(username: string, pick: (project?: string) => boolean): { n: number; drop: () => Promise<void> } {
+  const ids = new Set(readAll(username).filter((a) => pick(a.project)).map((a) => a.id));
+  return {
+    n: ids.size,
+    drop: async () => {
+      if (ids.size) writeAll(username, readAll(username).filter((a) => !ids.has(a.id)));
+    },
+  };
+}
+
 /** Changes one task in the account's list; a task deleted meanwhile is left gone. */
 function update(username: string, id: string, change: (a: Automation) => void): Automation | null {
   const list = readAll(username);
@@ -157,6 +168,7 @@ async function finish(username: string, id: string, result: Omit<AutomationResul
     text: `${r.status === "done" ? "" : `${r.status === "error" ? "Failed" : "Skipped"}: `}${r.text}`,
     href: r.chat ? `/?chat=${r.chat}` : `/settings/automations?task=${id}`,
     ref: id,
+    workspace: a?.project,
   }).catch(() => {});
 }
 

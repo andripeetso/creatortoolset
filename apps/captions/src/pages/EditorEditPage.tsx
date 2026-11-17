@@ -12,6 +12,7 @@ import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, get
 import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
+import { editorsOnMac, openInEditor, type MacEditor } from "@/lib/thisMac";
 import { confirmHeavy } from "@/lib/setup";
 import { Maker, StateBadge, thumb } from "./EditorPage";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
@@ -53,6 +54,10 @@ export default function EditorEditPage() {
   // takes with no picture to draw a line on (a voice recording): they have no eye line, and an edit of only those has no Eye line section
   const [blind, setBlind] = useState<string[]>([]);
   const busy = !!edit?.jobs.some((j) => j.state === "queued" || j.state === "running");
+  // the video editors on this Mac (the Mac app only) and the draft being opened in one: "<draft>:<editor>"
+  const [editors, setEditors] = useState<MacEditor[]>([]);
+  const [opening, setOpening] = useState<string | null>(null);
+  useEffect(() => void editorsOnMac().then(setEditors), []);
 
   const act = (p: Promise<Edit>) =>
     p.then((e) => {
@@ -80,7 +85,7 @@ export default function EditorEditPage() {
   if (!edit) {
     return (
       <div className="flex min-h-dvh flex-col">
-        <AppBar tool="AI Editor" to="/editor" />
+        <AppBar tool="Editor" to="/editor" />
         <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-4 sm:px-6">
           {error || live.error ? <p className="text-sm text-red-400">{error || live.error}</p> : <div aria-hidden="true" className="h-[420px] rounded-xl border border-zinc-500/20" />}
         </main>
@@ -112,7 +117,7 @@ export default function EditorEditPage() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <AppBar tool="AI Editor" to="/editor" trail={edit.name}>
+      <AppBar tool="Editor" to="/editor" trail={edit.name}>
         {editable && <>
         <Button size="sm" variant="outline" onClick={() => void saveAsStyle()}>
           Save as style
@@ -399,6 +404,19 @@ export default function EditorEditPage() {
                             <Download className="h-3.5 w-3.5" />
                             {f === "otio" ? "OTIO" : f === "fcpxml" ? "FCPXML" : "ZIP"}
                           </a>
+                        </Button>
+                      ))}
+                      {!postHeld && d && editors.map((ed) => (
+                        <Button key={ed.id} size="sm" variant="outline" disabled={opening !== null}
+                          onClick={() => {
+                            setOpening(`${n}:${ed.id}`);
+                            const tl = d.timeline;
+                            void openInEditor({ edit: id, draft: n, editor: ed.id, name: `${edit.name} ${n}`, project: edit.name, fps: tl.fps, width: tl.width, height: tl.height })
+                              .then((r) => (r.problem ? toast.error(r.problem) : r.note && toast(r.note)))
+                              .finally(() => setOpening(null));
+                          }}>
+                          {opening === `${n}:${ed.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                          Open in {ed.name}
                         </Button>
                       ))}
                       {editable && pv && (

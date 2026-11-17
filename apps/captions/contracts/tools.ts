@@ -37,7 +37,7 @@ export const TOOL_NAMES: Record<Tool, string> = {
   captions: "Caption Studio",
   review: "Review",
   media: "Media Library",
-  editor: "AI Editor",
+  editor: "Editor",
   stories: "Story Splitter",
   design: "Designer",
   notes: "Video Notes",
@@ -100,6 +100,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   PERPLEXITY_API_KEY: "Lets research look things up on the web. Perplexity bills you, to your own account.",
   YOUTUBE_API_KEY: "Reads public YouTube channels through YouTube's own API. Free within Google's daily quota.",
   TYPESAFE_API_KEY: "Sharper picks for Content Analyzer. TypeSafe Jev bills you, to your own account.",
+  GEMINI_API_KEY: "Gemini watches each Media Library video with its sound and notes what happens when. Google bills you, to your own account.",
 };
 
 /**

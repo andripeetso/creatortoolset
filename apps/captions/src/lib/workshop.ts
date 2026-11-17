@@ -3,6 +3,7 @@ import type { FindHit } from "@/lib/instagram";
 import type { SocialPlatform } from "@contracts/connectors";
 import type { Selection } from "@contracts/providers";
 import type { LibraryUpload } from "@contracts/library";
+import type { WorkspaceContents } from "@contracts/workspaces";
 import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type DraftStatus, type ProposalStatus, type ReplyStatus, type SessionStatus, type ShareProgressState } from "@contracts/workshop-statuses";
 /**
  * Client for the Content Workshop (api/workshop.ts): research sessions on
@@ -88,6 +89,10 @@ export interface WorkshopFramework {
   pairsWith?: string;
   example?: string;
   seedKey?: string;
+  /** The workspaces it applies in; missing = every workspace. */
+  only?: string[];
+  /** This workspace has its own version of it, used here in place of the shared one. */
+  changedHere?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -102,11 +107,23 @@ export interface WorkshopRule {
   /** Applied to every generation unless a run switches it off. */
   on: boolean;
   seedKey?: string;
+  /** The workspaces it applies in; missing = every workspace. */
+  only?: string[];
+  /** This workspace has its own version of it, used here in place of the shared one. */
+  changedHere?: boolean;
   createdAt: number;
   updatedAt: number;
 }
 
 export type RuleFields = Pick<WorkshopRule, "name" | "text" | "on">;
+/**
+ * Where a rule or framework applies and which version a change goes to (api/lib/workshop/rule-workspaces.ts):
+ * `workspaces` sets where the shared one applies; `here` saves the change as this workspace's own version.
+ */
+export interface ScopeInput {
+  workspaces?: { all: true } | { only: string[] };
+  here?: boolean;
+}
 
 export type DraftKind = "reel" | "carousel" | "ad" | "free";
 export type { DraftStatus };
@@ -311,6 +328,8 @@ export const patchProject = async (id: string, fields: Partial<ProjectFields>) =
   await useWorkspace.getState().load();
   return p;
 };
+/** What deleting a workspace deletes with it (the confirm's counts). */
+export const workspaceContents = (id: string) => fetch(`/api/workshop/projects/${id}/contents`).then((r) => json<WorkspaceContents>(r));
 export const deleteProject = async (id: string) => {
   const out = await fetch(`/api/workshop/projects/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
   await useWorkspace.getState().load();
@@ -367,7 +386,7 @@ export async function addProjectFiles(projectId: string, kept: Array<{ file: Fil
 
 export const listFrameworks = () =>
   fetch("/api/workshop/frameworks").then((r) => json<WorkshopFramework[]>(r));
-export type FrameworkInput = Omit<Partial<FrameworkFields>, "steps"> & { steps?: string[] | string };
+export type FrameworkInput = Omit<Partial<FrameworkFields>, "steps"> & { steps?: string[] | string } & ScopeInput;
 
 export const createFramework = (fields: FrameworkInput) =>
   fetch("/api/workshop/frameworks", jsonInit(fields)).then((r) => json<WorkshopFramework>(r));
@@ -375,6 +394,9 @@ export const patchFramework = (id: string, fields: FrameworkInput) =>
   fetch(`/api/workshop/frameworks/${id}`, jsonInit(fields, "PATCH")).then((r) => json<WorkshopFramework>(r));
 export const deleteFramework = (id: string) =>
   fetch(`/api/workshop/frameworks/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
+/** This workspace's own version deleted: the shared framework is used here again. */
+export const deleteFrameworkHere = (id: string) =>
+  fetch(`/api/workshop/frameworks/${id}/here`, { method: "DELETE" }).then((r) => json<WorkshopFramework>(r));
 
 export type { KnowledgeSource, SourceKind, SourceSection } from "@contracts/knowledge";
 export { SOURCE_KINDS } from "@contracts/knowledge";
@@ -406,12 +428,15 @@ export const deleteSource = (id: string) => fetch(`/api/workshop/sources/${id}`,
 export const sourceTextUrl = (id: string) => `/api/workshop/sources/${id}/text`;
 
 export const listRules = () => fetch("/api/workshop/rules").then((r) => json<WorkshopRule[]>(r));
-export const createRule = (fields: Partial<RuleFields>) =>
+export const createRule = (fields: Partial<RuleFields> & ScopeInput) =>
   fetch("/api/workshop/rules", jsonInit(fields)).then((r) => json<WorkshopRule>(r));
-export const patchRule = (id: string, fields: Partial<RuleFields>) =>
+export const patchRule = (id: string, fields: Partial<RuleFields> & ScopeInput) =>
   fetch(`/api/workshop/rules/${id}`, jsonInit(fields, "PATCH")).then((r) => json<WorkshopRule>(r));
 export const deleteRule = (id: string) =>
   fetch(`/api/workshop/rules/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
+/** This workspace's own version deleted: the shared rule is used here again. */
+export const deleteRuleHere = (id: string) =>
+  fetch(`/api/workshop/rules/${id}/here`, { method: "DELETE" }).then((r) => json<WorkshopRule>(r));
 
 export const listSessions = () => {
   const params = new URLSearchParams();

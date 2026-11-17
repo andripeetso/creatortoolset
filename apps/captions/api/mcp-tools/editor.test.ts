@@ -206,7 +206,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     expect(again).toMatchObject({ id, name: "Tiny keys", retried: [{ kind: "script", state: "queued" }], link: `http://localhost/editor/${id}` });
     const reply = (await chat()).at(-1)!;
     expect(reply.steps).toEqual(["Running the failed step again"]);
-    expect(reply.work).toEqual([{ id: `edit:${id}:retry`, kind: "edit", title: "Tiny keys", href: `/editor/${id}`, status: "running", detail: "The AI Editor is working on it" }]);
+    expect(reply.work).toEqual([{ id: `edit:${id}:retry`, kind: "edit", title: "Tiny keys", href: `/editor/${id}`, status: "running", detail: "The Editor is working on it" }]);
     await t.end();
     const mark = (await chat()).length;
     await drain();

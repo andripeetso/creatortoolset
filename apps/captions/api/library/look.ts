@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import type { IndexShot } from "../../contracts/edit-plan";
-import { STRETCH_TAGS, STRETCH_TEXT_MAX } from "../../contracts/library";
+import { LOOK_LEVELS, STRETCH_TAGS, STRETCH_TEXT_MAX, type LookLevel } from "../../contracts/library";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { ffmpegSlot, ffmpegTo } from "./media/run";
@@ -27,9 +27,8 @@ const CUT_OVER = 3;
 const CUT_PLUS = 0.08;
 /** Two cuts this close (s) are one: a flash frame is not a shot */
 const MIN_SHOT_S = 0.3;
-/** A take longer than LONG_S is split, no piece shorter than PIECE_S */
-const LONG_S = 8;
-const PIECE_S = 4;
+/** A take longer than its level's `long` seconds is split, no piece shorter than its `piece` (contracts LOOK_LEVELS) */
+const spanOf = (level: LookLevel) => LOOK_LEVELS.find((l) => l.value === level)!;
 /** The change over this long (s) says where a long take changes most */
 export const LAG_S = 0.5;
 /** Movement (mean |Δ| a second) below which a source counts as still, whatever its own most is */
@@ -246,9 +245,10 @@ export function cutsOf({ fps, cut: step }: PictureRead): number[] {
   return cuts;
 }
 
-/** Splits frames [a, b) into pieces of PIECE_S..LONG_S where the picture changes most (the lag change's peak). */
-export function splitLong(a: number, b: number, read: PictureRead): number[] {
+/** Splits frames [a, b) into pieces of the level's piece..long seconds where the picture changes most (the lag change's peak). */
+export function splitLong(a: number, b: number, read: PictureRead, level: LookLevel = "standard"): number[] {
   const { fps, lag } = read;
+  const { long: LONG_S, piece: PIECE_S } = spanOf(level);
   if (b - a <= LONG_S * fps) return [];
   const half = Math.round((LAG_S * fps) / 2);
   let best = -1;
@@ -257,16 +257,16 @@ export function splitLong(a: number, b: number, read: PictureRead): number[] {
     const v = lag[Math.min(lag.length - 1, i + half)] ?? 0; // the change over LAG_S, centred on i
     if (v > best) [best, at] = [v, i];
   }
-  return [...splitLong(a, at, read), at, ...splitLong(at, b, read)];
+  return [...splitLong(a, at, read, level), at, ...splitLong(at, b, read, level)];
 }
 
-/** Shots covering 0..dur from what was read: cuts, long takes split, motion against the source's own most. */
-export function shotsOf(read: PictureRead, dur: number): IndexShot[] {
+/** Shots covering 0..dur from what was read: cuts, long takes split (at the library's `level`), motion against the source's own most. */
+export function shotsOf(read: PictureRead, dur: number, level: LookLevel = "standard"): IndexShot[] {
   const n = read.step.length;
   if (!n) return dur > 0 ? [{ a: 0, b: dur, motion: 0 }] : [];
   const edges = [0, ...cutsOf(read), n];
   const all: number[] = [0];
-  for (let k = 1; k < edges.length; k++) all.push(...splitLong(edges[k - 1]!, edges[k]!, read), edges[k]!);
+  for (let k = 1; k < edges.length; k++) all.push(...splitLong(edges[k - 1]!, edges[k]!, read, level), edges[k]!);
   const per: number[] = [];
   for (let k = 1; k < all.length; k++) {
     let s = 0;

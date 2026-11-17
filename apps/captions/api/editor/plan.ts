@@ -375,6 +375,12 @@ const LINE_TEXT = 100;
 const LINES_HOW =
   "Shot lines: S<n> start–end (minutes:seconds) a<action: 0 nothing changes (a menu, loading, standing) … 5 a peak of the action>, clear when the main subject is easy to see, then tags and what happens. A shot's in is still seconds.";
 
+/** Timeline lines in a plan prompt, in all; past it each source keeps its share, spread over its length. */
+export const TIMELINE_MAX = 1200;
+const TIMELINE_TEXT = 160;
+const TIMELINE_HOW =
+  "Timeline lines: t start–end (minutes:seconds), what happens there, watched with its sound: what is heard and what changes. Pick moments by these times.";
+
 /** m:ss.d */
 const mmss = (t: number) => {
   const d = Math.round(t * 10) / 10;
@@ -398,6 +404,22 @@ export function shotLines(index: FootageIndex): Map<string, string[]> {
     const text = (x.desc ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_TEXT);
     const line = `${tagOf(index, l.s.id)} ${mmss(x.a)}–${mmss(x.b)} a${x.action ?? 0}${x.clear ? " clear" : ""}${looksLike(x)}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
     out.set(l.s.id, [...(out.get(l.s.id) ?? []), line]);
+  }
+  return out;
+}
+
+/** Each source's timeline as plan lines (`  t 1:02.0–1:05.5 the boss falls · sound: a roar · change: a cut to a wide`), by source id. */
+export function timelineLines(index: FootageIndex): Map<string, string[]> {
+  const timed = index.sources.filter((s) => s.timeline?.length);
+  const share = Math.max(1, Math.floor(TIMELINE_MAX / Math.max(1, timed.length)));
+  const out = new Map<string, string[]>();
+  for (const s of timed) {
+    const all = s.timeline!;
+    const kept = all.length <= share ? all : Array.from({ length: share }, (_, k) => all[Math.floor((k * all.length) / share)]!);
+    out.set(
+      s.id,
+      kept.map((e) => `  t ${mmss(e.a)}–${mmss(e.b)} ${[e.what, e.sound && `sound: ${e.sound}`, e.change && `change: ${e.change}`].filter(Boolean).join(" · ").replace(/\s+/g, " ").slice(0, TIMELINE_TEXT)}`),
+    );
   }
   return out;
 }
@@ -441,6 +463,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   if (overdone(i.brief)) parts.push("Effects: overdone. Every shot gets at least one effect, the shots on strong beats get stacks of two to four (punch + flash + shake, stutter + zoomblur…), and the sizes vary (fill, fit, blur, letterbox, inset, split).");
   const n = poolSize(i.index);
   const lines = shotLines(i.index);
+  const timed = timelineLines(i.index);
   const src = i.index.sources.map((s) => {
     const head = `${tagOf(i.index, s.id)} ${JSON.stringify(s.title)}: ${s.dur.toFixed(1)} s, ${pictured(s) ? `${s.w}x${s.h} at ${Math.round(s.fps)} fps` : "sound only (no picture: not a shot)"}, ${s.sound === false ? "no sound" : "sound"}${s.speech ? ", someone speaks" : ""}`;
     // the library's shot descriptions: every line (LINES_MAX in all, the busiest kept); else the strongest shots, spread out
@@ -450,9 +473,12 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
     if (own && own.length < s.shots.length) shots.unshift(`  ${own.length} of its ${s.shots.length} shot lines (the busiest):`);
     else if (!own && pool.length < s.shots.length) shots.unshift(`  ${pool.length} of its ${s.shots.length} shots:`);
     const said = i.words[s.id] ? [`  said: ${i.words[s.id]}`] : [];
-    return [head, ...shots, ...said].join("\n");
+    const t = timed.get(s.id) ?? [];
+    if (t.length && t.length < s.timeline!.length) t.unshift(`  ${t.length} of its ${s.timeline!.length} timeline lines:`);
+    return [head, ...shots, ...t, ...said].join("\n");
   });
   if (lines.size) parts.push(LINES_HOW);
+  if (timed.size) parts.push(TIMELINE_HOW);
   parts.push(`Sources:\n${src.join("\n")}`);
   const b = i.index.song;
   if (i.song && b) {

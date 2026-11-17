@@ -10,6 +10,7 @@ import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { downloadName, readerOf } from "./routes";
 import { assetRef, canSee } from "./sources";
+import { lookable } from "./shots";
 
 /**
  * The Media Library's moves on many clips at once (the page's selection bar, Library settings → Redo for every clip).
@@ -69,8 +70,11 @@ bulkApp.get("/:id/zip", async (c) => {
   });
 });
 
-/** What can be asked for again on many clips: a fresh transcript, description, or search data (vectors). */
-const REDO = new Set(["transcribe", "describe", "embed"]);
+/**
+ * What can be asked for again on many clips: a fresh transcript, description, search data (vectors), or shot
+ * descriptions (the videos that get them: shots.ts lookable; written again only where the context or the level changed).
+ */
+const REDO = new Set(["transcribe", "describe", "embed", "look"]);
 
 // POST /api/library/:id/jobs { kinds, assetIds?, count? } → { clips }: those jobs queued again on the clips the caller may
 // change (every clip in the library when assetIds is left out), with the caller as the actor (their AI and keys). A
@@ -90,10 +94,11 @@ bulkApp.post("/:id/jobs", async (c) => {
   ).filter(Boolean) as { id: string; kind: string; v: string | null }[];
   let clips = 0;
   for (const r of rows) {
-    const these = kinds.filter((k) => (k === "describe" ? r.kind === "video" : r.kind === "video" || r.kind === "audio"));
-    if (!r.v || !these.length || !(await mayWrite(user.username, libraryId, r.id, r.v))) continue;
+    const v = r.v;
+    const these = kinds.filter((k) => (k === "look" ? !!v && !!lookable(db(), v) : k === "describe" ? r.kind === "video" : r.kind === "video" || r.kind === "audio"));
+    if (!v || !these.length || !(await mayWrite(user.username, libraryId, r.id, v))) continue;
     clips++;
-    if (b?.count !== true) for (const k of these) enqueueJob(db(), libraryId, r.v, k, user.username, true);
+    if (b?.count !== true) for (const k of these) enqueueJob(db(), libraryId, v, k, user.username, true);
   }
   return c.json({ clips });
 });

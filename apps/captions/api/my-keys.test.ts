@@ -57,6 +57,11 @@ describe("keyFor: whose key pays", () => {
     expect(JSON.parse(body).find((k: { env: string }) => k.env === "PERPLEXITY_API_KEY")).toMatchObject({ set: true, last4: "9876" });
     expect((await put("PERPLEXITY_API_KEY", null)).status).toBe(200);
     expect(keyFor("lee", "PERPLEXITY_API_KEY").key).toBe("");
+    // a Gemini key of the newer kind ("AQ." and 50 more, dots included) saves as it is
+    const gemini = `AQ.${"Ab1_-.".repeat(8)}xy`;
+    expect((await put("GEMINI_API_KEY", gemini)).status).toBe(200);
+    expect(keyFor("lee", "GEMINI_API_KEY").key).toBe(gemini);
+    expect((await put("GEMINI_API_KEY", null)).status).toBe(200);
     who = { username: "visitor", role: "visitor", cloud: false, off: [] };
     expect((await app.request("/")).status).toBe(403);
   });

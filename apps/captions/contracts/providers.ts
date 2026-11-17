@@ -138,14 +138,23 @@ export interface Selection {
   effort: Effort;
 }
 
-/** What a job is, for its default and the usage page. Every AI call names one. */
-export const JOBS = [
+/**
+ * What a job is, for its default and the usage page. Every AI call names one. `recommend`: an engine that does the job
+ * better than a provider, with its one-line reason (Settings → AI by job shows it under the job). "library" with no pick
+ * of its own takes the Content Analyzer's (api/lib/providers.ts pick), as it did before it had its own row.
+ */
+export const JOBS: readonly { id: "workshop" | "captions" | "analyzer" | "notes" | "editor" | "library"; label: string; recommend?: { key: "GEMINI_API_KEY"; why: string } }[] = [
   { id: "workshop", label: "Content Workshop" },
   { id: "captions", label: "Caption Studio" },
   { id: "analyzer", label: "Content Analyzer" },
   { id: "notes", label: "Video Notes and guides" },
-  { id: "editor", label: "AI Editor" },
-] as const;
+  { id: "editor", label: "Editor" },
+  {
+    id: "library",
+    label: "Media Library descriptions",
+    recommend: { key: "GEMINI_API_KEY", why: "Gemini is recommended: it watches the whole video with its sound, at the lowest cost an hour." },
+  },
+];
 export type JobId = (typeof JOBS)[number]["id"];
 
 /**

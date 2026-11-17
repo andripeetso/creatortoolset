@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { STRETCH_TEXT_MAX, type PictureSignal, type Stretch } from "../../contracts/library";
+import { STRETCH_TEXT_MAX, type LookLevel, type PictureSignal, type Stretch } from "../../contracts/library";
 import { shotsOf } from "./look";
 
 /**
@@ -70,14 +70,15 @@ export interface StretchLine {
 }
 
 /**
- * Stores the stretches found in a version's picture, in order and with no line yet: the AI's rows found before go
- * (stretches are found again only when the picture is read again); the person's own lines stay. The shots' picture
- * vectors go with them (pictures.ts makes them again from the new sheets).
+ * Stores the stretches found in a version's picture at `level`, in order and with no line yet: the AI's rows found
+ * before go (stretches are found again only when the picture is read again); the person's own lines stay. The
+ * shots' picture vectors go with them (pictures.ts makes them again from the new sheets).
  */
-export function storeStretches(db: DatabaseSync, versionId: string, found: FoundStretch[]): void {
+export function storeStretches(db: DatabaseSync, versionId: string, found: FoundStretch[], level: LookLevel = "standard"): void {
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM stretches WHERE version_id = ? AND source = 'ai'").run(versionId);
+    db.prepare("UPDATE asset_versions SET look_level = ? WHERE id = ?").run(level === "standard" ? null : level, versionId);
     db.prepare("DELETE FROM pictures WHERE version_id = ? AND seg >= 0").run(versionId);
     const add = db.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, ph, source, created_at) VALUES (?, ?, ?, ?, ?, ?, 'ai', ?)");
     const now = Date.now();
@@ -150,11 +151,15 @@ export function parseSignal(body: unknown): PictureSignal | string {
 
 /**
  * A picture read on another computer (the studio's worker, a Mac with the file): its stretches found as the server finds
- * its own (look.ts shotsOf, D4) and stored with no line yet (storeStretches), answered in order.
+ * its own (look.ts shotsOf, D4) at the library's level and stored with no line yet (storeStretches), answered in order.
  */
-export function takeSignal(db: DatabaseSync, versionId: string, duration: number, x: PictureSignal): { seg: number; a: number; b: number; motion: number }[] {
+export function takeSignal(db: DatabaseSync, versionId: string, duration: number, x: PictureSignal, level: LookLevel = "standard"): { seg: number; a: number; b: number; motion: number }[] {
   const read = { fps: x.fps, step: Float32Array.from(x.step), cut: Float32Array.from(x.cut), lag: Float32Array.from(x.lag) };
-  const found = shotsOf(read, duration || x.step.length / x.fps);
-  storeStretches(db, versionId, found);
+  const found = shotsOf(read, duration || x.step.length / x.fps, level);
+  storeStretches(db, versionId, found, level);
   return found.map((s, seg) => ({ seg, a: s.a, b: s.b, motion: s.motion }));
 }
+
+/** The level a version's stored stretches were found at (storeStretches). */
+export const stretchLevelOf = (db: DatabaseSync, versionId: string): LookLevel =>
+  ((db.prepare("SELECT look_level FROM asset_versions WHERE id = ?").get(versionId) as { look_level: LookLevel | null } | undefined)?.look_level ?? "standard");

@@ -125,3 +125,13 @@ export interface InviteInfo {
 export const INVITE_DAYS = 7;
 /** Invite tokens in links: /join/<token>. */
 export const INVITE_TOKEN_RE = /^[a-f0-9]{40}$/;
+
+/**
+ * What deleting a workspace (the brand, a Workshop project: DELETE /api/workshop/projects/:id) deletes with it, from
+ * GET /api/workshop/projects/:id/contents (api/lib/workspace-delete.ts): each kind that has any ("5 chats"), and
+ * whether the person's own folders or Media Library files are in it (the files stay, only the app's records go).
+ */
+export interface WorkspaceContents {
+  items: Array<{ n: number; what: string }>;
+  ownFiles: boolean;
+}

@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Folder } from "lucide-react";
-import { NEEDS, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { LOOK_LEVELS, NEEDS, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Card, ListRow, Row, Section, SettingsSelect, Status } from "@/components/settings/ui";
+import { Card, InUse, ListRow, Row, Section, SettingsSelect, Status, TextField } from "@/components/settings/ui";
 import type { Organize } from "@contracts/library";
-import { CopyTo, folderName } from "@/components/LibraryProcessing";
+import { aboutTime, aboutUsd, CopyTo, folderName } from "@/components/LibraryProcessing";
 import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
@@ -41,9 +41,10 @@ const WHERE: Partial<Record<LibraryStepRoute, string>> = {
 };
 
 /** What each switch adds, before where it runs. */
-const WHAT: Record<"describe" | "look" | "embed" | "pictures", string> = {
+const WHAT: Record<"describe" | "look" | "timeline" | "embed" | "pictures", string> = {
   describe: "What is on screen in each video, written down for search.",
   look: "A line for each shot of a longer video.",
+  timeline: "What happens when in each of those videos, from its picture and sound, made by Gemini.",
   embed: "Search matches by meaning as well as by exact words.",
   pictures: "Search matches what the footage shows as well as its words.",
 };
@@ -215,18 +216,19 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
 
 /** What search reads, a switch each (api/library/db.ts SETTING_DEFAULTS): each says where it runs for this account, read from the server's own routes (the estimate). */
 function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError">) {
-  const [routes, setRoutes] = useState<LibraryEstimate["steps"] | null>(null);
-  const { describe, look, embed } = library.settings;
+  const [est, setEst] = useState<LibraryEstimate | null>(null);
+  const routes = est?.steps ?? null;
+  const { describe, look, timeline, embed, lookLevel, lookBudget } = library.settings;
   useEffect(() => {
     let live = true;
     getEstimate(library.id, { clips: 1, bytes: 1 }).then(
-      (e) => live && setRoutes(e.steps),
-      () => live && setRoutes([]),
+      (e) => live && setEst(e),
+      () => live && setEst({ clips: 0, minutes: 0, steps: [], seconds: 0 }),
     );
     return () => void (live = false);
-  }, [library.id, describe, look, embed]);
+  }, [library.id, describe, look, timeline, embed, lookLevel, lookBudget]);
 
-  const flip = (key: "describe" | "look" | "embed" | "pictures", on: boolean) =>
+  const flip = (key: "describe" | "look" | "timeline" | "embed" | "pictures", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
@@ -254,19 +256,98 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
     />
   );
   return (
-    <Section id="library-ai" title="Search">
+    <>
+      <Section id="library-ai" title="Search">
+        <Card>
+          {row("describe", "describe", "Descriptions")}
+          {row("look", "look", "Shot descriptions")}
+          {look && (
+            <Row
+              title="Timelines"
+              description={WHAT.timeline}
+              status={
+                timeline &&
+                est &&
+                (est.timelineKey ? (
+                  <Status>Uses the Gemini API key</Status>
+                ) : (
+                  <Status tone="attention">
+                    <Link to="/settings/keys" className="underline-offset-4 hover:underline">
+                      Needs a Gemini API key
+                    </Link>
+                  </Status>
+                ))
+              }
+              control={<Switch aria-label="Timelines" checked={timeline} onCheckedChange={(on) => void flip("timeline", on)} />}
+            />
+          )}
+          {row("embed", "embed", "Search by meaning")}
+          {/* only where this server makes picture vectors (api/library/pictures.ts): it runs here, nothing to add */}
+          {library.settings.pictures !== undefined && (
+            <Row
+              title="Search by picture"
+              description={WHAT.pictures}
+              control={<Switch aria-label="Search by picture" checked={library.settings.pictures} onCheckedChange={(on) => void flip("pictures", on)} />}
+            />
+          )}
+        </Card>
+      </Section>
+      {look && <ShotDetail library={library} estimate={est} onChange={onChange} onError={onError} />}
+    </>
+  );
+}
+
+/** "About 12 min and $2.64 an hour of footage": a level's time and cost for an hour of footage (estimate.ts lookLevels). */
+const perHour = (seconds: number, usd: number) => {
+  const t = `${aboutTime(seconds)} and ${aboutUsd(usd).replace(/^about /, "")} an hour of footage`;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+/**
+ * How densely shots are described (contracts LOOK_LEVELS), each level with the time and cost of an hour of footage on
+ * this account's route (estimate.ts lookLevels), and the monthly budget with this month's spend. A new level describes
+ * the clips from then on; All clips → Shot descriptions describes the others again.
+ */
+function ShotDetail({ library, estimate, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { estimate: LibraryEstimate | null }) {
+  const { lookLevel, lookBudget } = library.settings;
+  const save = (settings: Partial<Settings>) => updateLibrary(library.id, { settings }).then(onChange);
+  const budget = async (text: string) => {
+    const t = text.trim().replace(/^\$/, "");
+    const usd = t === "" ? null : Number(t);
+    if (usd !== null && !(Number.isFinite(usd) && usd >= 0)) throw new Error("Needs an amount in dollars");
+    await save({ lookBudget: usd });
+  };
+  const spent = estimate?.lookSpent;
+  const reached = spent !== undefined && lookBudget !== null && spent >= lookBudget;
+  return (
+    <Section id="library-shot-detail" title="Shot detail">
       <Card>
-        {row("describe", "describe", "Descriptions")}
-        {row("look", "look", "Shot descriptions")}
-        {row("embed", "embed", "Search by meaning")}
-        {/* only where this server makes picture vectors (api/library/pictures.ts): it runs here, nothing to add */}
-        {library.settings.pictures !== undefined && (
-          <Row
-            title="Search by picture"
-            description={WHAT.pictures}
-            control={<Switch aria-label="Search by picture" checked={library.settings.pictures} onCheckedChange={(on) => void flip("pictures", on)} />}
-          />
-        )}
+        {LOOK_LEVELS.map((l) => {
+          const e = estimate?.lookLevels?.find((x) => x.level === l.value);
+          return (
+            <ListRow
+              key={l.value}
+              title={l.label}
+              subtitle={e ? perHour(e.seconds, e.usd) : `A line every ${l.piece} to ${l.long} seconds of a long take`}
+              actions={
+                l.value === lookLevel ? (
+                  <InUse>In use</InUse>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => void save({ lookLevel: l.value }).catch((err: unknown) => onError(message(err)))}>
+                    Use
+                  </Button>
+                )
+              }
+            />
+          );
+        })}
+        <Row
+          id="library-shot-budget"
+          title="Monthly budget"
+          description="The most shot descriptions may cost in a month, in dollars."
+          status={spent !== undefined ? <Status tone={reached ? "attention" : undefined}>{reached ? "Reached: " : ""}${spent.toFixed(2)} this month</Status> : null}
+          control={<TextField label="Monthly budget" value={lookBudget === null ? "" : String(lookBudget)} placeholder="No limit" onCommit={budget} className="sm:w-28" />}
+        />
       </Card>
     </Section>
   );

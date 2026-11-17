@@ -41,7 +41,7 @@ async function heldEdit(job: JobRow): Promise<{ edit: EditMeta; actor: string }>
 }
 
 /** The asker's own AI for the step, resolved here: the computer only names which use (the AI Editor's or the Analyzer's). */
-const useOf = (job: unknown): JobId => (job === "analyzer" ? "analyzer" : "editor");
+const useOf = (job: unknown): JobId => (job === "analyzer" || job === "library" ? job : "editor");
 const labelOf = (label: unknown) => (typeof label === "string" && label ? label.slice(0, 80) : "AI Editor");
 const routeFor = (actor: string, label = "AI Editor") => aiFor(whoFor(actor), "editor", label);
 

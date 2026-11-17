@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
-import { isFolderTool, SHAREABLE_TOOLS, type FolderTool, type ToolFolder, type ToolFolders } from "../contracts/folders";
+import { FOLDER_TOOLS, isFolderTool, SHAREABLE_TOOLS, type FolderTool, type ToolFolder, type ToolFolders } from "../contracts/folders";
 import { env } from "./lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
@@ -39,7 +39,9 @@ async function save(tool: FolderTool, username: string, data: ToolFolders) {
   await rename(tmp, file);
 }
 
-// one writer per file: every change reads, changes and writes the whole file
+// one writer per file: every change reads, changes and writes the whole file. Exported for a plug-in that files its own
+// items server-side (the studio's Editor puts each version of a video in that video's folder)
+export { change as changeFolders };
 const locks = new Map<string, Promise<unknown>>();
 function change<T>(tool: FolderTool, username: string, fn: (d: ToolFolders) => T | Response): Promise<T | Response> {
   const key = `${tool}/${username}`;
@@ -128,6 +130,24 @@ foldersApp.patch("/:tool/:fid", async (c) => {
 });
 
 // DELETE /api/folders/:tool/:fid → gone; what was in it (items and folders) moves up one level
+/** The account's folders in every tool kept to a workspace being deleted (lib/workspace-delete.ts), share links with them; the items are each tool's. */
+export async function workspaceToolFolders(username: string, has: (ws?: string) => boolean): Promise<{ n: number; drop: () => Promise<void> }> {
+  const hit = await Promise.all(FOLDER_TOOLS.map(async (t) => [t, new Set((await read(t, username)).folders.filter((f) => has(f.workspace)).map((f) => f.id))] as const));
+  return {
+    n: hit.reduce((n, [, ids]) => n + ids.size, 0),
+    drop: async () => {
+      for (const [t, ids] of hit) {
+        if (!ids.size) continue;
+        await change(t, username, (d) => {
+          d.folders = d.folders.filter((f) => !ids.has(f.id));
+          for (const f of d.folders) if (f.parentId && ids.has(f.parentId)) f.parentId = null;
+          for (const [item, at] of Object.entries(d.items)) if (ids.has(at)) delete d.items[item];
+        });
+      }
+    },
+  };
+}
+
 foldersApp.delete("/:tool/:fid", async (c) => {
   const fid = c.req.param("fid");
   const out = await change(...ctx(c), (d) => {

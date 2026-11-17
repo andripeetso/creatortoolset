@@ -84,13 +84,14 @@ describe.skipIf(rootReplaced)("AI Editor: edits kept apart by project", () => {
     expect(list.map((e) => [e.name, e.projectId])).toEqual([["Solo take", undefined]]);
   });
 
-  it("an edit whose project is deleted goes with the first brand's", async () => {
+  it("an edit is deleted with its workspace, never handed to the first brand", async () => {
     const first = await project("third", "Third's first");
     const later = await project("third", "Third's later");
     await edit("third", "Made in the later one", { projectId: later });
     expect(await names("third", `?projectId=${first}`)).toEqual([]);
     expect(await names("third", `?projectId=${later}`)).toEqual(["Made in the later one"]);
     expect((await call("third", "DELETE", `/api/workshop/projects/${later}`)).status).toBeLessThan(300);
-    expect(await names("third", `?projectId=${first}`)).toEqual(["Made in the later one"]);
+    expect(await names("third", `?projectId=${first}`)).toEqual([]);
+    expect(await names("third")).toEqual([]);
   });
 });

@@ -196,3 +196,47 @@ export function FolderRow(p: FolderProps) {
     </FolderMenu>
   );
 }
+
+/** One line of a folder sidebar: the folder's own menu and drops, `depth` for the indent, `on` while it is open. */
+export type SidebarFolder = FolderProps & { id: string; depth: number; on: boolean };
+
+/**
+ * The folders as a sidebar, the same in every tool: the top level first (`top`: "All edits"), then each folder under
+ * its parent with its count. The open one is lit; items dropped on a line go into it, on the top line out of every folder.
+ */
+export function FolderSidebar({ top, folders, label = "Folders" }: { top: Omit<SidebarFolder, "id" | "depth">; folders: SidebarFolder[]; label?: string }) {
+  return (
+    <nav aria-label={label} className="flex flex-col gap-0.5">
+      <SidebarLine {...top} depth={0} />
+      {folders.map((f) => (
+        <FolderMenu key={f.id} {...f}>
+          <SidebarLine name={f.name} to={f.to} meta={f.meta} drop={f.drop} depth={f.depth} on={f.on} icon={f.icon} />
+        </FolderMenu>
+      ))}
+    </nav>
+  );
+}
+
+/** `menu`: what the right-click menu's trigger hands its child (its handlers and ref), passed on to the link. */
+function SidebarLine({ name, to, meta, drop, depth, on, icon, ...menu }: Pick<SidebarFolder, "name" | "to" | "meta" | "drop" | "depth" | "on" | "icon"> & React.HTMLAttributes<HTMLAnchorElement>) {
+  const { over, handlers } = useFolderDrop(drop);
+  const Icon = icon ?? FolderIcon;
+  return (
+    <Link
+      {...menu}
+      to={to}
+      draggable={false}
+      {...handlers}
+      aria-current={on ? "page" : undefined}
+      style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
+      className={cn(
+        "flex h-8 items-center gap-2 rounded-md pr-2 text-[13px] transition-colors",
+        over ? "bg-violet-500/15 text-zinc-100 ring-1 ring-violet-500" : on ? "bg-zinc-500/15 font-medium text-zinc-100" : "text-zinc-400 hover:bg-zinc-500/10 hover:text-zinc-200",
+      )}
+    >
+      <Icon className={cn("h-4 w-4 shrink-0", on ? "text-violet-400" : "text-zinc-500")} />
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+      {meta !== undefined && <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">{meta}</span>}
+    </Link>
+  );
+}
