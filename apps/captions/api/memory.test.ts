@@ -120,8 +120,9 @@ describe("with nothing kept, nothing is different", () => {
     // every file that imports the store (api/lib/memory.ts), by any spelling of its path
     const store = path.join(api, "lib", "memory");
     const readers = all.filter((f) => [...f.src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].some((m) => m[1]!.startsWith(".") && path.resolve(f.dir, m[1]!).replace(/\.ts$/, "") === store));
-    // the dock's turn, the routes of the list (which hand no prompt text to anyone), and the workspace form's draft
-    expect(readers.map((f) => f.name).sort()).toEqual(["assistant.ts", "memory.ts", "workshop.ts"]);
+    // the dock's turn, the routes of the list (which hand no prompt text to anyone), the workspace form's draft, and a
+    // workspace's delete (it counts and deletes the facts kept for it, and hands no text to anyone)
+    expect(readers.map((f) => f.name).sort()).toEqual(["assistant.ts", "lib/workspace-delete.ts", "memory.ts", "workshop.ts"]);
     expect([...all.find((f) => f.name === "workshop.ts")!.src.matchAll(/memoryFor\(/g)].length).toBe(1);
     expect(all.filter((f) => f.src.includes("memoryBlock")).map((f) => f.name).sort()).toEqual(["assistant.ts", "lib/memory.ts"]);
     expect(all.find((f) => f.name === "memory.ts")!.src).not.toContain("memoryBlock");
@@ -437,6 +438,49 @@ describe("Settings covers every workspace", () => {
     expect((await facts("?all=1", garden))[0]!.project).toBeUndefined();
     expect((await facts("", tumbles)).map((f) => f.text)).toEqual(["we never show faces"]);
     expect((await app.request("/api/memory/nope/workspace", { method: "PUT", ...json({ workspace: null }, { cookie }) })).status).toBe(404);
+    await removeAll();
+  });
+});
+
+describe("each workspace its own", () => {
+  it("the switch files every new fact to the chat's workspace, whatever the AI asks; facts kept before stay where they are", async () => {
+    const ws = (await (await app.request("/api/workshop/workspace", { headers: { cookie } })).json()) as { projects: { id: string; name: string }[] };
+    const [tumbles, garden] = ["Tiny Acrobatics", "Tiny Gardens"].map((n) => ws.projects.find((p) => p.name === n)!.id) as [string, string];
+    const enter = async (id: string) => expect((await app.request("/api/workshop/workspace", { method: "PATCH", ...json({ currentProjectId: id }, { cookie }) })).status).toBe(200);
+    const setting = (perWorkspace: unknown, headers: Record<string, string> = { cookie }) => app.request("/api/memory/workspaces", { method: "PUT", ...json({ perWorkspace }, headers) });
+    const shown = async () => ((await (await app.request("/api/memory", { headers: { cookie } })).json()) as { perWorkspace: boolean }).perWorkspace;
+    await enter(tumbles);
+    await newChat();
+    const before = await turn("I only film on my phone.");
+    await tool(before.token, "remember", { quote: "I only film on my phone" });
+    // a reply's token cannot change it, and it is a yes or a no
+    expect((await setting(true, { cookie, authorization: before.token })).status).toBe(403);
+    await before.end();
+    expect((await setting("yes")).status).toBe(400);
+    expect(await shown()).toBe(false);
+    expect((await setting(true)).status).toBe(200);
+    expect(await shown()).toBe(true);
+
+    await newChat();
+    const t = await turn("We film at dawn.");
+    expect(JSON.parse((await tool(t.token, "remember", { quote: "We film at dawn" })).text)).toEqual({ kept: "We film at dawn", for_project: "Tiny Acrobatics" });
+    await t.end();
+    expect((await kept()).map((f) => [f.text, f.project?.name])).toEqual([["We film at dawn", "Tiny Acrobatics"], ["I only film on my phone", undefined]]);
+
+    await enter(garden);
+    await newChat();
+    const there = await turn("Hello");
+    expect(there.job.system).toContain("I only film on my phone");
+    expect(there.job.system).not.toContain("dawn");
+    await there.end();
+
+    // shared by all workspaces again: a new fact is about the person, as before
+    expect((await setting(false)).status).toBe(200);
+    await newChat();
+    const back = await turn("I edit on Sundays.");
+    expect(JSON.parse((await tool(back.token, "remember", { quote: "I edit on Sundays" })).text)).toEqual({ kept: "I edit on Sundays" });
+    await back.end();
+    await enter(tumbles);
     await removeAll();
   });
 });

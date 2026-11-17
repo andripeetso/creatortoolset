@@ -60,6 +60,23 @@ async function writeStorage(user: string, st: StorageState): Promise<void> {
   await rename(tmp, file(user));
 }
 
+/**
+ * The account's folders kept to a workspace being deleted (lib/workspace-delete.ts): only their entries go, never a file
+ * in them. One used in every workspace stays. The workspace's Media Library, which read them, is deleted with it.
+ */
+export async function workspaceStorageFolders(user: string, has: (ws?: string) => boolean): Promise<{ n: number; drop: () => Promise<void> }> {
+  const ids = new Set((await readStorage(user)).folders.filter((f) => f.workspace !== EVERY_WORKSPACE && has(f.workspace)).map((f) => f.id));
+  return {
+    n: ids.size,
+    drop: () =>
+      chained(user, async () => {
+        const st = await readStorage(user);
+        st.folders = st.folders.filter((f) => !ids.has(f.id));
+        await writeStorage(user, st);
+      }),
+  };
+}
+
 const str = (x: unknown, max: number) => (typeof x === "string" && x.trim() ? x.trim().slice(0, max) : "");
 /** A device id this account may put a folder on: its own computer, or an admin's the team's AI worker (owner "workspace"). */
 const mine = (c: C, host: string) => {
