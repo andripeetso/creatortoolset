@@ -11,6 +11,7 @@ import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
 import { confirmPlaces } from "./places";
 import { readerOf } from "./reader";
+import { assetRef, canSee } from "./sources";
 
 /**
  * A file indexed where it is on the person's Mac, for a server that is not on that Mac (the Mac app's Media Library
@@ -85,11 +86,12 @@ export async function macFrames(versionId: string): Promise<string[]> {
 export const dropMacFrames = (versionId: string) => rm(framesDir(versionId), { recursive: true, force: true });
 
 /**
- * Records `x` in `libraryId` as `by`: { duplicateOf } when the library has it already (the same fingerprint and size, an
+ * Records `x` in `libraryId` as `by`: { duplicateOf } when the library has it already ({ duplicate } with no id when `by`
+ * may not see that clip) (the same fingerprint and size, an
  * upload's too, or the same path and size; the caller's computer then has it here: a place, places.ts), else the new
  * asset, ready at once with its pictures, its description queued when the library has that on.
  */
-export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): Promise<{ assetId: string; versionId: string } | { duplicateOf: string }> {
+export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { duplicate: true }> {
   const d = libraryDb();
   // the computer the file is on, when it is the caller's: the file's root from its disks, and its place
   const device = x.device ? deviceOf(x.device) : undefined;
@@ -101,8 +103,10 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     )
     .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.path, x.size) as { id: string; version: string } | undefined;
   if (dup) {
-    const viewer = mine && (await readerOf(by, libraryId));
-    if (viewer) await confirmPlaces(libraryId, viewer, mine, [{ versionId: dup.version, path: x.path, quick: x.quick }]);
+    // a clip the caller may not see is never named: no id, no place (the id alone would say it is there)
+    const viewer = await readerOf(by, libraryId);
+    if (!viewer || !(await canSee(viewer, assetRef(libraryId, dup.id, dup.version)))) return { duplicate: true };
+    if (mine) await confirmPlaces(libraryId, viewer, mine, [{ versionId: dup.version, path: x.path, quick: x.quick }]);
     return { duplicateOf: dup.id };
   }
   const at = mine && rootAt(x.path, mine.report?.machine?.disks);

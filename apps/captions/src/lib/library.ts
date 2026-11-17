@@ -299,6 +299,8 @@ export async function listAllAssets(libraryId: string, facets?: Record<string, s
 export interface UploadResult {
   assetId?: string;
   duplicateOf?: string;
+  /** already in the library, as a clip this account may not see (no id) */
+  duplicate?: true;
 }
 
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));

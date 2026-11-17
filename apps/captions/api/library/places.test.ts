@@ -32,6 +32,7 @@ const { reconnect } = await import("./locate");
 const { markHere } = await import("./query");
 const { fileFor } = await import("../editor/reach");
 const { pairDevice, saveReport } = await import("../lib/devices");
+const { LIBRARY_SOURCE, registerLibrarySlot } = await import("./sources");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
@@ -140,39 +141,66 @@ describe("the places routes", () => {
   });
 
   it("a file moved on the share moves for everybody, logged once per folder change; a copy elsewhere is the finder's alone", async () => {
-    const r = await call<PlacesReportAnswer>("bo", "/api/library/lib/places", {
+    // the library's owner reads them at their new folder on the share: moved for everybody, the origin path follows
+    const r = await call<PlacesReportAnswer>("ana", "/api/library/lib/places", {
+      device: anaMac,
+      confirmed: [
+        { versionId: "june", path: "/Volumes/footage/Archive/2025/June/a.mov", quick: q("1") },
+        { versionId: "july", path: "/Volumes/footage/Archive/2025/July/b.mov", quick: q("2") },
+      ],
+      gone: [],
+    });
+    expect(r.json.confirmed).toEqual(["june", "july"]);
+    expect(version("june").root_rel).toBe("Archive/2025/June/a.mov");
+    expect(version("july").root_rel).toBe("Archive/2025/July/b.mov");
+    expect(version("june").mac_path).toBe("/Volumes/footage/Archive/2025/June/a.mov");
+    // bo's Mac finds them at the new root path with no search
+    const tried = await call<PlacesAnswer>("bo", `/api/library/lib/places?device=${boMac}&versions=june`);
+    expect(tried.json.versions.june!.tries).toContain("/Volumes/footage-1/Archive/2025/June/a.mov");
+    const bos = await call<PlacesReportAnswer>("bo", "/api/library/lib/places", {
       device: boMac,
       confirmed: [
-        { versionId: "june", path: "/Volumes/footage-1/Archive/2025/June/a.mov", quick: q("1") },
-        { versionId: "july", path: "/Volumes/footage-1/Archive/2025/July/b.mov", quick: q("2") },
+        { versionId: "june", path: "/Volumes/footage-1/Archive/2025/June/a.mov" },
+        { versionId: "july", path: "/Volumes/footage-1/Archive/2025/July/b.mov" },
         { versionId: "home", path: "/Volumes/Travel SSD/Movies/d.mov", quick: q("4") },
       ],
       gone: [],
     });
-    expect(r.json.confirmed).toEqual(["june", "july", "home"]);
-    expect(version("june").root_rel).toBe("Archive/2025/June/a.mov");
-    expect(version("july").root_rel).toBe("Archive/2025/July/b.mov");
-    // ana's Mac finds it at the new root path with no search; its origin path follows when it reads it there
-    const ana = await call<PlacesAnswer>("ana", `/api/library/lib/places?device=${anaMac}&versions=june`);
-    expect(ana.json.versions.june!.tries).toContain("/Volumes/footage/Archive/2025/June/a.mov");
-    await call("ana", "/api/library/lib/places", { device: anaMac, confirmed: [{ versionId: "june", path: "/Volumes/footage/Archive/2025/June/a.mov" }], gone: [] });
-    expect(version("june").mac_path).toBe("/Volumes/footage/Archive/2025/June/a.mov");
+    expect(bos.json.confirmed).toEqual(["june", "july", "home"]);
     // bo's copy on the travel disk is a place of bo's; the clip stays where it is for everybody else
     expect(place("home", boMac)?.path).toBe("/Volumes/Travel SSD/Movies/d.mov");
     expect(version("home").root_rel).toBe("Users/ana/Movies/d.mov");
     const bo = await call<MovesAnswer>("bo", "/api/library/lib/places/moves");
     expect(bo.json.moves.map(({ kind, from, to, count, root }) => ({ kind, from, to, count, root: root?.name }))).toEqual([
       { kind: "found", from: "/Users/ana", to: "/Volumes/Travel SSD", count: 1, root: "Travel SSD" },
-      { kind: "moved", from: "2025", to: "Archive/2025", count: 2, root: "Footage" },
+      { kind: "moved", from: "2025", to: "Archive/2025", count: 2, root: "footage" },
     ]);
     // ana sees the move, not bo's copy
     expect((await call<MovesAnswer>("ana", "/api/library/lib/places/moves")).json.moves.map((m) => m.kind)).toEqual(["moved"]);
   });
 
+  it("a member who may only read moves nothing for anybody: their verified copy on the share is their own place", async () => {
+    add("aug", { bytes: 700, quick: q("7"), mac: "/Volumes/footage/2025/Aug/g.mov", device: anaMac, root: ROOT, rel: "2025/Aug/g.mov" });
+    const r = await call<PlacesReportAnswer>("bo", "/api/library/lib/places", {
+      device: boMac,
+      confirmed: [{ versionId: "aug", path: "/Volumes/footage-1/Moved/g.mov", quick: q("7") }],
+      gone: [],
+    });
+    expect(r.json.confirmed).toEqual(["aug"]);
+    expect(version("aug").root_rel).toBe("2025/Aug/g.mov");
+    expect(place("aug", boMac)?.path).toBe("/Volumes/footage-1/Moved/g.mov");
+    const found = { kind: "found", from: "/Volumes/footage-1/2025/Aug", to: "/Volumes/footage-1/Moved" };
+    const bo = await call<MovesAnswer>("bo", "/api/library/lib/places/moves");
+    expect(bo.json.moves.map(({ kind, from, to }) => ({ kind, from, to }))).toContainEqual(found);
+    const ana = await call<MovesAnswer>("ana", "/api/library/lib/places/moves");
+    expect(ana.json.moves.map(({ kind, from, to }) => ({ kind, from, to }))).not.toContainEqual(found);
+    expect((await call<PlacesAnswer>("ana", `/api/library/lib/places?device=${anaMac}&versions=aug`)).json.versions.aug!.tries).toContain("/Volumes/footage/2025/Aug/g.mov");
+  });
+
   it("gone marks only the caller's computer, lists what it can search for, and a confirm brings it back", async () => {
     await call("bo", "/api/library/lib/places", { device: boMac, confirmed: [], gone: ["july", "upload"] });
     expect(place("july", boMac)?.gone_at).toBeTruthy();
-    expect(place("july", anaMac)).toBeUndefined();
+    expect(place("july", anaMac)?.gone_at).toBeNull();
     // no way to the upload on bo's Mac: nothing to mark
     expect(place("upload", boMac)).toBeUndefined();
     const gone = await call<GoneAnswer>("bo", `/api/library/lib/places/gone?device=${boMac}`);
@@ -200,6 +228,16 @@ describe("indexing and reading by places", () => {
     expect(place(fresh.versionId, anaMac)?.path).toBe("/Volumes/footage/2026/f.mov");
   });
 
+  it("indexing a file the library has as a clip the caller may not see names no clip and records no place", async () => {
+    add("secret", { bytes: 800, quick: q("8"), key: "libraries/lib/v/secret/source.mov" });
+    registerLibrarySlot("test-refuses", { policies: [{ sourceId: LIBRARY_SOURCE, canSee: (v, a) => !(v.username === "bo" && a.assetId === "a_secret") }] });
+    const r = await indexOnMac("lib", "bo", { name: "s.mov", path: "/Volumes/Travel SSD/s.mov", size: 800, quick: q("8"), device: boMac, frames: [] });
+    expect(r).toEqual({ duplicate: true });
+    expect(place("secret", boMac)).toBeUndefined();
+    // the owner still gets the clip's id
+    expect(await indexOnMac("lib", "ana", { name: "s.mov", path: "/Volumes/footage/s.mov", size: 800, quick: q("8"), device: anaMac, frames: [] })).toEqual({ duplicateOf: "a_secret" });
+  });
+
   it("a member's computer that has the share reads the original there, and its cards say so", () => {
     const row = { id: "june", source_key: "mac:june", source_path: null, mac_path: "/Volumes/footage/Archive/2025/June/a.mov", mac_device: anaMac, proxy: null };
     expect(fileFor(row, boMac, [], () => false)).toEqual({ path: "/Volumes/footage-1/Archive/2025/June/a.mov" });
@@ -217,7 +255,7 @@ describe("indexing and reading by places", () => {
     const n = await reconnect("lib", "bo", { asked: "july", gone: [], files: [{ path: "/Volumes/Travel SSD/b.mov", size: 200, quick: q("2") }], device: boMac });
     expect(n).toBe(1);
     expect(place("july", boMac)?.path).toBe("/Volumes/Travel SSD/b.mov");
-    expect(version("july").mac_path).toBe("/Volumes/footage/2025/July/b.mov");
+    expect(version("july").mac_path).toBe("/Volumes/footage/Archive/2025/July/b.mov");
   });
 });
 

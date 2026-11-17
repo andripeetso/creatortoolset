@@ -93,7 +93,9 @@ const moveOf = (a: string, b: string): PathMove => derivedMove(a, b) ?? (base(a)
  * a path the server did not list for that computer is taken only with a fingerprint equal to the version's; one with
  * another fingerprint is another file. Verified that way: a version with no root gets the one the file is on, and a file
  * at a new root path on its own root moved there for everybody (a move, logged). Otherwise a copy found on another disk
- * is that computer's alone (logged as found). The origin computer's place is the version's mac_path too.
+ * is that computer's alone (logged as found). Only the library's owner moves a clip for everybody (changing what is
+ * there stays with libraryRole, access.ts): a member's verified move is that member's own place, logged as found. The
+ * origin computer's place is the version's mac_path too.
  */
 export async function confirmPlaces(
   libraryId: string,
@@ -115,6 +117,7 @@ export async function confirmPlaces(
     moves.set(k, { kind, ...m, root, device, count: (had?.count ?? 0) + 1 });
   };
   let changed = false;
+  const shared = viewer.role === "owner";
   for (const x of confirmed) {
     const v = rows.get(x.versionId);
     const tries = v ? placesFor(v, { id: c.id, disks }, v.gone_at ? null : v.own, folders) : [];
@@ -140,12 +143,12 @@ export async function confirmPlaces(
     const onRoot = !!at && at.key === v.root;
     if (at && !v.root && (verified || listed)) {
       d.prepare("UPDATE asset_versions SET root = ?, root_rel = ? WHERE id = ? AND root IS NULL").run(at.key, at.rel, v.id);
-    } else if (at && onRoot && verified && at.rel !== v.root_rel?.normalize("NFC")) {
+    } else if (shared && at && onRoot && verified && at.rel !== v.root_rel?.normalize("NFC")) {
       // moved on its own root: the same for every computer
       d.prepare("UPDATE asset_versions SET root_rel = ? WHERE id = ?").run(at.rel, v.id);
       if (v.root_rel !== null) log("moved", moveOf(v.root_rel, at.rel), labelOf(at.key, disks, disksOf(v.mac_device ?? "")), "");
       changed = true;
-    } else if (!listed && !onRoot) {
+    } else if (!listed && (!onRoot || !shared)) {
       // a copy somewhere else, this computer's alone: from where it looked before, else where it was indexed
       const was = v.own ?? tries[0] ?? v.mac_path;
       if (was) log("found", moveOf(was, x.path), at ? labelOf(at.key, disks) : { key: "", name: base(dir(x.path)) || x.path }, c.id);
