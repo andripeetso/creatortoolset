@@ -253,8 +253,14 @@ export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
 };
 
 /** "5 descriptions need an AI provider", and where to add it. */
-export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean }): { text: string; href: string } {
+export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean; server?: boolean }): { text: string; href: string } {
   const one = w.count === 1;
+  // server: this server parks it for video work it does not do (worker.ts leftToComputers), and no computer takes that step
+  // (a description needs the picture on this server; a look waits for a computer that reads the file)
+  if (w.away && w.server)
+    return w.step === "describe"
+      ? { text: `${stepCount(w)} ${one ? "waits" : "wait"} for video work on this server`, href: "/settings/devices" }
+      : { text: `${stepCount(w)} ${one ? "waits" : "wait"} for a computer that can read the file`, href: "/settings/devices" };
   if (w.away)
     return { text: `${stepCount(w)} ${one ? "waits" : "wait"} for one of your computers`, href: "/settings/devices" };
   return { text: `${stepCount(w)} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
@@ -355,6 +361,8 @@ export interface LibraryProgress {
     computer?: boolean;
     /** waits for one of the person's computers to be on: this server does not do that video work (worker.ts leftToComputers) */
     away?: boolean;
+    /** with away: waits for a computer that can read the file (no computer of theirs takes it), not for any computer */
+    server?: boolean;
   }[];
   /** each step's count, in the order they run; only the steps this run has */
   stages?: LibraryStage[];

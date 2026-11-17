@@ -347,10 +347,11 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const db = libraryDb();
   const rows = db
     .prepare(
-      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, away, mac, budget`,
+      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, IFNULL(error, '') = ? AS budget,
+         IFNULL(error, '') = ? AS server, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, away, mac, budget, server`,
     )
-    .all(LIMIT_LIKE, MAC_WAITS, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; away: number; mac: number; n: number; error: string | null }[];
+    .all(LIMIT_LIKE, MAC_WAITS, BUDGET_WAITS, WAITS_FOR_SERVER, libraryId) as { kind: string; state: string; held: number; away: number; mac: number; server: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => r.state !== "needs_key" && !r.held && !r.away);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
@@ -361,9 +362,10 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   // waiting for one of the person's computers, per step: "6 descriptions wait for one of your computers"
   for (const r of rows.filter((x) => x.away)) {
     const step = STEP_OF[r.kind] ?? "files";
-    const same = waiting.find((w) => w.away && w.step === step);
+    const server = !!r.server;
+    const same = waiting.find((w) => w.away && w.step === step && !!w.server === server);
     if (same) same.count += r.n;
-    else waiting.push({ step, count: r.n, missing: r.error ?? "", away: true });
+    else waiting.push({ step, count: r.n, missing: r.error ?? "", away: true, ...(server ? { server: true } : {}) });
   }
   // held for the plan's limit, per step: "4 descriptions paused", "2 shot descriptions paused"
   for (const step of ["look", "describe"] as const) {
