@@ -171,7 +171,7 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     const mac = pairDevice("pollonly", "Poll Mac");
     // the device record is written as the poll comes in, before the poll waits for anything: look a moment later
     const poll = async () => {
-      void post(mac.token, "/api/devices/relay/wait", { blobs: true, work: 1 }).catch(() => {});
+      void Promise.resolve(post(mac.token, "/api/devices/relay/wait", { blobs: true, work: 1 })).catch(() => {});
       await new Promise((r) => setTimeout(r, 100));
       return deviceOf(mac.device.id)?.work;
     };
