@@ -218,3 +218,160 @@ export interface PlacesSearchState {
    *  and the server heard nothing of them. Allow access (askMediaFolder), then search again. */
   access: string[];
 }
+
+// ---- Local first (P1): one place record, location agents' reports, one reader ----
+
+/**
+ * A computer's last word on one file it holds (version_places.state):
+ * - verified: size and modified time match and the quick fingerprint matched, at verified_at
+ * - found: size and modified time match, no fingerprint read yet. Shown as "On this computer" (owner decision 22); never
+ *   enough to remove a server copy (that needs a full sha256, whereis.ts mayRemoveServerCopy)
+ * - gone: its folder was listed whole on that computer, its disk mounted, and the file was not in it
+ * - unchecked: not looked at since (a row from before, the computer offline, its disk away, a read that timed out, the
+ *   folder not found). "Not checked yet", never "missing"
+ */
+export const PLACE_STATES = ["verified", "found", "gone", "unchecked"] as const;
+export type PlaceState = (typeof PLACE_STATES)[number];
+export type PlaceKind = "original" | "proxy";
+export type PlaceSource = "scan" | "drop" | "copy" | "locate" | "server-disk" | "work-claim" | "migrated";
+
+/**
+ * A folder's state on the computer it is on, from that computer's last report (StorageFolder.folderState):
+ * ok: listed; not_found: its disk is mounted and the folder is not there ("Folder not found, re-point?"); needs_ok: the
+ * computer has not been allowed to read it yet ("Needs your OK"); disk_away: its disk is not connected ("<drive> isn't connected").
+ */
+export const FOLDER_STATES = ["ok", "not_found", "needs_ok", "disk_away"] as const;
+export type FolderState = (typeof FOLDER_STATES)[number];
+
+/** The most files in one report call; a bigger folder is sent in pages that share one `scan` id. */
+export const REPORT_FILES_MAX = 2000;
+
+/** One file a location agent listed: its path on that computer, size, modified time (ms), and what it has read of it. */
+export interface ReportFile {
+  path: string;
+  bytes: number;
+  mtime: number;
+  /** work/files.ts quickPrint (size + first and last MiB), when read */
+  quick?: string;
+  /** the whole file's SHA-256, when hashed (the hash job, a copy written) */
+  sha256?: string;
+}
+
+/** One folder in a report: its state and (state ok) a page of its listing. */
+export interface ReportFolder {
+  /** the Settings → Folders folder id (GET /api/devices/relay/folders) */
+  id: string;
+  state: FolderState;
+  /** disk_away: the drive's name */
+  disk?: string;
+  /** one full listing's id; its pages share it */
+  scan?: string;
+  /** this page ends the listing: every row of this folder on this computer that the listing did not name is gone */
+  complete?: boolean;
+  files?: ReportFile[];
+  /** folders (paths on that computer) that could not be read in time: their rows become unchecked, never gone */
+  unreadable?: string[];
+}
+
+/**
+ * POST /api/devices/relay/report, the location agents' contract (the Mac's LocationAgent, the Linux helper). A body
+ * without reportVersion is read as before: the computer's CLIs and machine, no folders.
+ */
+export interface ReportV2 {
+  reportVersion: 2;
+  /** the computer's own id, kept across pairings (the Mac's Keychain, the helper's config) */
+  machineId?: string;
+  /** what every report carried before (drivers, homes, machine with its disks) */
+  drivers?: unknown[];
+  homes?: unknown[];
+  machine?: unknown;
+  version?: string;
+  folders?: ReportFolder[];
+}
+
+/** The answer: the files that match no version in the folder's libraries. The agent indexes each where it is
+ *  (POST /api/devices/relay/index) and the next report finds them. */
+export interface ReportAnswer {
+  ok: true;
+  index: Array<{ folder: string; path: string }>;
+}
+
+/** POST /api/devices/relay/index: a file in one of this computer's folders, indexed in place in every library its
+ *  folder is in (the on-mac body, contracts in api/library/on-mac.ts OnMacIndex, plus the folder id). No bytes. */
+export interface RelayIndexAnswer {
+  versions: Array<{ library: string; versionId?: string; duplicateOf?: string }>;
+}
+
+/** GET /api/devices/relay/folders: this computer's Settings → Folders folders, for its grants and its scans. */
+export interface RelayFolder {
+  id: string;
+  /** the path as the person added it on this computer */
+  path: string;
+  /** the path on the computer itself, and inside the container a helper runs in (the same for a native computer) */
+  hostPath: string;
+  mountPath: string;
+  /** workspace ids, or "*" for every workspace */
+  workspaces: string[] | "*";
+  use: "media" | "exports" | "finals";
+}
+export interface RelayFoldersAnswer {
+  folders: RelayFolder[];
+}
+
+/** whereIs: one computer's places for one version. */
+export interface PlaceOn {
+  device: string;
+  /** the computer's name as the person named it */
+  name: string;
+  online: boolean;
+  original?: { state: PlaceState; path: string; folder: string; checkedAt: number | null };
+  proxy?: { state: PlaceState; path: string };
+  /** the original's drive is not connected on that computer now: its name */
+  diskAway?: string;
+  /** its folder's state there, when not ok */
+  folderState?: Exclude<FolderState, "ok">;
+}
+
+/** whereIs(versionId): every computer that has, had or should have the version, and the server's own copy. */
+export interface WhereIs {
+  versionId: string;
+  library: string;
+  computers: PlaceOn[];
+  /** the server holds the original (an upload) or a proxy */
+  server: { original: boolean; proxy: boolean };
+}
+
+/** What a screen says for a version on one computer (wording.ts placeLine turns it into words). */
+export type PlaceWord =
+  | { word: "here" }
+  | { word: "on"; computer: string }
+  | { word: "found" }
+  | { word: "unchecked"; computer?: string }
+  | { word: "folder_not_found" }
+  | { word: "missing"; computer: string }
+  | { word: "disk_away"; disk: string }
+  | { word: "offline"; computer: string }
+  | { word: "needs_ok" };
+
+/**
+ * The one answer every screen gives for a version's original, seen from computer `here` (the Mac window's own computer, or
+ * the computer a browser's filter picked; none: any of the person's). Words come from src/lib/wording.ts placeLine.
+ */
+export function placeWordOf(w: Pick<WhereIs, "computers"> | null | undefined, here?: string): PlaceWord {
+  const list = w?.computers.filter((c) => c.original) ?? [];
+  const word = (c: PlaceOn, mine: boolean): PlaceWord | null => {
+    const o = c.original!;
+    if (c.folderState === "needs_ok") return { word: "needs_ok" };
+    if (c.diskAway && o.state !== "gone") return { word: "disk_away", disk: c.diskAway };
+    if (c.folderState === "not_found") return { word: "folder_not_found" };
+    if (o.state === "verified" || o.state === "found") return mine ? { word: "here" } : { word: "on", computer: c.name };
+    if (o.state === "gone") return { word: "missing", computer: c.name };
+    return { word: "unchecked", computer: c.name };
+  };
+  const mine = here ? list.find((c) => c.device === here) : undefined;
+  if (mine) return word(mine, true)!;
+  const held = list.find((c) => c.original!.state === "verified" || c.original!.state === "found");
+  if (held) return here ? { word: "on", computer: held.name } : { word: "here" };
+  const first = list[0];
+  return first ? word(first, false)! : { word: "unchecked" };
+}

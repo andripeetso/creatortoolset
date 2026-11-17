@@ -1,7 +1,7 @@
 import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { LIBRARY_NAME, okFolderPath, sourcesOf, STORAGE_SCHEMA, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 import { isWindowsPath, joinRoot, rootKey } from "../../contracts/places";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
@@ -20,11 +20,32 @@ export function parseStorageFile(raw: string): StorageState {
     const v = JSON.parse(raw) as Partial<StorageState> | null;
     // a music folder from before is footage now: everything in a folder goes into the Media Library, which sorts songs
     // and sound effects by itself (owner, 2026-11-17)
-    return { folders: Array.isArray(v?.folders) ? v.folders.map((f) => (f?.role === "music" ? { ...f, role: "footage" } : f)) : [] };
+    return { ...(typeof v?.schemaVersion === "number" ? { schemaVersion: v.schemaVersion } : {}), folders: Array.isArray(v?.folders) ? v.folders.map((f) => (f?.role === "music" ? { ...f, role: "footage" } : f)) : [] };
   } catch (e) {
     console.warn(`[devices-storage] storage file unreadable, treated as empty: ${e instanceof Error ? e.message : e}`);
     return { folders: [] };
   }
+}
+
+/**
+ * A storage list moved to schema 2 (contracts/storage.ts STORAGE_SCHEMA): every computer is a device id now, the
+ * "this-computer" folders the computer the server runs on (`thisDevice`; kept as they were when it has none: a server with
+ * no paired computer of its own reads them itself) and ids of computers paired again resolved
+ * (`resolve`, whereis.ts resolveDevice). Two entries for one path in two workspaces stay two (a folder in several
+ * workspaces is one entry with `workspaces` from Settings on). `changed` says whether the file needs writing.
+ */
+export function migrateStorage(st: StorageState, thisDevice: string | undefined, resolve: (id: string) => string = (id) => id): { st: StorageState; changed: boolean } {
+  const host = (h: string) => (h === THIS_COMPUTER ? (thisDevice ?? h) : resolve(h));
+  const out: StorageFolder[] = [];
+  let changed = st.schemaVersion !== STORAGE_SCHEMA;
+  for (const f of st.folders) {
+    const h = host(f.origin.host);
+    const reach = Object.fromEntries(Object.entries(f.reach ?? {}).map(([k, v]) => [resolve(k), v]));
+    const g: StorageFolder = h === f.origin.host && Object.keys(reach).every((k) => k in (f.reach ?? {})) ? f : { ...f, origin: { ...f.origin, host: h }, reach };
+    if (g !== f) changed = true;
+    out.push(g);
+  }
+  return { st: { ...st, schemaVersion: STORAGE_SCHEMA, folders: out }, changed };
 }
 
 /** The disk a path is on, read by the server (statfs). A path that does not exist yet (a Library not made) is read at its

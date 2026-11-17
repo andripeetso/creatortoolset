@@ -218,7 +218,7 @@ describe("each workspace", () => {
     expect(added.status).toBe(200); // "music" from an older app: added as footage, the Media Library sorts the songs
     expect(((await added.json()) as View).folders.map((f) => f.origin.path)).toEqual([music]);
     expect((await list("ws-a")).map((f) => f.id)).toEqual(before.map((f) => f.id));
-    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music}`);
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music} (on Tiny Studio Mac)`); // schema 2: "this computer" is the paired computer this server runs on
     expect(await foldersNote(USER, "ws-a")).not.toContain(music);
     // Settings shows every workspace: each folder says which one it is in (an older one the first brand's)
     const id = (await list("ws-b"))[0]!.id;
@@ -247,7 +247,7 @@ describe("each workspace", () => {
     expect((await all()).find((f) => f.id === id)!.workspace).toBe("*");
     expect((await list("ws-b")).map((f) => f.id)).toEqual([id]);
     expect((await list("ws-a")).map((f) => f.id)).toContain(id);
-    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music}`);
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music} (on Tiny Studio Mac)`); // schema 2: the setup folder is now on the computer this server runs on
     expect(await foldersNote(USER, "ws-a")).toContain(`- Footage: ${music}`);
     expect(watchedIn("ws-a")).toContain(music);
     expect(watchedIn("ws-b")).toEqual([music]);

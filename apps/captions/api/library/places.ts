@@ -129,9 +129,10 @@ export async function confirmPlaces(
       continue;
     }
     d.prepare(
-      `INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (version_id, device) DO UPDATE SET path = excluded.path, confirmed_at = excluded.confirmed_at, gone_at = NULL`,
-    ).run(v.id, c.id, x.path, now);
+      `INSERT INTO version_places (version_id, device, path, confirmed_at, checked_at, state, source, quick, verified_at) VALUES (?, ?, ?, ?, ?, ?, 'locate', ?, ?)
+       ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET path = excluded.path, confirmed_at = excluded.confirmed_at, checked_at = excluded.checked_at, gone_at = NULL,
+         state = excluded.state, quick = COALESCE(excluded.quick, quick), verified_at = COALESCE(excluded.verified_at, verified_at)`,
+    ).run(v.id, c.id, x.path, now, now, verified ? "verified" : "found", x.quick ?? null, verified ? now : null);
     answer.confirmed.push(v.id);
     // its own recorded try read: the fingerprint it never had
     if (x.quick && !v.quick) d.prepare("UPDATE asset_versions SET quick = ? WHERE id = ? AND (quick IS NULL OR quick = '')").run(x.quick, v.id);
@@ -159,9 +160,9 @@ export async function confirmPlaces(
     const was = v && (v.own ?? placesFor(v, { id: c.id, disks }, null, folders)[0]);
     if (!v || !was) continue;
     d.prepare(
-      `INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (version_id, device) DO UPDATE SET gone_at = excluded.gone_at`,
-    ).run(v.id, c.id, was, now, now);
+      `INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at, checked_at, state, source) VALUES (?, ?, ?, ?, ?, ?, 'gone', 'locate')
+       ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET gone_at = excluded.gone_at, checked_at = excluded.checked_at, state = 'gone'`,
+    ).run(v.id, c.id, was, now, now, now);
   }
   for (const m of moves.values()) {
     d.prepare(

@@ -36,6 +36,8 @@ export interface OnMacIndex {
   sprite?: string;
   frames: string[];
   collectionId?: string;
+  /** the Settings → Folders folder it was found in (a location agent's scan, POST /api/devices/relay/index); none: a drop */
+  folder?: string;
 }
 
 const MB = 1024 * 1024;
@@ -121,7 +123,12 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
     d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ?, quick = ?, root = ?, root_rel = ? WHERE id = ?")
       .run(x.path, x.device ?? null, JSON.stringify(probe), x.quick, at?.key ?? null, at?.rel ?? null, versionId);
-    if (mine) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)").run(versionId, mine.id, x.path, Date.now());
+    if (mine) {
+      // the Mac read this very file for its fingerprint: verified there (contracts/places.ts PlaceState)
+      const now = Date.now();
+      d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, quick, confirmed_at, checked_at, verified_at, state, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)")
+        .run(versionId, mine.id, x.folder ?? "", x.path, x.size, x.quick, now, now, now, x.folder ? "scan" : "drop");
+    }
     d.exec("COMMIT");
   } catch (e) {
     d.exec("ROLLBACK");

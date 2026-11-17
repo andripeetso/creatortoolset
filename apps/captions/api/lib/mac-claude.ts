@@ -8,7 +8,7 @@ import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type 
 import type { DeviceHint } from "../../contracts/devices";
 import { limitLine, limitMessage, limitResetAt } from "../../contracts/plans";
 import { env, keepsOverRestart } from "./env";
-import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
+import { deviceName, deviceOf as deviceRecord, isOnline, noteMachineId, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
 import { noteCallOutcome } from "./providers";
 import { okId } from "./workshop/validate";
@@ -692,7 +692,12 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const machine = parseMachine(b.machine);
     const r: MacReport = { at: Date.now(), drivers: list(b.drivers), homes: list(b.homes), ...(machine ? { machine } : {}) };
     saveReport(device, r, typeof b.version === "string" ? b.version.slice(0, 40) : undefined);
-    return c.json({ ok: true });
+    // reportVersion 2 (contracts/places.ts ReportV2): the computer's folders too, matched to its place rows
+    if (b.reportVersion !== 2) return c.json({ ok: true });
+    noteMachineId(device, b.machineId);
+    const d = deviceRecord(device);
+    const { applyReport, parseReportFolders } = await import("../library/report");
+    return c.json(d ? await applyReport(d, parseReportFolders(b.folders)) : { ok: true, index: [] });
   });
 
   return app;

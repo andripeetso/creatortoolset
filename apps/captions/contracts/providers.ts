@@ -185,6 +185,9 @@ export interface Device {
   lastSeen?: number;
   /** the Mac app's version */
   version?: string;
+  /** the computer's own id, the same across pairings (the Mac's Keychain, the helper's config): a pairing that names it
+   *  keeps this device's id (lib/devices.ts pairDevice) */
+  machineId?: string;
   /** what it reported last: CLIs and config folders */
   report?: MacReport;
   /** the editor step kinds it runs (contracts/devices.ts); it is handed only these */

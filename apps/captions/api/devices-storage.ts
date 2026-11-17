@@ -8,7 +8,8 @@ import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { libraryPath, localDisks, migrateStorage, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { resolveDevice } from "./library/whereis";
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
@@ -47,10 +48,42 @@ function chained<T>(user: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** No file yet, or a file that is not valid JSON: an empty list (parseStorageFile logs the bad one). */
+/**
+ * No file yet, or a file that is not valid JSON: an empty list (parseStorageFile logs the bad one). A file from before
+ * schema 2 is moved on read (lib/storage.ts migrateStorage) and written back in the account's queue.
+ */
 async function readStorage(user: string): Promise<StorageState> {
   const raw = await readFile(file(user), "utf-8").catch(() => "{}");
-  return parseStorageFile(raw);
+  const parsed = parseStorageFile(raw);
+  if (!parsed.folders.length) return parsed;
+  const here = listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id;
+  const { st, changed } = migrateStorage(parsed, here, resolveDevice);
+  if (changed) void chained(user, async () => {
+    const now = parseStorageFile(await readFile(file(user), "utf-8").catch(() => "{}"));
+    const again = migrateStorage(now, here, resolveDevice);
+    if (again.changed) await writeStorage(user, again.st);
+  }).catch((e: unknown) => console.warn(`[devices-storage] schema 2 not saved: ${e instanceof Error ? e.message : e}`));
+  return st;
+}
+
+/** The account's folders, as every reader outside Settings gets them (report.ts, the relay's folder list). */
+export const storageOf = (user: string): Promise<StorageState> => readStorage(user);
+
+/**
+ * Changes one folder in the account's list, in its queue (a location agent's report writes the folder's state there).
+ * `fn` gets the folder and gives it back changed, or null for no change. False when there is no such folder.
+ */
+export function updateFolder(user: string, id: string, fn: (f: StorageFolder) => StorageFolder | null): Promise<boolean> {
+  return chained(user, async () => {
+    const st = await readStorage(user);
+    const i = st.folders.findIndex((f) => f.id === id);
+    if (i < 0) return false;
+    const next = fn(st.folders[i]!);
+    if (!next) return true;
+    st.folders[i] = next;
+    await writeStorage(user, st);
+    return true;
+  });
 }
 
 async function writeStorage(user: string, st: StorageState): Promise<void> {
@@ -251,14 +284,16 @@ storageApp.post("/folders", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
   const role = b?.role === "finals" ? "finals" : b?.role === "music" ? "footage" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
-  const host = str(b?.host, 120);
+  // "this computer" (setup's Folders step) is the paired computer this server runs on, when there is one (schema 2)
+  const asked = str(b?.host, 120);
+  const host = asked === THIS_COMPUTER ? (listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id ?? asked) : asked;
   const raw = b?.path;
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);
   // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
   const p = (raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there.
   // A Finals folder is not footage: only its projects' subfolders are read, into Finals (library/watch.ts watchFinals)
-  if (role !== "finals" && readHere(user, host)) {
+  if (role !== "finals" && (asked === THIS_COMPUTER || readHere(user, host))) {
     const refused = await addWatchFolder(user, p);
     if (refused) return c.json({ error: refused }, 400);
   }

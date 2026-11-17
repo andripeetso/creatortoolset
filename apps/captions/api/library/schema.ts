@@ -620,4 +620,43 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE jobs ADD COLUMN held_by TEXT;
   ALTER TABLE jobs ADD COLUMN claim_id TEXT;
   `,
+  // 38: one place record per computer, kind and folder (local first, P1). version_places is rebuilt: its key was (version,
+  // device), so one computer could not hold an original and a proxy, or a file in two folders. state is the computer's
+  // last word (contracts/places.ts PlaceState); a row from before is 'unchecked' until a scan reads the file again, so it
+  // is never "On this computer" by itself. full_sha256: the server's own file read whole (removal guard, whereis.ts).
+  // device_alias: a computer paired again with a new id (lib/devices.ts pairDevice); its rows move to the new id.
+  // A quick fingerprint of '' (a read that failed) is tried again
+  `
+  CREATE TABLE version_places_v2 (
+    version_id TEXT NOT NULL,
+    device TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'original' CHECK (kind IN ('original','proxy')),
+    folder_id TEXT NOT NULL DEFAULT '',
+    path TEXT NOT NULL,
+    bytes INTEGER,
+    mtime INTEGER,
+    quick TEXT,
+    sha256 TEXT,
+    state TEXT NOT NULL DEFAULT 'unchecked' CHECK (state IN ('verified','found','gone','unchecked')),
+    source TEXT,
+    confirmed_at INTEGER,
+    checked_at INTEGER,
+    verified_at INTEGER,
+    gone_at INTEGER,
+    PRIMARY KEY (version_id, device, kind, folder_id)
+  );
+  INSERT INTO version_places_v2 (version_id, device, kind, folder_id, path, confirmed_at, gone_at, state, source)
+    SELECT version_id, device, 'original', '', path, confirmed_at, gone_at, 'unchecked', 'migrated' FROM version_places;
+  DROP TABLE version_places;
+  ALTER TABLE version_places_v2 RENAME TO version_places;
+  CREATE INDEX version_places_device ON version_places(device);
+  CREATE INDEX version_places_folder ON version_places(device, folder_id);
+  ALTER TABLE asset_versions ADD COLUMN full_sha256 TEXT;
+  CREATE TABLE device_alias (
+    old_id TEXT PRIMARY KEY,
+    new_id TEXT NOT NULL,
+    at INTEGER NOT NULL
+  );
+  UPDATE asset_versions SET quick = NULL WHERE quick = '';
+  `,
 ];

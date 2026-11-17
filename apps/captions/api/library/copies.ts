@@ -374,10 +374,12 @@ export const copyJob: DeviceJobSlot = {
     if (c && !h.item)
       db()
         .prepare(
-          `INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT (version_id, device) DO UPDATE SET path = excluded.path, confirmed_at = excluded.confirmed_at, gone_at = NULL WHERE gone_at IS NOT NULL`,
+          `INSERT INTO version_places (version_id, device, path, bytes, sha256, confirmed_at, checked_at, state, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'copy')
+           ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET path = excluded.path, bytes = excluded.bytes, sha256 = excluded.sha256, confirmed_at = excluded.confirmed_at,
+             checked_at = excluded.checked_at, state = excluded.state, gone_at = NULL WHERE gone_at IS NOT NULL OR state <> 'verified'`,
         )
-        .run(h.key, device, path.posix.join(c.path, done.rel), now);
+        // a copy the computer hashed as it wrote it is verified there; without its sha256 it is only found (whereis.ts)
+        .run(h.key, device, path.posix.join(c.path, done.rel), v.bytes, sha || null, now, now, sha ? "verified" : "found");
     end(h, { state: "ok", free: b.free });
     // an original a computer sent that every copy has now goes
     if (!h.item) void dropSent(h.key).catch((e: unknown) => console.error("[library] copies:", e));
