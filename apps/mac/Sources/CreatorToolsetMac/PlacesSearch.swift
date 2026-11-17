@@ -280,7 +280,7 @@ final class PlacesSearch: @unchecked Sendable {
                 queue.async { [self] in
                     let disks = Places.shared.diskList()
                     var search = MissingSearch(gone: list, disks: disks)
-                    search.granted = MediaFiles.granted
+                    search.granted = MediaFiles.granted(server: MediaFiles.serverKey(site.base), workspace: nil)
                     search.roots = MediaFiles.rootGrants
                     search.everywhere = pressed
                     search.progress = { [self] l, f, n in lock.withLock { (looked, found, left) = (l, f, n) } }

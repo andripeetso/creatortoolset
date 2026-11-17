@@ -191,7 +191,9 @@ final class Shell: NSObject, ObservableObject {
                     let device = DeviceVault.deviceID(for: self.base.host ?? "")
                     // the proxy cache is a server elsewhere's (no worker runs for This Mac)
                     let cache = !self.runsHere
-                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache)) }
+                    // what the page may play: this server's folders allowed on this Mac too, not only the open-panel picks
+                    let granted = MediaFiles.granted(server: MediaFiles.serverKey(self.base), workspace: nil)
+                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache, granted: granted)) }
                 case .connect(let root)?:
                     // a share this Mac never had asks first, naming this window's server
                     let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")

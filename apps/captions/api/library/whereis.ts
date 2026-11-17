@@ -104,7 +104,10 @@ export function whereIsMany(versionIds: string[], folderStateOf?: (device: strin
       if (r.kind === "proxy") on.proxy ??= { state: r.state, path: r.path };
       else if (!on.original) {
         on.original = { state: r.state, path: r.path, folder: r.folder_id, checkedAt: r.checked_at };
-        const away = awayDisk(r.path, dev?.report?.machine?.disks);
+        // a row verified or found was just listed there, and gone needs a whole listing: its drive is connected. Only a
+        // row not checked may be on a drive that went away (the computer leaves some drives out of its list: read-only,
+        // small, hidden ones)
+        const away = r.state === "unchecked" ? awayDisk(r.path, dev?.report?.machine?.disks) : undefined;
         if (away) on.diskAway = away;
         const fs = r.folder_id ? folderStateOf?.(r.device, r.folder_id) : undefined;
         if (fs) on.folderState = fs;

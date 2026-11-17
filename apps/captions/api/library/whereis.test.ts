@@ -17,7 +17,9 @@ const { libraryApp } = await import("./routes");
 const { buildAssetQuery, markHere, pageOf } = await import("./query");
 const { mayRemoveServerCopy } = await import("./whereis");
 const { backfillQuick, reconnect, RETRY_QUICK_MS } = await import("./locate");
-const { pairDevice } = await import("../lib/devices");
+const { pairDevice, saveReport } = await import("../lib/devices");
+const { whereIs } = await import("./whereis");
+const { placeWordOf } = await import("../../contracts/places");
 const { quickPrint } = await import("../work/files");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -89,6 +91,13 @@ describe("the Library's filters and card words read the place rows", () => {
     expect(by.get("norow")!.placeWord).toBeUndefined();
     expect(by.get("elsewhere")!.placeWord).toEqual({ word: "on", computer: "Tiny Laptop" });
     expect(by.get("elsewhere")!.here).toBeUndefined();
+  });
+
+  it("a drive the computer leaves out of its disk list is away only for a row not checked: a verified row was just listed there", () => {
+    saveReport(mac, { at: Date.now(), drivers: [], homes: [], machine: { disks: [{ name: "System disk", path: "/", freeGb: 10 }] } } as unknown as Parameters<typeof saveReport>[1]);
+    expect(placeWordOf(whereIs("verified"), mac)).toEqual({ word: "here" });
+    expect(placeWordOf(whereIs("unchecked"), mac)).toEqual({ word: "disk_away", disk: "Tiny Footage" });
+    expect(placeWordOf(whereIs("gone"), mac)).toEqual({ word: "missing", computer: "Tiny Studio Mac" });
   });
 
   it("GET …/where answers each version the caller may see, with its word; another library's version is left out", async () => {

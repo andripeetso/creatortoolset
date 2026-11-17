@@ -18,8 +18,10 @@ func missingDisk(_ path: String, mounted: [String]) -> String? {
     return mounted.contains("/Volumes/" + parts[2]) ? nil : parts[2]
 }
 
+/// The mount points, from the mount table (getfsstat): asking FileManager for the volumes reads each one, and macOS asks
+/// the person before the app reads a removable or network volume.
 func mountedVolumes() -> [String] {
-    (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: []) ?? []).map { $0.standardized.path }
+    mountedFileSystems().map { cField($0.f_mntonname) }
 }
 
 /// Free bytes on the disk holding `url` (its nearest existing folder), as macOS counts them for important files.

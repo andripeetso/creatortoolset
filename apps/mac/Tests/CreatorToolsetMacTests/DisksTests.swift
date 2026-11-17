@@ -63,4 +63,11 @@ final class DisksTests: XCTestCase {
         XCTAssertNil(shareServer("//nas-1"))
         XCTAssertNil(shareServer("//"))
     }
+
+    /// A volume's id comes from Disk Arbitration, not from the volume (asking the volume prompts for a removable one).
+    func testVolumeUUIDComesFromTheDiskDescription() {
+        let id = volumeUUID(at: "/System/Volumes/Data") ?? volumeUUID(at: "/")
+        XCTAssertNotNil(id.flatMap { UUID(uuidString: $0) })
+        XCTAssertNil(volumeUUID(at: "/no/such/volume/here"))
+    }
 }

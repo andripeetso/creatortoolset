@@ -28,7 +28,8 @@ export const useOf = (f: StorageFolder): RelayFolder["use"] => (f.role === "fina
 async function workspacesOf(owner: string, f: StorageFolder): Promise<string[] | "*"> {
   if (f.workspace === EVERY_WORKSPACE) return "*";
   const of = await projectOf({ username: owner } as SessionUser);
-  if (!of) return [];
+  // an account with no workspaces: everything it has is one library, so the folder is in all of it
+  if (!of) return "*";
   return [...new Set((f.workspaces ?? [f.workspace]).map((w) => (w ? w : of(undefined))))];
 }
 
@@ -45,12 +46,12 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
 /** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". */
 export async function librariesOf(owner: string, f: StorageFolder): Promise<string[]> {
   const ws = await workspacesOf(owner, f);
+  const ids = ws === "*" ? (await ownedProjects(owner)).map((p) => p.id) : ws;
   // an account with no workspaces: its one library
-  if (ws !== "*" && !ws.length) {
+  if (!ids.length) {
     const one = await ensureLibrary(owner);
     return one ? [one] : [];
   }
-  const ids = ws === "*" ? (await ownedProjects(owner)).map((p) => p.id) : ws;
   const out: string[] = [];
   for (const id of ids) {
     const lib = await ensureLibrary(owner, id);
@@ -176,8 +177,13 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
     const start = scans.get(key);
     if (r.complete && start !== undefined) {
       const gone = d
-        .prepare("UPDATE version_places SET state = 'gone', gone_at = ? WHERE device = ? AND folder_id = ? AND kind = 'original' AND state <> 'gone' AND (checked_at IS NULL OR checked_at < ?)")
-        .run(now, device, folder.id, start);
+        // only in the libraries the folder fills now: a row of a library it no longer fills was not looked for, not gone
+        .prepare(
+          `UPDATE version_places SET state = 'gone', gone_at = ? WHERE device = ? AND folder_id = ? AND kind = 'original' AND state <> 'gone'
+             AND (checked_at IS NULL OR checked_at < ?)
+             AND version_id IN (SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id IN (SELECT value FROM json_each(?)))`,
+        )
+        .run(now, device, folder.id, start, inLibs);
       if (Number(gone.changes)) libs.forEach((l) => touched.add(l));
       scans.delete(key);
     }

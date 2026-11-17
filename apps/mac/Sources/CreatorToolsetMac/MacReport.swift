@@ -1,5 +1,6 @@
 // What this Mac reports to the site (the Mac relay report; MacReport in apps/captions/contracts/providers.ts):
 // the coding CLIs it finds and their versions, its Claude and Codex config folders, and its disks. Read only. Every function takes the home folder so the tests can use a temp one.
+import DiskArbitration
 import Foundation
 
 /// Every driver the report lists, in contracts/providers.ts order.
@@ -341,13 +342,13 @@ func diskReport(_ v: VolumeFacts) -> [String: Any]? {
 }
 
 /// The C string in a fixed-size tuple field of statfs (f_fstypename, f_mntfromname).
-private func cField<T>(_ field: T) -> String {
+func cField<T>(_ field: T) -> String {
     withUnsafeBytes(of: field) { raw in String(cString: raw.bindMemory(to: CChar.self).baseAddress!) }
 }
 
 /// Every mounted file system as the kernel has it, without asking any of them (MNT_NOWAIT: a dead share's numbers are
 /// its last ones, and the call never waits for its server).
-private func mountedFileSystems() -> [statfs] {
+func mountedFileSystems() -> [statfs] {
     let count = getfsstat(nil, 0, MNT_NOWAIT)
     guard count > 0 else { return [] }
     let room = Int(count) + 8
@@ -366,8 +367,20 @@ struct ReadDisk {
     var url: String?
 }
 
+/// A mounted volume's UUID from Disk Arbitration (the disk's description), never from the volume itself: asking the
+/// volume (URL resource values) counts as reading a removable or network volume, and macOS asks the person for that at
+/// launch, before any folder on it was allowed.
+private let diskSession = DASessionCreate(kCFAllocatorDefault)
+func volumeUUID(at mountPoint: String) -> String? {
+    guard let session = diskSession,
+          let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, URL(fileURLWithPath: mountPoint, isDirectory: true) as CFURL),
+          let info = DADiskCopyDescription(disk) as? [CFString: Any],
+          let id = info[kDADiskDescriptionVolumeUUIDKey] else { return nil }
+    return CFUUIDCreateString(kCFAllocatorDefault, (id as! CFUUID)) as String?
+}
+
 /// Every mounted volume's disk report. Never waits on a share (a dead one hung statfs for minutes); a local volume's
-/// UUID comes from its URL keys. The system disk's is its data volume's, where the home folders are.
+/// UUID comes from Disk Arbitration (volumeUUID). The system disk's is its data volume's, where the home folders are.
 func readDisks() -> [ReadDisk] {
     mountedFileSystems().compactMap { st -> ReadDisk? in
         let path = cField(st.f_mntonname), fstype = cField(st.f_fstypename), source = cField(st.f_mntfromname)
@@ -385,7 +398,7 @@ func readDisks() -> [ReadDisk] {
         guard diskReport(facts) != nil else { return nil }
         if !network {
             let data = path == "/" && FileManager.default.fileExists(atPath: "/System/Volumes/Data") ? "/System/Volumes/Data" : path
-            facts.uuid = (try? URL(fileURLWithPath: data).resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString
+            facts.uuid = volumeUUID(at: data)
         }
         return diskReport(facts).map { ReadDisk(report: $0, url: network ? shareURL(source: source, fstype: fstype) : nil) }
     }

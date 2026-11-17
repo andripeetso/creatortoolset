@@ -71,6 +71,15 @@ describe("location agents: the computers report, the server records", () => {
     const on = whereIs(versionId)!.computers[0]!.original!;
     expect(on).toMatchObject({ state: "found", path: `${DIR}/renamed.mp4` });
 
+    // a row of a library the folder doesn't fill (it left that workspace) is not looked for: never gone
+    const d = libraryDb();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_left', 'ws-left', 'Left', 'local', 0)").run();
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_left', 'lib_left', 'video', 'left', 'v_left', 'ana', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('v_left', 'a_left', 1, 'mac:v_left', 5, 'x', 'ready', 'ana', 0)").run();
+    d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, state, source, checked_at) VALUES ('v_left', ?, ?, ?, 'verified', 'scan', 1)").run(device.id, folder, `${DIR}/left.mp4`);
+    await report({ folders: [{ id: folder, state: "ok", scan: "s5", complete: true, files: [] }] });
+    expect(whereIs("v_left")!.computers[0]!.original!.state).toBe("verified");
+
     // a file outside the folder is never recorded
     r = (await (await report({ folders: [{ id: folder, state: "ok", files: [{ ...file, path: "/Users/someone/elsewhere.mp4" }] }] })).json()) as { index: { path: string }[] };
     expect(r.index).toEqual([]);
