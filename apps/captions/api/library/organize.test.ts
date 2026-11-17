@@ -8,7 +8,7 @@ import type { AuthVars } from "../auth";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
 // A library's first-run choice (organize.ts): Default folders makes the six folders; AI organizes makes none and files
-// what comes in, making a folder with its first file: a video by its description's answer, a sound by its length, a
+// what comes in, making a folder with its first file: a video by its description's answer, a sound by its kind, a
 // picture into Graphics. Through the PATCH
 // route and the worker, with the AI stubbed.
 
@@ -169,5 +169,7 @@ describe("organize", () => {
     expect(folders("lib_def")).toHaveLength(6);
     await probed("lib_def", "snd-def", "audio", media("short.m4a"));
     expect(folderOf("snd-def")).toEqual([]);
+    // filed in no folder, a sound is still known as one (sound-kind.ts)
+    expect(libraryDb().prepare("SELECT tag, source FROM asset_tags WHERE asset_id = 'snd-def'").all()).toEqual([{ tag: "sound effect", source: "ai" }]);
   });
 });

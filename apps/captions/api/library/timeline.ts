@@ -40,7 +40,7 @@ import { LOOK_LABEL, WATCH_LABEL } from "./shots";
  * Dollars per million tokens, in and out (thinking counted as out), paid tier, one rate for video, audio and text.
  * Read 2026-11-16 off Google's price list; 3.8 Flash's doubles on 2027-01-01 (1.5 in, 7.5 out).
  */
-const PRICE: Record<GeminiModel, { in: number; out: number }> = {
+export const GEMINI_PRICE: Record<GeminiModel, { in: number; out: number }> = {
   "gemini-3.8-flash": { in: 0.75, out: 3.75 },
   "gemini-3.5-flash-lite": { in: 0.3, out: 2.5 },
 };
@@ -118,7 +118,7 @@ const MEASURED: Record<GeminiModel, Record<LookLevel, { inS: number; outMin: num
 export function watchUsdPerHour(level: LookLevel, model: WatchModel = watchModelOf(undefined)): number {
   if (model === "antigravity") return 0;
   const m = MEASURED[model][level];
-  return (3600 * m.inS * PRICE[model].in + 60 * m.outMin * PRICE[model].out) / 1e6;
+  return (3600 * m.inS * GEMINI_PRICE[model].in + 60 * m.outMin * GEMINI_PRICE[model].out) / 1e6;
 }
 
 /**
@@ -525,7 +525,7 @@ async function answerOf(r: Response, model: GeminiModel, a: number, b: number, s
   const text = (body.candidates?.[0]?.content?.parts ?? []).filter((p) => !p.thought && p.text).map((p) => p.text).join("");
   const u = body.usageMetadata ?? {};
   const out = (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0);
-  const usage = { tokens: (u.promptTokenCount ?? 0) + out, costUsd: ((u.promptTokenCount ?? 0) * PRICE[model].in + out * PRICE[model].out) / 1e6 };
+  const usage = { tokens: (u.promptTokenCount ?? 0) + out, costUsd: ((u.promptTokenCount ?? 0) * GEMINI_PRICE[model].in + out * GEMINI_PRICE[model].out) / 1e6 };
   return { events: parseTimeline(text, a, b, sound), usage, inTokens: u.promptTokenCount ?? 0, outTokens: out };
 }
 
