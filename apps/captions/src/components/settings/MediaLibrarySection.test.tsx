@@ -95,7 +95,7 @@ async function render(el: ReactNode) {
   for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
 }
 
-const SECTIONS = ["Files", "Footage folders", "Storage", "Search", "All clips"];
+const SECTIONS = ["Adding files", "Footage folders", "Uploads", "Storage", "Descriptions", "Shot detail", "Search", "All clips"];
 const WITHOUT_FOLDERS = SECTIONS.filter((s) => s !== "Footage folders");
 const headings = (text: string) => SECTIONS.filter((s) => text.includes(s));
 
@@ -162,7 +162,7 @@ describe("the Media Library's settings", () => {
   it("Shot detail lists each level with an hour's time and cost, and saves the level picked and the monthly budget", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("About 12 min and $2.64 an hour of footage");
+    expect(text).toContain("$2.64 and about 12 min for each hour of footage");
     expect(text).toContain("$4.20 this month");
     // Light and Detailed have Use; Standard, the one in use, says so
     const uses = [...host!.querySelectorAll('[data-settings-row="library-shot-detail"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
@@ -185,10 +185,10 @@ describe("the Media Library's settings", () => {
     await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
     const text = document.body.textContent ?? "";
     expect(text).toContain("Gemini 3.8 Flash");
-    expect(text).toContain("Picture and sound, most moments, about $0.42 an hour of footage");
-    expect(text).toContain("Picture and sound, fewer moments, about $0.16 an hour of footage");
+    expect(text).toContain("Picture and sound, most moments, about $0.42 for each hour of footage");
+    expect(text).toContain("Picture and sound, fewer moments, about $0.16 for each hour of footage");
     expect(text).toContain("Picture only, no sound");
-    const [lite, agy] = [...host!.querySelectorAll('[data-settings-row="library-ai"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
+    const [lite, agy] = [...host!.querySelectorAll('[data-settings-row="library-timeline-model"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
     await act(async () => lite!.click());
     await act(async () => agy!.click());
     expect(patches).toEqual([{ settings: { timelineModel: "gemini-3.5-flash-lite" } }, { settings: { timelineModel: "antigravity" } }]);
@@ -220,8 +220,11 @@ describe("the Media Library's settings", () => {
   it("the upload choice is saved on the library", async () => {
     const changed: LibrarySummary[] = [];
     await render(<UploadSelect library={library} onChange={(l) => changed.push(l)} onError={() => {}} />);
-    const select = host!.querySelector('select[aria-label="Upload to the server"]') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Video files and proxies"]);
+    const select = host!.querySelector('select[aria-label="Footage upload"]') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Originals and proxies"]);
+    // a final is one finished file: its choices say copy and file, never proxy
+    const finals = host!.querySelector('select[aria-label="Finals upload"]') as HTMLSelectElement;
+    expect([...finals.options].map((o) => o.textContent)).toEqual(["Off", "Smaller copies", "Full files"]);
     await act(async () => {
       select.value = "proxies";
       select.dispatchEvent(new Event("change", { bubbles: true }));
