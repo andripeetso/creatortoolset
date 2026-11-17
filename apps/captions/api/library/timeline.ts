@@ -28,17 +28,22 @@ export const WATCH_MODEL = "gemini-3.5-flash-lite";
 /** Dollars per million tokens, in and out (thinking counted as out). */
 const PRICE = { in: 0.3, out: 2.5 };
 const BASE = "https://generativelanguage.googleapis.com";
-/** Tokens a sampled frame costs at each media resolution, and a second of sound (Gemini's video docs). */
-const FRAME_TOKENS = { MEDIA_RESOLUTION_LOW: 66, MEDIA_RESOLUTION_MEDIUM: 258 } as const;
-const AUDIO_TOKENS_S = 32;
 /** Per level (contracts LOOK_LEVELS): frames a second Gemini samples, at what resolution. */
-export const WATCH_LEVELS: Record<LookLevel, { fps: number; res: keyof typeof FRAME_TOKENS }> = {
+export const WATCH_LEVELS: Record<LookLevel, { fps: number; res: "MEDIA_RESOLUTION_LOW" | "MEDIA_RESOLUTION_MEDIUM" }> = {
   light: { fps: 0.5, res: "MEDIA_RESOLUTION_LOW" },
   standard: { fps: 1, res: "MEDIA_RESOLUTION_LOW" },
   detailed: { fps: 2, res: "MEDIA_RESOLUTION_MEDIUM" },
 };
-/** One call covers this much of the video (its start and end offsets), so an hour's events fit one answer and Detailed fits the context. */
-export const PART_S = 20 * 60;
+/**
+ * One call covers this much of the video (its start and end offsets). Measured 2026-11-16 on a 24-minute open movie at
+ * Standard: a 20-minute part came back with 777 output tokens and a 19-minute hole, where one call on 12 minutes gave 89
+ * events over all of it. Ten minutes keeps each answer whole.
+ */
+export const PART_S = 10 * 60;
+/** Gemini's answers that mean "busy, ask again": tried RETRIES more times, waiting `backoffMs`, then three times that. */
+const BUSY = [429, 500, 503];
+const RETRIES = 2;
+export const watchTiming = { backoffMs: 15_000 };
 /** Parts of one video asked at once. */
 const PARTS_AT_ONCE = 3;
 /** A watch that failed is tried again this long after. */
@@ -46,14 +51,20 @@ export const RETRY_MS = 6 * 3600_000;
 /** Caps on an event's words. */
 const WHAT_MAX = 200;
 const NOTE_MAX = 120;
-/** Output tokens a minute of footage takes, guessed for the estimate until a real run is measured. */
-const OUT_TOKENS_MIN = 400;
+/**
+ * Tokens in a second of footage and out a minute of it, by level, as measured 2026-11-16 on a 12-minute open movie with
+ * sound (720p proxy, flash-lite): Light $0.09, Standard $0.16, Detailed $0.29 an hour of footage.
+ */
+const MEASURED: Record<LookLevel, { inS: number; outMin: number }> = {
+  light: { inS: 55, outMin: 176 },
+  standard: { inS: 86, outMin: 462 },
+  detailed: { inS: 146, outMin: 897 },
+};
 
-/** What an hour of footage costs to watch at `level` (dollars), from the token rates. */
+/** What an hour of footage costs to watch at `level` (dollars), from the measured tokens. */
 export function watchUsdPerHour(level: LookLevel): number {
-  const { fps, res } = WATCH_LEVELS[level];
-  const inTokens = 3600 * (fps * FRAME_TOKENS[res] + AUDIO_TOKENS_S);
-  return (inTokens * PRICE.in + 60 * OUT_TOKENS_MIN * PRICE.out) / 1e6;
+  const m = MEASURED[level];
+  return (3600 * m.inS * PRICE.in + 60 * m.outMin * PRICE.out) / 1e6;
 }
 
 /** The actor's Gemini key, or "" (keyFor: their own, else the server's for an admin). */
@@ -251,10 +262,42 @@ export const deleteVideo = (key: string, name: string) =>
     () => undefined,
   );
 
+/** A stretch this long with no event in it is asked again (holesOf): three of the level's longest lines, at least a minute. */
+export const holeS = (level: LookLevel): number => Math.max(60, 3 * LOOK_LEVELS.find((l) => l.value === level)!.long);
+
+/**
+ * The stretches of 0..dur that `events` leave without one, `min` seconds or longer, each cut to PART_S at most (with
+ * no events and `min` 0: the whole video in parts).
+ */
+export function holesOf(events: TimelineEvent[], dur: number, min: number): [number, number][] {
+  const gaps: [number, number][] = [];
+  let end = 0;
+  for (const e of [...events].sort((x, y) => x.a - y.a)) {
+    if (e.a - end >= min && e.a > end) gaps.push([end, e.a]);
+    end = Math.max(end, e.b);
+  }
+  if (dur - end >= min && dur > end) gaps.push([end, dur]);
+  return gaps.flatMap(([a, b]) => Array.from({ length: Math.ceil((b - a) / PART_S) }, (_, k): [number, number] => [a + k * PART_S, Math.min(b, a + (k + 1) * PART_S)]));
+}
+
 /** One part's call: its events and what it cost. */
 async function askPart(key: string, f: { uri: string; mimeType: string }, prompt: { system: string; user: string }, a: number, b: number, level: LookLevel) {
   const { fps, res } = WATCH_LEVELS[level];
-  const r = await fetch(`${BASE}/v1beta/models/${WATCH_MODEL}:generateContent`, {
+  // a busy model (measured: a 503 "high demand" after 109 s at Detailed) or a dropped connection (measured: "fetch
+  // failed" after five minutes) is asked again a little later
+  for (let i = 0; ; i++) {
+    const r = await callPart(key, f, prompt, a, b, fps, res).catch((e: unknown) => {
+      if (i >= RETRIES) throw new Error(`Gemini watch: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    });
+    if (r?.ok) return answerOf(r, a, b);
+    if (r && (!BUSY.includes(r.status) || i >= RETRIES)) throw await failure(r, "watch");
+    await new Promise((go) => setTimeout(go, watchTiming.backoffMs * 3 ** i));
+  }
+}
+
+const callPart = (key: string, f: { uri: string; mimeType: string }, prompt: { system: string; user: string }, a: number, b: number, fps: number, res: string) =>
+  fetch(`${BASE}/v1beta/models/${WATCH_MODEL}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -272,7 +315,9 @@ async function askPart(key: string, f: { uri: string; mimeType: string }, prompt
     }),
     signal: AbortSignal.timeout(15 * 60_000),
   });
-  if (!r.ok) throw await failure(r, "watch");
+
+/** A part's answer: its events inside a..b and what it cost. */
+async function answerOf(r: Response, a: number, b: number) {
   const body = (await r.json()) as {
     candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
@@ -300,24 +345,29 @@ export async function watchVersion(db: DatabaseSync, versionId: string, file: st
   const level = libraryLookLevel(v.library_id);
   const wsId = await workspaceIdOf(db, versionId);
   const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
-  const parts: [number, number][] = [];
-  for (let a = 0; a < Math.max(dur, 1); a += PART_S) parts.push([a, Math.min(Math.max(dur, 1), a + PART_S)]);
+  const length = Math.max(dur, 1);
   const f = await uploadVideo(key, file, v.title);
   let usd = 0;
+  /** The events of each range, asked PARTS_AT_ONCE at a time, each call tallied. */
+  const ask = async (ranges: [number, number][]) => {
+    const found: TimelineEvent[] = [];
+    for (let i = 0; i < ranges.length; i += PARTS_AT_ONCE)
+      for (const events of await Promise.all(
+        ranges.slice(i, i + PARTS_AT_ONCE).map(async ([a, b]) => {
+          const r = await askPart(key, f, watchPrompt({ title: v.title, workspace, level, a, b, dur }), a, b, level);
+          usd += r.usage.costUsd;
+          void recordUsage(WATCH_LABEL, r.usage, undefined, "workspace", wsId ?? null);
+          return r.events;
+        }),
+      ))
+        found.push(...events);
+    return found;
+  };
   try {
-    const found: TimelineEvent[][] = [];
-    for (let i = 0; i < parts.length; i += PARTS_AT_ONCE)
-      found.push(
-        ...(await Promise.all(
-          parts.slice(i, i + PARTS_AT_ONCE).map(async ([a, b]) => {
-            const r = await askPart(key, f, watchPrompt({ title: v.title, workspace, level, a, b, dur }), a, b, level);
-            usd += r.usage.costUsd;
-            void recordUsage(WATCH_LABEL, r.usage, undefined, "workspace", wsId ?? null);
-            return r.events;
-          }),
-        )),
-      );
-    const events = found.flat();
+    let events = await ask(holesOf([], length, 0));
+    // a stretch the answers left without an event is asked once more on its own
+    const holes = holesOf(events, length, holeS(level));
+    if (holes.length) events = [...events, ...(await ask(holes))].sort((x, y) => x.a - y.a);
     if (!events.length) throw new Error("Gemini named nothing that happens in the video");
     storeTimeline(db, versionId, { events, level, model: WATCH_MODEL });
     return { events: events.length, usd, ms: Date.now() - t0 };

@@ -22,7 +22,9 @@ const { blobs, libraryDb } = await import("./db");
 const { tick } = await import("./worker");
 const { searchLibrary, assetDetail } = await import("./search");
 const { queueLook, WATCH_LABEL } = await import("./shots");
-const { parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchUsdPerHour, watchVersion, WATCH_LEVELS, WATCH_MODEL } = await import("./timeline");
+const { holesOf, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS, WATCH_MODEL } = await import("./timeline");
+const { clock } = await import("./look");
+watchTiming.backoffMs = 0;
 const { embedChunks } = await import("./embed");
 const { saveMyKey } = await import("../my-keys");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -56,7 +58,10 @@ async function seed(id: string, duration = 12) {
 }
 
 /** Gemini, mocked: the upload, its state, each part's events (from `events(a, b)`), the delete. Every request kept. */
-function gemini(events: (a: number, b: number) => unknown[] = (a) => [{ start: `0:${String(a % 60).padStart(2, "0")}`, end: "0:05", what: "the boss dies", sound: "a roar", change: "a cut to wide" }], fail?: number) {
+/** One event over the whole part, its times counted from the part's start (the answer the shift is for). */
+const wholePart = (a: number, b: number) => [{ start: "0:00", end: clock(b - a), what: "the boss dies", sound: "a roar", change: "a cut to wide" }];
+
+function gemini(events: (a: number, b: number) => unknown[] = wholePart, fail?: number, busy: ("503" | "drop")[] = []) {
   const calls: { url: string; init: RequestInit & { headers?: Record<string, string> } }[] = [];
   const fetch = vi.fn(async (url: string, init: RequestInit & { headers?: Record<string, string> } = {}) => {
     calls.push({ url, init });
@@ -65,6 +70,10 @@ function gemini(events: (a: number, b: number) => unknown[] = (a) => [{ start: `
     if (url === "https://upload.test/1") return Response.json({ file: { name: "files/abc", uri: "https://files.test/abc", state: "ACTIVE" } });
     if (url.endsWith("/v1beta/files/abc") && init.method === "DELETE") return new Response("{}");
     if (url.endsWith("/v1beta/files/abc")) return Response.json({ name: "files/abc", uri: "https://files.test/abc", state: "ACTIVE" });
+    if (url.includes(":generateContent") && busy.length) {
+      if (busy.shift() === "drop") throw new TypeError("fetch failed");
+      return new Response(JSON.stringify({ error: { message: "This model is currently experiencing high demand." } }), { status: 503 });
+    }
     if (url.includes(":generateContent")) {
       const body = JSON.parse(String(init.body)) as { contents: { parts: { videoMetadata?: { startOffset: string; endOffset: string } }[] }[] };
       const m = body.contents[0]!.parts[0]!.videoMetadata!;
@@ -105,8 +114,7 @@ describe("a timeline's answer", () => {
   });
 
   it("an hour costs cents, more at Detailed", () => {
-    expect(watchUsdPerHour("standard")).toBeGreaterThan(0.05);
-    expect(watchUsdPerHour("standard")).toBeLessThan(0.3);
+    expect(watchUsdPerHour("standard")).toBeCloseTo(0.16, 2);
     expect(watchUsdPerHour("detailed")).toBeGreaterThan(watchUsdPerHour("standard"));
     expect(watchUsdPerHour("light")).toBeLessThan(watchUsdPerHour("standard"));
   });
@@ -143,6 +151,26 @@ describe("watching a video", () => {
     const hits = searchLibrary("lib_t", "boss dies");
     expect(hits.some((h) => h.asset.id === "long" && h.seconds === PART_S)).toBe(true);
     expect(assetDetail("lib_t", "long")?.timeline?.[0]).toMatchObject({ what: "the boss dies", sound: "a roar" });
+  });
+});
+
+describe("a busy or patchy answer", () => {
+  it("finds the stretches no event covers, cut to parts", () => {
+    expect(holesOf([], 1500, 0)).toEqual([[0, PART_S], [PART_S, 2 * PART_S], [2 * PART_S, 1500]]);
+    const e = (a: number, b: number) => ({ a, b, what: "x" });
+    expect(holesOf([e(0, 30), e(200, 260), e(250, 280)], 300, 60)).toEqual([[30, 200]]);
+    expect(holesOf([e(0, 30)], 1500, 60)).toEqual([[30, 30 + PART_S], [30 + PART_S, 30 + 2 * PART_S], [30 + 2 * PART_S, 1500]]);
+    expect(holesOf([e(0, 299)], 300, 60)).toEqual([]);
+  });
+
+  it("a 503 and a dropped connection are asked again; a part answered for its first minute only is asked once more for the rest", async () => {
+    const { v, file } = await seed("patchy", 400);
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini((a, b) => (a === 0 ? [{ start: "0:00", end: "1:00", what: "the start" }] : [{ start: clock(a), end: clock(b), what: "the rest" }]), undefined, ["503", "drop"]);
+    await watchVersion(libraryDb(), v, file, "local");
+    const asks = calls.filter((c) => c.url.includes(":generateContent")).map((c) => (JSON.parse(String(c.init.body)) as { contents: { parts: { videoMetadata: { startOffset: string } }[] }[] }).contents[0]!.parts[0]!.videoMetadata.startOffset);
+    expect(asks).toEqual(["0s", "0s", "0s", "60s"]);
+    expect(timelineOf(libraryDb(), v).map((e) => [e.a, e.b, e.what])).toEqual([[0, 60, "the start"], [60, 400, "the rest"]]);
   });
 });
 

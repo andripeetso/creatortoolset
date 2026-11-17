@@ -280,7 +280,7 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
     // an hour of footage at each level, so the person picks with the time and cost in front of them
     const mine = levelShare(libraryLookLevel(libraryId));
     out.lookLevels = [];
-    // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from the token rates)
+    // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from measured tokens)
     const watching = librarySetting(libraryId, "timeline") && !!watchKey(username);
     for (const l of LOOK_LEVELS) {
       const p = await lookPerClip(db, look, 3600, levelShare(l.value), mine);
