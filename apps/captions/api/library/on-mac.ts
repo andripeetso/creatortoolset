@@ -5,7 +5,10 @@ import { env } from "../lib/env";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
+import { looksLikeSong, type ProbeSummary } from "./media/probe";
 import { organizeOnProbe } from "./organize";
+import { tagSoundType } from "./sfx-type";
+import { settleSoundKind } from "./sound-kind";
 import { kindOf, recordVersion } from "./routes";
 import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
@@ -138,7 +141,11 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, k, `${base}/${k}.jpg`, bytes);
   }
   d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
-  organizeOnProbe(d, versionId, probe.duration); // a library the AI organizes: a sound or a picture to its folder now
+  // a sound's kind from its name, folders and length (sound-kind.ts: no listen, the file is not here); a library the AI
+  // organizes files a sound or a picture now
+  const sound = await settleSoundKind(d, versionId, { song: kind === "audio" && looksLikeSong(x.name, probe as ProbeSummary), seconds: probe.duration });
+  if (kind === "audio") tagSoundType(d, versionId, x.name, probe.duration);
+  organizeOnProbe(d, versionId, sound);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     const dir = framesDir(versionId);
     await mkdir(dir, { recursive: true });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { DEFAULT_FOLDERS, SOUNDS, type Organize } from "../../contracts/library";
+import { DEFAULT_FOLDERS, SOUNDS, type Organize, type Sound } from "../../contracts/library";
 import { libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { indexAsset } from "./query";
@@ -11,7 +11,7 @@ import { indexAsset } from "./query";
  * front and never an empty one: every file that comes in and is in no folder yet is filed, and a folder is made the
  * first time a file goes into it. A video is filed by its description (describe.ts: the AI sees what the footage is and
  * names one of the library's plain top-level folders, or a new one while there are fewer than MAX_AI_FOLDERS); a sound
- * by its length (organizeOnProbe); a picture goes to Graphics. Never into Finals. Choosing "ai" files what is already
+ * by its kind (sound-kind.ts: its tag, folders, length, or a listen); a picture goes to Graphics. Never into Finals. Choosing "ai" files what is already
  * there too (fileUnfiled).
  */
 
@@ -20,7 +20,7 @@ export const MAX_AI_FOLDERS = 12;
 
 const id = () => `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
-/** ponytail: a guess by length, no listening: under 20 s is a sound effect, longer is music */
+/** A sound with nothing else to tell its kind by (sound-kind.ts): under 20 s is a sound effect, longer is music */
 export const SHORT_SOUND_S = 20;
 /** The tag each sound folder's files carry (the names the assistant's songs and sound effects use too) */
 const SOUND_TAGS: Record<string, string> = Object.fromEntries(Object.values(SOUNDS).map((s) => [s.folder, s.tag]));
@@ -121,11 +121,13 @@ export function fileInto(d: DatabaseSync, a: Asset, name: string): boolean {
   return true;
 }
 
-/** After the probe: a sound or a picture in a library the AI organizes goes to its folder (videos wait for their description). */
-export function organizeOnProbe(d: DatabaseSync, versionId: string, duration: number, song = false): void {
+/**
+ * After the probe: a sound (by its kind, sound-kind.ts), a song's video or a picture in a library the AI organizes goes
+ * to its folder (other videos wait for their description).
+ */
+export function organizeOnProbe(d: DatabaseSync, versionId: string, sound: Sound | null): void {
   const a = toFile(d, versionId);
-  if (a && song) fileInto(d, a, SOUNDS.music.folder); // a music video too
-  else if (a?.kind === "audio") fileInto(d, a, duration < SHORT_SOUND_S ? SOUNDS.effect.folder : SOUNDS.music.folder);
+  if (a && sound) fileInto(d, a, SOUNDS[sound].folder);
   else if (a?.kind === "image") fileInto(d, a, "Graphics");
 }
 
@@ -136,14 +138,16 @@ export function organizeOnProbe(d: DatabaseSync, versionId: string, duration: nu
 export function fileUnfiled(d: DatabaseSync, libraryId: string, by: string): void {
   const rows = d
     .prepare(
-      `SELECT a.id, a.library_id, a.kind, a.created_by, v.id AS version, json_extract(v.probe, '$.duration') AS duration
+      `SELECT a.id, a.library_id, a.kind, a.created_by, v.id AS version,
+         (SELECT tag FROM asset_tags t WHERE t.asset_id = a.id AND t.tag IN (?, ?) ORDER BY t.source = 'user' DESC LIMIT 1) AS sound
        FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
        WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'ready'
          AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')`,
     )
-    .all(libraryId) as unknown as (Asset & { version: string; duration: number | null })[];
+    .all(SOUNDS.music.tag, SOUNDS.effect.tag, libraryId) as unknown as (Asset & { version: string; sound: string | null })[];
   for (const r of rows) {
     if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
-    else organizeOnProbe(d, r.version, r.duration ?? 0);
+    // a sound by its kind's tag (sound-kind.ts, since its probe): one with none (taken off, someone talking) stays where it is
+    else organizeOnProbe(d, r.version, r.sound === SOUNDS.music.tag ? "music" : r.sound === SOUNDS.effect.tag ? "effect" : null);
   }
 }

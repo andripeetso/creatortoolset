@@ -36,6 +36,8 @@ import { NeedsKey } from "./transcribe";
 export const LOOK_LABEL = "Media Library shot descriptions";
 /** What the usage tally counts a timeline call on a Gemini key as (timeline.ts): inside the same monthly budget. */
 export const WATCH_LABEL = `${LOOK_LABEL} (Gemini)`;
+/** What the usage tally counts Gemini listening to a sound file as (sound-kind.ts): inside the same monthly budget. */
+export const LISTEN_LABEL = "Media Library sound kinds (Gemini)";
 /** The look prompt's version, in its context stamp: a change that should describe shots again bumps it. */
 export const LOOK_VERSION = "look-1";
 /** A clip this long or shorter keeps its description as its only line. */
@@ -160,7 +162,7 @@ const monthStart = (now = Date.now()) => {
 export async function lookSpent(workspace: string | undefined, now = Date.now()): Promise<number> {
   let usd = 0;
   for (const labels of Object.values(await macUsageSince(monthStart(now))))
-    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL]) {
+    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL]) {
       const t = labels[label];
       usd += (workspace ? t?.ws?.[workspace]?.costUsd : t?.costUsd) ?? 0;
     }

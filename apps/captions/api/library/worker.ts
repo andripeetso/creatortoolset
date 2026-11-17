@@ -34,6 +34,7 @@ import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
 import { backfillRoots } from "./places";
+import { backfillSoundKinds, listen, settleSoundKind } from "./sound-kind";
 import { copiesWake } from "./copies";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
@@ -331,7 +332,7 @@ export function startLibraryWorker(): () => void {
           // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
           if (!draining()) {
             busy = await tick(Date.now(), lane.kinds);
-            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots();
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
             // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook);
             // then the timelines (timeline.ts sweepWatch): a done look that wants one is queued again
             if (!busy && lane.name === "looks") busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
@@ -421,7 +422,13 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
  * what it does not have yet. A picture, a waveform, a proxy, a strip or a fingerprint a computer made and sent with the
  * upload is never made again here.
  */
-export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<VersionRow, "id" | "library_id" | "kind" | "title" | "source_path" | "from_path">, p: ProbeSummary, actor: string | null): Promise<void> {
+export async function afterProbe(
+  db: ReturnType<typeof libraryDb>,
+  v: Pick<VersionRow, "id" | "library_id" | "kind" | "title" | "source_path" | "from_path">,
+  p: ProbeSummary,
+  actor: string | null,
+  file?: () => Promise<string>,
+): Promise<void> {
   const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(v.id) as { kind: string }[]).map((h) => h.kind));
   const want = (kind: string) => !have.has(kind) && enqueueJob(db, v.library_id, v.id, kind, actor);
   // one added as a song or a sound effect (its tag, routes.ts SOUNDS) is music: a thumbnail and a waveform, no
@@ -432,6 +439,8 @@ export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<Versi
   const song = !music && v.kind !== "image" && looksLikeSong(v.title, p);
   if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
   music ||= song;
+  // every sound is music or a sound effect (sound-kind.ts); Gemini listens only when nothing else tells, and only to a file here
+  const sound = await settleSoundKind(db, v.id, { song, seconds: p.duration, listen: file && (async () => listen(db, v.id, v.library_id, await file(), p.duration, actor)) });
   // a sound effect gets its type from its name and length (sfx-type.ts): no AI, and nothing when it has one already
   if (v.kind === "audio") tagSoundType(db, v.id, v.title, p.duration);
   // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
@@ -452,7 +461,7 @@ export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<Versi
   // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
   if (!music && actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: actor });
   // a library the AI organizes: a sound or a picture goes to its folder now (a video when it is described)
-  organizeOnProbe(db, v.id, p.duration, song);
+  organizeOnProbe(db, v.id, sound);
 }
 
 /** Whether the AI described the version before. */
@@ -536,7 +545,7 @@ async function run(job: JobRow): Promise<void> {
     p = { ...(await probe(await src())), ...(turn ? { turn } : {}) };
     await fillQuick(v.id, await src()); // Locate finds the original by it once it moves (locate.ts)
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
-    await afterProbe(db, v, p, job.actor);
+    await afterProbe(db, v, p, job.actor, src);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
