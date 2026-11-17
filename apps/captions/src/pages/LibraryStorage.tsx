@@ -196,7 +196,7 @@ export function LibraryStorageSettings({
   const text = (key: "endpoint" | "region" | "bucket" | "accessKey", label: string, placeholder = "", locked = false, needs = "") => (
     <Row
       title={titled(label, key, needs)}
-      control={<Input aria-label={label} aria-invalid={lacking.includes(key) || undefined} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} placeholder={placeholder} disabled={locked} autoComplete="off" className="h-8 sm:w-72" />}
+      control={<Input aria-label={label} aria-invalid={lacking.includes(key) || undefined} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} placeholder={placeholder} disabled={locked} autoComplete="off" className="h-8 sm:w-64" />}
     />
   );
   const service = (id: string) => {
@@ -256,7 +256,7 @@ export function LibraryStorageSettings({
                   title={titled("Bunny API key", "bunnyKey", "Needs a Bunny API key")}
                   description={link("https://dash.bunny.net/account/api-key", "Get a key")}
                   control={
-                    <div className="w-full sm:w-72">
+                    <div className="w-full sm:w-64">
                       <SecretField label="Bunny API key" value={bunny.apiKey} onChange={(apiKey) => setBunny({ ...bunny, apiKey })} />
                     </div>
                   }
@@ -281,7 +281,7 @@ export function LibraryStorageSettings({
                 <Row
                   title={titled("Secret key", "secretKey", "Needs a secret key")}
                   control={
-                    <div className="w-full sm:w-72">
+                    <div className="w-full sm:w-64">
                       <SecretField label="Secret key" value={form.secretKey} onChange={(secretKey) => setForm({ ...form, secretKey })} placeholder={keysSaved ? "Saved" : ""} />
                     </div>
                   }

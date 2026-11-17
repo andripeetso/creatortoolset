@@ -264,7 +264,7 @@ function ListField({ title, description, add, label, placeholder, value, onCommi
               aria-label={label}
               placeholder={placeholder}
               spellCheck={false}
-              className="h-8 w-full rounded-md border border-input bg-transparent px-3 font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-72"
+              className="h-8 w-full rounded-md border border-input bg-transparent px-3 font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-64"
               onBlur={(e) => {
                 if (e.target.value.trim()) save([...value, e.target.value]);
                 setAdding(false);

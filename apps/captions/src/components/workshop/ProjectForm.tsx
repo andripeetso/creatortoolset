@@ -235,7 +235,7 @@ export function ProjectForm({
       <Row
         id="workspace-name"
         title={<label htmlFor={`${fid}-name`}>Name</label>}
-        control={<Input id={`${fid}-name`} form={fid} autoFocus={!settings} required value={f.name} onChange={set("name")} className="h-8 sm:w-72" />}
+        control={<Input id={`${fid}-name`} form={fid} autoFocus={!settings} required value={f.name} onChange={set("name")} className="h-8 sm:w-64" />}
       />
       <Row
         id="workspace-colour"
@@ -279,7 +279,7 @@ export function ProjectForm({
                 placeholder="@handle"
                 disabled={locked}
                 spellCheck={false}
-                className="h-8 sm:w-72"
+                className="h-8 sm:w-64"
               />
             </label>
           ))}
