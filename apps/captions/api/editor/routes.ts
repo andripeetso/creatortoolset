@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, TRACKS, type EditSlot, type EditStep, type EditSummary, type Timeline, type TrackId, type VersionMark, type VersionPlan } from "../../contracts/editor";
+import { deviceOf } from "../lib/devices";
 import { innerCall, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
@@ -602,7 +603,8 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const footage = Object.keys(tl.sources).filter((k) => !tl.sources[k]!.file);
   if (footage.length && (await editSources(r.user, footage)) !== r.e.workspaceId) return notFound(c);
   if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
-  const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip");
+  const asker = c.req.query("device");
+  const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip", asker && deviceOf(asker)?.owner === r.user ? asker : undefined);
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => otioText(toOtio(tl, m.files, await gradeOf(ownerOf(r.e), r.e.bundle)));

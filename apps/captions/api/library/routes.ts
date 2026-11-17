@@ -18,7 +18,7 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -27,7 +27,9 @@ import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
-import { placesApp } from "./places";
+import { folderStatesFor, placesApp } from "./places";
+import { whereIsMany } from "./whereis";
+import { PLACES_MAX, placeWordOf } from "../../contracts/places";
 import { emptyTrash, inReview } from "./trash";
 import { copiesWake } from "./copies";
 import { similar } from "./similar";
@@ -943,7 +945,32 @@ libraryApp.get("/:id/assets", async (c) => {
   if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);
   const { sql, params, limit } = buildAssetQuery(libraryId, query);
   const page = pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit);
-  return c.json({ ...page, items: markHere(db(), await visibleCards(viewer, libraryId, page.items), query.device) });
+  return c.json({ ...page, items: await markHere(db(), await visibleCards(viewer, libraryId, page.items), query.device) });
+});
+
+/**
+ * GET /api/library/:id/where?versions=a,b&device=<id> → WhereAnswer: where each version is, from the place rows only
+ * (whereis.ts). At most PLACES_MAX ids, only the library's versions the caller may see; `device` counts only when it is the
+ * caller's own computer (the word is then seen from it).
+ */
+libraryApp.get("/:id/where", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const viewer = await readerOf(user.username, libraryId);
+  if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const ids = [...new Set((c.req.query("versions") ?? "").split(",").filter((x) => x && x.length <= 100))];
+  if (ids.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
+  const asked = c.req.query("device");
+  const device = asked && deviceOf(asked)?.owner === user.username ? asked : undefined;
+  const rows = db()
+    .prepare("SELECT v.id, v.asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.id IN (SELECT value FROM json_each(?))")
+    .all(libraryId, JSON.stringify(ids)) as { id: string; asset_id: string }[];
+  const seen: string[] = [];
+  for (const r of rows) if (await canSee(viewer, assetRef(libraryId, r.asset_id, r.id))) seen.push(r.id);
+  const where = whereIsMany(seen, await folderStatesFor(seen));
+  const versions: WhereAnswer["versions"] = {};
+  for (const [id, w] of where) versions[id] = { ...w, word: placeWordOf(w, device) };
+  return c.json({ versions } satisfies WhereAnswer);
 });
 
 /**

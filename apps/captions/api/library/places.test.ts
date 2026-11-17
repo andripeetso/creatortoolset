@@ -241,15 +241,15 @@ describe("indexing and reading by places", () => {
     expect(await indexOnMac("lib", "ana", { name: "s.mov", path: "/Volumes/footage/s.mov", size: 800, quick: q("8"), device: anaMac, frames: [] })).toEqual({ duplicateOf: "a_secret" });
   });
 
-  it("a member's computer that has the share reads the original there, and its cards say so", () => {
+  it("a member's computer that has the share reads the original there, and its cards say so", async () => {
     const row = { id: "june", source_key: "mac:june", source_path: null, mac_path: "/Volumes/footage/Archive/2025/June/a.mov", mac_device: anaMac, proxy: null };
     expect(fileFor(row, boMac, [], () => false)).toEqual({ path: "/Volumes/footage-1/Archive/2025/June/a.mov" });
     const cards = (["june", "home", "upload", "noprint"] as const).map((v) => ({ id: `a_${v}`, versionId: v }) as never);
-    expect(markHere(d, cards, boMac).filter((c: { here?: true }) => c.here).map((c: { versionId: string }) => c.versionId)).toEqual(["june", "home", "upload", "noprint"]);
+    expect((await markHere(d, cards, boMac)).filter((c: { here?: true }) => c.here).map((c: { versionId: string }) => c.versionId)).toEqual(["june", "home", "upload", "noprint"]);
     // the share away: only what bo's Mac read elsewhere, or read there and not looked for since
     report(boMac, [share("/Volumes/footage-1", { away: true }), travel]);
     d.prepare("DELETE FROM version_places WHERE device = ? AND version_id = 'noprint'").run(boMac);
-    expect(markHere(d, cards, boMac).filter((c: { here?: true }) => c.here).map((c: { versionId: string }) => c.versionId)).toEqual(["june", "home", "upload"]);
+    expect((await markHere(d, cards, boMac)).filter((c: { here?: true }) => c.here).map((c: { versionId: string }) => c.versionId)).toEqual(["june", "home", "upload"]);
     expect(fileFor({ ...row, id: "noprint" }, boMac, [], () => false)).toBeNull();
     report(boMac, [share("/Volumes/footage-1", { server: "Office-NAS.local", share: "Footage" }), travel]);
   });

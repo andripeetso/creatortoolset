@@ -91,9 +91,13 @@ export function inside(p: string, dir: string): string | null {
 }
 
 
-/** Where `host` has `folder`: the path it was made at on its own computer, else where that computer found its marker. */
+/** Where `host` has `folder`: on its own computer the path it reads it at (inside the container a helper runs in, mountPath;
+ *  else the path it was made at), else where that computer found its marker. */
 export const pathOn = (folder: StorageFolder, host: string): string | undefined =>
-  folder.origin.host === host ? folder.origin.path : folder.reach[host]?.path;
+  folder.origin.host === host ? (folder.mountPath ?? folder.origin.path) : folder.reach[host]?.path;
+
+/** The paths a folder has on its own computer: the one it was made at and, for a helper in a container, the one inside it. */
+const ownPaths = (folder: StorageFolder): string[] => [folder.origin.path, ...(folder.mountPath && folder.mountPath !== folder.origin.path ? [folder.mountPath] : [])];
 
 export interface FolderMatch { folder: StorageFolder; prefix: string; rest: string }
 
@@ -103,7 +107,7 @@ export function folderFor(p: string, folders: StorageFolder[], from?: string): F
   let best: FolderMatch | null = null;
   for (const folder of sourcesOf(folders)) {
     if (folder.role !== "footage") continue;
-    const prefixes = from ? [pathOn(folder, from)] : [folder.origin.path, ...Object.values(folder.reach).map((r) => r.path)];
+    const prefixes = from ? (from === folder.origin.host ? ownPaths(folder) : [folder.reach[from]?.path]) : [...ownPaths(folder), ...Object.values(folder.reach).map((r) => r.path)];
     for (const prefix of prefixes) {
       const rest = prefix === undefined ? null : inside(p, prefix);
       if (rest !== null && (!best || prefix!.length > best.prefix.length)) best = { folder, prefix: norm(prefix!), rest };

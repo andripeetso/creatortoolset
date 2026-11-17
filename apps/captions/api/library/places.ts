@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AuthVars } from "../auth";
 import type { LibraryViewer } from "../../contracts/library-source";
-import { derivedMove, joinRoot, PLACES_MAX, rootKey, type GoneVersion, type PathMove, type PlaceMove, type PlacesAnswer, type PlacesReportAnswer, type RootLabel, type VersionPlaces } from "../../contracts/places";
+import { derivedMove, joinRoot, PLACES_MAX, rootKey, type GoneVersion, type PathMove, type PlaceMove, type PlaceOn, type PlacesAnswer, type PlacesReportAnswer, type RootLabel, type VersionPlaces } from "../../contracts/places";
 import type { Device } from "../../contracts/providers";
 import type { Disk, StorageFolder } from "../../contracts/storage";
 import { deviceOf, listDevices } from "../lib/devices";
@@ -48,10 +48,46 @@ const disksOf = (device: string): Disk[] => deviceOf(device)?.report?.machine?.d
 /** The roots computer `device` has connected now (its last report; a share away is not). */
 export const rootsOn = (device: string): string[] => disksOf(device).flatMap((d) => (d.away ? [] : (rootKey(d) ?? [])));
 
+/**
+ * Computer `?`'s own place for version `v` (version_places, whereis.ts): the path of its best original row that is not gone
+ * (verified, then found, then not checked yet). A row not checked yet is still the path to try: "unknown there", never missing.
+ */
+export const OWN = `(SELECT op.path FROM version_places op WHERE op.version_id = v.id AND op.device = ? AND op.kind = 'original' AND op.state <> 'gone'
+  ORDER BY CASE op.state WHEN 'verified' THEN 0 WHEN 'found' THEN 1 ELSE 2 END, op.checked_at DESC LIMIT 1)`;
+/** When computer `?` last found version `v` gone, while it has no other place for it (else null). */
+const GONE_AT = `(SELECT max(gp.gone_at) FROM version_places gp WHERE gp.version_id = v.id AND gp.device = ? AND gp.kind = 'original' AND gp.state = 'gone'
+  AND NOT EXISTS (SELECT 1 FROM version_places hp WHERE hp.version_id = v.id AND hp.device = gp.device AND hp.kind = 'original' AND hp.state <> 'gone'))`;
+
+/** The versions whose proxy is in computer `device`'s cache: its proxy place rows (kind 'proxy', written from its work claims). */
+export const cachedOn = (device: string): string[] =>
+  (libraryDb().prepare("SELECT version_id FROM version_places WHERE device = ? AND kind = 'proxy' AND state IN ('verified','found')").all(device) as { version_id: string }[]).map((r) => r.version_id);
+
+/**
+ * A work claim's cache list (api/work/routes.ts) as computer `device`'s proxy places: one 'proxy' row per version it holds,
+ * the rows of versions it no longer lists removed. Versions the server does not know are skipped.
+ */
+export function noteProxyCache(device: string, versions: string[], now = Date.now()): void {
+  const d = libraryDb();
+  const ids = JSON.stringify([...new Set(versions)]);
+  d.exec("BEGIN IMMEDIATE");
+  try {
+    d.prepare("DELETE FROM version_places WHERE device = ? AND kind = 'proxy' AND source = 'work-claim' AND version_id NOT IN (SELECT value FROM json_each(?))").run(device, ids);
+    d.prepare(
+      `INSERT INTO version_places (version_id, device, kind, folder_id, path, state, source, confirmed_at, checked_at)
+       SELECT id, ?, 'proxy', '', '', 'verified', 'work-claim', ?, ? FROM asset_versions WHERE id IN (SELECT value FROM json_each(?))
+       ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET state = 'verified', checked_at = excluded.checked_at`,
+    ).run(device, now, now, ids);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+}
+
 /** The paths `host` tries for version row `r` (reach.ts fileFor: its first is where a step reads the file there). */
 export function triesOn(r: { id: string; mac_path: string | null; mac_device: string | null }, host: string, folders: StorageFolder[]): string[] {
   const v = libraryDb()
-    .prepare("SELECT v.root, v.root_rel, p.path AS own FROM asset_versions v LEFT JOIN version_places p ON p.version_id = v.id AND p.device = ? AND p.gone_at IS NULL WHERE v.id = ?")
+    .prepare(`SELECT v.root, v.root_rel, ${OWN} AS own FROM asset_versions v WHERE v.id = ?`)
     .get(host, r.id) as { root: string | null; root_rel: string | null; own: string | null } | undefined;
   return placesFor({ root: v?.root ?? null, root_rel: v?.root_rel ?? null, mac_path: r.mac_path, mac_device: r.mac_device }, { id: host, disks: disksOf(host) }, v?.own, folders);
 }
@@ -67,17 +103,33 @@ function labelOf(key: string, ...lists: Disk[][]): RootLabel {
 /** The account's computers' folders (reach.ts foldersOf), loaded when asked: a static import would close a loop (reach → work → library worker → here). */
 const foldersOf = async (owner: string): Promise<StorageFolder[]> => (await import("../editor/reach")).foldersOf(owner);
 
-type Row = PlaceVersion & { id: string; asset_id: string; bytes: number; quick: string | null; own: string | null; gone_at: number | null; title: string };
+/**
+ * The folder states the place rows of `versionIds` point at (whereis.ts whereIsMany's folderStateOf): each row's folder,
+ * from its computer's owner's Settings → Folders (StorageFolder.folderState, written from that computer's reports). "ok"
+ * and a folder not known read as nothing to say.
+ */
+export async function folderStatesFor(versionIds: string[]): Promise<(device: string, folder: string) => PlaceOn["folderState"]> {
+  const devices = libraryDb()
+    .prepare("SELECT DISTINCT device FROM version_places WHERE folder_id <> '' AND version_id IN (SELECT value FROM json_each(?))")
+    .all(JSON.stringify(versionIds)) as { device: string }[];
+  const owners = [...new Set(devices.flatMap((r) => deviceOf(r.device)?.owner ?? []))];
+  const states = new Map<string, PlaceOn["folderState"]>();
+  for (const owner of owners) for (const f of await foldersOf(owner)) if (f.folderState && f.folderState !== "ok") states.set(f.id, f.folderState);
+  return (_device, folder) => states.get(folder);
+}
+
+type Row = PlaceVersion & { id: string; asset_id: string; bytes: number; quick: string | null; own: string | null; gone_at: number | null; gone_path: string | null; title: string };
 
 /** The library's versions among `ids`, out of the trash, each with `device`'s place; only the ones `viewer` may see. */
 async function versionsOf(libraryId: string, viewer: LibraryViewer, device: string, ids: string[]): Promise<Row[]> {
   const rows = libraryDb()
     .prepare(
-      `SELECT v.id, v.asset_id, v.bytes, v.quick, v.root, v.root_rel, v.mac_path, v.mac_device, a.title, p.path AS own, p.gone_at
-       FROM asset_versions v JOIN assets a ON a.id = v.asset_id LEFT JOIN version_places p ON p.version_id = v.id AND p.device = ?
+      `SELECT v.id, v.asset_id, v.bytes, v.quick, v.root, v.root_rel, v.mac_path, v.mac_device, a.title, ${OWN} AS own, ${GONE_AT} AS gone_at,
+         (SELECT gp.path FROM version_places gp WHERE gp.version_id = v.id AND gp.device = ? AND gp.kind = 'original' AND gp.state = 'gone' ORDER BY gp.gone_at DESC LIMIT 1) AS gone_path
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.id IN (SELECT value FROM json_each(?))`,
     )
-    .all(device, libraryId, JSON.stringify(ids)) as unknown as Row[];
+    .all(device, device, device, libraryId, JSON.stringify(ids)) as unknown as Row[];
   const out: Row[] = [];
   for (const r of rows) if (await canSee(viewer, assetRef(libraryId, r.asset_id, r.id))) out.push(r);
   return out;
@@ -219,7 +271,7 @@ placesApp.get("/:id/places", async (c) => {
   if (ids.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
   const disks = a.dev.report?.machine?.disks ?? [];
   const folders = await foldersOf(a.dev.owner);
-  const cached = new Set(a.dev.work?.cache?.versions ?? []);
+  const cached = new Set(cachedOn(a.dev.id));
   const proxies = new Map(
     (libraryDb()
       .prepare("SELECT v.id, v.source_key, v.bytes, d.bytes AS proxy FROM asset_versions v LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL WHERE v.id IN (SELECT value FROM json_each(?))")
@@ -266,8 +318,8 @@ placesApp.get("/:id/places/gone", async (c) => {
   if ("error" in a) return c.json(a.error, a.status);
   const ids = (libraryDb()
     .prepare(
-      `SELECT p.version_id AS id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE p.device = ? AND p.gone_at IS NOT NULL AND a.library_id = ? AND v.quick IS NOT NULL AND v.quick != ''`,
+      `SELECT DISTINCT p.version_id AS id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE p.device = ? AND p.kind = 'original' AND p.state = 'gone' AND a.library_id = ? AND v.quick IS NOT NULL AND v.quick != ''`,
     )
     .all(a.dev.id, a.libraryId) as { id: string }[]).map((r) => r.id);
   // ponytail: the newest 20,000 away; a bigger library away from its share lists the rest after those are found
@@ -282,7 +334,7 @@ placesApp.get("/:id/places/gone", async (c) => {
           .all(a.libraryId, JSON.stringify(rootsOn(a.dev.id))) as { id: string }[]).map((r) => r.id)
       : [];
   const gone: GoneVersion[] = (await versionsOf(a.libraryId, a.viewer, a.dev.id, [...new Set([...ids, ...away])])).map((v) => {
-    const path = v.own ?? (v.mac_device === a.dev.id ? v.mac_path : null) ?? "";
+    const path = v.own ?? v.gone_path ?? (v.mac_device === a.dev.id ? v.mac_path : null) ?? "";
     return { versionId: v.id, bytes: v.bytes, quick: v.quick!, root: v.root, rootRel: v.root_rel, path, name: path ? base(path) : v.title };
   });
   return c.json({ gone });

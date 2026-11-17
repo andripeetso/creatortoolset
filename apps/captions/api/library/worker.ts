@@ -398,9 +398,9 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
       `SELECT v.source_key, a.library_id, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
        WHERE v.id = ? AND a.kind = 'video' AND v.from_path IS NOT NULL AND v.mac_path IS NULL AND v.source_path IS NULL
-         -- the computer it came from still holds it (a place it reported, not gone): else the original waits on the server
-         -- ponytail: a reported place, not a checked one; P1a's verified place row (state 'verified', full sha256) replaces this
-         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.gone_at IS NULL)
+         -- the computer it came from still holds it: else the original waits on the server
+         -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
+         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified')
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;

@@ -56,7 +56,7 @@ async function upload(lib: string, name: string, placed = true): Promise<string>
   ).json()) as { id: string };
   await app.request(`/api/library/uploads/${init.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(body.length) }, body });
   const id = ((await (await post(`/api/library/uploads/${init.id}/finish`)).json()) as { versionId: string }).versionId;
-  if (placed && id) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, 'mac-1', ?, ?)").run(id, `/Users/tiny/Movies/${name}`, Date.now());
+  if (placed && id) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-1', ?, ?, 'verified')").run(id, `/Users/tiny/Movies/${name}`, Date.now());
   return id;
 }
 
@@ -114,9 +114,12 @@ describe("a Media Library whose upload is proxies only", () => {
     await proxied(id);
     expect(await dropOriginal(id)).toBe(false);
     expect(await blobs.stat(original)).not.toBeNull();
-    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at) VALUES (?, 'mac-1', '/Users/tiny/Movies/Arch.mp4', 1, 2)").run(id);
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at, state) VALUES (?, 'mac-1', '/Users/tiny/Movies/Arch.mp4', 1, 2, 'gone')").run(id);
     expect(await dropOriginal(id)).toBe(false);
-    d.prepare("UPDATE version_places SET gone_at = NULL WHERE version_id = ?").run(id);
+    d.prepare("UPDATE version_places SET gone_at = NULL, state = 'unchecked' WHERE version_id = ?").run(id);
+    // a place not checked yet (a row from before the place states) is not enough: the Mac's scan must read it there
+    expect(await dropOriginal(id)).toBe(false);
+    d.prepare("UPDATE version_places SET state = 'verified' WHERE version_id = ?").run(id);
     expect(await dropOriginal(id)).toBe(true);
   });
 

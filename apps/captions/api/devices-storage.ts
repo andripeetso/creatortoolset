@@ -141,6 +141,8 @@ const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMo
  * A folder this server reads in place, so it joins the Media Library's watch list: "this computer" by name (setup's
  * Folders step), or the paired computer that is the machine this server runs on (Settings → Storage picks a computer),
  * where the server may read the person's folders at all (watchAllowed: not a hosted server).
+ * A folder on any other computer (a Mac, a helper) is read only by that computer's location agent: its report
+ * (library/report.ts applyReport) writes the place rows whereIs reads. The server never opens that path, never watches it.
  */
 const readHere = (user: string, host: string) => host === THIS_COMPUTER || (isThisMachine(host) && watchAllowed(user));
 
@@ -356,6 +358,50 @@ storageApp.patch("/folders/:id", async (c) => {
   });
   if (!out) return c.json({ error: "Not found" }, 404);
   await unwatch(user, f.origin.path, was, now);
+  return c.json(shown(out, here, user, named));
+});
+
+/**
+ * POST /api/devices/storage/folders/:id/re-point {path}: the folder moved or was renamed on its computer, and the person
+ * picked where it is now (the Mac's folder picker). Same computer, new path; its state there is cleared ("Not checked
+ * yet") and its place rows turn unchecked until that computer's next report lists it. A folder this server reads itself
+ * moves on the watch list too. Returns the folder list like the other routes here.
+ */
+storageApp.post("/folders/:id/re-point", async (c) => {
+  const u = c.get("user");
+  const user = u.username;
+  const id = c.req.param("id");
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const raw = b?.path;
+  // the folder's own computer's path, whole ("~" is a home folder this server cannot say for another computer)
+  if (!okFolderPath(raw) || raw.startsWith("~")) return c.json({ error: "Needs a folder" }, 400);
+  const p = raw.normalize("NFC").replace(/(.)\/+$/, "$1");
+  const { mine: here, named } = await scopeOf(c);
+  const before = (await readStorage(user)).folders;
+  const f = before.find((x) => x.id === id);
+  if (!f) return c.json({ error: "Not found" }, 404);
+  if (f.origin.path === p) return c.json(shown({ folders: before }, here, user, named));
+  if (before.some((x) => x.id !== id && x.role === f.role && x.origin.host === f.origin.host && x.origin.path === p)) return c.json({ error: "That folder is already there" }, 400);
+  const watched = f.role !== "library" && f.role !== "finals" && readHere(user, f.origin.host);
+  const of = watched ? await projectOf(u) : null;
+  const was = watched ? await readersOf(user, of, before, f.origin) : new Set<string>();
+  for (const ws of was) {
+    const refused = await watchIn(user, p, ws);
+    if (refused) return c.json({ error: refused }, 400);
+  }
+  const out = await chained(user, async () => {
+    const st = await readStorage(user);
+    const i = st.folders.findIndex((x) => x.id === id);
+    if (i < 0) return null;
+    // its state there and a container path were the old path's
+    const { folderState: _s, checkedAt: _c, mountPath: _m, ...rest } = st.folders[i]!;
+    st.folders[i] = { ...rest, name: p.split("/").filter(Boolean).pop() ?? p, origin: { ...rest.origin, path: p } };
+    await writeStorage(user, st);
+    return st;
+  });
+  if (!out) return c.json({ error: "Not found" }, 404);
+  libraryDb().prepare("UPDATE version_places SET state = 'unchecked' WHERE device = ? AND folder_id = ? AND state <> 'unchecked'").run(f.origin.host, id);
+  if (watched) await unwatch(user, f.origin.path, was, await readersOf(user, of, out.folders, f.origin));
   return c.json(shown(out, here, user, named));
 });
 
