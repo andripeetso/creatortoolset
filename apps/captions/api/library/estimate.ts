@@ -4,7 +4,7 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { freeTierStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
+import { antigravityRoute, canWatch, freeTierStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
 import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
@@ -280,8 +280,8 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
     // an hour of footage at each level, so the person picks with the time and cost in front of them
     const mine = levelShare(libraryLookLevel(libraryId));
     out.lookLevels = [];
-    // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from measured tokens)
-    const watching = librarySetting(libraryId, "timeline") && !!watchKey(username);
+    // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from measured tokens; Antigravity's costs nothing a call)
+    const watching = librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username);
     const model = libraryWatchModel(db, libraryId);
     for (const l of LOOK_LEVELS) {
       const p = await lookPerClip(db, look, 3600, levelShare(l.value), mine);
@@ -291,7 +291,8 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   out.timelineKey = !!watchKey(username);
   // each model's timeline of an hour at the library's level, so the person picks one with its cost in front of them
   if (out.timelineKey && freeTierStopped(db, libraryId)) out.timelineFreeTier = true;
-  if (out.timelineKey) out.timelineModels = WATCH_MODELS.map((m) => ({ model: m.value, usd: watchUsdPerHour(libraryLookLevel(libraryId), m.value) }));
+  if (out.timelineKey) out.timelineModels = WATCH_MODELS.filter((m) => m.value !== "antigravity").map((m) => ({ model: m.value, usd: watchUsdPerHour(libraryLookLevel(libraryId), m.value) }));
+  if (antigravityRoute(username)) out.timelineAntigravity = true;
   if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);
   if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);

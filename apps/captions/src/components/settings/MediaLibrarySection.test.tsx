@@ -181,15 +181,24 @@ describe("the Media Library's settings", () => {
     expect(patches).toEqual([{ settings: { lookLevel: "detailed" } }, { settings: { lookBudget: 35 } }]);
   });
 
-  it("Timelines list each Gemini model with an hour's cost, 3.8 Flash in use, and save the one picked", async () => {
+  it("Timelines list each Gemini model with an hour's cost, 3.8 Flash in use, Antigravity as picture only, and save the one picked", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
     const text = document.body.textContent ?? "";
     expect(text).toContain("Gemini 3.8 Flash");
-    expect(text).toContain("Most moments, about $0.42 an hour of footage");
-    expect(text).toContain("Fewer moments, about $0.16 an hour of footage");
-    const lite = [...host!.querySelectorAll('[data-settings-row="library-ai"] button')].find((b) => b.textContent === "Use") as HTMLButtonElement;
-    await act(async () => lite.click());
-    expect(patches).toEqual([{ settings: { timelineModel: "gemini-3.5-flash-lite" } }]);
+    expect(text).toContain("Picture and sound, most moments, about $0.42 an hour of footage");
+    expect(text).toContain("Picture and sound, fewer moments, about $0.16 an hour of footage");
+    expect(text).toContain("Picture only, no sound");
+    const [lite, agy] = [...host!.querySelectorAll('[data-settings-row="library-ai"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
+    await act(async () => lite!.click());
+    await act(async () => agy!.click());
+    expect(patches).toEqual([{ settings: { timelineModel: "gemini-3.5-flash-lite" } }, { settings: { timelineModel: "antigravity" } }]);
+  });
+
+  it("Timelines on Antigravity need it among the AI providers", async () => {
+    await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, timelineModel: "antigravity" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+    const needs = [...host!.querySelectorAll("a")].find((x) => x.textContent === "Needs Antigravity");
+    expect(needs?.getAttribute("href")).toBe("/settings/providers");
+    expect(document.body.textContent).not.toContain("Uses the Gemini API key");
   });
 
   it("Timelines say once when the Gemini key is on Google's free tier", async () => {

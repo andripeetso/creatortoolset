@@ -1,10 +1,15 @@
 import { openAsBlob } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import https from "node:https";
+import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { LOOK_LEVELS, watchModelOf, type LookLevel, type TimelineEvent, type WatchModel } from "../../contracts/library";
+import { LOOK_LEVELS, watchModelOf, type GeminiModel, type LookLevel, type TimelineEvent, type WatchModel } from "../../contracts/library";
+import { completeWithFallback, type ProviderOpts } from "../ai-complete";
 import { keyFor } from "../my-keys";
-import { recordUsage } from "../lib/mac-claude";
+import { MacClaudeError, recordUsage, usageIn } from "../lib/mac-claude";
+import { ownSettings, providerSettings, routeForInstance, runFields } from "../lib/providers";
+import { findUser } from "../users";
 import { workspaceContext } from "../lib/workshop/context";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { libraryLookLevel, librarySetting } from "./db";
@@ -13,7 +18,8 @@ import { canEmbed } from "./embed";
 import { enqueueJob } from "./jobs";
 import { clock, RULE } from "./look";
 import { hasSound } from "./media/probe";
-import { WATCH_LABEL } from "./shots";
+import { ffmpeg } from "./media/run";
+import { LOOK_LABEL, WATCH_LABEL } from "./shots";
 
 /**
  * Timelines: Gemini watches a video with its sound and says what happens when (contracts TimelineEvent), on top of the
@@ -24,13 +30,15 @@ import { WATCH_LABEL } from "./shots";
  * is counted in the usage tally and the library's monthly budget like the look's own. A watch that fails never fails the
  * look: its error is kept and it is tried again RETRY_MS later (sweepWatch). A watch runs beside the look lane, never in
  * it (watchAfter): a busy model can keep one call waiting for minutes.
+ * The library's Timelines may watch on Antigravity instead (WATCH_MODELS), the person's own AI provider signed in with
+ * Google, no key: picture only (askAntigravity).
  */
 
 /**
  * Dollars per million tokens, in and out (thinking counted as out), paid tier, one rate for video, audio and text.
  * Read 2026-11-16 off Google's price list; 3.8 Flash's doubles on 2027-01-01 (1.5 in, 7.5 out).
  */
-const PRICE: Record<WatchModel, { in: number; out: number }> = {
+const PRICE: Record<GeminiModel, { in: number; out: number }> = {
   "gemini-3.8-flash": { in: 0.75, out: 3.75 },
   "gemini-3.5-flash-lite": { in: 0.3, out: 2.5 },
 };
@@ -81,7 +89,7 @@ const NOTE_MAX = 120;
  * 3.8 Flash 2026-11-16 on an 11:39 public-domain NASA video (MEASURED_NOTE); Flash-Lite 2026-11-16 on a 12-minute open
  * movie (Light $0.09, Standard $0.16, Detailed $0.29 an hour of footage).
  */
-const MEASURED: Record<WatchModel, Record<LookLevel, { inS: number; outMin: number }>> = {
+const MEASURED: Record<GeminiModel, Record<LookLevel, { inS: number; outMin: number }>> = {
   "gemini-3.8-flash": {
     light: { inS: 0, outMin: 0 },
     standard: { inS: 93, outMin: 1000 },
@@ -94,8 +102,9 @@ const MEASURED: Record<WatchModel, Record<LookLevel, { inS: number; outMin: numb
   },
 };
 
-/** What an hour of footage costs to watch at `level` with `model` (dollars), from the measured tokens. */
+/** What an hour of footage costs to watch at `level` with `model` (dollars), from the measured tokens; nothing on Antigravity (a subscription). */
 export function watchUsdPerHour(level: LookLevel, model: WatchModel = watchModelOf(undefined)): number {
+  if (model === "antigravity") return 0;
   const m = MEASURED[model][level];
   return (3600 * m.inS * PRICE[model].in + 60 * m.outMin * PRICE[model].out) / 1e6;
 }
@@ -118,6 +127,37 @@ export const libraryWatchModel = (db: DatabaseSync, libraryId: string): WatchMod
 /** The actor's Gemini key, or "" (keyFor: their own, else the server's for an admin). */
 export const watchKey = (actor: string | null): string => (actor ? keyFor(actor, "GEMINI_API_KEY").key : "");
 
+/**
+ * The actor's Antigravity as the route of one watch, or null when they have none that runs: their own provider, else
+ * for an admin the workspace's. `fixed`: a quota never moves the call to another AI. `once`: the video part goes with
+ * the request and is not kept on the Mac.
+ */
+export function antigravityRoute(actor: string | null): ProviderOpts | null {
+  if (!actor) return null;
+  const admin = findUser(actor)?.role === "admin";
+  for (const inst of [ownSettings(actor), admin ? providerSettings() : null].flatMap((s) => s?.instances ?? [])) {
+    if (inst.driver !== "antigravity" || !inst.enabled) continue;
+    const r = routeForInstance(actor, admin, "library", { instance: inst.id, model: inst.model ?? "", effort: "medium" });
+    if (r?.instance.id !== inst.id) continue;
+    return {
+      only: ["mac"],
+      fixed: true,
+      mac: {
+        label: AGY_LABEL,
+        background: true,
+        once: true,
+        provider: { instance: inst.id, driver: inst.driver, home: inst.home, model: r.selection.model, effort: r.selection.effort, device: r.device, scope: r.scope, ...runFields(inst) },
+      },
+    };
+  }
+  return null;
+}
+const AGY_LABEL = `${LOOK_LABEL} (Antigravity)`;
+
+/** Whether `actor` can watch in this library: a Gemini key, or with Antigravity picked, an Antigravity that runs. */
+export const canWatch = (db: DatabaseSync, libraryId: string, actor: string | null): boolean =>
+  libraryWatchModel(db, libraryId) === "antigravity" ? !!antigravityRoute(actor) : !!watchKey(actor);
+
 /** A version's timeline row. */
 interface Row {
   events: string;
@@ -128,14 +168,15 @@ interface Row {
 }
 const rowOf = (db: DatabaseSync, versionId: string) => db.prepare("SELECT events, level, model, error, at FROM timelines WHERE version_id = ?").get(versionId) as Row | undefined;
 
-/** Whether `versionId` should be watched now as `actor`: Timelines on, a key, and no timeline at the library's level (one that failed: RETRY_MS later). */
+/** Whether `versionId` should be watched now as `actor`: Timelines on, what watches (canWatch), and no timeline at the library's level (one that failed: RETRY_MS later). */
 export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | null, now = Date.now()): boolean {
   const r = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined;
-  if (!r || !librarySetting(r.library_id, "timeline") || !watchKey(actor)) return false;
+  if (!r || !librarySetting(r.library_id, "timeline") || !canWatch(db, r.library_id, actor)) return false;
   const t = rowOf(db, versionId);
   if (!t) return true;
   if (t.error) return now - t.at >= RETRY_MS;
-  return t.level !== libraryLookLevel(r.library_id);
+  // a picture-only timeline is made again with its sound once the library watches on a Gemini key
+  return t.level !== libraryLookLevel(r.library_id) || (t.model === "antigravity" && libraryWatchModel(db, r.library_id) !== "antigravity");
 }
 
 /** A version's timeline, in order; empty when it has none. */
@@ -222,7 +263,7 @@ export function parseTimeline(text: string, a: number, b: number, sound = true):
  * The prompt for one part a..b of a video `dur` long. `sound` false: the file has no sound track, and the model is told
  * so (both models, asked as with sound, made up giggling, footsteps and singing over silent files: 2026-11-16).
  */
-export function watchPrompt(o: { title: string; workspace: string; level: LookLevel; a: number; b: number; dur: number; sound: boolean }): { system: string; user: string } {
+export function watchPrompt(o: { title: string; workspace: string; level: LookLevel; a: number; b: number; dur: number; sound: boolean; file?: string }): { system: string; user: string } {
   const long = LOOK_LEVELS.find((l) => l.value === o.level)!.long;
   return {
     system:
@@ -230,7 +271,7 @@ export function watchPrompt(o: { title: string; workspace: string; level: LookLe
         ? "You watch a video with its sound for a video editor, so it can find moments by their time without watching it. "
         : "You watch a video for a video editor, so it can find moments by their time without watching it. The video has no " +
           "sound track: say nothing about what is heard, and never guess a sound from the picture. ") +
-      "List what happens, in order, as events. Each has its start and end (M:SS, counted from the start of the whole video); what happens: " +
+      `List what happens, in order, as events. Each has its start and end (M:SS, counted from the start of the ${o.file ? "file" : "whole video"}); what happens: ` +
       "the subject, the action, the place and the kind of shot (wide, close, screen, text); " +
       (o.sound ? "what the sound adds, when it adds something (a hit, an explosion, a line said, music rising or dropping, a silence); " : "") +
       "and what changed from the event before " +
@@ -238,7 +279,9 @@ export function watchPrompt(o: { title: string; workspace: string; level: LookLe
       `${RULE} Answer with JSON only.`,
     user: [
       ...(o.workspace ? [`The workspace the footage is for. Use it to name what is seen${o.sound ? " and heard" : ""} when the video shows it; never add what it doesn't:\n${o.workspace}`] : []),
-      `“${o.title}”, ${clock(o.dur)} long${o.sound ? "" : ", with no sound"}. Watch it from ${clock(o.a)} to ${clock(o.b)}.`,
+      o.file
+        ? `“${o.title}”, ${clock(o.dur)} long. The file ${o.file} in the current folder is its part from ${clock(o.a)} to ${clock(o.b)}, with no sound: open it with your file-reading tool and watch all of it.`
+        : `“${o.title}”, ${clock(o.dur)} long${o.sound ? "" : ", with no sound"}. Watch it from ${clock(o.a)} to ${clock(o.b)}.`,
       `Answer as {"events": [{"start": "M:SS", "end": "M:SS", "what": "…", ${o.sound ? '"sound": "…", ' : ""}"change": "…"}]}`,
     ].join("\n\n"),
   };
@@ -367,7 +410,7 @@ function longPost(url: string, headers: Record<string, string>, body: string, ms
 }
 
 /** One part's call: its events and what it cost. */
-async function askPart(key: string, model: WatchModel, f: { uri: string; mimeType: string }, prompt: { system: string; user: string }, a: number, b: number, level: LookLevel, sound: boolean) {
+async function askPart(key: string, model: GeminiModel, f: { uri: string; mimeType: string }, prompt: { system: string; user: string }, a: number, b: number, level: LookLevel, sound: boolean) {
   const { fps, res } = WATCH_LEVELS[level];
   // a busy model (measured: a 503 "high demand" after 109 s at Detailed) or a dropped connection is asked again later
   for (let i = 0; ; i++) {
@@ -392,7 +435,7 @@ async function askPart(key: string, model: WatchModel, f: { uri: string; mimeTyp
   }
 }
 
-const callPart = (key: string, model: WatchModel, f: { uri: string; mimeType: string }, prompt: { system: string; user: string }, a: number, b: number, fps: number, res: string, sound: boolean) =>
+const callPart = (key: string, model: GeminiModel, f: { uri: string; mimeType: string }, prompt: { system: string; user: string }, a: number, b: number, fps: number, res: string, sound: boolean) =>
   watchTiming.post(
     `${BASE}/v1beta/models/${model}:generateContent`,
     { "x-goog-api-key": key, "Content-Type": "application/json" },
@@ -413,7 +456,7 @@ const callPart = (key: string, model: WatchModel, f: { uri: string; mimeType: st
   );
 
 /** A part's answer: its events inside a..b and what it cost. */
-async function answerOf(r: Response, model: WatchModel, a: number, b: number, sound: boolean) {
+async function answerOf(r: Response, model: GeminiModel, a: number, b: number, sound: boolean) {
   const body = (await r.json()) as {
     candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
@@ -425,11 +468,63 @@ async function answerOf(r: Response, model: WatchModel, a: number, b: number, so
   return { events: parseTimeline(text, a, b, sound), usage, inTokens: u.promptTokenCount ?? 0, outTokens: out };
 }
 
+/** The name of the part's copy in the Antigravity run's folder. */
+const AGY_FILE = "video.mp4";
+/** How long a used-up Antigravity quota parks its watches when the refusal names no time. */
+const AGY_PARK_MS = 3600_000;
+const QUOTA = /quota|resource.?exhausted|rate.?limit|\b429\b|usage limit/i;
+const TOO_BIG = /too (large|big)|exceeds|\b413\b|payload/i;
+
 /**
- * Watches `file` (a version's proxy, else its original; a Mac's copy) on the actor's Gemini key and stores its
- * timeline: uploaded once, asked in parts of PART_S (PARTS_AT_ONCE at a time) with the library's model, each call
- * tallied as WATCH_LABEL under the version's workspace, the upload dropped after. A file with no sound track is watched
- * as one (watchPrompt). Throws when it fails (watchAfter keeps the error).
+ * The part a..b of `file`, watched by Antigravity: a copy of it at 360 lines, 5 frames a second and no sound goes into
+ * the run's own folder on the person's Mac (removed with the run), and Antigravity reads it with its file tool.
+ * Measured 2026-11-17 on screen-recorded gameplay: 3 to 39 minutes in one file (3 to 38 MB) came back with the right
+ * times, and a 10-minute part as made here is about 8 MB. It sees the picture only (it said so of a test beep), so no
+ * sound note is kept. Times come back from the file's start and are moved to the video's. A file too big for it is asked
+ * as two halves; a used-up quota parks `park` (no next part, no other video) and the watch is tried again later.
+ */
+export async function askAntigravity(
+  route: ProviderOpts,
+  park: string,
+  file: string,
+  o: { title: string; workspace: string; level: LookLevel; a: number; b: number; dur: number },
+  workspace?: string,
+): Promise<TimelineEvent[]> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ct-watch-"));
+  try {
+    const part = path.join(dir, AGY_FILE);
+    await ffmpeg(["-ss", String(o.a), "-i", file, "-t", String(o.b - o.a), "-vf", "scale=-2:'min(360,ih)',fps=5", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "32", part]);
+    const files = { [AGY_FILE]: `base64:${(await readFile(part)).toString("base64")}` };
+    await rm(part);
+    const prompt = watchPrompt({ ...o, sound: false, file: AGY_FILE });
+    const text = await usageIn(workspace, () => completeWithFallback(prompt.system, prompt.user, undefined, (t) => t, { ...route, mac: { ...route.mac, files } }));
+    const r2 = (x: number) => Math.round(x * 100) / 100;
+    return parseTimeline(text, 0, o.b - o.a, false).map((e) => ({ ...e, a: r2(e.a + o.a), b: r2(e.b + o.a) }));
+  } catch (e) {
+    const said = e instanceof Error ? e.message : String(e);
+    if (/authenticat|signed out|not signed in|log ?in required/i.test(said)) throw new Error("Antigravity is signed out: sign in to it again in Settings → Providers");
+    if ((e instanceof MacClaudeError && e.kind === "limit") || QUOTA.test(said)) {
+      const msg = "Antigravity's quota is used up for now: the watch is tried again later";
+      parked.set(park, { until: (e instanceof MacClaudeError && e.limited?.until) || Date.now() + AGY_PARK_MS, said: msg });
+      throw new Error(msg);
+    }
+    if (TOO_BIG.test(said)) {
+      if (o.b - o.a <= 60) throw new Error("The video is too big for Antigravity, even a minute at a time");
+      const m = Math.round((o.a + o.b) / 2);
+      return [...(await askAntigravity(route, park, file, { ...o, b: m }, workspace)), ...(await askAntigravity(route, park, file, { ...o, a: m }, workspace))];
+    }
+    throw new Error(`Antigravity: ${said}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Watches `file` (a version's proxy, else its original; a Mac's copy) and stores its timeline, with the library's model
+ * (contracts WATCH_MODELS). On a Gemini key: uploaded once, asked in parts of PART_S (PARTS_AT_ONCE at a time), each
+ * call tallied as WATCH_LABEL under the version's workspace, the upload dropped after; a file with no sound track is
+ * watched as one (watchPrompt). On Antigravity: the same parts one at a time, picture only (askAntigravity). Throws
+ * when it fails (watchAfter keeps the error).
  */
 export async function watchVersion(
   db: DatabaseSync,
@@ -437,41 +532,44 @@ export async function watchVersion(
   file: string,
   actor: string,
 ): Promise<{ events: number; usd: number; ms: number; sound: boolean; inTokens: number; outTokens: number }> {
-  const key = watchKey(actor);
-  if (!key) throw new Error("Needs a Gemini API key");
-  // a key whose quota ran out: nothing is uploaded or asked until its wait is over (the watch is tried again RETRY_MS later)
-  const p = parkedOf(key);
-  if (p) throw new Error(p.said);
   const t0 = Date.now();
   const v = db
     .prepare("SELECT a.title, a.library_id, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
     .get(versionId) as { title: string; library_id: string; probe: string | null };
+  const model = libraryWatchModel(db, v.library_id);
+  const route = model === "antigravity" ? antigravityRoute(actor) : null;
+  const key = model === "antigravity" ? "" : watchKey(actor);
+  if (model === "antigravity" && !route) throw new Error("Needs Antigravity in Settings → Providers");
+  if (model !== "antigravity" && !key) throw new Error("Needs a Gemini API key");
+  // a quota that ran out: nothing is uploaded or asked until its wait is over (the watch is tried again RETRY_MS later)
+  const park = route ? `antigravity:${actor}` : key;
+  const p = parkedOf(park);
+  if (p) throw new Error(p.said);
   const dur = Number((JSON.parse(v.probe ?? "null") as { duration?: number } | null)?.duration) || 0;
   const level = libraryLookLevel(v.library_id);
-  const model = libraryWatchModel(db, v.library_id);
-  const sound = await hasSound(file);
+  const sound = !route && (await hasSound(file));
   const wsId = await workspaceIdOf(db, versionId);
   const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
   const length = Math.max(dur, 1);
-  const f = await uploadVideo(key, file, v.title);
+  const f = route ? null : await uploadVideo(key, file, v.title);
   let usd = 0;
   let inTokens = 0;
   let outTokens = 0;
-  /** The events of each range, asked PARTS_AT_ONCE at a time, each call tallied. */
+  const one = async ([a, b]: [number, number]): Promise<TimelineEvent[]> => {
+    if (route) return askAntigravity(route, park, file, { title: v.title, workspace, level, a, b, dur }, wsId);
+    const r = await askPart(key, model as GeminiModel, f!, watchPrompt({ title: v.title, workspace, level, a, b, dur, sound }), a, b, level, sound);
+    usd += r.usage.costUsd;
+    inTokens += r.inTokens;
+    outTokens += r.outTokens;
+    void recordUsage(WATCH_LABEL, r.usage, undefined, "workspace", wsId ?? null);
+    return r.events;
+  };
+  // Antigravity runs one part at a time: each run starts its program afresh on the person's Mac
+  const atOnce = route ? 1 : PARTS_AT_ONCE;
+  /** The events of each range, asked `atOnce` at a time. */
   const ask = async (ranges: [number, number][]) => {
     const found: TimelineEvent[] = [];
-    for (let i = 0; i < ranges.length; i += PARTS_AT_ONCE)
-      for (const events of await Promise.all(
-        ranges.slice(i, i + PARTS_AT_ONCE).map(async ([a, b]) => {
-          const r = await askPart(key, model, f, watchPrompt({ title: v.title, workspace, level, a, b, dur, sound }), a, b, level, sound);
-          usd += r.usage.costUsd;
-          inTokens += r.inTokens;
-          outTokens += r.outTokens;
-          void recordUsage(WATCH_LABEL, r.usage, undefined, "workspace", wsId ?? null);
-          return r.events;
-        }),
-      ))
-        found.push(...events);
+    for (let i = 0; i < ranges.length; i += atOnce) for (const events of await Promise.all(ranges.slice(i, i + atOnce).map(one))) found.push(...events);
     return found;
   };
   try {
@@ -479,11 +577,11 @@ export async function watchVersion(
     // a stretch the answers left without an event is asked once more on its own
     const holes = holesOf(events, length, holeS(level));
     if (holes.length) events = [...events, ...(await ask(holes))].sort((x, y) => x.a - y.a);
-    if (!events.length) throw new Error("Gemini named nothing that happens in the video");
+    if (!events.length) throw new Error(`${route ? "Antigravity" : "Gemini"} named nothing that happens in the video`);
     storeTimeline(db, versionId, { events, level, model });
     return { events: events.length, usd, ms: Date.now() - t0, sound, inTokens, outTokens };
   } finally {
-    await deleteVideo(key, f.name);
+    if (f) await deleteVideo(key, f.name);
   }
 }
 
@@ -516,25 +614,27 @@ const swept = new Map<string, number>();
 
 /**
  * Timelines as a background index: the next video whose look is done that wants a timeline (Timelines switched on, or a
- * key added, after its look; a level changed; a failed watch whose wait is over) gets its look queued again as its
+ * key or Antigravity added, after its look; a level changed; a picture-only timeline once the library watches on a key;
+ * a failed watch whose wait is over) gets its look queued again as its
  * uploader: the look finds its lines current and goes on to the watch. True when it queued one.
  */
 export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, actor: string) => boolean, now = Date.now()): boolean {
   if (watching.size >= WATCHES_AT_ONCE) return false;
   const rows = db
     .prepare(
-      `SELECT v.id, v.created_by AS actor FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+      `SELECT v.id, v.created_by AS actor, a.library_id AS lib FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
          JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
        WHERE a.trashed_at IS NULL AND v.created_by IS NOT NULL AND IFNULL(json_extract(l.settings, '$.timeline'), 1)
-         AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at <= ?) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard')))
+         AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at <= ?) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
+              OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
        ORDER BY v.created_at DESC LIMIT 50`,
     )
-    .all(now - RETRY_MS) as { id: string; actor: string }[];
+    .all(now - RETRY_MS) as { id: string; actor: string; lib: string }[];
   for (const r of rows) {
     if ((swept.get(r.id) ?? 0) > now || watching.has(r.id)) continue;
     swept.set(r.id, now + RETRY_MS);
-    if (!watchKey(r.actor)) continue;
+    if (!canWatch(db, r.lib, r.actor)) continue;
     if (queueLook(r.id, r.actor)) return true;
   }
   return false;

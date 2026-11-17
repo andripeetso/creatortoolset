@@ -59,7 +59,7 @@ export type ProviderOpts = {
   /** Exactly these, in this order (the configured ones). */
   only?: ProviderId[];
   /** The Mac's provider call: what it is for (its usage tally), the provider, and its measured usage. The API path uses the label too. */
-  mac?: Pick<MacOpts, "label" | "background" | "files" | "web" | "onStep" | "session" | "onSession" | "provider" | "model">;
+  mac?: Pick<MacOpts, "label" | "background" | "files" | "once" | "web" | "onStep" | "session" | "onSession" | "provider" | "model">;
   onUsage?: (usage: MacUsage) => void;
   /** Anthropic API only: its output_config.effort and model (the providers page's API settings). */
   effort?: Effort;

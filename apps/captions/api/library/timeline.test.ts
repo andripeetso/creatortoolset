@@ -1,13 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
 vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
-  return { ...m, aiFor: vi.fn(() => ({ only: ["mac"] })) };
+  return { ...m, aiFor: vi.fn(() => ({ only: ["mac"] })), completeWithFallback: vi.fn(m.completeWithFallback) };
+});
+// the person's AI providers: none, unless a test gives them Antigravity (agy)
+vi.mock("../lib/providers", async (real) => {
+  const m = await real<typeof import("../lib/providers")>();
+  return { ...m, ownSettings: vi.fn(m.ownSettings), routeForInstance: vi.fn(m.routeForInstance) };
 });
 vi.mock("../ai-vision", () => ({ completeVisionWithFallback: vi.fn() }));
 
@@ -32,7 +37,10 @@ const watched = () => Promise.all([...watching.values()]);
 const { embedChunks } = await import("./embed");
 const { saveMyKey } = await import("../my-keys");
 const { completeVisionWithFallback } = await import("../ai-vision");
-const { macUsageSince } = await import("../lib/mac-claude");
+const { MacClaudeError, macUsageSince } = await import("../lib/mac-claude");
+const { completeWithFallback } = await import("../ai-complete");
+const providers = await import("../lib/providers");
+const { antigravityRoute, askAntigravity, canWatch } = await import("./timeline");
 
 afterAll(() => {
   vi.unstubAllGlobals();
@@ -370,5 +378,109 @@ describe("in an edit's plan", () => {
     const { user } = planPrompt({ brief: "", setup: "", versions: 1, index, words: {}, gen: [], targetS: 0 } as never);
     expect(user).toContain("Timeline lines:");
     expect(user).toContain("the boss dies · sound: a roar");
+  });
+});
+
+describe("Antigravity", () => {
+  const inst = { id: "agy", driver: "antigravity" as const, name: "Antigravity", enabled: true, device: "mac-1" };
+  /** The actor has Antigravity on their Mac; the library watches with it. */
+  function withAntigravity() {
+    vi.mocked(providers.ownSettings).mockReturnValue({ instances: [inst], default: { instance: "agy", model: "", effort: "medium" }, jobs: {} } as never);
+    vi.mocked(providers.routeForInstance).mockReturnValue({ scope: "local", selection: { instance: "agy", model: "", effort: "medium" }, instance: inst, device: "mac-1" } as never);
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineModel', 'antigravity') WHERE id = 'lib_t'`).run();
+  }
+  /** Each run Antigravity is asked: its prompt, its route, and what the video part it got holds. */
+  function runs(answer: (n: number) => unknown = () => ({ events: [{ start: "0:01", end: "0:04", what: "a jump", sound: "giggling", change: "a cut" }] })) {
+    const asked: { system: string; user: string; opts: Parameters<typeof completeWithFallback>[4]; audio: string; height: number }[] = [];
+    vi.mocked(completeWithFallback).mockImplementation(async (system, user, _c, parse, opts) => {
+      const part = path.join(dir, `part-${asked.length}.mp4`);
+      writeFileSync(part, Buffer.from(opts!.mac!.files!["video.mp4"]!.slice(7), "base64"));
+      // a part past the end of the 12-second test file is an empty copy: nothing to read in it
+      const probe = (what: string) => {
+        try {
+          return execFileSync("ffprobe", ["-v", "error", "-show_entries", what, "-of", "csv=p=0", part]).toString().trim();
+        } catch {
+          return "";
+        }
+      };
+      asked.push({ system, user, opts, audio: probe("stream=codec_type").includes("audio") ? "yes" : "no", height: Number(probe("stream=height")) });
+      const a = answer(asked.length - 1);
+      if (a instanceof Error) throw a;
+      return parse(JSON.stringify(a));
+    });
+    return asked;
+  }
+  afterEach(() => {
+    vi.mocked(providers.ownSettings).mockReset();
+    vi.mocked(providers.routeForInstance).mockReset();
+    vi.mocked(completeWithFallback).mockReset();
+    libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+  });
+
+  it("watches a small soundless copy in its run folder: picture only, no sound note kept, no key, no Gemini call", async () => {
+    const { v, file } = await seed("agy");
+    withAntigravity();
+    const calls = gemini();
+    const asked = runs();
+    expect(canWatch(libraryDb(), "lib_t", "local")).toBe(true);
+    expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+    const r = await watchVersion(libraryDb(), v, file, "local");
+    expect(calls).toHaveLength(0);
+    expect(r).toMatchObject({ sound: false, usd: 0 });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ audio: "no", height: 90 });
+    expect(asked[0]!.opts).toMatchObject({ only: ["mac"], fixed: true, mac: { once: true, background: true, provider: { driver: "antigravity", device: "mac-1" } } });
+    expect(asked[0]!.system).toContain("no sound track");
+    expect(asked[0]!.system).toContain("counted from the start of the file");
+    expect(asked[0]!.user).toContain("The file video.mp4 in the current folder is its part from 0:00 to 0:12");
+    expect(timelineOf(libraryDb(), v)).toEqual([{ a: 1, b: 4, what: "a jump", change: "a cut" }]);
+    expect((libraryDb().prepare("SELECT model FROM timelines WHERE version_id = ?").get(v) as { model: string }).model).toBe("antigravity");
+    // a key added and the library back on Gemini: the picture-only timeline is made again with its sound
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+    expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+  });
+
+  it("a part's times come back from the file's start and are moved to the video's", async () => {
+    const { file } = await seed("agy-part");
+    withAntigravity();
+    runs();
+    const e = await askAntigravity(antigravityRoute("local")!, "p", file, { title: "T", workspace: "", level: "standard", a: 4, b: 12, dur: 12 });
+    expect(e).toEqual([{ a: 5, b: 8, what: "a jump", change: "a cut" }]);
+  });
+
+  it("picked with no Antigravity: nothing runs, a Gemini key or not", async () => {
+    const { v } = await seed("agy-none");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineModel', 'antigravity') WHERE id = 'lib_t'`).run();
+    expect(antigravityRoute("local")).toBeNull();
+    expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
+  });
+
+  it("signed out and too big say so in plain words; a too-big part is asked as two halves", async () => {
+    const { v, file } = await seed("agy-errors");
+    withAntigravity();
+    runs(() => new Error("Antigravity: Authentication required"));
+    await expect(watchVersion(libraryDb(), v, file, "local")).rejects.toThrow("Antigravity is signed out: sign in to it again in Settings → Providers");
+    const big = runs((n) => (n === 0 ? new Error("Request payload size exceeds the limit") : { events: [{ start: "0:00", end: "0:02", what: `half ${n}` }] }));
+    const e = await askAntigravity(antigravityRoute("local")!, "p", file, { title: "T", workspace: "", level: "standard", a: 0, b: 120, dur: 120 });
+    expect(big.map((b) => b.user.match(/part from (\S+) to (\S+),/)!.slice(1))).toEqual([["0:00", "2:00"], ["0:00", "1:00"], ["1:00", "2:00"]]);
+    expect(e.map((x) => [x.a, x.what])).toEqual([[0, "half 1"], [60, "half 2"]]);
+  });
+
+  it("a used-up quota parks it: no other video asked, kept to try later, never moved to the Gemini key", async () => {
+    const { v, file } = await seed("agy-quota");
+    const { v: other, file: otherFile } = await seed("agy-quota-2");
+    withAntigravity();
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini();
+    const asked = runs(() => Object.assign(new MacClaudeError("Antigravity: RESOURCE_EXHAUSTED: quota", "limit"), { limited: { until: null } }));
+    await watchAfter(libraryDb(), v, async () => file, "local");
+    await watchAfter(libraryDb(), other, async () => otherFile, "local");
+    expect(asked).toHaveLength(1);
+    expect(calls).toHaveLength(0);
+    expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toBe("Antigravity's quota is used up for now: the watch is tried again later");
+    expect(parked.get("antigravity:local")!.until).toBeGreaterThan(Date.now());
+    expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
   });
 });

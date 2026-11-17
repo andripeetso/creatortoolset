@@ -58,6 +58,8 @@ export interface MacOpts {
   label?: string;
   /** A working folder (path → text): Claude reads it with Read, Glob and Grep before answering (the Workshop's chat). */
   files?: Record<string, string>;
+  /** The files are for this run only (a video part for a timeline): they go with the request, never kept on the Mac (packFor). */
+  once?: boolean;
   /** Another Claude than the provider's model, e.g. Fable for a reader's review. Only for a Claude provider: any other keeps its own model. */
   model?: string;
   /** The provider instance that answers (contracts/providers.ts): its CLI, identity folder, model and effort, the device it runs on and whose settings it is. */
@@ -230,6 +232,7 @@ interface Req {
   background: boolean;
   label: string;
   files?: Record<string, string>;
+  once?: boolean;
   model?: string;
   provider?: MacOpts["provider"];
   /** the workspace its usage counts under, read when it was asked (the answer arrives in the computer's own request) */
@@ -441,7 +444,7 @@ export function streamMacClaude(
   // ponytail: no device = nothing to run it: an unclaimed miss, so an API-key fallback may still answer
   if (!opts.provider?.device) return Promise.reject(new MacClaudeError("No Mac runs this provider: pick one in Settings → Providers", "unclaimed"));
   return wait(
-    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, model: opts.model, provider: opts.provider, workspace: usageWorkspace(), session: opts.session, mcp: opts.mcp, keep: opts.keep },
+    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, once: opts.once, model: opts.model, provider: opts.provider, workspace: usageWorkspace(), session: opts.session, mcp: opts.mcp, keep: opts.keep },
     false,
     cancel,
     onDelta,
@@ -450,7 +453,7 @@ export function streamMacClaude(
   );
 }
 
-type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "model" | "provider" | "workspace" | "session" | "mcp" | "keep">;
+type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "once" | "model" | "provider" | "workspace" | "session" | "mcp" | "keep">;
 type Hooks = Pick<MacOpts, "onStep" | "onAsk" | "onSession">;
 
 /** The promise of one request's answer: a new one waits for its Mac, one taken up after a restart (`claimed`) is already with it. */
@@ -697,7 +700,8 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
 
 /**
  * Big text files (a book in Knowledge) go to a relay that keeps them as "sha256:<hex>": it fetches each once from
- * /blob and reuses its copy on every later turn, so a turn carries a hash instead of megabytes.
+ * /blob and reuses its copy on every later turn, so a turn carries a hash instead of megabytes. A request's `once` files
+ * (a timeline's video part) go with it as they are: the Mac keeps no copy of them.
  * ponytail: the texts stay in this map for 30 min after their request; a restart in between = the relay's fetch 404s
  * and the turn fails once (the next turn sends it again).
  */
@@ -706,7 +710,7 @@ const BLOB_KEEP_MS = 30 * 60_000;
 const blobs = new Map<string, { text: string; device: string; at: number }>();
 export function packFor(r: Req, keepsBlobs: boolean) {
   const p = pack(r);
-  if (!keepsBlobs || !p.files) return p;
+  if (!keepsBlobs || !p.files || r.once) return p;
   const now = Date.now();
   for (const [k, v] of blobs) if (now - v.at > BLOB_KEEP_MS) blobs.delete(k);
   const files: Record<string, string> = {};
