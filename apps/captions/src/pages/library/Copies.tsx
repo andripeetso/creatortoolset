@@ -70,7 +70,7 @@ export function LibraryCopies({ libraryId, className }: { libraryId: string; cla
     copies.set((all) => all?.filter((x) => x.id !== c.id) ?? all);
   };
   const show = async (c: LibraryCopy) => {
-    const r = (await thisMacBridge()!.postMessage(`reveal:${JSON.stringify({ library: libraryId, copy: c.id })}`)) as unknown as { ok?: boolean; problem?: string };
+    const r = (await thisMacBridge()!.postMessage(`reveal:${JSON.stringify({ library: libraryId, copy: c.id, path: c.path })}`)) as unknown as { ok?: boolean; problem?: string };
     if (!r?.ok) throw new Error(r?.problem ?? "Folder not found on this Mac");
   };
   return (
