@@ -806,6 +806,8 @@ interface UploadResp {
   offset?: number;
   complete?: boolean;
   proxyReady?: boolean;
+  /** the editing copy waits for one of the owner's computers: the line to show */
+  proxyWait?: string;
   hasOriginal?: boolean;
   originalBytes?: number;
   srcWidth?: number;
@@ -1470,6 +1472,7 @@ async function waitForProxy(
         await switchToProxy(projectId, clipId, fromUrl, originalBytes);
         return;
       }
+      patchClip(clipId, { proxyWait: status.proxyWait });
       await changed;
     } catch {
       // The original is already safe. A transient polling failure must not
@@ -1550,6 +1553,7 @@ async function switchToProxy(
   patchClip(clipId, (now) => ({
     videoUrl: proxyUrl,
     uploadState: badge(CLIP_UPLOAD_MOVES, now.uploadState, "done", "switchToProxy"),
+    proxyWait: undefined,
     hasOriginal: true,
     originalBytes,
   }));

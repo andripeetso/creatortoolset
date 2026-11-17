@@ -1,5 +1,5 @@
 import { HTTPException } from "hono/http-exception";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -46,6 +46,12 @@ import type { Expired } from "./retention";
 import { type SessionUser, bumpUsage } from "./users";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { deviceOf } from "./lib/devices";
+import { libraryDb } from "./library/db";
+import { mayReceive } from "./library/upload-gate";
+import { keep, startTask, taskFor, taskWaitLine, type Started } from "./work/tasks";
+import "./work/task-kinds";
+import type { IngestInput, Probe } from "./work/tasks/caption-studio";
 
 /**
  * File-based project persistence. A project is a POOL of clips: one
@@ -72,6 +78,25 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
  * saves (and local no-auth use) keep working.
  */
 export const projectsApp = new Hono<{ Variables: AuthVars }>();
+
+/**
+ * D5 (local-first plan, upload-gate.test.ts's table): every Caption Studio route that takes an original's bytes asks
+ * mayReceive. A person's upload is always taken (decision 1). A computer's own file (the request names where it is on
+ * that computer: ?fromPath=) is taken only where the clip's Media Library takes a computer's originals, and with no
+ * library only on This Mac (an unknown library reads as Upload none); else refused with the line.
+ */
+const takesOriginal: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
+  if (c.req.method !== "POST" || !c.req.query("fromPath")) return next();
+  const id = c.req.param("id") ?? "";
+  const clipId = c.req.param("clipId");
+  const clip = clipId && okId(id) ? (await readMeta(id))?.clips.find((x) => x.id === clipId) : undefined;
+  const lib = clip?.libraryVersionId
+    ? (libraryDb().prepare("SELECT a.library_id AS id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(clip.libraryVersionId) as { id: string } | undefined)
+    : undefined;
+  const gate = mayReceive("original", { id: lib?.id ?? "" }, "computer");
+  return gate.ok ? next() : c.json(gate.body, gate.status);
+};
+for (const route of ["/", "/:id/clips", "/:id/clips/:clipId/original", "/:id/clips/:clipId/original/*"]) projectsApp.use(route, takesOriginal);
 
 const DATA_DIR =
   process.env.DATA_DIR || path.join(homedir(), ".caption-studio");
@@ -128,7 +153,7 @@ async function readPartsUploadState(
   }
 }
 
-const proxyBuilds = new Map<string, Promise<void>>();
+const proxyBuilds = new Map<string, Promise<Started<Probe> | undefined>>();
 
 /**
  * Originals are only needed for burned-in exports — the proxy carries
@@ -246,112 +271,6 @@ interface ProjectUpdate {
     string,
     unknown
   >;
-}
-
-/** Probe the first audio stream's codec ("" when none / ffprobe fails). */
-function probeAudioCodec(file: string): Promise<string> {
-  return new Promise((resolve) => {
-    const p = spawn("ffprobe", [
-      "-v",
-      "error",
-      "-select_streams",
-      "a:0",
-      "-show_entries",
-      "stream=codec_name",
-      "-of",
-      "csv=p=0",
-      file,
-    ]);
-    let out = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => resolve(out.trim().toLowerCase()));
-    p.on("error", () => resolve(""));
-  });
-}
-
-/**
- * Probe a video's size as it is shown (0×0 when ffprobe fails). A phone clip filmed upright is stored lying down
- * with a quarter turn beside it: every player, the editing copy and a render show it turned, so that is its size.
- */
-function probeDims(file: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve) => {
-    const p = spawn(
-      "ffprobe",
-      [
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
-        "-of",
-        "default=noprint_wrappers=1",
-        file,
-        // a wedged file must never hang a project load — kill after 10s
-      ],
-      { timeout: 10_000 },
-    );
-    let out = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => {
-      const n = (key: string) => Number(new RegExp(`^${key}=(-?[\\d.]+)`, "m").exec(out)?.[1]) || 0;
-      const [w, h] = [n("width"), n("height")];
-      // the turn is side data on today's ffprobe, a `rotate` tag on older ones
-      const turned = Math.abs(n("rotation") || n("TAG:rotate")) % 180 === 90;
-      resolve(turned ? { width: h, height: w } : { width: w, height: h });
-    });
-    p.on("error", () => resolve({ width: 0, height: 0 }));
-  });
-}
-
-/** Nearest standard frame rate within 2%, else the raw value rounded. */
-const STD_FPS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 90, 120];
-function snapFps(raw: number): number {
-  let best = STD_FPS[0];
-  for (const s of STD_FPS) {
-    if (Math.abs(raw - s) < Math.abs(raw - best)) best = s;
-  }
-  return Math.abs(raw - best) / best < 0.02
-    ? best
-    : Math.round(raw * 100) / 100;
-}
-
-/** Probe a video's frame rate (0 when unknown / ffprobe fails). */
-function probeFps(file: string): Promise<number> {
-  return new Promise((resolve) => {
-    const p = spawn(
-      "ffprobe",
-      [
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=r_frame_rate,avg_frame_rate",
-        "-of",
-        "default=noprint_wrappers=1",
-        file,
-      ],
-      { timeout: 10_000 },
-    );
-    let out = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => {
-      const rates: Record<string, number> = {};
-      for (const line of out.trim().split("\n")) {
-        const [k, v] = line.split("=");
-        if (!k || !v) continue;
-        const [num, den] = v.split("/").map(Number);
-        rates[k] = den ? num / den : Number(v) || 0;
-      }
-      // avg is the truth for variable-rate phone clips; r_ is the fallback
-      const raw = [rates.avg_frame_rate, rates.r_frame_rate].find(
-        (v) => typeof v === "number" && v > 0 && v <= 480,
-      );
-      resolve(raw ? snapFps(raw) : 0);
-    });
-    p.on("error", () => resolve(0));
-  });
 }
 
 const canAccess = (meta: Meta, user: SessionUser) =>
@@ -697,190 +616,83 @@ function run(cmd: string, args: string[]): Promise<void> {
   });
 }
 
-/** 320px JPEG for the project picker — 1s in, first frame as fallback. */
-async function makeThumb(src: string, out: string): Promise<void> {
-  const args = (seek: string[]) => [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    ...seek,
-    "-i",
-    src,
-    "-frames:v",
-    "1",
-    "-vf",
-    "scale=320:-2",
-    "-q:v",
-    "5",
-    out,
-  ];
-  try {
-    await run("ffmpeg", args(["-ss", "1"]));
-    if (statSync(out).size === 0) throw new Error("empty thumb");
-  } catch {
-    await rm(out, { force: true }).catch(() => {});
-    await run("ffmpeg", args([]));
-  }
-}
-
 /**
- * Backfill thumbnails for clips that predate them (or whose generation
- * failed), sequentially in the background at boot. New clips generate
- * theirs during ingest; the /thumb route covers anything left over.
- */
-async function backfillThumbs(): Promise<void> {
-  let ids: string[] = [];
-  try {
-    ids = (await readdir(PROJECTS_DIR, { withFileTypes: true }))
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .filter(okId);
-  } catch {
-    return;
-  }
-  for (const id of ids) {
-    for (const clipId of await clipIds(id)) {
-      const cdir = clipDir(id, clipId);
-      const thumb = path.join(cdir, "thumb.jpg");
-      if (existsSync(thumb)) continue;
-      const src = existsSync(clipOriginalPath(id, clipId))
-        ? clipOriginalPath(id, clipId)
-        : clipProxyPath(id, clipId);
-      if (!existsSync(src)) continue;
-      await makeThumb(src, thumb).catch(() => {});
-    }
-  }
-}
-void backfillThumbs();
-
-/**
- * Transcode an uploaded source into the editing proxy inside the clip
- * dir and keep the source next to it. Returns probed source metadata.
- */
-async function ingestClip(
-  src: string,
-  cdir: string,
-): Promise<{
-  srcWidth: number;
-  srcHeight: number;
-  srcFps: number;
-}> {
-  // editing proxy: ≤720p CRF 25 — light enough to stream, close enough
-  // to judge the picture. Audio is COPIED whenever mp4 allows it:
-  // a bit-identical track can't drift out of sync the way a re-encode
-  // can, and phone clips are AAC already.
-  const audioCodec = await probeAudioCodec(src);
-  const audioArgs = ["aac", "mp3"].includes(audioCodec)
-    ? ["-c:a", "copy"]
-    : ["-c:a", "aac", "-b:a", "128k", "-af", "aresample=async=1:first_pts=0"];
-  await run("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-i",
-    src,
-    "-vf",
-    "scale=-2:floor(min(720\\,ih)/2)*2",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "25",
-    "-pix_fmt",
-    "yuv420p",
-    ...audioArgs,
-    "-movflags",
-    "+faststart",
-    path.join(cdir, "proxy.mp4"),
-  ]);
-  // keep the source for burned-in exports (subject to retention sweep)
-  const original = path.join(cdir, "original");
-  await rename(src, original);
-  const dims = await probeDims(original);
-  const srcFps = await probeFps(original);
-  // thumbnail for the project picker — fire and forget, a missing one
-  // is generated lazily by the /thumb route or the boot backfill
-  void makeThumb(original, path.join(cdir, "thumb.jpg")).catch(() => {});
-  return { srcWidth: dims.width, srcHeight: dims.height, srcFps };
-}
-
-/**
- * Build the editing proxy after a resumable source upload has completed.
- * This runs independently of the upload request: proxy generation can take
- * minutes, but it must never hold the project id or transcript hostage.
+ * A clip's editing copy, the size and frame rate of its original and its picture: the "caption-ingest" computer task
+ * (work/tasks/caption-studio.ts). It runs here on This Mac, or where the server's video work is on and no computer can
+ * take it; else it is queued for one of the owner's computers (the one that holds the original when the server has
+ * none), and the clip waits with the wait line meanwhile (the status route's proxyWait). Proxy generation can take
+ * minutes, but it must never hold the project id or transcript hostage. A clip that has its copy, or has no original
+ * anywhere, is left as it is.
  */
 async function buildProxyFromOriginal(
   id: string,
   clipId: string,
-): Promise<void> {
+): Promise<Started<Probe> | undefined> {
   const key = `${id}/${clipId}`;
   if (proxyBuilds.has(key)) return proxyBuilds.get(key)!;
   const task = (async () => {
-    const src = clipOriginalPath(id, clipId);
-    const cdir = clipDir(id, clipId);
-    if (!existsSync(src) || existsSync(clipProxyPath(id, clipId))) return;
-    const audioCodec = await probeAudioCodec(src);
-    const audioArgs = ["aac", "mp3"].includes(audioCodec)
-      ? ["-c:a", "copy"]
-      : ["-c:a", "aac", "-b:a", "128k", "-af", "aresample=async=1:first_pts=0"];
-    const proxyTmp = path.join(cdir, "proxy.mp4.tmp");
-    try {
-      await run("ffmpeg", [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        src,
-        "-vf",
-        "scale=-2:floor(min(720\\,ih)/2)*2",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "25",
-        "-pix_fmt",
-        "yuv420p",
-        ...audioArgs,
-        "-movflags",
-        "+faststart",
-        // The atomic temp suffix is not a recognized container extension.
-        // Declare MP4 explicitly so completed uploads can always produce the
-        // proxy before proxy.mp4.tmp is renamed to proxy.mp4.
-        "-f",
-        "mp4",
-        proxyTmp,
-      ]);
-      await rename(proxyTmp, clipProxyPath(id, clipId));
-      const dims = await probeDims(src);
-      const srcFps = await probeFps(src);
-      await withProjectWrite(id, async () => {
-        // Re-read after probing: an autosave can commit while ffprobe runs,
-        // and media metadata must never write an older editor revision back.
-        const meta = await readMeta(id);
-        const clip = meta?.clips.find((entry) => entry.id === clipId);
-        if (meta && clip) {
-          if (dims.width) {
-            clip.srcWidth = dims.width;
-            clip.srcHeight = dims.height;
-          }
-          if (srcFps) clip.srcFps = srcFps;
-          meta.updatedAt = Date.now();
-          await writeMeta(meta);
-          announceSoon(meta.owner, "projects"); // the editor waiting for this proxy switches to it
-        }
-      });
-      void makeThumb(src, path.join(cdir, "thumb.jpg")).catch(() => {});
-    } finally {
-      await rm(proxyTmp, { force: true }).catch(() => {});
+    if (existsSync(clipProxyPath(id, clipId))) return undefined;
+    const meta = await readMeta(id);
+    const input: IngestInput = { project: id, clip: clipId };
+    if (!existsSync(clipOriginalPath(id, clipId))) {
+      const versionId = meta?.clips.find((c) => c.id === clipId)?.libraryVersionId;
+      const at = versionId ? heldOn(versionId, meta?.owner ?? "") : undefined;
+      if (!at) return undefined;
+      Object.assign(input, { device: at.device, paths: { original: at.path } });
     }
+    return startTask<IngestInput, Probe>("caption-ingest", key, meta?.owner ?? "", meta?.projectId ?? null, input);
   })().finally(() => proxyBuilds.delete(key));
   proxyBuilds.set(key, task);
   return task;
+}
+
+/** Where one of `owner`'s computers holds a Media Library version's original (version_places), best place first. */
+function heldOn(versionId: string, owner: string): { device: string; path: string } | undefined {
+  const rows = libraryDb()
+    .prepare(
+      `SELECT device, path FROM version_places WHERE version_id = ? AND kind = 'original' AND state <> 'gone'
+       ORDER BY CASE state WHEN 'verified' THEN 0 WHEN 'found' THEN 1 ELSE 2 END`,
+    )
+    .all(versionId) as { device: string; path: string }[];
+  return rows.find((r) => deviceOf(r.device)?.owner === owner);
+}
+
+/** The picture and the probe of a clip that has its editing copy (an older clip, or a picture that was never made). */
+function lookAgain(id: string, home: string, clipId: string, owner?: string, workspace?: string) {
+  return startTask<IngestInput, Probe>("caption-ingest", `${id}/${clipId}/look`, owner ?? "", workspace ?? null, {
+    project: home,
+    clip: clipId,
+    look: true,
+    ...(home !== id ? { into: id } : {}),
+  });
+}
+
+/** Files what a caption-ingest task made, on whichever machine: the editing copy, the picture, the probe. */
+export async function ingested(
+  input: IngestInput,
+  probe: Probe,
+  files: Record<string, string>,
+): Promise<void> {
+  const into = input.into ?? input.project;
+  // the clip went while its task waited: nothing to file
+  if (!existsSync(clipDir(into, input.clip))) return;
+  if (files["proxy.mp4"]) await keep(files["proxy.mp4"], clipProxyPath(input.project, input.clip));
+  if (files["thumb.jpg"]) await keep(files["thumb.jpg"], path.join(clipDir(into, input.clip), "thumb.jpg"));
+  await withProjectWrite(into, async () => {
+    // Re-read: an autosave can commit while the task runs, and media
+    // metadata must never write an older editor revision back.
+    const meta = await readMeta(into);
+    const clip = meta?.clips.find((entry) => entry.id === input.clip);
+    if (!meta || !clip) return;
+    if (probe.srcWidth) {
+      clip.srcWidth = probe.srcWidth;
+      clip.srcHeight = probe.srcHeight;
+    }
+    if (probe.srcFps) clip.srcFps = probe.srcFps;
+    if (!input.look) meta.updatedAt = Date.now();
+    await writeMeta(meta);
+    announceSoon(meta.owner, "projects"); // the editor waiting for this proxy switches to it
+  });
 }
 
 async function cacheObjectSourceAndBuildProxy(
@@ -1134,6 +946,17 @@ projectsApp.put("/:id/draft", async (c) => {
   }
 });
 
+/** What the one-shot upload routes answer about the clip's editing copy: its probe once made, else the wait line. */
+const ingestAnswer = (made: Started<Probe> | undefined) => {
+  const probe = made?.state === "done" ? made.result : undefined;
+  return {
+    srcWidth: probe?.srcWidth ?? 0,
+    srcHeight: probe?.srcHeight ?? 0,
+    ...(probe?.srcFps ? { srcFps: probe.srcFps } : {}),
+    ...(made?.state === "queued" && made.line ? { proxyWait: made.line } : {}),
+  };
+};
+
 /* create project: raw video body → first clip's compressed proxy.
    The client may pre-assign the clip id (?clipId=) so its local state
    needs no remap when the upload lands. */
@@ -1167,21 +990,12 @@ projectsApp.post("/", async (c) => {
     await writeJson(clipDataPath(id, clipId), {});
     await writeMeta(meta);
     await pipeline(Readable.fromWeb(body as never), createWriteStream(src));
-    // register the project before the transcode so it shows up in the
-    // project list right away — big clips can take minutes to proxy
-    const probe = await ingestClip(src, cdir);
-    meta.clips[0].srcWidth = probe.srcWidth;
-    meta.clips[0].srcHeight = probe.srcHeight;
-    if (probe.srcFps) meta.clips[0].srcFps = probe.srcFps;
-    await writeMeta(meta);
+    // the project is registered before its editing copy is made, so it shows
+    // up in the project list right away: big clips can take minutes to proxy
+    await rename(src, clipOriginalPath(id, clipId));
+    const made = await buildProxyFromOriginal(id, clipId);
     bumpUsage(meta.owner!, { projectsCreated: 1 });
-    return c.json({
-      id,
-      clipId,
-      srcWidth: probe.srcWidth,
-      srcHeight: probe.srcHeight,
-      ...(probe.srcFps ? { srcFps: probe.srcFps } : {}),
-    });
+    return c.json({ id, clipId, ...ingestAnswer(made) });
   } catch (e) {
     // Keep the registered shell. It is owned and visible, and any transcript
     // already written to it must survive even when this legacy upload fails.
@@ -1220,17 +1034,8 @@ projectsApp.post("/:id/clips", async (c) => {
     meta.clips.push(cm);
     meta.updatedAt = Date.now();
     await writeMeta(meta);
-    const probe = await ingestClip(src, cdir);
-    cm.srcWidth = probe.srcWidth;
-    cm.srcHeight = probe.srcHeight;
-    if (probe.srcFps) cm.srcFps = probe.srcFps;
-    await writeMeta(meta);
-    return c.json({
-      clipId,
-      srcWidth: probe.srcWidth,
-      srcHeight: probe.srcHeight,
-      ...(probe.srcFps ? { srcFps: probe.srcFps } : {}),
-    });
+    await rename(src, clipOriginalPath(id, clipId));
+    return c.json({ clipId, ...ingestAnswer(await buildProxyFromOriginal(id, clipId)) });
   } catch (e) {
     // roll back both the files and the registry entry
     meta.clips = meta.clips.filter((x) => x.id !== clipId);
@@ -1413,7 +1218,6 @@ projectsApp.get("/:id", async (c) => {
   const meta = await ownedMeta(id, c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   const projData = await readProjectData(id);
-  let metaDirty = false;
   const clips = await Promise.all(
     meta.clips.map(async (cm) => {
       let clipData: Record<string, unknown> = {};
@@ -1423,33 +1227,14 @@ projectsApp.get("/:id", async (c) => {
         // clip uploaded but never saved — still loadable (video only)
       }
       const home = mediaHome(id, cm);
-      // older clips predate srcWidth/srcFps — backfill from what's kept
-      if (!cm.srcWidth && existsSync(clipOriginalPath(home, cm.id))) {
-        const dims = await probeDims(clipOriginalPath(home, cm.id));
-        if (dims.width) {
-          cm.srcWidth = dims.width;
-          cm.srcHeight = dims.height;
-          metaDirty = true;
-        }
-      }
-      if (!cm.srcFps) {
-        // the proxy transcode keeps the source timing, so it can stand in
-        // for fps once the original has been freed from the server
-        const src = existsSync(clipOriginalPath(home, cm.id))
-          ? clipOriginalPath(home, cm.id)
-          : clipProxyPath(home, cm.id);
-        if (existsSync(src)) {
-          const fps = await probeFps(src);
-          if (fps) {
-            cm.srcFps = fps;
-            metaDirty = true;
-          }
-        }
+      // older clips predate srcWidth/srcFps: probed once, as a computer task, from what's kept (the editing copy keeps
+      // the source timing, so it stands in for fps once the original has been freed from the server)
+      if ((!cm.srcWidth || !cm.srcFps) && existsSync(clipProxyPath(home, cm.id)) && !taskFor("caption-ingest", `${id}/${cm.id}/look`)) {
+        void lookAgain(id, home, cm.id, meta.owner, meta.projectId).catch(() => {});
       }
       return { ...cm, ...clipData, ...clipOriginalInfo(id, cm.id, cm) };
     }),
   );
-  if (metaDirty) await writeMeta(meta);
   return c.json({
     id: meta.id,
     name: meta.name,
@@ -1729,6 +1514,13 @@ projectsApp.post(
   },
 );
 
+/** The wait line of a clip whose editing copy waits for one of the owner's computers (none can take it now). */
+const ingestWait = (id: string, clipId: string) => {
+  const t = taskFor("caption-ingest", `${id}/${clipId}`);
+  const line = t && taskWaitLine(t);
+  return line ? { proxyWait: line } : {};
+};
+
 /* Current resumable-upload position and source/proxy readiness. */
 projectsApp.get("/:id/clips/:clipId/original/status", async (c) => {
   const id = c.req.param("id");
@@ -1750,6 +1542,7 @@ projectsApp.get("/:id/clips/:clipId/original/status", async (c) => {
     offset: original.hasOriginal ? original.originalBytes : offset,
     complete: original.hasOriginal,
     proxyReady: existsSync(clipProxyPath(id, clipId)),
+    ...ingestWait(id, clipId),
     ...original,
     srcWidth: clip.srcWidth ?? 0,
     srcHeight: clip.srcHeight ?? 0,
@@ -2241,11 +2034,9 @@ projectsApp.get("/:id/clips/:clipId/thumb", async (c) => {
       },
     });
   }
-  if (!existsSync(thumb)) {
-    const src = existsSync(clipOriginalPath(home, clipId))
-      ? clipOriginalPath(home, clipId)
-      : clipProxyPath(home, clipId);
-    if (existsSync(src)) await makeThumb(src, thumb).catch(() => {});
+  // an older clip's picture: made by a computer task (here at once on This Mac), else asked for again later
+  if (!existsSync(thumb) && (existsSync(clipOriginalPath(home, clipId)) || existsSync(clipProxyPath(home, clipId)))) {
+    await lookAgain(id, home, clipId, meta.owner, meta.projectId).catch(() => undefined);
   }
   if (!existsSync(thumb)) return c.json({ error: "Not found" }, 404);
   const img = await readFile(thumb);
@@ -2538,7 +2329,7 @@ export async function createProjectFromFile(o: {
 export type Captioning = "preparing" | "transcribing";
 export const captioning = new Map<string, Captioning>();
 
-/** Exists for this user with its editing proxy built (waits for a build). */
+/** Exists for this user with its editing proxy built (waits for a build here), or queued for one of the owner's computers. */
 export async function clipReadyToEdit(
   projectId: string,
   clipId: string,
@@ -2548,8 +2339,8 @@ export async function clipReadyToEdit(
   const clip = meta?.clips.find((entry) => entry.id === clipId);
   if (!meta || !clip) return false;
   const home = mediaHome(projectId, clip);
-  await buildProxyFromOriginal(home, clipId);
-  return existsSync(clipProxyPath(home, clipId));
+  const made = await buildProxyFromOriginal(home, clipId);
+  return made?.state === "queued" || existsSync(clipProxyPath(home, clipId));
 }
 
 /**

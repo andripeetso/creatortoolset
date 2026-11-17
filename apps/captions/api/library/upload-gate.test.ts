@@ -101,7 +101,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/lib/uploads.ts": "PASS: the helpers (appendBody, writeBody, receivePart); gated by their callers",
   "apps/captions/api/lib/incoming.ts": "PASS: requestBodyStream, a helper; gated by its callers",
   "apps/captions/api/review.ts": "PASS: a person's own upload into a review (decision 1); Review is serving (decision 5)",
-  "apps/captions/api/projects.ts": "OPEN P3a: Caption Studio originals; gating before its computer ingest would stop the tool",
+  "apps/captions/api/projects.ts": "P3a: POST /, POST /:id/clips and every /:id/clips/:clipId/original route call mayReceive (takesOriginal): a person's upload is taken, a computer's own file (?fromPath=) by the clip's library, none off This Mac without one",
   "apps/captions/api/clips.ts": "OPEN P3d: Video Notes recordings stay on the recorder's computer (decision 19)",
   "apps/captions/api/transcribe.ts": "OPEN P3f: speech for transcription",
   "apps/captions/api/lib/device-transcribe.ts": "OPEN P3f: the server speech model",
