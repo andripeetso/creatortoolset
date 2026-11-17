@@ -148,7 +148,7 @@ export async function readIndex(file: File | MacFile, signal?: AbortSignal): Pro
 export const deviceHere = async () => ((await thisMacBridge()?.postMessage("state").catch(() => null))?.device ?? undefined);
 
 /** Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent. */
-export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string }> {
+export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
   const [quick, index, device] = await Promise.all([file instanceof File ? quickPrint(file) : file.quick, readIndex(file, signal), deviceHere()]);
   signal?.throwIfAborted();
   const r = await fetch(`/api/library/${libraryId}/on-mac`, {
@@ -157,7 +157,7 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
     body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index }),
     signal,
   });
-  const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; error?: string };
+  const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; duplicate?: true; error?: string };
   if (!r.ok) throw new Error(body.error ?? "Could not add the file");
   return body;
 }

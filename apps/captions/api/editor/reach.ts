@@ -8,6 +8,7 @@ import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
 import { folderFor, hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryDb, libraryUpload } from "../library/db";
+import { triesOn } from "../library/places";
 import { needsProxy } from "../library/media/proxy";
 import type { ProbeSummary } from "../library/media/probe";
 import type { JobRow } from "../library/jobs";
@@ -56,12 +57,15 @@ export type FileAt = { path: string } | { copy: "proxy" };
 
 /** How `host` gets at file `r`; null when it can't. */
 export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here: (host: string) => boolean): FileAt | null {
-  // a file on a computer: that computer, or another that found the shared folder it is in, at its own path there
-  const at = r.mac_path ?? r.source_path;
-  if (at && (r.mac_path ? r.mac_device === host : here(host))) return { path: at };
-  const from = r.mac_path ? (r.mac_device ?? undefined) : undefined;
-  const there = at && ((from && hostPath(at, folders, host, from)) || hostPath(at, folders, host));
-  if (there) return { path: there };
+  // a file on this server's disk: this machine, or a computer that found the shared folder it is in
+  if (!r.mac_path && r.source_path) {
+    const there = here(host) ? r.source_path : hostPath(r.source_path, folders, host);
+    if (there) return { path: there };
+  }
+  // a file on a computer: the first path this one tries (its own place, its root on this computer's disks, a shared
+  // folder, where it was indexed: library/places.ts placesFor)
+  const first = triesOn(r, host, folders)[0];
+  if (first) return { path: first };
   // else the server's proxy; an original the server holds is never downloaded to analyse or cut
   return lightKey(r) ? { copy: "proxy" } : null;
 }

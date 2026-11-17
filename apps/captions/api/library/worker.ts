@@ -31,6 +31,7 @@ import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
+import { backfillRoots } from "./places";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -304,7 +305,7 @@ export function startLibraryWorker(): () => void {
           // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
           if (!draining()) {
             busy = await tick(Date.now(), lane.kinds);
-            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots();
           }
         } catch (e) {
           console.error("[library] worker:", e);
