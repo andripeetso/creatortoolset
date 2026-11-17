@@ -206,7 +206,7 @@ setupApp.put("/", async (c) => {
   return c.json(await view(user));
 });
 
-/* ---- your AI on this Mac (Connect your AI, Settings → Providers) ---- */
+/* ---- your AI tool on this Mac (Connect your AI, Settings → Providers) ---- */
 
 /**
  * The AI CLIs on this computer are the owner's: only the owner's own account on a server that runs on a computer

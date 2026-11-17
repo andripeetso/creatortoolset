@@ -35,7 +35,7 @@ const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).cod
 /**
  * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
  * theirs, it is done on this Mac: `onHere` is told so first ("Ana's Mac Studio is unreachable. Doing it on this Mac.",
- * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, AI on this Mac, which adds
+ * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, Take work from this server, which adds
  * it to this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
  * for any other answer, the call's own error.
  */
@@ -52,7 +52,7 @@ export async function onThisMac<T>(run: () => Promise<T>, opts: { onHere?: (why:
     const other = e.device && here?.device && e.device.id !== here.device;
     opts.onHere?.(other ? `${e.device!.name} is unreachable. Doing it on this Mac.` : "This Mac isn't connected to this server. Connecting it and doing it here.");
     const s = await startThisMac();
-    if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not be switched on for it: ${s.problem}` : e.message);
+    if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not start taking work from this server: ${s.problem}` : e.message);
     // the server sees the Mac at its first call, a moment after it is switched on
     for (let n = 1; ; n++) {
       await new Promise((r) => setTimeout(r, wait));

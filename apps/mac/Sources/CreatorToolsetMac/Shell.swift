@@ -555,8 +555,8 @@ final class Shell: NSObject, ObservableObject {
     }
 
     var aiLine: String {
-        guard aiOn else { return "AI on this Mac: off" }
-        return ai.running > 0 ? "AI on this Mac: running \(ai.running)" : "AI on this Mac: on"
+        guard aiOn else { return "Taking work: off" }
+        return ai.running > 0 ? "Taking work: running \(ai.running)" : "Taking work: on"
     }
 
     /// The Mac's device is known for this site (paired once); "Remove this Mac from the account" needs it.
@@ -757,7 +757,7 @@ final class Shell: NSObject, ObservableObject {
 
     // MARK: this Mac for the person's AI (Relay.swift)
 
-    /// "AI on this Mac": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
+    /// "Take work from this server": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
     func setAI(_ on: Bool) {
         aiOn = on
         UserDefaults.standard.set(on, forKey: aiKey)
@@ -870,7 +870,7 @@ final class Shell: NSObject, ObservableObject {
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
-        setAIOff("This Mac was removed from the account. Turn on AI on this Mac to add it again.")
+        setAIOff("This Mac was removed from the account. Turn on “Take work from this server” to add this Mac again.")
     }
 
     private func setAIOff(_ message: String?) {

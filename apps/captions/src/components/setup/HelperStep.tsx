@@ -192,12 +192,12 @@ export function HelperSetup({ device }: { device: string }) {
   );
 }
 
-/** The Mac app's own Mac before it helps: the one switch that adds it (Settings → Computers, AI on this Mac). */
+/** The Mac app's own Mac before it helps: the one switch that adds it (Settings → Computers, Take work from this server). */
 export function HelperPair() {
   return (
     <Card>
       <Row
-        title="AI on this Mac"
+        title="Take work from this server"
         control={<Button size="sm" onClick={() => tell("ai:on")}>Turn on</Button>}
       />
     </Card>

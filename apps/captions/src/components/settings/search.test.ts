@@ -114,6 +114,10 @@ describe("search ranking", () => {
     expect(searchSettings("recording shortcut", ALL, undefined, false, true)[0]?.id).toBe("recording-shortcut");
   });
 
+  it("finds the Mac's take-work switch by its old name too", () => {
+    for (const q of ["take work", "AI on this Mac"]) expect(searchSettings(q, ALL, undefined, false, true)[0]?.id).toBe("use-this-mac");
+  });
+
   it("finds the Screen Recorder's settings only in a Mac app that has them, on that tool's page", () => {
     const has = (mac: boolean, recorder: boolean) => searchSettings("camera quality", ALL, undefined, false, mac, recorder).find((h) => h.id === "recorder-camera-quality");
     expect(has(true, false)).toBeUndefined();
