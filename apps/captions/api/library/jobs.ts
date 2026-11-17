@@ -26,6 +26,9 @@ export interface JobRow {
   attempts: number;
   run_after: number;
   lease_until: number | null;
+  /** the computer that holds it and its claim (library jobs only, work/library-package.ts); stale once not running */
+  held_by?: string | null;
+  claim_id?: string | null;
   actor: string | null;
   error: string | null;
   started_at?: number | null;
@@ -55,7 +58,7 @@ export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(),
   return (
     (db
       .prepare(
-        `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, started_at = ?
+        `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, started_at = ?${table === "jobs" ? ", held_by = NULL, claim_id = NULL" : ""}
          WHERE id = ${pick}
          RETURNING *`,
       )
@@ -124,6 +127,15 @@ export function requeueExpired(db: DatabaseSync, now = Date.now(), table: JobTab
       )
       .run(MAX_ATTEMPTS, MAX_ATTEMPTS, now).changes,
   );
+}
+
+/**
+ * At this server's start: each library job a computer holds gets a whole lease from now. The computer kept working
+ * while the server was away and its next beat renews the lease, so a restart costs no try; only a real silence of the
+ * lease's length puts the job back (requeueExpired). Returns how many.
+ */
+export function graceHeld(db: DatabaseSync, seconds: number, now = Date.now()): number {
+  return Number(db.prepare("UPDATE jobs SET lease_until = MAX(COALESCE(lease_until, 0), ?) WHERE state = 'running' AND held_by IS NOT NULL").run(now + seconds * 1000).changes);
 }
 
 /** A claimed job its actor has no key or AI route for: parked as needs_key (not failed) until someone queues it again. */

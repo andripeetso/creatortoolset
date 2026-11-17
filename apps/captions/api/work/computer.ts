@@ -15,7 +15,8 @@ import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
-import { cancelLibraryJob, runLibraryJob, runPictureJob } from "./library";
+import { cancelLibraryJob, runLibraryJob, runPictureJob, stopLibraryJob } from "./library";
+import { processesGone } from "../library/media/run";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 
 /**
@@ -35,6 +36,8 @@ export interface WorkerOptions {
   token: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   beatMs?: number;
+  /** a library job is given up after the server answered nothing this long (library.ts GIVE_UP_MS) */
+  giveUpMs?: number;
   downloadBeatMs?: number;
   idleMs?: number;
   /** wait after a claim that failed (server away) */
@@ -170,6 +173,18 @@ export function cancelStep(): void {
   if (!current) return;
   current.cancelled = true;
   current.ctl.abort();
+}
+
+/**
+ * This worker is asked to stop (SIGTERM: a service restart): the running step stops and its library job sends its
+ * fail, and the ffmpeg it started is waited for, all within `ms`; the caller exits after. A service manager that kills
+ * the whole group is the backstop for a process that outlives it.
+ */
+export async function stopForExit(ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  cancelStep();
+  await stopLibraryJob(ms);
+  await processesGone(Math.max(0, end - Date.now()));
 }
 
 const ORDER: WorkTable[] = ["libraries", "assets", "asset_versions", "asset_tags", "descriptions", "transcripts", "stretches", "derivatives", "edit_jobs"];

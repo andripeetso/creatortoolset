@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
-import { writeJsonAtomic } from "./run";
+import { spawnKillable, writeJsonAtomic } from "./run";
 
 export const WAVE_PER_SECOND = 10;
 const RATE = 8000; // samples per second read from ffmpeg
@@ -14,7 +13,7 @@ const PER_PEAK = RATE / WAVE_PER_SECOND;
 export function makeWave(src: string, out: string, hasAudio: boolean): Promise<void> {
   if (!hasAudio) return writeJsonAtomic(out, { perSecond: WAVE_PER_SECOND, peaks: [] });
   return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegCommand(), [
+    const p = spawnKillable(ffmpegCommand(), [
       "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src,
       "-vn", "-ac", "1", "-ar", String(RATE), "-f", "s16le", "pipe:1",
     ]);

@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegCommand } from "../ffmpeg-runtime";
+import { currentJobSignal, spawnKillable } from "./media/run";
 import { vpdqHashes } from "./vpdq";
 
 /**
@@ -63,7 +63,7 @@ export function phashPerSecond(src: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
     // a remote video (a posted reel's URL) gets a read timeout, so a stalled download cannot hang the check
     const remote = /^https?:\/\//.test(src) ? ["-rw_timeout", "30000000"] : [];
-    const p = spawn(ffmpegCommand(), [
+    const p = spawnKillable(ffmpegCommand(), [
       "-hide_banner", "-loglevel", "error", "-nostdin", ...remote, "-i", src, "-map", "0:V:0", "-an",
       "-vf", `fps=1,scale=${N}:${N}:flags=area,format=gray`, "-f", "rawvideo", "pipe:1",
     ]);
@@ -89,7 +89,7 @@ export async function fingerprint(src: string, duration: number, scratch: string
   const dir = await mkdtemp(path.join(scratch, "fingerprint-"));
   try {
     // ponytail: 30 min to decode one video for vPDQ; past that (or any vPDQ error) the pHashes are stored alone
-    const pdq = await vpdqHashes(src, Math.max(duration, 1), dir, ffmpegCommand(), hasher, "vpdq", undefined, 30 * 60_000);
+    const pdq = await vpdqHashes(src, Math.max(duration, 1), dir, ffmpegCommand(), hasher, "vpdq", currentJobSignal(), 30 * 60_000);
     return { phash: phashes, pdq };
   } catch {
     return { phash: phashes };

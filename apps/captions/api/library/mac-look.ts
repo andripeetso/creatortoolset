@@ -47,7 +47,11 @@ export const TOO_BIG = "This video is too long to describe shot by shot: its she
 type Sheet = LookSheet & { ph: string[] };
 /** The looks Macs hold now, by job id: the Mac, the version, its length, and the sheets sent so far and their bytes. */
 const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; level: LookLevel; sheets: Sheet[]; bytes: number; watch: boolean; copy?: string }>();
-/** The sheets a Mac finished sending, by version, until the look lane takes them for its AI call. */
+/**
+ * The sheets a Mac finished sending, by version, until the look lane takes them for its AI call. Only in memory: a
+ * restart loses them and the look waits for the Mac again (lookOnMac), which sends the sheets it kept, its video unread.
+ * A restart costs a resend of the sheets, never a second read of the picture, so they are not written here.
+ */
 const sent = new Map<string, LookSheet[]>();
 /** The copies for the timeline a Mac sent with its sheets, by version, until the look lane takes them (a file each). */
 const copies = new Map<string, string>();

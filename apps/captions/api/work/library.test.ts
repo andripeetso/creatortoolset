@@ -192,7 +192,7 @@ describe("library work on the computer that has the file", () => {
     expect(first.lib?.job.kind).toBe("proxy");
     expect(first.lib?.original).toEqual({ bytes: size });
     expect(first.lib?.file.path).toBeUndefined();
-    const work = path.join(dir, "library-work", String(first.lib!.job.id));
+    const work = path.join(dir, "library-work", `${first.lib!.job.id}-${first.lib!.job.claim}`);
     expect(await runLibraryJob(first.lib!, o())).toBe("done");
     expect(gets).toEqual(["original"]);
     expect(existsSync(work)).toBe(false); // the downloaded original went with the job's folder

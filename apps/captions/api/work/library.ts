@@ -12,7 +12,7 @@ import { makeProxy, wantsProxy } from "../library/media/proxy";
 import { makeSprite } from "../library/media/sprite";
 import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
-import { ffmpegTo } from "../library/media/run";
+import { ffmpegTo, withSignal } from "../library/media/run";
 import { soundArgs } from "../library/transcribe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
@@ -41,12 +41,28 @@ const LINE: Record<string, string> = {
   transcribe: "Transcribing",
 };
 
-/** The running library job, for Cancel (the menu). */
+/** The running library job, for Cancel (the menu) and a stop of this worker. */
 let current: AbortController | null = null;
+let running: Promise<unknown> | null = null;
 export const cancelLibraryJob = (): void => current?.abort(new Error("Stopped"));
+/** Stops the running library job and waits for it to end (its processes killed, its fail sent), at most `ms`. */
+export async function stopLibraryJob(ms: number): Promise<void> {
+  cancelLibraryJob();
+  if (running) await Promise.race([running.catch(() => {}), new Promise((r) => setTimeout(r, ms).unref())]);
+}
 
-/** Makes what `lib` asks for from `src` into `dir`; `hear` turns a transcript's sound into its words (the server's /hear). */
-export async function makeDerived(lib: LibraryPackage, src: string, dir: string, hear?: (sound: string) => Promise<LibraryTranscript>): Promise<Made> {
+/** How long the server may answer nothing before this computer gives a job up: the lease (library-package.ts) less a minute. */
+export const GIVE_UP_MS = (300 - 60) * 1000;
+
+/**
+ * Makes what `lib` asks for from `src` into `dir`; `hear` turns a transcript's sound into its words (the server's /hear).
+ * `signal`: the job's; each ffmpeg or ffprobe it starts is killed when it aborts (media/run.ts spawnKillable).
+ */
+export function makeDerived(lib: LibraryPackage, src: string, dir: string, hear?: (sound: string) => Promise<LibraryTranscript>, signal?: AbortSignal): Promise<Made> {
+  return signal ? withSignal(signal, () => derive(lib, src, dir, hear)) : derive(lib, src, dir, hear);
+}
+
+async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sound: string) => Promise<LibraryTranscript>): Promise<Made> {
   const out = (name: string) => path.join(dir, name);
   const kind = lib.job.kind;
   if (kind === "send") {
@@ -97,60 +113,100 @@ function counter(total: number, report: (p: Progress) => void) {
   });
 }
 
-/** Runs one claimed library job to the end: done or fail sent, or nothing when the server took it back. */
-export async function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Promise<"done" | "failed" | "stopped"> {
-  const c = client(o);
+/**
+ * Runs one claimed library job to the end: done or fail sent, or nothing when the server took it back. Each call names
+ * the job's claim (x-ct-claim). A server that answers nothing or a 5xx is asked again until GIVE_UP_MS passed since it
+ * last answered (a restart of it costs the job nothing); a 410 (taken back) stops the job and its processes at once.
+ */
+export function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Promise<"done" | "failed" | "stopped"> {
+  const run = runLibrary(lib, o);
+  running = run;
+  return run.finally(() => {
+    if (running === run) running = null;
+  });
+}
+
+async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done" | "failed" | "stopped"> {
+  const claim = lib.job.claim;
+  const f = o.fetch ?? fetch;
+  const c = client(claim ? { ...o, fetch: (u, i = {}) => f(u, { ...i, headers: { ...(i.headers as Record<string, string>), "x-ct-claim": claim } }) } : o);
   const base = `work/lib/${lib.job.id}`;
   const ctl = new AbortController();
   current = ctl;
+  // taken back (410), or the server away past GIVE_UP_MS: the job is no longer this computer's, nothing more is sent
+  let taken = false;
+  const drop = (why: string) => {
+    taken = true;
+    ctl.abort(new Error(why));
+  };
+  let heard = Date.now();
+  /** An answer of the server's, or null while it is away (no answer, a 5xx); a 410 drops the job. */
+  const heardFrom = (res: Response | null): Response | null => {
+    if (res && res.status < 500) {
+      heard = Date.now();
+      if (res.status === 410) drop("Taken back");
+      return res;
+    }
+    if (Date.now() - heard > (o.giveUpMs ?? GIVE_UP_MS)) drop("The server was away too long");
+    return null;
+  };
+  /** One call for the job, made again every retryMs while the server is away; throws once the job is dropped or stopped. */
+  const call = async (send: () => Promise<Response>): Promise<Response> => {
+    for (;;) {
+      ctl.signal.throwIfAborted();
+      const res = heardFrom(await send().catch(() => null));
+      ctl.signal.throwIfAborted();
+      if (res) return res;
+      await new Promise((r) => setTimeout(r, o.retryMs ?? 5000));
+    }
+  };
   const beat: { line?: string } & Partial<Progress> = { line: LINE[lib.job.kind] };
   const progress = (p: Progress) => Object.assign(beat, p);
   const still = () => {
     for (const k of ["done", "total", "leftS"] as const) delete beat[k];
   };
-  let taken = false;
   let timer: NodeJS.Timeout | undefined;
   const loop = () => {
     timer = setTimeout(async () => {
-      try {
-        if ((await c.post<{ ok: boolean }>(`${base}/beat`, beat)).ok === false) {
-          taken = true;
-          ctl.abort(new Error("Taken back"));
-          return;
-        }
-      } catch {
-        // the server is away a moment: the lease outlives a few missed beats
-      }
+      const res = heardFrom(await c.raw(`${base}/beat`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(beat) }).catch(() => null));
+      // an older server answers a job it took back with ok: false
+      if (res?.ok && ((await res.json().catch(() => null)) as { ok?: boolean } | null)?.ok === false) drop("Taken back");
       if (!ctl.signal.aborted) loop();
     }, o.beatMs ?? 10_000);
   };
   loop();
-  const dir = path.join(env.dataDir, "library-work", String(lib.job.id));
+  // named by the claim: a later claim of the same job never shares it; kept until the result is in or the job is dropped
+  const dir = path.join(env.dataDir, "library-work", claim ? `${lib.job.id}-${claim}` : String(lib.job.id));
   try {
     await mkdir(dir, { recursive: true });
     // where the file is on this computer first; a download only when it is not here
     let src = await copyHere(lib.file, lib.folders ?? []);
     if (!src && lib.original) {
       src = path.join(dir, "original");
-      const res = await c.raw(`${base}/original`, { signal: ctl.signal });
-      if (!res.ok || !res.body) throw new Error(`Could not download ${lib.file.title} (${res.status})`);
+      const res = heardFrom(await c.raw(`${base}/original`, { signal: ctl.signal }));
+      ctl.signal.throwIfAborted();
+      if (!res?.ok || !res.body) throw new Error(`Could not download ${lib.file.title} (${res?.status ?? "no answer"})`);
       await pipeline(Readable.fromWeb(res.body as never), counter(lib.original.bytes, progress), createWriteStream(src), { signal: ctl.signal });
       if (sizeOf(src) !== lib.original.bytes) throw new Error(`${lib.file.title} came incomplete`);
     }
-    src ??= (await resolveFiles({ files: [lib.file] }, { folders: [], get: (_v, init) => c.raw(`${base}/light`, init), signal: ctl.signal, progress }))[lib.file.id]!;
+    const light = async (_v: string, init?: RequestInit) => heardFrom(await c.raw(`${base}/light`, init)) ?? new Response(null, { status: 503 });
+    src ??= (await resolveFiles({ files: [lib.file] }, { folders: [], get: light, signal: ctl.signal, progress }))[lib.file.id]!;
     still();
     const made = await makeDerived(lib, src, dir, async (sound) => {
-      const res = await c.raw(`${base}/hear`, {
+      // once: a 502 is the key's provider failing, and each try is heard (and paid) again
+      const res = heardFrom(await c.raw(`${base}/hear`, {
         method: "POST",
         headers: { "content-type": "application/octet-stream", "content-length": String(statSync(sound).size) },
         body: Readable.toWeb(createReadStream(sound)) as ReadableStream,
         signal: ctl.signal,
         duplex: "half",
-      } as RequestInit);
+      } as RequestInit));
+      ctl.signal.throwIfAborted();
+      if (!res) throw new Error("The server did not answer the sound");
       const said = (await res.json().catch(() => ({}))) as LibraryTranscript & { error?: string };
       if (!res.ok) throw new Error(said.error ?? `The server could not hear it (${res.status})`);
       return said;
-    });
+    }, ctl.signal);
     ctl.signal.throwIfAborted();
 
     const names = Object.keys(made.files) as LibraryResult["files"];
@@ -161,25 +217,31 @@ export async function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Prom
       const file = made.files[name]!;
       const size = statSync(file).size;
       const at = before;
-      const res = await c.raw(`${base}/file?name=${name}`, {
-        method: "PUT",
-        headers: { "content-type": "application/octet-stream", "content-length": String(size) },
-        body: Readable.toWeb(createReadStream(file).pipe(counter(size, (p) => progress({ ...p, done: at + p.done, total })))) as ReadableStream,
-        signal: ctl.signal,
-        duplex: "half",
-      } as RequestInit);
+      const res = await call(() =>
+        c.raw(`${base}/file?name=${name}`, {
+          method: "PUT",
+          headers: { "content-type": "application/octet-stream", "content-length": String(size) },
+          body: Readable.toWeb(createReadStream(file).pipe(counter(size, (p) => progress({ ...p, done: at + p.done, total })))) as ReadableStream,
+          signal: ctl.signal,
+          duplex: "half",
+        } as RequestInit),
+      );
       before += size;
-      if (res.ok) sent.push(name);
-      else console.warn(`[work] library job ${lib.job.id}: the server refused ${name} (${res.status})`);
+      // a result without one of its files would be filed half: the try fails and the job is made again
+      if (!res.ok) throw new Error(`The server refused the ${name} (${res.status})`);
+      sent.push(name);
     }
     still();
     const { files: _, ...rest } = made;
     const result: LibraryResult = { v: WORK_V, outcome: { done: true }, files: sent, ...rest };
-    if (!taken) await c.post(`${base}/done`, result);
-    return "done";
+    const res = await call(() => c.raw(`${base}/done`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) }));
+    if (((await res.json().catch(() => null)) as { ok?: boolean } | null)?.ok) return "done";
+    console.warn(`[work] library job ${lib.job.id}: the server did not take the result (${res.status})`);
+    return "failed";
   } catch (e) {
+    if (taken) return "stopped";
     if (ctl.signal.aborted) {
-      if (!taken) await c.post(`${base}/fail`, { error: "Stopped" }).catch(() => {});
+      await c.post(`${base}/fail`, { error: "Stopped" }).catch(() => {});
       return "stopped";
     }
     await c.post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e) }).catch((x) => console.warn(`[work] library job ${lib.job.id}:`, x));

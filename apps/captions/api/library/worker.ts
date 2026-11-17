@@ -8,7 +8,7 @@ import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from 
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, graceHeld, parkJob, requeueExpired, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
 import { ModelNotReady } from "../lib/device-transcribe";
@@ -311,6 +311,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
 /** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
+  graceHeld(libraryDb(), LEASE_S); // before the first tick's requeueExpired: a restart costs a computer's job no try
   const stopCatchUp = startEmbedCatchUp();
   const stopPictures = startPictureCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have

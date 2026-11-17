@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openLibraryDb } from "./db";
 import type { DatabaseSync } from "node:sqlite";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, graceHeld, parkJob, requeueExpired } from "./jobs";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-jobs-"));
 let db: DatabaseSync;
@@ -77,6 +77,22 @@ describe("long jobs and the editor's table", () => {
     extendLease(db, job.id, 300, 1000 + 250_000); // lease now runs to 551 s
     expect(requeueExpired(db, 1000 + 400_000)).toBe(0);
     expect(state("render").state).toBe("running");
+  });
+
+  it("a server's start gives each job a computer holds a whole lease, and none to a job it ran itself", () => {
+    enqueueJob(db, "lib_1", "ver_g1", "held", "u1");
+    enqueueJob(db, "lib_1", "ver_g2", "own", "u1");
+    const held = claimJob(db, 300, 1000, "jobs", ["held"])!;
+    claimJob(db, 300, 1000, "jobs", ["own"]);
+    db.prepare("UPDATE jobs SET held_by = 'dev_tiny', claim_id = 'c1' WHERE id = ?").run(held.id);
+    // the server was away 250 s; back, it gives the held job its lease again before it puts anything back
+    expect(graceHeld(db, 300, 1000 + 250_000)).toBe(1);
+    expect(requeueExpired(db, 1000 + 400_000)).toBe(1); // only the job it ran itself: that run is gone
+    expect(state("held")).toMatchObject({ state: "running", attempts: 1 });
+    expect(state("own")).toMatchObject({ state: "queued", attempts: 1 });
+    // claimed again, it is no one's until its claimer says (work/library-package.ts)
+    db.prepare("UPDATE jobs SET state = 'queued' WHERE id = ?").run(held.id);
+    expect(claimJob(db, 300, 10 ** 13, "jobs", ["held"])).toMatchObject({ held_by: null, claim_id: null });
   });
 
   it("defer puts a job back in the queue later without counting the attempt", () => {

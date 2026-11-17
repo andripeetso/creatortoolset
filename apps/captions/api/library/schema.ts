@@ -536,4 +536,10 @@ export const MIGRATIONS: string[] = [
   // ran the cut model, NULL where look.ts cutsOf measured them. A library can hold both; a version is read again only
   // when its shots are asked for again
   `ALTER TABLE asset_versions ADD COLUMN cuts_by TEXT;`,
+  // 33: which computer holds a library job it claimed (its device id) and that claim's id (work/library-package.ts): a
+  // restart of this server keeps the holder, and a computer's beat, file or result counts only on the claim it holds
+  `
+  ALTER TABLE jobs ADD COLUMN held_by TEXT;
+  ALTER TABLE jobs ADD COLUMN claim_id TEXT;
+  `,
 ];

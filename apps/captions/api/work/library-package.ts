@@ -11,6 +11,7 @@
  * speech model goes the speech road instead (lib/computer-transcribe.ts), where that computer cuts the sound itself.
  */
 import { Hono, type Context } from "hono";
+import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -96,17 +97,17 @@ function peersOf(owner: string, me: Device): Device[] {
     .filter(takesLibrary);
 }
 
-/** Which computer holds each library job it claimed (this process; a lease outlives a restart and puts the job back). */
-// ponytail: in memory; a device column on jobs if two server processes ever share one queue
-const holders = new Map<number, string>();
-const holding = (device: string) => [...holders].some(([id, d]) => d === device && heldBy(id, d));
+/** Whether `device` holds a library job now (on the jobs row, so a restart of this server keeps it). */
+const holding = (device: string) => !!libraryDb().prepare("SELECT 1 FROM jobs WHERE state = 'running' AND held_by = ?").get(device);
 
-/** The job `device` holds (claimed by it, still running), else undefined. */
-export function heldBy(id: number, device: string): JobRow | undefined {
-  if (holders.get(id) !== device) return undefined;
-  const job = libraryDb().prepare("SELECT * FROM jobs WHERE id = ? AND state = 'running'").get(id) as JobRow | undefined;
-  if (!job) holders.delete(id);
-  return job;
+/**
+ * The job `device` holds (claimed by it, still running), else undefined: on claim `claim` when the computer names one;
+ * an older computer names none and is matched by the device alone. A job taken back and claimed again has a new claim
+ * id, so the first run's late beats, files and result count for nothing.
+ */
+export function heldBy(id: number, device: string, claim?: string): JobRow | undefined {
+  const job = libraryDb().prepare("SELECT * FROM jobs WHERE id = ? AND state = 'running' AND held_by = ?").get(id, device) as JobRow | undefined;
+  return job && (!claim || job.claim_id === claim) ? job : undefined;
 }
 
 /** Why a library job stops: its account may no longer see the clip (a library policy refused them since it was queued). */
@@ -117,14 +118,13 @@ const stillSees = async (job: JobRow, r: LibRow): Promise<boolean> => !!job.acto
 
 /** A job its account may no longer see fails for good, queued or held: retrying would only be refused again. */
 function failUnseen(job: JobRow): void {
-  holders.delete(job.id);
   libraryDb().prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ? AND state IN ('queued', 'running')").run(UNSEEN, job.id);
   libraryChanged(job.library_id);
 }
 
 /** The job `device` holds while its account may still see the clip; one it may not see fails here. */
-async function heldSeen(id: number, device: string): Promise<JobRow | undefined> {
-  const job = heldBy(id, device);
+async function heldSeen(id: number, device: string, claim?: string): Promise<JobRow | undefined> {
+  const job = heldBy(id, device, claim);
   const r = job && rowOf(job.version_id);
   if (!job || !r) return undefined;
   if (await stillSees(job, r)) return job;
@@ -160,9 +160,10 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
     }
     const got = claimJob(db, LEASE_S, now, "jobs", undefined, job.id);
     if (!got) continue;
-    holders.set(got.id, d.id);
+    const claim = randomUUID();
+    db.prepare("UPDATE jobs SET held_by = ?, claim_id = ? WHERE id = ?").run(d.id, claim, got.id);
     libraryChanged(got.library_id); // its card says it is being worked on
-    return packageOf(got, r, d, folders);
+    return packageOf({ ...got, claim_id: claim }, r, d, folders);
   }
   return null;
 }
@@ -181,7 +182,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
   const send = job.kind === "send" && upload !== "none";
   return {
     v: WORK_V,
-    job: { id: job.id, kind: job.kind, versionId: r.id, libraryId: r.library_id, actor: job.actor ?? d.owner },
+    job: { id: job.id, kind: job.kind, versionId: r.id, libraryId: r.library_id, actor: job.actor ?? d.owner, ...(job.claim_id ? { claim: job.claim_id } : {}) },
     file,
     folders: folders.flatMap((f) => {
       const p = f.reach[d.id]?.path ?? (f.origin.host === d.id ? f.origin.path : undefined);
@@ -217,7 +218,7 @@ export function computerTakesLibrary(job: JobRow): boolean {
   if (own.some((x) => libraryRank(x, job, r, folders) > 0)) return true;
   if (job.kind === "proxy") return false;
   const p = libraryDb().prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running')").get(r.id) as JobRow | undefined;
-  return !!p && (p.state === "running" ? holders.has(p.id) : computerTakesLibrary(p));
+  return !!p && (p.state === "running" ? !!p.held_by : computerTakesLibrary(p));
 }
 leaveToComputers.kinds = KINDS;
 leaveToComputers.test = computerTakesLibrary;
@@ -250,10 +251,11 @@ function capped(cap: number): Transform {
   });
 }
 
-/** A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it. */
-export async function acceptLibraryFile(jobId: number, deviceId: string, name: string, body: Readable): Promise<boolean> {
-  const job = heldBy(jobId, deviceId);
-  if (!job || !NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile)) return false;
+/** A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it, "gone" when the job is not held. */
+export async function acceptLibraryFile(jobId: number, deviceId: string, name: string, body: Readable, claim?: string): Promise<boolean | "gone"> {
+  const job = heldBy(jobId, deviceId, claim);
+  if (!job) return "gone";
+  if (!NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile)) return false;
   // the original only to a library that keeps originals: a proxies-only library never gets one
   if (name === "original" && (!job.version_id || versionUpload(job.version_id) !== "all")) return false;
   const cap = name === "original" ? (rowOf(job.version_id)?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
@@ -268,25 +270,34 @@ export async function acceptLibraryFile(jobId: number, deviceId: string, name: s
   return true;
 }
 
-/** The job's result, filed while `deviceId` still holds it: the files and rows through recordDerived, then the job done. */
-export async function applyLibraryResult(jobId: number, deviceId: string, r: LibraryResult): Promise<boolean> {
-  const job = heldBy(jobId, deviceId);
-  if (!job) return false;
+/** The file each kind must send for its result to count: without it the job fails (retried), never done half. */
+const NEEDS: Record<string, DerivedFile | undefined> = { proxy: "proxy", wave: "wave", sprite: "sprite" };
+
+/**
+ * The job's result, filed while `deviceId` still holds it: the files and rows through recordDerived, then the job done.
+ * "done", "failed" when the result was missing what its kind makes (or said it failed), "gone" when the job is not held.
+ */
+export async function applyLibraryResult(jobId: number, deviceId: string, r: LibraryResult, claim?: string): Promise<"done" | "failed" | "gone"> {
+  const job = heldBy(jobId, deviceId, claim);
+  if (!job) return "gone";
   const db = libraryDb();
-  holders.delete(jobId);
+  const failed = (why: string) => (failLibrary(job, why), "failed" as const);
   try {
-    if ("error" in r.outcome) return failLibrary(job, r.outcome.error);
+    if ("error" in r.outcome) return failed(r.outcome.error);
     const there = new Set(await readdir(incoming(jobId)).catch(() => [] as string[]));
     const files = Object.fromEntries(r.files.filter((f) => there.has(f) && SENDS[job.kind]?.includes(f)).map((f) => [f, path.join(incoming(jobId), f)]));
+    const need = NEEDS[job.kind];
+    if (need && !files[need]) return failed(`Your computer's ${need} did not arrive`);
     const probe = job.kind === "send" && r.probe && typeof r.probe === "object" ? (r.probe as unknown as ProbeSummary) : undefined;
     const fingerprint = (job.kind === "fingerprint" || job.kind === "send") && typeof r.fingerprint === "string" && r.fingerprint.length < 1_000_000 ? r.fingerprint : undefined;
     const hex = (x: unknown) => (job.kind === "send" && typeof x === "string" && /^[0-9a-f]{64}$/.test(x) ? x : undefined);
     const sha256 = hex(r.sha256);
     const quick = hex(r.quick);
-    if (job.kind === "send" && !probe) return failLibrary(job, "Your computer sent no probe of the file");
+    if (job.kind === "send" && !probe) return failed("Your computer sent no probe of the file");
+    if (job.kind === "fingerprint" && !fingerprint) return failed("Your computer sent no fingerprint");
     if (job.kind === "transcribe") {
       const t = transcriptOf(r.transcript);
-      if (!t) return failLibrary(job, "Your computer sent no transcript");
+      if (!t) return failed("Your computer sent no transcript");
       fileTranscript(db, job.version_id!, job.actor, t);
       // new words to search by meaning, as after a transcript made here (library/worker.ts)
       if (librarySetting(job.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, job.library_id, job.version_id!, "embed", job.actor, true);
@@ -294,9 +305,9 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
     await recordDerived(job.version_id!, { files, ...(probe ? { probe } : {}), ...(fingerprint ? { fingerprint } : {}), ...(sha256 ? { sha256 } : {}), ...(quick ? { quick } : {}) }, job.actor);
     finishJob(db, job.id, true, undefined, Date.now());
     sortAfter(job);
-    return true;
+    return "done";
   } catch (e) {
-    return failLibrary(job, e instanceof Error ? e.message : String(e));
+    return failed(e instanceof Error ? e.message : String(e));
   } finally {
     await rm(incoming(jobId), { recursive: true, force: true });
   }
@@ -317,7 +328,6 @@ function transcriptOf(x: unknown): LibraryTranscript | null {
 /** A failed try (retried after its backoff); the last one of a step the card is shown with fails the version, as on the server. */
 function failLibrary(job: JobRow, error: string): true {
   const db = libraryDb();
-  holders.delete(job.id);
   finishJob(db, job.id, false, error, Date.now());
   const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
   if (after?.state === "failed" && (job.kind === "send" || job.kind === "proxy")) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
@@ -331,6 +341,10 @@ function caller(c: Context): Device | null {
   if (d) touchDevice(d.id, c.req.header("user-agent"));
   return d;
 }
+/** The claim a computer's call is for (x-ct-claim); none from an older computer. */
+const claimOf = (c: Context): string | undefined => c.req.header("x-ct-claim") || undefined;
+/** The answer to a call for a job the computer no longer holds: taken back, given to another claim, or finished. */
+const GONE = (c: Context) => c.json({ ok: false, error: "This job was taken back" }, 410);
 const idOf = (c: Context): number => {
   const n = Number(c.req.param("id"));
   return Number.isSafeInteger(n) && n > 0 ? n : 0;
@@ -342,17 +356,19 @@ export const libWorkApp = new Hono();
 libWorkApp.post("/:id/beat", (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = heldBy(idOf(c), d.id);
-  if (job) extendLease(libraryDb(), job.id, LEASE_S);
-  return c.json({ ok: !!job });
+  const job = heldBy(idOf(c), d.id, claimOf(c));
+  if (!job) return GONE(c);
+  extendLease(libraryDb(), job.id, LEASE_S);
+  return c.json({ ok: true });
 });
 
 /** The server's proxy of the job's file, for a kind that reads it (never the proxy job's or a send's). */
 libWorkApp.get("/:id/light", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = await heldSeen(idOf(c), d.id);
-  const key = job && job.kind !== "proxy" && job.kind !== "send" ? rowOf(job.version_id)?.proxy : null;
+  const job = await heldSeen(idOf(c), d.id, claimOf(c));
+  if (!job) return GONE(c);
+  const key = job.kind !== "proxy" && job.kind !== "send" ? rowOf(job.version_id)?.proxy : null;
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
@@ -360,8 +376,9 @@ libWorkApp.get("/:id/light", async (c) => {
 libWorkApp.get("/:id/original", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = await heldSeen(idOf(c), d.id);
-  const r = job?.kind === "proxy" ? rowOf(job.version_id) : undefined;
+  const job = await heldSeen(idOf(c), d.id, claimOf(c));
+  if (!job) return GONE(c);
+  const r = job.kind === "proxy" ? rowOf(job.version_id) : undefined;
   return r && !r.source_key.startsWith("mac:") ? serveBlob(c, r.source_key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
@@ -372,9 +389,10 @@ libWorkApp.get("/:id/original", async (c) => {
 libWorkApp.post("/:id/hear", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = await heldSeen(idOf(c), d.id);
+  const job = await heldSeen(idOf(c), d.id, claimOf(c));
+  if (!job) return GONE(c);
   const body = c.req.raw.body;
-  if (job?.kind !== "transcribe" || !job.version_id) return c.json({ error: "Not found" }, 404);
+  if (job.kind !== "transcribe" || !job.version_id) return c.json({ error: "Not found" }, 404);
   if (!body) return c.json({ error: "Send the sound." }, 400);
   await mkdir(incoming(job.id), { recursive: true });
   const file = path.join(incoming(job.id), `sound.${keySound(job.actor, job.version_id) ?? "wav"}`);
@@ -394,7 +412,8 @@ libWorkApp.put("/:id/file", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "Send the file." }, 400);
-  const ok = await acceptLibraryFile(idOf(c), d.id, c.req.query("name") ?? "", Readable.fromWeb(body as never));
+  const ok = await acceptLibraryFile(idOf(c), d.id, c.req.query("name") ?? "", Readable.fromWeb(body as never), claimOf(c));
+  if (ok === "gone") return GONE(c);
   return ok ? c.json({ ok }) : c.json({ error: "Not a file this job may send" }, 400);
 });
 
@@ -403,14 +422,15 @@ libWorkApp.post("/:id/done", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const r = (await c.req.json().catch(() => null)) as LibraryResult | null;
   if (!r || typeof r !== "object" || !r.outcome || !Array.isArray(r.files)) return c.json({ error: "A library result" }, 400);
-  return c.json({ ok: await applyLibraryResult(idOf(c), d.id, r) });
+  const got = await applyLibraryResult(idOf(c), d.id, r, claimOf(c));
+  return got === "gone" ? GONE(c) : c.json({ ok: got === "done" });
 });
 
 libWorkApp.post("/:id/fail", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  const job = heldBy(idOf(c), d.id);
-  if (!job) return c.json({ ok: false });
+  const job = heldBy(idOf(c), d.id, claimOf(c));
+  if (!job) return GONE(c);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   return c.json({ ok: failLibrary(job, typeof b?.error === "string" && b.error ? b.error.slice(0, 500) : "Your computer could not run this job") });
 });

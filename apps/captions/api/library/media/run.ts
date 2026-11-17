@@ -1,8 +1,47 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
+
+/** The abort signal of the job a call runs for (withSignal): every process spawnKillable starts under it dies with it. */
+const jobSignal = new AsyncLocalStorage<AbortSignal>();
+/** Runs `work` with `signal` as its job's: a process it starts (ffmpeg, ffprobe) is killed when the signal aborts. */
+export const withSignal = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> => jobSignal.run(signal, work);
+/** The signal of the job this call runs for, for a helper that kills its own processes (vpdq.ts). */
+export const currentJobSignal = (): AbortSignal | undefined => jobSignal.getStore();
+
+/** The processes spawnKillable started that are still alive. */
+const alive = new Set<ChildProcessWithoutNullStreams>();
+const KILL_AFTER_MS = 5000;
+
+/**
+ * spawn() for a media process: when the job's signal (withSignal) aborts, it gets SIGTERM, then SIGKILL after 5 s.
+ * Throws at once when the signal already aborted, so a job taken back between two steps starts no next one.
+ */
+export function spawnKillable(cmd: string, args: string[]): ChildProcessWithoutNullStreams {
+  const signal = jobSignal.getStore();
+  signal?.throwIfAborted();
+  const p = spawn(cmd, args);
+  alive.add(p);
+  const kill = () => {
+    p.kill("SIGTERM");
+    setTimeout(() => p.exitCode === null && p.signalCode === null && p.kill("SIGKILL"), KILL_AFTER_MS).unref();
+  };
+  signal?.addEventListener("abort", kill, { once: true });
+  p.once("close", () => {
+    alive.delete(p);
+    signal?.removeEventListener("abort", kill);
+  });
+  return p;
+}
+
+/** Waits until every process spawnKillable started has ended, or `ms` passed; true when none is left. */
+export async function processesGone(ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; alive.size && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
+  return alive.size === 0;
+}
 
 // One ffmpeg at a time server-wide (FFMPEG_CONCURRENCY, default 1): the library and the AI Editor both run through here.
 let running = 0;
@@ -47,7 +86,7 @@ export function ffmpeg(args: string[], soon = false): Promise<void> {
 
 function run(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...args]);
+    const p = spawnKillable(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...args]);
     let err = "";
     p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
     p.on("error", reject);

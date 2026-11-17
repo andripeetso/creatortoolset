@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { open } from "node:fs/promises";
 import { blobs, libraryDb } from "../db";
+import { spawnKillable } from "./run";
 
 /**
  * What the library keeps of a file's probe (tasks/media-library-plan.md, section 5). Built field by field from
@@ -93,7 +93,7 @@ export const hasSound = (file: string): Promise<boolean> =>
 
 function ffprobe(file: string, args: string[]): Promise<{ format?: Json; streams?: Json[]; stream_groups?: Json[] }> {
   return new Promise((resolve, reject) => {
-    const p = spawn("ffprobe", ["-v", "error", ...args, "-of", "json", file]);
+    const p = spawnKillable("ffprobe", ["-v", "error", ...args, "-of", "json", file]);
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d.toString()));

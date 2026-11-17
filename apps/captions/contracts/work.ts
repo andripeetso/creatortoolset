@@ -123,7 +123,8 @@ export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?
  */
 export interface LibraryPackage {
   v: number;
-  job: { id: number; kind: string; versionId: string; libraryId: string; actor: string };
+  /** `claim`: this claim's id, sent back as the x-ct-claim header on each call for the job; absent from an older server */
+  job: { id: number; kind: string; versionId: string; libraryId: string; actor: string; claim?: string };
   /** the file, read where it is first (path, quick fingerprint), else the server's light copy (`proxy`) */
   file: WorkFile;
   /** the account's storage folders as paths on this computer */
