@@ -20,7 +20,7 @@ const live = new Set<AudioContext>();
 export const resumeSound = () => live.forEach((c) => void c.resume());
 
 /** A file as sound: a WAV is read only around `span` seconds (a long recording isn't loaded whole), anything else whole. */
-async function readSound(ctx: AudioContext, url: string, span?: [number, number]): Promise<{ buf: AudioBuffer; from: number }> {
+export async function readSound(ctx: AudioContext, url: string, span?: [number, number]): Promise<{ buf: AudioBuffer; from: number }> {
   if (span && /\.wav(\?|$)/i.test(url)) {
     const part = await wavPart(ctx, url, span).catch(() => null);
     if (part) return part;
