@@ -364,11 +364,15 @@ class Copies(unittest.TestCase):
             f.write(b"video")
         self.assertEqual(helper.readable([os.path.join(self.top, "nope.mov"), clip], 5), os.path.realpath(clip))
         self.assertIsNone(helper.readable([clip], 6))
-        # a copy folder is read once its marker is this helper's, not before
+        # in a copy folder only a file its marker lists as copied, at its rel and size: never the person's own video
+        # that was in the folder the server named as a copy
         self.write("In copy.mov", b"copy!")
         self.assertIsNone(helper.readable([self.path("In copy.mov")], 5))
         self.job("check", init="1")
-        self.assertEqual(helper.readable([self.path("In copy.mov")], 5), os.path.realpath(self.path("In copy.mov")))
+        self.assertIsNone(helper.readable([self.path("In copy.mov")], 5))
+        self.put("c1", b"copied", "Copied.mov")
+        self.assertEqual(helper.readable([self.path("Copied.mov")], 6), os.path.realpath(self.path("Copied.mov")))
+        self.assertIsNone(helper.readable([self.path("Copied.mov")], 5))
         # send refuses the key: "not on this computer"
         calls = []
         h = fake_helper(calls)

@@ -887,17 +887,22 @@ def own_copy(root, copy):
 
 def readable(paths, size):
     """The first of `paths` this helper may read for the server, as its real path: a regular file of `size` bytes with a
-    media extension, inside (prefix + "/") a network share this computer has connected (disks()) or one of its own copy
-    folders whose marker is still its own. Else None: "not on this computer". A server that names any other file (a key
-    in ~/.ssh, found by its size) never gets it read, through a link or otherwise."""
-    roots = [d["path"] for d in disks()]
+    media extension, inside (prefix + "/") a network share this computer has connected (disks()), or in one of its own
+    copy folders (whose marker is still its own) a file that marker lists as copied, at its rel and size: a folder the
+    server named as a copy never opens the person's files already in it. Else None: "not on this computer". A server
+    that names any other file (a key in ~/.ssh, found by its size) never gets it read, through a link or otherwise."""
+    roots = [r for r in (os.path.realpath(d["path"]).rstrip("/") for d in disks()) if r]
+    copied = {}
     for root, copy in (read_json(COPIES) or {}).items():
         try:
-            if (read_json(os.path.join(root, MARKER)) or {}).get("copy") == copy:
-                roots.append(root)
+            m = read_json(os.path.join(root, MARKER)) or {}
         except OSError:
-            pass  # a share that went away
-    roots = [r for r in (os.path.realpath(x).rstrip("/") for x in roots) if r]
+            continue  # a share that went away
+        if m.get("copy") != copy or not isinstance(m.get("files"), dict):
+            continue
+        for f in m["files"].values():
+            if isinstance(f, dict) and rel_ok(f.get("rel")) and isinstance(f.get("size"), int):
+                copied[os.path.realpath(os.path.join(root, f["rel"]))] = f["size"]
     for p in paths:
         if not isinstance(p, str):
             continue
@@ -906,7 +911,9 @@ def readable(paths, size):
             st = os.stat(r)
         except OSError:
             continue
-        if stat.S_ISREG(st.st_mode) and st.st_size == size and os.path.splitext(r)[1].lower() in MEDIA and any(r.startswith(x + "/") for x in roots):
+        if not (stat.S_ISREG(st.st_mode) and st.st_size == size and os.path.splitext(r)[1].lower() in MEDIA):
+            continue
+        if any(r.startswith(x + "/") for x in roots) or copied.get(r) == size:
             return r
     return None
 
