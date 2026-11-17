@@ -1,6 +1,6 @@
 /**
- * Choosing faces by the person's own words: the AI sees one picture per face and answers with the ids that match. Shared by
- * the AI Editor's Blur faces step (editor-steps/face-blur) and the Face Blur tool (editor-steps/blur-faces).
+ * Choosing faces by the person's own words: the AI sees one picture per face and answers with the ids that match. Used by
+ * the Face Blur tool (editor-steps/blur-faces).
  */
 
 /** The rule every face question carries: match by what is visible, never say who someone is. */

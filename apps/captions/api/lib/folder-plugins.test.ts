@@ -197,6 +197,13 @@ describe("plug-ins from the person's folder", () => {
     expect(row("a")).toMatchObject({ on: true, running: true, changed: false });
   });
 
+  it("never loads a plug-in that left the app, from a copy downloaded before", async () => {
+    write("face-blur", "plugin.ts", server("editor-face-blur"));
+    await switchOn("face-blur");
+    expect(await start()).toEqual([]);
+    expect(row("editor-face-blur")).toMatchObject({ on: true, running: false, error: expect.stringContaining("no longer part of the app") });
+  });
+
   it("keeps running the approved copy when the folder changes, and says it changed", async () => {
     write("a", "plugin.ts", server("a"));
     await switchOn("a");

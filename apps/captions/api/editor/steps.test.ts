@@ -77,7 +77,6 @@ describe("Settings → AI Editor's steps", () => {
       "adobe-enhance": "enhance",
       "blur-faces": "tool",
       colour: "editor",
-      "face-blur": "editor",
       "face-refine": "editor",
       voice: "editor",
     });

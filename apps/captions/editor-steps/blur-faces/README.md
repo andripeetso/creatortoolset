@@ -16,8 +16,7 @@ installed before this stayed on only in the workspace its account worked in then
 - **in the iPhone app**: More → Face Blur shows on a server that has this plug-in; it picks from Photos and saves the
   covered copy to Photos.
 
-In a plain browser the page says where it runs. The AI Editor's own step "Blur faces" (`editor-steps/face-blur`) is a
-different plug-in: it blurs faces inside an edit with MediaPipe.
+In a plain browser the page says where it runs.
 
 ## Settings (per workspace)
 

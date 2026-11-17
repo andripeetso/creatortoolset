@@ -8,7 +8,7 @@ import { env } from "../lib/env";
 import { REQUIREMENTS } from "./mediapipe-requirements";
 
 /**
- * The Python the AI Editor's face steps run on (Face refinement, Blur faces: plug-in folders in editor-steps/): one venv
+ * The Python the AI Editor's face steps run on (Face refinement: a plug-in folder in editor-steps/): one venv
  * with MediaPipe and OpenCV, made once from the pinned list in mediapipe-requirements.ts, in
  * <data dir>/runtime/mediapipe-<hash of the list>. Made the first time a step that needs it runs, never before the
  * person has switched that step on. `ready` is written only after the step's own self-test passed, so a broken
