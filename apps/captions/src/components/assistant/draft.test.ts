@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addVideo, cancelUpload, droppedByPath, droppedFiles, EMPTY_DRAFT, filesPending } from "./draft";
+import { addVideo, cancelUpload, droppedByPath, droppedFiles, EMPTY_DRAFT, filesPending, removeUpload, startUploads, type Upload } from "./draft";
 
 const file = (name: string) => ({ isFile: true, isDirectory: false, name, file: (ok: (f: File) => void) => ok(new File(["x"], name)) });
 // a folder whose reader hands its entries over in batches of two, then an empty one
@@ -48,6 +48,9 @@ describe("droppedFiles", () => {
 describe("filesPending", () => {
   const withFile = (f: Record<string, unknown>) => ({ ...EMPTY_DRAFT, files: [{ key: "k", name: "a.mov", size: 1, pct: 10, ...f }] });
   it("lets a message go once its video's upload is made, before the video is all in", () => {
+    // not sent yet: Send is what uploads it
+    expect(filesPending(withFile({ file: new File(["x"], "a.mov") }))).toBe(false);
+    // its upload started on Send, not made yet
     expect(filesPending(withFile({}))).toBe(true);
     expect(filesPending(withFile({ id: "u1" }))).toBe(false);
     expect(filesPending(withFile({ id: "u1", error: "Network" }))).toBe(true);
@@ -64,10 +67,39 @@ describe("a video in the box", () => {
     vi.stubGlobal("fetch", fetch);
     const f = new File(["x"], "walkthru-1.mp4");
     const patch = vi.fn();
-    expect(addVideo(f, "/Users/you/Movies/walkthru-1.mp4", patch)).toBeNull();
+    addVideo(f, "/Users/you/Movies/walkthru-1.mp4", patch);
     expect(patch).toHaveBeenCalledWith({ path: "/Users/you/Movies/walkthru-1.mp4", pct: 100, done: true });
     expect(droppedByPath.get("/Users/you/Movies/walkthru-1.mp4")).toBe(f);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("added in a browser is kept in memory and sends nothing; its X before Send sends nothing either", () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const f = new File(["x"], "take.mov");
+    const patch = vi.fn();
+    addVideo(f, undefined, patch);
+    expect(patch).toHaveBeenCalledWith({ file: f });
+    const uploads = new Map<string, Upload>();
+    removeUpload({ key: "k", name: "take.mov", size: 1, pct: 0, file: f }, uploads);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("uploads on Send, once per chip, and a path chip never", async () => {
+    const fetch = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+    const f = new File(["x"], "take.mov");
+    const draft = { ...EMPTY_DRAFT, files: [{ key: "k", name: "take.mov", size: 1, pct: 0, file: f }, { key: "p", name: "a.mov", size: 1, pct: 100, path: "/Users/you/a.mov" }] };
+    const uploads = new Map<string, Upload>();
+    const patches: unknown[] = [];
+    startUploads(draft, uploads, (key) => (p) => patches.push([key, p]));
+    startUploads(draft, uploads, () => () => {});
+    await new Promise((r) => setTimeout(r, 0));
+    expect([...uploads.keys()]).toEqual(["k"]);
+    expect(patches).toEqual([["k", { file: undefined }]]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]).toMatchObject(["/api/assistant/files", { method: "POST" }]);
+    uploads.get("k")!.ctl.abort();
   });
 
   it("its X aborts the upload and deletes the server copy", () => {
