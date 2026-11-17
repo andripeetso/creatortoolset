@@ -29,7 +29,7 @@ const RETRY_MS = 60 * 60_000;
 const takesPictures = (d: Device): boolean => !!d.work?.pictures && d.work.v >= WORK_MIN && !offOf(d.owner).has(d.id);
 
 type Hold = { device: string; versionId: string; libraryId: string; assetId: string; owner: string; card: boolean; sheets: PicturePackage["sheets"]; shots: string; until: number };
-// ponytail: in memory, as library-package.ts holders; a restart hands the clips out again
+// ponytail: in memory (library jobs keep their holder on the jobs row); a restart hands the clips out again
 const held = new Map<number, Hold>();
 const tried = new Map<string, number>();
 let nextId = 1;
