@@ -114,6 +114,12 @@ describe("local-first ratchets", () => {
     expect(Object.keys(DECODERS).length).toBeLessThanOrEqual(DECODERS_AT_START);
   });
 
+  it("T1: a computer task's work is started only through work/tasks.ts, which asks mayRunHere", () => {
+    // a module in api/work/tasks/ registers its kind; a tool that imported one could run its work with no gate
+    const importers = app(/^import (?!type )(?:[^;]*from )?"[^"]*\/tasks\/[\w-]+";/m).filter((f) => !f.endsWith(".test.ts"));
+    expect(importers).toEqual(["api/work/task-kinds.ts"].filter((f) => importers.includes(f)));
+  });
+
   it("T8: no deletion by age reaches library or export files", () => {
     expect(app(AGE)).toEqual(Object.keys(AGE_DELETES).sort());
     // the paths decision 8 closed: nothing in them goes for its age

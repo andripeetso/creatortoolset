@@ -35,6 +35,8 @@ import { editorStepsAtRisk, releaseRunningSteps, startEditorWorker } from "./edi
 import { serverWorkApp } from "./work/server-work-routes";
 import { serverUpdateApp } from "./server-update";
 import { settleServerWork } from "./work/server-work";
+import { startTaskTick, sweepTasks } from "./work/tasks";
+import "./work/task-kinds";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
@@ -514,6 +516,8 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   startLibraryWorker();
   startEditorWorker();
+  // computer tasks (work/tasks.ts): a queued one the server may run once its video work is switched on
+  void sweepTasks().then(startTaskTick);
   startTrashPurge();
   startWatchFolders();
   startPlugins(serverPlugins, startFolderPlugin);

@@ -210,9 +210,10 @@ export interface Device {
    * its work package worker, by its last work claim (contracts/work.ts, api/work/routes.ts): the package format it reads,
    * the plug-in steps it has, its proxy cache. Kept apart from `kinds`, which the device runner's claim rewrites.
    * `empty`: Settings → Storage → Empty, told on its next claim. `at`: when it last claimed. `libraryOnly`: a worker that
-   * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step.
+   * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step. `tasks`: the computer task kinds it
+   * runs (api/work/tasks.ts); absent on an older worker, which is never handed one.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true; at?: number; libraryOnly?: true };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[] };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

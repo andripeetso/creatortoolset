@@ -20,6 +20,8 @@ import { processesGone } from "../library/media/run";
 import { claimLook, looksHere } from "./look";
 import { machineNow } from "./machine";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
+import { runTaskJob, taskKinds } from "./tasks";
+import "./task-kinds";
 
 /**
  * The computer worker (design 2.4, 3): a computer signed in to a server by address runs that server's video steps for
@@ -135,6 +137,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
         cache: cacheReport(),
         library: true,
         ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
+        ...(only ? {} : { tasks: taskKinds() }),
         machine: await machineNow(),
       });
     } catch (e) {
@@ -159,6 +162,9 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
       idleSince = Date.now();
     } else if (claim.pics) {
       await runPictureJob(claim.pics, o);
+      idleSince = Date.now();
+    } else if (claim.task) {
+      await runTaskJob(claim.task, c, o);
       idleSince = Date.now();
     } else if ("update" in claim && claim.update) {
       console.log("[work] the server needs a newer Creator Toolset to hand it steps");

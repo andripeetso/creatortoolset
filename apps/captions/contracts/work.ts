@@ -100,7 +100,19 @@ export interface WorkOffline {
   bytes: number;
 }
 
-export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?: LibraryPackage; pics?: PicturePackage }) & {
+/**
+ * A computer task (api/work/tasks.ts): one piece of a tool's processing (a Caption Studio proxy, an export, a frame) that
+ * the server hands to one of the asker's computers. `input` is the kind's own JSON; files it names are read where the
+ * computer has them, else downloaded with GET work/task/:id/file?name=. The computer PUTs each made file, then POSTs
+ * done with the kind's result and the names of the files it sent.
+ */
+export interface TaskPackage {
+  v: number;
+  task: { id: number; kind: string; claim: string; actor: string };
+  input: unknown;
+}
+
+export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?: LibraryPackage; pics?: PicturePackage; task?: TaskPackage }) & {
   /** the account this computer works for (the device's owner): its proxy cache is that account's own folder */
   account?: string;
   /** Settings → Storage → Empty: empty the proxy cache now; the proxies kept offline stay */

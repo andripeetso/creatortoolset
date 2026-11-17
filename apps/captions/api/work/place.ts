@@ -22,6 +22,7 @@ import type { JobRow } from "../library/jobs";
 import { libraryWaits } from "./library-package";
 import { picturesWait } from "./pictures";
 import { serverPreferred, serverWeight, serverWorks, stepWorkspace } from "./server-work";
+import { tasksWait } from "./tasks";
 
 export interface WorkProgress extends WorkBeat {
   /** the computer's name, as Settings → Devices shows it */
@@ -139,7 +140,7 @@ const serverOpen = (job: Pick<JobRow, "version_id" | "actor">): boolean => serve
 /** Whether a step waits that computer `d` would be handed by a work claim now: what its device runner's long poll is told. */
 export async function workWaits(d: Device, now = Date.now()): Promise<boolean> {
   if (!works(d)) return false;
-  if ((await libraryWaits(d, now)) || picturesWait(d)) return true;
+  if ((await libraryWaits(d, now)) || picturesWait(d) || tasksWait(d, now)) return true;
   const k = coreKinds();
   const fits = await fitsWork(d, now);
   return (

@@ -16,6 +16,7 @@ import { finishJob, type JobRow } from "../library/jobs";
 import { claimExtras, offlineFor } from "./offline";
 import { claimLibraryForComputer, libWorkApp } from "./library-package";
 import { claimPictures, picturesWorkApp } from "./pictures";
+import { claimTask, taskWorkApp } from "./tasks";
 import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
@@ -49,6 +50,8 @@ export const workApp = new Hono();
 // library jobs (phase 6): their own ids, under work/lib/:id/
 workApp.route("/lib", libWorkApp);
 workApp.route("/pictures", picturesWorkApp);
+// computer tasks (local-first P3): their own ids, under work/task/:id/
+workApp.route("/task", taskWorkApp);
 
 workApp.post("/claim", async (c) => {
   const d = caller(c);
@@ -73,6 +76,8 @@ workApp.post("/claim", async (c) => {
   const pictures = b?.pictures === true;
   // a worker that takes only library jobs (CT_WORKER_KINDS=library) is never handed an editor step
   const libraryOnly = library && b?.libraryOnly === true;
+  // the computer task kinds it runs (tasks.ts): one that names none is never handed a task
+  const tasks = strings(b?.tasks ?? [], 100) ?? [];
   // its load and shares now: load balancing scores it, and a share it has connected gives it the folders on it
   const machine = parseMachine(b?.machine);
   if (machine) noteMachine(d.id, machine);
@@ -89,6 +94,7 @@ workApp.post("/claim", async (c) => {
     ...(library ? { library: true as const } : {}),
     ...(pictures && !libraryOnly ? { pictures: true as const } : {}),
     ...(libraryOnly ? { libraryOnly: true as const } : {}),
+    ...(tasks.length && !libraryOnly ? { tasks } : {}),
     at: Date.now(),
   });
   // the cache it reported is its proxy places (version_places kind 'proxy'): what "On this computer" and Locate read
@@ -114,6 +120,8 @@ workApp.post("/claim", async (c) => {
     if (lib) return answer({ pkg: null, lib });
     const pics = libraryOnly ? null : await claimPictures(deviceOf(d.id)!);
     if (pics) return answer({ pkg: null, pics });
+    const task = libraryOnly ? null : claimTask(deviceOf(d.id)!);
+    if (task) return answer({ pkg: null, task });
     if (Date.now() >= end || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
     await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
     touchDevice(d.id, c.req.header("user-agent"));
