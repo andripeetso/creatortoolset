@@ -64,7 +64,10 @@ export interface TimelineView {
 // keeps the key, every other one is "<track>:<frame>" with edits of its own;
 // copyOf = this key is a new item, a copy of that one (paste, Option-drag),
 // with the rest of its edit on the copy; slip = an overlay's span plays that
-// many frames later in its clip (< 0 earlier), where it is (the slip tool).
+// many frames later in its clip (< 0 earlier), where it is (the slip tool);
+// gain = a sound clip that many dB louder (< 0 quieter) than it is; off = an
+// overlay switched off (its lane hidden or muted): it stays on the timeline
+// and neither shows nor sounds.
 
 export interface ItemEdit {
   key: string;
@@ -83,9 +86,13 @@ export interface ItemEdit {
   tilt?: number;
   /** V1: the shot's new grade (contracts/grade.ts) */
   grade?: Grade;
+  /** a sound clip: dB more (< 0 less) than it has */
+  gain?: number;
+  /** an overlay switched off */
+  off?: boolean;
 }
 
-const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade;
+const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade && !e.gain && !e.off;
 /** Layers an overlay may go to: the same kind, never the talent or its voice. */
 export const layerFor = (from: string, to: string) => to !== from && to[0] === from[0] && /^[VA][2-9]$/.test(to);
 const whole = (v: unknown) => (Number.isInteger(v) && v !== 0 && Math.abs(v as number) <= 100_000 ? (v as number) : undefined);
@@ -113,6 +120,9 @@ export function cleanEdits(v: unknown): ItemEdit[] {
       if (zoom !== undefined) Object.assign(x, { zoom }, { pan: real(e.pan, -5000, 5000) ?? 0, tilt: real(e.tilt, -5000, 5000) ?? 0 });
       const grade = talent ? cleanGrade(e.grade) : undefined;
       if (grade) x.grade = grade;
+      const gain = e.key[0] === "A" ? real(e.gain, -30, 30) : undefined;
+      if (gain) x.gain = gain;
+      if (e.off === true && /^[VA][2-9]:/.test(e.key)) x.off = true;
     }
     // cuts stand whatever else the first piece gets (a removed first piece leaves the others)
     const split = Array.isArray(e.split)
@@ -193,6 +203,8 @@ export function describeEdit(e: ItemEdit, fps: number): string {
     e.split?.length && `split ${e.split.length === 1 ? "in two" : `in ${e.split.length + 1}`}`,
     e.zoom !== undefined && `reframed to ${e.zoom.toFixed(2)}×`,
     e.grade && `graded: ${describeGrade(e.grade)}`,
+    e.gain && `${e.gain > 0 ? "+" : ""}${e.gain} dB`,
+    e.off && "switched off",
   ].filter(Boolean).join(", ");
 }
 
@@ -330,7 +342,7 @@ export function playPlan(view: TimelineView, edits: ItemEdit[], holes: PlanHole[
       card("added", e.track ?? it.track)(is);
       continue;
     }
-    if (e.remove) {
+    if (e.remove || e.off) {
       card("gone", it.track)(was);
       continue;
     }

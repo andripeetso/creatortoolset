@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dragSpan, snapDelta } from "./clip-drag";
+import { dragSpan, settle, snapDelta } from "./clip-drag";
 
 describe("a clip under the hand", () => {
   it("lands on what is near, and only then", () => {
@@ -34,5 +34,29 @@ describe("a clip under the hand", () => {
     expect(dragSpan({ start: 7, end: 9 }, "end", -30, limits)).toEqual({ start: 7, end: 7.6 });
     expect(dragSpan({ start: 7, end: 9 }, "start", -30, limits)).toEqual({ start: 5, end: 9 });
     expect(dragSpan({ start: 7, end: 9 }, "start", 30, limits)).toEqual({ start: 8.4, end: 9 });
+  });
+
+  it("one lane plays one clip at a time: overwrite cuts back or takes out what a clip now covers", () => {
+    const lane = [{ key: "a", rec: 0, len: 50 }, { key: "b", rec: 60, len: 20 }, { key: "c", rec: 100, len: 50 }];
+    // a's end pulled out 0-50 → 0-110: b is covered whole, c loses its first 10 frames
+    expect(settle(lane, "a", { rec: 0, len: 50 }, { rec: 0, len: 110 }, "overwrite")).toEqual([
+      { key: "b", rec: 60, end: 80, gone: true },
+      { key: "c", rec: 110, end: 150 },
+    ]);
+    // b moved onto the end of a: a ends where b now starts
+    expect(settle(lane, "b", { rec: 60, len: 20 }, { rec: 40, len: 20 }, "overwrite")).toEqual([{ key: "a", rec: 0, end: 40 }]);
+    expect(settle(lane, "b", { rec: 60, len: 20 }, { rec: 55, len: 20 }, "overwrite")).toEqual([]); // nothing under it
+  });
+
+  it("ripple moves what follows by what the end moved, then overwrites what is still under it", () => {
+    const lane = [{ key: "a", rec: 0, len: 50 }, { key: "b", rec: 60, len: 20 }, { key: "c", rec: 100, len: 50 }];
+    expect(settle(lane, "a", { rec: 0, len: 50 }, { rec: 0, len: 75 }, "ripple")).toEqual([
+      { key: "b", rec: 85, end: 105 },
+      { key: "c", rec: 125, end: 175 },
+    ]);
+    // shorter: the rest comes up as much
+    expect(settle(lane, "b", { rec: 60, len: 20 }, { rec: 60, len: 10 }, "ripple")).toEqual([{ key: "c", rec: 90, end: 140 }]);
+    // a start pulled out earlier moves nothing after it; the clip before is cut back
+    expect(settle(lane, "c", { rec: 100, len: 50 }, { rec: 70, len: 80 }, "ripple")).toEqual([{ key: "b", rec: 60, end: 70 }]);
   });
 });
