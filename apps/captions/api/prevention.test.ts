@@ -12,33 +12,28 @@ import { filesMatching, repo } from "./lib/scan-source";
  * that starts one fails the build until it is gated and listed. Fixing one (its work moves to a computer) removes its row.
  */
 const DECODERS: Record<string, string> = {
-  // library jobs: DECODES run only where the server's video work is on (library/worker.ts leftToComputers, serverWorks)
-  "api/library/worker.ts": "serverWorks (DECODES); probe is P3f",
-  "api/library/media/probe.ts": "probe: P3f",
-  "api/library/media/proxy.ts": "serverWorks (DECODES proxy)",
-  "api/library/media/run.ts": "the runner of the library's ffmpeg calls",
-  "api/library/media/sprite.ts": "serverWorks (DECODES sprite)",
-  "api/library/media/thumb.ts": "serverWorks (DECODES thumb)",
-  "api/library/media/wave.ts": "serverWorks (DECODES wave; the middle of a sound sound-kind.ts lets Gemini hear, in a probe here)",
-  "api/library/fingerprint.ts": "serverWorks (DECODES fingerprint)",
-  "api/library/transcribe.ts": "serverWorks (DECODES transcribe)",
-  "api/library/describe.ts": "serverWorks (DECODES describe)",
-  "api/library/look.ts": "serverWorks (DECODES look)",
-  "api/library/vpdq.ts": "serverWorks (DECODES fingerprint)",
-  "api/library/shots.ts": "serverWorks (DECODES look); unverified",
-  "api/library/cuts.ts": "serverWorks (DECODES look); unverified",
-  "api/library/timeline.ts": "OPEN P3f: the watch copy encode",
-  "api/library/pictures.ts": "OPEN P3f",
-  "api/library/turn.ts": "OPEN P3f: rotate on the thumb",
-  "api/library/estimate.ts": "OPEN P3f; unverified",
-  "api/library/watch.ts": "OPEN P3f; unverified",
-  "api/library/collections.ts": "OPEN P3e: collection covers",
-  "api/library/storage/types.ts": "names a type only; unverified",
+  // library jobs: DECODES (probe, thumb, wave, proxy, sprite, fingerprint, transcribe, describe, look) run here only where
+  // the server's video work is on (library/worker.ts leftToComputers, serverWorks); else on the uploader's computers
+  // (work/library-package.ts, the same media code) or they wait
+  "api/library/media/probe.ts": "DECODES probe (a computer's probe: work/library-package.ts); a Mac's watch copy's sound check",
+  "api/library/media/proxy.ts": "DECODES proxy",
+  "api/library/media/run.ts": "the runner of the library's media calls (worker.ts and a computer's work/library.ts)",
+  "api/library/media/sprite.ts": "DECODES sprite",
+  "api/library/media/thumb.ts": "DECODES thumb",
+  "api/library/media/wave.ts": "DECODES wave; the middle of a sound sound-kind.ts lets Gemini hear (a probe here: worker.ts)",
+  "api/library/fingerprint.ts": "DECODES fingerprint",
+  "api/library/transcribe.ts": "DECODES transcribe; a library file's sound is cut here only where serverWorks (ownSound); OPEN: the mic's dictation (api/transcribe.ts /mic) on a key",
+  "api/library/describe.ts": "DECODES describe (cutStills); a computer cuts them otherwise",
+  "api/library/look.ts": "DECODES look; a Mac reads its own file (mac-look.ts)",
+  "api/library/vpdq.ts": "DECODES fingerprint",
+  "api/library/shots.ts": "DECODES look: sheetHashes of a sheet the server's own look made",
+  "api/library/cuts.ts": "DECODES look: the cut model in a server look (look.ts)",
+  "api/library/timeline.ts": "DECODES look: the watch-part encode only in a server look; a Mac's copy goes whole (askAntigravity)",
+  "api/library/pictures.ts": "the picture model's crops of card pictures and sheets: picturesHere (work/place.ts mayRunHere)",
+  "api/library/watch.ts": "textutil reads a script document's text on a Mac server, no video or sound",
   // AI Editor steps: placeOf puts a step that reads video or sound on a computer; the server takes it only through
   // serverMayTake (work/place.ts mayRunHere)
   "api/editor/analyze.ts": "mayRunHere (placeOf)",
-  "api/editor/animation-styles.ts": "OPEN P3d; unverified",
-  "api/editor/cards/step.ts": "OPEN P3d: tiles the drawn cards (pictures, no footage)",
   "api/editor/critique.ts": "mayRunHere (placeOf)",
   "api/editor/eyeline.ts": "mayRunHere (placeOf)",
   "api/editor/generate.ts": "mayRunHere (placeOf)",
@@ -53,29 +48,23 @@ const DECODERS: Record<string, string> = {
   "api/editor/subject.ts": "mayRunHere (placeOf); unverified",
   "api/editor/sync.ts": "mayRunHere (placeOf)",
   // processing with no gate yet: the phase that moves it to a computer
-  "api/projects.ts": "OPEN P3a: Caption Studio ingest and proxy",
-  "api/captions-job.ts": "OPEN P3a",
-  "api/exports.ts": "OPEN P3b",
-  "api/export.ts": "OPEN P3b",
-  "api/alpha-video.ts": "OPEN P3b",
-  "api/caption-frames.ts": "OPEN P3b: headless browser",
-  "api/review.ts": "serving (decision 5): the upload transcode; frames P3c",
-  "api/clips.ts": "OPEN P3d",
-  "api/enhance.ts": "OPEN P3d",
-  "api/instagram.ts": "OPEN P3e",
-  "api/connect/connector.ts": "OPEN P3e",
-  "api/lib/connectors/prints.ts": "OPEN P3e",
-  "api/designs.ts": "OPEN P3e",
-  "api/lib/design-picture.ts": "OPEN P3e: headless browser",
-  "api/transcribe.ts": "OPEN P3f",
-  "api/lib/device-transcribe.ts": "OPEN P3f: the server speech model",
-  "api/lib/device-embed.ts": "OPEN P3f",
-  "api/lib/device-picture.ts": "OPEN P3f: picturesHere",
-  "api/lib/clip-frame.ts": "OPEN P3f; unverified",
-  "api/lib/small-jpeg.ts": "OPEN P3f; unverified",
+  "api/caption-frames.ts": "the frame browser, used only by the export and design-pages tasks (work/tasks.ts mayRunHere)",
+  "api/review.ts": "serving (decision 5): the Review upload transcode",
+  "api/work/tasks/review.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/enhance.ts": "runStep only: the spawn a plug-in engine runs its own pass's commands with (enhanceHost); the host's own steps (finish, the blend) are computer tasks",
+  "api/lib/device-transcribe.ts": "the speech model: deviceTranscribes = This Mac only (work/place.ts mayRunHere rule 1)",
+  "api/lib/device-embed.ts": "the search model: only where deviceTranscribes (This Mac)",
+  "api/lib/device-picture.ts": "the picture model: library/pictures.ts picturesHere (mayRunHere)",
   "api/work/library.ts": "a computer's own work (the work package)",
   "api/work/look.ts": "a computer's own work (the work package)",
   "api/work/computer.ts": "a computer's own runner (CT_WORKER)",
+  "api/work/tasks/clips.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/caption-studio.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/design-pages.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/export.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/enhance.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/frames.ts": "computer task (work/tasks.ts mayRunHere)",
+  "api/work/tasks/social-prints.ts": "computer task (work/tasks.ts mayRunHere)",
   // not video work: AI programs, tools, the app itself
   "api/ffmpeg-runtime.ts": "finds the ffmpeg build",
   "api/lib/helper-check.ts": "the helper's own check",
@@ -83,11 +72,12 @@ const DECODERS: Record<string, string> = {
   "api/lib/local-claude.ts": "AI programs on the person's own computer",
   "api/lib/antigravity.ts": "an AI program on the person's own computer",
   "api/lib/folder-plugins.ts": "builds a plug-in folder on This Mac",
+  "api/connect/connector.ts": "the tunnel (cloudflared), not media work",
   "api/assistant.ts": "the assistant's prompt names the tools; unverified",
   "api/boot.ts": "names the runtime; unverified",
 };
 /** The count at the start (local-first plan P0): it may only go down. */
-const DECODERS_AT_START = 68;
+const DECODERS_AT_START = 56; // 68 at P0; P3 moved twelve to computers
 const DECODE = /spawn\(|spawnSync|spawnKillable|execFile\(|execFileSync|execSync|ffmpeg|ffprobe|chromium|playwright|onnx/;
 
 /** T8: every remaining deletion by age under api/, with why it stays. Library and export files have none (decision 8). */
@@ -112,6 +102,12 @@ describe("local-first ratchets", () => {
   it("T1: every file that starts a decoder, encoder, browser or model is listed with its gate", () => {
     expect(app(DECODE)).toEqual(Object.keys(DECODERS).sort());
     expect(Object.keys(DECODERS).length).toBeLessThanOrEqual(DECODERS_AT_START);
+  });
+
+  it("T1: a computer task's work is started only through work/tasks.ts, which asks mayRunHere", () => {
+    // a module in api/work/tasks/ registers its kind; a tool that imported one could run its work with no gate
+    const importers = app(/^import (?!type )(?:[^;]*from )?"[^"]*\/tasks\/[\w-]+";/m).filter((f) => !f.endsWith(".test.ts"));
+    expect(importers).toEqual(["api/work/task-kinds.ts"].filter((f) => importers.includes(f)));
   });
 
   it("T8: no deletion by age reaches library or export files", () => {

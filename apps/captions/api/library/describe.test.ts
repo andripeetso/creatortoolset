@@ -293,7 +293,7 @@ describe("a clip filmed on its side", () => {
     expect([card("ast-rot-0001").width, card("ast-rot-0001").height]).toEqual([2622, 1206]);
   });
 
-  it("the AI's turn and Rotate turn the card, its thumbnail and its strip, never the file", async () => {
+  it("the AI's turn and Rotate turn the card and queue its thumbnail and strip again, never the file", async () => {
     const v = await seed("ast-turn-001");
     libraryDb().prepare(`UPDATE asset_versions SET probe = '{"duration":2,"vcodec":"h264","width":160,"height":120}' WHERE id = ?`).run(v);
     const thumb = path.join(dir, "turn-thumb.jpg");
@@ -315,13 +315,16 @@ describe("a clip filmed on its side", () => {
     let c = card("ast-turn-001");
     expect([c.turn, c.width, c.height]).toEqual([270, 120, 160]);
     expect(c.thumbUrl).toContain("?t=270");
-    expect(await size()).toBe("120,160");
-    expect(job(v, "sprite")?.state).toBe("queued"); // made again, upright
+    // the picture and the strip are made again, upright, by library jobs (a computer's unless video work is on): the
+    // server never turns the picture itself
+    expect(await size()).toBe("160,120");
+    expect(job(v, "thumb")?.state).toBe("queued");
+    expect(job(v, "sprite")?.state).toBe("queued");
     // Rotate: a quarter clockwise from 270 is upright again
     expect((await call("local", "/api/library/lib_a/assets/ast-turn-001", "PATCH", { turn: 0 })).status).toBe(200);
     c = card("ast-turn-001");
     expect([c.turn, c.width, c.height]).toEqual([undefined, 160, 120]);
-    expect(await size()).toBe("160,120");
+    expect(job(v, "thumb")?.state).toBe("queued");
   });
 });
 

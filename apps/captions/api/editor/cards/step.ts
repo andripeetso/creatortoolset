@@ -14,9 +14,8 @@ import { libraryDb } from "../../library/db";
 import { whoFor } from "../../library/describe";
 import { enqueueJob } from "../../library/jobs";
 import { probe } from "../../library/media/probe";
-import { ffmpeg } from "../../library/media/run";
 import { Waiting } from "../analyze";
-import { findAnimation, fitJpeg, pictureFile } from "../animation-styles";
+import { findAnimation, fitJpeg, pictureFile, tilePictures } from "../animation-styles";
 import type { StepContext } from "../engine";
 import { previewSize } from "../preview";
 import { ownerOf, readDraft, readStep, saveDraft } from "../store";
@@ -130,7 +129,7 @@ function linesOf(editId: string, variant: string, tl: Timeline): (PlanLine & { i
 }
 
 /** One sheet of the cards' stills for the look call: a card in each column when the picture is tall, else in each row. */
-export async function lookSheet(editId: string, variant: string, ids: string[], width: number, height: number): Promise<{ image: VisionImage; columns: boolean }> {
+export async function lookSheet(actor: string, editId: string, variant: string, ids: string[], width: number, height: number): Promise<{ image: VisionImage; columns: boolean }> {
   const dir = path.join(cardsDir(editId, variant), "sheet");
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
@@ -140,8 +139,14 @@ export async function lookSheet(editId: string, variant: string, ids: string[], 
     const order = columns ? STILLS.flatMap((s) => ids.map((id) => [id, s] as const)) : ids.flatMap((id) => STILLS.map((s) => [id, s] as const));
     for (const [n, [id, s]] of order.entries()) await symlink(cardFile(editId, variant, id, s)!, path.join(dir, `${String(n + 1).padStart(3, "0")}.png`));
     const h = Math.round((height * 540) / width / 2) * 2;
-    await ffmpeg(["-framerate", "1", "-i", path.join(dir, "%03d.png"), "-vf", `scale=540:${h},tile=${columns ? ids.length : 3}x${columns ? 3 : ids.length}`, "-frames:v", "1", path.join(dir, "sheet.png")]);
-    await fitJpeg(path.join(dir, "sheet.png"), path.join(dir, "sheet.jpg"), SHEET_MAX_SIDE, SHEET_MAX_BYTES);
+    // a picture is processing: made on a computer of the actor's, else the step waits with the line (never made here)
+    for (const made of [
+      () => tilePictures(actor, dir, path.join(dir, "sheet.png"), h, columns ? ids.length : 3, columns ? 3 : ids.length),
+      () => fitJpeg(actor, path.join(dir, "sheet.png"), path.join(dir, "sheet.jpg"), SHEET_MAX_SIDE, SHEET_MAX_BYTES),
+    ]) {
+      const r = await made();
+      if (r !== true) throw r === "That picture could not be read" ? new Error(r) : new Waiting(60, r);
+    }
     return { image: { jpegBase64: (await readFile(path.join(dir, "sheet.jpg"))).toString("base64") }, columns };
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -245,7 +250,10 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     }
     const shown = frame.cards.filter((c) => st.drawn.includes(c.id));
     // the stills on one sheet. Stills that cannot be laid out are not looked at: the cards are drawn, and no call is made
-    const sheet = st.looked || st.draws >= MAX_DRAWS ? null : await lookSheet(edit.id, variant, shown.map((c) => c.id), frame.width, frame.height).catch(() => null);
+    const sheet = st.looked || st.draws >= MAX_DRAWS ? null : await lookSheet(owner, edit.id, variant, shown.map((c) => c.id), frame.width, frame.height).catch((e) => {
+            if (e instanceof Waiting) throw e;
+            return null;
+          });
     if (sheet && (await spend())) {
       await save({ ...st, looked: true });
       const pictures = await stylePictures(owner, style, LOOK_PICTURES);

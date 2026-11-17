@@ -4,6 +4,7 @@ import { SPRITE_FRAMES, type AssetCard, type AssetKind } from "@contracts/librar
 import { ClipStage } from "@/components/LibraryProcessing";
 import { libraryBadges } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
+import { placeLine } from "@/lib/wording";
 
 /** The Media Library's clips as cards and as list rows (LibraryPage.tsx), and their frames before the list is known. */
 
@@ -11,10 +12,22 @@ export const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio:
 
 /** The small mark of a clip on this computer (its proxy cached here, or its file indexed here): the card's `here`. */
 export const HereMark = ({ className }: { className?: string }) => (
-  <span role="img" aria-label="On this computer" title="On this computer" className={className}>
+  <span role="img" aria-label={placeLine({ word: "here" })} title={placeLine({ word: "here" })} className={className}>
     <Laptop aria-hidden className="h-3 w-3" />
   </span>
 );
+
+/** The words that need saying on a card about its file (a missing file, a drive away, a folder not found or not allowed);
+ *  none for a clip that is fine or not checked yet. A clip the server marked missing says its place word when it has one
+ *  ("Not checked yet" for a file nobody has looked for), else "File not found". */
+const ATTENTION = new Set(["missing", "disk_away", "folder_not_found", "needs_ok"]);
+export function fileLine(a: AssetCard): string | null {
+  if (a.state === "failed" && !a.failed) return "Could not read the file";
+  const w = a.placeWord;
+  if (w && (ATTENTION.has(w.word) || (a.state === "missing" && w.word !== "here" && w.word !== "on" && w.word !== "found"))) return placeLine(w);
+  return a.state === "missing" && !w ? "File not found" : null;
+}
+const isHere = (a: AssetCard) => !!a.here || a.placeWord?.word === "here" || a.placeWord?.word === "found";
 
 export const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -109,18 +122,18 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
             <div aria-hidden className="absolute bottom-0 left-0 h-0.5 bg-white/90" style={{ width: `${at * 100}%` }} />
           </>
         )}
-        {a.here && <HereMark className="absolute bottom-1.5 left-1.5 rounded bg-black/70 p-1 text-white" />}
+        {isHere(a) && <HereMark className="absolute bottom-1.5 left-1.5 rounded bg-black/70 p-1 text-white" />}
         {a.durationS !== undefined && (
           <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white">
             {clock(a.durationS)}
           </span>
         )}
-        {(a.state === "missing" || (a.state === "failed" && !a.failed)) && (
+        {fileLine(a) && (
           // on the picture's own dark label in both themes: white words, the colour in the dot (red failed, amber needs the person)
           <span className="absolute left-1.5 top-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
             <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", a.state === "failed" ? "bg-red-500" : "bg-amber-500")} />
             {/* a failed clip whose step is known says which one under its name (ClipStage) */}
-            <span className="truncate">{a.state === "failed" ? "Could not read the file" : "File not found"}</span>
+            <span className="truncate">{fileLine(a)}</span>
           </span>
         )}
       </div>
@@ -156,11 +169,11 @@ export function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen:
         {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
       </div>
       <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
-      {a.here && <HereMark className="shrink-0 text-zinc-500" />}
-      {a.state === "missing" ? (
+      {isHere(a) && <HereMark className="shrink-0 text-zinc-500" />}
+      {fileLine(a) && a.state !== "failed" ? (
         <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          File not found
+          {fileLine(a)}
         </span>
       ) : (
         <ClipStage card={a} className="shrink-0" />

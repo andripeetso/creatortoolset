@@ -17,6 +17,9 @@ const { collectionApp } = await import("./collections");
 const { publicShareApp, shareApp } = await import("./shares");
 const { indexAsset } = await import("./query");
 const { registerLibrarySlot, resetLibrarySlots } = await import("./sources");
+await import("../work/task-kinds");
+// the cover's frame is cut here: the server's video work is on (work/tasks/media-tasks.test.ts has the computer's road)
+(await import("../work/server-work")).writeServerWork({ on: true });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

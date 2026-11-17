@@ -480,7 +480,7 @@ final class RelayRunner {
             } else if step.kind == splitKind {
                 (end, more) = SplitJob(api: api, id: step.id).run()
             } else if step.kind == transcribeKind, let speech {
-                (end, more) = TranscribeJob(api: api, step: step, speech: speech, proxies: work.appendingPathComponent("work/proxies")).run()
+                (end, more) = TranscribeJob(api: api, step: step, speech: speech, proxies: work.appendingPathComponent("work/proxies"), granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil)).run()
             } else if step.kind == faceBlurAutoKind {
                 (end, more) = FaceBlurAutoJob(api: api, step: step, folder: work.appendingPathComponent("faceblur/\(step.id)")).run()
             } else if step.kind == folderListKind {
@@ -519,7 +519,7 @@ final class RelayRunner {
     /// server hands this Mac one at a time and wakes its long poll for the next (mac-look.ts).
     private func startLook(_ step: EditorJob) {
         let thread = Thread { [self] in
-            let job = LibraryLookJob(api: api, step: step, folder: looksFolder, stopped: { [weak self] in self?.isStopped ?? true })
+            let job = LibraryLookJob(api: api, step: step, folder: looksFolder, stopped: { [weak self] in self?.isStopped ?? true }, granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil))
             if case .failed(let why) = job.run().end { AppLog.write("shot descriptions: step \(step.id) failed: \(why)") }
         }
         thread.qualityOfService = .utility
@@ -530,7 +530,7 @@ final class RelayRunner {
     /// The server hands this Mac one at a time and wakes its long poll for the next (api/library/copies.ts).
     private func startCopy(_ step: EditorJob) {
         let thread = Thread { [self] in
-            if case .failed(let why) = LibraryCopyJob(api: api, step: step, stopped: { [weak self] in self?.isStopped ?? true }).run() {
+            if case .failed(let why) = LibraryCopyJob(api: api, step: step, stopped: { [weak self] in self?.isStopped ?? true }, granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil)).run() {
                 AppLog.write("library copy: step \(step.id) failed: \(why)")
             }
         }

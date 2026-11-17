@@ -81,6 +81,7 @@ struct LibraryLookJob {
                 case .file(let real, _): src = URL(fileURLWithPath: real)
                 case .status(404): throw LibraryLookRefused(why: "The file is not on this Mac at \(path).")
                 case .status(415): throw LibraryLookRefused(why: "\(path) is not a video this Mac reads.")
+                case .diskAway(let disk): throw LibraryLookRefused(why: "\(disk) isn't connected")
                 case .status: throw LibraryLookRefused(why: "\(path) is not in a folder Creator Toolset was given on this Mac (dropped on its window or chosen).")
                 }
                 let reading = stretches.isEmpty

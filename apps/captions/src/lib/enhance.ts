@@ -45,6 +45,8 @@ export interface EnhanceSession {
   status: EnhanceStatus;
   engine?: string;
 
+  /** "Waits for one of your computers…" while no computer can take the run */
+  line?: string;
   /** a plug-in engine's run waiting for, or claimed by, its outside worker */
   remote?: { state: "waiting" | "claimed"; at: number };
   /** the passes in order (admins: a second one); step = the one running */
@@ -127,14 +129,35 @@ export const setEnhanceMix = (id: string, mix: number) =>
     body: JSON.stringify({ mix }),
   }).then((r) => json<EnhanceSession>(r));
 
-/** The result at the strength picked (under 100 %: blended with the original on the server). */
-export function downloadEnhanced(
+/**
+ * The result at the strength picked. Under 100 % it is a blend with the original, made on one of the person's computers:
+ * the server is asked first (?ready=1) and, while it is being made, `onWait` gets its line and the ask is repeated; then
+ * the plain link downloads it.
+ */
+export async function downloadEnhanced(
   s: EnhanceSession,
   kind: "audio" | "video",
   mix = 1,
-): void {
+  onWait?: (line: string | null) => void,
+): Promise<void> {
+  const url = `/api/enhance/${s.id}/download?mix=${mix}${kind === "video" ? "&kind=video" : ""}`;
+  try {
+    // shortcut: asks for ten minutes at most; the Download button asks again after that
+    for (let n = 0; ; n++) {
+      const r = await fetch(`${url}&ready=1`);
+      if (r.status !== 202) {
+        await json<{ ready: true }>(r);
+        break;
+      }
+      if (n >= 200) throw new Error("The download is not ready yet. Try again in a while.");
+      onWait?.(((await r.json().catch(() => null)) as { line?: string } | null)?.line ?? "Getting the download ready");
+      await new Promise((done) => setTimeout(done, 3000));
+    }
+  } finally {
+    onWait?.(null);
+  }
   const a = document.createElement("a");
-  a.href = `/api/enhance/${s.id}/download?mix=${mix}${kind === "video" ? "&kind=video" : ""}`;
+  a.href = url;
   a.download = "";
   a.click();
 }

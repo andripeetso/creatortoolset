@@ -18,7 +18,7 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -27,7 +27,9 @@ import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
-import { placesApp } from "./places";
+import { folderStatesFor, placesApp } from "./places";
+import { whereIsMany } from "./whereis";
+import { PLACES_MAX, placeWordOf } from "../../contracts/places";
 import { emptyTrash, inReview } from "./trash";
 import { copiesWake } from "./copies";
 import { similar } from "./similar";
@@ -329,9 +331,20 @@ async function fileMade(row: UploadRow, versionId: string): Promise<void> {
 // a Review video: Review owns its versions and its trash, so the library refuses to add a version or trash it
 const IN_REVIEW = { error: "This video is in Review: change it there", code: "conflict" } as const;
 
+/**
+ * The upload gate for an upload under way: a file a computer sends (its place named) or one a person sent; the phone's
+ * 720p copy as a proxy. `got`: at the finish, what the received bytes hash to (the proxy proof).
+ */
+const receives = (row: UploadRow, got?: string) => {
+  const made = madeOf(row)?.proxy;
+  const sender = row.from_device ? deviceOf(row.from_device) : undefined;
+  const into = { id: row.library_id, collectionId: row.collection_id };
+  const origin = row.from_path ? "computer" : "person";
+  if (!made) return mayReceive("original", into, origin, { sender });
+  return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got, bytes: row.size, original: made.size } : {}) } });
+};
+
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
-/** The upload gate for an upload under way: a file a computer sends (its place named) or one a person sent. */
-const receives = (row: UploadRow) => mayReceive("original", { id: row.library_id, collectionId: row.collection_id }, row.from_path ? "computer" : "person");
 
 async function ownUpload(c: Context<{ Variables: AuthVars }>): Promise<UploadRow | null> {
   const user = c.get("user");
@@ -397,6 +410,12 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
     throw new Error("The bucket's copy is not the size that was declared");
   }
   const sha256 = await sha256File(await store.localCopy(key));
+  const proof = receives(row, sha256);
+  if (!proof.ok) {
+    await store.delete(key); // not the copy it said it was: nothing of it is kept
+    db().prepare("UPDATE uploads SET state = 'failed', made = NULL WHERE id = ?").run(row.id);
+    return c.json(proof.body, proof.status);
+  }
   const dup = duplicateOf(row, sha256);
   if (dup) {
     await store.delete(key); // not metered yet, so no usage to take back
@@ -513,11 +532,15 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
   }
-  const gate = mayReceive("original", { id: libraryId, collectionId: collection }, from ? "computer" : "person");
-  if (!gate.ok) return c.json(gate.body, gate.status);
   // what the phone made of the file itself (derived.ts Made): only to a library this server files it for
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
+  const into = { id: libraryId, collectionId: collection };
+  const origin = from ? "computer" : "person";
+  const gate = made?.proxy
+    ? mayReceive("proxy", into, origin, { sender, proof: { ...(made.proxy.sha256 ? { sha256: made.proxy.sha256 } : {}), bytes: size, original: made.proxy.size } })
+    : mayReceive("original", into, origin, { sender });
+  if (!gate.ok) return c.json(gate.body, gate.status);
   await sweepStale();
   const staging = path.join(stagingDir(), id);
   // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
@@ -699,6 +722,12 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     const got = await stagedBytes(row.staging_path);
     if (got !== row.size) return c.json({ error: "The upload is incomplete", code: "conflict", offset: got }, 409);
     const sha256 = await sha256File(row.staging_path);
+    const proof = receives(row, sha256);
+    if (!proof.ok) {
+      await rm(row.staging_path, { force: true }); // not the copy it said it was: nothing of it is kept
+      db().prepare("UPDATE uploads SET state = 'failed', made = NULL WHERE id = ?").run(row.id);
+      return c.json(proof.body, proof.status);
+    }
     const dup = duplicateOf(row, sha256);
     if (dup) {
       await rm(row.staging_path, { force: true });
@@ -943,7 +972,32 @@ libraryApp.get("/:id/assets", async (c) => {
   if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);
   const { sql, params, limit } = buildAssetQuery(libraryId, query);
   const page = pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit);
-  return c.json({ ...page, items: markHere(db(), await visibleCards(viewer, libraryId, page.items), query.device) });
+  return c.json({ ...page, items: await markHere(db(), await visibleCards(viewer, libraryId, page.items), query.device) });
+});
+
+/**
+ * GET /api/library/:id/where?versions=a,b&device=<id> → WhereAnswer: where each version is, from the place rows only
+ * (whereis.ts). At most PLACES_MAX ids, only the library's versions the caller may see; `device` counts only when it is the
+ * caller's own computer (the word is then seen from it).
+ */
+libraryApp.get("/:id/where", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const viewer = await readerOf(user.username, libraryId);
+  if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const ids = [...new Set((c.req.query("versions") ?? "").split(",").filter((x) => x && x.length <= 100))];
+  if (ids.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
+  const asked = c.req.query("device");
+  const device = asked && deviceOf(asked)?.owner === user.username ? asked : undefined;
+  const rows = db()
+    .prepare("SELECT v.id, v.asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.id IN (SELECT value FROM json_each(?))")
+    .all(libraryId, JSON.stringify(ids)) as { id: string; asset_id: string }[];
+  const seen: string[] = [];
+  for (const r of rows) if (await canSee(viewer, assetRef(libraryId, r.asset_id, r.id))) seen.push(r.id);
+  const where = whereIsMany(seen, await folderStatesFor(seen));
+  const versions: WhereAnswer["versions"] = {};
+  for (const [id, w] of where) versions[id] = { ...w, word: placeWordOf(w, device) };
+  return c.json({ versions } satisfies WhereAnswer);
 });
 
 /**

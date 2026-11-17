@@ -309,6 +309,7 @@ enum Rules {
         let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
         let bodyOffset = (json?["offset"] as? NSNumber)?.int64Value
         let message = json?["error"] as? String ?? "The server answered \(status)"
+        if let line = APIError.refusal(status, json) { return .failed(line) }
         switch step.kind {
         case .patch:
             if status == 204 || status == 200, let at = uploadOffset {

@@ -1,17 +1,18 @@
 /**
  * Item 6C (and 6A's "send"): library jobs on the uploader's own computers, on the same road as the AI Editor's steps
  * (claim → package → result; contracts/work.ts LibraryPackage). A file only the server has (a phone or browser upload)
- * gets its proxy, waveform, strip and fingerprint made on one of its uploader's computers while one is online; the proxy
- * job may download the original to make the proxy, and the computer deletes it after. The other kinds read the file
- * where it is on that computer, else the proxy the server has; never the original. A "send" job is a file on one
- * computer that nothing uploaded yet (library/derived.ts sendLater): only a computer that has it takes it, and this
- * server never runs it. The server runs a job no such computer can take only where its video work is on (server-work.ts).
+ * gets its probe, card picture, proxy, waveform, strip, fingerprint and description stills made on one of its uploader's
+ * computers while one is online; the proxy job (and a probe, or a card picture with no proxy yet) may download the
+ * original, and the computer deletes it after. The other kinds read the file where it is on that computer, else the
+ * proxy the server has; never the original. A description: the computer cuts the stills, the server asks the actor's
+ * AI. A "send" job is a file on one computer that nothing uploaded yet (library/derived.ts sendLater): only a computer
+ * that has it takes it, and this server never runs it. The server runs a job no such computer can take only where its video work is on (server-work.ts).
  * A transcript on the person's key (6B) is one of them too: the computer cuts the sound from its copy, the server hears
  * it on the key (/hear, nothing decoded here), and the words come back in the result. A transcript on a computer's own
  * speech model goes the speech road instead (lib/computer-transcribe.ts), where that computer cuts the sound itself.
  */
 import { Hono, type Context } from "hono";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -23,34 +24,53 @@ import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type Library
 import { computers, either, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
 import { folderFor } from "../lib/storage";
 import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOriginals, type WorkerSeen } from "../lib/balance";
-import { deviceForToken, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
+import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
+import { hasMembers, mayReceive, provesProxies, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
-import { claimJob, enqueueJob, extendLease, finishJob, type JobRow } from "../library/jobs";
+import { FRAMES } from "../library/describe";
+import { claimJob, enqueueJob, extendLease, finishJob, parkJob, type JobRow } from "../library/jobs";
+import { wakePictures } from "../library/pictures";
 import type { ProbeSummary } from "../library/media/probe";
 import { sortAfter } from "../library/roll";
 import { serveBlob } from "../library/routes";
-import { fileTranscript, hearSound, keySound } from "../library/transcribe";
-import { leaveToComputers } from "../library/worker";
+import { fileTranscript, hearSound, keySound, NeedsKey } from "../library/transcribe";
+import { aiWaits, describeFromStills, leaveToComputers } from "../library/worker";
 import { mayRead } from "./offline";
 
 /** The library jobs a computer runs; "send" only a computer can. */
-export const LIBRARY_ON_COMPUTER: readonly string[] = ["proxy", "wave", "sprite", "fingerprint", "transcribe"];
+export const LIBRARY_ON_COMPUTER: readonly string[] = ["probe", "thumb", "proxy", "wave", "sprite", "fingerprint", "transcribe", "describe"];
 const KINDS = ["send", ...LIBRARY_ON_COMPUTER];
 const LEASE_S = 300;
+/** The stills a describe job sends (describe.ts FRAMES at most). */
+const STILLS = Array.from({ length: FRAMES }, (_, i) => `still${i}`);
 /** The files each kind may send back. */
-const SENDS: Record<string, DerivedFile[]> = { send: ["original", "proxy", "thumb", "wave", "sprite"], proxy: ["proxy"], wave: ["wave"], sprite: ["sprite"], fingerprint: [], transcribe: [] };
+const SENDS: Record<string, string[]> = {
+  send: ["original", "proxy", "thumb", "wave", "sprite"],
+  probe: [],
+  thumb: ["thumb"],
+  proxy: ["proxy"],
+  wave: ["wave"],
+  sprite: ["sprite"],
+  fingerprint: [],
+  transcribe: [],
+  describe: STILLS,
+};
 /** The file each kind must send back; a job without it fails (retried), never finishes empty. */
-const REQUIRED: Record<string, DerivedFile> = { proxy: "proxy", wave: "wave", sprite: "sprite" };
+const REQUIRED: Record<string, string> = { thumb: "thumb", proxy: "proxy", wave: "wave", sprite: "sprite", describe: "still0" };
+/** The kinds that may download the original of a file only the server has: the proxy, and the probe and card picture it has no lighter copy for. */
+const READS_ORIGINAL = ["proxy", "probe", "thumb"];
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
 
 /** A computer whose worker reads this server's package and said it runs library jobs. */
 const takesLibrary = (d: Pick<Device, "work">): boolean => !!d.work?.library && d.work.v >= WORK_MIN;
+/** The kinds added after the first library jobs: only a computer that names them in its claim (work/library.ts LIBRARY_HERE) gets one. */
+const LATER_KINDS = ["probe", "thumb", "describe"];
 
 interface LibRow extends FileRow {
   library_id: string;
@@ -86,14 +106,18 @@ const where = (r: LibRow): FileRow => (r.mac_path || !r.from_path ? r : { ...r, 
  */
 export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: LibRow, folders: ReturnType<typeof foldersOf>, b: Balance): number {
   if (!takesLibrary(d) || !allowsLibrary(b, d.id, r.library_id)) return 0;
+  if (LATER_KINDS.includes(job.kind) && !d.work?.libraryKinds?.includes(job.kind)) return 0;
   // only a transcript on the person's key: the speech road takes one on a computer's model, this server one on its own
   if (job.kind === "transcribe" && !keySound(job.actor, r.id)) return 0;
+  // a file indexed on a Mac is described here from the stills that Mac sent (library/worker.ts)
+  if (job.kind === "describe" && r.source_key.startsWith("mac:")) return 0;
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   if (at && "path" in at) return 3;
   if (job.kind === "send") return 0;
-  if (job.kind === "proxy") return r.source_key.startsWith("mac:") || !takesOriginals(b, d) ? 0 : 1;
-  // a proxy, never the original itself: the one download of an original is the proxy job's
-  return r.proxy ? 2 : 0;
+  // a probe reads the original's own header, never its proxy's
+  if (job.kind !== "proxy" && job.kind !== "probe" && r.proxy) return 2;
+  // the original only for the proxy, or a probe or card picture with no proxy to read
+  return READS_ORIGINAL.includes(job.kind) && !r.source_key.startsWith("mac:") && takesOriginals(b, d) ? 1 : 0;
 }
 
 /** The computers of `owner` that may take a library job now: `me`, and the others online, free, holding none, asking for work lately and not Off. */
@@ -150,7 +174,7 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
   const folders = foldersOf(d.owner);
   const peers = peersOf(d.owner, d, now);
   for (const job of queued) {
-    const r = rowOf(job.version_id);
+    const r = waitsForWords(job) ? undefined : rowOf(job.version_id);
     if (!r) continue;
     const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
     const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
@@ -187,6 +211,11 @@ function queuedFor(d: Device, now: number, balance: Balance): JobRow[] {
     .all(now, d.owner, ...KINDS, ...(libs ?? [])) as unknown as JobRow[];
 }
 
+/** A description reads what is said: it waits while its clip's transcript is still to come (library/worker.ts nextJob). */
+function waitsForWords(job: JobRow): boolean {
+  return job.kind === "describe" && !!libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'transcribe' AND state IN ('queued', 'running')").get(job.version_id);
+}
+
 function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof foldersOf>): LibraryPackage {
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   const file: WorkFile = {
@@ -195,7 +224,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     bytes: r.bytes,
     ...(r.quick ? { quick: r.quick } : r.sha256.startsWith("mac:") ? { quick: r.sha256.slice(4) } : {}),
     ...(at && "path" in at ? { path: at.path } : {}),
-    ...(r.proxy && job.kind !== "proxy" && job.kind !== "send" ? { proxy: { bytes: r.proxy_bytes ?? 0 } } : {}),
+    ...(r.proxy && !["proxy", "probe", "send"].includes(job.kind) ? { proxy: { bytes: r.proxy_bytes ?? 0 } } : {}),
   };
   const upload = versionUpload(r.id);
   const send = job.kind === "send" && upload !== "none";
@@ -207,7 +236,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
       const p = f.reach[d.id]?.path ?? (f.origin.host === d.id ? f.origin.path : undefined);
       return p ? [p] : [];
     }),
-    ...(job.kind === "proxy" && !r.source_key.startsWith("mac:") ? { original: { bytes: r.bytes } } : {}),
+    ...(READS_ORIGINAL.includes(job.kind) && !r.source_key.startsWith("mac:") && (job.kind !== "thumb" || !r.proxy) ? { original: { bytes: r.bytes } } : {}),
     ...(r.probe && job.kind !== "send" ? { probe: JSON.parse(r.probe) as Record<string, unknown> } : {}),
     ...(job.kind === "transcribe" ? { audio: keySound(job.actor, r.id) ?? "wav" } : {}),
     ...(send
@@ -237,7 +266,8 @@ export function computerTakesLibrary(job: JobRow): boolean {
   const folders = foldersOf(job.actor);
   const balance = readBalanceSync(job.actor);
   if (own.some((x) => libraryRank(x, job, r, folders, balance) > 0)) return true;
-  if (job.kind === "proxy") return false;
+  // a later kind no computer of theirs runs yet (an older app): this server's, as before
+  if (job.kind === "proxy" || (LATER_KINDS.includes(job.kind) && !own.some((x) => x.work?.libraryKinds?.includes(job.kind)))) return false;
   const p = libraryDb().prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running')").get(r.id) as JobRow | undefined;
   return !!p && (p.state === "running" ? !!p.held_by : computerTakesLibrary(p));
 }
@@ -281,13 +311,13 @@ export async function libraryWaits(d: Device, now = Date.now()): Promise<boolean
   const queued = queuedFor(d, now, balance);
   const folders = queued.length ? foldersOf(d.owner) : [];
   return queued.some((j) => {
-    const r = rowOf(j.version_id);
+    const r = waitsForWords(j) ? undefined : rowOf(j.version_id);
     return !!r && libraryRank(d, j, r, folders, balance) > 0;
   });
 }
 
 const incoming = (jobId: number) => path.join(env.dataDir, "library", "incoming", String(jobId));
-const NAME = /^(original|proxy|thumb|wave|sprite)$/;
+const NAME = /^(original|proxy|thumb|wave|sprite|still\d)$/;
 
 /** Passes at most `cap` bytes, then fails the stream. */
 function capped(cap: number): Transform {
@@ -300,21 +330,55 @@ function capped(cap: number): Transform {
   });
 }
 
-/** A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it, "gone" when the job is not held. */
-export async function acceptLibraryFile(jobId: number, deviceId: string, name: string, body: Readable, claim?: string): Promise<boolean | "gone"> {
+/**
+ * A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it, "gone" when the
+ * job is not held, the gate's refusal (upload-gate.ts) when the library does not take it. `declared`: the SHA-256 a
+ * computer declared for a proxy before sending it; the bytes must hash to it.
+ */
+export async function acceptLibraryFile(
+  jobId: number,
+  deviceId: string,
+  name: string,
+  body: Readable,
+  claim?: string,
+  declared?: string,
+): Promise<boolean | "gone" | Exclude<Received, { ok: true }>> {
   const job = heldBy(jobId, deviceId, claim);
   if (!job) return "gone";
-  if (!NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile)) return false;
-  // the original only to a library that keeps originals: a proxies-only library never gets one
-  if (name === "original" && (!job.version_id || versionUpload(job.version_id) !== "all")) return false;
-  const cap = name === "original" ? (rowOf(job.version_id)?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
+  if (!NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile) || !job.version_id) return false;
+  const r = rowOf(job.version_id);
+  // a proxy of a file only a computer has (`mac:`) is that computer's upload; one of the server's own original is made from it
+  const kind = name === "original" ? "original" : name === "proxy" && r?.source_key.startsWith("mac:") ? "proxy" : "derivative";
+  const sender = deviceOf(deviceId);
+  const into = { id: job.library_id, versionId: job.version_id };
+  const must = provesProxies(sender) && kind === "proxy";
+  const team = kind === "proxy" && (await hasMembers(job.library_id));
+  const before = mayReceive(kind, into, "computer", { sender, team, ...(must ? { proof: { sha256: declared ?? "" } } : {}) });
+  if (!before.ok) return before;
+  const cap = name === "original" ? (r?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
   await mkdir(incoming(jobId), { recursive: true });
   const out = path.join(incoming(jobId), name);
+  const hash = createHash("sha256");
+  let bytes = 0;
+  const tally = new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      hash.update(chunk);
+      bytes += chunk.length;
+      done(null, chunk);
+    },
+  });
   try {
-    await pipeline(body, capped(cap), createWriteStream(out));
+    await pipeline(body, capped(cap), tally, createWriteStream(out));
   } catch {
     await rm(out, { force: true });
     return false;
+  }
+  if (kind === "proxy") {
+    const after = mayReceive("proxy", into, "computer", { sender, team, proof: { ...(declared ? { sha256: declared } : {}), got: hash.digest("hex"), bytes, original: r?.bytes } });
+    if (!after.ok) {
+      await rm(out, { force: true }); // not the proxy it said: nothing of it is kept
+      return after;
+    }
   }
   return true;
 }
@@ -331,16 +395,19 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
   try {
     if ("error" in r.outcome) return failed(r.outcome.error);
     const there = new Set(await readdir(incoming(jobId)).catch(() => [] as string[]));
-    const files = Object.fromEntries(r.files.filter((f) => there.has(f) && SENDS[job.kind]?.includes(f)).map((f) => [f, path.join(incoming(jobId), f)]));
+    const sent = Object.fromEntries((r.files as string[]).filter((f) => there.has(f) && SENDS[job.kind]?.includes(f)).map((f) => [f, path.join(incoming(jobId), f)]));
     // the kind's own file, or the job is not done: a refused upload is a failed try, never a finished job with nothing
     const need = REQUIRED[job.kind];
-    if (need && !files[need]) return failed(`Your computer's ${need} did not arrive`);
-    const probe = job.kind === "send" && r.probe && typeof r.probe === "object" ? (r.probe as unknown as ProbeSummary) : undefined;
+    if (need && !sent[need]) return failed(`Your computer's ${need} did not arrive`);
+    const stills = STILLS.flatMap((s) => (sent[s] ? [sent[s]] : []));
+    const files = Object.fromEntries(Object.entries(sent).filter(([f]) => !STILLS.includes(f))) as Partial<Record<DerivedFile, string>>;
+    const probes = job.kind === "send" || job.kind === "probe";
+    const probe = probes && r.probe && typeof r.probe === "object" ? (r.probe as unknown as ProbeSummary) : undefined;
     const fingerprint = (job.kind === "fingerprint" || job.kind === "send") && typeof r.fingerprint === "string" && r.fingerprint.length < 1_000_000 ? r.fingerprint : undefined;
-    const hex = (x: unknown) => (job.kind === "send" && typeof x === "string" && /^[0-9a-f]{64}$/.test(x) ? x : undefined);
-    const sha256 = hex(r.sha256);
-    const quick = hex(r.quick);
-    if (job.kind === "send" && !probe) return failed("Your computer sent no probe of the file");
+    const hex = (x: unknown) => (typeof x === "string" && /^[0-9a-f]{64}$/.test(x) ? x : undefined);
+    const sha256 = job.kind === "send" ? hex(r.sha256) : undefined;
+    const quick = probes ? hex(r.quick) : undefined;
+    if (probes && !probe) return failed("Your computer sent no probe of the file");
     if (job.kind === "fingerprint" && !fingerprint) return failed("Your computer sent no fingerprint");
     if (job.kind === "transcribe") {
       const t = transcriptOf(r.transcript);
@@ -349,11 +416,17 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
       // new words to search by meaning, as after a transcript made here (library/worker.ts)
       if (librarySetting(job.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, job.library_id, job.version_id!, "embed", job.actor, true);
     }
+    // the stills its computer cut: the actor's AI describes them here (decision 12: the computer reads the footage)
+    if (job.kind === "describe") await describeFromStills(db, job.library_id, job.version_id!, job.actor, stills);
     await recordDerived(job.version_id!, { files, ...(probe ? { probe } : {}), ...(fingerprint ? { fingerprint } : {}), ...(sha256 ? { sha256 } : {}), ...(quick ? { quick } : {}) }, job.actor);
+    if (files.thumb) wakePictures();
     finishJob(db, job.id, true, undefined, Date.now());
     sortAfter(job);
     return "done";
   } catch (e) {
+    // no AI for it: parked, as the server's own run parks it; a usage limit or a busy AI waits, never fails (library/worker.ts)
+    if (e instanceof NeedsKey) return (parkJob(db, job.id, e.message), libraryChanged(job.library_id), "failed");
+    if (job.kind === "describe" && aiWaits(db, job, e)) return "failed";
     return failed(e instanceof Error ? e.message : String(e));
   } finally {
     await rm(incoming(jobId), { recursive: true, force: true });
@@ -415,17 +488,17 @@ libWorkApp.get("/:id/light", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = await heldSeen(idOf(c), d.id, claimOf(c));
   if (!job) return GONE(c);
-  const key = job.kind !== "proxy" && job.kind !== "send" ? rowOf(job.version_id)?.proxy : null;
+  const key = !["proxy", "probe", "send"].includes(job.kind) ? rowOf(job.version_id)?.proxy : null;
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
-/** The original, only to make the proxy of a file only the server has: the computer deletes it once the proxy is made. */
+/** The original of a file only the server has, only to make its proxy, probe or card picture: the computer deletes it once that is made. */
 libWorkApp.get("/:id/original", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = await heldSeen(idOf(c), d.id, claimOf(c));
   if (!job) return GONE(c);
-  const r = job.kind === "proxy" ? rowOf(job.version_id) : undefined;
+  const r = READS_ORIGINAL.includes(job.kind) ? rowOf(job.version_id) : undefined;
   return r && !r.source_key.startsWith("mac:") ? serveBlob(c, r.source_key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
@@ -459,8 +532,9 @@ libWorkApp.put("/:id/file", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "Send the file." }, 400);
-  const ok = await acceptLibraryFile(idOf(c), d.id, c.req.query("name") ?? "", Readable.fromWeb(body as never), claimOf(c));
+  const ok = await acceptLibraryFile(idOf(c), d.id, c.req.query("name") ?? "", Readable.fromWeb(body as never), claimOf(c), c.req.query("sha256") || undefined);
   if (ok === "gone") return GONE(c);
+  if (typeof ok === "object") return c.json(ok.body, ok.status);
   return ok ? c.json({ ok }) : c.json({ error: "Not a file this job may send" }, 400);
 });
 

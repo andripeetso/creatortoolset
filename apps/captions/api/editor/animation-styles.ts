@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import {
@@ -20,7 +21,7 @@ import { picturesInChat } from "../assistant";
 import { jobTurn, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
-import { ffmpeg } from "../library/media/run";
+import { pictureMade } from "../lib/clip-frame";
 import { notTyped } from "./own-words";
 import { change, read, type Saved } from "./styles";
 
@@ -124,17 +125,24 @@ export async function deleteAnimation(username: string, id: string, kind: StyleK
 
 /**
  * `src` as a JPEG at `out`, no longer than `side` on its long side and no bigger than `bytes`: the quality goes down,
- * then the size, until it fits. Throws when the file is no picture ffmpeg reads.
+ * then the size, until it fits. Made by the `picture` task (work/tasks/frames.ts): on one of `actor`'s computers unless
+ * the server's video work is on. True when made, else the line why not.
  */
-export async function fitJpeg(src: string, out: string, side: number, bytes: number): Promise<void> {
-  for (let s = side; s >= 64; s = Math.round(s * 0.7)) {
-    for (const q of [3, 6, 10, 16, 24, 31]) {
-      await ffmpeg(["-i", src, "-frames:v", "1", "-vf", `scale=w='min(${s},iw)':h='min(${s},ih)':force_original_aspect_ratio=decrease`, "-q:v", String(q), "-f", "mjpeg", out], true);
-      if ((await stat(out)).size <= bytes) return;
-    }
-  }
-  throw new Error("The picture could not be made small enough");
-}
+export const fitJpeg = (actor: string, src: string, out: string, side: number, bytes: number): Promise<true | string> =>
+  pictureMade(actor, { files: { src }, out: [], ext: "jpg", to: out, fit: { side, bytes } });
+
+/**
+ * Tiles the numbered pictures in `dir` (001.png, …) into one sheet at `out`, each 540 wide and `h` high, `cols` × `rows`:
+ * the cards' stills a Mac drew, for the look call (cards/step.ts lookSheet), by the `picture` task as fitJpeg.
+ */
+export const tilePictures = (actor: string, dir: string, out: string, h: number, cols: number, rows: number): Promise<true | string> =>
+  pictureMade(actor, {
+    files: Object.fromEntries(readdirSync(dir).filter((n) => /^\d{3}\.png$/.test(n)).map((n) => [n, path.join(dir, n)])),
+    out: [],
+    ext: "png",
+    to: out,
+    tile: { h, cols, rows },
+  });
 
 /**
  * Adds the picture at `src` to a style, made small (PICTURE_MAX_SIDE, PICTURE_MAX_BYTES). An inspiration over
@@ -153,11 +161,10 @@ export async function addPicture(username: string, styleId: string, src: string,
   const pic: StylePicture = { id: randomUUID(), kind, at: Date.now(), ...(chat ? { chat } : {}) };
   const file = path.join(dir, `${pic.id}.jpg`);
   await mkdir(dir, { recursive: true });
-  try {
-    await fitJpeg(src, file, PICTURE_MAX_SIDE, PICTURE_MAX_BYTES);
-  } catch {
+  const made = await fitJpeg(username, src, file, PICTURE_MAX_SIDE, PICTURE_MAX_BYTES);
+  if (made !== true) {
     await rm(file, { force: true });
-    return "That file is not a picture this app can read";
+    return made === "That picture could not be read" ? "That file is not a picture this app can read" : made;
   }
   const dropped: string[] = [];
   const saved = change(username, (f) => {

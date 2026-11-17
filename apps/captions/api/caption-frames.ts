@@ -85,7 +85,7 @@ export async function createCaptionFrameRenderer(
   // clean error, never crash the whole server at module load
   const { chromium } = await import("playwright-chromium").catch(() => {
     throw new Error(
-      "playwright-chromium is not installed on the server — caption video exports are unavailable"
+      "The export browser is not installed here — caption video exports are unavailable"
     );
   });
   const launch = () =>

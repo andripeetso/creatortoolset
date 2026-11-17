@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { libraryChanged } from "./access";
-import { blobs, finalsUpload, isFinalsCollection, libraryDb, libraryUpload } from "./db";
+import { blobs, libraryDb } from "./db";
+import { uploadFor } from "./upload-gate";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
 import { kindOf, recordVersion } from "./routes";
@@ -127,7 +128,7 @@ export function sendLater(
 
 /** Whether a file of this name, sent to `libraryId` (into `collectionId`), goes the computer's way (sendLater) rather than as its original. */
 export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null): boolean =>
-  kindOf(filename) === "video" && (collectionId && isFinalsCollection(collectionId) ? finalsUpload(libraryId) : libraryUpload(libraryId)) !== "none";
+  kindOf(filename) === "video" && uploadFor({ id: libraryId, collectionId }) !== "none";
 
 /**
  * What a phone made of a video itself and sends with the upload start (phase 6, 6D; the iPhone's PhoneMade.swift), so this
@@ -139,7 +140,8 @@ export interface Made {
   quick: string;
   /** the card picture, JPEG, base64 */
   thumb?: string;
-  proxy?: { size: number; probe: ProbeSummary };
+  /** sha256: the copy's own SHA-256, declared before its bytes (upload-gate.ts proxy proof); older phones send none */
+  proxy?: { size: number; probe: ProbeSummary; sha256?: string };
 }
 
 /** Which version of `Made` an upload start takes (GET /api/library `uploadTakes`). */
@@ -173,10 +175,11 @@ export async function parseMade(body: Record<string, unknown> | null): Promise<M
     made.thumb = body.thumb;
   }
   if (body.proxy !== undefined) {
-    const x = body.proxy as { size?: unknown; probe?: unknown } | null;
+    const x = body.proxy as { size?: unknown; probe?: unknown; sha256?: unknown } | null;
     const probe = await probeFrom(x?.probe);
     if (!Number.isSafeInteger(x?.size) || (x?.size as number) <= 0 || !probe?.vcodec) return "proxy: the original's size and probe";
-    made.proxy = { size: x!.size as number, probe };
+    if (x!.sha256 !== undefined && (typeof x!.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(x!.sha256))) return "proxy.sha256: the copy's SHA-256 in hex";
+    made.proxy = { size: x!.size as number, probe, ...(typeof x!.sha256 === "string" ? { sha256: x!.sha256 } : {}) };
   }
   return made;
 }

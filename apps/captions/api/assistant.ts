@@ -95,14 +95,21 @@ After the go, start the edit at once and say where to follow it.
 The keys the app takes, and what each one is for:
 ${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}`;
 
+/**
+ * Link downloads (yt-dlp) run on the person's computer, in the shell of the AI that answers there, never on the server:
+ * only where the server is that computer too (CT_LOCAL=1), so use_file takes the download by its path and nothing uploads.
+ */
+const LINK_LOCAL = `A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch, on the user's computer and never on the server: run yt-dlp in your own shell, on the computer you run on, saving into one of this workspace's Media folders from Settings → Folders (listed below as Footage; \`yt-dlp -P <Media folder> <link>\`; \`-x --audio-format mp3\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it), and cut or convert it there with ffmpeg. With none listed below, ask for one first (navigate /settings/folders). Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.`;
+const LINK_AWAY = `A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is not downloaded here: a download runs on the user's computer, never on the server, and this server is not on their computer. Say so in a line: the chat in the Creator Toolset app with its own server on their computer fetches links.`;
+
 /** Added for the dock's turns, where Claude also has the user's Mac (answerWithTools onAsk). */
 export const MAC_NOTE = `
 
 You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.
 
-A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch: download it into your folder yourself with yt-dlp (\`yt-dlp -x --audio-format mp3 <link>\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it) and cut or convert it with ffmpeg. Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.
+${process.env.CT_LOCAL === "1" ? LINK_LOCAL : LINK_AWAY}
 
-Where this workspace keeps its files on the user's computers (Settings → Folders) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Folders (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.
+Where this workspace keeps its files on the user's computers (Settings → Folders) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Folders (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.
 
 Before saying a file is not there, or asking what it is called, look with folder_list (match: words from what they said, like song): it sees every subfolder.`;
 

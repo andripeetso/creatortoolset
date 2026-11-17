@@ -22,6 +22,10 @@ import type { JobRow } from "../library/jobs";
 import { libraryWaits } from "./library-package";
 import { picturesWait } from "./pictures";
 import { serverPreferred, serverWeight, serverWorks, stepWorkspace } from "./server-work";
+import { mayRunHere } from "./may-run";
+import { tasksWait } from "./tasks";
+
+export { mayRunHere };
 
 export interface WorkProgress extends WorkBeat {
   /** the computer's name, as Settings → Devices shows it */
@@ -113,22 +117,6 @@ export const serverMayTake = (job: JobRow): boolean =>
     computer: () => computerCanTake(job),
   }) === "server";
 
-/**
- * Where a piece of processing runs: the one rule (local-first plan, D7). "server" = this server runs it now (on This Mac
- * that is the person's own computer); "computer" = one of the asker's computers takes it; "wait" = it waits with its line
- * and never falls through to the server. `reads`: it decodes video or sound; `open`: the server's video work is on for it
- * (serverWorks and the person's weight); `first`: the person prefers the server and it holds every file; `computer`: a
- * computer of theirs can take it now. The thunks run only when the answer needs them.
- */
-export function mayRunHere(q: { reads: boolean; open: () => boolean; first?: () => boolean; computer: () => boolean }): "server" | "computer" | "wait" {
-  // This Mac: open is always true (server-work.ts), the server being the person's own computer
-  if (!q.reads) return "server";
-  const open = q.open();
-  if (open && q.first?.()) return "server";
-  if (q.computer()) return "computer";
-  return open ? "server" : "wait";
-}
-
 /** The person prefers the server for this step and it has every file (an upload or its proxy): it goes there first. */
 const serverFirst = (job: JobRow, rows: FileRow[]): boolean =>
   serverPreferred(stepWorkspace(job.version_id), job.actor) && rows.every((r) => !r.source_key.startsWith("mac:") || !!r.proxy);
@@ -139,7 +127,7 @@ const serverOpen = (job: Pick<JobRow, "version_id" | "actor">): boolean => serve
 /** Whether a step waits that computer `d` would be handed by a work claim now: what its device runner's long poll is told. */
 export async function workWaits(d: Device, now = Date.now()): Promise<boolean> {
   if (!works(d)) return false;
-  if ((await libraryWaits(d, now)) || picturesWait(d)) return true;
+  if ((await libraryWaits(d, now)) || picturesWait(d) || tasksWait(d, now)) return true;
   const k = coreKinds();
   const fits = await fitsWork(d, now);
   return (

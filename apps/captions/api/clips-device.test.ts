@@ -42,6 +42,7 @@ vi.mock("./ai-complete", async (real) => {
 });
 const { ffmpegCommand } = await import("./ffmpeg-runtime");
 const { clipsApp } = await import("./clips");
+await import("./work/task-kinds");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -68,11 +69,12 @@ describe("Video Notes with no transcription key", () => {
     expect(words).toEqual([{ text: "Tiny", start: 0.1, end: 0.4 }, { text: "Acrobatics.", start: 0.4, end: 1 }]);
   });
 
-  it("on a hosted server nothing changes: no transcript, and the clip never reaches the model", async () => {
+  it("on a hosted server it waits for one of the person's computers, and the clip never reaches the model", async () => {
     process.env.CT_LOCAL = "1";
     process.env.CT_MODE = "hosted";
     heard.length = 0;
-    expect((await process1()).words).toEqual([]);
+    const { id } = (await (await app.request("/api/clips?name=Walk&mime=audio/wav", { method: "POST", body: readFileSync(recording) })).json()) as { id: string };
+    await vi.waitFor(async () => expect(((await (await app.request(`/api/clips/${id}`)).json()) as { note?: string }).note).toMatch(/^Waits for one of your computers/), { timeout: 5000, interval: 50 });
     expect(heard).toEqual([]);
   });
 });

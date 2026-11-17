@@ -122,6 +122,8 @@ export interface ClipInfo {
   uploadState: ClipUploadState;
   uploadPct: number;
   uploadError: string | null;
+  /** The server's wait line while the clip's editing copy waits for one of the owner's computers. */
+  proxyWait?: string;
   /** The server still holds the uploaded source (needed for burn-in). */
   hasOriginal: boolean;
   originalBytes: number;

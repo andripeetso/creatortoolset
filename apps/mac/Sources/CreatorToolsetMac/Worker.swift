@@ -17,7 +17,7 @@ struct WorkStatus: Decodable, Equatable {
 }
 
 /// The worker's environment: the server it works for, this Mac's token there, its own data folder, the bundled ffmpeg
-/// first on PATH and the approved plug-ins. No PORT, HOST, APP_SECRET or CT_LOCAL: it serves nothing.
+/// first on PATH, the app's export browser and the approved plug-ins. No PORT, HOST, APP_SECRET or CT_LOCAL: it serves nothing.
 func workerEnvironment(server: URL, token: String, data: URL, folder: URL, inherited: [String: String],
                        plugins: [String: String], release: [String: String] = [:]) -> [String: String] {
     var env = inherited.filter { ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL"].contains($0.key) }
@@ -27,6 +27,8 @@ func workerEnvironment(server: URL, token: String, data: URL, folder: URL, inher
     env["CT_DEVICE_TOKEN"] = token
     env["DATA_DIR"] = data.path
     env["CT_APP_FOLDER"] = appSupport.path
+    // the frame browser of a caption export: the one This Mac's server downloads (Server.swift), never a second copy
+    env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
     env["CT_EXIT_WITH_PARENT"] = "1"
     env.merge(release, uniquingKeysWith: { $1 })
     env.merge(plugins, uniquingKeysWith: { $1 })

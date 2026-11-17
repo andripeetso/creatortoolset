@@ -27,7 +27,7 @@ describe("pickSource", () => {
 
   it("says why the original doesn't play here", () => {
     expect(awayLine({ state: "away", root })).toBe("The original is on footage (office-nas), which isn't connected");
-    expect(awayLine({ state: "gone" })).toBe("The original is missing here");
+    expect(awayLine({ state: "gone" })).toBe("The original is missing on this computer");
     expect(awayLine({ state: "here", path: "/a", url: "ctlocal://media/a" })).toBeNull();
   });
 });

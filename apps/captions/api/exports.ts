@@ -1,12 +1,8 @@
 import { Hono } from "hono";
-import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
 import { createReadStream, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rm,
@@ -16,13 +12,10 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { ZipFile } from "yazl";
 import type { CaptionRenderSpec } from "../src/lib/types";
 import type { AuthVars } from "./auth";
 import { emitEvent } from "./lib/events";
-import { assertMovHasTransparency } from "./alpha-video";
-import { createCaptionFrameRenderer } from "./caption-frames";
-import { filterEscape, requireFontsDir } from "./export";
-import { ffmpegCommand } from "./ffmpeg-runtime";
 import { env } from "./lib/env";
 import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from "./media-store";
 import { saveToLibrary } from "./library/routes";
@@ -33,10 +26,16 @@ import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
+import type { ExportInput } from "./work/tasks/export";
+
+/** The computer task kind that renders an export (work/tasks/export.ts). */
+const EXPORT_TASK = "export";
 
 /**
- * Background export jobs (Canva-style). POST creates a job and returns
- * immediately; ffmpeg renders server-side while the client polls for
+ * Background export jobs. POST creates a job and returns immediately; the
+ * render runs as a computer task (work/tasks/export.ts) on one of the owner's
+ * computers, or here where the server may, while the client polls for
  * progress. Finished files live under $DATA_DIR/exports/<id>/ so they
  * stay downloadable after a reload — or after the tab was closed
  * mid-render — until their owner removes them (Settings → Storage). Nothing is
@@ -85,7 +84,7 @@ interface Job {
   id: string;
   kind: "burn" | "overlay";
   /**
-   * native: ffmpeg/libass renders the client-built ASS — no browser,
+   * native: libass renders the client-built ASS in the encoder — no browser,
    * faster than realtime. wysiwyg: headless Chromium screenshots the
    * DOM render surface per frame (pixel-exact, slower, needs Chromium).
    */
@@ -113,15 +112,19 @@ const canSee = (job: Job, user: SessionUser) =>
 /** Client-facing shape (params stay server-side, but for the project a render was made from). */
 function publicJob(j: Job): Omit<Job, "params"> & { projectId?: string } {
   const pub: Partial<Job> & { projectId?: string } = { ...j, projectId: j.params.projectId };
+  // a render waiting for one of the owner's computers says so (R6), in the line the tray shows
+  const task = j.status === "queued" || j.status === "running" ? taskFor(EXPORT_TASK, j.id) : undefined;
+  const wait = task && taskWaitLine(task);
+  if (wait) pub.note = wait;
   delete pub.params;
   return pub as Omit<Job, "params">;
 }
 
-/** Why a render failed, as one plain sentence: what ffmpeg or the frame browser printed stays in the job, for the log and the page's tray. */
+/** Why a render failed, as one plain sentence: what the encoder or the frame browser printed stays in the job, for the log and the page's tray. */
 const FAILURES: Array<[RegExp, string]> = [
   [/^Source video is not on the server/, "The video is no longer on the server"],
   [/^Interrupted by a server restart/, "The server restarted while it was rendering, so it has to be exported again"],
-  [/^(Downloading the export browser failed|playwright-chromium is not installed|Caption renderer is missing)/, "The browser that draws the captions could not be started on this server"],
+  [/^(Downloading the export browser failed|The export browser is not installed|Caption renderer is missing)/, "The browser that draws the captions could not be started"],
 ];
 export const exportFailure = (error = ""): string => FAILURES.find(([known]) => known.test(error))?.[1] ?? "The video could not be rendered";
 
@@ -157,7 +160,6 @@ void import("./assistant").then(({ checkWork }) => checkWork("export", async (id
 }));
 
 const jobs = new Map<string, Job>();
-const children = new Map<string, ChildProcess>();
 /** An account's renders still to finish, for Home's list and the menu bar (api/activity.ts). */
 export const activeExports = async (user: SessionUser) => {
   const here = await inCurrentWorkspace(user);
@@ -192,7 +194,7 @@ async function jobPersist(job: Job): Promise<void> {
 const cutOff: Job[] = [];
 const onItsWay = (finals: Job["finals"]) => finals?.status === "waiting" || finals?.status === "sending";
 
-/** Load persisted jobs once at boot; renders killed by a restart → error. */
+/** Load persisted jobs once at boot; renders a restart cut off → error, but one its computer task still holds (it outlives a restart). */
 const loaded = (async () => {
   await mkdir(EXPORTS_DIR, { recursive: true }).catch(() => {});
   let ids: string[] = [];
@@ -209,7 +211,8 @@ const loaded = (async () => {
       const job: Job = JSON.parse(
         await readFile(path.join(jobDir(id), "job.json"), "utf-8"),
       );
-      if (job.status === "queued" || job.status === "running") {
+      const task = taskFor(EXPORT_TASK, id)?.state;
+      if ((job.status === "queued" || job.status === "running") && task !== "queued" && task !== "running") {
         job.status = move(EXPORT_MOVES, job.status, "error", "export job");
         job.error = "Interrupted by a server restart — export again.";
         job.finishedAt = Date.now();
@@ -233,8 +236,7 @@ async function removeJob(id: string): Promise<void> {
   jobs.delete(id); // runJob checks this before writing results
   const qi = queue.indexOf(id);
   if (qi >= 0) queue.splice(qi, 1);
-  children.get(id)?.kill("SIGKILL");
-  children.delete(id);
+  dropTask(EXPORT_TASK, id); // a computer that renders it stops at its next beat; the server's own run at its next progress
   await rm(jobDir(id), { recursive: true, force: true }).catch(() => {});
 }
 
@@ -263,7 +265,7 @@ export async function removeFinishedExports(owner: string, dirs: string[]): Prom
 }
 
 
-/* ---- render queue (renders are CPU-bound: run a few at most) ---- */
+/* ---- render queue (renders here are CPU-bound: run a few at most, EXPORT_CONCURRENCY) ---- */
 
 const queue: string[] = [];
 let running = 0;
@@ -285,467 +287,96 @@ function pump(): void {
   }
 }
 
-/**
- * Capture the editor's transparent React/CSS surface and stream the PNGs to
- * FFmpeg in display order. FFmpeg never lays out or rasterizes caption text.
- */
-async function runRenderedFfmpeg(
-  job: Job,
-  spec: CaptionRenderSpec,
-  args: string[],
-): Promise<void> {
-  const renderer = await createCaptionFrameRenderer(spec, () => {
-    job.note = "Preparing the Exact export (196 MB download)…";
-    void jobPersist(job);
-  });
-  if (job.note) {
-    delete job.note;
-    await jobPersist(job);
-  }
-  const fps = job.params.fps ?? 30;
-  const total = Math.max(1, Math.ceil(job.params.duration * fps));
-  const p = spawn(
-    ffmpegCommand(),
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-nostats",
-      "-y",
-      ...args,
-      "-progress",
-      "pipe:1",
-    ],
-    { stdio: ["pipe", "pipe", "pipe"] },
-  );
-  children.set(job.id, p);
-  let err = "";
-  let lastWrite = 0;
-  p.stderr!.on("data", (d) => {
-    err += d.toString();
-    if (err.length > 8000) err = err.slice(-8000);
-  });
-  // Consume progress output even though capture progress is the user-facing
-  // number; an unread pipe can otherwise block FFmpeg at the end.
-  p.stdout!.resume();
-  const closed = new Promise<void>((resolve, reject) => {
-    p.on("close", (code) => {
-      children.delete(job.id);
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited ${code}: ${err}`));
-    });
-    p.on("error", (error) => {
-      children.delete(job.id);
-      reject(error);
-    });
-  });
-  // FFmpeg can reject before the current screenshot batch finishes. Mark the
-  // promise handled immediately; the awaited original below still propagates.
-  void closed.catch(() => {});
+/** The task's inputs where its kind serves them (work/tasks/export.ts): the clip as a link to its original, the ASS or the frame spec beside the job. */
+const sourceLink = (id: string) => path.join(jobDir(id), "source");
 
-  try {
-    const batchSize = renderer.capacity;
-    for (let start = 0; start < total; start += batchSize) {
-      if (!jobs.has(job.id)) throw new Error("Export cancelled");
-      const end = Math.min(total, start + batchSize);
-      const times = Array.from(
-        { length: end - start },
-        (_, i) => (start + i) / fps,
-      );
-      const frames = await renderer.render(times);
-      for (const frame of frames) {
-        if (!p.stdin!.write(frame)) await once(p.stdin!, "drain");
-      }
-      job.progress = Math.min(end / total, 0.99);
-      if (Date.now() - lastWrite > 500) {
-        lastWrite = Date.now();
-        await jobPersist(job);
-      }
-    }
-    p.stdin!.end();
-    await closed;
-  } catch (error) {
-    p.stdin?.destroy();
-    if (p.exitCode === null) p.kill("SIGKILL");
-    await closed.catch(() => {});
-    throw error;
-  } finally {
-    await renderer.close();
-    children.delete(job.id);
-  }
-}
+const inputOf = (job: Job): ExportInput => ({
+  id: job.id,
+  kind: job.kind,
+  engine: job.engine,
+  format: job.format,
+  ext: job.ext,
+  filename: job.filename,
+  width: job.params.width,
+  height: job.params.height,
+  fps: job.params.fps,
+  duration: job.params.duration,
+  crf: job.params.crf,
+});
 
 /**
- * Native export: a single ffmpeg pass over the client-built ASS file
- * (libass renders text + the drawn pill; no browser involved). Progress
- * comes from ffmpeg's own -progress stream against the clip duration.
+ * Starts the render as a computer task (work/tasks/export.ts): run here now where mayRunHere says the server may (This
+ * Mac, or its video work on and no computer of the owner can take it), else queued for one of the owner's computers,
+ * waiting with one line while none can. Whichever renders it, its progress moves the job and its apply finishes it.
  */
-async function runNativeFfmpeg(job: Job, args: string[]): Promise<void> {
-  const p = spawn(ffmpegCommand(), [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-nostats",
-    "-y",
-    ...args,
-    "-progress",
-    "pipe:1",
-  ]);
-  children.set(job.id, p);
-  let err = "";
-  let lastWrite = 0;
-  p.stderr!.on("data", (d) => {
-    err += d.toString();
-    if (err.length > 8000) err = err.slice(-8000);
-  });
-  p.stdout!.on("data", (d) => {
-    // out_time_ms is actually microseconds in ffmpeg's progress stream
-    const m = /out_time_ms=(\d+)/.exec(d.toString());
-    if (!m) return;
-    job.progress = Math.min(Number(m[1]) / 1e6 / job.params.duration, 0.99);
-    if (Date.now() - lastWrite > 500) {
-      lastWrite = Date.now();
-      void jobPersist(job);
-    }
-  });
-  await new Promise<void>((resolve, reject) => {
-    p.on("close", (code) => {
-      children.delete(job.id);
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited ${code}: ${err}`));
-    });
-    p.on("error", (error) => {
-      children.delete(job.id);
-      reject(error);
-    });
-  });
-}
-
-function run(cmd: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
-    let err = "";
-    p.stderr.on("data", (d) => {
-      err += d.toString();
-      if (err.length > 4000) err = err.slice(-4000);
-    });
-    p.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${cmd} exited ${code}: ${err}`));
-    });
-    p.on("error", reject);
-  });
-}
-
 async function runJob(job: Job): Promise<void> {
-  const dir = jobDir(job.id);
-  job.status = move(EXPORT_MOVES, job.status, "running", "export job");
-  await jobPersist(job);
   try {
-    const { fps = 30, duration, crf, projectId, clipId } = job.params;
-
-    if (job.engine === "native") {
-      const assPath = path.join(dir, "captions.ass");
-      const fontsOpt = `:fontsdir='${filterEscape(requireFontsDir())}'`;
-      const vf = `ass='${filterEscape(assPath)}'${fontsOpt}`;
-      const W = job.params.width ?? 1920;
-      const H = job.params.height ?? 1080;
-      if (job.kind === "burn") {
-        const src = await ensureProjectOriginal(
-          projectId!,
-          clipId!,
-          projectOriginal(projectId!, clipId),
-        );
-        if (!src) throw new Error("Source video is not on the server");
-        const codec =
-          job.format === "h265"
-            ? [
-                "-c:v",
-                "libx265",
-                "-preset",
-                "medium",
-                "-crf",
-                String(crf ?? 22),
-                "-tag:v",
-                "hvc1",
-              ]
-            : [
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                String(crf ?? 19),
-              ];
-        await runNativeFfmpeg(job, [
-          "-i",
-          src,
-          "-vf",
-          vf,
-          ...codec,
-          "-pix_fmt",
-          "yuv420p",
-          "-c:a",
-          "aac",
-          "-b:a",
-          "192k",
-          "-movflags",
-          "+faststart",
-          outPath(job),
-        ]);
-      } else {
-        // transparent base; libass draws text + pill with real alpha
-        // (alpha=1: the ass filter drops the alpha channel by default)
-        const base = `color=c=black@0.0:size=${W}x${H}:rate=${fps}:d=${duration},format=rgba`;
-        const vfAlpha = `${vf}:alpha=1`;
-        if (job.format === "mov") {
-          await runNativeFfmpeg(job, [
-            "-f",
-            "lavfi",
-            "-i",
-            base,
-            "-vf",
-            `${vfAlpha},format=yuva444p10le`,
-            "-c:v",
-            "prores_ks",
-            "-profile:v",
-            "4",
-            "-pix_fmt",
-            "yuva444p10le",
-            "-alpha_bits",
-            "16",
-            "-tag:v",
-            "ap4h",
-            "-an",
-            "-vendor",
-            "apl0",
-            "-movflags",
-            "+faststart",
-            outPath(job),
-          ]);
-        } else if (job.format === "webm") {
-          await runNativeFfmpeg(job, [
-            "-f",
-            "lavfi",
-            "-i",
-            base,
-            "-vf",
-            vfAlpha,
-            "-c:v",
-            "libvpx-vp9",
-            "-pix_fmt",
-            "yuva420p",
-            "-auto-alt-ref",
-            "0",
-            "-crf",
-            "24",
-            "-b:v",
-            "2M",
-            "-cpu-used",
-            "5",
-            "-row-mt",
-            "1",
-            "-deadline",
-            "good",
-            "-an",
-            outPath(job),
-          ]);
-        } else {
-          const framesDir = path.join(dir, "frames");
-          await mkdir(framesDir, { recursive: true });
-          await runNativeFfmpeg(job, [
-            "-f",
-            "lavfi",
-            "-i",
-            base,
-            "-vf",
-            vfAlpha,
-            "-c:v",
-            "png",
-            "-pix_fmt",
-            "rgba",
-            "-start_number",
-            "0",
-            path.join(framesDir, "%05d.png"),
-          ]);
-          const frames = await readdir(framesDir);
-          if (frames.length === 0) throw new Error("No frames rendered");
-          await run("zip", [
-            "-j",
-            "-q",
-            "-X",
-            outPath(job),
-            ...frames.map((f) => path.join(framesDir, f)),
-          ]);
-          await rm(framesDir, { recursive: true, force: true }).catch(() => {});
-        }
-      }
-    } else {
-      const renderPath = path.join(dir, "render.json");
-      const spec: CaptionRenderSpec = JSON.parse(
-        await readFile(renderPath, "utf-8"),
-      );
-      const frameInput = [
-        "-f",
-        "image2pipe",
-        "-framerate",
-        String(fps),
-        "-i",
-        "pipe:0",
-      ];
-
-      if (job.kind === "burn") {
-        const src = await ensureProjectOriginal(
-          projectId!,
-          clipId!,
-          projectOriginal(projectId!, clipId),
-        );
-        if (!src) throw new Error("Source video is not on the server");
-        const codec =
-          job.format === "h265"
-            ? [
-                "-c:v",
-                "libx265",
-                "-preset",
-                "medium",
-                "-crf",
-                String(crf ?? 22),
-                "-tag:v",
-                "hvc1",
-              ]
-            : [
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                String(crf ?? 19),
-              ];
-        await runRenderedFfmpeg(job, spec, [
-          "-i",
-          src,
-          ...frameInput,
-          "-filter_complex",
-          // sidedata: a clip filmed upright is turned as it is read, and FFmpeg 7.1 still hands its quarter turn on
-          // to the file after a filter graph like this one, so every player turned the finished video a second time
-          "[0:v][1:v]overlay=0:0:format=auto:eof_action=pass,sidedata=mode=delete:type=DISPLAYMATRIX[v]",
-          "-map",
-          "[v]",
-          "-map",
-          "0:a?",
-          "-t",
-          String(duration),
-          ...codec,
-          "-pix_fmt",
-          "yuv420p",
-          "-c:a",
-          "aac",
-          "-b:a",
-          "192k",
-          "-movflags",
-          "+faststart",
-          outPath(job),
-        ]);
-      } else {
-        if (job.format === "mov") {
-          await runRenderedFfmpeg(job, spec, [
-            ...frameInput,
-            "-vf",
-            "format=yuva444p10le",
-            "-c:v",
-            "prores_ks",
-            "-profile:v",
-            "4",
-            "-pix_fmt",
-            "yuva444p10le",
-            "-alpha_bits",
-            "16",
-            "-tag:v",
-            "ap4h",
-            "-an",
-            "-vendor",
-            "apl0",
-            "-movflags",
-            "+faststart",
-            outPath(job),
-          ]);
-        } else if (job.format === "webm") {
-          await runRenderedFfmpeg(job, spec, [
-            ...frameInput,
-            "-c:v",
-            "libvpx-vp9",
-            "-pix_fmt",
-            "yuva420p",
-            "-auto-alt-ref",
-            "0",
-            "-crf",
-            "24",
-            "-b:v",
-            "2M",
-            "-cpu-used",
-            "5",
-            "-row-mt",
-            "1",
-            "-deadline",
-            "good",
-            "-an",
-            outPath(job),
-          ]);
-        } else {
-          const framesDir = path.join(dir, "frames");
-          await mkdir(framesDir, { recursive: true });
-          await runRenderedFfmpeg(job, spec, [
-            ...frameInput,
-            "-c:v",
-            "png",
-            "-pix_fmt",
-            "rgba",
-            "-start_number",
-            "0",
-            path.join(framesDir, "%05d.png"),
-          ]);
-          const frames = await readdir(framesDir);
-          if (frames.length === 0) throw new Error("No frames rendered");
-          await run("zip", [
-            "-j",
-            "-q",
-            "-X",
-            outPath(job),
-            ...frames.map((f) => path.join(framesDir, f)),
-          ]);
-          await rm(framesDir, { recursive: true, force: true }).catch(() => {});
-        }
-      }
+    const { projectId, clipId } = job.params;
+    if (job.kind === "burn") {
+      const src = await ensureProjectOriginal(projectId!, clipId!, projectOriginal(projectId!, clipId));
+      if (!src) throw new Error("Source video is not on the server");
+      await rm(sourceLink(job.id), { force: true });
+      await symlink(src, sourceLink(job.id));
     }
-
-    if (!jobs.has(job.id)) return; // cancelled mid-render
-    if (job.kind === "overlay" && job.format === "mov") {
-      await assertMovHasTransparency(outPath(job));
-    }
-    const st = await stat(outPath(job));
-    if (!jobs.has(job.id)) return; // cancelled while the checks above ran
-    job.status = move(EXPORT_MOVES, job.status, "done", "export job");
-    job.progress = 1;
-    job.bytes = st.size;
-    job.finishedAt = Date.now();
-    await rm(path.join(dir, "render.json"), { force: true }).catch(() => {});
-    await rm(path.join(dir, "captions.ass"), { force: true }).catch(() => {});
-    await jobPersist(job);
-    // success only: an error, a cancel and the restart recovery (which marks jobs as failed) do not emit
-    emitEvent("export.finished", { id: job.id, owner: job.owner, kind: job.kind, format: job.format, bytes: st.size });
-    if (job.params.finals && job.owner) await sendToFinals(job);
-    chatHears(job);
+    if (!jobs.has(job.id)) return; // removed while its original was fetched
+    const got = await startTask<ExportInput, null>(EXPORT_TASK, job.id, job.owner ?? "", job.params.workspace ?? null, inputOf(job));
+    if (got.state === "queued") announceSoon(job.owner, "exports"); // its wait line (publicJob)
   } catch (e) {
-    // cancelled — dir is gone, don't resurrect; a job already done keeps its file
-    if (!jobs.has(job.id) || !canMove(EXPORT_MOVES, job.status, "error")) return;
-    job.status = move(EXPORT_MOVES, job.status, "error", "export job");
-    job.error = e instanceof Error ? e.message : String(e);
-    job.finishedAt = Date.now();
-    if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
-    await jobPersist(job);
-    if (job.params.chat) console.warn(`[exports] ${job.id} failed: ${job.error}`);
-    chatHears(job);
+    await exportFailed(job.id, e instanceof Error ? e.message : String(e));
   }
+}
+
+/** The render's progress, from whichever machine renders it (its `progress` call): `stop` when the job was removed. */
+export async function exportProgress(id: string, body: unknown): Promise<{ stop?: true }> {
+  await loaded;
+  const job = jobs.get(id);
+  if (!job || (job.status !== "queued" && job.status !== "running")) return { stop: true };
+  const b = (body ?? {}) as { progress?: unknown; note?: unknown };
+  if (job.status === "queued") job.status = move(EXPORT_MOVES, job.status, "running", "export job");
+  if (typeof b.progress === "number" && Number.isFinite(b.progress)) job.progress = Math.min(Math.max(b.progress, 0), 0.99);
+  if (typeof b.note === "string") job.note = b.note.slice(0, 200);
+  else if (b.note === null) delete job.note;
+  await jobPersist(job);
+  return {};
+}
+
+/** The rendered file came (the task's apply, on the server): kept as the job's file, then Finals and the chat. */
+export async function exportRendered(id: string, file: string): Promise<void> {
+  await loaded;
+  const job = jobs.get(id);
+  if (!job || (job.status !== "queued" && job.status !== "running")) return; // removed or ended meanwhile
+  await keep(file, outPath(job));
+  const st = await stat(outPath(job));
+  if (!jobs.has(job.id)) return; // removed while the file was kept
+  if (job.status === "queued") job.status = move(EXPORT_MOVES, job.status, "running", "export job");
+  job.status = move(EXPORT_MOVES, job.status, "done", "export job");
+  job.progress = 1;
+  job.bytes = st.size;
+  job.finishedAt = Date.now();
+  delete job.note;
+  for (const f of ["render.json", "captions.ass", "source"]) await rm(path.join(jobDir(id), f), { force: true }).catch(() => {});
+  await jobPersist(job);
+  // success only: an error, a cancel and the restart recovery (which marks jobs as failed) do not emit
+  emitEvent("export.finished", { id: job.id, owner: job.owner, kind: job.kind, format: job.format, bytes: st.size });
+  if (job.params.finals && job.owner) await sendToFinals(job);
+  chatHears(job);
+}
+
+/** The render failed for good (the task's three tries, or at once on the server): the job shows why. */
+export async function exportFailed(id: string, error: string): Promise<void> {
+  await loaded;
+  const job = jobs.get(id);
+  // cancelled: its dir is gone, don't resurrect it; a job already done keeps its file
+  if (!job || !canMove(EXPORT_MOVES, job.status, "error")) return;
+  job.status = move(EXPORT_MOVES, job.status, "error", "export job");
+  job.error = error;
+  job.finishedAt = Date.now();
+  delete job.note;
+  if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there
+  await rm(sourceLink(id), { force: true }).catch(() => {});
+  await jobPersist(job);
+  if (job.params.chat) console.warn(`[exports] ${job.id} failed: ${job.error}`);
+  chatHears(job);
 }
 
 /** One-click Send to Finals: the finished render goes into the owner's library and its Finals piece. Never throws; the outcome is on the job. */
@@ -1042,7 +673,7 @@ exportsApp.get("/", async (c) => {
 });
 
 /* several finished exports as one ZIP. Stored, not compressed (videos don't shrink), streamed
-   as zip writes it; entries carry each export's own file name. */
+   as it is written; entries carry each export's own file name. */
 exportsApp.get("/zip", async (c) => {
   await loaded;
   const user = c.get("user");
@@ -1052,21 +683,16 @@ exportsApp.get("/zip", async (c) => {
     .filter((j): j is Job => !!j && canSee(j, user) && j.status === "done" && existsSync(outPath(j)));
   if (!ready.length) return c.json({ error: "Nothing to download" }, 404);
   const name = (c.req.query("name") || "exports").replace(/[^\w.-]+/g, "_").slice(0, 80);
-  // links named as the files should be inside the ZIP (zip stores what they point at)
-  const dir = await mkdtemp(path.join(tmpdir(), "exports-zip-"));
+  const zip = new ZipFile();
   const used = new Set<string>();
-  const entries: string[] = [];
   for (const j of ready) {
     let entry = j.filename;
     for (let k = 2; used.has(entry); k++) entry = j.filename.replace(/(\.[^.]+)?$/, `-${k}$1`);
     used.add(entry);
-    await symlink(outPath(j), path.join(dir, entry));
-    entries.push(entry);
+    zip.addFile(outPath(j), entry, { compress: false });
   }
-  const zip = spawn("zip", ["-0", "-q", "-", ...entries], { cwd: dir });
-  zip.on("close", () => void rm(dir, { recursive: true, force: true }));
-  zip.on("error", () => void rm(dir, { recursive: true, force: true }));
-  return new Response(Readable.toWeb(zip.stdout) as unknown as ReadableStream, {
+  zip.end();
+  return new Response(Readable.toWeb(zip.outputStream as Readable) as unknown as ReadableStream, {
     headers: {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="${name}.zip"`,

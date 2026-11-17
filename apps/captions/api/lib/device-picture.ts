@@ -1,14 +1,13 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { ffmpegSlot } from "../library/media/run";
-import { beforeSpeechModel, deviceTranscribes, modelLibrary, modelsDir, speechModelInUse } from "./device-transcribe";
-import { hostedMode } from "./env";
+import { beforeSpeechModel, modelLibrary, modelsDir, speechModelInUse } from "./device-transcribe";
 
 /**
  * Search by picture: an image–text model (SigLIP 2) run by the server itself turns each shot's picture into a vector
  * and a typed search into one in the same space, so a search finds what the footage shows, not only its words. Where
- * the server runs on the person's own computer (deviceTranscribes), and on a server whose admin turns it on
- * (LIBRARY_PICTURES=1); never on a hosted server, whose processor every account shares: an hour of footage has some
+ * the server runs on the person's own computer, or where its video work is on and no computer of theirs runs the model
+ * (library/pictures.ts picturesHere, the one rule); never on a hosted server without a grant: an hour of footage has some
  * 880 shots, and two cores of a busy desktop processor took about 2 minutes for them (0.13 s a shot, 1.2 GB held;
  * measured on 2 hours of public-domain films), minutes of a shared server per hour of every account's footage. There
  * the person's own computers make them (work/pictures.ts) and the server reads only typed searches with the text side
@@ -27,9 +26,6 @@ export const PICTURE_MODEL_MB = 655;
 export const PICTURE_DIM = 768;
 const BATCH = 8;
 const IDLE_MS = 2 * 60_000;
-
-/** Whether this server makes picture vectors (see above). */
-export const picturesHere = (): boolean => !hostedMode() && (deviceTranscribes() || process.env.LIBRARY_PICTURES === "1");
 
 const kept = (...f: string[]) => existsSync(path.join(modelsDir(), PICTURE_MODEL, ...f));
 /** Whether the model is on this computer (fetched once by the first library job, kept with the person's data). */

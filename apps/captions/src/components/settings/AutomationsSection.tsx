@@ -52,7 +52,7 @@ function taskAis(view: ProvidersView): ProviderInstance[] {
 
 const deviceLabel = (view: ProvidersView, id: string) => {
   const d = view.devices.find((x) => x.id === id);
-  return d ? `${d.name}${d.online ? "" : " (offline)"}` : "Computer not found";
+  return d ? `${d.name}${d.online ? "" : " (offline)"}` : "A removed computer";
 };
 
 /** What a new task runs on: the assistant's default when it can run one, else the first AI that can. */

@@ -204,7 +204,7 @@ function Unread({ inst, device, view, bridge, hit }: { inst: ProviderInstance; d
   let state: string | undefined;
   let fix: string | undefined = "The first reading takes up to five minutes.";
   let control: ReactNode | undefined;
-  if (!mac) [state, fix] = ["Computer not found", undefined];
+  if (!mac) [state, fix] = ["Computer removed", undefined];
   else if (!mac.online) [state, fix] = ["Computer offline", undefined];
   else if (off) {
     state = "Plan limits off";

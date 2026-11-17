@@ -17,6 +17,9 @@ import { mayClaim, offOf, readBalance, writeBalance, type WorkerSeen } from "./l
 import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
+import { aliasDevice } from "./library/whereis";
+import { indexForDevice, relayFolders } from "./library/report";
+import { parseOnMac } from "./library/on-mac";
 import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, setDeviceWork, touchDevice } from "./lib/devices";
 import { clearTries, waitFor, wrongTry } from "./lib/sign-in-code";
 import { findUser } from "./users";
@@ -26,7 +29,7 @@ import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
-import { copyFile, copyJob } from "./library/copies";
+import { copyFile, copyJob, copyRelayIn } from "./library/copies";
 import { env } from "./lib/env";
 import { workWaits } from "./work/place";
 import { SERVER_PLACE } from "./work/server-work";
@@ -76,6 +79,27 @@ const jobId = (c: Context): number => {
 };
 
 // registered before the relay mount below, so these answer first (the relay's middleware is for its own routes)
+
+/** GET /api/devices/relay/folders → RelayFoldersAnswer: the Settings → Folders folders this computer holds, for its
+ *  grants and its scans (local first, P1; library/report.ts). */
+devicesApp.get("/relay/folders", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  return c.json({ folders: await relayFolders(d) });
+});
+
+/** POST /api/devices/relay/index {folder, ...OnMacIndex} → RelayIndexAnswer: a file in one of this computer's folders,
+ *  indexed where it is (library/report.ts indexForDevice). Never its bytes. */
+devicesApp.post("/relay/index", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const x = parseOnMac(b);
+  if (typeof x === "string" || typeof b?.folder !== "string") return c.json({ error: typeof x === "string" ? x : "folder" }, 400);
+  const r = await indexForDevice(d, b.folder, x);
+  return typeof r === "string" ? c.json({ error: r }, 400) : c.json(r);
+});
+
 devicesApp.post("/relay/editor/claim", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
@@ -238,6 +262,15 @@ devicesApp.get(`/relay/job/${COPY_KIND}/:id/file`, async (c) => {
   if (!f) return c.json({ error: "Not found" }, 404);
   if ("key" in f) return serveBlob(c, f.key, "application/octet-stream");
   return (await f.open(c.req.raw)) ?? c.json({ error: "Not found" }, 404);
+});
+// a send's bytes for a copy, piped live into the copy's waiting GET: never written here (before the generic file route)
+devicesApp.post(`/relay/job/${COPY_KIND}/:id/file`, async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: "Send the file." }, 400);
+  const r = await copyRelayIn(d.id, jobId(c), body);
+  return "error" in r ? c.json({ error: r.error }, r.status as 400) : c.json({ ...(r.reply as object), ...(await ended(d, true)) });
 });
 devicesApp.post("/relay/job/:kind/:id", async (c) => {
   const d = deviceCaller(c);
@@ -422,9 +455,13 @@ devicesApp.post("/", async (c) => {
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 60) : "";
   if (!name) return c.json({ error: "Name the Mac" }, 400);
   const version = typeof b?.version === "string" ? b.version.slice(0, 40) : undefined;
-  const { device, token, replaced } = pairDevice(u.username, name, version);
-  // the same Mac paired again: its providers now run on the new record
-  if (replaced.length) await moveProviders(u.username, replaced, device.id);
+  const machineId = typeof b?.machineId === "string" ? b.machineId : undefined;
+  const { device, token, replaced } = pairDevice(u.username, name, version, machineId);
+  // an app from before paired again under a new id: its providers, places and copies now belong to the new record
+  if (replaced.length) {
+    await moveProviders(u.username, replaced, device.id);
+    aliasDevice(replaced, device.id);
+  }
   return c.json({ device, token });
 });
 
@@ -492,12 +529,15 @@ devicePairApp.post("/", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 60) : "";
   if (typeof b?.code !== "string" || !name) return c.json({ error: "code, name" }, 400);
-  const paired = pairWithCode(b.code, name, typeof b.version === "string" ? b.version.slice(0, 40) : undefined);
+  const paired = pairWithCode(b.code, name, typeof b.version === "string" ? b.version.slice(0, 40) : undefined, Date.now(), typeof b.machineId === "string" ? b.machineId : undefined);
   if (!paired) {
     wrongTry(PAIR_TRIES, from);
     return c.json({ error: "That code is used or expired. Create a new one in Settings → Computers." }, 400);
   }
   clearTries(PAIR_TRIES, from);
-  if (paired.replaced.length) await moveProviders(paired.device.owner, paired.replaced, paired.device.id);
+  if (paired.replaced.length) {
+    await moveProviders(paired.device.owner, paired.replaced, paired.device.id);
+    aliasDevice(paired.replaced, paired.device.id);
+  }
   return c.json({ device: paired.device, token: paired.token });
 });

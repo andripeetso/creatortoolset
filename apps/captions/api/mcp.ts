@@ -779,6 +779,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         const r = await api(`${path}/v/${t.version}/frame?c=${encodeURIComponent(String(t.id))}`).catch(() => null);
         if (!r) continue;
         out.push({ type: "text", text: `Comment ${t.id} (v${t.version}, ${t.at}): ${t.text}` });
+        // its frame is being made on one of the owner's computers: the line says so, no picture yet
+        if (r.status === 202) {
+          out.push({ type: "text", text: `Its frame: ${((await r.json().catch(() => null)) as { line?: string } | null)?.line ?? "being made, ask again in a moment"}` });
+          continue;
+        }
         out.push({ type: "image", mimeType: "image/jpeg", data: Buffer.from(await r.arrayBuffer()).toString("base64") });
       }
       return out;

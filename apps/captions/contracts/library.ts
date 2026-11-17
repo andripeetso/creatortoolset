@@ -1,3 +1,5 @@
+import type { PlaceWord, WhereIs } from "./places";
+
 /**
  * Media Library: the types the web app and the server share (tasks/media-library-plan.md, section 7).
  * Routes live in api/library/routes.ts (later slices). Who may do what is in api/library/access.ts:
@@ -41,8 +43,12 @@ export interface AssetCard {
   onComputer?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
-  /** on the computer that asked (`?device=`): its proxy in that computer's cache, or the file indexed there */
+  /** on the computer that asked (`?device=`): its proxy in that computer's cache, or its original verified or found there (place rows) */
   here?: true;
+  /** where its original is, seen from the computer that asked (`?device=`; none: any of the person's), from the place rows
+   *  (api/library/whereis.ts, contracts/places.ts placeWordOf; src/lib/wording.ts placeLine says it). None: no computer has
+   *  a place row for it (the server's own copy, or not reported by any computer yet). `place` is the filming country */
+  placeWord?: PlaceWord;
   /** a strip of frames across the clip, side by side in one picture (videos, once made): hover scrub and the filmstrip */
   spriteUrl?: string;
   /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
@@ -536,6 +542,8 @@ export interface Piece {
   items: PieceItem[];
   /** The owner's picked frame (`?v=` stamped); absent or null = the automatic cover (the winner's thumbnail). */
   coverUrl?: string | null;
+  /** A picked frame that waits for one of the owner's computers to make it: the line it waits with. */
+  coverWaits?: string;
   /** Whether the viewer may change it: every item is theirs to change. Set on the single-piece read only. */
   writable?: boolean;
 }
@@ -690,4 +698,10 @@ export interface CopyItem {
   rel: string;
   size: number;
   sha256?: string;
+}
+
+/** GET /api/library/:id/where?versions=a,b&device=<id>: where each version is (at most PLACES_MAX ids, only ones the caller
+ *  may see), with the word for it seen from `device` (none: any of the person's computers). */
+export interface WhereAnswer {
+  versions: Record<string, WhereIs & { word: PlaceWord }>;
 }

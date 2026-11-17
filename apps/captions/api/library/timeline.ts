@@ -543,6 +543,8 @@ const TOO_BIG = /too (large|big)|exceeds|\b413\b|payload/i;
  * times, and a 10-minute part as made here is about 8 MB. It sees the picture only (it said so of a test beep), so no
  * sound note is kept. Times come back from the file's start and are moved to the video's. A file too big for it is asked
  * as two halves; a used-up quota parks `park` (no next part, no other video) and the watch is tried again later.
+ * `whole`: the small copy a Mac made for watching (LibraryLookJob.swift watchCopy), sent as it is in one part: this
+ * server encodes nothing for it (local-first plan D7); one too big for Antigravity fails, saying so.
  */
 export async function askAntigravity(
   route: ProviderOpts,
@@ -550,13 +552,14 @@ export async function askAntigravity(
   file: string,
   o: { title: string; workspace: string; level: LookLevel; a: number; b: number; dur: number },
   workspace?: string,
+  whole = false,
 ): Promise<TimelineEvent[]> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "ct-watch-"));
   try {
-    const part = path.join(dir, AGY_FILE);
-    await ffmpeg(["-ss", String(o.a), "-i", file, "-t", String(o.b - o.a), "-vf", "scale=-2:'min(360,ih)',fps=5", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "32", part]);
+    const part = whole ? file : path.join(dir, AGY_FILE);
+    if (!whole) await ffmpeg(["-ss", String(o.a), "-i", file, "-t", String(o.b - o.a), "-vf", "scale=-2:'min(360,ih)',fps=5", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "32", part]);
     const files = { [AGY_FILE]: `base64:${(await readFile(part)).toString("base64")}` };
-    await rm(part);
+    if (!whole) await rm(part);
     const prompt = watchPrompt({ ...o, sound: false, file: AGY_FILE });
     const text = await usageIn(workspace, () => completeWithFallback(prompt.system, prompt.user, undefined, (t) => t, { ...route, mac: { ...route.mac, files } }));
     const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -570,6 +573,7 @@ export async function askAntigravity(
       throw new Error(msg);
     }
     if (TOO_BIG.test(said)) {
+      if (whole) throw new Error("The Mac's copy of the video is too big for Antigravity in one piece");
       if (o.b - o.a <= 60) throw new Error("The video is too big for Antigravity, even a minute at a time");
       const m = Math.round((o.a + o.b) / 2);
       return [...(await askAntigravity(route, park, file, { ...o, b: m }, workspace)), ...(await askAntigravity(route, park, file, { ...o, a: m }, workspace))];
@@ -592,6 +596,7 @@ export async function watchVersion(
   versionId: string,
   file: string,
   actor: string,
+  sent = false,
 ): Promise<{ events: number; usd: number; ms: number; sound: boolean; inTokens: number; outTokens: number }> {
   const t0 = Date.now();
   const v = db
@@ -617,7 +622,7 @@ export async function watchVersion(
   let inTokens = 0;
   let outTokens = 0;
   const one = async ([a, b]: [number, number]): Promise<TimelineEvent[]> => {
-    if (route) return askAntigravity(route, park, file, { title: v.title, workspace, level, a, b, dur }, wsId);
+    if (route) return askAntigravity(route, park, file, { title: v.title, workspace, level, a, b, dur }, wsId, whole);
     const r = await askPart(key, model as GeminiModel, f!, watchPrompt({ title: v.title, workspace, level, a, b, dur, sound }), a, b, level, sound);
     usd += r.usage.costUsd;
     inTokens += r.inTokens;
@@ -633,10 +638,12 @@ export async function watchVersion(
     for (let i = 0; i < ranges.length; i += atOnce) for (const events of await Promise.all(ranges.slice(i, i + atOnce).map(one))) found.push(...events);
     return found;
   };
+  // a Mac's copy goes to Antigravity whole: no part of it is cut here
+  const whole = !!route && sent;
   try {
-    let events = await ask(holesOf([], length, 0));
-    // a stretch the answers left without an event is asked once more on its own
-    const holes = holesOf(events, length, holeS(level));
+    let events = await ask(whole ? [[0, length]] : holesOf([], length, 0));
+    // a stretch the answers left without an event is asked once more on its own (a whole copy only once: nothing is cut)
+    const holes = whole ? [] : holesOf(events, length, holeS(level));
     if (holes.length) events = [...events, ...(await ask(holes))].sort((x, y) => x.a - y.a);
     if (!events.length) throw new Error(`${route ? "Antigravity" : "Gemini"} named nothing that happens in the video`);
     storeTimeline(db, versionId, { events, level, model });
@@ -659,8 +666,8 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
     try {
       const file = await src();
       // the key's credit ran out on this watch and its owner picked Antigravity until then: watched there at once
-      const r = await watchVersion(db, versionId, file, actor).catch((e: unknown) => {
-        if (e instanceof Error && e.message.startsWith(CREDIT_GONE) && onAntigravity(actor)) return watchVersion(db, versionId, file, actor);
+      const r = await watchVersion(db, versionId, file, actor, sent).catch((e: unknown) => {
+        if (e instanceof Error && e.message.startsWith(CREDIT_GONE) && onAntigravity(actor)) return watchVersion(db, versionId, file, actor, sent);
         throw e;
       });
       console.log(`[library] timeline of ${versionId}: ${r.events} events, $${r.usd.toFixed(4)}, ${Math.round(r.ms / 1000)} s`);

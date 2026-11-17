@@ -10,8 +10,10 @@ import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
 import { loudest, peaks } from "@/lib/waveform";
-import { allGranted, askMediaFolder, localMediaFiles, localMediaUrl } from "@/lib/local-files";
-import { findOriginals, openOriginals, type Originals } from "@/lib/relink";
+import { askMediaFolder, localMediaFiles, localMediaUrl } from "@/lib/local-files";
+import { allowFolders, awayLine as originalsAway, findOriginals, foldersToAllow, openOriginals, type Originals } from "@/lib/relink";
+import { WORDS } from "@/lib/wording";
+import type { StorageFolder } from "@contracts/storage";
 import { rootName, useHere } from "@/lib/here";
 import { listLibraries } from "@/lib/library";
 import { macPlaces } from "@/lib/thisMac";
@@ -196,6 +198,11 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   const allowOriginals = async () => {
     if (originals) setOriginals(await findOriginals(originals, store()));
   };
+  // files in a Settings → Folders folder this Mac hasn't been allowed to read: its folders, for Allow on this Mac
+  const [toAllow, setToAllow] = useState<StorageFolder[]>([]);
+  useEffect(() => {
+    if (originals) void foldersToAllow(originals).then(setToAllow, () => {});
+  }, [originals]);
   const { edits: handEdits, hole } = hist.now;
   const { edits: sentEdits, holes: sentHoles } = sentOf(sent);
   const planEdits = stackEdits([sentEdits, handEdits]);
@@ -336,8 +343,11 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   const access = voiceHere.find((c) => c.state === "here" && c.needs === "access");
   const off = voiceHere.filter((c) => c.state === "away" || c.state === "gone");
   const offLine = off[0] && `${off.length} of ${voiceFiles.length} originals ${
-    off[0].state === "gone" ? "missing here" : off[0].root ? `on ${rootName(off[0].root)}, which isn't connected` : "not connected"}`;
+    off[0].state === "gone" ? "missing on this computer" : `on ${off[0].root ? rootName(off[0].root) : "a drive"}, which isn't connected`}`;
   const lost = voiceFiles.filter((s) => !found[s] && !here?.[s]);
+  // what this Mac said of the files by path: a drive away, or a folder waiting for an OK (with its Allow); else the reach text
+  const pathAway = originals && lost.length > 0 ? originalsAway(originals) : null;
+  const pathLine = pathAway === WORDS.needsOk && !toAllow.length ? null : pathAway;
   const sound = view && plan && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
     ...soundPieces(splitView(view, playEdits), playEdits, plan, soundLanes)
       .filter((p) => found[p.src]).map((p) => ({ ...p, src: urlOf(p.src) })),
@@ -475,11 +485,17 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] text-zinc-500">
           {!own && !theirs && !manage && "Click a clip to comment on it"}
-          {originals && lost.length > 0 && (
+          {originals && lost.length > 0 && !pathLine && (
             <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
               title="Edits play with the sound of the original recordings: allow their folder, or the folder they are in now">
-              {originals.tried || lost.some((s) => allGranted([paths![s]], originals.folders))
+              {originals.tried || lost.some((s) => originals.away?.[s]?.state === "not_here")
                 ? "Find the original files" : "Play edits from the originals"}
+            </button>
+          )}
+          {pathLine && <span>{pathLine}</span>}
+          {originals && pathLine === WORDS.needsOk && (
+            <button onClick={() => void allowFolders(originals, toAllow, store()).then(setOriginals)} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800">
+              {WORDS.allowOnThisMac}
             </button>
           )}
           {access && (

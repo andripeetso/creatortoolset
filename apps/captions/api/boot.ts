@@ -9,7 +9,7 @@ import { clipAgentApp } from "./clip-agent";
 import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp, enhancesAtRisk } from "./enhance";
-import { exportApp, resolveFontsDir } from "./export";
+import { resolveFontsDir } from "./export";
 import { exportsApp, exportsAtRisk, resumeFinalsSends } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
@@ -35,6 +35,8 @@ import { editorStepsAtRisk, releaseRunningSteps, startEditorWorker } from "./edi
 import { serverWorkApp } from "./work/server-work-routes";
 import { serverUpdateApp } from "./server-update";
 import { settleServerWork } from "./work/server-work";
+import { startTaskTick, sweepTasks } from "./work/tasks";
+import "./work/task-kinds";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
@@ -159,6 +161,8 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/library/uploads/") ||
     // a file a device made for a plug-in's job (devices.ts): the device token is checked before it is read
     (c.req.method === "POST" && /^\/api\/devices\/relay\/job\/[^/]+\/\d+\/file$/.test(c.req.path)) ||
+    // a computer task's made file (capped at the route) and a call carrying its sound (work/tasks.ts): the device token is checked first
+    /^\/api\/devices\/relay\/work\/task\/\d+\/(?:file|call\/[\w-]+)$/.test(c.req.path) ||
     (c.req.method === "POST" && /^\/api\/workshop-share\/[^/]+\/deliveries$/.test(c.req.path)) ||
     replacedLargeBody(c.req.path) ||
     // a plug-in route that takes a large upload (plugin.ts bodyLimitExempt); the route checks its own access first
@@ -458,7 +462,6 @@ app.route("/api/captions", captionLayoutApp);
 // before the built-in routers of those paths take them, and after the account gate above
 mountAnsweredRoutes(app, serverPlugins);
 app.route("/api/exports", exportsApp);
-app.route("/api/export", exportApp);
 app.route("/api/hf", hfApp);
 app.route("/api/presets", presetsApp);
 app.route("/api/packs", packsApp);
@@ -514,6 +517,8 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   startLibraryWorker();
   startEditorWorker();
+  // computer tasks (work/tasks.ts): a queued one the server may run once its video work is switched on
+  void sweepTasks().then(startTaskTick);
   startTrashPurge();
   startWatchFolders();
   startPlugins(serverPlugins, startFolderPlugin);

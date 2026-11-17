@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SPRITE_FRAMES, type AssetCard } from "@contracts/library";
-import { AssetTile, frameAt, intoColumns } from "./ClipCards";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AssetRow, AssetTile, fileLine, frameAt, intoColumns } from "./ClipCards";
 
 // A mouse across a video card's picture shows the clip there from its strip of frames; leaving shows the picture again.
 
@@ -75,5 +76,22 @@ describe("photo columns", () => {
     expect(first).toEqual([[2], [1, 1], [1]]);
     const more = intoColumns([2, 1, 1, 1, 0.5, 0.5], 3, tall);
     expect(more.map((c, i) => c.slice(0, first[i]!.length))).toEqual(first);
+  });
+});
+
+describe("a card's line about its file", () => {
+  const at = (c: Partial<AssetCard>) => ({ ...card, state: "ready", ...c }) as AssetCard;
+  it("says the place word, and never missing for a file nobody has looked for", () => {
+    expect(fileLine(at({ state: "missing", placeWord: { word: "unchecked" } }))).toBe("Not checked yet");
+    expect(fileLine(at({ placeWord: { word: "unchecked" } }))).toBeNull();
+    expect(fileLine(at({ placeWord: { word: "disk_away", disk: "Tiny Drive" } }))).toBe("Tiny Drive isn't connected");
+    expect(fileLine(at({ placeWord: { word: "missing", computer: "Tiny Studio Mac" } }))).toBe("Missing on Tiny Studio Mac");
+    expect(fileLine(at({ placeWord: { word: "here" } }))).toBeNull();
+    expect(fileLine(at({ state: "missing" }))).toBe("File not found"); // a server without place rows
+  });
+
+  it("marks a clip on this computer from its place word", () => {
+    expect(renderToStaticMarkup(<AssetRow asset={at({ placeWord: { word: "here" } })} onOpen={() => {}} />)).toContain('aria-label="On this computer"');
+    expect(renderToStaticMarkup(<AssetRow asset={at({ placeWord: { word: "folder_not_found" } })} onOpen={() => {}} />)).toContain("Folder not found, re-point?");
   });
 });
