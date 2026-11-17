@@ -60,6 +60,12 @@ const session = (id: string, working: boolean, ready: boolean) => ({ id, title: 
 const limit = "Your Claude plan's weekly limit is reached; it resets 5pm. They continue then.";
 
 describe("activityLines", () => {
+  it("a waiting row keeps its buttons (a key out of credit: Top up, …)", () => {
+    const choices = [{ label: "Top up", url: "https://aistudio.google.com/billing" }, { label: "Continue without", post: "/api/activity/credit/GEMINI_API_KEY/without" }];
+    const { waiting } = activityLines([row("credit:GEMINI_API_KEY", "/settings/keys", { state: "ready", choices })], [], []);
+    expect(waiting[0]!.choices).toEqual(choices);
+  });
+
   it("puts working rows and replies being written under Running, and what needs you under Waiting on you", () => {
     const { running, waiting } = activityLines(
       [row("l", "/library"), row("k", "/library", { state: "ready" }), row("mac", "/editor", { actions: [{ id: "s", title: "Stop", run: "stop", label: "x" }] })],

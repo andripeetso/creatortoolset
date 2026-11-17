@@ -6,13 +6,14 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { LOOK_LEVELS, watchModelOf, type GeminiModel, type LookLevel, type TimelineEvent, type WatchModel } from "../../contracts/library";
 import { completeWithFallback, type ProviderOpts } from "../ai-complete";
-import { creditBack, creditOut } from "../credits";
+import { creditBack, creditChoice, creditOut, type CreditChoice } from "../credits";
 import { keyFor } from "../my-keys";
 import { MacClaudeError, recordUsage, usageIn } from "../lib/mac-claude";
 import { ownSettings, providerSettings, routeForInstance, runFields } from "../lib/providers";
 import { findUser } from "../users";
 import { workspaceContext } from "../lib/workshop/context";
 import { parseJsonObject } from "../lib/instagram/vision";
+import { libraryChanged, libraryRole } from "./access";
 import { libraryLookLevel, librarySetting } from "./db";
 import { WORKSPACE_MAX, workspaceIdOf } from "./describe";
 import { canEmbed } from "./embed";
@@ -165,6 +166,44 @@ export function antigravityRoute(actor: string | null): ProviderOpts | null {
 }
 const AGY_LABEL = `${LOOK_LABEL} (Antigravity)`;
 
+/**
+ * Whether `actor`'s watches go to their Antigravity while their Gemini key's credit is out: its owner picked it on Home's
+ * Activity (credits.ts), the key is parked and Antigravity runs. Once the key works again (creditBack), back to the key.
+ */
+function onAntigravity(actor: string | null): boolean {
+  const key = watchKey(actor);
+  return !!parkedOf(key) && creditChoice("GEMINI_API_KEY", key) === "antigravity" && !!antigravityRoute(actor);
+}
+
+/**
+ * `username` picked what happens to the timelines waiting on their Gemini credit (`owners`: whom the key serves, chooseCredit):
+ * on Antigravity, those waits end now (the sweep asks them again); without, Timelines are switched off in the libraries
+ * `username` owns that hold one. Answers those libraries.
+ */
+export function creditWaitsChosen(db: DatabaseSync, owners: string[], username: string, choice: CreditChoice): string[] {
+  if (!owners.length) return [];
+  const marks = owners.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT t.version_id AS v, a.library_id AS lib FROM timelines t JOIN asset_versions v ON v.id = t.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE t.error LIKE ? AND v.created_by IN (${marks})`,
+    )
+    .all(`${CREDIT_GONE}%`, ...owners) as { v: string; lib: string }[];
+  if (choice === "antigravity") {
+    for (const r of rows) {
+      db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(r.v);
+      swept.delete(r.v);
+    }
+    return [];
+  }
+  const libs = [...new Set(rows.map((r) => r.lib))].filter((lib) => libraryRole(username, lib) === "owner");
+  for (const lib of libs) {
+    db.prepare("UPDATE libraries SET settings = json_set(settings, '$.timeline', json('false')) WHERE id = ?").run(lib);
+    libraryChanged(lib);
+  }
+  return libs;
+}
+
 /** Whether `actor` can watch in this library: a Gemini key, or with Antigravity picked, an Antigravity that runs. */
 export const canWatch = (db: DatabaseSync, libraryId: string, actor: string | null): boolean =>
   libraryWatchModel(db, libraryId) === "antigravity" ? !!antigravityRoute(actor) : !!watchKey(actor);
@@ -186,8 +225,11 @@ export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | 
   const t = rowOf(db, versionId);
   if (!t) return true;
   if (t.error) return now - t.at >= RETRY_MS;
-  // a picture-only timeline is made again with its sound once the library watches on a Gemini key
-  return t.level !== libraryLookLevel(r.library_id) || (t.model === "antigravity" && libraryWatchModel(db, r.library_id) !== "antigravity");
+  // a picture-only timeline is made again with its sound once the library watches on a Gemini key that has credit
+  return (
+    t.level !== libraryLookLevel(r.library_id) ||
+    (t.model === "antigravity" && libraryWatchModel(db, r.library_id) !== "antigravity" && creditChoice("GEMINI_API_KEY", watchKey(actor)) !== "antigravity")
+  );
 }
 
 /** A version's timeline, in order; empty when it has none. */
@@ -557,7 +599,7 @@ export async function watchVersion(
   const v = db
     .prepare("SELECT a.title, a.library_id, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
     .get(versionId) as { title: string; library_id: string; probe: string | null };
-  const model = libraryWatchModel(db, v.library_id);
+  const model = onAntigravity(actor) ? "antigravity" : libraryWatchModel(db, v.library_id);
   const route = model === "antigravity" ? antigravityRoute(actor) : null;
   const key = model === "antigravity" ? "" : watchKey(actor);
   if (model === "antigravity" && !route) throw new Error("Needs Antigravity in Settings → Providers");
@@ -617,7 +659,12 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
   if (!actor || watching.has(versionId) || (!sent && watching.size >= WATCHES_AT_ONCE) || !wantsWatch(db, versionId, actor)) return Promise.resolve();
   const run = (async () => {
     try {
-      const r = await watchVersion(db, versionId, await src(), actor);
+      const file = await src();
+      // the key's credit ran out on this watch and its owner picked Antigravity until then: watched there at once
+      const r = await watchVersion(db, versionId, file, actor).catch((e: unknown) => {
+        if (e instanceof Error && e.message.startsWith(CREDIT_GONE) && onAntigravity(actor)) return watchVersion(db, versionId, file, actor);
+        throw e;
+      });
       console.log(`[library] timeline of ${versionId}: ${r.events} events, $${r.usd.toFixed(4)}, ${Math.round(r.ms / 1000)} s`);
     } catch (e) {
       storeTimeline(db, versionId, { error: e instanceof Error ? e.message : String(e) });

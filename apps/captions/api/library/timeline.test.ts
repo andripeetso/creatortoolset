@@ -418,6 +418,10 @@ describe("in an edit's plan", () => {
   });
 });
 
+/** A watch stopped by an empty Gemini credit, kept on the version. */
+const storeTimelineError = (v: string) =>
+  libraryDb().prepare("INSERT OR REPLACE INTO timelines (version_id, events, error, at) VALUES (?, '[]', 'The Gemini credit ran out: depleted', ?)").run(v, Date.now());
+
 describe("Antigravity", () => {
   const inst = { id: "agy", driver: "antigravity" as const, name: "Antigravity", enabled: true, device: "mac-1" };
   /** The actor has Antigravity on their Mac; the library watches with it. */
@@ -452,6 +456,59 @@ describe("Antigravity", () => {
     vi.mocked(providers.routeForInstance).mockReset();
     vi.mocked(completeWithFallback).mockReset();
     libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+  });
+
+  it("the Gemini credit out and Antigravity picked on Home's Activity: the waiting videos and the next ones are watched there until the key works again", async () => {
+    const { chooseCredit, creditBack } = await import("../credits");
+    const { creditWaitsChosen } = await import("./timeline");
+    const { v, file } = await seed("agy-credit");
+    const { v: next, file: nextFile } = await seed("agy-credit-2");
+    withAntigravity();
+    libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    gemini();
+    const asked = runs();
+    const post = watchTiming.post;
+    watchTiming.post = async () => Response.json({ error: { code: 402, message: "Your prepayment credits are depleted." } }, { status: 402 });
+    const model = (id: string) => (libraryDb().prepare("SELECT model, error FROM timelines WHERE version_id = ?").get(id) as { model: string | null; error: string | null });
+    try {
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      expect(model(v).error).toMatch(/^The Gemini credit ran out/);
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
+      // picked: the wait ends now, and the watch goes to Antigravity
+      creditWaitsChosen(libraryDb(), chooseCredit("GEMINI_API_KEY", "local", "antigravity"), "local", "antigravity");
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      expect(model(v)).toEqual({ model: "antigravity", error: null });
+      // not made again with sound while the credit is out
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
+      // the key's wait over and still empty: the next video tries it once, then goes to Antigravity at once
+      parked.clear();
+      await watchAfter(libraryDb(), next, async () => nextFile, "local");
+      expect(model(next)).toEqual({ model: "antigravity", error: null });
+      expect(asked).toHaveLength(2);
+      // topped up: back to the key, the picture-only ones made again with their sound
+      creditBack("GEMINI_API_KEY", "gk-test");
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+    } finally {
+      watchTiming.post = post;
+      creditBack("GEMINI_API_KEY", "gk-test");
+    }
+  });
+
+  it("Continue without: Timelines go off in the person's libraries with a video waiting on the credit", async () => {
+    const { creditWaitsChosen } = await import("./timeline");
+    const { librarySetting } = await import("./db");
+    const { v } = await seed("credit-without");
+    storeTimelineError(v);
+    try {
+      expect(creditWaitsChosen(libraryDb(), ["local"], "someone", "without")).toEqual([]);
+      expect(creditWaitsChosen(libraryDb(), ["local"], "local", "without")).toEqual(["lib_t"]);
+      expect(librarySetting("lib_t", "timeline")).toBe(false);
+      expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(false);
+    } finally {
+      libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timeline') WHERE id = 'lib_t'`).run();
+    }
   });
 
   it("watches a small soundless copy in its run folder: picture only, no sound note kept, no key, no Gemini call", async () => {
