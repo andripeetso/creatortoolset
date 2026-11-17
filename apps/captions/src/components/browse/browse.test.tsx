@@ -140,6 +140,15 @@ describe("FolderSidebar", () => {
     act(() => void links[1].dispatchEvent(dragEvent("drop", { [ITEM]: "e1,e2" })));
     expect(into.onItems).toHaveBeenCalledWith(["e1", "e2"]);
   });
+
+  it("right-click on a folder line opens its menu: Rename…, Delete", async () => {
+    const el = render(
+      <FolderSidebar top={{ name: "All edits", to: "/editor", on: true }} folders={[{ id: "f1", name: "Tiny Flip", to: "/editor?f=f1", depth: 0, on: false, onRename: vi.fn(), onDelete: vi.fn() }]} />,
+    );
+    await act(async () => void el.querySelectorAll("a")[1].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 5, clientY: 5 })));
+    expect(document.body.textContent).toContain("Rename…");
+    expect(document.body.textContent).toContain("Delete folder");
+  });
 });
 
 describe("BrowseList", () => {

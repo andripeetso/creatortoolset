@@ -210,18 +210,20 @@ export function FolderSidebar({ top, folders, label = "Folders" }: { top: Omit<S
       <SidebarLine {...top} depth={0} />
       {folders.map((f) => (
         <FolderMenu key={f.id} {...f}>
-          <SidebarLine {...f} />
+          <SidebarLine name={f.name} to={f.to} meta={f.meta} drop={f.drop} depth={f.depth} on={f.on} icon={f.icon} />
         </FolderMenu>
       ))}
     </nav>
   );
 }
 
-function SidebarLine({ name, to, meta, drop, depth, on, icon }: Pick<SidebarFolder, "name" | "to" | "meta" | "drop" | "depth" | "on" | "icon">) {
+/** `menu`: what the right-click menu's trigger hands its child (its handlers and ref), passed on to the link. */
+function SidebarLine({ name, to, meta, drop, depth, on, icon, ...menu }: Pick<SidebarFolder, "name" | "to" | "meta" | "drop" | "depth" | "on" | "icon"> & React.HTMLAttributes<HTMLAnchorElement>) {
   const { over, handlers } = useFolderDrop(drop);
   const Icon = icon ?? FolderIcon;
   return (
     <Link
+      {...menu}
       to={to}
       draggable={false}
       {...handlers}
