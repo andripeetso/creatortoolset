@@ -8,6 +8,10 @@ import type { DatabaseSync } from "node:sqlite";
  */
 
 export const MAX_ATTEMPTS = 3;
+
+/** What a job left by the switch says while it waits: one a computer takes, or one only a server with video work on runs (worker.ts leftToComputers). */
+export const WAITS_FOR_COMPUTER = "Waits for one of your computers. Open Creator Toolset on your Mac";
+export const WAITS_FOR_SERVER = "Video work is off on this server";
 const BACKOFF_MS = 60_000;
 
 /** The tables these functions run on: interpolated into SQL, so never a free string. */

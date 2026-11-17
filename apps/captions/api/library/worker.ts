@@ -8,7 +8,7 @@ import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from 
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
 import { ModelNotReady } from "../lib/device-transcribe";
@@ -148,8 +148,9 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
   const held = [
     ...takingClips,
     ...(db
-      .prepare(`SELECT DISTINCT library_id FROM jobs WHERE kind IN (${marks(PICTURES)}) AND (state = 'running' OR (state = 'queued' AND run_after <= ?))`)
-      .all(...PICTURES, now) as { library_id: string }[]).map((r) => r.library_id),
+      // a picture step left waiting for a computer (leftToComputers) holds nothing back: nothing here runs it
+      .prepare(`SELECT DISTINCT library_id FROM jobs WHERE kind IN (${marks(PICTURES)}) AND (state = 'running' OR (state = 'queued' AND run_after <= ? AND IFNULL(error, '') NOT IN (?, ?)))`)
+      .all(...PICTURES, now, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER) as { library_id: string }[]).map((r) => r.library_id),
   ];
   const first = firstClips();
   // an opened clip's own picture goes before the other pictures, and its slow steps (a 4K proxy takes as long as many
@@ -206,9 +207,7 @@ export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) 
  */
 export const DECODES: readonly string[] = ["wave", "proxy", "sprite", "fingerprint", "transcribe", "describe", "look"];
 
-/** What a job left by the switch says while it waits: one a computer takes, or one only a server with video work on runs. */
-export const WAITS_FOR_COMPUTER = "Waits for one of your computers. Open Creator Toolset on your Mac";
-export const WAITS_FOR_SERVER = "Video work is off on this server";
+export { WAITS_FOR_COMPUTER, WAITS_FOR_SERVER };
 
 /**
  * A step that decodes nothing here even where video work is off (run): a look a Mac of theirs reads (it waits for that

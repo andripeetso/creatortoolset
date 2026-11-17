@@ -9,8 +9,8 @@ import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
-import { stillToCome } from "./jobs";
-import { LANES, LIMIT_LIKE, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./worker";
+import { stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
+import { LANES, LIMIT_LIKE } from "./worker";
 
 /**
  * How much processing clips will take, before they go in, and how much is left (GET /api/library/:id/estimate and

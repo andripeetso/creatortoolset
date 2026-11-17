@@ -297,7 +297,7 @@ describe("the Media Library's work", () => {
     expect(job("describe").error).not.toBe(library.WAITS_FOR_SERVER);
     // that Mac is handed the look with the path the file was sent from
     db.prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE version_id = 'ver_l' AND kind = 'look'").run(MAC_WAITS);
-    expect(macLookJob.claim({ ...mac.device, owner: "lib" })?.options.path).toBe("/Volumes/Card/clip.mov");
+    expect(macLookJob.claim({ ...mac.device, owner: "lib" })?.options?.path).toBe("/Volumes/Card/clip.mov");
     db.exec("DELETE FROM jobs WHERE version_id = 'ver_l' AND kind IN ('look', 'describe'); DELETE FROM descriptions WHERE version_id = 'ver_l'");
     db.exec("UPDATE asset_versions SET from_path = NULL, from_device = NULL WHERE id = 'ver_l'");
   });
