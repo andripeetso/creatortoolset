@@ -26,6 +26,7 @@ writeFileSync(
 const { libraryDb, openLibraryDb } = await import("./db");
 const { MIGRATIONS } = await import("./schema");
 const { libraryApp } = await import("./routes");
+const { searchApp } = await import("./search");
 const { placesFor, backfillRoots } = await import("./places");
 const { indexOnMac } = await import("./on-mac");
 const { reconnect } = await import("./locate");
@@ -40,6 +41,7 @@ app.use(async (c, next) => {
   return next();
 });
 app.route("/api/library", libraryApp);
+app.route("/api/library", searchApp);
 const call = async <T>(user: string, url: string, body?: unknown): Promise<{ status: number; json: T }> => {
   const r = await app.request(url, { method: body ? "POST" : "GET", headers: { "x-user": user, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
   return { status: r.status, json: (await r.json()) as T };
@@ -256,6 +258,11 @@ describe("indexing and reading by places", () => {
     expect(n).toBe(1);
     expect(place("july", boMac)?.path).toBe("/Volumes/Travel SSD/b.mov");
     expect(version("july").mac_path).toBe("/Volumes/footage/Archive/2025/July/b.mov");
+  });
+
+  it("the Where filter's countries have their own address, so the places route only ever answers a computer", async () => {
+    expect((await call<{ places: unknown[] }>("ana", "/api/library/lib/countries")).status).toBe(200);
+    expect((await call("ana", "/api/library/lib/places")).status).toBe(403);
   });
 });
 

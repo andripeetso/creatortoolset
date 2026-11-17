@@ -201,9 +201,9 @@ searchApp.get("/:id/tags", async (c) => {
   return c.json({ tags });
 });
 
-// GET /api/library/:id/places → { places: [{ place, count }] }: the countries clips were filmed in, most clips first, for
-// the Where filter. ponytail: the whole library, as /tags above
-searchApp.get("/:id/places", async (c) => {
+// GET /api/library/:id/countries → { places: [{ place, count }] }: the countries clips were filmed in, most clips first,
+// for the Where filter (…/places is where originals are, places.ts). ponytail: the whole library, as /tags above
+searchApp.get("/:id/countries", async (c) => {
   const libraryId = c.req.param("id");
   if (!(await readerOf(c.get("user").username, libraryId))) return notFound(c);
   const places = db()
