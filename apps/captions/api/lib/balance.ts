@@ -1,32 +1,71 @@
 import { readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_WEIGHT, type Balance, type Machine } from "../../contracts/providers";
+import { DEFAULT_WEIGHT, type Balance, type Device, type Machine } from "../../contracts/providers";
 import { env } from "./env";
 
 /** Load balancing (Settings → Devices): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. */
 export const balanceFile = (user: string) => path.join(env.dataDir, "balance", `${user}.json`);
 
-/**
- * The owner's computers set to Off in Load balancing (weight 0 while it is on): they take no step and no picture work (work/pictures.ts), so
- * none of them counts as the one that could, and the step goes to another computer (or, in phase 4, the server).
- */
-export function offOf(owner: string): Set<string> {
+const parse = (b: Partial<Balance> | null): Balance => {
+  const map = <T>(x: unknown, ok: (v: unknown) => v is T): Record<string, T> =>
+    x && typeof x === "object" ? Object.fromEntries(Object.entries(x).filter(([, v]) => ok(v))) as Record<string, T> : {};
+  return {
+    on: b?.on !== false,
+    weights: map(b?.weights, (v): v is number => typeof v === "number"),
+    libraries: map(b?.libraries, (v): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string")),
+    originals: map(b?.originals, (v): v is boolean => typeof v === "boolean"),
+  };
+};
+
+/** The balance file read at once (the server's loop asks per job, and a claim per poll). */
+export function readBalanceSync(user: string): Balance {
   try {
-    const b = JSON.parse(readFileSync(balanceFile(owner), "utf8")) as Partial<Balance>;
-    return b.on === false ? new Set() : new Set(Object.entries(b.weights ?? {}).flatMap(([id, w]) => (w === 0 ? [id] : [])));
+    return parse(JSON.parse(readFileSync(balanceFile(user), "utf8")) as Partial<Balance>);
   } catch {
-    return new Set();
+    return parse(null);
   }
 }
 export async function readBalance(user: string): Promise<Balance> {
   try {
-    const b = JSON.parse(await readFile(balanceFile(user), "utf-8")) as Partial<Balance>;
-    return { on: b.on !== false, weights: b.weights && typeof b.weights === "object" ? b.weights : {} };
+    return parse(JSON.parse(await readFile(balanceFile(user), "utf-8")) as Partial<Balance>);
   } catch {
-    return { on: true, weights: {} };
+    return parse(null);
   }
 }
+/** readBalance for a caller that cannot wait (a device job slot's claim, lib/plugin.ts DeviceJobSlot). */
+export const balanceNow = readBalanceSync;
+
+/** Writes the balance file whole (Settings → Computers; the studio's own Computers page writes it too). */
+export async function writeBalance(user: string, cur: Balance): Promise<void> {
+  await mkdir(path.dirname(balanceFile(user)), { recursive: true });
+  const tmp = `${balanceFile(user)}.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(cur, null, 2));
+  await rename(tmp, balanceFile(user));
+}
+
+/**
+ * The owner's computers set to Off in Load balancing (weight 0 while it is on): they take no work at all, not even when
+ * no other computer could (the owner, 17 Nov: Off is off), so none of them counts as the one that could.
+ */
+export function offOf(owner: string): Set<string> {
+  const b = readBalanceSync(owner);
+  return b.on ? new Set(Object.entries(b.weights).flatMap(([id, w]) => (w === 0 ? [id] : []))) : new Set();
+}
+
+/** Whether computer `id` takes Media Library work of library `library`: every library unless its list narrows it. */
+export const allowsLibrary = (b: Balance, id: string, library: string): boolean => !b.libraries?.[id] || b.libraries[id]!.includes(library);
+
+/**
+ * Whether computer `d` may download an original (to make the proxy of a file only the server has): as set, else not on a
+ * Linux or Windows computer (a box that takes library work beside the Mac, owner 17 Nov) and yes on a Mac.
+ */
+export const takesOriginals = (b: Balance, d: Pick<Device, "id" | "report">): boolean =>
+  b.originals?.[d.id] ?? !["linux", "windows"].includes(d.report?.machine?.os ?? "");
+
+/** How recent a computer's last work claim must be for it to count as one that takes work now (an idle worker asks every 25 s). */
+export const CLAIM_FRESH_MS = 120_000;
+export const claimsFresh = (d: Pick<Device, "work">, now = Date.now()): boolean => !!d.work?.at && now - d.work.at < CLAIM_FRESH_MS;
 
 /** A computer that runs AI Editor steps, as its last report and heartbeat left it (a device in lib/devices.ts). */
 export interface WorkerSeen {
@@ -51,12 +90,13 @@ export function score(w: WorkerSeen, weight: number): number {
 
 /**
  * May `host` take a heavy job of `kind` now? With balancing on, only the best computer for it among those online,
- * free and willing; when none qualifies (no other computer, none reports its load) the one asking takes it, even one
- * set to Off (weight 0 is never the best, so Off only means "not while another can take it"). Balancing off: whoever asks first.
+ * free and willing. A computer set to Off never takes one (the owner, 17 Nov). When no computer could be scored (none
+ * reports its load yet, or all are full) the one asking takes it. Balancing off: whoever asks first.
  */
 export function mayClaim(kind: string, host: string, workers: WorkerSeen[], balance: Balance, now: number, onlineMs: number): boolean {
   if (!balance.on) return true;
   const weight = (h: string) => balance.weights[h] ?? DEFAULT_WEIGHT;
+  if (weight(host) <= 0) return false;
   let best: string | null = null;
   let top = 0;
   for (const w of workers) {

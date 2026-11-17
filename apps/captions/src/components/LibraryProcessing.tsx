@@ -103,11 +103,12 @@ function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: str
 }
 
 /** What a step waiting for the person needs, in a few words, with the page that gives it one click away. */
-function Needs({ step, what, count = 0 }: { step: LibraryStepEstimate["step"]; what?: string; count?: number }) {
+function Needs({ step, what, count = 0, away }: { step: LibraryStepEstimate["step"]; what?: string; count?: number; away?: boolean }) {
   // the estimate names the step ("AI descriptions need an AI"), the progress line counts its clips
-  const text = what ? `${what} need ${NEEDS[step].needs}` : waitingLine({ step, count }).text;
+  const line = waitingLine({ step, count, away });
+  const text = what ? `${what} need ${NEEDS[step].needs}` : line.text;
   return (
-    <Link to={NEEDS[step].href} className="underline-offset-4 hover:underline">
+    <Link to={what ? NEEDS[step].href : line.href} className="underline-offset-4 hover:underline">
       {text}
     </Link>
   );
@@ -168,7 +169,7 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const needsYou = !!p?.waiting.some((w) => !w.limit && !w.computer);
   const waiting = p?.waiting.map((w) => (
     <div
-      key={`${w.step}${w.limit ? "-limit" : w.computer ? "-computer" : ""}`}
+      key={`${w.step}${w.limit ? "-limit" : w.computer ? "-computer" : w.away ? "-away" : ""}`}
       // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
       className={w.limit ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" : "flex items-center gap-2 text-xs text-zinc-500"}
     >
@@ -182,7 +183,7 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
           Shot descriptions for {w.count.toLocaleString()} {w.count === 1 ? "clip need the Mac the file is on" : "clips need the Mac the files are on"}
         </span>
       ) : (
-        <Needs step={w.step} count={w.count} />
+        <Needs step={w.step} count={w.count} away={w.away} />
       )}
     </div>
   ));

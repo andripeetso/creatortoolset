@@ -115,6 +115,14 @@ export function connectFor(m: FolderMount, os: "mac" | "linux" | "windows"): { u
   return m.fs === "smb" ? { line: `net use * "\\\\${host}\\${share.replace(/\//g, "\\")}" /persistent:yes` } : null;
 }
 
+/**
+ * The shares computer `device` doesn't reach: the footage folders on a share that another computer added and that its
+ * connected drives do not give it (withMounts, from its last report). Each share once, by name ("MONOLITH DIGITAL").
+ */
+export function unreachedShares(folders: StorageFolder[], device: string): string[] {
+  return [...new Set(folders.filter((f) => f.role === "footage" && f.mount && f.origin.host !== device && !f.reach[device]).map((f) => f.mount!.share))];
+}
+
 export interface StorageState {
   folders: StorageFolder[];
 }

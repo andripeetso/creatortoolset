@@ -1,0 +1,37 @@
+# A Linux computer that takes Media Library work from a Creator Toolset server (api/work/computer.ts, CT_WORKER_KINDS=library):
+# proxies, waveforms, frame strips, fingerprints, transcripts and shot descriptions, reading each clip in place on the
+# network shares it has connected. A systemd --user unit; fill in the two paths, then:
+#
+#   cp ct-library-worker.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   install -m 600 /dev/null ~/.config/ct-library-worker.env    # then write the two lines below into it
+#     CT_WORKER=https://your.server.example
+#     CT_DEVICE_TOKEN=ctd_...
+#   The token: a pair code from Settings → Computers → Add computer → Linux, then
+#     curl -s https://your.server.example/api/devices/pair -H 'content-type: application/json' \
+#       -d "{\"code\":\"<code>\",\"name\":\"$(hostname)\"}"            # answers {"token":"ctd_..."}
+#   systemctl --user enable --now ct-library-worker && loginctl enable-linger "$USER"
+#
+# Stop it taking work: Settings → Computers → Load balancing → Off, or `systemctl --user disable --now ct-library-worker`.
+# Remove it from the account there too (its token stops working).
+[Unit]
+Description=Creator Toolset library worker
+After=network-online.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/ct-library-worker.env
+Environment=CT_WORKER_KINDS=library
+Environment=NODE_ENV=production
+Environment=DATA_DIR=%h/ct-library-data
+# The app's checkout, built (pnpm install && pnpm build in apps/captions)
+WorkingDirectory=/path/to/creatortoolset/apps/captions
+# An absolute node 22, not a version manager's shim (`mise where node@22` + /bin/node)
+ExecStart=/path/to/node22/bin/node dist/boot.js
+# it exits after 10 minutes with nothing to do, and with 3 when the server needs a newer app: it is started again
+Restart=always
+RestartSec=30
+Nice=10
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

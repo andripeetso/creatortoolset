@@ -5,10 +5,10 @@
 import { Hono, type Context } from "hono";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import type { Device } from "../../contracts/providers";
+import { parseMachine, type Device } from "../../contracts/providers";
 import { WORK_MIN, type WorkClaim, type WorkResult } from "../../contracts/work";
 import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
-import { deviceForToken, deviceOf, setDeviceWork, touchDevice } from "../lib/devices";
+import { deviceForToken, deviceOf, noteMachine, setDeviceWork, touchDevice } from "../lib/devices";
 import { libraryDb } from "../library/db";
 import { libraryMedia } from "../library/routes";
 import { finishJob, type JobRow } from "../library/jobs";
@@ -70,6 +70,11 @@ workApp.post("/claim", async (c) => {
   // a worker that runs library jobs says so: one that doesn't is never handed one
   const library = b?.library === true;
   const pictures = b?.pictures === true;
+  // a worker that takes only library jobs (CT_WORKER_KINDS=library) is never handed an editor step
+  const libraryOnly = library && b?.libraryOnly === true;
+  // its load and shares now: load balancing scores it, and a share it has connected gives it the folders on it
+  const machine = parseMachine(b?.machine);
+  if (machine) noteMachine(d.id, machine);
   // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
   // told yet stays, and the cache it will empty counts as emptied
   const empty = deviceOf(d.id)?.work?.empty;
@@ -81,14 +86,16 @@ workApp.post("/claim", async (c) => {
     ...(kept ? { cache: empty ? { ...kept, bytes: 0, versions: [] } : kept } : {}),
     ...(empty ? { empty } : {}),
     ...(library ? { library: true as const } : {}),
-    ...(pictures ? { pictures: true as const } : {}),
+    ...(pictures && !libraryOnly ? { pictures: true as const } : {}),
+    ...(libraryOnly ? { libraryOnly: true as const } : {}),
+    at: Date.now(),
   });
   // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
   const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
   if (v < WORK_MIN) return answer({ pkg: null, update: true });
   const end = Date.now() + CLAIM_POLL.holdMs;
   for (;;) {
-    const got = await claimForComputer(deviceOf(d.id)!);
+    const got = libraryOnly ? null : await claimForComputer(deviceOf(d.id)!);
     if (got) {
       try {
         const pkg = await buildPackage(got.job, d);
@@ -102,7 +109,7 @@ workApp.post("/claim", async (c) => {
     }
     const lib = library ? await claimLibraryForComputer(deviceOf(d.id)!) : null;
     if (lib) return answer({ pkg: null, lib });
-    const pics = await claimPictures(deviceOf(d.id)!);
+    const pics = libraryOnly ? null : await claimPictures(deviceOf(d.id)!);
     if (pics) return answer({ pkg: null, pics });
     if (Date.now() >= end || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
     await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));

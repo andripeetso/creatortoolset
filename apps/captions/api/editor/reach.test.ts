@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Disk, StorageFolder } from "../../contracts/storage";
 import type { FileRow } from "./reach";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "editor-reach-"));
@@ -46,6 +47,19 @@ describe("how a computer gets at a file", () => {
     expect(fileFor(row({ probe: probe(3840, 2160) }), "pc", [], nobody)).toBeNull();
     expect(lightKey(row({ probe: probe(3840, 2160), proxy: "p" }))).toBe("p");
     expect(lightKey(row({ source_key: "mac:v", probe: probe(1920, 1080) }))).toBeNull();
+  });
+  it("a computer with the share connected at another path reads the file there by itself, never the proxy", async () => {
+    const { withMounts } = await import("../lib/storage");
+    const mac: Disk[] = [{ path: "/Volumes/TINY FOOTAGE", name: "TINY FOOTAGE", freeGb: 900, network: true, server: "tiny-nas", fs: "smb", share: "TINY FOOTAGE" }];
+    // as a Linux computer reports a cifs mount: //user@Tiny-NAS.local/TINY FOOTAGE on /mnt/tiny
+    const linux: Disk[] = [{ path: "/mnt/tiny", name: "tiny", freeGb: 900, network: true, server: "tiny-nas.local", fs: "smb", share: "TINY FOOTAGE" }];
+    const folder: StorageFolder = { id: "f", role: "footage", name: "SHOOTS", origin: { host: "mac", path: "/Volumes/TINY FOOTAGE/SHOOTS" }, make: false, createdAt: 0, reach: {} };
+    const folders = withMounts([folder], [{ id: "mac", disks: mac }, { id: "linux", disks: linux }]);
+    expect(folders[0]!.reach.linux?.path).toBe("/mnt/tiny/SHOOTS");
+    // indexed on the Mac, and uploaded from it (the library job's file: from_path where it was sent from, a proxy here too)
+    const clip = row({ source_key: "mac:v", mac_path: "/Volumes/TINY FOOTAGE/SHOOTS/day 1/a.mov", mac_device: "mac", proxy: "p" });
+    expect(fileFor(clip, "linux", folders, nobody)).toEqual({ path: "/mnt/tiny/SHOOTS/day 1/a.mov" });
+    expect(fileFor(clip, "laptop", folders, nobody)).toEqual({ copy: "proxy" });
   });
   it("ranks a step by its worst file", () => {
     expect(rankOf([{ path: "/a" }, { copy: "proxy" }])).toBe(2);

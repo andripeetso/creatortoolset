@@ -2,6 +2,7 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { LIBRARY_LOOK_KIND, type DeviceJob } from "../../contracts/devices";
 import type { Device } from "../../contracts/providers";
+import { balanceNow, mayClaim, type WorkerSeen } from "../lib/balance";
 import { deviceOf, listDevices, setDeviceLooks } from "../lib/devices";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import type { DeviceJobSlot } from "../lib/plugin";
@@ -9,6 +10,7 @@ import { libraryChanged } from "./access";
 import { libraryDb, libraryLookLevel } from "./db";
 import { defer, extendLease, finishJob, firstClips } from "./jobs";
 import { SHEET_STRETCHES } from "./look";
+import { triesOn } from "./places";
 import { MAC_WAITS, SHEET_FORMAT, type LookSheet } from "./shots";
 import { parseSignal, storeStretches, stretchLevelOf, takeSignal } from "./stretches";
 import { WATCH_LEVELS, wantsWatch } from "./timeline";
@@ -22,7 +24,9 @@ import type { LookLevel } from "../../contracts/library";
  * stretches are found here as for the server's own read (D4); it makes the sheets the server's look makes, keeps them,
  * and sends them. The look lane (worker.ts) then asks the job's actor's AI from them, as for a file the server holds
  * (shots.ts lookFromSheets), and drops them: the sheets are held in memory until that call and never written here.
- * Only the Mac in the version's mac_device takes it, and only when its account added the file; one look at a time.
+ * A computer of the account that added the file takes it, one that reaches the file (a file kept on a Mac: that Mac, or
+ * another that connects the share it is on, as a Linux computer's worker does, api/work/look.ts); of several, the best
+ * placed under load balancing (placedOn). One look at a time each.
  * The Mac keeps its sheets; each claim it makes says which versions it keeps them for, and the answer names the ones it
  * may drop (lookSheetsClaim). Settings → Storage counts them and empties them (api/kept.ts).
  * With a Gemini key and Timelines on (timeline.ts wantsWatch), the claim also asks for a small copy of the video (option
@@ -82,17 +86,61 @@ function holding(device: string, id: number) {
 }
 const busy = (device: string) => [...held.keys()].some((id) => holding(device, id));
 
+type PlaceRow = { version_id: string; source_key: string; mac_path: string | null; mac_device: string | null; from_path: string | null; from_device: string | null };
+const PLACE_COLS = "v.id AS version_id, v.source_key, v.mac_path, v.mac_device, v.from_path, v.from_device";
+
+/**
+ * Where computer `device` reads a version's file: on the Mac it is kept on with nothing uploaded, or the one it was
+ * uploaded from or found on since, or on a share it connects with the file's root (library/places.ts), for a server that
+ * does no video work itself (worker.ts lookOnMac). Null when it has none.
+ * ponytail: a shared folder two computers reach (Settings → Storage) is not tried; the paths a computer reported are
+ */
+function pathOn(device: string, r: PlaceRow): string | null {
+  const at = r.source_key.startsWith("mac:") || r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device };
+  return triesOn({ id: r.version_id, mac_path: at.mac_path, mac_device: at.mac_device }, device, [])[0] ?? null;
+}
+
+/** The same window as the device road's (api/devices.ts ONLINE_MS): a computer not heard from in 40 s takes nothing. */
+const ONLINE_MS = 40_000;
+
+/**
+ * Whether `device` is the one of `owner`'s computers to take this look now, as for the other library jobs
+ * (work/library-package.ts): among those that reach the file, list the look and are online and free, the best under
+ * load balancing (lib/balance.ts mayClaim). The one asking is always among them.
+ */
+function placedOn(device: string, owner: string, r: PlaceRow, now = Date.now()): boolean {
+  const workers: WorkerSeen[] = listDevices(
+    (x) =>
+      x.owner === owner &&
+      (x.id === device || (now - (x.lastSeen ?? 0) <= ONLINE_MS && !busy(x.id) && (x.kinds ?? []).includes(LIBRARY_LOOK_KIND) && !!pathOn(x.id, r))),
+  )
+    .filter((x) => x.report?.machine)
+    .map((x) => ({ host: x.id, at: x.id === device ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
+  return mayClaim(LIBRARY_LOOK_KIND, device, workers, balanceNow(owner), now, ONLINE_MS);
+}
+
+/** Whether one of `owner`'s Macs has version `versionId`'s file, so its look can wait for that Mac. */
+export function onTheirMac(versionId: string, owner: string | null): boolean {
+  if (!owner) return false;
+  const r = libraryDb().prepare(`SELECT ${PLACE_COLS} FROM asset_versions v WHERE v.id = ?`).get(versionId) as PlaceRow | undefined;
+  return !!r && listDevices((x) => x.owner === owner).some((x) => !!pathOn(x.id, r));
+}
+
 /** The look waiting for `device`: parked for the Mac its file is on, added by the Mac's own account; edits' files first. */
 function nextFor(device: string, owner: string) {
-  return libraryDb()
+  const rows = libraryDb()
     .prepare(
-      `SELECT j.id, j.library_id, j.actor, v.id AS version_id, v.mac_path, v.probe FROM jobs j
+      `SELECT j.id, j.library_id, j.actor, ${PLACE_COLS}, v.probe FROM jobs j
          JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.source_key LIKE 'mac:%' AND v.mac_device = ?
-         AND v.created_by = ? AND a.trashed_at IS NULL
-       ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 1`,
+       WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.created_by = ? AND a.trashed_at IS NULL
+       ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 200`,
     )
-    .get(MAC_WAITS, device, owner, JSON.stringify(firstClips())) as { id: number; library_id: string; actor: string | null; version_id: string; mac_path: string; probe: string | null } | undefined;
+    .all(MAC_WAITS, owner, JSON.stringify(firstClips())) as (PlaceRow & { id: number; library_id: string; actor: string | null; probe: string | null })[];
+  for (const r of rows) {
+    const at = pathOn(device, r);
+    if (at && placedOn(device, owner, r)) return { ...r, mac_path: at };
+  }
+  return undefined;
 }
 
 /** A sheet from the Mac, checked: its stretches (1 to SHEET_STRETCHES), a base64 JPEG under JPEG_MAX, a hash each. */

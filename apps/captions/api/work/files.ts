@@ -44,20 +44,38 @@ function readFound(): Record<string, string> {
   }
 }
 
-/** 1a–c: the file itself on this computer: the index's path (same size), else a same-named file under the folders whose quick fingerprint matches. */
-export async function copyHere(f: WorkFile, folders: string[]): Promise<string | null> {
-  if (f.path && sizeOf(f.path) === f.bytes) return f.path;
+/** A folder's files, listed at most every 10 minutes per worker: a NAS share is slow to walk. */
+const LISTED_MS = 10 * 60_000;
+/** A folder with more entries than this is not looked through (a whole share by mistake); the miss is logged. */
+const LISTED_MAX = 50_000;
+const listed = new Map<string, { at: number; files: string[] }>();
+async function filesIn(root: string, now = Date.now()): Promise<string[]> {
+  const kept = listed.get(root);
+  if (kept && now - kept.at < LISTED_MS) return kept.files;
+  const all = await readdir(root, { recursive: true, withFileTypes: true }).catch(() => []);
+  if (all.length > LISTED_MAX) console.warn(`[work] ${root} holds ${all.length} entries; not looked through for a file`);
+  const files = all.length > LISTED_MAX ? [] : all.filter((e) => e.isFile()).map((e) => path.join(e.parentPath, e.name));
+  listed.set(root, { at: now, files });
+  return files;
+}
+
+/**
+ * 1a–c: the file itself on this computer: the path the server gives (same size, and the same quick fingerprint when it
+ * knows one: a different file of the same size at that path is not it), else a same-named file under the folders whose
+ * quick fingerprint matches.
+ */
+export async function copyHere(f: WorkFile, folders: string[], may: (p: string) => Promise<boolean> = async () => true): Promise<string | null> {
+  // `may`: whether this computer may read the file at all (work/library.ts mayReadHere), asked before its first byte
+  const same = async (p: string) => sizeOf(p) === f.bytes && (await may(p)) && (!f.quick || (await quickPrint(p)) === f.quick);
+  if (f.path && (await same(f.path))) return f.path;
   if (!f.quick) return null;
-  const same = async (p: string) => sizeOf(p) === f.bytes && (await quickPrint(p)) === f.quick;
   const found = readFound();
   if (found[f.id] && (await same(found[f.id]!))) return found[f.id]!;
   const names = new Set([f.path && path.basename(f.path), f.title].filter(Boolean));
   for (const root of folders) {
-    // ponytail: a full listing of each folder, by name only; a renamed file is found by Locate (phase 5)
-    const all = await readdir(root, { recursive: true, withFileTypes: true }).catch(() => []);
-    for (const e of all) {
-      const p = path.join(e.parentPath, e.name);
-      if (e.isFile() && names.has(e.name) && (await same(p))) {
+    // ponytail: a listing of each folder, by name only; a renamed file is found by Locate (phase 5)
+    for (const p of await filesIn(root)) {
+      if (names.has(path.basename(p)) && (await same(p))) {
         writeFileSync(foundFile(), JSON.stringify({ ...found, [f.id]: p }));
         return p;
       }

@@ -7,7 +7,7 @@ import type { WorkFile } from "../../contracts/work";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-files-"));
 process.env.DATA_DIR = path.join(dir, "data");
 
-const { needsOriginal, quickPrint, resolveFiles } = await import("./files");
+const { copyHere, needsOriginal, quickPrint, resolveFiles } = await import("./files");
 const { partPath, proxyPath, setCacheAccount } = await import("./cache");
 setCacheAccount("tinyacrobatics"); // as a claim answer names it
 
@@ -48,6 +48,14 @@ describe("resolveFiles", () => {
     expect(seen.at(-1)).toBe(20);
     // found again by where it was last found
     expect(JSON.parse(readFileSync(path.join(dir, "data", "found.json"), "utf8"))).toEqual({ vb: b });
+  });
+
+  it("the path the server gives is not the file when its bytes differ at the same size", async () => {
+    const real = payload(3 * (1 << 20), 4);
+    const other = put(path.join(dir, "share", "same-size.mov"), payload(3 * (1 << 20), 5));
+    const f: WorkFile = { id: "vq", title: "same-size.mov", bytes: real.length, path: other, quick: (await quickPrint(put(path.join(dir, "real", "q.mov"), real)))! };
+    expect(await copyHere(f, [])).toBeNull();
+    expect(await copyHere({ ...f, quick: (await quickPrint(other))! }, [])).toBe(other);
   });
 
   it("never asks for an original: a step that needs one it doesn't have fails with one line, before any download", async () => {

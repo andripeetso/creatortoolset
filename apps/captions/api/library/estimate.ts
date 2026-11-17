@@ -9,7 +9,7 @@ import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
-import { stillToCome } from "./jobs";
+import { stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE } from "./worker";
 
 /**
@@ -314,6 +314,11 @@ const runs = new Map<string, Set<string>>();
 // a description held back by the plan's limit (worker.ts holdForLimit), or a look by its library's monthly budget (BUDGET_WAITS):
 // it waits, and takes no time, until one gets through or the budget is raised
 const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND (IFNULL(error, '') LIKE ? OR IFNULL(error, '') = '${BUDGET_WAITS.replace(/'/g, "''")}'))`;
+// a step this server leaves for one of the person's computers while none can take it, or that waits for video work this
+// server does not do (worker.ts leftToComputers): nothing runs it until a computer of theirs is on, so it is waiting, not
+// time left (a library stuck at "about 20 min left" for days, 2026-11-17)
+// The lines that name the folder (work/library-package.ts libraryWaitLine) wait the same way.
+const AWAY = `(state = 'queued' AND (IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}) OR IFNULL(error, '') LIKE 'Only % can read %' OR IFNULL(error, '') LIKE 'No computer can read %'))`;
 
 /** The whole library's state per step, for "how far is indexing, is anything broken": every clip in it, not one run. */
 export function libraryStatus(libraryId: string): LibraryStatus {
@@ -342,17 +347,24 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const db = libraryDb();
   const rows = db
     .prepare(
-      `SELECT kind, state, ${HELD} AS held, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, mac, budget`,
+      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, away, mac, budget`,
     )
-    .all(LIMIT_LIKE, MAC_WAITS, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; mac: number; n: number; error: string | null }[];
-  const pending = rows.filter((r) => r.state !== "needs_key" && !r.held);
+    .all(LIMIT_LIKE, MAC_WAITS, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; away: number; mac: number; n: number; error: string | null }[];
+  const pending = rows.filter((r) => r.state !== "needs_key" && !r.held && !r.away);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome;
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key")
     .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
+  // waiting for one of the person's computers, per step: "6 descriptions wait for one of your computers"
+  for (const r of rows.filter((x) => x.away)) {
+    const step = STEP_OF[r.kind] ?? "files";
+    const same = waiting.find((w) => w.away && w.step === step);
+    if (same) same.count += r.n;
+    else waiting.push({ step, count: r.n, missing: r.error ?? "", away: true });
+  }
   // held for the plan's limit, per step: "4 descriptions paused", "2 shot descriptions paused"
   for (const step of ["look", "describe"] as const) {
     const held = rows.filter((r) => r.held && STEP_OF[r.kind] === step);
@@ -368,7 +380,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
   }
   const open = db
-    .prepare(`SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND state IN ('queued', 'running') AND NOT ${HELD}`)
+    .prepare(`SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND state IN ('queued', 'running') AND NOT ${HELD} AND NOT ${AWAY}`)
     .all(libraryId, LIMIT_LIKE) as { v: string }[];
   const run = runs.get(libraryId) ?? new Set<string>();
   runs.set(libraryId, run);
@@ -383,7 +395,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     .prepare(
       `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed')) AS fin,
          COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs
-       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND state != 'needs_key' AND NOT ${HELD} GROUP BY version_id)`,
+       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY} GROUP BY version_id)`,
     )
     .get(libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
   // a clip of the run whose every step left is held is through, as far as this computer goes

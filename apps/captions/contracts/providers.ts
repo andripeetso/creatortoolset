@@ -203,9 +203,10 @@ export interface Device {
   /**
    * its work package worker, by its last work claim (contracts/work.ts, api/work/routes.ts): the package format it reads,
    * the plug-in steps it has, its proxy cache. Kept apart from `kinds`, which the device runner's claim rewrites.
-   * `empty`: Settings → Storage → Empty, told on its next claim.
+   * `empty`: Settings → Storage → Empty, told on its next claim. `at`: when it last claimed. `libraryOnly`: a worker that
+   * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true; at?: number; libraryOnly?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */
@@ -249,6 +250,10 @@ export interface Machine {
 export interface Balance {
   on: boolean;
   weights: Record<string, number>;
+  /** the Media Library libraries a computer takes work of, by device id; absent: every library */
+  libraries?: Record<string, string[]>;
+  /** whether a computer may download an original to make its proxy, by device id; absent: no on Linux or Windows, else yes */
+  originals?: Record<string, boolean>;
 }
 export const LOAD_PREFERENCES = [
   { value: 100, label: "Prefer" },

@@ -221,7 +221,7 @@ export function appRows(w: AppWork): ActivityRow[] {
       if (x.limit) add("limit", what, { reason: x.missing });
       else {
         const { text, href } = waitingLine(x);
-        add(`key:${x.step}`, text, { state: "ready", href });
+        add(`${x.away ? "away" : "key"}:${x.step}`, text, { state: "ready", href });
       }
     }
   }

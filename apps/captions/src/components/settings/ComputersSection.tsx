@@ -19,6 +19,14 @@ import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
 import { hasThisMac, SharedDrivesRow, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
+import { useCachedLoad } from "@/lib/local-cache";
+import { call } from "./StorageRows";
+import { unreachedShares, type StorageView } from "@contracts/storage";
+import type { Balance } from "@contracts/providers";
+import { listLibraries } from "@/lib/library";
+import type { LibrarySummary } from "@contracts/library";
+
+const STORAGE_ALL = "/api/devices/storage?all=1";
 import { LoadBalancing } from "./ServerWorkSection";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
@@ -185,10 +193,18 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
   // its last test for helping with heavy work: a folder it could not read or a failed encode needs fixing; fine is quiet
   const check = primary.check;
   const failedRead = check?.folders.find((f) => !f.ok);
+  // a computer that takes work and lacks a share one of the account's folders is on: Set up shows how to connect it,
+  // and the line goes by itself once its next report has the share
+  const { data: storage } = useCachedLoad<StorageView>(STORAGE_ALL, () => call<StorageView>(STORAGE_ALL), { topic: "devices", own: true });
+  const unreached = primary.work && storage ? unreachedShares(storage.folders, primary.id) : [];
   const state = offline ? (
     <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
   ) : check && !readyLine(primary, check) ? (
     <Status tone="attention">{failedRead ? `Can't read ${failedRead.name}` : "Test failed"}</Status>
+  ) : unreached.length ? (
+    <button type="button" className="underline-offset-2 hover:underline" onClick={() => setSetUp(true)}>
+      <Status tone="attention">{`Doesn't reach ${unreached.join(", ")}`}</Status>
+    </button>
   ) : null;
   const subtitle = (
     <>
@@ -318,8 +334,56 @@ function HelperDialog({ device, name, onClose }: { device: string; name: string;
           <DialogTitle>Set up {name}</DialogTitle>
         </DialogHeader>
         <HelperSetup device={device} />
+        <LibraryWork device={device} />
       </SettingsDialogContent>
     </SettingsDialog>
+  );
+}
+
+/**
+ * Which Media Library work a computer takes (Settings → Computers, Set up): every library unless narrowed to some, and
+ * whether it may download an original to make a proxy (until set: no on Linux or Windows, else yes). Only for a computer
+ * whose worker takes library work.
+ */
+function LibraryWork({ device }: { device: string }) {
+  const { data: view } = useProviders();
+  const [balance, setBalance] = useState<Balance | null>(null);
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    void call<Balance>("/api/devices/balance").then(setBalance, (e: Error) => setProblem(e.message));
+    void listLibraries().then((l) => setLibraries(l.filter((x) => !x.readOnly)), () => {});
+  }, []);
+  const d = view?.devices.find((x) => x.id === device);
+  if (!d?.work?.library || !balance) return null;
+  const only = balance.libraries?.[device];
+  const originals = balance.originals?.[device] ?? !["linux", "windows"].includes(d.report?.machine?.os ?? "");
+  const save = (body: Partial<Record<"libraries" | "originals", unknown>>) =>
+    call<Balance>("/api/devices/balance", "PUT", body).then(setBalance, (e: Error) => setProblem(e.message));
+  const pick = (id: string, on: boolean) => {
+    const next = new Set(only ?? libraries.map((l) => l.id));
+    if (on) next.add(id);
+    else next.delete(id);
+    void save({ libraries: { [device]: [...next] } });
+  };
+  return (
+    <Card>
+      <Row
+        title="All libraries"
+        description="Media Library work: proxies, waveforms, frame strips, fingerprints and transcripts"
+        status={problem ? <Status tone="broken">{problem}</Status> : undefined}
+        control={<Switch checked={!only} aria-label="Media Library work for all libraries" onCheckedChange={(v) => void save({ libraries: { [device]: v ? null : libraries.map((l) => l.id) } })} />}
+      />
+      {only &&
+        libraries.map((l) => (
+          <Row key={l.id} title={l.name} control={<Switch checked={only.includes(l.id)} aria-label={`Media Library work for ${l.name}`} onCheckedChange={(v) => pick(l.id, v)} />} />
+        ))}
+      <Row
+        title="Download originals"
+        description="Makes the proxy of a phone or browser upload from its original"
+        control={<Switch checked={originals} aria-label="Download originals" onCheckedChange={(v) => void save({ originals: { [device]: v } })} />}
+      />
+    </Card>
   );
 }
 
