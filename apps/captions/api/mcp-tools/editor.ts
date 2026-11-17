@@ -243,7 +243,7 @@ export const editorTools: ToolModule = {
   // a retry starts work again: its card opens the edit, and ends when the run does (api/editor/ended.ts)
   work: (name, _a, r) =>
     (name === "editor_retry" || (name === "editor_feedback" && r.queued === true)) && r.id
-      ? { card: { id: `edit:${String(r.id)}:retry`, kind: "edit", title: String(r.name ?? "Edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: "running", detail: "The AI Editor is working on it" } }
+      ? { card: { id: `edit:${String(r.id)}:retry`, kind: "edit", title: String(r.name ?? "Edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: "running", detail: "The Editor is working on it" } }
       // a cut made from timeline edits: its card opens the cut in Review, and ends when the new version is filed
       : name === "editor_cut" && r.id && r.from_version
         ? { card: { id: `edit:${String(r.id)}:cut`, kind: "edit", title: String(r.name ?? "Edit"), href: String(r.link ?? "").replace(/^https?:\/\/[^/]+/, ""), status: "running", detail: "Making the next version from the timeline edits" } }

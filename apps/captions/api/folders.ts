@@ -39,7 +39,9 @@ async function save(tool: FolderTool, username: string, data: ToolFolders) {
   await rename(tmp, file);
 }
 
-// one writer per file: every change reads, changes and writes the whole file
+// one writer per file: every change reads, changes and writes the whole file. Exported for a plug-in that files its own
+// items server-side (the studio's Editor puts each version of a video in that video's folder)
+export { change as changeFolders };
 const locks = new Map<string, Promise<unknown>>();
 function change<T>(tool: FolderTool, username: string, fn: (d: ToolFolders) => T | Response): Promise<T | Response> {
   const key = `${tool}/${username}`;

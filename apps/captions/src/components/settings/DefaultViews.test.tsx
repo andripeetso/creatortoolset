@@ -36,7 +36,7 @@ describe("Default view", () => {
       ["Review", "Cards"],
       ["Media Library", "Cards"],
       ["Finals", "Cards"],
-      ["AI Editor", "List"],
+      ["Editor", "List"],
       ["Caption Studio", "Cards"],
       ["Story Splitter", "List"],
       ["Video Notes", "List"],
@@ -49,7 +49,7 @@ describe("Default view", () => {
   it("a tool switched off for the account has no row", () => {
     const el = render(["editor", "media"], "user");
     const names = rows(el).map((r) => r[0]);
-    expect(names).not.toContain("AI Editor");
+    expect(names).not.toContain("Editor");
     expect(names).not.toContain("Finals");
     expect(names).not.toContain("Media Library");
     expect(names).toContain("Review");

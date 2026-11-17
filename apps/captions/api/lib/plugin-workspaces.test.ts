@@ -92,7 +92,7 @@ describe("a plug-in that changes the whole server", () => {
     for (const ws of ["ws-tiny", "ws-homes"]) expect(await pluginOnIn(studio, "ana", ws)).toBe(true);
     expect(Object.values(await pluginsOffIn([{ id: "ws-tiny", owner: "ana" }, { id: "ws-homes", owner: "ana" }])).flat()).not.toContain("studio");
     const view = (await (await app.request("/api/plugins/studio/workspaces")).json()) as { fixed?: string; all: boolean };
-    expect(view.fixed).toBe("It runs this server's AI Editor, so it is on in every workspace");
+    expect(view.fixed).toBe("It runs this server's Editor, so it is on in every workspace");
     expect(view.all).toBe(true);
   });
 });

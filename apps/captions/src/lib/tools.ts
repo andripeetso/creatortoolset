@@ -57,7 +57,7 @@ const BUILTIN_WORKFLOW: { stage: string; tools: Tool[] }[] = [
       {
         to: "/editor",
         icon: Clapperboard,
-        name: "AI Editor",
+        name: "Editor",
         desc: "Raw takes in, draft timelines out.",
         can: (me) => canUse(me, "editor"),
       },

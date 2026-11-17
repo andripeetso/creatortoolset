@@ -135,7 +135,7 @@ media_update changes its title, tags or description, media_add_to_folder files c
 makes a folder sort itself by what the user says goes in it, media_share makes a link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
 B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
-AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
+Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
 one per version, and the run files each draft's preview in Review by itself. editor_create makes a new one from the takes' version ids and starts it:
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
 the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop project
@@ -1262,13 +1262,13 @@ const STEPS: Record<string, string> = {
   resolve_comment: "Resolving a comment",
   review_set_approval: "Setting the approval",
   review_share: "Getting the share link",
-  editor_list: "Looking at the AI Editor's edits",
+  editor_list: "Looking at the Editor's edits",
   list_scheduled_tasks: "Looking at your scheduled tasks",
   schedule_task: "Saving the scheduled task",
   run_scheduled_task_now: "Running the scheduled task",
   delete_scheduled_task: "Deleting the scheduled task",
   editor_get: "Opening the edit",
-  editor_run: "Starting an AI Editor job",
+  editor_run: "Starting an Editor job",
   editor_go: "Carrying on the edit",
   instagram_posts: "Reading your Instagram posts",
   instagram_refresh: "Refreshing Instagram",
@@ -1279,7 +1279,7 @@ const STEPS: Record<string, string> = {
   instagram_add_account: "Adding the Instagram account",
   instagram_comments: "Reading the comments",
 };
-const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
+const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
 export const stepFor = (name: string, args: Args, plugged: Record<string, string> = {}): string =>
   name === "navigate"
     ? `Opening ${PAGES[String(args.path ?? "").split(/[/?]/)[1] ?? ""] ?? "the page"}`
@@ -1321,13 +1321,13 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
       return {
         card: {
           id: `edit:${a.edit}:${toReview ? `review:${a.draft}` : a.kind}`, kind: "edit", title: toReview ? `${a.draft} to Review` : kindTitle(a.kind), href: `/editor/${edit}`,
-          status: "running", detail: toReview ? "Going into Review" : "The AI Editor is working on it",
+          status: "running", detail: toReview ? "Going into Review" : "The Editor is working on it",
         },
       };
     }
     case "editor_create":
       return r.id
-        ? { card: { id: `edit:${r.id}:new`, kind: "edit", title: String(r.name ?? "New edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: r.status === "started" ? "running" : "done", detail: r.status === "started" ? "The AI Editor is working on it" : "Made, not started" } }
+        ? { card: { id: `edit:${r.id}:new`, kind: "edit", title: String(r.name ?? "New edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: r.status === "started" ? "running" : "done", detail: r.status === "started" ? "The Editor is working on it" : "Made, not started" } }
         : null;
     case "use_file": {
       if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;

@@ -44,7 +44,7 @@ export interface AppTool {
 const APP_TOOLS: { id: string; title: string; href: string; gate?: string }[] = [
   { id: "home", title: "Home", href: "/" },
   { id: "workshop", title: "Content Workshop", href: "/workshop", gate: "workshop" },
-  { id: "editor", title: "AI Editor", href: "/editor", gate: "editor" },
+  { id: "editor", title: "Editor", href: "/editor", gate: "editor" },
   { id: "finals", title: "Finals", href: "/finals", gate: "media" },
   { id: "analyzer", title: "Content Analyzer", href: "/analyzer", gate: "instagram" },
 ];
@@ -225,7 +225,7 @@ export function appRows(w: AppWork): ActivityRow[] {
       }
     }
   }
-  for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "AI Editor", state: "working", href: `/editor/${e.id}` });
+  for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "Editor", state: "working", href: `/editor/${e.id}` });
   // the other tools: the thing worked on, the tool and what it does; how far, when the tool knows and it is not waiting
   const work = (id: string, title: string, tool: string, doing: string, href: string, x: { waits?: boolean; progress?: number } = {}) =>
     rows.push({ id, title, detail: `${tool} · ${x.waits ? "queued" : doing}`, state: "working", href, ...(!x.waits && x.progress !== undefined ? { progress: x.progress } : {}) });

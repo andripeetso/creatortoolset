@@ -1398,7 +1398,7 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   const n = Number(c.req.param("n"));
   const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
   if (!v || !version) return c.json({ error: "Not found" }, 404);
-  if (version.edit || version.draft) return c.json({ error: "A version from the AI Editor has its own timeline" }, 409);
+  if (version.edit || version.draft) return c.json({ error: "A version from the Editor has its own timeline" }, 409);
   const name = cleanText(c.req.query("name"), 160) || "timeline";
   // refuse on the declared length before any of the body is read
   if (Number(c.req.header("content-length") ?? 0) > MAX_TIMELINE_BYTES) {

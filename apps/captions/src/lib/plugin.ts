@@ -421,7 +421,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
     out.push({ text: `Settings → ${computers ? "Devices" : "Storage"}: ${d.title}`, to: computers ? "/settings/devices" : "/settings/folders" });
   }
   const r = p.replaces ?? {};
-  if (r.editor || r.editorEdit) out.push({ text: "Replaces the AI Editor page", to: "/editor" });
+  if (r.editor || r.editorEdit) out.push({ text: "Replaces the Editor page", to: "/editor" });
   if (r.media) out.push({ text: "Replaces the Media Library page", to: "/library" });
   if (r.finals) out.push({ text: "Replaces the Finals page", to: "/finals" });
   if (r.storage) out.push({ text: "Replaces Settings → Folders", to: "/settings/folders" });

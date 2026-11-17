@@ -309,7 +309,7 @@ export async function indexGate(edit: IndexEdit, signal: AbortSignal, now = Date
     if (!w || w.ready !== ready.length) waits.set(key, { ready: ready.length, since: now });
     else if (!w.told && now - w.since >= STILL_WAITING_MS && edit.createdBy && edit.id) {
       w.told = true;
-      void notifyWorkshopOwner(edit.createdBy, { kind: "waiting", by: "AI Editor", name: edit.name ?? "An edit", text: `Still waiting for the Media Library: ${ready.length} of ${edit.sources.length} files`, href: `/editor/${edit.id}`, ref: edit.id, workspace: edit.projectId }).catch(() => {});
+      void notifyWorkshopOwner(edit.createdBy, { kind: "waiting", by: "Editor", name: edit.name ?? "An edit", text: `Still waiting for the Media Library: ${ready.length} of ${edit.sources.length} files`, href: `/editor/${edit.id}`, ref: edit.id, workspace: edit.projectId }).catch(() => {});
     }
     const said = pending.find((p) => p.line)?.line;
     throw new Waiting(30, `Waiting for the Media Library: ${ready.length} of ${edit.sources.length} files${said ? `. ${said.replace(/\.$/, "")}` : ""}`);
