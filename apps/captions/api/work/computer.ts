@@ -16,6 +16,7 @@ import { NeedsKey } from "../library/transcribe";
 import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
 import { cancelLibraryJob, runLibraryJob, runPictureJob } from "./library";
+import { claimLook, looksHere } from "./look";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 
 /**
@@ -103,6 +104,11 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
   await reportLeftover(o).catch((e) => console.warn("[work] leftover step:", e));
   let idleSince = Date.now();
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
+    // a look of a file on a share this computer connects (look.ts): Linux only, a Mac's app takes its own
+    if (looksHere() && (await claimLook(c).catch((e) => void console.warn("[work] look:", e instanceof Error ? e.message : e)))) {
+      idleSince = Date.now();
+      continue;
+    }
     let claim: WorkClaim;
     try {
       claim = await c.post<WorkClaim>("work/claim", {

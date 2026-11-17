@@ -370,7 +370,7 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
     }));
   const balance = await readBalance(d.owner);
   // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
-  // a folder listing and a look at a file on a Mac go to the computer that holds them, a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
+  // a folder listing goes to the computer that holds it, a look is placed per file (library/mac-look.ts placedOn), a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
   // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
   // hold it back from every one that has them
   return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));

@@ -19,10 +19,21 @@ export function offOf(owner: string): Set<string> {
     return new Set();
   }
 }
+function parseBalance(text: string): Balance {
+  const b = JSON.parse(text) as Partial<Balance>;
+  return { on: b.on !== false, weights: b.weights && typeof b.weights === "object" ? b.weights : {} };
+}
 export async function readBalance(user: string): Promise<Balance> {
   try {
-    const b = JSON.parse(await readFile(balanceFile(user), "utf-8")) as Partial<Balance>;
-    return { on: b.on !== false, weights: b.weights && typeof b.weights === "object" ? b.weights : {} };
+    return parseBalance(await readFile(balanceFile(user), "utf-8"));
+  } catch {
+    return { on: true, weights: {} };
+  }
+}
+/** readBalance for a caller that cannot wait (a device job slot's claim, lib/plugin.ts DeviceJobSlot). */
+export function balanceNow(user: string): Balance {
+  try {
+    return parseBalance(readFileSync(balanceFile(user), "utf-8"));
   } catch {
     return { on: true, weights: {} };
   }
