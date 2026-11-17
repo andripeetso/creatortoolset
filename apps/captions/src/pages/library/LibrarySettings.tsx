@@ -138,8 +138,7 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
       .catch((e) => onError(message(e)));
   // the footage folders on the server's own computer are listed in their own section
   const places = (library.settings.places ?? []).filter((p) => !watch.folders.some((f) => f.path === p.path));
-  // with the server elsewhere, the workspace's footage folders on this Mac are read too (foldersHere)
-  const canLook = from === "here" ? watch.folders.length > 0 : macImports();
+  const canLook = from === "here" ? watch.folders.length > 0 : macImports() && places.some((p) => p.mode === "in-place");
   const look = async () => {
     setBusy(true);
     try {

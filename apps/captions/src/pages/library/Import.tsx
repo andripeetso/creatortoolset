@@ -3,8 +3,6 @@ import { placeOf, type ImportMode, type LibrarySettings, type LibrarySummary, ty
 import { CopyTo, folderName } from "@/components/LibraryProcessing";
 import { SettingsSelect } from "@/components/settings/ui";
 import { PLACES_MAX } from "@contracts/places";
-import { EVERY_WORKSPACE, type StorageView } from "@contracts/storage";
-import { getStorage } from "@/components/settings/StorageRows";
 import { checkUpload, reportPlaces, updateLibrary, versionPlaces } from "@/lib/library";
 import { indexOnMac } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
@@ -117,23 +115,7 @@ export async function reconnectKnown(libraryId: string, known: Known[], seen: Se
 }
 
 /**
- * This workspace's own footage and music folders on this computer (Settings → Folders), when the server can't read this
- * computer itself (`here`): Look for new files reads them as places used where they are. A folder in every workspace is
- * left out (a whole drive would fill this workspace's library), and so is one this computer never found.
- */
-export function foldersHere(view: Pick<StorageView, "folders" | "here">, device: string): string[] {
-  if (view.here?.includes(device)) return [];
-  const paths = view.folders
-    .filter((f) => (f.role === "footage" || f.role === "music") && f.workspace !== EVERY_WORKSPACE)
-    .map((f) => f.reach[device]?.path ?? (f.origin.host === device ? f.origin.path : ""))
-    .filter((p) => p.startsWith("/"));
-  // a folder inside another listed one is read with it
-  return [...new Set(paths)].filter((p) => !paths.some((o) => o !== p && p.startsWith(`${o.replace(/\/+$/, "")}/`)));
-}
-
-/**
- * Look for new files, from the Mac app with the server elsewhere: each place used where it is (and the workspace's
- * footage and music folders on this computer, foldersHere) is read again on this
+ * Look for new files, from the Mac app with the server elsewhere: each place used where it is is read again on this
  * Mac, the files the library has already (by their fingerprint) are left out, and each new one is indexed where it is,
  * read by its address. One the library has at a path this computer doesn't know is reconnected (reconnectKnown). `onStep`
  * hears how far it is. Resolves to the numbers added and reconnected.
@@ -143,12 +125,9 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
   let added = 0;
   const known: Known[] = [];
   const seen = new Set<string>();
-  const device = thisMacDevice();
-  const folders = device ? foldersHere(await getStorage().catch(() => ({ folders: [] })), device) : [];
-  const inPlace = (library.settings.places ?? []).filter((p) => p.mode === "in-place").map((p) => p.path);
-  for (const path of [...new Set([...inPlace, ...folders])]) {
-    onStep(`Looking in ${folderName(path)}`);
-    const files = await importScan(path);
+  for (const place of (library.settings.places ?? []).filter((p) => p.mode === "in-place")) {
+    onStep(`Looking in ${folderName(place.path)}`);
+    const files = await importScan(place.path);
     for (const f of files) seen.add(f.path.normalize("NFC"));
     const prints: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 500) Object.assign(prints, await importPrint(files.slice(i, i + 500).map((f) => f.path)));
@@ -162,7 +141,7 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
     });
     for (const f of fresh) {
       signal?.throwIfAborted();
-      onStep(`Adding ${added + 1} of ${fresh.length} from ${folderName(path)}`);
+      onStep(`Adding ${added + 1} of ${fresh.length} from ${folderName(place.path)}`);
       const name = f.path.split("/").pop() ?? f.path;
       const r = await indexOnMac(library.id, { url: macMediaUrl(f.path), name, size: f.size, quick: prints[f.path]! }, f.path, undefined, signal).catch(() => ({}));
       if ("assetId" in r && r.assetId) added++;
