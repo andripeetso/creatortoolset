@@ -204,10 +204,11 @@ export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) 
 
 /**
  * The jobs that decode video or sound (design 2.1): this server runs them only where its video work is on
- * (work/server-work.ts). A probe reads the file's header and a card picture one frame: those always run here. A file
+ * (work/server-work.ts). A probe reads the file's header: that always runs here. A file
  * indexed on a Mac decodes nothing here (its description and shot descriptions read what the Mac sent).
  */
-export const DECODES: readonly string[] = ["wave", "proxy", "sprite", "fingerprint", "transcribe", "describe", "look"];
+// thumb decodes a frame of the original; the job itself moves to a computer later (local-first plan P3f), until then it waits
+export const DECODES: readonly string[] = ["thumb", "wave", "proxy", "sprite", "fingerprint", "transcribe", "describe", "look"];
 
 export { WAITS_FOR_COMPUTER, WAITS_FOR_SERVER };
 
@@ -389,7 +390,8 @@ const READS_ORIGINAL = ["probe", "thumb", "wave", "proxy", "transcribe"];
  * original is queued or running, the original is deleted from the library's store. The version keeps its place on the
  * Mac (mac_path, mac_device: shown as on that Mac, downloads say so) and its source becomes the proxy, so every reader
  * of the source (playback, the AI Editor, Caption Studio, the steps here) reads the proxy from then on. Pictures and
- * sounds have no proxy: they stay as uploaded. True when it dropped one.
+ * sounds have no proxy: they stay as uploaded. Only while the Mac it came from still has a place for it (version_places),
+ * so the original is never on no computer at all. True when it dropped one.
  */
 export async function dropOriginal(versionId: string): Promise<boolean> {
   const db = libraryDb();
@@ -398,6 +400,9 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
       `SELECT v.source_key, a.library_id, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
        WHERE v.id = ? AND a.kind = 'video' AND v.from_path IS NOT NULL AND v.mac_path IS NULL AND v.source_path IS NULL
+         -- the computer it came from still holds it (a place it reported, not gone): else the original waits on the server
+         -- ponytail: a reported place, not a checked one; P1a's verified place row (state 'verified', full sha256) replaces this
+         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.gone_at IS NULL)
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;

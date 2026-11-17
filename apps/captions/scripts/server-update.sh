@@ -80,6 +80,19 @@ until idle; do
   data 'touch "$d/drain"'
   sleep "${CT_UPDATE_WAIT:-15}"
 done
+# a dated copy of what the new version's migrations may change, on the data disk, before it starts: the library's
+# database (a consistent copy while the app runs), Settings → Folders, the server's video work switch, offline lists
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+if ! data "b=\"\$DATA_DIR/backups/$stamp\"; mkdir -p \"\$b\" && for f in server-work.json storage offline; do [ ! -e \"\$DATA_DIR/\$f\" ] || cp -R \"\$DATA_DIR/\$f\" \"\$b/\"; done" ||
+  ! app node -e "const d=process.env.DATA_DIR,f=d+'/library/library.db';if(require('fs').existsSync(f))new (require('node:sqlite').DatabaseSync)(f).exec(\"VACUUM INTO '\"+d+'/backups/$stamp/library.db'+\"'\")"; then
+  note "the backup before the update failed"
+  git config creatortoolset.failed "$new"
+  done_
+  status "$behind" true
+  exit 1
+fi
+# ponytail: the newest 5 backups are kept, by count (never by age); a size cap if a library.db grows past the disk's room
+data 'ls -1d "$DATA_DIR"/backups/*/ 2>/dev/null | sort | head -n -5 | while read -r o; do rm -rf "$o"; done'
 docker compose up -d
 n=0
 until up; do

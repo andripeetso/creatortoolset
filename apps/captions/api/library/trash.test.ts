@@ -6,10 +6,9 @@ import { afterAll, describe, expect, it } from "vitest";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-trash-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
-const { purgeTrash, purgeTrashedPieces } = await import("./trash");
+const { emptyTrash, purgeTrashedPieces } = await import("./trash");
 
 afterAll(() => {
-  delete process.env.LIBRARY_TRASH_DAYS;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -39,38 +38,35 @@ function trashed(id: string, daysAgo: number, now: number) {
   return { src, thumb };
 }
 
-describe("library trash purge", () => {
-  it("deletes assets trashed longer than LIBRARY_TRASH_DAYS with their rows and files; newer trash stays", async () => {
+describe("library trash", () => {
+  it("nothing leaves the trash for its age; Empty trash deletes the library's trash with its rows and files", async () => {
     const d = libraryDb();
     const now = Date.now();
     d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_t', 'ws', 'T', 'local', 0)").run();
     d.prepare("INSERT INTO collections (id, library_id, name, kind, created_at) VALUES ('col_t', 'lib_t', 'F', 'manual', 0)").run();
-    const old = trashed("ast_old", 15, now);
-    const fresh = trashed("ast_fresh", 13, now);
+    const old = trashed("ast_old", 400, now);
+    const fresh = trashed("ast_fresh", 0, now);
+    // the hourly loop no longer purges assets (trash.ts startTrashPurge): a year-old one is still there
+    expect(await emptyTrash("lib_other")).toBe(0);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM assets").get()).toEqual({ n: 2 });
 
-    expect(await purgeTrash(now)).toBe(1);
+    expect(await emptyTrash("lib_t")).toBe(2);
     const left = (sql: string) => (d.prepare(sql).all() as { id: string }[]).map((r) => r.id);
-    expect(left("SELECT id FROM assets")).toEqual(["ast_fresh"]);
-    expect(left("SELECT version_id AS id FROM derivatives")).toEqual(["v_ast_fresh"]);
-    expect(left("SELECT asset_id AS id FROM collection_items")).toEqual(["ast_fresh"]);
-    expect(left("SELECT target_id AS id FROM shares")).toEqual(["ast_fresh"]);
-    expect(left("SELECT asset_id AS id FROM search_assets")).toEqual(["ast_fresh"]);
-    expect(existsSync(blobFile(old.src)) || existsSync(blobFile(old.thumb))).toBe(false);
-    expect(existsSync(blobFile(fresh.src)) && existsSync(blobFile(fresh.thumb))).toBe(true);
-
-    // a shorter setting reaches the newer one too
-    process.env.LIBRARY_TRASH_DAYS = "7";
-    expect(await purgeTrash(now)).toBe(1);
     expect(left("SELECT id FROM assets")).toEqual([]);
+    expect(left("SELECT version_id AS id FROM derivatives")).toEqual([]);
+    expect(left("SELECT asset_id AS id FROM collection_items")).toEqual([]);
+    expect(left("SELECT target_id AS id FROM shares")).toEqual([]);
+    expect(left("SELECT asset_id AS id FROM search_assets")).toEqual([]);
+    for (const f of [old, fresh]) expect(existsSync(blobFile(f.src)) || existsSync(blobFile(f.thumb))).toBe(false);
   });
 
-  it("leaves a video in Review's trash to Review, whose trash keeps it longer", async () => {
+  it("leaves a video in Review's trash to Review", async () => {
     const now = Date.now();
     trashed("ast_review", 20, now);
     mkdirSync(path.join(dir, "review", "trash", "ast_review"), { recursive: true });
     writeFileSync(path.join(dir, "review", "trash", "ast_review", "meta.json"), "{}");
     trashed("ast_plain", 20, now);
-    expect(await purgeTrash(now)).toBe(1);
+    expect(await emptyTrash("lib_t")).toBe(1);
     expect(libraryDb().prepare("SELECT id FROM assets").all()).toEqual([{ id: "ast_review" }]);
   });
   it("takes Finals pieces out of the trash after five days; a fresh trashed piece and its versions stay", async () => {

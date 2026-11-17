@@ -11,8 +11,8 @@ import { adminCount, findUser } from "./users";
  * and anything still owned by an account that no longer exists goes on the next sweep.
  * A server that wants an age limit sets CONTENT_EXPIRES=1: then Caption Studio projects (originals included), Review
  * videos and their folders, Audio Enhancer sessions and guides that haven't changed for 14 days (plain `user`) or
- * 28 days (team) are deleted for good. Admins keep theirs; Video Notes (clips) are shared links and stay.
- * Exports expire on their own after EXPORTS_KEEP_HOURS (api/exports.ts).
+ * 28 days (team) are deleted for good. Admins keep theirs. Video Notes (clips) are shared links, and Review videos are
+ * Media Library files: those go only with their account. Exports stay until removed in Settings → Storage.
  */
 export const KEEP_DAYS = { user: 14, team: 28 } as const;
 
@@ -70,12 +70,12 @@ async function purgeDesigns(expired: Expired): Promise<void> {
   }
 }
 
-// clipsExpired: a clip is a shared link, so the age sweep keeps it and only a gone account takes it.
-async function purge(expired: Expired, clipsExpired: Expired = expired): Promise<void> {
+// gone: what only a gone account takes, never its age: a clip is a shared link, a Review video a Media Library file
+async function purge(expired: Expired, gone: Expired = expired): Promise<void> {
   for (const step of [
     () => purgeExpiredProjects(expired),
-    () => purgeExpiredReview(expired),
-    () => purgeMetaDirs(path.join(env.dataDir, "clips"), clipsExpired),
+    () => purgeExpiredReview(gone),
+    () => purgeMetaDirs(path.join(env.dataDir, "clips"), gone),
     () => purgeMetaDirs(path.join(env.dataDir, "documents"), expired),
     () => purgeMetaDirs(path.join(env.dataDir, "enhance"), expired),
     () => purgeDesigns(expired),

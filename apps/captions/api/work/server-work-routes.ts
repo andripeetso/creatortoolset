@@ -36,9 +36,10 @@ async function allProjects(): Promise<Project[]> {
 }
 
 async function adminView(): Promise<NonNullable<ServerWorkView["admin"]>> {
-  const s = readServerWork() ?? { on: true };
+  const s = readServerWork() ?? { on: false };
   return {
     on: s.on,
+    offByUpdate: !!s.offByUpdate,
     all: !s.projectIds,
     workspaces: (await allProjects()).map((p) => ({ id: p.id, name: p.name, owner: p.owner, on: !s.projectIds || s.projectIds.includes(p.id) })),
   };
@@ -63,8 +64,9 @@ serverWorkApp.put("/", async (c) => {
   if (u.role !== "admin") return c.json({ error: "Only an admin changes this" }, 403);
   if (serverKind() !== "server") return c.json({ error: "This server has no such switch" }, 400);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const cur = readServerWork() ?? { on: true };
-  const next = { ...cur };
+  const cur = readServerWork() ?? { on: false };
+  // the admin's own choice: the update's notice has done its job
+  const next = { ...cur, offByUpdate: false };
   if (typeof b?.on === "boolean") next.on = b.on;
   if (b?.all === true) delete next.projectIds;
   else if (Array.isArray(b?.only)) {

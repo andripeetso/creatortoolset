@@ -8,7 +8,6 @@ import { JoinPage } from "@/pages/JoinPage";
 import { joinToken } from "@/lib/workspaces";
 import { siteFrameFor } from "@/lib/plugin";
 import { CodeStep } from "@/components/SignInCode";
-import { markSignedInHere } from "@/lib/setup";
 import { webPlugins } from "@/plugins.gen";
 
 const PUBLIC_UUID =
@@ -234,7 +233,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   };
 
   function signedIn(user: Me | null) {
-    markSignedInHere();
     const back = returnTo(window.location.search, window.location.origin);
     if (back) {
       window.location.replace(back);

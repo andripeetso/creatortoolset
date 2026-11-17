@@ -1,0 +1,28 @@
+# The app's tests, its type check and the public-repo guard, on every push and pull request.
+name: CI
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: ffmpeg and gitleaks
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz | sudo tar -xz -C /usr/local/bin gitleaks
+      - run: scripts/check-public.sh
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test

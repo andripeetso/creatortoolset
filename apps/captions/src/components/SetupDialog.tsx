@@ -45,9 +45,6 @@ import {
   MAKE_NAMES,
   SETUP_PATH,
   dismissSetup,
-  openSetupAt,
-  helperOffers,
-  markHelperOffered,
   firstProjectName,
   markIntroSeen,
   introPlays,
@@ -140,20 +137,13 @@ export function SetupDialog() {
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
   const asked = params.get("setup");
-  // the Help screen: this Mac, and the account's other computers (it opens by itself once, right after a sign-in here)
+  // the Help screen: this Mac, and the account's other computers. It opens only from a press (Settings → Setup, ?setup=helper)
   const macApp = hasThisMac();
   const bridge = useThisMac(macApp && !!me && asked === "helper"); // asked every 3 s: only while the Help screen is up
   // read only in the Mac app (the screen is about this computer): a browser never loads it for this
   const { data: providers } = useCachedLoad<ProvidersView>(macApp ? "/api/providers" : null, getProviders, { topic: ["providers", "devices"], own: true });
   const self = bridge?.device ?? document.documentElement.dataset.macDevice ?? null;
   const others = (providers?.devices ?? []).filter((d) => d.owner === me?.username && d.id !== self).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
-  const tested = !!providers?.devices.find((d) => d.id === self)?.check;
-  const offer = !!me && !!providers && helperOffers({ macApp, others: others.length, tested });
-  useEffect(() => {
-    if (!offer || asked) return;
-    markHelperOffered();
-    openSetupAt("helper");
-  }, [offer, asked]);
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it; never on a phone
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
   const open = real && !!prefs && setupOpen(view, asked, { firstRun, phone: isPhoneHub() });

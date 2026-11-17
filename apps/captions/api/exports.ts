@@ -39,12 +39,12 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
  * immediately; ffmpeg renders server-side while the client polls for
  * progress. Finished files live under $DATA_DIR/exports/<id>/ so they
  * stay downloadable after a reload — or after the tab was closed
- * mid-render — until the retention sweep removes them.
+ * mid-render — until their owner removes them (Settings → Storage). Nothing is
+ * removed for its age.
  */
 export const exportsApp = new Hono<{ Variables: AuthVars }>();
 
 const EXPORTS_DIR = path.join(env.dataDir, "exports");
-const KEEP_HOURS = Number(process.env.EXPORTS_KEEP_HOURS || 24);
 const MAX_CONCURRENT = Math.max(1, Number(process.env.EXPORT_CONCURRENCY || 1));
 
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
@@ -248,8 +248,6 @@ export async function deleteExportsForProject(
   }
 }
 
-/** How long a finished render stays, in days (Settings → Storage says it). */
-export const EXPORTS_KEEP_DAYS = KEEP_HOURS / 24;
 // a render on its way to Finals is still being read: it stays until that ends
 const finishedOf = (owner: string) =>
   [...jobs.values()].filter((j) => j.owner === owner && j.status !== "queued" && j.status !== "running" && !onItsWay(j.finals));
@@ -264,21 +262,6 @@ export async function removeFinishedExports(owner: string, dirs: string[]): Prom
   for (const job of finishedOf(owner)) if (dirs.includes(jobDir(job.id))) await removeJob(job.id);
 }
 
-async function sweepExports(): Promise<void> {
-  await loaded;
-  const cutoff = Date.now() - KEEP_HOURS * 3600 * 1000;
-  for (const job of [...jobs.values()]) {
-    const ts = job.finishedAt ?? job.createdAt;
-    if (job.status !== "queued" && job.status !== "running" && ts < cutoff) {
-      jobs.delete(job.id);
-      await rm(jobDir(job.id), { recursive: true, force: true }).catch(
-        () => {},
-      );
-    }
-  }
-}
-void sweepExports();
-setInterval(() => void sweepExports(), 3600 * 1000).unref();
 
 /* ---- render queue (renders are CPU-bound: run a few at most) ---- */
 

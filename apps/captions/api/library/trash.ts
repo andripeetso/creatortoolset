@@ -7,22 +7,16 @@ import { dropMacFrames } from "./on-mac";
 import { assetsCopiesLack, copiesNotice } from "./copies";
 
 /**
- * The library's trash purge (tasks/media-library-plan.md, section 5): an asset trashed longer than LIBRARY_TRASH_DAYS
- * (default 14) is deleted for good, with every version, derivative and file. Rows go first in one transaction, then
- * the files: a restore that lands in between finds nothing to restore, never a row whose file is gone.
+ * The library's trash: an asset stays in it until the library's owner empties it (Empty trash), never for its age
+ * (users manage their own storage). Emptying deletes it for good, with every version, derivative and file. Rows go first
+ * in one transaction, then the files: a restore that lands in between finds nothing to restore, never a row whose file
+ * is gone.
  */
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 /** Finals pieces stay in the trash this long (owner default, 2026-11-08). */
 const PIECE_TRASH_DAYS = 5;
-
-/** Read per call (AGENTS: process.env at the point of use). */
-export function trashDays(): number {
-  const raw = process.env.LIBRARY_TRASH_DAYS;
-  const v = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
-  return Number.isFinite(v) && v >= 0 ? v : 14;
-}
 
 /**
  * A Review video (api/review.ts toLibrary: same id), live or in Review's trash. Review owns its versions and its trash
@@ -33,26 +27,25 @@ export const inReview = (assetId: string) =>
 
 const inList = (n: number) => Array(n).fill("?").join(", ");
 
-/** Deletes assets trashed before now − LIBRARY_TRASH_DAYS. Returns how many went. */
-export async function purgeTrash(now = Date.now()): Promise<number> {
+/** Empty trash: deletes every asset in library `libraryId`'s trash that may go now. Returns how many went. */
+export async function emptyTrash(libraryId: string): Promise<number> {
   const d = libraryDb();
   let lacking: Set<string> | undefined;
-  // an asset with a job running is left for the next pass: the worker may be writing a derivative for it
+  // an asset with a job running stays: the worker may be writing a derivative for it
   const assets = (
     d
       .prepare(
-        `SELECT id FROM assets a WHERE trashed_at IS NOT NULL AND trashed_at < ?
+        `SELECT id FROM assets a WHERE library_id = ? AND trashed_at IS NOT NULL
          AND NOT EXISTS (SELECT 1 FROM jobs j JOIN asset_versions v ON v.id = j.version_id WHERE v.asset_id = a.id AND j.state = 'running')`,
       )
-      .all(now - trashDays() * DAY) as { id: string }[]
+      .all(libraryId) as { id: string }[]
   )
     .map((a) => a.id)
     .filter((id) => !inReview(id))
     // an original a copy still lacks stays until it has it (copies.ts); Stop copying lets it go
-    .filter((id, _, all) => !(lacking ??= assetsCopiesLack(all)).has(id))
-    .slice(0, 500); // ponytail: 500 a pass keeps the IN lists short; the next hour takes the rest
-  await deleteAssets(assets);
-  await purgeTrashedPieces(now);
+    .filter((id, _, all) => !(lacking ??= assetsCopiesLack(all)).has(id));
+  // ponytail: 500 at a time keeps the IN lists short
+  for (let i = 0; i < assets.length; i += 500) await deleteAssets(assets.slice(i, i + 500));
   return assets.length;
 }
 
@@ -137,10 +130,10 @@ export async function deleteLibrary(id: string): Promise<void> {
   await rm(path.join(env.dataDir, "library", "blobs", "libraries", id), { recursive: true, force: true });
 }
 
-/** Runs the purge now and every hour. */
+/** Runs the Finals pieces' purge and the copies' notice now and every hour. */
 export function startTrashPurge(): void {
   const run = () => {
-    void purgeTrash().catch((e) => console.error("[library] trash purge:", e));
+    void purgeTrashedPieces().catch((e) => console.error("[library] pieces purge:", e));
     void copiesNotice().catch((e) => console.error("[library] copies notice:", e));
   };
   run();

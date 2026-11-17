@@ -9,7 +9,6 @@ import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { trashDays } from "../library/trash";
 import type { SessionUser } from "../users";
 import { Waiting } from "./analyze";
 import { scriptThrew } from "./cards/device";
@@ -288,6 +287,13 @@ export function failForDevice(device: string, id: number, why: string): boolean 
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
   moved(job);
   return true;
+}
+
+/** Days an edit stays in the trash (LIBRARY_TRASH_DAYS, default 14). Read per call (AGENTS: process.env at the point of use). */
+function trashDays(): number {
+  const raw = process.env.LIBRARY_TRASH_DAYS;
+  const v = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(v) && v >= 0 ? v : 14;
 }
 
 /** Starts the loop, and the hourly purge of edits trashed LIBRARY_TRASH_DAYS ago; the returned function stops the loop after the current step. */
