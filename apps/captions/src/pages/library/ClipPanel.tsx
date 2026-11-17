@@ -258,8 +258,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
       <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       {a.state === "missing" && (
         <p className="text-sm text-zinc-400">
-          The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back
-          when the file does.
+          The file was moved or renamed, or its drive is not connected.
         </p>
       )}
       <Locate libraryId={libraryId} versionId={a.versionId} missing={a.state === "missing"} onMac={!!a.onMac} />
@@ -382,7 +381,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     .filter((j) => (j.kind === "describe" || j.kind === "embed") && (j.state === "needs_key" || j.state === "failed"))
     .map((j) => (
       <p key={j.kind} className="text-xs text-zinc-500">
-        {j.kind === "describe" ? "AI description" : "Search by meaning"}
+        {j.kind === "describe" ? "Description" : "Search by meaning"}
         {/* waiting for an AI or a key: a few words, the place to add it one click away */}
         {j.state === "needs_key" ? (
           <>
@@ -392,7 +391,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             </Link>
           </>
         ) : (
-          `: ${j.error ?? "failed"}`
+          `: ${j.error ?? "not made"}`
         )}
       </p>
     ));
@@ -614,12 +613,6 @@ export function OfflineSwitch({ versionId, folders, onError }: { versionId: stri
   );
 }
 
-export const AiBadge = () => (
-  <span title="Written by AI" className="mr-1 rounded bg-zinc-500/20 px-1 py-px text-[10px] font-medium uppercase text-zinc-400">
-    AI
-  </span>
-);
-
 /**
  * The clip's shot descriptions, under its description: one line a shot with its time, a click plays from there, the
  * shot playing now is marked. The person can rewrite a line; theirs wins over the AI's (shown quieter, as the AI's
@@ -739,8 +732,8 @@ function Transcript({
   const waiting = job?.state === "queued" || job?.state === "running";
   if (detail?.transcript)
     return (
-      <section aria-label="What is said" className="flex flex-col gap-1">
-        <span className="text-xs text-zinc-500">What is said</span>
+      <section aria-label="Transcript" className="flex flex-col gap-1">
+        <span className="text-xs text-zinc-500">Transcript</span>
         <div className="-mx-1 flex flex-col gap-0.5">
           {detail.transcript.segments.map((seg, i) => {
             const on = now >= seg.start && now < seg.end;
@@ -763,7 +756,7 @@ function Transcript({
   if (!job) return null;
   return (
     <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      {waiting ? job.error || "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
+      {waiting ? job.error || "Transcribing" : job.state === "done" ? "No speech" : job.error ?? "Could not transcribe the clip"}
       {(job.state === "needs_key" || job.state === "failed") && !inTrash && (
         <Button size="sm" variant="outline" onClick={onRetry}>
           Retry
@@ -813,7 +806,7 @@ function DescriptionBox({
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
-          placeholder={asset.description?.source === "ai" ? "Your own description (shown instead of the AI's)" : "Describe this clip"}
+          placeholder="Describe this clip"
           aria-label="Description"
           className="w-full rounded-md border border-zinc-500/30 bg-transparent p-2"
         />
@@ -832,7 +825,6 @@ function DescriptionBox({
     <section aria-label="Description" className="flex flex-col gap-1 text-sm">
       {asset.description && (
         <p className={cn("leading-relaxed", asset.description.source === "ai" && "text-zinc-400")}>
-          {asset.description.source === "ai" && <AiBadge />}
           {asset.description.text}
         </p>
       )}
@@ -840,12 +832,12 @@ function DescriptionBox({
         <div className="-ml-2 flex flex-wrap items-center">
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" onClick={() => setText(mine)}>
             <Pencil className="h-3.5 w-3.5" />
-            {asset.description ? "Edit" : "Add a description"}
+            {asset.description ? "Edit" : "Add description"}
           </Button>
           {(asset.kind === "video" || asset.kind === "image") && (
             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" disabled={queued} onClick={() => void describe()}>
               <CtMark className="h-3.5 w-3.5" />
-              {queued ? "Queued: the AI's description shows when it is done" : "Describe with AI"}
+              {queued ? "Queued" : "Describe"}
             </Button>
           )}
         </div>

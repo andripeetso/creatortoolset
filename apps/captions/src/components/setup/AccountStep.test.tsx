@@ -31,7 +31,7 @@ it("shows a button only for the providers the account server has keys for", () =
 it("shows no sign-in button when the reply names no providers (an older Mac app)", () => {
   const html = view({ state: "signedOut" }, []);
   expect(html).not.toContain("Continue with");
-  expect(html).toContain("Sign in to set up your Creator Toolset account.");
+  expect(html).toContain("Sign in to set up a Creator Toolset account.");
   expect(html).not.toMatch(/nothing else/i);
 });
 
@@ -41,12 +41,12 @@ it("goes on once signed in, while the server has no sign-in yet, or with no acco
   expect(signed).not.toContain("Continue with Apple");
   expect(signed).toContain(">Continue<");
   const notYet = view({ state: "notSetUp", server: "creatortoolset.com" });
-  expect(notYet).toContain("Sign-in isn&#x27;t set up on creatortoolset.com yet");
+  expect(notYet).toContain("Sign-in is not set up on creatortoolset.com.");
   expect(notYet).toContain(">Continue<");
   expect(view({ state: "off" })).toContain(">Continue<");
   // offline on the first run: never stuck on a step that can't be passed
   const offline = view({ state: "unreachable", server: "creatortoolset.com" });
-  expect(offline).toContain("Can&#x27;t reach creatortoolset.com");
+  expect(offline).toContain("Could not reach creatortoolset.com.");
   expect(offline).toContain(">Continue<");
 });
 
@@ -74,7 +74,7 @@ it("the account screen is a sign-in screen: one button for each sign-in offered,
   expect(html).not.toMatch(/GitHub|phone|settings|sync/i);
   // a sign-in card: its own title and one line, and only what a sign-in does today
   expect(html).toContain("Sign in to Creator Toolset");
-  expect(html).toContain("Optional. One account for this app and creatortoolset.com.");
+  expect(html).toContain("An optional account for this app and creatortoolset.com.");
   // never a promise about what is or is not read from the Apple or Google account
   expect(html + setup({ state: "signedIn", name: "Ana", email: "ana@tinyacrobatics.example" })).not.toMatch(/nothing else|is read|only your name/i);
   // while the system's sheet is up: that button says so, and no second sign-in can be started
@@ -93,15 +93,15 @@ it("the account screen after a press: signed in says who; a closed sheet says no
   expect(closed).not.toContain("text-red-600");
   for (const [state, words] of [
     [{ state: "error", message: "That sign-in didn't go through." }, "That sign-in didn't go through."],
-    [{ state: "notSetUp" }, "Sign-in is not available right now."],
-    [{ state: "unreachable" }, "Couldn't reach the account server."],
+    [{ state: "notSetUp" }, "Sign-in not available"],
+    [{ state: "unreachable" }, "Could not reach the account server"],
   ] as [AccountState, string][]) {
     const html = setup(state);
     expect(html).toContain(words);
     expect(buttons(html)).toEqual(["Continue with Google", "Continue with Apple"]);
   }
   // opened with nothing to offer (an old link): one plain line, no button
-  expect(setup({ state: "signedOut" }, [])).toContain("Sign-in is not available right now.");
+  expect(setup({ state: "signedOut" }, [])).toContain("Sign-in is not available.");
 });
 
 it("reads the sign-ins linked to the account, with each one's email, and none when signed out", () => {

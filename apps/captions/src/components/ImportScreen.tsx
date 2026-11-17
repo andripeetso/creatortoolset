@@ -175,14 +175,14 @@ function ProjectSafetyBadge({ s }: { s: SessionMeta }) {
   if (s.serverConflict) {
     return (
       <span className="rounded border border-red-400/70 bg-red-500/25 px-1.5 py-0.5 text-[9px] font-black uppercase text-red-100">
-        Conflict copy — safe locally
+        Conflict copy · saved locally
       </span>
     );
   }
   if (s.localOnly) {
     return (
       <span className="rounded border border-amber-300/60 bg-amber-400/20 px-1.5 py-0.5 text-[9px] font-black uppercase text-amber-100">
-        Local only — cloud pending
+        Saved locally · not on the server
       </span>
     );
   }
@@ -355,7 +355,7 @@ export function ImportScreen() {
     if (
       !(await confirmDialog({
         title: `Delete “${project?.name ?? "this project"}”?`,
-        body: `The cloud copy can be recovered for ${TRASH_KEEP_DAYS} days. This browser's local copy is removed now.`,
+        body: `It stays in the trash for ${TRASH_KEEP_DAYS} days.`,
         ok: "Delete",
         danger: true,
       }))
@@ -380,9 +380,9 @@ export function ImportScreen() {
   const permanentlyDelete = async (project: DeletedSessionMeta) => {
     if (
       !(await confirmDialog({
-        title: `Delete “${project.name}” for good?`,
-        body: "Its video, captions, exports and uploaded source are deleted now. This cannot be undone.",
-        ok: "Delete for good",
+        title: `Delete “${project.name}”?`,
+        body: "Its videos, captions and exports are deleted and cannot be restored.",
+        ok: "Delete",
         danger: true,
       }))
     ) {
@@ -392,7 +392,7 @@ export function ImportScreen() {
     const deleted = await permanentlyDeleteSession(project.id);
     setDeletingForever(null);
     if (!deleted) {
-      void alertDialog({ title: "Could not delete this project", body: "Please try again." });
+      void alertDialog({ title: "Could not delete the project", ok: "Close" });
       return;
     }
     setDeletedSessions((sessions) =>
@@ -453,7 +453,7 @@ export function ImportScreen() {
         {hasCurrentProject && <PersistenceBadge />}
       </AppBar>
       <div ref={column} className="flex flex-1 flex-col items-center justify-center py-8">
-      <ToolIntro icon={Captions} title="Caption Studio" line="Transcribe · caption · export with alpha" className="mt-0" />
+      <ToolIntro icon={Captions} title="Caption Studio" line="Transcribe, caption and export" className="mt-0" />
 
       {editable && (
       <label
@@ -467,7 +467,7 @@ export function ImportScreen() {
       >
         <DropZoneText
           title="Drop videos here, or click to browse"
-          hint="MP4 · WebM · MOV — drop several to caption them as one batch"
+          hint="MP4 · WebM · MOV"
         />
         <input
           type="file"
@@ -515,7 +515,7 @@ export function ImportScreen() {
         <details className="mt-4 w-[560px] max-w-[90%] rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
           <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
             Trash · {deletedSessions.length} project
-            {deletedSessions.length === 1 ? "" : "s"} · recoverable for{" "}
+            {deletedSessions.length === 1 ? "" : "s"} · kept for{" "}
             {TRASH_KEEP_DAYS} days
           </summary>
           <div className="mt-2 space-y-1.5">
@@ -530,7 +530,7 @@ export function ImportScreen() {
                   </p>
                   <p className="text-[10px] text-zinc-600">
                     Deleted {new Date(project.deletedAt).toLocaleDateString()} ·{" "}
-                    purges{" "}
+                    kept until{" "}
                     {new Date(project.recoverableUntil).toLocaleDateString()}
                   </p>
                 </div>
@@ -547,7 +547,7 @@ export function ImportScreen() {
                   className="flex shrink-0 items-center gap-1 rounded border border-red-950 px-2 py-1 text-[11px] font-medium text-red-500 hover:border-red-700 hover:bg-red-950/30 hover:text-red-300 disabled:cursor-wait disabled:opacity-50"
                 >
                   <Trash2 className="h-3 w-3" />
-                  {deletingForever === project.id ? "Deleting…" : "Delete now"}
+                  {deletingForever === project.id ? "Deleting…" : "Delete"}
                 </button>
               </div>
             ))}
@@ -598,7 +598,7 @@ export function ImportScreen() {
                   ],
                 }}
               />
-              {find.trim() && everything.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+              {find.trim() && everything.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matching projects</p>}
               <SessionsBlock
                 sessions={everything}
                 view={view}

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -184,6 +184,21 @@ describe("watch folder scan", () => {
     utimesSync(copying, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
     expect(await scanWatchFolders(t5 + QUICK_SETTLE_MS)).toBe(0); // it grew: the wait starts again
     expect(await scanWatchFolders(t5 + 2 * QUICK_SETTLE_MS)).toBe(1);
+  });
+
+  it("a referenced file moved inside the folder reconnects by its checksum: the clip reads it at its new path", async () => {
+    const t6 = t0 + 600 * SETTLE_MS;
+    const had = versions().length;
+    const moved = path.join(watched, "2025", "Handstand.mp4");
+    mkdirSync(path.dirname(moved), { recursive: true });
+    renameSync(clip, moved);
+    await scanWatchFolders(t6);
+    expect(versions()[0]).toMatchObject({ state: "missing", source_path: clip });
+    await scanWatchFolders(t6 + SETTLE_MS);
+    const [v] = versions();
+    expect(v).toMatchObject({ state: "processing", source_path: moved });
+    expect(readlinkSync(path.join(process.env.DATA_DIR!, "library", "blobs", v!.source_key))).toBe(moved);
+    expect(versions()).toHaveLength(had);
   });
 });
 

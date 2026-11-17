@@ -26,9 +26,9 @@ struct ThisMacView: View {
     var body: some View {
         Form {
             Section("Startup") {
-                Toggle("Open Creator Toolset when I log in", isOn: $loginOn)
+                Toggle("Open at login", isOn: $loginOn)
                     .onChange(of: loginOn) { _, on in LoginItem.set(on) }
-                Text("On for a copy in Applications. It waits in the menu bar, so your AI and recordings are ready when you need them.")
+                Text("A copy in Applications stays in the menu bar after login, so AI and recordings are ready.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Servers") {
@@ -36,8 +36,8 @@ struct ThisMacView: View {
                 AddServerField(shell: shell)
                 Button("Run your own server…") { openWindow(id: "guide") }
             }
-            Section("AI on this Mac") {
-                Toggle("Use this Mac for my AI", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
+            Section {
+                Toggle("AI on this Mac", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
                     .disabled(!shell.hasServer)
                 Text("Runs the open server's AI jobs for your account with the Claude CLI on this Mac, signed in as you.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -46,7 +46,7 @@ struct ThisMacView: View {
                     Text(notice).font(.caption).foregroundStyle(.secondary)
                 }
                 if shell.pairedHere {
-                    Button("Remove this Mac from my account", role: .destructive) { shell.forgetThisMac() }
+                    Button("Remove this Mac from the account", role: .destructive) { shell.forgetThisMac() }
                 }
             }
             if shell.pluginCount > 0 {
@@ -174,31 +174,38 @@ struct ThisMacView: View {
         .onAppear { measure(server) }
     }
 
-    /// Access from other devices: a password of the owner's own first, then the server listens beyond this Mac.
+    /// Network access: a password of the owner's own first, then the server listens beyond this Mac.
     @ViewBuilder private func accessSection(_ server: LocalServer) -> some View {
-        Section("Access from other devices") {
-            Toggle("Let phones and other computers sign in", isOn: Binding(get: { server.otherDevices }, set: { on in
+        Section {
+            Toggle("Network access", isOn: Binding(get: { server.otherDevices }, set: { on in
                 if on && !server.hasOwnerPassword {
                     askPassword = true
                 } else {
                     Task { accessMessage = await shell.setOtherDevices(on) }
                 }
             }))
-            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(macHostName()):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
+            Text("Phones and other computers on this network can open this Mac's server.")
                 .font(.caption).foregroundStyle(.secondary)
+            if server.otherDevices {
+                LabeledContent("Address", value: "http://\(macHostName()):\(server.port)")
+                LabeledContent("Sign-in name", value: LocalServer.ownerName)
+            }
             if askPassword {
                 SecureField("This computer's password (10 characters or more)", text: $password)
                 SecureField("Type it again", text: $again)
                 HStack {
                     Button("Cancel") { askPassword = false; password = ""; again = "" }
                     Button("Set password and turn on") {
+                        guard !busy else { return }   // a second press while the first is with the server
                         guard password == again else { accessMessage = "The two passwords differ."; return }
+                        busy = true
                         Task {
                             accessMessage = await shell.setOtherDevices(true, password: password)
+                            busy = false
                             if accessMessage == nil { askPassword = false; password = ""; again = "" }
                         }
                     }
-                    .disabled(password.count < 10)
+                    .disabled(password.count < 10 || busy)
                 }
             }
             if let accessMessage {
@@ -266,7 +273,7 @@ struct GuideView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Run your own server").font(.title2.bold())
-                Text("The same app as on this Mac, on a machine that stays on, so your phone and other computers reach it. It runs on your own keys and accounts: AI on your own Claude Code or Codex through this Mac, storage on its disk or your own S3-compatible bucket, research on your own Apify key.")
+                Text("The same app as on this Mac, on a computer that stays on, so your phone and other computers reach it. It runs on your own keys and accounts: AI on your own Claude Code or Codex through this Mac, storage on its disk or your own S3-compatible bucket, research on your own Apify key.")
                     .foregroundStyle(.secondary)
 
                 step(1, "A server") {
@@ -298,7 +305,7 @@ struct GuideView: View {
                     checkRow("Signed in", signedIn)
                 }
                 step(5, "Your own keys") {
-                    Text("AI: with your server open, turn on Use this Mac for my AI; Settings → Your AI shows the install and sign-in commands. Storage: the server's disk, or your bucket's OBJECT_STORAGE_ values in .env. Research: your Apify key in Settings → Connectors. The Apple or Google sign-in on the first run is optional: leave This Mac → Account server empty to skip it.")
+                    Text("AI: with your server open, turn on AI on this Mac; Settings → Providers shows the install and sign-in commands. Storage: the server's disk, or your bucket's OBJECT_STORAGE_ values in .env. Research: your Apify key in Settings → Connectors. The Apple or Google sign-in on the first run is optional: leave This Mac → Account server empty to skip it.")
                 }
                 HStack {
                     Button(checking ? "Checking…" : "Check") { Task { await check() } }

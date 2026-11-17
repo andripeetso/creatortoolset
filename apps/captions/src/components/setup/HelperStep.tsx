@@ -198,7 +198,6 @@ export function HelperPair() {
     <Card>
       <Row
         title="AI on this Mac"
-        description="AI jobs can run on this Mac."
         control={<Button size="sm" onClick={() => tell("ai:on")}>Turn on</Button>}
       />
     </Card>

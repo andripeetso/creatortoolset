@@ -85,7 +85,7 @@ describe("switching it on (Settings → Account)", () => {
   let windowCookie = "";
 
   beforeAll(async () => {
-    // the owner chooses a password of their own first, as Access from other devices does; the LAN can sign in after that
+    // the owner chooses a password of their own first, as Network access does; the LAN can sign in after that
     const first = cookieOf(await login("admin", "sign-in-code-test-secret"));
     windowCookie = cookieOf(await req("POST", "/api/auth/password", { cookie: first, body: { current: "sign-in-code-test-secret", password: OWNER.password } }));
     lanCookie = cookieOf(await login(OWNER.username, OWNER.password, { address: LAN }));

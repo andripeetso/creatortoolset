@@ -53,7 +53,7 @@ function useChange(workspace: string | null | undefined, done: (d: EditorDefault
     setBusy(true);
     setEditorDefault(slot, id, workspace)
       .then(done)
-      .catch(() => saveFailed("Default not saved"))
+      .catch(() => saveFailed("Default not saved. Try again."))
       .finally(() => setBusy(false));
   };
   return { busy, change };

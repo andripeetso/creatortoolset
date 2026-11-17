@@ -25,6 +25,7 @@ import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
+import { placesApp } from "./places";
 import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -51,6 +52,7 @@ libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
 libraryApp.route("/offline", offlineApp); // GET/POST /offline: Available offline (api/work/offline.ts)
 libraryApp.route("/", locateApp); // GET, POST /:id/locate
+libraryApp.route("/", placesApp); // GET, POST /:id/places, GET /:id/places/gone, /:id/places/moves
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
@@ -179,6 +181,9 @@ export function recordVersion(
   }
   const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
   if (roll) fileRoll(d, assetId, roll);
+  // uploaded into Finals (a project's final, AddFinalDialog): finished from the start, never footage in the Media Library
+  else if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(o.collectionId))
+    fileRoll(d, assetId, "none");
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;
@@ -317,7 +322,7 @@ async function fileMade(row: UploadRow, versionId: string): Promise<void> {
 }
 
 // a Review video: Review owns its versions and its trash, so the library refuses to add a version or trash it
-const IN_REVIEW = { error: "This video lives in Review: change it there", code: "conflict" } as const;
+const IN_REVIEW = { error: "This video is in Review: change it there", code: "conflict" } as const;
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
 async function ownUpload(c: Context<{ Variables: AuthVars }>): Promise<UploadRow | null> {
@@ -468,7 +473,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
-    if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   }
   const id = randomUUID();
   const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
@@ -477,7 +482,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
-    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename)
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
@@ -543,7 +548,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (!path.isAbsolute(given)) return refuse("Not a full path");
   const real = await realpath(given).catch(() => null);
   const s = real ? await stat(real).catch(() => null) : null;
-  if (!real || !s?.isFile()) return refuse(`No such file on this computer: ${given}`);
+  if (!real || !s?.isFile()) return refuse(`File not found on this computer: ${given}`);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
   // macOS may keep this server out of a folder the app itself may read (Desktop, Downloads): the page uploads it then
@@ -575,7 +580,7 @@ libraryApp.post("/:id/in-place", async (c) => {
         .prepare("SELECT v.source_path, a.id, a.trashed_at FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
         .get(got.versionId) as { source_path: string | null; id: string; trashed_at: number | null } | undefined)
     : undefined;
-  if (!v) return c.json({ error: "It could not be added", code: "conflict" }, 409);
+  if (!v) return c.json({ error: "Could not add the file", code: "conflict" }, 409);
   if (v.trashed_at) return c.json({ error: "In the trash in the Media Library: restore it there to use it", code: "conflict" }, 409);
   // this very file, taken now (or by the call this one asks again for); anything else was in the library already
   if (v.source_path === real && (got.fresh || body.again === true)) return c.json({ assetId: v.id, versionId: got.versionId });
@@ -596,7 +601,7 @@ libraryApp.post("/:id/on-mac", async (c) => {
   if (x.collectionId) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(x.collectionId, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
-    if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   }
   return c.json(await indexOnMac(libraryId, user.username, x));
 });
@@ -699,7 +704,8 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     uploadDone(row.id, versionId);
     return c.json({ assetId, versionId });
   } catch (e) {
-    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(row.id);
+    // only one still open: an upload whose file is already in the library stays done
+    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ? AND state = 'open'").run(row.id);
     return c.json({ error: e instanceof Error ? e.message : String(e), code: "conflict" }, 500);
   } finally {
     busy.delete(row.id);
@@ -732,6 +738,7 @@ const settingsOf = (json: string): LibrarySettings => {
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
     upload: uploadOf(s.upload),
+    finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
     ...(typeof s.copyTo === "string" && s.copyTo ? { copyTo: s.copyTo } : {}),
     ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
@@ -768,7 +775,7 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
 // (a video is filed by its description) and files what is in no folder yet
@@ -796,6 +803,7 @@ libraryApp.patch("/:id", async (c) => {
     releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
     libraryChanged(libraryId);
   }
+  if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
   if (Array.isArray(s.places)) {
@@ -833,7 +841,7 @@ libraryApp.patch("/:id", async (c) => {
 // POST /api/library { name } → a local library of the caller's own, in the workspace this request works in
 libraryApp.post("/", async (c) => {
   const user = c.get("user");
-  if (user.role === "visitor") return c.json({ error: "Sign in to make a library", code: "forbidden" }, 403);
+  if (user.role === "visitor") return c.json({ error: "Sign in to create a library", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
   const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;

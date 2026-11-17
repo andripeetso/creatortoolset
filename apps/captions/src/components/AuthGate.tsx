@@ -60,9 +60,9 @@ export function connectingApp(search = typeof window === "undefined" ? "" : wind
   try {
     const id = new URLSearchParams(next.slice(next.indexOf("?") + 1)).get("client_id") ?? "";
     const n = (JSON.parse(atob(id.split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))) as { n?: unknown }).n;
-    return typeof n === "string" && n.trim() ? n.trim().slice(0, 60) : "your AI app";
+    return typeof n === "string" && n.trim() ? n.trim().slice(0, 60) : "an AI app";
   } catch {
-    return "your AI app";
+    return "an AI app";
   }
 }
 
@@ -195,7 +195,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-zinc-950 px-4 text-center text-zinc-200">
         <p className="max-w-sm text-sm">
-          Your team signs in with {mustLink.map((p) => (p === "apple" ? "Apple" : "Google")).join(" or ")}. Link yours once, and use it to sign in from now on.
+          Your team signs in with {mustLink.map((p) => (p === "apple" ? "Apple" : "Google")).join(" or ")}.
         </p>
         {mustLink.map((p) => (
           <a key={p} href={`/api/account/login/${p}?for=link`} className="w-72 rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-500">
@@ -224,7 +224,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       if (res.ok) signedIn(d.user ?? null);
       else if (typeof d.step === "string") setStep({ token: d.step, setup: d.code === "CODE_SETUP" });
       else {
-        setError(d.error || "Login failed");
+        setError(d.error || "Sign-in failed");
       }
     } catch {
       setError("Could not reach the server");
@@ -258,7 +258,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <ToolsetLogo className="h-11 w-11" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
-          <p className="text-sm text-zinc-500">{connectingApp() ? `Sign in to connect ${connectingApp()}` : "Sign in to your account"}</p>
+          <p className="text-sm text-zinc-500">{connectingApp() ? `Sign in to connect ${connectingApp()}` : "Sign in"}</p>
         </div>
       </div>
       {error && <p className="w-72 text-xs text-red-400">{error}</p>}

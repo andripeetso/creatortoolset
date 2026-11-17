@@ -195,6 +195,8 @@ final class AssistantModel: ObservableObject {
     var server: () -> AssistantServer? = { .signedIn }
     private var watching: Task<Void, Never>?
     private var reading: Task<Void, Never>?
+    /// Counts the resets: an answer asked for before one is of the conversation that was left, and is dropped.
+    private var resets = 0
     /// Replies being stopped because a video of their message failed.
     private var stopping: Set<String> = []
 
@@ -230,9 +232,12 @@ final class AssistantModel: ObservableObject {
         outbox.open(server.queue)
         // the box, beside the account's queue: there again after the app closed
         draft.keep(at: server.queue.map { $0.deletingPathExtension().appendingPathExtension("box.json") })
+        let asked = resets
         do {
-            take(try await server.call("/api/assistant", "GET", nil))
+            let answer = try await server.call("/api/assistant", "GET", nil)
+            if asked == resets { take(answer) }
         } catch {
+            guard asked == resets else { return }
             offline = (error as? ToolsetAPI.Failure)?.status == 0
             if view == nil { self.error = error.localizedDescription }
         }
@@ -259,6 +264,7 @@ final class AssistantModel: ObservableObject {
 
     /// Signed out, or another computer picked: its conversation is not this one.
     func reset() {
+        resets += 1
         stopWatching()
         reading?.cancel()
         reading = nil
@@ -329,9 +335,12 @@ final class AssistantModel: ObservableObject {
     /// and says why (a 404 is something already gone or finished: nothing to say).
     private func write(_ path: String, method: String = "POST", json: Any? = nil) async {
         guard !Self.pretend, let server = server() else { return }
+        let asked = resets
         do {
-            take(try await server.call(path, method, json))
+            let answer = try await server.call(path, method, json)
+            if asked == resets { take(answer) }
         } catch {
+            guard asked == resets else { return }
             await load()
             let status = (error as? ToolsetAPI.Failure)?.status ?? 0
             if status != 404, status != 0 { self.error = error.localizedDescription }
@@ -393,10 +402,11 @@ final class AssistantModel: ObservableObject {
     private func stop(reply: String, of message: String?) async {
         guard let server = server(), stopping.insert(reply).inserted else { return }
         defer { stopping.remove(reply) }
+        let asked = resets
         do {
             let answer = try await server.call("/api/assistant/stop", "POST", ["reply": reply])
             if let message { outbox.detach(message) }
-            take(answer)
+            if asked == resets { take(answer) }
         } catch let failure as ToolsetAPI.Failure where failure.status == 404 {
             if let message { outbox.detach(message) }   // it had ended already
         } catch {}
@@ -410,7 +420,7 @@ final class AssistantModel: ObservableObject {
                 if Task.isCancelled { return }
                 await self.load()
             }
-            self?.reading = nil
+            if !Task.isCancelled { self?.reading = nil }   // cancelled by reset: the handle may be a newer poll's by now
         }
     }
 
@@ -430,8 +440,10 @@ final class AssistantModel: ObservableObject {
         } else {
             outbox.tried(message.id, after: view?.messages.last?.id ?? "")
         }
+        let asked = resets
         do {
             let answer = try await server.call("/api/assistant/turn", "POST", Self.body(message))
+            guard asked == resets else { return .later }   // another conversation by now: its queue is not this one's
             // out of the queue in the same moment it shows in the conversation: never drawn twice. One that
             // went before its videos were up stays, out of sight, for them.
             let reply = (try? JSONDecoder().decode(AssistantView.self, from: answer))?.messages.last

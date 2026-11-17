@@ -800,6 +800,9 @@ final class CaptionEditor: ObservableObject, Identifiable {
     /// A project picked on this phone whose upload or captions didn't
     /// finish (the app was closed): carry on from the kept copy.
     private func resume(_ file: URL) async {
+        // still opening while the kept copy is read: Transcribe pressed then ran beside the transcription below
+        step = .opening
+        defer { step = nil }
         guard let clip, let source = try? await CaptionSource.probe(file) else { return }
         if hasOriginal, !cues.isEmpty {
             CaptionSources.forget(id, server: server)   // all on the server now
@@ -1073,7 +1076,7 @@ final class CaptionEditor: ObservableObject, Identifiable {
             // Another device saved first. Take its revision so the next save can go through,
             // and keep this phone's version: the message says the last change wasn't saved.
             if let fresh: CapProject = try? await api.get("/api/projects/\(id)") { revision = fresh.revision }
-            fail("This project changed on another device, so your last change wasn't saved. Save again to keep this version, or check the website first.")
+            fail("This project changed on another phone or computer, so your last change wasn't saved. Save again to keep this version, or check the website first.")
         } catch {
             fail("Not saved: \(error.localizedDescription)")
         }

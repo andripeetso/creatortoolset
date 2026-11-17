@@ -86,7 +86,7 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
   const ids = jobFiles(edit, variant);
   // the access rule the worker checks at every step (worker.ts stillReadable), over every file the step may read
   // and the library's own per-clip check for a teammate (store.ts seesEdit: a clip a library policy hides from them never goes down)
-  if (sourcesWorkspace(ownerOf(edit), ids) !== edit.workspaceId || !(await editRole(job.actor, edit)) || !(await seesEdit(job.actor, edit))) throw new Error("Some footage is gone or no longer yours to read");
+  if (sourcesWorkspace(ownerOf(edit), ids) !== edit.workspaceId || !(await editRole(job.actor, edit)) || !(await seesEdit(job.actor, edit))) throw new Error("Some footage was deleted or cannot be read by this account");
 
   const db = libraryDb();
   const versions = rowsOf("SELECT * FROM asset_versions WHERE id IN (?*)", ids);

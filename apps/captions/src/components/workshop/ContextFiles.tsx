@@ -171,7 +171,7 @@ function useText(id: string) {
   useEffect(() => {
     let live = true;
     fetch(sourceTextUrl(id))
-      .then((r) => (r.ok ? r.text() : Promise.reject(new Error("Couldn't open the file"))))
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error("Could not open the file"))))
       .then(
         (text) => live && setGot({ id, text }),
         (e: Error) => live && setGot({ id, error: e.message }),

@@ -15,6 +15,7 @@ import { FrameworkForm, type FrameworkDraft } from "@/components/workshop/Framew
 import { KnowledgePanel } from "@/components/workshop/KnowledgePanel";
 import { RuleRow } from "@/components/workshop/RuleRow";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
+import { useAskFinal } from "@/components/workshop/AddFinalDialog";
 import { SessionMenu } from "@/components/workshop/SessionMenu";
 import { SharePopover } from "@/components/workshop/SharePopover";
 import { saveObsidianMany } from "@/components/workshop/ExportMarkdown";
@@ -213,9 +214,13 @@ export default function WorkshopPage() {
       navigate(sessionPath(s.id));
     });
 
+  const [askFinal, finalDialog] = useAskFinal();
   const setPosted = (id: string, posted: SessionPatch["posted"]) =>
     patchSession(id, { posted })
-      .then((m) => setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s))))
+      .then((m) => {
+        setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s)));
+        askFinal(id, m.title, m.status);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const setStatus = (id: string, status: SessionStatus) => {
@@ -231,12 +236,13 @@ export default function WorkshopPage() {
       });
     };
     put(status).then(
-      () =>
-        was &&
-        was !== status &&
-        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
-          for (const s of statusSteps(status, was)) await put(s);
-        }),
+      () => {
+        if (was !== status) askFinal(id, row?.title ?? "", status);
+        if (was && was !== status)
+          undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+            for (const s of statusSteps(status, was)) await put(s);
+          });
+      },
       (e) => setError(e instanceof Error ? e.message : String(e)),
     );
   };
@@ -254,7 +260,7 @@ export default function WorkshopPage() {
     run("export", async () => {
       const { saved, skipped } = await saveObsidianMany([...picked]);
       setPicked(new Set());
-      say(`Exported ${saved}${skipped ? `, skipped ${skipped} with no reel or carousel words yet` : ""}`);
+      say(`Exported ${saved}${skipped ? `, skipped ${skipped} with no reel or carousel words` : ""}`);
     });
   // a share link for each (the same link a session's own Share makes), all of them copied as "title: link" lines.
   // The copy starts inside the click with the links still coming (a ClipboardItem holding a promise): Safari and
@@ -273,7 +279,7 @@ export default function WorkshopPage() {
       await text;
       const ok = await copied;
       setPicked(new Set());
-      say(`${rows.length} share link${rows.length === 1 ? "" : "s"} ${ok ? "copied" : "made (the copy was refused; each row's Share has its link)"}`);
+      say(`${rows.length} share link${rows.length === 1 ? "" : "s"} ${ok ? "copied" : "made, not copied: each row's Share has its link"}`);
     });
   };
 
@@ -302,13 +308,13 @@ export default function WorkshopPage() {
         <ToolIntro
           icon={NotebookPen}
           title="Content Workshop"
-          line={`Search your research, take notes, draft reels, carousels, YouTube scripts, newsletters, X threads and articles.${avail ? ` · ${avail.library} posts in the library` : ""}`}
+          line={`Research, notes and drafts for reels, carousels and ads.${avail ? ` · ${avail.library} posts in Content Analyzer` : ""}`}
         />
 
         {avail && !avail.ai && (
           <p className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-            Connect Claude Code or Codex to write. Research and notes work now.
+            Needs an AI provider
           </p>
         )}
 
@@ -411,9 +417,10 @@ export default function WorkshopPage() {
               {/* hidden while rows are picked, so Share / Export take its place and nothing wraps */}
               {!picked.size && editable && <button type="button" disabled={busy !== null} onClick={() => void newSession()} className={`${primary} h-8 py-0`}>
                 {busy === "session" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                New session
+                New project
               </button>}
             </BrowseBar>
+            {finalDialog}
             {!sessionsKnown ? (
               <div aria-hidden className="flex flex-col gap-1.5">
                 {Array.from({ length: 5 }, (_, i) => (
@@ -422,7 +429,7 @@ export default function WorkshopPage() {
               </div>
             ) : sessions.length === 0 ? (
               <p className="py-10 text-center text-sm text-zinc-600">
-                No sessions yet. Start one, search a topic, add the posts worth reading.
+                No projects
               </p>
             ) : (
               (() => {
@@ -464,7 +471,7 @@ export default function WorkshopPage() {
                               <Loader2 className="h-3 w-3 animate-spin" /> Working
                             </span>
                           ) : live(s).unseen ? (
-                            <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-300" title="A reply finished that you haven't looked at">
+                            <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-300" title="Unread reply">
                               <CircleCheck className="h-3.5 w-3.5" /> Done
                             </span>
                           ) : null}
@@ -495,9 +502,9 @@ export default function WorkshopPage() {
 
         {tab === "rules" && (
           <section>
-            <p className={label}>Writing rules — they apply inside every framework</p>
+            <p className={label}>Writing rules</p>
             <p className="mb-3 text-[11px] text-zinc-500">
-              Rules that are on go into every generation. Switch one off here to drop it by default, or untick it for a single run in the Generate panel.
+              Rules that are on apply to every piece.
             </p>
             <form
               className="mb-3 flex gap-2"
@@ -513,12 +520,12 @@ export default function WorkshopPage() {
               <input
                 value={newRule}
                 onChange={(e) => setNewRule(e.target.value)}
-                placeholder="New rule, as an instruction — e.g. Spell out numbers under a hundred."
+                placeholder="New rule"
                 className="min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
               />
               <button type="submit" disabled={busy !== null || !newRule.trim()} className={primary}>
                 {busy === "rule" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                Add
+                Create
               </button>
             </form>
             <div className="flex flex-col gap-1.5">

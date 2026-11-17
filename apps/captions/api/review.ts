@@ -141,6 +141,9 @@ interface Version {
   draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
+  /** The same file on the computer that made it (an absolute path there, set by whoever files it): managers only, never
+   *  on a link. The Mac app shows it in Finder when it is on that Mac (apps/mac Reveal.swift), else Review downloads. */
+  local?: string;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
   stems?: StemSet;
   /** When its video files were deleted to save space (a later version went on
@@ -470,7 +473,7 @@ async function processVersion(id: string, n: number): Promise<void> {
   const src = sourcePath(id, n);
   try {
     const info = await probe(src);
-    if (!info || (!info.vcodec && !info.acodec)) throw new Error("Not a video file ffmpeg can read");
+    if (!info || (!info.vcodec && !info.acodec)) throw new Error("Could not read this file as a video");
     await jobVersion(id, n, {
       duration: info.duration,
       fps: info.fps,
@@ -567,7 +570,7 @@ function placeInBackground(id: string, n: number, placed: Promise<void>, onPlace
       },
       (e) => {
         console.error(`[review] relay ${id}/${n}:`, e);
-        return jobVersion(id, n, { status: "error", error: "Couldn't fetch the upload from its relay. Upload it again." });
+        return jobVersion(id, n, { status: "error", error: "Could not get the uploaded file. Upload it again." });
       },
     )
     .catch((e) => console.error(`[review] relay ${id}/${n}:`, e));
@@ -583,7 +586,7 @@ async function resumeRelay(id: string, n: number, relay: NonNullable<Version["re
   placeInBackground(
     id,
     n,
-    plugged ? plugged.place(relay.vid, sourcePath(id, n), relay.bytes) : Promise.reject(new Error("That upload relay is no longer set up")),
+    plugged ? plugged.place(relay.vid, sourcePath(id, n), relay.bytes) : Promise.reject(new Error("The upload service is not set up")),
   );
 }
 
@@ -953,6 +956,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(manage && v.edit ? { edit: v.edit } : {}),
       ...(manage && v.draft ? { draft: v.draft } : {}),
       ...(manage && v.source ? { source: v.source } : {}),
+      ...(manage && v.local && !v.removed ? { local: v.local } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
@@ -1020,7 +1024,7 @@ export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<R
   }
   const projectId = !assetId && body?.projectId ? body.projectId : undefined;
   if (projectId && !(await ownsProject(user.username, projectId))) {
-    return c.json({ error: "That project is gone" }, 404);
+    return c.json({ error: "Project not found" }, 404);
   }
   return {
     total: size,
@@ -1079,7 +1083,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1122,6 +1126,7 @@ export async function addVersion(
       ...(v.edit ? { edit: v.edit } : {}),
       ...(v.draft ? { draft: v.draft } : {}),
       ...(v.source ? { source: v.source } : {}),
+      ...(v.local && path.isAbsolute(v.local) ? { local: v.local } : {}),
       createdAt: now,
     });
   });
@@ -1133,7 +1138,7 @@ export async function addVersion(
     if (options.relay) placeInBackground(id, n, place(sourcePath(id, n)), emitAdded);
     else await place(sourcePath(id, n));
   } catch (e) {
-    await setVersion(id, n, { status: "error", error: "Upload incomplete — upload it again" });
+    await setVersion(id, n, { status: "error", error: "Upload incomplete. Upload it again." });
     throw e;
   }
   if (!options.relay) {
@@ -1211,7 +1216,7 @@ uploadRelayApp.post("/", async (c) => {
   const plugged = c.req.query("relay") === "tus" ? pluginRelay(view.active) : undefined;
   if (plugged) {
     const started = await plugged.start({ name: init.name, mime: init.mime, total: init.total }).catch(() => null);
-    if (!started) return c.json({ error: "The upload relay isn't answering: try again" }, 502);
+    if (!started) return c.json({ error: "Could not reach the upload service" }, 502);
     await startUpload<UploadInit>(uploadDir(uid), { ...init, relay: { id: plugged.id, vid: started.vid } });
     return c.json({ id: uid, relay: plugged.id, partSize: started.tus.partSize, tus: started.tus });
   }
@@ -1255,7 +1260,7 @@ uploadRelayApp.post("/:uid/complete", async (c) => {
     if (state.relay) {
       const { id: relayId, vid } = state.relay;
       const plugged = pluginRelay(relayId);
-      if (!plugged) return c.json({ error: "That upload relay is no longer set up" }, 409);
+      if (!plugged) return c.json({ error: "The upload service is not set up" }, 409);
       const res = await finishUpload(c, state, (dest) => plugged.place(vid, dest, state.total), { relay: { id: relayId, vid } });
       if (res.status === 200) await rm(uploadDir(uid), { recursive: true, force: true }).catch(() => {});
       return res;
@@ -1273,7 +1278,7 @@ uploadRelayApp.post("/:uid/complete", async (c) => {
     return c.json({ error: "Invalid parts" }, 400);
   }
   const store = serverStore();
-  if (!store?.direct) return c.json({ error: "The server's bucket is not set up" }, 409);
+  if (!store?.direct) return c.json({ error: "The server's storage is not set up" }, 409);
   try {
     await store.direct.complete(direct.key, direct.uploadId, parts);
   } catch (e) {
@@ -1300,7 +1305,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
   if (ver.status !== "ready" || !ver.width) return c.json({ error: "Wait until this version is ready" }, 409);
   const small = belowHd(ver.width, ver.height);
   if (small) return c.json({ error: small }, 409);
-  if (!ver.versionId) return c.json({ error: "This version isn't in the library yet" }, 409);
+  if (!ver.versionId) return c.json({ error: "This version is not in the Media Library yet" }, 409);
   const project = v.meta.projectId ? (await readProjects()).find((p) => p.id === v.meta.projectId) : undefined;
   const out = await addToFinals(
     {
@@ -1331,7 +1336,7 @@ reviewApp.post("/assets/:id/v/:n/content", async (c) => {
   if (!master) return c.json({ error: "Mark it captioned and pick its version without captions first" }, 409);
   for (const x of [ver, master]) {
     if (x.status !== "ready" || !x.width) return c.json({ error: "Wait until both are ready" }, 409);
-    if (!x.versionId) return c.json({ error: "This version isn't in the library yet" }, 409);
+    if (!x.versionId) return c.json({ error: "This version is not in the Media Library yet" }, 409);
     const small = belowHd(x.width, x.height);
     if (small) return c.json({ error: small }, 409);
   }
@@ -1388,14 +1393,14 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   const n = Number(c.req.param("n"));
   const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
   if (!v || !version) return c.json({ error: "Not found" }, 404);
-  if (version.edit || version.draft) return c.json({ error: "An AI edit has its own timeline" }, 409);
+  if (version.edit || version.draft) return c.json({ error: "A version from the AI Editor has its own timeline" }, 409);
   const name = cleanText(c.req.query("name"), 160) || "timeline";
   // refuse on the declared length before any of the body is read
   if (Number(c.req.header("content-length") ?? 0) > MAX_TIMELINE_BYTES) {
-    return c.json({ error: "That timeline file is too big" }, 413);
+    return c.json({ error: "Timeline file over 30 MB" }, 413);
   }
   const text = await c.req.text();
-  if (Buffer.byteLength(text) > MAX_TIMELINE_BYTES) return c.json({ error: "That timeline file is too big" }, 413);
+  if (Buffer.byteLength(text) > MAX_TIMELINE_BYTES) return c.json({ error: "Timeline file over 30 MB" }, 413);
   try {
     importTimeline(name, text, version.fps || undefined);
   } catch (e) {
@@ -1524,7 +1529,7 @@ reviewApp.patch("/assets/:id", async (c) => {
   const share = body?.share;
   const projectId = body?.projectId;
   if (projectId != null && !(await ownsProject(v.meta.owner, projectId))) {
-    return c.json({ error: "That project is gone" }, 404);
+    return c.json({ error: "Project not found" }, 404);
   }
   let oldToken: string | undefined;
   const ws = typeof projectId === "string" ? await folderWorkspace(projectId) : undefined;
@@ -2320,7 +2325,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       await writeFile(`${file}.jpg`, await refLook(file, kind));
     } catch {
       await rm(file, { force: true });
-      return c.json({ error: "Couldn't read that as an image or a video" }, 400);
+      return c.json({ error: "Could not read that file as an image or a video" }, 400);
     }
     await writeJson(`${file}.json`, ref);
     return c.json(ref, 201);
@@ -2425,7 +2430,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       return cm;
     });
     if (result === 404) return c.json({ error: "Not found" }, 404);
-    if (result === 403) return c.json({ error: "Not your comment" }, 403);
+    if (result === 403) return c.json({ error: "Only its author can change this comment" }, 403);
     return c.json(publicComment(v, result));
   });
 
@@ -2445,7 +2450,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       return 200;
     });
     if (status !== 200) {
-      return c.json({ error: status === 403 ? "Not your comment" : "Not found" }, status);
+      return c.json({ error: status === 403 ? "Only its author can change this comment" : "Not found" }, status);
     }
     // its references go with it
     for (const cm of gone) {
@@ -2465,6 +2470,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (!status || (!v.manage && !REVIEWER_APPROVALS.includes(status)) || !by) {
       return c.json({ error: "Invalid status" }, 400);
     }
+    // a person's own choice, so any status from any other: APPROVAL_MOVES holds back only what the app sets by itself (setApproval)
     const meta = await updateMeta(v.meta.id, (m) => {
       m.approval = { status, by, at: Date.now() };
     });

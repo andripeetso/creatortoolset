@@ -426,11 +426,16 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         Task { () -> Void in
             let client = AccountClient(server: server)
             var ticket: String?
+            // a later sign-in or a sign-out during the checks took this one's place and answered it: nothing more from here
+            let current = { self.pkce?.verifier == pair.verifier }
             do {
-                guard try await client.isSetUp(provider) else { answer(reply(AccountError.notSetUp)); return }
+                let up = try await client.isSetUp(provider)
+                guard current() else { return }
+                guard up else { answer(reply(AccountError.notSetUp)); return }
                 if link, let token { ticket = try await client.linkStart(token) }
+                guard current() else { return }
             } catch {
-                answer(link ? reply(error) : unreachable(error))
+                if current() { answer(link ? reply(error) : unreachable(error)) }
                 return
             }
             let sheet = ASWebAuthenticationSession(url: client.loginURL(provider, challenge: pair.challenge, link: ticket), callbackURLScheme: "creatortoolset") { [weak self] url, error in

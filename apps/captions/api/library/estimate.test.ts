@@ -198,7 +198,7 @@ describe("the plan's usage limit", () => {
     const p = await progress("lib_e", "local");
     expect(p.left).toBe(0);
     expect(p.waiting).toEqual([
-      { step: "describe", count: 3, missing: "Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then.", limit: true },
+      { step: "describe", count: 3, missing: "Your Claude plan's weekly limit is reached; it resets 5pm. They continue then.", limit: true },
     ]);
     expect(claimJob(d, 300, Date.now(), "jobs", ["describe"])).toBeNull(); // none asks the closed plan meanwhile
     // the hold is over and one asks again: still waiting, no time left shown, until one gets through

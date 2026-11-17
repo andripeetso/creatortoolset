@@ -13,6 +13,7 @@ import { DocumentEditor } from "@/components/workshop/DocumentEditor";
 import { DocumentTabs } from "@/components/workshop/DocumentTabs";
 import { ExportMarkdown } from "@/components/workshop/ExportMarkdown";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
+import { AddFinalButton } from "@/components/workshop/AddFinalDialog";
 import { DeskControls, WorkshopDesk } from "@/components/workshop/WorkshopDesk";
 import { SelectedSourcesStrip } from "@/components/workshop/SelectedSourcesStrip";
 import { SelectionToContext } from "@/components/workshop/SelectionToContext";
@@ -76,6 +77,7 @@ import {
   type SessionRecord,
   type SessionRow,
   type SessionStatus,
+  type DocumentBase,
   type WorkshopDocument,
   type WorkshopFramework,
   type WorkshopProject,
@@ -158,6 +160,9 @@ export default function WorkshopSessionPage() {
   // A piece being typed in keeps the copy it showed until its save lands (`held`): a refetch caused elsewhere never
   // moves the text under the cursor.
   const held = useRef(new Map<string, WorkshopDocument>());
+  // What the next save of a piece was typed on, sent with it so the server keeps what a turn wrote meanwhile: the
+  // copy it showed, or the last save itself while newer typing kept that save's answer off the screen.
+  const based = useRef(new Map<string, DocumentBase>());
   const savingDocs = useRef(new Map<string, number>());
   // `held` changes only with a docs write, which changes the data
   const setDocsData = docsLoad.set;
@@ -238,7 +243,7 @@ export default function WorkshopSessionPage() {
   const usageHint = useMemo(() => {
     const here = usageTally(messages);
     const elsewhere = session?.projectUsageElsewhere;
-    if (!here.turns && !elsewhere?.turns) return "thinking, questions, research";
+    if (!here.turns && !elsewhere?.turns) return "";
     const session$ = `Project $${here.costUsd.toFixed(2)} (${tokensLabel(here.tokens)} tokens)`;
     if (!elsewhere?.turns) return `${session$} API-equivalent`;
     return `${session$} · Workspace $${(here.costUsd + elsewhere.costUsd).toFixed(2)} (${tokensLabel(here.tokens + elsewhere.tokens)}, ${elsewhere.sessions + 1} projects) API-equivalent`;
@@ -422,11 +427,26 @@ export default function WorkshopSessionPage() {
     setDocSaving(true);
     const inFlight = (n: number) => savingDocs.current.set(p.docId, (savingDocs.current.get(p.docId) ?? 0) + n);
     inFlight(1);
-    return patchDocument(sessionId, p.docId, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}) })
+    const shown = held.current.get(p.docId);
+    const base: DocumentBase | undefined =
+      based.current.get(p.docId) ??
+      (shown && {
+        blocks: shown.blocks.map((b) => ({ id: b.id, text: b.text })),
+        caption: shown.caption?.text ?? "",
+        pinned: shown.pinned?.text ?? "",
+        ...(shown.kind === "reel" ? { hooks: (shown.hooks ?? []).map((h) => ({ id: h.id, text: h.text })) } : {}),
+      });
+    return patchDocument(sessionId, p.docId, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}), ...(base ? { base } : {}) })
       .then((doc) => {
         inFlight(-1);
         // the saved copy takes the server's; the piece on screen lets go of its own once no newer edit is waiting
-        if (pendingBlocks.current?.docId !== doc.id && !savingDocs.current.get(doc.id)) held.current.delete(doc.id);
+        if (pendingBlocks.current?.docId !== doc.id && !savingDocs.current.get(doc.id)) {
+          held.current.delete(doc.id);
+          based.current.delete(doc.id);
+        } else {
+          // ponytail: two saves in flight at once share one base; a queue per piece if a page's lines go missing that way
+          based.current.set(doc.id, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}) });
+        }
         setDocs((ds) => ds.map((d) => (d.id === doc.id ? doc : d)));
         return true;
       })
@@ -630,12 +650,6 @@ export default function WorkshopSessionPage() {
       .catch(fail);
   };
 
-  const setProject = (projectId: string | null) => {
-    if (!session) return;
-    setSession({ ...session, projectId: projectId ?? undefined });
-    patchSession(session.id, { projectId }).catch(fail);
-    if (projectId) void selectProject(projectId);
-  };
   // ---- what the AI changed: the last turn's new words on the open piece light up while it
   // writes, fade out a few seconds after, and the Changes button shows them again
   const lastEdit = [...messages].reverse().find((m) => m.role === "assistant" && m.edits?.docId === activeDoc?.id && !!m.edits?.versionBefore)?.edits;
@@ -704,7 +718,7 @@ export default function WorkshopSessionPage() {
     if (!session || !activeDoc) return false;
     setError(null);
     if (!(await flushBlocks())) {
-      setError("Your last edits did not save, so nothing was sent");
+      setError("Could not save the last edits, so nothing was sent");
       return false;
     }
     const reading = readerPost ? { postId: readerPost.id, slide: readerSlide?.postId === readerPost.id ? readerSlide.index : 0 } : undefined;
@@ -906,7 +920,11 @@ export default function WorkshopSessionPage() {
   };
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2 || /instagram\.com\//i.test(q)) return;
+    if (q.length < 2 || /instagram\.com\//i.test(q)) {
+      setResults(null);
+      setSearching(false);
+      return;
+    }
     let stopped = false;
     const t = window.setTimeout(() => {
       setSearching(true);
@@ -1061,6 +1079,7 @@ export default function WorkshopSessionPage() {
         }
       >
         {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} readOnly={readOnly} /> : null}
+        {session && !readOnly ? <AddFinalButton id={session.id} title={session.title} status={session.status} /> : null}
         {session ? <SessionStatusSelect value={session.status} onChange={setStatus} readOnly={readOnly} /> : <Ghost className="h-8 w-[107px]" />}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
@@ -1108,7 +1127,7 @@ export default function WorkshopSessionPage() {
               </button>
             ))
           : null}
-        <ProjectSwitcher onSelect={setProject} />
+        <ProjectSwitcher />
       </AppBar>
 
       <div className="flex min-h-0 flex-1">
@@ -1231,7 +1250,8 @@ export default function WorkshopSessionPage() {
                     <DocumentEditor
                       key={activeDoc.id}
                       doc={activeDoc}
-                      locked={thinking || !fresh || readOnly}
+                      locked={!fresh || readOnly}
+                      writing={thinking}
                       quiet={!thinking}
                       saving={docSaving}
                       aiAvailable={aiAvailable}
@@ -1256,7 +1276,7 @@ export default function WorkshopSessionPage() {
                     />
                   </div>
                 ) : session && docsKnown ? (
-                  <p className="p-4 text-sm text-muted-foreground">No document yet — add one with “+ New”.</p>
+                  <p className="p-4 text-sm text-muted-foreground">No pieces</p>
                 ) : (
                   // not loaded yet: the page's shape in quiet blocks (a title line, the piece's lines)
                   <div aria-hidden className="flex flex-col gap-3 p-4">
@@ -1338,7 +1358,7 @@ export default function WorkshopSessionPage() {
                             type="button"
                             onClick={() => void review()}
                             disabled={thinking}
-                            title="A reader reads only the piece, as one of your followers would: where they'd stop, what they'd take away, whether they'd save or send it. Its read lands here and the writer sees it next turn."
+                            title="A read of the piece alone, as a follower: where they would stop, what they would take away, whether they would save or send it."
                             className="flex items-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                           >
                             <Eye className="h-3.5 w-3.5" /> Read as a follower
@@ -1391,7 +1411,7 @@ export default function WorkshopSessionPage() {
                           searching={searching}
                           mine={
                             mine
-                              ? { on: mineOnly, label: `My account · @${mine.username}`, onToggle: () => setMineOnly((v) => !v) }
+                              ? { on: mineOnly, label: `Your account · @${mine.username}`, onToggle: () => setMineOnly((v) => !v) }
                               : null
                           }
                           format={{ on: formatOnly, onToggle: () => setFormatOnly((v) => !v) }}
@@ -1401,11 +1421,11 @@ export default function WorkshopSessionPage() {
                         {pastedLinks.length && !readOnly ? (
                           <div className="flex flex-col gap-2 rounded-lg border border-violet-400/30 bg-violet-500/[0.06] p-3 text-[12px]">
                             <p className="text-foreground">
-                              {pastedLinks.length === 1 ? "A post or video" : `${pastedLinks.length} posts or videos`}: add {pastedLinks.length === 1 ? "it" : "them"} to your library and this project. The transcript and on-screen text start at once.
+                              {pastedLinks.length === 1 ? "1 post or video" : `${pastedLinks.length} posts or videos`}
                             </p>
                             <div className="flex items-center gap-2">
                               <button type="button" disabled={adding?.busy || posts.length >= MAX_SESSION_SOURCES} onClick={() => void addFromLinks()} className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-                                {adding?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Add to the library and this project
+                                {adding?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Add to Content Analyzer and this project
                               </button>
                               <button type="button" onClick={() => setQuery("")} className="rounded-md px-2 py-1.5 text-muted-foreground hover:text-foreground">
                                 Clear
@@ -1414,7 +1434,7 @@ export default function WorkshopSessionPage() {
                             {adding?.error ? <p className="text-red-300">{adding.error}</p> : null}
                           </div>
                         ) : activeResults && hits.length === 0 ? (
-                          <p className="py-8 text-center text-sm text-muted-foreground">Nothing in the library talks about that yet.</p>
+                          <p className="py-8 text-center text-sm text-muted-foreground">No posts found</p>
                         ) : !activeResults ? (
                           library === null ? (
                             <div aria-hidden className="grid gap-2 md:grid-cols-2">
@@ -1424,11 +1444,10 @@ export default function WorkshopSessionPage() {
                             </div>
                           ) : library.length === 0 ? (
                             <p className="py-8 text-center text-sm text-muted-foreground">
-                              Nothing in the library yet —{" "}
+                              No posts ·{" "}
                               <Link to="/instagram" className="text-violet-700 hover:underline dark:text-violet-300">
-                                ingest posts in the Instagram Analyzer
-                              </Link>{" "}
-                              and they show up here.
+                                Add posts in Content Analyzer
+                              </Link>
                             </p>
                           ) : (
                             <div className="grid gap-2 md:grid-cols-2">

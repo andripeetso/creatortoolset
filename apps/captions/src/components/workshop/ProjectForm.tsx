@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { FileText, Folder, Loader2, Paperclip, Undo2, X } from "lucide-react";
+import { toast } from "sonner";
 import { PLATFORMS, type SocialPlatform } from "@contracts/connectors";
 import { listAccounts } from "@/lib/instagram";
 import {
@@ -103,7 +104,7 @@ export function ProjectForm({
   formId?: string;
   /** "setup": the first-run step. No accounts, instructions or context files; handles only. */
   variant?: "setup";
-  /** The page Settings → Details: no accounts block, and Save is on only while something changed. */
+  /** The page Settings → Details: no accounts block; it stays open after a save, so the save is said. */
   settings?: boolean;
   /** Tells the parent whether the name has text, so it can enable its own Create button. */
   onReady?: (ready: boolean) => void;
@@ -112,8 +113,6 @@ export function ProjectForm({
 }) {
   const setup = variant === "setup";
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
-  // what the server has, as text: on Settings → Details Save is on only while the form differs from it
-  const [saved, setSaved] = useState(() => JSON.stringify(f));
   // setup's edit shows the saved handles, so saving again keeps them (and the page can change them)
   const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>(() => (setup && initial?.handles ? { ...initial.handles } : {}));
   const [pending, setPending] = useState(false);
@@ -123,6 +122,8 @@ export function ProjectForm({
   const [dropped, setDropped] = useState<File[]>([]);
   const [filing, setFiling] = useState<FileFiling[]>([]);
   const [before, setBefore] = useState<{ notes: string; files: File[]; filing: FileFiling[] } | null>(null);
+  // what the material said two ways without saying which is right: his to settle
+  const [unsure, setUnsure] = useState<string[]>([]);
   const [drafting, setDrafting] = useState(false);
   const [over, setOver] = useState(false);
   const pick = useRef<HTMLInputElement>(null);
@@ -161,7 +162,8 @@ export function ProjectForm({
   };
   // only files: dragged or pasted text still lands in the box
   const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
-  const canWrite = !!f.notes.trim() || dropped.length > 0 || !!initial?.accountId;
+  // a saved workspace may hold context files, which the draft reads too
+  const canWrite = !!f.notes.trim() || dropped.length > 0 || !!initial;
   const write = async () => {
     setError(null);
     setDrafting(true);
@@ -173,13 +175,14 @@ export function ProjectForm({
       const known = handles.size ? await listAccounts("", { projectId: null }).catch(() => []) : [];
       const accountIds = [initial?.accountId, ...known.filter((a) => handles.has(a.username.toLowerCase())).map((a) => a.id)].filter((x): x is string => !!x);
       const files = await Promise.all(dropped.map(materialOf));
-      const { notes, files: filed = [] } = await draftProjectNotes({ name: f.name, text: context.trim(), accountIds, files });
+      const { notes, files: filed = [], unsure: open = [] } = await draftProjectNotes({ name: f.name, text: context.trim(), accountIds, files, projectId: initial?.id });
       if (!alive.current) return;
       setBefore({ notes: context, files: dropped, filing });
       setF((cur) => ({ ...cur, notes }));
       // the files stay, to look things up in later; only what it says a writer never needs goes
       const out = new Set(filed.filter((x) => !x.keep).map((x) => x.file));
       setFiling(filed);
+      setUnsure(open);
       setDropped((cur) => cur.filter((x) => !out.has(filePath(x))));
     } catch (err) {
       if (alive.current) setError(err instanceof Error ? err.message : String(err));
@@ -202,7 +205,8 @@ export function ProjectForm({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (setup && !f.name.trim()) return;
+    // an empty name never gets here (the field is `required`); one of spaces only does
+    if (!f.name.trim()) return setup ? undefined : setError("Needs a name");
     setPending(true);
     const said = new Map(filing.map((x) => [x.file, x]));
     const kept = dropped.map((file): KeptFile => ({ file, about: said.get(filePath(file))?.about, kind: said.get(filePath(file))?.kind }));
@@ -218,12 +222,12 @@ export function ProjectForm({
         setDropped([]);
         setFiling([]);
         setBefore(null);
-        setSaved(JSON.stringify(f));
+        // nothing on the page shows that it is saved
+        toast.success("Saved");
       })
       .catch((err) => alive.current && setError(err instanceof Error ? err.message : String(err)))
       .finally(() => alive.current && setPending(false));
   };
-  const changed = JSON.stringify(f) !== saved || dropped.length > 0;
   const quiet = "text-muted-foreground hover:text-foreground";
 
   const rows = (
@@ -371,7 +375,7 @@ export function ProjectForm({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => (setF((cur) => ({ ...cur, notes: before.notes })), setDropped(before.files), setFiling(before.filing), setBefore(null))}
+                  onClick={() => (setF((cur) => ({ ...cur, notes: before.notes })), setDropped(before.files), setFiling(before.filing), setUnsure([]), setBefore(null))}
                   className={cn("rounded-full", quiet)}
                 >
                   <Undo2 /> Undo
@@ -404,6 +408,11 @@ export function ProjectForm({
                 .reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), [])}
             </p>
           ) : null}
+          {unsure.map((u) => (
+            <p key={u} className="pt-2 text-xs text-muted-foreground">
+              Not sure: {u}
+            </p>
+          ))}
         </Row>
       )}
       {!setup && (
@@ -421,7 +430,6 @@ export function ProjectForm({
           }
         />
       )}
-      {!setup && initial && <WorkspaceServerWork projectId={initial.id} />}
       {children}
     </Card>
   );
@@ -431,13 +439,16 @@ export function ProjectForm({
     </p>
   ) : null;
   const save = (
-    <Button type="submit" form={fid} size="sm" disabled={locked || f.name.trim().length === 0 || (settings && !changed)}>
+    // never off for a missing name: the name is `required`, so pressing Save says so at the field
+    <Button type="submit" form={fid} size="sm" disabled={locked}>
       {(busy || pending) && <Loader2 className="animate-spin" />}
       {initial ? "Save" : "Create"}
     </Button>
   );
   // the <form> holds no rows of its own (see `fid`)
   const form = <form id={fid} className="contents" onSubmit={submit} />;
+  // saves when picked, so it is a card of its own, never a row among the ones that wait for Save
+  const work = !setup && initial && <WorkspaceServerWork projectId={initial.id} />;
   // its own section (title, Add, the list), the same one the Workshop's Knowledge tab draws
   const files = !setup && initial && <KnowledgePanel projectId={initial.id} />;
 
@@ -449,6 +460,7 @@ export function ProjectForm({
           {rows}
           {failed}
           <div className="flex justify-end">{save}</div>
+          {work}
         </Section>
         {files}
       </>
@@ -460,6 +472,7 @@ export function ProjectForm({
       <div className="flex flex-col gap-2.5">
         {rows}
         {failed}
+        {work}
       </div>
       {!setup && initial && (
         // a new workspace adds its accounts in step 2, once it exists (ProjectList's AccountsStep)

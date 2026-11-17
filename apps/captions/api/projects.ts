@@ -1284,7 +1284,7 @@ projectsApp.put("/:id/sync", async (c) => {
     if (revision !== baseRevision) {
       return c.json(
         {
-          error: "Project changed on another tab or device",
+          error: "The project was changed in another tab or on another computer",
           code: "REVISION_CONFLICT",
           revision,
         },
@@ -2552,7 +2552,7 @@ export async function clipWithCaptions(
     const meta = await ownedMeta(projectId, user);
     const clip = meta?.clips.find((c) => c.id === clipId);
     if (!meta || !clip)
-      throw new HTTPException(404, { message: "Caption clip not found." });
+      throw new HTTPException(404, { message: "Clip not found" });
     const home = mediaHome(projectId, clip);
     const file = await clipSourceFile(home, clipId);
     if (!file || !existsSync(file))
@@ -2600,7 +2600,7 @@ export async function addEditedClip(o: {
     let meta = await ownedMeta(projectId, o.user);
     if (o.origin && !meta)
       throw new HTTPException(404, {
-        message: "The Caption Studio project is no longer available.",
+        message: "Caption Studio project not found",
       });
     const existing = meta?.clips.find(
       (c) => c.transferId === o.transferId,

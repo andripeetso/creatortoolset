@@ -25,7 +25,12 @@ import { finished, keptByWeek, keptShare } from "./lib/workshop/kept";
 import { closestPairs, closestPosts } from "./lib/workshop/closest";
 import { PLAIN_VOICE } from "./lib/workshop/plain-voice";
 import { providerSettings, routeFor } from "./lib/providers";
-import { isOnline } from "./lib/devices";
+import { isOnline, isThisMachine } from "./lib/devices";
+import { finalsProjectOf, watchAllowed, watchFinals } from "./library/watch";
+import { kindOf } from "./library/routes";
+import { parseStorageFile, pathOn, storageFilePath } from "./lib/storage";
+import { THIS_COMPUTER, finalsDirName, finalsFolderOf, folderIn, type StorageFolder } from "../contracts/storage";
+import type { LibraryUpload } from "../contracts/library";
 import type { AccountContext, Comment } from "./lib/instagram/types";
 import { annotateComments } from "./lib/instagram/comment-judge";
 import { buildAnswerPrompt, listComments, type AnswerMessage, type AnswersFile } from "./lib/workshop/answers";
@@ -34,13 +39,13 @@ import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
-import { scriptsOwnerFor } from "./lib/workspaces";
-import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
+import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
-import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
+import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
-import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
+import { setSessionStatus, TURN_STOPPED, type ShareProgressState } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { announce } from "./lib/sync";
@@ -51,19 +56,20 @@ import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
 import {
   getWorkspace,
   inProject,
-  movesTo,
   onFor,
-  ownedProject,
   ownedProjects,
   readUserMarker,
   resolveProjectId,
   setCurrentProjectId,
   sharedHere,
+  sharedProjects,
+  workspaceScope,
   writeUserMarker,
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
 import { renderContext, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
+import { memoryFor } from "./lib/memory";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -78,21 +84,20 @@ import { channelFiles } from "./connectors";
 import { fetchYoutubeViaApify } from "./lib/youtube/fetch";
 import { PLAN_PARSERS } from "./lib/workshop/plans";
 import { renderDraft } from "./lib/workshop/render";
-import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, onVersion, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
+import { applyEdits, docToMarkdown, isHookId, keep, markEditsSeen, newDocument, onBase, onVersion, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./lib/workshop/doc";
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
-import { buildTurnPrompt, renderDocument, wantsComments } from "./lib/workshop/chat-prompt";
+import { buildTurnPrompt, renderDocument, unansweredBefore, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
-import { readThrough } from "./lib/workshop/readthrough";
 import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
-import { addToFinals, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
+import { addToFinals, finalsCollectionId, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
 import { probe as probeMedia } from "./library/media/probe";
-import { libraryDb } from "./library/db";
+import { finalsUpload, libraryDb } from "./library/db";
 import { ensureLibrary, libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
@@ -142,7 +147,7 @@ const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").
 /** A Mac CLI that can search the web (Codex's read-only sandbox has no network, so research never runs on it). */
 const onWebMac = (user: SessionUser, own?: Selection) => onMac(user, own) && (workshopAi(user, own).mac?.provider?.driver ?? "claude") !== "codex";
 const researchFor = (user: SessionUser) => !!perplexityFor(user) || onWebMac(user);
-const RESEARCH_OFF = "Research needs an AI on your Mac that can search the web (Claude Code, Gemini CLI or Grok) or your Perplexity key in Settings → API keys";
+const RESEARCH_OFF = "Needs an AI provider that can search the web or a Perplexity key";
 const researchLabel = (user: SessionUser) => (onWebMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
@@ -195,9 +200,16 @@ async function webResearch(
  *   sessions/<id>/drafts/<id>.md  rendered draft (+ .json plan)
  */
 export const workshopApp = new Hono<{ Variables: AuthVars }>();
-// the restart pass runs before the first request, so no read ever has to tidy a stale state
-workshopApp.use("*", async (_c, next) => {
+// the restart pass runs before the first request, so no read ever has to tidy a stale state; and before an account's
+// first one its sources that waited to be read when the server stopped take their turn again, as its own work
+const readsResumed = new Set<string>();
+workshopApp.use("*", async (c, next) => {
   await reconcileRestart();
+  const user = c.get("user") as SessionUser | undefined;
+  if (user && !readsResumed.has(user.username)) {
+    readsResumed.add(user.username);
+    if (!noKnowledge(user)) void queueWaiting(user).catch((e) => console.warn(`[workshop] waiting reads: ${errorMessage(e)}`));
+  }
   await next();
 });
 
@@ -299,43 +311,46 @@ const inRead = new Set<string>();
 export const knowledgeWork = async (username: string) =>
   (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name, ...(s.projectId ? { projectId: s.projectId } : {}) }] : []));
 
-/**
- * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,
- * kept to that project, so another brand never reads them.
- */
+/** The account's sources, oldest first: a read and nothing else (reconcileRestart puts right what an older version or a restart left). */
 async function listSources(user: SessionUser): Promise<KnowledgeSource[]> {
-  for (const p of await ownedProjects(user.username)) {
-    if (!p.knowledge?.length) continue;
-    for (const k of p.knowledge) {
-      if (!k.text.trim()) continue;
-      const now = Date.now();
-      const id = okId(k.id) ? k.id : randomUUID();
-      if (await readJson(sourcePath(id))) continue; // moved already (a form open since then saved it back)
-      await writeSource({ id, owner: user.username, name: k.name, projectId: p.id, chars: k.text.length, status: "new", createdAt: k.addedAt || now, updatedAt: now }, k.text);
-    }
-    await writeJsonAtomic(projectPath(p.id), { ...p, knowledge: [], updatedAt: Date.now() });
-    console.log(`[workshop] ${user.username}: ${p.knowledge.length} context files of "${p.name}" moved into Knowledge`);
+  return (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** The account's sources that wait to be read take their turn: after a restart, after a usage limit's reset, and when Read is pressed. */
+async function queueWaiting(user: SessionUser): Promise<void> {
+  for (const s of await listRecords<KnowledgeSource>(DIRS.sources, user)) if (s.owner === user.username && s.status === "queued") queueRead(user, s.id);
+}
+
+/**
+ * A project's context files from before (Project.knowledge) move into its owner's sources, kept to that project, so
+ * another brand never reads them. At start, and when a form open since before saves them back.
+ */
+async function moveOldKnowledge(p: Project): Promise<void> {
+  if (!p.knowledge?.length) return;
+  for (const k of p.knowledge) {
+    if (!k.text.trim()) continue;
+    const now = Date.now();
+    const id = okId(k.id) ? k.id : randomUUID();
+    if (await readJson(sourcePath(id))) continue; // moved already (a form open since then saved it back)
+    await writeSource({ id, owner: p.owner, name: k.name, projectId: p.id, chars: k.text.length, status: "new", createdAt: k.addedAt || now, updatedAt: now }, k.text);
   }
-  let list = (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username);
-  let split = false;
-  for (const s of list) {
-    // a folder kept as one source before each file was its own: its files, each its own source
-    if (s.status === "reading" || /\.[a-z0-9]{1,5}$/i.test(s.name) || !(await sourceHead(s.id)).startsWith(`# ${s.name}/`)) continue;
-    const parts = splitBundle(s.name, await readSourceText(s.id));
-    if (!parts) continue;
-    for (const [i, p] of parts.entries()) {
-      const about = p.about || s.sections?.find((x) => x.title === p.path)?.about || "";
-      const now = Date.now();
-      await writeSource({ id: randomUUID(), owner: s.owner, name: p.path.slice(0, SOURCE_LIMITS.name), ...(s.projectId ? { projectId: s.projectId } : {}), chars: p.text.length, status: about ? "read" : "queued", ...(about ? { about, readAt: now } : {}), createdAt: s.createdAt + i, updatedAt: now }, p.text);
-    }
-    await rm(sourcePath(s.id), { force: true });
-    await rm(sourceTextPath(s.id), { force: true });
-    console.log(`[workshop] ${user.username}: "${s.name}" split into its ${parts.length} files`);
-    split = true;
+  await writeJsonAtomic(projectPath(p.id), { ...p, knowledge: [], updatedAt: Date.now() });
+  console.log(`[workshop] ${p.owner}: ${p.knowledge.length} context files of "${p.name}" moved into Knowledge`);
+}
+
+/** At start: a folder kept as one source before each file was its own becomes its files, each its own source. */
+async function splitOldBundle(s: KnowledgeSource): Promise<void> {
+  if (/\.[a-z0-9]{1,5}$/i.test(s.name) || !(await sourceHead(s.id)).startsWith(`# ${s.name}/`)) return;
+  const parts = splitBundle(s.name, await readSourceText(s.id));
+  if (!parts) return;
+  for (const [i, p] of parts.entries()) {
+    const about = p.about || s.sections?.find((x) => x.title === p.path)?.about || "";
+    const now = Date.now();
+    await writeSource({ id: randomUUID(), owner: s.owner, name: p.path.slice(0, SOURCE_LIMITS.name), ...(s.projectId ? { projectId: s.projectId } : {}), chars: p.text.length, status: about ? "read" : "queued", ...(about ? { about, readAt: now } : {}), createdAt: s.createdAt + i, updatedAt: now }, p.text);
   }
-  if (split) list = (await listRecords<KnowledgeSource>(DIRS.sources, user)).filter((s) => s.owner === user.username);
-  for (const s of list) if (s.status === "queued" && !queuedReads.has(s.id)) queueRead(user, s.id);
-  return list.sort((a, b) => a.createdAt - b.createdAt);
+  await rm(sourcePath(s.id), { force: true });
+  await rm(sourceTextPath(s.id), { force: true });
+  console.log(`[workshop] ${s.owner}: "${s.name}" split into its ${parts.length} files`);
 }
 
 /** A source text's first bytes: enough to tell a kept folder, without reading a book. */
@@ -491,7 +506,7 @@ function pauseReads(user: SessionUser, until: number): void {
   setTimeout(() => {
     if (readsPaused.get(user.username) !== until) return;
     readsPaused.delete(user.username);
-    void listSources(user).then((all) => all.filter((s) => s.status === "queued").forEach((s) => queueRead(user, s.id)));
+    void queueWaiting(user);
   }, Math.max(1000, until - Date.now() + 5000)).unref?.();
 }
 
@@ -690,6 +705,8 @@ export async function readSession(id: string): Promise<SessionMeta | null> {
 /**
  * What a restart ended: a draft still generating, a reply still thinking, a source still being read. Nothing runs
  * across a restart, so each is marked failed once, before the first request (the workshop middleware awaits it).
+ * The same pass moves what an older version kept another way to where it is kept now (a list of the sources did
+ * that before, as it read).
  */
 let restarted: Promise<void> | undefined;
 function reconcileRestart(): Promise<void> {
@@ -717,18 +734,28 @@ function reconcileRestart(): Promise<void> {
         }
       });
     }
+    for (const f of await readdir(DIRS.projects).catch(() => [] as string[])) {
+      const p = f.endsWith(".json") ? await readJson<Project>(path.join(DIRS.projects, f)) : null;
+      if (p) await moveOldKnowledge(p);
+    }
     for (const f of await readdir(DIRS.sources).catch(() => [] as string[])) {
       const id = f.endsWith(".json") ? f.slice(0, -".json".length) : "";
       if (!okId(id)) continue;
       const s = await readJson<KnowledgeSource>(sourcePath(id));
-      if (s?.status === "reading") await patchSource(id, (cur) => ({ ...cur, status: "queued" }));
+      const now = s?.status === "reading" ? await patchSource(id, (cur) => ({ ...cur, status: "queued" })) : s;
+      if (now) await splitOldBundle(now);
     }
   })().catch((e) => console.error("[workshop] restart pass", errorMessage(e))));
 }
 
 export async function ownedSession(id: string, user: SessionUser): Promise<SessionMeta | null> {
   const meta = await readSession(id);
-  return meta && canSee(meta.owner, user) ? meta : null;
+  if (!meta || !canSee(meta.owner, user)) return null;
+  // a chat's tools (mcp.ts, a scope with its turn) open only the projects of the chat's own workspace, whatever id
+  // they are given: another client's script is never read or written from this chat (owner, 2026-11-16)
+  const chat = workspaceScope.getStore();
+  if (chat?.turn && meta.projectId && meta.projectId !== chat.id) return null;
+  return meta;
 }
 
 /**
@@ -802,6 +829,25 @@ const IMAGE_EXT: Record<ImageRef["type"], string> = { "image/jpeg": "jpg", "imag
 const imagePath = (id: string, im: Pick<ImageRef, "id" | "type">) => path.join(sessionDir(id), "images", `${im.id}.${IMAGE_EXT[im.type]}`);
 /** Files sent with messages (PDFs), one file each, in sessions/<id>/files/. */
 const filePath = (id: string, f: Pick<FileRef, "id" | "type">) => path.join(sessionDir(id), "files", `${f.id}.${ATTACH_EXT[f.type]}`);
+
+/** A message's stored pictures and PDFs as base64, each with its path in the turn folder (attached.ts); a gone one is
+ * left out. PDFs only when the Mac reads them (`pdfs`): the rest are `unread`. */
+async function readAttachments(sessionId: string, m: ChatMessage, pdfs: boolean) {
+  const images: Array<ImageRef & { data: string; file: string }> = [];
+  const files: Array<FileRef & { data: string; file: string }> = [];
+  const unread: FileRef[] = [];
+  for (const a of messageAttachments(m)) {
+    if (a.kind === "image") {
+      const data = await readFile(imagePath(sessionId, a.ref)).catch(() => null);
+      if (data) images.push({ ...a.ref, data: data.toString("base64"), file: a.file });
+      continue;
+    }
+    const data = pdfs ? await readFile(filePath(sessionId, a.ref)).catch(() => null) : null;
+    if (data) files.push({ ...a.ref, data: data.toString("base64"), file: a.file });
+    else unread.push(a.ref);
+  }
+  return { images, files, unread };
+}
 
 /** A picture a piece holds (the editor's Add picture): stored in the session's images/ like a chat picture; found by id and whichever type it is. */
 async function pieceImage(sessionId: string, iid: string): Promise<ImageRef | null> {
@@ -1043,7 +1089,8 @@ async function nameSession(sessionId: string, user: SessionUser, docId: string, 
   const names: string[] = [];
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const m = id === sessionId ? null : await readSession(id);
-    if (m?.owner === user.username && !UNTITLED.test(m.title.trim())) names.push(m.title.trim());
+    // this workspace's names only: another client's project names never go into a prompt here
+    if (m?.owner === user.username && m.projectId === meta.projectId && !UNTITLED.test(m.title.trim())) names.push(m.title.trim());
   }
   const name = await completeWithFallback(
     "Name this project. Reply with the name only.",
@@ -1130,7 +1177,7 @@ async function turnFolder(
   Object.assign(files, libraryFiles(await libraryForWorkshop(user, session.projectId)));
   await ensureSeeds(user.username);
   Object.assign(files, frameworkFiles(onFor((await listRecords<Framework>(DIRS.frameworks, user)).filter((f) => f.owner === user.username), project).map(withRole)));
-  const log = await readEditLog(session.owner);
+  const log = (await readEditLog(session.owner)).filter((p) => inProject(p, session.projectId));
   if (log.length) files["my-edits/INDEX.md"] = editsFile(log);
   return files;
 }
@@ -1193,18 +1240,28 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
   };
   /** Locked slides the turn tried to change: refused, and said so. */
   const refused = new Set<string>();
+  // The piece stays open while the turn writes. What the author changes after the turn read it is theirs: the turn's
+  // edit to it is refused and said so, and taking the turn back out leaves it in place.
+  const since = Date.now();
+  const theirs = new Set<string>();
+  const noteSkipped = (skipped: ReturnType<typeof applyEdits>["skipped"]) => {
+    for (const x of skipped) {
+      if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
+      if (x.reason === "edited") theirs.add("id" in x.op ? x.op.id : x.op.op === "set_caption" ? "caption" : "pinned");
+    }
+  };
   const undoPartial = async () => {
     if (!applied || !versionBefore) return;
     const before = versionBefore;
     await updateDoc(session.id, ask.docId, (d) => {
-      revert(d, before);
+      undoTurn(d, before, since);
     }).catch(() => {});
     applied = 0;
     blockIds = [];
   };
   try {
     const read = await readDoc(session.id, ask.docId);
-    if (!read) throw new Error("That document is gone");
+    if (!read) throw new Error("Piece not found");
     // a turn for one Finals version: the writer reads and writes that version's post description as the piece's
     const doc = ask.captionFor ? withVersionCaption(read, ask.captionFor) : read;
     await progress({ stage: "packing" }, true);
@@ -1247,7 +1304,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         if (e) fetched.push({ handle: e.handle, parts: a.parts });
       }
       const named = fresh.map((a) => index.find((x) => x.id === a.postId)?.handle).filter(Boolean);
-      step(`Pulled from the sources: ${[...new Set(named)].map((h) => `@${h}`).join(", ")} (${[...new Set(fresh.flatMap((a) => a.parts))].join(", ")})`);
+      step(`Loaded from the sources: ${[...new Set(named)].map((h) => `@${h}`).join(", ")} (${[...new Set(fresh.flatMap((a) => a.parts))].join(", ")})`);
       return true;
     };
     // A transcript the AI needs but nobody made yet: make it now, then the pull has words in it.
@@ -1296,13 +1353,16 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const askPasted = await readPasted(session.id, ask.pasted);
     // the pieces as the author saw them when they wrote: a line they gave their own version of is kept from these
     const piecesAsked = (await listDocs(session.id)).filter((d) => d.kind !== "notes");
-    const askImages: Array<ImageRef & { data: string }> = [];
-    for (const im of ask.images ?? []) {
-      const data = await readFile(imagePath(session.id, im)).catch(() => null);
-      if (data) askImages.push({ ...im, data: data.toString("base64") });
-    }
+    // PDFs are read by the Mac only (its folder, or the files it reads without one); the API-key path has no way to read them
+    const macReads = onMac(user, session.ai);
+    const { images: askImages, files: askFiles, unread: unreadFiles } = await readAttachments(session.id, ask, macReads);
+    // The author's messages a stop or a failure left without a reply: this turn answers them too, with their pictures
+    const unanswered = unansweredBefore(chat.messages, ask);
+    const missed = await Promise.all(unanswered.map((m) => readAttachments(session.id, m, macReads)));
+    const missedImages = missed.flatMap((a) => a.images);
     // Media Library clips: read now, as the author; each thumbnail goes with the pictures, the words into the prompt
     const askLibrary: Array<{ title: string; description?: { text: string; source: "user" | "ai" }; transcript?: string }> = [];
+    let thumbs = 0;
     for (const ref of ask.library ?? []) {
       if (ref.kind === "external") {
         // a source's clip: its title only until the source serves its description and thumbnail (external refs have no file here)
@@ -1314,18 +1374,14 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       if (!clip) continue;
       const { thumb, ...words } = clip;
       askLibrary.push(words);
-      if (thumb) askImages.push({ id: ref.versionId, name: `${clip.title} (library thumbnail)`, type: "image/jpeg", data: thumb });
+      if (thumb) {
+        const im = { id: ref.versionId, name: `${clip.title} (library thumbnail)`, type: "image/jpeg" as const };
+        // numbered after the message's own pictures and files, so theirs keep the same paths on every later turn
+        askImages.push({ ...im, data: thumb, file: attachedFile(im, (ask.images?.length ?? 0) + (ask.files?.length ?? 0) + thumbs++, ask.id) });
+      }
     }
-    // PDFs are read by the Mac only (its folder, or the files it reads without one); the API-key path has no way to read them
-    const macReads = onMac(user, session.ai);
-    const askFiles: Array<FileRef & { data: string }> = [];
-    const unreadFiles: FileRef[] = [];
-    for (const f of ask.files ?? []) {
-      const data = macReads ? await readFile(filePath(session.id, f)).catch(() => null) : null;
-      if (data) askFiles.push({ ...f, data: data.toString("base64") });
-      else unreadFiles.push(f);
-    }
-    const attachments = [...askImages, ...askFiles]; // the folder's attached/ files, numbered in this order
+    // the folder's attached/<message>/ files, this message's and the unanswered ones'
+    const attachments = [...askImages, ...askFiles, ...missed.flatMap((a) => [...a.images, ...a.files])];
     // Next to the piece: the few of the author's posts and rewrites closest to it (closest.ts), the
     // description rewrites when the author asks for one, the slide/hook/script ones always. The rest is in the folder.
     const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
@@ -1347,6 +1403,11 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // On the Mac the turn reads a folder with everything; on the API key, the packed prompt below. A caption turn
     // needs none of it: the Mac answers from the prompt (a folder can be megabytes of tokens per turn).
     let folder: Folder | null = null;
+    // Grok's prompt gets the folder's files whole and it can't be given pictures: no skills for it. The chat's earlier
+    // pictures go to Claude only, which opens one when it needs it (Codex is handed every picture in the folder, each turn)
+    const driver = workshopAi(user, session.ai).mac?.provider?.driver;
+    const grok = driver === "grok";
+    const keepsPictures = !driver || driver === "claude";
     if (onMac(user, session.ai) && !(captionOnly && !approvedWeb)) {
       // the folder is all it reads (no pulls): a source video nobody transcribed yet is transcribed first
       const untranscribed = index.filter((e) => e.kind !== "carousel" && !e.has.transcript).map((e) => e.id);
@@ -1360,8 +1421,17 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         return null;
       });
       if (folder) {
-        // the relay writes "base64:" entries as bytes; Claude's Read tool shows them as pictures
-        attachments.forEach((f, i) => (folder![attachedFile(f, i)] = `base64:${f.data}`));
+        // the relay writes "base64:" entries as bytes; Claude's Read tool shows them as pictures. Every picture and PDF
+        // sent in this chat stays at its message's path for the whole session, so a later turn or a new Claude session
+        // can still open it (the Mac keeps them by hash: mac-claude.ts packFor).
+        if (keepsPictures) {
+          for (const m of chat.messages) {
+            if (m.role !== "user" || m.id === ask.id || !(m.images?.length || m.files?.length)) continue;
+            const kept = await readAttachments(session.id, m, true);
+            for (const f of [...kept.images, ...kept.files]) folder[f.file] = `base64:${f.data}`;
+          }
+        }
+        for (const f of attachments) folder[f.file] = `base64:${f.data}`;
         const chars = Object.values(folder).reduce((n, f) => n + f.length, 0);
         console.log(`[workshop] folder: ${Object.keys(folder).length} files, ${(chars / 1e6).toFixed(1)} MB of text, ${Date.now() - t} ms`);
       }
@@ -1371,7 +1441,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const askAt = chat.messages.findIndex((m) => m.id === ask.id);
     // The author's own skills for this project (lib/skills.ts): a file each in the folder, a line each in the prompt, and
     // a change to them starts the Mac's session over. Not for Grok, whose prompt gets the folder's files whole.
-    const skills = folder && workshopAi(user, session.ai).mac?.provider?.driver !== "grok" ? await skillsFor(user.username, session.projectId) : [];
+    const skills = folder && !grok ? await skillsFor(user.username, session.projectId) : [];
     Object.assign(folder ?? {}, skillFiles(skills));
     const context = contextKey(project, frameworks) + skills.map((s) => `:${s.id}@${s.updatedAt}`).join("");
     const claude = folder ? resumableClaude(session, askAt > 0 ? chat.messages[askAt - 1]!.id : undefined, ids, context, providerKey(user, session.ai)) : undefined;
@@ -1447,10 +1517,17 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         web: folder && onWebMac(user, session.ai) ? approvedWeb || undefined : undefined,
         quotes: ask.quotes,
         pasted: askPasted.map((p) => ({ name: p.name, text: p.text, ...(folder ? { file: pastedFile(session, p) } : {}) })),
-        images: askImages.map((im, i) => ({ name: im.name, ...(folder || macReads ? { file: attachedFile(im, i) } : {}) })),
-        files: askFiles.map((f, j) => ({ name: f.name, file: attachedFile(f, askImages.length + j) })),
+        images: askImages.map((im) => ({ name: im.name, ...(folder || macReads ? { file: im.file } : {}) })),
+        files: askFiles.map((f) => ({ name: f.name, file: f.file })),
+        unanswered: unanswered.length
+          ? unanswered.map((m, k) => ({
+              text: m.text,
+              images: missed[k]!.images.map((im) => ({ name: im.name, ...(folder || macReads ? { file: im.file } : {}) })),
+              files: missed[k]!.files.map((f) => ({ name: f.name, file: f.file })),
+            }))
+          : undefined,
         library: askLibrary.length ? askLibrary : undefined,
-        folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)) } : undefined,
+        folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)), attached: keepsPictures } : undefined,
         resumed: resume && folder ? { newSources: index.filter((e) => !resume.sources.includes(e.id)).map((e) => ({ ref: refOf.get(e.id)!, handle: e.handle })) } : undefined,
       });
       return prompt;
@@ -1472,9 +1549,9 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           const fresh = part.edits.slice(applied);
           await updateDoc(session.id, doc.id, (d) => {
             if (!versionBefore) versionBefore = d.headVersion ?? snapshot(d, `${d.dirty ? "your edits " : ""}before: ${ask.text.slice(0, 80)}`).id;
-            const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(fresh, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" })));
+            const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(fresh, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" }), { since, read: doc.blocks }));
             blockIds.push(...r.blockIds);
-            for (const x of r.skipped) if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
+            noteSkipped(r.skipped);
           });
           applied = part.edits.length;
           patch.edits = { docId: doc.id, blockIds: [...blockIds], versionBefore };
@@ -1491,7 +1568,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     let macMissed = false;
     for (;;) {
       calls++;
-      step(calls === 1 ? (folder ? "Reading your folder and thinking" : "Thinking") : research ? "Thinking again with what the web search found" : "Thinking again with what it pulled");
+      step(calls === 1 ? (folder ? "Reading the folder" : "Thinking") : research ? "Reading the web search results" : "Reading the loaded text");
       let out: { result: TurnPlan; provider: string } | null = null;
       // a provider on the Mac reads the folder; without one (it could not be made) it gets the packed prompt
       if (onMac(user, session.ai)) {
@@ -1504,7 +1581,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
             ...workshopAi(user, session.ai).mac,
             label: "Workshop",
             // no folder: the pictures still go as files the provider reads
-            files: folder ?? (attachments.length ? Object.fromEntries(attachments.map((f, i) => [attachedFile(f, i), `base64:${f.data}`])) : undefined),
+            files: folder ?? (attachments.length ? Object.fromEntries(attachments.map((f) => [f.file, `base64:${f.data}`])) : undefined),
             web: !!folder && !!approvedWeb && onWebMac(user, session.ai),
             onStep: step,
             ...(folder ? { session: { key: session.id, resume: resume?.id }, onSession: (s: MacSession) => (got.session = s) } : {}),
@@ -1517,7 +1594,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           if (e instanceof MacClaudeError) addUsage(e.usage);
           const kind = macErrorKind(e);
           if (signal.aborted || kind === "stopped") throw new Error("Stopped");
-          throw new Error(`${kind === "unclaimed" || kind === "limit" ? errorMessage(e) : `Your AI did not finish this reply (${errorMessage(e)})`}. Retry sends it again.`);
+          throw new Error(`${kind === "unclaimed" || kind === "limit" ? errorMessage(e) : `The AI provider did not finish this reply (${errorMessage(e)})`}. Retry sends it again.`);
         };
         // the Mac's Claude session is gone (the Mac relay): this same turn runs once more as a new session, and the reply says so
         let lost = false;
@@ -1533,7 +1610,9 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       } else {
         // the API key (a guest or the demo, when switched on): the packed prompt, pictures sent along
         const prompt = await build();
-        const pictures = askImages.length ? { images: askImages.map((im) => ({ type: im.type, data: im.data })) } : {};
+        // the unanswered messages' pictures after this one's, in the order the prompt numbers them
+        const shown = [...askImages, ...missedImages];
+        const pictures = shown.length ? { images: shown.map((im) => ({ type: im.type, data: im.data })) } : {};
         out = await streamWithFallback(prompt.system, prompt.user, signal, parseTurn, hooks, { ...workshopAi(user, session.ai), ...pictures });
       }
       plan = out.result;
@@ -1624,15 +1703,15 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       const ok = await updateDoc(session.id, target.id, (d) => {
         if (revert(d, plan.revertTo!)) revertedTo = plan.revertTo;
       });
-      if (!ok) throw new Error("That document is gone");
+      if (!ok) throw new Error("Piece not found");
     } else if (plan.edits.length > applied || (created && plan.edits.length)) {
       const rest = created || fillEmpty ? editsForNewDocument(plan.edits) : plan.edits.slice(applied);
       await progress({ stage: "applying" }, true);
       await updateDoc(session.id, target.id, (d) => {
         if (!created && !versionBefore) versionBefore = d.headVersion ?? snapshot(d, `${d.dirty ? "your edits " : ""}before: ${ask.text.slice(0, 80)}`).id;
-        const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(rest, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" })));
+        const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(rest, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" }), { since, read: doc.blocks }));
         blockIds.push(...r.blockIds);
-        for (const x of r.skipped) if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
+        noteSkipped(r.skipped);
       });
       applied = plan.edits.length;
     }
@@ -1642,7 +1721,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         versionAfter = snapshot(d, `after: ${ask.text.slice(0, 80)}`).id;
       });
     }
-    await updateDoc(session.id, doc.id, (d) => markEditsSeen(d));
+    await updateDoc(session.id, doc.id, (d) => markEditsSeen(d, since));
     // a line of the piece they gave their own version of in this message is kept like a rewrite on the page (edit-log.ts)
     if (plan.theirs?.length) {
       const pointed = (ask.quotes ?? []).filter((q) => q.from !== "reply" && !q.postId);
@@ -1663,37 +1742,38 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         ? { kind: "research", depth: plan.research.depth, question: plan.research.question, status: "open" }
         : undefined;
     const notes: string[] = [];
-    if (macLast?.session?.state === "lost") notes.push("Claude's earlier session for this conversation was gone, so this reply read the whole conversation again.");
-    if (plan.revertTo && !revertedTo) notes.push(`I could not find version ${plan.revertTo}.`);
+    if (macLast?.session?.state === "lost") notes.push("The earlier session was not found, so this reply read the whole chat again.");
+    if (plan.revertTo && !revertedTo) notes.push(`Version ${plan.revertTo} not found.`);
     if (plan.search) {
       notes.push(
         hits?.length
-          ? `I searched the library for “${plan.search}” — ${hits.length} related post${hits.length === 1 ? "" : "s"} below, add the ones you want.`
-          : `I searched the library for “${plan.search}” — nothing beyond what is already in the project.`,
+          ? `Searched posts for “${plan.search}”: ${hits.length} related post${hits.length === 1 ? "" : "s"} below.`
+          : `Searched posts for “${plan.search}”: nothing beyond what is already in the project.`,
       );
     }
     // Codex's sandbox has no network: an approved search runs only on Claude Code on the Mac (or Perplexity), say so otherwise
-    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Web search isn't set up for this AI, so I could not check that on the web. An AI on your Mac that can search can, or add a Perplexity key.");
+    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Not checked on the web: needs an AI provider that can search the web or a Perplexity key.");
     // a web search the model ran itself is said in the answer, in code (the model may not)
     const searched = steps.filter((x) => x.label.startsWith("Searched the web: ")).map((x) => x.label.slice("Searched the web: ".length));
     if (searched.length) notes.push(`Searched the web for ${searched.join(", ")}.`);
     if (unreadFiles.length) {
       const list = unreadFiles.map((f) => f.name).join(", ");
-      notes.push(macReads ? `Not read, the file is no longer in this project: ${list}.` : `Not read: ${list}. PDFs reach the AI only through the Mac, so this reply did not read them.`);
+      notes.push(macReads ? `Not read, the file is no longer in this project: ${list}.` : `Not read: ${list}. PDFs need an AI provider on a computer.`);
     }
     if (refused.size) {
       const at = (await readDoc(session.id, target.id))?.blocks.map((b) => b.id) ?? [];
       const nums = [...refused].map((id) => at.indexOf(id) + 1).filter((n) => n > 0).sort((a, b) => a - b);
-      notes.push(`Left ${nums.length ? `${nums.length > 1 ? "slides" : "slide"} ${nums.join(", ")}` : "your locked slides"} as you locked ${nums.length > 1 ? "them" : "it"}.`);
+      notes.push(`Locked and not changed: ${nums.length ? `${nums.length > 1 ? "slides" : "slide"} ${nums.join(", ")}` : "the locked slides"}.`);
     }
-    // the read-through: the whole piece against what the model never checks, and against the author's posted carousels
-    if (blockIds.length || created) {
-      const edited = await readDoc(session.id, target.id);
-      if (edited) {
-        const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
-        const found = readThrough(edited, { slides: (own?.posts ?? []).flatMap((p) => p.slides ?? []), captions: (own?.posts ?? []).map((p) => p.item.caption ?? "") });
-        if (found.length) notes.push(`Read-through:\n${found.map((f) => `- ${f}`).join("\n")}`);
-      }
+    if (theirs.size) {
+      const now = await readDoc(session.id, target.id);
+      const unit = now?.kind === "carousel" ? "slide" : now?.kind === "ad" ? "line" : now?.kind === "thread" ? "post" : "section";
+      const name = (id: string) =>
+        id === "caption" ? "the post description" : id === "pinned" ? "the pinned comment" : isHookId(id) ? "a hook" : now?.kind === "reel" ? "the script" : now?.kind === "notes" ? "the notes" : `${unit} ${(now?.blocks.findIndex((b) => b.id === id) ?? -1) + 1}`;
+      // one they have since removed is not named
+      const names = [...new Set([...theirs].map(name))].filter((n) => !n.endsWith(" 0")).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const one = names.length === 1;
+      if (names.length) notes.push(`You changed ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]} while this was being written, so ${one ? "it was" : "they were"} left as you wrote ${one ? "it" : "them"}.`);
     }
     // the draft changed: check it against its rules (flags only, never blocks)
     let flags: Awaited<ReturnType<typeof checkDraft>> | undefined;
@@ -1791,7 +1871,7 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
   const signal = stopSignal(messageId);
   try {
     const doc = await readDoc(session.id, docId);
-    if (!doc?.blocks.length) throw new Error("That document is empty");
+    if (!doc?.blocks.length) throw new Error("The piece is empty");
     const project = await projectForAi(session.projectId, user);
     const { handle, best } = await bestPosts(user, project, 8);
     const reader = fableProvider(user);
@@ -1847,12 +1927,12 @@ async function runAudit(session: SessionMeta, user: SessionUser, messageId: stri
     let covered: { chars: number; total: number } | undefined;
     if (target.type === "document") {
       const doc = await readDoc(session.id, target.id);
-      if (!doc) throw new Error("That document is gone");
-      if (!doc.blocks.length) throw new Error("The document is empty — nothing to check");
+      if (!doc) throw new Error("Piece not found");
+      if (!doc.blocks.length) throw new Error("The piece is empty: nothing to check");
       ({ text, covered } = documentAudit(doc));
     } else {
       const pack = (await packPostsForUser([target.id], user, { perPost: MAX_AUDIT_CHARS, total: MAX_AUDIT_CHARS, comments: false })).packs[0];
-      if (!pack) throw new Error("That source is gone");
+      if (!pack) throw new Error("Source not found");
       text = postAuditText(pack.handle, pack.kind, pack.markdown);
     }
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
@@ -2018,6 +2098,7 @@ workshopApp.post("/projects", async (c) => {
       project.color = PROJECT_COLORS.find((c) => !used.has(c)) ?? PROJECT_COLORS[0];
     }
     await writeJsonAtomic(projectPath(project.id), project);
+    await moveOldKnowledge(project); // an older form sent context files: they are sources now
     await scopeOldRecords(user).catch((e: unknown) => console.warn(`[workshop] keeping projects apart: ${errorMessage(e)}`));
     await setCurrentProjectId(user, project.id);
     return c.json(project, 201);
@@ -2047,11 +2128,15 @@ const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text :
 
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
-  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; said?: unknown; files?: unknown; projectId?: unknown } | null;
+  // the workspace being edited: its saved context files and the lines kept in Memory are read too, and `text` is its
+  // instructions so far (the form's box; from a chat, the saved ones, with what the person said now as `said`)
+  const project = typeof body?.projectId === "string" ? await readProject(body.projectId, user) : null;
   const text = typeof body?.text === "string" ? body.text.slice(0, DRAFT_TEXT).trim() : "";
+  const said = typeof body?.said === "string" ? body.said.slice(0, DRAFT_TEXT).trim() : "";
   const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
   const given = givenFiles(body?.files, DRAFT_FILES);
-  const links = [...new Set(text.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
+  const links = [...new Set(`${text}\n${said}`.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
   const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
   // each part on its own: one that can't be read is said, the rest still drafts
   const [parts, files] = await Promise.all([
@@ -2076,23 +2161,37 @@ workshopApp.post("/projects/draft-notes", async (c) => {
   ]);
   const read = files.filter((f) => f.text.trim());
   const unread = files.filter((f) => !f.text.trim()).map((f) => `(${f.name} could not be read${"error" in f ? `: ${f.error}` : ""})`);
-  if (!text && !read.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
+  // the saved context files, one per path (a file saved twice: the newer); one given again now is read as given
+  const now = new Set(read.map((f) => f.name));
+  const kept = project ? (await knowledgeFor(user, project)).filter((f) => f.text.trim() && !now.has(f.name)) : [];
+  const saved = [...new Map(kept.map((f) => [f.name, { name: f.name, text: f.text }])).values()].slice(0, DRAFT_FILES);
+  const all = [...read, ...saved];
+  if (!text && !said && !all.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
   const ai = route(user, "workshop", "Workspace setup");
   // on the Mac the files go as files, read whole; elsewhere into the prompt
-  const mac = onMac(user) && read.length > 0;
+  const mac = onMac(user) && all.length > 0;
+  const list = (fs: Array<{ name: string }>) => fs.map((f) => `- ${f.name}`).join("\n");
+  // what the person said in earlier chats, kept in Memory: the rule, then their own words
+  const memory = project ? memoryFor(user.username, project.id) : null;
+  const lines = (fs: Array<{ text: string; said?: string }>) => fs.map((f) => `- ${f.text}${f.said ? ` (${JSON.stringify(f.said)})` : ""}`).join("\n");
   const prompt = [
     typeof body?.name === "string" && body.name.trim() ? `Workspace: ${body.name.slice(0, 80)}` : "",
-    text ? `What they wrote:\n${text}` : "",
+    `Today: ${new Date().toISOString().slice(0, 10)}`,
+    text ? `${project?.notes.trim() ? "The workspace's instructions as they stand" : "What they wrote"}:\n${text}` : "",
+    said ? `What they said about it now:\n${said}` : "",
+    memory?.here.length ? `Kept in Memory for this workspace:\n${lines(memory.here)}` : "",
+    memory?.mine.length ? `Kept in Memory about the person, in every workspace:\n${lines(memory.mine)}` : "",
     ...parts.filter(Boolean),
     ...unread,
-    read.length ? (mac ? `The files, in material/ in your folder (read every one):\n${read.map((f) => `- ${f.name}`).join("\n")}` : `The files:\n${inlineFiles(read)}`) : "",
+    all.length ? (mac ? `The files, in material/ in your folder (read every one):\n${list(all)}` : `The files:\n${inlineFiles(all)}`) : "",
+    saved.length ? `Of those, the workspace's saved context files, filed already (leave them out of "files"):\n${list(saved)}` : "",
   ].filter(Boolean).join("\n\n");
   const draft = () =>
     completeWithFallback(DRAFT_SYSTEM, prompt, undefined, (t) => parseDraft(t, read.map((f) => f.name), LIMITS.projectNotes), {
       ...ai,
-      ...(mac ? { mac: { ...ai.mac, label: "Workspace setup", files: Object.fromEntries(read.map((f) => [`material/${f.name.split("/").filter((x) => x && x !== "." && x !== "..").join("/")}`, f.text])) } } : {}),
+      ...(mac ? { mac: { ...ai.mac, label: "Workspace setup", files: Object.fromEntries(all.map((f) => [`material/${f.name.split("/").filter((x) => x && x !== "." && x !== "..").join("/")}`, f.text])) } } : {}),
     });
-  if (!read.length) {
+  if (!all.length) {
     try {
       return c.json(await draft());
     } catch (e) {
@@ -2126,6 +2225,7 @@ workshopApp.patch("/projects/:id", async (c) => {
     if (accountId === null) delete next.accountId;
     else if (accountId) next.accountId = accountId;
     await writeJsonAtomic(projectPath(next.id), next);
+    await moveOldKnowledge(next); // a form open since before saved its context files back: they are sources now
     return c.json(next);
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
@@ -2136,20 +2236,8 @@ workshopApp.delete("/projects/:id", async (c) => {
   const user = c.get("user");
   const project = await readProject(c.req.param("id"), user);
   if (!project) return c.json({ error: "Not found" }, 404);
-  let names: string[] = [];
-  try {
-    names = await readdir(DIRS.sessions);
-  } catch {
-    names = [];
-  }
-  for (const id of names) {
-    const meta = await ownedSession(id, user);
-    if (meta?.projectId === project.id) {
-      await updateSession(id, (m) => {
-        delete m.projectId;
-      });
-    }
-  }
+  // its projects keep its id, so no other workspace lists them. They used to lose it, and a project with none is listed
+  // in every workspace (inProject): a deleted client's scripts showed up in all the others (owner, 2026-11-16).
   await rm(projectPath(project.id), { force: true });
   const ws = await getWorkspace(user);
   if (ws.currentProjectId === project.id) await setCurrentProjectId(user, ws.projects[0]?.id ?? null);
@@ -2310,6 +2398,7 @@ workshopApp.post("/sources/:id/read", async (c) => {
   const queued = await patchSource(s.id, (cur) => ({ ...cur, status: "queued", error: undefined, waitUntil: undefined }));
   readsPaused.delete(user.username); // pressed by hand: try now, a limit pauses them again
   queueRead(user, s.id);
+  void queueWaiting(user); // the ones the limit held go on behind it (the list that follows a press started them before)
   return c.json(queued ?? s);
 });
 
@@ -2528,7 +2617,7 @@ workshopApp.get("/sessions", async (c) => {
   // matching sessions to posts reads the account's posts: it runs beside the list, never in front of it
   void inJob([user.username], () => linkPosted(user)).catch((e) => console.error(`workshop: matching sessions to posts: ${errorMessage(e)}`));
   const scope = c.req.query("projectId") || "";
-  const projectId = okId(scope) ? scope : undefined;
+  const projectId = await listWorkspaceId(user, okId(scope) ? scope : undefined);
   let names: string[] = [];
   try {
     names = await readdir(DIRS.sessions);
@@ -2557,6 +2646,17 @@ workshopApp.get("/sessions", async (c) => {
   return c.json(rows);
 });
 
+/**
+ * Which of the owner's scripts a member with the scripts grant reads, by the script's workspace: once the owner gave
+ * them workspaces (Settings → Team → Access), only those workspaces' scripts, never another client's. With none given,
+ * the grant is all it says: the owner's scripts.
+ */
+async function givenScripts(user: SessionUser, owner: string): Promise<(projectId?: string) => boolean> {
+  if (!sharedWith(user.username)) return () => true;
+  const theirs = await Promise.all((await sharedProjects(user.username)).map((p) => inProjectOf({ username: owner } as SessionUser, p.id)));
+  return (projectId) => theirs.some((inIt) => inIt?.(projectId));
+}
+
 /*
  * Team scripts (contracts/workspaces.ts `scripts`): a member whose grant is on reads the owner's sessions, read-only.
  * Own routes, so canSee and ownedSession (which guard writes too) stay as they are. Reads only: no ensureDocuments
@@ -2565,10 +2665,11 @@ workshopApp.get("/sessions", async (c) => {
 workshopApp.get("/team/scripts", async (c) => {
   const owner = scriptsOwnerFor(c.get("user").username);
   if (!owner) return c.json({ error: "Not found" }, 404);
+  const given = await givenScripts(c.get("user"), owner);
   const rows = [];
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const meta = await readSession(id);
-    if (!meta || meta.owner !== owner || meta.status === "shelved") continue;
+    if (!meta || meta.owner !== owner || meta.status === "shelved" || !given(meta.projectId)) continue;
     const kinds = pieceKinds(await listDocs(meta.id));
     if (kinds.length) rows.push({ id: meta.id, title: meta.title, status: meta.status ?? "draft", kinds, updatedAt: meta.updatedAt, owner: meta.owner });
   }
@@ -2592,7 +2693,7 @@ workshopApp.get("/team/sessions/:id", async (c) => {
 workshopApp.get("/team/scripts/:id/docs", async (c) => {
   const owner = scriptsOwnerFor(c.get("user").username);
   const meta = owner && (await readSession(c.req.param("id")));
-  if (!owner || !meta || meta.owner !== owner || meta.status === "shelved") return c.json({ error: "Not found" }, 404);
+  if (!owner || !meta || meta.owner !== owner || meta.status === "shelved" || !(await givenScripts(c.get("user"), owner))(meta.projectId)) return c.json({ error: "Not found" }, 404);
   c.header("Cache-Control", "no-store");
   return c.json((await listDocs(meta.id)).filter((d) => d.kind !== "notes").map(publicDoc));
 });
@@ -2663,7 +2764,7 @@ workshopApp.get("/sessions/summary", async (c) => {
   const user = c.get("user");
   // the same project scope as the sessions list
   const scope = c.req.query("projectId") || "";
-  const projectId = okId(scope) ? scope : undefined;
+  const projectId = await listWorkspaceId(user, okId(scope) ? scope : undefined);
   const out = [];
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const meta = await ownedSession(id, user);
@@ -2717,8 +2818,8 @@ workshopApp.post("/sessions", async (c) => {
     const now = Date.now();
     const sources = Array.isArray(body?.sourceIds) ? parseSources(body.sourceIds, now) : [];
     const known = new Set((await postsForUser(sources.map((s) => s.postId), user)).map((p) => p.id));
-    const projectId = patch.projectId ?? (await resolveProjectId(user));
-    if (patch.projectId && (await ownedProject(patch.projectId, user))) movesTo(user, patch.projectId);
+    // the workspace named, when it is one of this account's (a chat that names another one moves there: resolveProjectId), else the current one
+    const projectId = await resolveProjectId(user, patch.projectId);
     const meta: SessionMeta = {
       id: randomUUID(),
       owner: user.username,
@@ -2758,12 +2859,17 @@ workshopApp.patch("/sessions/:id", async (c) => {
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   try {
-    const patch = parseSessionPatch(await c.req.json().catch(() => null));
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    const patch = parseSessionPatch(body);
+    // A session changes workspace only when asked by name (`moveTo`, the menu's Move to), and only into one of this
+    // account's. A plain `projectId` is ignored: an app still running the old page sent it on every workspace switch
+    // (owner, 2026-11-16: switching workspace moved the open project into the new one).
+    const moveTo = okId(body?.moveTo) ? body.moveTo : undefined;
+    if (moveTo && !(await getWorkspace(user)).projects.some((p) => p.id === moveTo)) return c.json({ error: "Unknown workspace" }, 400);
     const next = await updateSession(meta.id, (m) => {
       if (patch.title !== undefined) m.title = patch.title || "Untitled project";
       if (patch.query !== undefined) m.query = patch.query;
-      if (patch.projectId === null) delete m.projectId;
-      else if (patch.projectId) m.projectId = patch.projectId;
+      if (moveTo) m.projectId = moveTo;
       if (patch.status) setSessionStatus(m, patch.status, "session"); // a refused move throws: 409 below
       if (patch.pinned === true) m.pinned = true;
       else if (patch.pinned === false) delete m.pinned;
@@ -2826,7 +2932,7 @@ workshopApp.delete("/sessions/:id", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is still generating — wait for it to finish" }, 409);
+    return c.json({ error: "A draft is still being written" }, 409);
   }
   await rm(sessionDir(meta.id), { recursive: true, force: true });
   return c.json({ ok: true });
@@ -2937,11 +3043,12 @@ workshopApp.get("/sessions/:id/docs/:docId/versions/:versionId", async (c) => {
 /** The author's rewrites of the AI's text, kept for good (edit-log.ts): $DATA_DIR/workshop/users/<name>.edits.json. */
 const editLogPath = (username: string) => path.join(DIRS.users, `${username}.edits.json`);
 const readEditLog = async (username: string) => (await readJson<EditPair[]>(editLogPath(username))) ?? [];
-/** The author's rewrites closest to the piece, this project's first: they're the author's taste in every brand, but its own words come first. */
+/**
+ * The author's rewrites closest to the piece, from this workspace only: each workspace is its own client, so words
+ * rewritten for one never teach the writer in another (owner, 2026-11-16; they used to fill up from the other brands).
+ */
 function closestRewrites(near: string, log: EditPair[], projectId: string | undefined, n: number): EditPair[] {
-  const here = log.filter((p) => inProject(p, projectId));
-  const got = closestPairs(near, here, n);
-  return got.length >= n ? got : [...got, ...closestPairs(near, log.filter((p) => !here.includes(p)), n - got.length)];
+  return closestPairs(near, log.filter((p) => inProject(p, projectId)), n);
 }
 async function keepRewrites(username: string, doc: Document, projectId?: string): Promise<void> {
   await keepPairs(username, pairsOf(doc), projectId);
@@ -2988,10 +3095,12 @@ workshopApp.patch("/sessions/:id/docs/:docId", async (c) => {
         else delete d.captions;
       }
       if (patch.blocks || patch.caption !== undefined || patch.pinned !== undefined || patch.hooks !== undefined) {
-        userEdit(d, patch.blocks ?? d.blocks.map((b) => ({ id: b.id, text: b.text })), Date.now(), {
-          caption: patch.caption,
-          pinned: patch.pinned,
-          ...(patch.hooks !== undefined ? { hooks: patch.hooks } : {}),
+        // an editor says what its save was typed on: what a turn wrote meanwhile stays (onBase)
+        const mine = patch.base ? onBase(d, patch.base, patch) : patch;
+        userEdit(d, mine.blocks ?? d.blocks.map((b) => ({ id: b.id, text: b.text })), Date.now(), {
+          caption: mine.caption,
+          pinned: mine.pinned,
+          ...(mine.hooks !== undefined ? { hooks: mine.hooks } : {}),
         }, byKey ? "ai" : "user");
       }
     });
@@ -3043,6 +3152,9 @@ export interface WorkshopFinal {
 
 export async function workshopFinalsFor(username: string): Promise<Record<string, WorkshopFinal>> {
   const out: Record<string, WorkshopFinal> = {};
+  // the workspace the request works in: another workspace's session titles and text never show here (a phone, with none, gets all as before)
+  const ws = await listWorkspaceId({ username } as SessionUser);
+  const here = ws ? await inProjectOf({ username } as SessionUser, ws) : null;
   const shares = Object.entries(await readShares());
   const rows = libraryDb()
     .prepare("SELECT id, library_id, workshop_session AS session, workshop_doc AS doc FROM pieces WHERE workshop_session IS NOT NULL AND trashed_at IS NULL")
@@ -3050,7 +3162,7 @@ export async function workshopFinalsFor(username: string): Promise<Record<string
   for (const row of rows) {
     if (libraryRole(username, row.library_id) !== "owner") continue;
     const meta = await readSession(row.session);
-    if (!meta) continue;
+    if (!meta || (here && !here(meta.projectId))) continue;
     const main = await mainPiece(row.session);
     const doc = (row.doc && (await readDoc(row.session, row.doc))) || main;
     const items = libraryDb().prepare("SELECT id, label, post_description FROM piece_items WHERE piece_id = ? ORDER BY position, id").all(row.id) as {
@@ -3152,15 +3264,129 @@ export async function describeVersion(
   return true;
 }
 
-/** Link a Media Library Finals piece to this session (Finals' "Workshop session" link). The account must own both. */
+/** The workspace's Finals folder for a session (Settings → Folders, else its Library's Finished/), and the session's
+ *  folder in it: its title made a file name the first time, then kept on the session (a second project of that title gets " 2"). */
+async function finalsPlace(meta: SessionMeta): Promise<{ root: StorageFolder; dir: string } | null> {
+  const u = findUser(meta.owner);
+  if (!u) return null;
+  const inWs = await inProjectOf(sessionOf(u), meta.projectId);
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, meta.owner), "utf-8").catch(() => "{}"));
+  const root = finalsFolderOf(st.folders.filter((f) => folderIn(f, inWs)));
+  if (!root) return null;
+  if (meta.finalsDir) return { root, dir: meta.finalsDir };
+  const taken = new Set((await ownSessions(meta.owner)).filter((s) => s.id !== meta.id && s.projectId === meta.projectId).map((s) => s.finalsDir));
+  const base = finalsDirName(meta.title || "Untitled");
+  let dir = base;
+  for (let n = 2; taken.has(dir); n++) dir = `${base} ${n}`;
+  const kept = await updateSession(meta.id, (m) => void (m.finalsDir ??= dir), { touch: false });
+  return { root, dir: kept?.finalsDir ?? dir };
+}
+
+/** What GET /sessions/:id/finals answers: whether the project has its final, where a dropped one goes, and its folder. */
+export interface SessionFinals {
+  linked: boolean;
+  /** the library a final the user drops goes to (null: no Media Library for this account) */
+  libraryId: string | null;
+  finalsId: string | null;
+  /** what a final from a computer sends (the library's finalsUpload) */
+  upload: LibraryUpload;
+  /** the project's folder on the computer that asked (`device`), when that computer has the Finals folder */
+  folder?: string;
+  /** the server reads that folder itself (it is on its own disk): a file put there comes in with nothing more to do */
+  reads?: boolean;
+}
+
+/**
+ * Whether a final video is in Finals for this session yet (a library piece, or one a plug-in keeps, or a video in its
+ * folder in the Finals folder), and where a final goes. The Workshop asks for the final at Ready to post. On a server
+ * that reads the person's folders the project's folder is made and read from now on (library/watch.ts watchFinals), and
+ * what the library took from it is linked here (a file it had already, or one read before a restart).
+ * `device`: the computer asking, for the folder's place there.
+ */
+export async function sessionFinals(meta: SessionMeta, device?: string): Promise<SessionFinals> {
+  const mainId = (await mainPiece(meta.id))?.id;
+  const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
+  let linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
+  const libraryId = await ensureLibrary(meta.owner, meta.projectId ?? "");
+  // the upload goes straight into Finals, so the Media Library never lists it as footage
+  const finalsId = libraryId ? finalsCollectionId(libraryId) : null;
+  const out: SessionFinals = { linked, libraryId, finalsId, upload: libraryId ? finalsUpload(libraryId) : "all" };
+  const place = libraryId && finalsId ? await finalsPlace(meta) : null;
+  if (!place) return out;
+  const { root, dir } = place;
+  const local = root.origin.host === THIS_COMPUTER || isThisMachine(root.origin.host);
+  const sub = local && watchAllowed(meta.owner) ? await watchFinals(meta.owner, libraryId!, root.origin.path, dir, meta.id, finalsId!) : null;
+  if (sub) {
+    linked ||= (await readdir(sub, { recursive: true }).catch(() => [] as string[])).some((f) => kindOf(f) === "video" && !f.split(path.sep).some((s) => s.startsWith(".")));
+    const taken = libraryDb()
+      .prepare(
+        `SELECT s.version_id AS v FROM watch_seen s WHERE s.library_id = ? AND substr(s.path, 1, ?) = ? AND s.version_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM piece_items i WHERE i.version_id = s.version_id)`,
+      )
+      .all(libraryId, sub.length + 1, sub + path.sep) as { v: string }[];
+    for (const { v } of taken) await finalFromVersion(meta, meta.owner, v);
+  }
+  const at = device ? (pathOn(root, device) ?? (local && isThisMachine(device) ? root.origin.path : undefined)) : undefined;
+  return { ...out, linked, ...(at ? { folder: `${at.replace(/\/+$/, "")}/${dir}`, reads: !!sub } : {}) };
+}
+
+/**
+ * A library video (an asset's current version, or one version) into Finals as this session's final: the piece named as
+ * the project, linked to it (`docId`: one of its pieces). `who` must own the library. 202 while the library still reads it.
+ */
+async function finalFromVersion(meta: SessionMeta, who: string, video: string, docId?: string): Promise<{ code: 200 | 202 | 404 | 409; body: Record<string, unknown> }> {
+  const row = libraryDb()
+    .prepare(
+      `SELECT a.library_id AS lib, a.title, v.id AS version, v.state, json_extract(v.probe, '$.width') AS w, json_extract(v.probe, '$.height') AS h
+         FROM assets a JOIN asset_versions v ON v.asset_id = a.id
+        WHERE a.trashed_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
+    )
+    .get(video, video) as { lib: string; title: string | null; version: string; state: string; w: number | null; h: number | null } | undefined;
+  if (!row || libraryRole(who, row.lib) !== "owner") return { code: 404, body: { error: "No such video of yours" } };
+  if (row.state === "failed" || row.state === "missing") return { code: 409, body: { error: "The library could not read this video" } };
+  if (!row.w || !row.h) return { code: 202, body: { waiting: true } };
+  const out = await addToFinals(
+    { owner: who, libraryId: row.lib, label: meta.title || "Untitled", item: row.title, kind: "export", width: row.w, height: row.h },
+    { versionId: row.version },
+  );
+  if (!out.ok) return { code: out.code === "no_access" || out.code === "not_found" ? 404 : 409, body: { error: out.error } };
+  linkFinalsPiece(out.pieceId, meta.id, docId, who);
+  return { code: 200, body: { linked: true, pieceId: out.pieceId } };
+}
+
+// a file read from a project's folder in the Finals folder: into Finals, linked to that project, once the library read its
+// size; once only (a file read again keeps its piece, whatever the project is called now)
+onEvent("library.version.probed", async ({ libraryId, versionId }) => {
+  const v = libraryDb()
+    .prepare("SELECT source_path FROM asset_versions v WHERE id = ? AND NOT EXISTS (SELECT 1 FROM piece_items i WHERE i.version_id = v.id)")
+    .get(versionId) as { source_path: string | null } | undefined;
+  const session = v?.source_path ? finalsProjectOf(libraryId, v.source_path) : null;
+  const meta = session ? await readSession(session) : null;
+  if (meta) await finalFromVersion(meta, meta.owner, versionId);
+});
+
+workshopApp.get("/sessions/:id/finals", async (c) => {
+  const meta = await ownedSession(c.req.param("id"), c.get("user"));
+  return meta ? c.json(await sessionFinals(meta, c.req.query("device") || undefined)) : c.json({ error: "Not found" }, 404);
+});
+
+/** Link a Media Library Finals piece to this session (Finals' "Workshop session" link), or put a library video in Finals
+ *  as this session's final (`assetId` or `versionId`: a file the user dropped when it went to Ready to post). The account must own both.
+ *  202 while the library still reads the new file (no size yet): ask again. */
 workshopApp.post("/sessions/:id/finals", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  const body = (await c.req.json().catch(() => null)) as { pieceId?: unknown; docId?: unknown } | null;
-  if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
-  const docId = typeof body.docId === "string" ? body.docId : undefined;
+  const body = (await c.req.json().catch(() => null)) as { pieceId?: unknown; assetId?: unknown; versionId?: unknown; docId?: unknown } | null;
+  const docId = typeof body?.docId === "string" ? body.docId : undefined;
   if (docId && !(await readDoc(meta.id, docId))) return c.json({ error: "No such piece of this project" }, 404);
+  const video = [body?.assetId, body?.versionId].find((x): x is string => typeof x === "string" && !!x);
+  if (video) {
+    // a library video (its current version) or one version of it (what the chat's use_file gave)
+    const r = await finalFromVersion(meta, user.username, video, docId);
+    return c.json(r.body, r.code);
+  }
+  if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
   return linkFinalsPiece(body.pieceId, meta.id, docId, user.username) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
 });
 
@@ -3194,7 +3420,7 @@ workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
     return c.json(publicDoc(current));
   }
 
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 400);
 
   const fallback: SlideCompose[] = visualizeCarousel({
     typeId: type.id,
@@ -3274,7 +3500,7 @@ workshopApp.post("/sessions/:id/docs/:docId/revert", async (c) => {
     ok = revert(d, versionId);
   });
   if (!doc) return c.json({ error: "Not found" }, 404);
-  if (!ok) return c.json({ error: "That version is gone" }, 404);
+  if (!ok) return c.json({ error: "Version not found" }, 404);
   return c.json(publicDoc(doc));
 });
 
@@ -3293,7 +3519,7 @@ workshopApp.post("/sessions/:id/docs/:docId/keep", async (c) => {
   });
   if (!doc) return c.json({ error: "Not found" }, 404);
   if (doc.kind === "notes") return c.json({ error: "Notes has no versions" }, 400);
-  if (!ok) return c.json({ error: versionId ? "That version is gone" : "Nothing to keep" }, 404);
+  if (!ok) return c.json({ error: versionId ? "Version not found" : "Nothing to keep" }, 404);
   return c.json(publicDoc(doc));
 });
 
@@ -3425,18 +3651,18 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 400);
   let input;
   try {
     input = parseTurnInput(await c.req.json().catch(() => null));
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
   }
-  if (!(await readDoc(meta.id, input.docId))) return c.json({ error: "That document is gone" }, 404);
+  if (!(await readDoc(meta.id, input.docId))) return c.json({ error: "Piece not found" }, 404);
   const library: ClipRef[] = [];
   for (const r of input.library ?? []) {
     const ref = "assetId" in r ? await libraryRef(user.username, r.assetId, r.versionId) : await externalLibraryRef(user.username, r);
-    if (!ref) return c.json({ error: "A library clip is gone, or not in your library" }, 404);
+    if (!ref) return c.json({ error: "A Media Library clip was not found" }, 404);
     library.push(ref);
   }
   await readChat(meta.id); // a reply a restart left thinking is marked first; the one-turn check is in startTurn
@@ -3494,7 +3720,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     status: "done",
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking" };
-  if (!(await startTurn(meta.id, [ask, reply], input.retryOf))) return c.json({ error: "Still thinking about the last message — wait for it" }, 409);
+  if (!(await startTurn(meta.id, [ask, reply], input.retryOf))) return c.json({ error: "Still working on the last message" }, 409);
   void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id), meta.id);
   return c.json({ ask, reply }, 202);
 });
@@ -3515,14 +3741,14 @@ workshopApp.post("/sessions/:id/chat/:messageId/stop", async (c) => {
 async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInput): Promise<{ ask: ChatMessage; reply: ChatMessage } | { error: string; status: 400 | 404 | 409 }> {
   if (!researchFor(user)) return { error: RESEARCH_OFF, status: 400 };
   const doc = await readDoc(meta.id, input.docId);
-  if (!doc) return { error: "That document is gone", status: 404 };
+  if (!doc) return { error: "Piece not found", status: 404 };
   let target: AuditTarget;
   if (input.postId) {
     const post = (await postsForUser([input.postId], user))[0];
-    if (!post) return { error: "That source is gone", status: 404 };
+    if (!post) return { error: "Source not found", status: 404 };
     target = { type: "post", id: post.id, title: `@${post.creator.username} — ${post.kind}` };
   } else {
-    if (!doc.blocks.length) return { error: "The document is empty — nothing to check", status: 400 };
+    if (!doc.blocks.length) return { error: "The piece is empty: nothing to check", status: 400 };
     target = { type: "document", id: doc.id, title: doc.title };
   }
   await readChat(meta.id);
@@ -3536,7 +3762,7 @@ async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInpu
     status: "done",
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking", audit: { target, depth: input.depth } };
-  if (!(await startTurn(meta.id, [ask, reply]))) return { error: "Still working on the last message — wait for it", status: 409 };
+  if (!(await startTurn(meta.id, [ask, reply]))) return { error: "Still working on the last message", status: 409 };
   void inJob([meta.owner, user.username], () => runAudit(meta, user, reply.id, input, target), meta.id);
   return { ask, reply };
 }
@@ -3606,8 +3832,8 @@ workshopApp.post("/sessions/:id/docs/:docId/lines", async (c) => {
   const text = typeof body?.text === "string" ? body.text.slice(0, LIMITS.blockText) : "";
   const start = typeof body?.start === "number" ? Math.max(0, Math.floor(body.start)) : -1;
   const end = typeof body?.end === "number" ? Math.min(text.length, Math.floor(body.end)) : -1;
-  if (start < 0 || end <= start || !text.slice(start, end).trim()) return c.json({ error: "Select the words you want said another way" }, 400);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
+  if (start < 0 || end <= start || !text.slice(start, end).trim()) return c.json({ error: "Select the words to reword" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 503);
   const notes = (await readChat(meta.id)).messages.filter((m) => m.docId === doc.id && m.role === "user" && m.text.trim()).map((m) => m.text.trim());
   const { system, user: prompt } = buildLinesPrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, notes, workspace: await contextOf(meta) });
   try {
@@ -3631,7 +3857,7 @@ workshopApp.post("/sessions/:id/docs/:docId/ask", async (c) => {
   const text = typeof body?.text === "string" ? body.text.slice(0, LIMITS.blockText) : "";
   const question = typeof body?.question === "string" ? body.question.trim().slice(0, LIMITS.turnText) : "";
   if (!text.trim() || !question) return c.json({ error: "Ask something about the slide" }, 400);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 503);
   const start = typeof body?.start === "number" ? Math.max(0, Math.floor(body.start)) : undefined;
   const end = typeof body?.end === "number" ? Math.min(text.length, Math.floor(body.end)) : undefined;
   const history = (Array.isArray(body?.history) ? body!.history : [])
@@ -3644,7 +3870,7 @@ workshopApp.post("/sessions/:id/docs/:docId/ask", async (c) => {
   try {
     let usage: MacUsage | undefined;
     const answer = await completeWithFallback(system, prompt, undefined, (t) => {
-      if (!t.trim()) throw new Error("Empty answer");
+      if (!t.trim()) throw new Error("The reply was empty");
       return t.trim();
     }, { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
     bumpUsage(user.username, { aiRuns: 1 });
@@ -3662,12 +3888,12 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { docId?: unknown } | null;
   const doc = typeof body?.docId === "string" ? await readDoc(meta.id, body.docId) : null;
   if (!doc || doc.kind === "notes" || !doc.blocks.length) return c.json({ error: "Open a piece with some text first" }, 400);
-  if (!onMac(user)) return c.json({ error: "A follower's read runs through your AI on the Mac" }, 503);
+  if (!onMac(user)) return c.json({ error: "Read as a follower needs an AI provider on a computer" }, 503);
   await readChat(meta.id);
   const now = Date.now();
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: readerName(fableProvider(user)), review: { model: REVIEW_MODEL } };
-  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message" }, 409);
   void inJob([meta.owner, user.username], () => runReview(meta, user, reply.id, doc.id), meta.id);
   return c.json({ ask, reply }, 202);
 });
@@ -3705,7 +3931,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
     // a quick search the author approved: the next turn searches for it and answers with what it found
     const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Search the web: ${question}`, at: now, docId: m.docId, status: "done", web: question };
     const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking" };
-    if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+    if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message" }, 409);
     void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id), meta.id);
     const proposal: Proposal = { ...m.proposal, status: "accepted", depth, question };
     await patchMessage(meta.id, m.id, { proposal });
@@ -3713,7 +3939,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
   }
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Run deep research: ${question}`, at: now, docId: m.docId, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking", research: { question, depth: "deep", status: "running" } };
-  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message" }, 409);
   void inJob([meta.owner, user.username], () => runResearch(meta, user, reply.id, question), meta.id);
   return c.json({ message: await settle("accepted"), ask, reply }, 202);
 });
@@ -3727,9 +3953,9 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fix", async (c) => {
   const claim = m?.audit?.result?.claims.find((x) => x.id === body?.claimId);
   if (!m?.audit || !claim) return c.json({ error: "No such claim" }, 404);
   if (m.audit.target.type !== "document" || !claim.fix || !claim.where || !/^(b\d{1,5}|h\d{1,5}|caption|pinned)$/.test(claim.where)) {
-    return c.json({ error: "This claim has no fix that maps to a block" }, 400);
+    return c.json({ error: "This claim has no rewording to apply" }, 400);
   }
-  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message" }, 409);
   let applied = false;
   let locked = false;
   const doc = await updateDoc(meta.id, m.audit.target.id, (d) => {
@@ -3746,7 +3972,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fix", async (c) => {
       applied = true;
     }
   });
-  if (!doc) return c.json({ error: "That document is gone" }, 404);
+  if (!doc) return c.json({ error: "Piece not found" }, 404);
   if (!applied) return c.json({ error: locked ? lockedNote([slideOf(doc, claim.where!)]) : "That wording is no longer in the document" }, 400);
   const audit: AuditMeta = { ...m.audit, applied: [...(m.audit.applied ?? []), claim.id] };
   await patchMessage(meta.id, m.id, { audit });
@@ -3761,8 +3987,8 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fixes", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { claimIds?: unknown } | null;
   const ids = Array.isArray(body?.claimIds) ? body.claimIds.filter((x): x is string => typeof x === "string") : [];
   if (!m?.audit?.result) return c.json({ error: "No such audit" }, 404);
-  if (m.audit.target.type !== "document") return c.json({ error: "This claim has no fix that maps to a block" }, 400);
-  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message — wait for it" }, 409);
+  if (m.audit.target.type !== "document") return c.json({ error: "This claim has no rewording to apply" }, 400);
+  if (chat.messages.some((x) => x.status === "thinking")) return c.json({ error: "Still working on the last message" }, 409);
   const already = new Set(m.audit.applied ?? []);
   const wanted = m.audit.result.claims.filter((claim) => ids.includes(claim.id) && !already.has(claim.id) && claim.fix && claim.where && /^(b\d{1,5}|h\d{1,5}|caption|pinned)$/.test(claim.where));
   if (!wanted.length) return c.json({ error: "Nothing to apply" }, 400);
@@ -3780,7 +4006,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/apply-fixes", async (c) => {
     appliedIds = found.filter((id) => landed.has(whereOf.get(id) ?? ""));
     if (appliedIds.length) snapshot(d, `after: audit — ${appliedIds.length} ${appliedIds.length === 1 ? "fix" : "fixes"}`);
   });
-  if (!doc) return c.json({ error: "That document is gone" }, 404);
+  if (!doc) return c.json({ error: "Piece not found" }, 404);
   const locked = lockedBlocks.map((b) => slideOf(doc, b));
   if (!appliedIds.length) return c.json({ error: locked.length ? lockedNote(locked) : "Those wordings are no longer in the document" }, 400);
   const applied = [...(m.audit.applied ?? []), ...appliedIds];
@@ -3792,7 +4018,7 @@ workshopApp.delete("/sessions/:id/chat/:messageId", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   const id = c.req.param("messageId");
-  if (chatting.has(id)) return c.json({ error: "Still thinking" }, 409);
+  if (chatting.has(id)) return c.json({ error: "Still working" }, 409);
   await updateChat(meta.id, (ch) => {
     ch.messages = ch.messages.filter((m) => m.id !== id);
   });
@@ -3854,7 +4080,7 @@ workshopApp.get("/sessions/:id/obsidian.md", async (c) => {
   const docs = await listDocs(meta.id);
   // one note per piece (reel, carousel): `part` picks one; without it, a session with several says how many
   const types = await pieceTypes(meta.id, docs);
-  if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words yet" }, 400);
+  if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words" }, 400);
   // the note says what a share would make it (In Production, not the Ready it had in the Workshop); this read shows
   // that without moving the session: the share route does the move
   const stored = meta.status ?? "draft";
@@ -4039,7 +4265,7 @@ workshopApp.post("/sessions/:id/export/:exportId", async (c) => {
   const day = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : new Date().toISOString().slice(0, 10);
   const docs = await listDocs(meta.id);
   const types = await pieceTypes(meta.id, docs);
-  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words yet" }, 400);
+  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words" }, 400);
   const status = await sharedForProduction(meta);
   const files = obsidianPieces({ ...meta, status }, docs, day, types).map((piece) => {
     const vars = exportVars(piece, status, day);
@@ -4088,7 +4314,7 @@ export async function draftRequest(session: SessionMeta, draft: DraftMeta, user:
   const noteFor = new Map(session.sources.map((s) => [s.postId, s.note]));
   const { packs, warning, missing } = await packPostsForUser(draft.sourceIds, user);
   if (draft.sourceIds.length && !packs.length) {
-    throw new Error("None of the selected sources are in the library anymore");
+    throw new Error("The selected sources were not found in Content Analyzer");
   }
   const [project, ...frameworkHits] = await Promise.all([
     projectForAi(draft.projectId, user),
@@ -4195,21 +4421,25 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 400);
   if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is already generating in this project — wait for it" }, 409);
+    return c.json({ error: "A draft is still being written" }, 409);
   }
   const made = draftFrom(meta, await c.req.json().catch(() => null));
   if ("error" in made) return c.json({ error: made.error }, 400);
   const { draft, input } = made;
   generating.add(draft.id);
+  // checked again inside the write, as startTurn does: two requests at once cannot both start a draft
+  let taken = false;
   const next = await updateSession(meta.id, (m) => {
+    taken = m.drafts.some((d) => d.status === "generating");
+    if (taken) return;
     m.drafts = [draft, ...m.drafts];
     if (input.projectId) m.projectId = input.projectId;
   });
-  if (!next) {
+  if (!next || taken) {
     generating.delete(draft.id);
-    return c.json({ error: "Not found" }, 404);
+    return taken ? c.json({ error: "A draft is already generating in this project — wait for it" }, 409) : c.json({ error: "Not found" }, 404);
   }
   void inJob([next.owner, user.username], () => runDraft(next, draft, user), next.id);
   return c.json({ draft }, 202);
@@ -4260,7 +4490,7 @@ interface WorkshopShare {
   title: string;
   createdAt: number;
   /** The freelancer's own mark. */
-  progress?: { state: "producing" | "done"; by?: string; at: number };
+  progress?: { state: ShareProgressState; by?: string; at: number };
   /** Finals the freelancer uploaded through the link: sessions/<id>/deliveries/<did>/<name>. */
   deliveries?: Delivery[];
   /** The Finals piece the share's files went into (a library piece linked to the session), and the delivery ids already sent. */
@@ -4463,11 +4693,11 @@ workshopShareApp.post("/:token/answers/ask", async (c) => {
   const question = typeof body?.question === "string" ? body.question.trim().slice(0, LIMITS.turnText) : "";
   const commentId = typeof body?.commentId === "string" ? body.commentId : undefined;
   if (!question && !commentId) return c.json({ error: "Ask something" }, 400);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
+  if (!aiOn(user)) return c.json({ error: "Needs an AI provider" }, 503);
   const { handle, replies, file } = await loadPostComments(meta, user, false);
   const all = file.comments.flatMap((x) => [x, ...(x.replies ?? [])]);
   const comment = commentId ? all.find((x) => x.id === commentId) : undefined;
-  if (commentId && !comment) return c.json({ error: "That comment is gone; refresh the comments" }, 404);
+  if (commentId && !comment) return c.json({ error: "Comment not found: refresh the comments" }, 404);
   const docs = await listDocs(meta.id);
   const notesDoc = docs.find((d) => d.kind === "notes");
   const chat = [];
@@ -4491,7 +4721,7 @@ workshopShareApp.post("/:token/answers/ask", async (c) => {
   try {
     let usage: MacUsage | undefined;
     const answer = await completeWithFallback(system, prompt, undefined, (t) => {
-      if (!t.trim()) throw new Error("Empty answer");
+      if (!t.trim()) throw new Error("The reply was empty");
       return t.trim();
     }, { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
     bumpUsage(user.username, { aiRuns: 1 });

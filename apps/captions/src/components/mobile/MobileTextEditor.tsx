@@ -43,8 +43,7 @@ export function MobileTextEditor({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <p className="shrink-0 px-4 pt-2.5 text-xs leading-5 text-zinc-500">
-        One caption per line. Fix words, split or merge lines — timings are
-        kept automatically.
+        One caption per line.
       </p>
       <textarea
         autoFocus

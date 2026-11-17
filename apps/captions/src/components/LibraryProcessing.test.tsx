@@ -54,9 +54,9 @@ describe("the library's processing line", () => {
     act(() => el.querySelector("button")!.click());
     expect(el.textContent).toContain("Adding clips from Trip");
     expect(el.textContent).toContain("Proxies · C9501");
-    expect(el.textContent).toContain("5 AI descriptions need an AI provider");
+    expect(el.textContent).toContain("5 descriptions need an AI provider");
     expect(el.textContent).not.toContain("Settings → API keys");
-    expect(el.querySelector('a[href="/settings/providers"]')?.textContent).toBe("5 AI descriptions need an AI provider");
+    expect(el.querySelector('a[href="/settings/providers"]')?.textContent).toBe("5 descriptions need an AI provider");
     act(() => root!.unmount());
     root = undefined;
     expect((await render()).textContent).toContain("Proxies");
@@ -65,7 +65,7 @@ describe("the library's processing line", () => {
   it("says what waits by itself when nothing runs: it is why nothing moves", async () => {
     progress = { ...progress, left: 0, clips: 0, share: 0, stages: [] };
     const el = await render();
-    expect(el.textContent).toBe("5 AI descriptions need an AI provider");
+    expect(el.textContent).toBe("5 descriptions need an AI provider");
     expect(el.querySelector('[role="progressbar"]')).toBeNull();
   });
 });
@@ -79,7 +79,7 @@ describe("where a chosen folder's files are kept", () => {
     act(() => root!.render(<KeepChoice libraryId="lib_1" folder="/Volumes/Card/Trip" bytes={5e9} to="~/Movies/Creator Toolset/Footage" free={free} onChange={(c) => picked.push(c)} />));
     await flush();
     const radio = (text: string) => [...host!.querySelectorAll("label")].find((l) => l.textContent?.startsWith(text))!.querySelector("input")!;
-    return { picked, copy: radio("Copy them into the library"), keep: radio("Use them where they are") };
+    return { picked, copy: radio("Copy into the library"), keep: radio("Keep in place") };
   }
 
   it("copies into the library folder when there is room", async () => {

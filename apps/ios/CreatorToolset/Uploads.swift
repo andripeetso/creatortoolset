@@ -1,11 +1,70 @@
 import Foundation
+import OSLog
 
 /// One file on its way to the server's Media Library. The file is copied into the app (`AppFiles.uploads`), so an
 /// upload carries on after the app is closed: a pick from Files at once, a clip of the camera roll when Upload is pressed.
 struct UploadItem: Codable, Identifiable, Hashable {
     /// picked: waits for Upload. preparing: copied out of Photos and fingerprinted. confirming: the library is fetching
     /// it from where it was sent (a studio's fast route).
-    enum State: String, Codable { case picked, preparing, sending, finishing, confirming, done, failed }
+    enum State: String, Codable {
+        case picked, preparing, sending, finishing, confirming, done, failed
+
+        /// Every move an upload makes, and who makes it (UploadEngine.swift; "catalog": Studio/CatalogUpload.swift).
+        /// The queue changes a state in one place, `UploadStore.move`, and only along these. Nothing but the person
+        /// takes an upload out of picked, done or failed: a step or a transfer's answer that began before the upload
+        /// stopped there finds no move, and is dropped.
+        static let moves: [State: Set<State>] = [
+            .picked: [
+                .preparing,   // Upload (uploadAll → retry)
+                .sending,     // a New edit's Start (send)
+                .picked,      // a New edit's Try again before anything was sent (restart)
+            ],
+            .preparing: [
+                .sending,     // the copy is on the phone (prepare; catalog: catalogPrepare)
+                .done,        // catalog: the library has these bytes already (catalogPrepare → landed)
+                .failed,      // fail
+            ],
+            .sending: [
+                .sending,     // the next chunk or part (startPatch, startPart), or a new upload in place of one the
+                              // server dropped (perform .startOver; catalog: catalogBegin, startRelayPatch,
+                              // startCatalogPatch, catalogRestart, sendDirectly)
+                .finishing,   // every byte is there (startFinish; catalog: startRelayComplete, startCatalogComplete)
+                .confirming,  // catalog: the fast route no longer has it, the library is fetching it (catalogResume)
+                .preparing,   // catalog: the copy, its fingerprint or the send's record is gone (catalogResume,
+                              // catalogStartOver)
+                .done,        // catalog: the library has it (catalogResume → acceptServerCopy → landed)
+                .failed,      // fail
+                .picked,      // a New edit's Try again (restart)
+            ],
+            .finishing: [
+                .finishing,   // finish asked again (resume → startFinish; catalog: startRelayComplete,
+                              // startCatalogComplete)
+                .sending,     // the server has fewer bytes than were sent, or dropped the upload (perform .send,
+                              // .startOver; catalog: as from sending)
+                .confirming,  // catalog: the fast route has all of it (catalogFinished .confirm, catalogResume)
+                .preparing,   // catalog: as from sending
+                .done,        // the server has the file (perform .done → landed; catalog: acceptServerCopy → landed)
+                .failed,      // fail
+                .picked,      // a New edit's Try again (restart)
+            ],
+            .confirming: [
+                .done,        // catalog: the library fetched it (catalogConfirm → acceptServerCopy → landed)
+                .sending,     // catalog: it could not, or its copy is not the phone's: sent again (sendDirectly,
+                              // catalogRestart)
+                .preparing,   // catalog: the send's record is gone (sendDirectly → catalogStartOver)
+                .failed,      // fail
+            ],
+            .done: [
+                .picked,      // a New edit's Try again sends its clips once more (restart)
+            ],
+            .failed: [
+                .preparing,   // Try again, Upload (retry)
+                .picked,      // a New edit's Try again (restart)
+            ],
+        ]
+
+        func canMove(to next: State) -> Bool { Self.moves[self]?.contains(next) ?? false }
+    }
     /// Where it goes: the server's own Media Library, or a plug-in's library behind it (`Studio/CatalogUpload.swift`).
     enum Route: String, Codable { case library, catalog }
 
@@ -14,7 +73,8 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var size: Int64
     /// The server it goes to (`Server.id`), fixed when it is picked.
     let server: String
-    var state: State = .picked
+    /// Changed by `UploadStore.move` only.
+    fileprivate(set) var state: State = .picked
     var sent: Int64 = 0
     /// The server's upload (POST /api/library/:id/uploads).
     var uploadId: String?
@@ -52,18 +112,20 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var isFinished: Bool { state == .done }
 
     /// A clip of the camera roll, waiting for Upload.
-    init(asset: String, filename: String, isVideo: Bool, capturedAt: Date?, server: String, id: UUID = UUID()) {
-        self.init(id: id, filename: filename, size: 0, server: server)
+    init(asset: String, filename: String, isVideo: Bool, capturedAt: Date?, server: String, id: UUID = UUID(),
+         state: State = .picked) {
+        self.init(id: id, filename: filename, size: 0, server: server, state: state)
         assetId = asset
         self.isVideo = isVideo
         self.capturedAt = capturedAt
     }
 
-    init(id: UUID, filename: String, size: Int64, server: String) {
+    init(id: UUID, filename: String, size: Int64, server: String, state: State = .picked) {
         self.id = id
         self.filename = filename
         self.size = size
         self.server = server
+        self.state = state
     }
 }
 
@@ -112,6 +174,28 @@ final class UploadStore: ObservableObject {
         change(&items[i])
         save()
     }
+
+    /// The one way an upload changes state, and only along `UploadItem.State.moves`; `change` sets what goes with the
+    /// move. False, with nothing changed, when the upload was removed meanwhile or the move is not one of them: the
+    /// caller then starts nothing more for it. A refused move is logged; a debug build stops on one refused to an
+    /// upload on its way, which would mean a move is missing from the list.
+    @discardableResult
+    func move(_ id: UUID, to next: UploadItem.State, _ change: (inout UploadItem) -> Void = { _ in }) -> Bool {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return false }
+        var item = items[i]
+        guard item.state.canMove(to: next) else {
+            Self.log.error("upload move refused: \(item.state.rawValue, privacy: .public) to \(next.rawValue, privacy: .public)")
+            assert(!item.isWorking, "an upload on its way has no move from \(item.state) to \(next)")
+            return false
+        }
+        item.state = next
+        change(&item)
+        items[i] = item
+        save()
+        return true
+    }
+
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CreatorToolset", category: "uploads")
 
     func remove(_ id: UUID) {
         items.removeAll { $0.id == id }

@@ -10,7 +10,7 @@ import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp, enhancesAtRisk } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
-import { exportsApp, exportsAtRisk } from "./exports";
+import { exportsApp, exportsAtRisk, resumeFinalsSends } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
@@ -20,15 +20,16 @@ import { collectionApp } from "./library/collections";
 import { searchApp } from "./library/search";
 import { relatedApp } from "./library/related";
 import { publicShareApp, shareApp } from "./library/shares";
-import { releaseRunningJobs, startLibraryWorker } from "./library/worker";
+import { libraryJobsAtRisk, releaseRunningJobs, startLibraryWorker } from "./library/worker";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
 import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
-import { releaseRunningSteps, startEditorWorker } from "./editor/worker";
+import { editorStepsAtRisk, releaseRunningSteps, startEditorWorker } from "./editor/worker";
 import { serverWorkApp } from "./work/server-work-routes";
+import { serverUpdateApp } from "./server-update";
 import { settleServerWork } from "./work/server-work";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
@@ -272,9 +273,10 @@ app.get("/api/health", (c) =>
     environment: environmentOf(),
     uptimeSec: Math.round(process.uptime()),
     // what a restart now would end, for a deploy to wait on: AI answers that stream straight to an open page (the
-    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances and caption jobs
+    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances, caption jobs, and the
+    // library's and the AI Editor's jobs running here (a restart would start them again from the beginning)
     answering: answersAtRisk(),
-    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk(),
+    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk() + libraryJobsAtRisk() + editorStepsAtRisk(),
     rssMb: Math.round(process.memoryUsage().rss / 1048576),
   }),
 );
@@ -430,6 +432,7 @@ app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
 app.route("/api/work/server-work", serverWorkApp);
+app.route("/api/server-update", serverUpdateApp);
 // Settings → Connect: link this computer to the account on the connect broker (api/connect/routes.ts)
 app.route("/api/connect", connectApp);
 // the menu bar panel's rows from plug-ins (activity.ts)
@@ -510,6 +513,9 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   startTelemetry();
   // assistant messages that waited for their videos when the server stopped
   resumeFromDisk();
+  // a render whose send to Finals the restart cut off goes again, a minute on: in a deploy's reload the process
+  // before this one may still be sending it, and two sends at once could both miss the other's file
+  setTimeout(() => void resumeFinalsSends().catch((e) => console.warn("[exports] Finals after the restart:", e)), 60_000).unref();
   // dropped files: the 7-day ones, and uploads nobody finished (no part for an hour)
   void sweepAll();
   setInterval(() => void sweepAll(), 3600_000).unref();

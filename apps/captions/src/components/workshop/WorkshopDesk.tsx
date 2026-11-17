@@ -66,7 +66,7 @@ export function DeskControls({
       <button type="button" className={btn(layout.geometry === "columns" && !layout.focus)} onClick={() => onChange((d) => setGeometry(d, "columns"))} aria-pressed={layout.geometry === "columns" && !layout.focus}>
         <Columns2 className="mr-1 inline h-3 w-3" /> Columns
       </button>
-      <button type="button" className={btn(focused)} onClick={() => onChange((d) => enterFocus(d, "writing"))} aria-pressed={focused} title="Writing only — Esc to restore">
+      <button type="button" className={btn(focused)} onClick={() => onChange((d) => enterFocus(d, "writing"))} aria-pressed={focused} title="Writing only (Esc)">
         <Maximize2 className="mr-1 inline h-3 w-3" /> Focus
       </button>
       <span className="mx-0.5 h-4 w-px bg-border" />
@@ -281,7 +281,7 @@ export function WorkshopDesk({
           type="button"
           onClick={() => onChange((d) => hideIsland(d, "content"))}
           className="absolute right-4 top-4 z-10 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          title="Close Browse (the Content chip opens it again)"
+          title="Close Browse"
           aria-label="Close Browse"
         >
           <X className="h-3.5 w-3.5" />

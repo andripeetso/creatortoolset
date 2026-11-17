@@ -198,7 +198,7 @@ const MAX_COMMENTS = Math.max(
   Number(process.env.INSTAGRAM_MAX_COMMENTS) || 1000,
 );
 const THUMB_MAX_BYTES = 8 * 1024 * 1024;
-const RESTART_MSG = "Interrupted by a server restart — retry.";
+const RESTART_MSG = "Stopped by a server restart";
 const SKIP_TOP = new Set(["users", "accounts", "stacks"]);
 
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
@@ -358,12 +358,12 @@ const writeQ = new Map<string, Promise<unknown>>();
 let running = 0;
 
 /** What the Analyzer does for this account right now (posts read, accounts pulled, idea boards written), for Home (api/activity.ts). */
-export const analyzerWork = (username: string) => [
-  ...[...active.values()].filter((m) => m.status === "processing" && jobUsers.get(m.id)?.username === username)
+export const analyzerWork = (username: string, here?: ((own?: string) => boolean) | null) => [
+  ...[...active.values()].filter((m) => m.status === "processing" && jobUsers.get(m.id)?.username === username && (!here || here(m.projectId)))
     .map((m) => ({ id: m.id, kind: "post" as const, name: m.creator.username ? `@${m.creator.username}` : m.shortcode || m.input, waits: m.step === "queued" })),
-  ...[...accountActive.values()].filter((m) => m.status === "processing" && jobUsers.get(`a:${m.id}`)?.username === username)
+  ...[...accountActive.values()].filter((m) => m.status === "processing" && jobUsers.get(`a:${m.id}`)?.username === username && (!here || here(m.projectId)))
     .map((m) => ({ id: m.id, kind: "account" as const, name: `@${m.username}`, waits: m.step === "queued" })),
-  ...[...boardLocks.keys()].filter((k) => k.startsWith(`${username}:`)).map((k) => ({ id: k, kind: "ideas" as const, name: "Ideas", waits: false })),
+  ...[...boardLocks.keys()].filter((k) => k.startsWith(`${username}:`) && (!here || here(k.slice(username.length + 1) || undefined))).map((k) => ({ id: k, kind: "ideas" as const, name: "Ideas", waits: false })),
 ];
 
 void mkdir(IG_ROOT, { recursive: true }).catch(() => {});
@@ -581,10 +581,10 @@ async function applyResearch(
   if ("stackId" in patch) {
     if (patch.stackId === null || patch.stackId === "") delete meta.stackId;
     else if (typeof patch.stackId !== "string" || !okId(patch.stackId)) {
-      return "Unknown topic stack";
+      return "Topic not found";
     } else {
       const stack = await ownedStack(patch.stackId, user);
-      if (!stack) return "Unknown topic stack";
+      if (!stack) return "Topic not found";
       meta.stackId = stack.id;
     }
   }
@@ -1402,7 +1402,7 @@ function markDuplicate(meta: PostMeta, original: PostMeta): void {
   const when = original.takenAt ? ` from ${new Date(original.takenAt).toISOString().slice(0, 10)}` : "";
   pushWarning(
     meta,
-    `Same media as @${original.creator.username}'s post${when}, already in your library — transcript, slide text, comments and tags skipped`,
+    `Same media as @${original.creator.username}'s post${when}, already saved: transcript, on-screen text, comments and tags skipped`,
   );
   for (const s of meta.slides) {
     if (s.transcript.status === "pending") s.transcript = { status: "skipped" };
@@ -1563,10 +1563,10 @@ async function downloadYoutubeThumb(meta: PostMeta, info: PostInfo, signal: Abor
   if (!src || !slide) return;
   const url = new URL(src.url);
   if (url.protocol !== "https:" || !YT_IMAGE_HOST.test(url.hostname)) {
-    throw new Error(`Refusing to download a thumbnail from ${url.hostname}`);
+    throw new Error(`Thumbnail address not allowed: ${url.hostname}`);
   }
   const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
-  if (!res.ok) throw new Error(`YouTube thumbnail HTTP ${res.status}`);
+  if (!res.ok) throw new Error("Could not download the YouTube thumbnail");
   const buf = Buffer.from(await res.arrayBuffer());
   if (!buf.length || buf.length > THUMB_MAX_BYTES) throw new Error("YouTube thumbnail is empty or too large");
   await mkdir(mediaDir(meta.id), { recursive: true });
@@ -2311,7 +2311,7 @@ async function generateIdeaBoardNow(
   signal?: AbortSignal,
   projectId?: string,
 ): Promise<IdeaBoard> {
-  if (!anyAiConfigured(user)) throw new Error("No AI is set up for you (Settings → Providers)");
+  if (!anyAiConfigured(user)) throw new Error("Needs an AI provider");
   const metas = (await metasInProject(user, projectId)).filter((m) => !m.duplicateOf);
   const taken = await workshopSourcePostIds(user);
   const catalog = ideaCatalog(metas.filter((m) => !taken.has(m.id)));
@@ -2439,7 +2439,7 @@ async function processPost(id: string): Promise<void> {
         const dup = await findByShortcode(meta.shortcode, user, meta.id);
         if (dup) {
           meta.duplicateOf = dup.id;
-          throw new Error("This post is already in your library");
+          throw new Error("This post is already saved");
         }
       }
       return fetched.info;
@@ -2524,7 +2524,7 @@ async function processPost(id: string): Promise<void> {
             if (await saveYoutubeTranscript(meta, info)) {
               meta.jobs = patchJob(meta.jobs, job, { status: "done" });
             } else {
-              pushWarning(meta, "No transcript yet: YouTube has no captions for this video, and the server cannot download its audio");
+              pushWarning(meta, "No transcript: YouTube has no captions for this video, and the server cannot download its audio");
               meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             }
             await persist(meta);
@@ -2549,7 +2549,7 @@ async function processPost(id: string): Promise<void> {
           const blocked = cloudTranscribeBlock(user);
           if (blocked) {
             for (const s of videos) s.transcript = { status: "skipped" };
-            pushWarning(meta, `Transcripts skipped — ${blocked}`);
+            pushWarning(meta, `Transcripts skipped: ${blocked}`);
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
@@ -2573,7 +2573,7 @@ async function processPost(id: string): Promise<void> {
           }
           if (!anyVisionConfigured(user)) {
             for (const s of work) s.vision = { status: "skipped" };
-            pushWarning(meta, "Slide text skipped — no vision-capable AI key is configured");
+            pushWarning(meta, "On-screen text skipped: needs an AI provider that reads images");
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
@@ -2593,7 +2593,7 @@ async function processPost(id: string): Promise<void> {
           stopCrawl();
         } else if (job === "tags") {
           if (!anyAiConfigured(user)) {
-            pushWarning(meta, "Tags skipped — no AI key is configured");
+            pushWarning(meta, "Tags skipped: needs an AI provider");
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
@@ -2601,7 +2601,7 @@ async function processPost(id: string): Promise<void> {
           await tagPost(meta, user, signal);
         } else if (job === "idea") {
           if (!anyAiConfigured(user)) {
-            pushWarning(meta, "Idea skipped — no AI key is configured");
+            pushWarning(meta, "Idea skipped: needs an AI provider");
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
@@ -2617,7 +2617,7 @@ async function processPost(id: string): Promise<void> {
                 : false;
           meta.jobs = patchJob(meta.jobs, job, {
             status: failedPart ? "error" : "done",
-            error: failedPart ? "One or more slides failed" : undefined,
+            error: failedPart ? "Could not read every slide" : undefined,
           });
         } else {
           meta.jobs = patchJob(meta.jobs, job, {
@@ -2891,9 +2891,9 @@ function cancel(id: string): void {
   if (live) {
     live.status = move(POST_STATUS_MOVES, live.status, "error", "post");
     live.step = undefined;
-    live.error = "Cancelled";
+    live.error = "Stopped";
     live.jobs = (live.jobs ?? []).map((j) =>
-      j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: "Cancelled" } : j,
+      j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: "Stopped" } : j,
     );
     void persist(live).catch(() => {});
   }
@@ -3028,7 +3028,7 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           if (mode === "graph") await refreshMineGraphStats(meta.id, signal);
         }
       } else if (job === "tags") {
-        if (!anyAiConfigured(user)) throw new Error("Tags skipped — no AI key is configured");
+        if (!anyAiConfigured(user)) throw new Error("Tags skipped: needs an AI provider");
         const catalog = await loadCatalog(meta.id);
         const captions = catalog
           .slice(0, 12)
@@ -3430,7 +3430,7 @@ instagramApp.put("/apify", async (c) => {
   const token = typeof body?.token === "string" ? body.token.trim() : "";
   if (token.length < 8) {
     return c.json(
-      { error: "Paste an Apify API token from console.apify.com → Settings → Integrations" },
+      { error: "Paste an Apify key from console.apify.com → Settings → Integrations" },
       400,
     );
   }
@@ -3450,14 +3450,14 @@ instagramApp.put("/apify/slow", async (c) => {
   const username = c.get("user").username;
   const body = (await c.req.json().catch(() => null)) as { slow?: unknown } | null;
   const next = await updateApify(username, (s) => ({ ...s, slow: body?.slow === true }));
-  if (!next) return c.json({ error: "No Apify token saved" }, 404);
+  if (!next) return c.json({ error: "No Apify key saved" }, 404);
   return c.json(publicApifyStatus(next));
 });
 
 instagramApp.post("/apify/check", async (c) => {
   const username = c.get("user").username;
   const checked = await checkApify(username);
-  if (!checked) return c.json({ error: "No Apify token saved" }, 404);
+  if (!checked) return c.json({ error: "No Apify key saved" }, 404);
   return c.json(publicApifyStatus(checked));
 });
 
@@ -3577,7 +3577,7 @@ async function ingestOne(
   if (wants(recipe, "media") && (await libraryBytes(user)) >= MAX_TOTAL_BYTES) {
     return {
       ok: false,
-      error: `The Instagram library is over its ${Math.round(MAX_TOTAL_BYTES / 1024 ** 3)} GB quota — delete some posts first`,
+      error: `Saved posts are over the ${Math.round(MAX_TOTAL_BYTES / 1024 ** 3)} GB limit: delete some posts first`,
       status: 409,
     };
   }
@@ -3694,15 +3694,15 @@ instagramApp.post("/", async (c) => {
     }
   }
   if (!posts.length) {
-    return c.json({ error: errors[0]?.error || "Ingest failed", errors }, failStatus);
+    return c.json({ error: errors[0]?.error || "Could not save the post", errors }, failStatus);
   }
   return c.json({ posts, errors }, (created || toppedUp) && run === "now" ? 202 : 200);
 });
 
 /** Why a shared link was saved but not crawled, worded for a phone (no "paste above"). */
 function shareLaterReason(code: string): string {
-  if (code === "APIFY_INVALID") return "your Apify key needs replacing in Settings → API keys";
-  return "add your Apify key in Settings → API keys to crawl it";
+  if (code === "APIFY_INVALID") return "needs a new Apify key";
+  return "needs an Apify key";
 }
 
 /**
@@ -3763,11 +3763,11 @@ instagramApp.post("/share", async (c) => {
     const saved = `${created > 1 ? `Saved ${created} posts` : "Saved"} to ${where}`;
     const message = created
       ? gate.ok
-        ? where === "Know-how" ? saved : `${saved}, crawling now`
+        ? where === "Know-how" ? saved : `${saved}, analyzing`
         : `${saved}${later}`
       : moved
-        ? `Already in your library, moved to ${where}`
-        : "Already in your library";
+        ? `Already saved, moved to ${where}`
+        : "Already saved";
     return c.json({ message, posts, accounts: [], errors }, created && gate.ok ? 202 : 200);
   }
 
@@ -3777,9 +3777,9 @@ instagramApp.post("/share", async (c) => {
     if (!result.ok) return c.json({ error: result.error }, result.status);
     const name = `@${result.meta.username}`;
     const message = result.existing
-      ? `${name} is already in your library`
+      ? `${name} is already added`
       : gate.ok
-        ? `Added ${name}, pulling their posts`
+        ? `Added ${name}, listing the posts`
         : `Added ${name}${later}`;
     return c.json(
       { message, posts: [], accounts: [await publicAccount(result.meta)], errors: [] },
@@ -3787,7 +3787,7 @@ instagramApp.post("/share", async (c) => {
     );
   }
 
-  return c.json({ error: "No Instagram link in what you shared" }, 400);
+  return c.json({ error: "No Instagram link in the shared text" }, 400);
 });
 
 instagramApp.get("/stacks", async (c) => {
@@ -3816,8 +3816,8 @@ instagramApp.post("/stacks", async (c) => {
   const ids = Array.isArray(body?.postIds)
     ? body.postIds.filter((id): id is string => typeof id === "string" && okId(id))
     : [];
-  if (!title) return c.json({ error: "Name this topic" }, 400);
-  if (ids.length < 2) return c.json({ error: "Pick at least two posts to stack" }, 400);
+  if (!title) return c.json({ error: "Needs a topic name" }, 400);
+  if (ids.length < 2) return c.json({ error: "A topic needs at least two posts" }, 400);
   const now = Date.now();
   const projectId = await resolveProjectId(user);
   const stack: StackMeta = {
@@ -3842,7 +3842,7 @@ instagramApp.post("/stacks", async (c) => {
       delete m.stackId;
       await persist(m);
     }
-    return c.json({ error: "Pick at least two posts you own" }, 400);
+    return c.json({ error: "A topic needs at least two posts you own" }, 400);
   }
   await persistStack(stack);
   return c.json(publicStack(stack, members), 201);
@@ -4325,7 +4325,7 @@ async function addAccountFor(
   const { run, mine } = opts;
   const username = parseProfileHandle(raw) || (raw.startsWith("@") ? raw.slice(1) : "");
   if (!username) {
-    return { ok: false, error: "Paste an Instagram profile URL or @username", status: 400 };
+    return { ok: false, error: "Paste an Instagram profile link or @username", status: 400 };
   }
   const existing = await findAccount(user, "", username);
   if (run === "now") {
@@ -4594,7 +4594,7 @@ instagramApp.patch("/accounts/:id", async (c) => {
   if (!body || !("mine" in body)) return c.json({ error: "Nothing to update" }, 400);
   if (body.mine === true) await assignMine(meta.owner, meta.id);
   else {
-    if (hasLogin(meta)) return c.json({ error: "This account is connected by its own login. Disconnect it in Settings → Social accounts first." }, 409);
+    if (hasLogin(meta)) return c.json({ error: "This account is connected: disconnect it in Settings → Social accounts first" }, 409);
     // only this account: another account's flag is not this button's to clear. No project keeps it as its own either.
     if (meta.mine) await assignMine(meta.owner, null);
     await unlinkAccount(meta.owner, meta.id);
@@ -4615,7 +4615,7 @@ instagramApp.patch("/accounts/:id/catalog", async (c) => {
   const code = typeof body?.shortcode === "string" ? body.shortcode : "";
   const catalog = await loadCatalog(acc.id);
   const row = catalog.find((r) => r.shortcode === code);
-  if (!row) return c.json({ error: "Not in catalog" }, 404);
+  if (!row) return c.json({ error: "Post not listed" }, 404);
   if (body && "ideaStatus" in body) {
     const s = parseIdeaStatus(body.ideaStatus);
     if (!s) return c.json({ error: "Status must be inbox, idea, done, or skip" }, 400);
@@ -4809,7 +4809,7 @@ instagramApp.post("/:id/comments/refetch", async (c) => {
   const user = c.get("user");
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!meta.shortcode && !meta.url) return c.json({ error: "Resolve the post first" }, 409);
+  if (!meta.shortcode && !meta.url) return c.json({ error: "Analyze the post first" }, 409);
   const gate = await ingestGate(user.username);
   if (!gate.ok) return c.json({ error: gate.error, code: gate.code }, 409);
   const body = (await c.req.json().catch(() => null)) as { more?: unknown } | null;
@@ -4822,7 +4822,7 @@ instagramApp.post("/:id/refresh-counts", async (c) => {
   const user = c.get("user");
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (meta.status === "processing") return c.json({ error: "Already processing" }, 409);
+  if (meta.status === "processing") return c.json({ error: "Already working" }, 409);
   const gate = await ingestGate(user.username);
   if (!gate.ok) {
     return c.json({ error: gate.error, code: gate.code }, 409);

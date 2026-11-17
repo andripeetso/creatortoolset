@@ -605,7 +605,7 @@ documentsApp.get("/", async (c) => {
 documentsApp.post("/", async (c) => {
   const user = c.get("user");
   if (!anyAiConfigured(user)) {
-    return c.json({ error: "AI is not configured" }, 400);
+    return c.json({ error: "Needs an AI provider" }, 400);
   }
   const body = (await c.req.json().catch(() => null)) as {
     prompt?: unknown;
@@ -777,7 +777,7 @@ documentsApp.post("/:id/generate", async (c) => {
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (!anyAiConfigured(user)) {
-    return c.json({ error: "AI is not configured" }, 400);
+    return c.json({ error: "Needs an AI provider" }, 400);
   }
   const kind = parseDocKind(meta.kind);
   let resolved: (DocSource & { pack: string })[];

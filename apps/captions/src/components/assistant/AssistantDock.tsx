@@ -44,16 +44,20 @@ import { chatTitle, useChats } from "./ChatList";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
 import { StartSuggestions, WorkPicker } from "./WorkPicker";
 import { useWorkspace } from "@/lib/workspace";
+import { leftForWorkspace } from "@/lib/page-workspace";
 import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
 import { Steps } from "@/components/chat/Steps";
 import { QueuedRow } from "@/components/chat/QueuedRow";
 import { useFollowEnd } from "@/components/chat/useFollowEnd";
+import { ScrollToEnd } from "@/components/chat/ScrollToEnd";
 import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { CopyButton } from "@/components/workshop/CopyButton";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { LimitBanner } from "./LimitBanner";
+import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
+import { useFeedback } from "@/lib/review-feedback";
 import { ConfirmCards } from "./ConfirmCards";
 import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
 import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
@@ -137,7 +141,7 @@ function followWorkspace(id: string | null | undefined) {
 export function AssistantDock() {
   const me = useMe();
   const navigate = useNavigate();
-  const { pathname, search } = useLocation();
+  const { pathname, search, state: routeState } = useLocation();
   const { collapsed, set, quote, setQuote, askAbout, images: handed, notice } = useAssistant();
   // Cite on the replies: select words, a pill where you let go; they become the quote of your next message
   const [cite, setCite] = useState<ReturnType<typeof citeAt>>(null);
@@ -157,6 +161,7 @@ export function AssistantDock() {
   /** The last message you've seen (undefined until the first load): a newer reply while closed nudges the bubble. */
   const [seenId, setSeenId] = useState<string | null | undefined>(undefined);
   const chatMode = useChatMode((s) => s.on);
+  const feedbackOn = useFeedback((s) => s.on && s.count !== null);
   const [chats, reloadChats] = useChats(real && chatMode);
   const bottom = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLButtonElement>(null);
@@ -272,7 +277,7 @@ export function AssistantDock() {
   useChatModeKey(real);
   // The newest message in view (useFollowEnd). After the chat-mode layout above, which gives the list its width, and so
   // its height
-  const follow = useFollowEnd(() => bottom.current?.parentElement, collapsed && !chatMode ? null : `${chatMode} ${view?.id}`, [view?.messages.length, last?.text, last?.steps?.length, view?.pending]);
+  const { follow, away, toEnd } = useFollowEnd(() => bottom.current?.parentElement, collapsed && !chatMode ? null : `${chatMode} ${view?.id}`, [view?.messages.length, last?.text, last?.steps?.length, view?.pending]);
   // the list folded away opens over the chat from its button, until a chat is picked
   const [listOpen, setListOpen] = useState(false);
   // the page beside the chats is the open chat's own (useChatPage): its newest card or video is what it works on
@@ -281,7 +286,7 @@ export function AssistantDock() {
     .filter((w) => w.href?.startsWith("/"))
     .at(-1);
   const pageWanted = useChatMode((s) => s.page);
-  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, newest && { id: newest.id, href: newest.href }, () => {
+  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, view?.workspace, newest && { id: newest.id, href: newest.href }, () => {
     if (useChatMode.getState().bare) washTo({ bare: false });
   });
   // a new chat has no page (lib/chat-mode.ts `bare`): chat mode shows it as only chats, the question and the message
@@ -314,8 +319,9 @@ export function AssistantDock() {
     if (historyDepth.modal.has(window.history.state?.idx ?? 0)) return;
     const was = routeWas.current;
     routeWas.current = route;
-    // the first page seen (the app loaded on it, or on a dialog over it) is no link followed
-    if (was === null || was === route) return;
+    // the first page seen (the app loaded on it, or on a dialog over it) is no link followed, nor is a page that left
+    // another workspace's thing (lib/page-workspace.ts): a new chat stays without a page
+    if (was === null || was === route || leftForWorkspace(routeState)) return;
     const cm = useChatMode.getState();
     if (!cm.on) return;
     // a window with no room for the page beside the chats: the page is what was asked for, the assistant floats over it
@@ -410,6 +416,8 @@ export function AssistantDock() {
   // chat only: another chat's messages still go
   const [held, setHeld] = useState<string[]>([]);
   const sending = useRef(false);
+  // the queued message on its way to the server: its row can't be edited or removed meanwhile
+  const [sendingId, setSendingId] = useState<string | null>(null);
   useEffect(() => {
     const save = (q: Queued[]) => (q.length ? localStorage.setItem(QUEUE_KEY, JSON.stringify(q)) : localStorage.removeItem(QUEUE_KEY));
     try {
@@ -429,7 +437,7 @@ export function AssistantDock() {
   const [dropping, setDropping] = useState(false);
   const addPictures = useCallback((imgs: AssistantImage[]) => {
     setDraft((d) => {
-      if (d.images.length + imgs.length > MAX_PICTURES) setError(`At most ${MAX_PICTURES} pictures go with one message`);
+      if (d.images.length + imgs.length > MAX_PICTURES) setError(`Send up to ${MAX_PICTURES} pictures at a time`);
       return { ...d, images: [...d.images, ...imgs].slice(0, MAX_PICTURES) };
     });
   }, []);
@@ -440,10 +448,10 @@ export function AssistantDock() {
       // a folder's other files (a camera's sidecars, notes) are passed over without a word
       const other = files.find((f) => !isPicture(f) && !isMediaFile(f));
       if (folder ? !pics.length && !media.length : other)
-        setError(folder ? "That folder has no pictures, videos or recordings" : `"${other?.name}" can't go with a message: only pictures, videos and recordings can`);
+        setError(folder ? "That folder has no pictures, videos or recordings" : `"${other?.name}" was not added: only pictures, videos and recordings can be attached`);
       const room = MAX_FILES - draftRef.current.files.length;
       if (media.length > room) {
-        setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
+        setError(`Send up to ${MAX_FILES} videos at a time: the first ${Math.max(room, 0)} were added`);
         media = media.slice(0, Math.max(room, 0));
       }
       // dropped in the Mac app, a video goes as its path and nothing uploads. Otherwise it uploads at once, and the message
@@ -502,8 +510,10 @@ export function AssistantDock() {
     // the server queues a message sent while a reply is being written: only a send in flight or a refused one holds this
     if (!next || !connectedNow || sending.current) return;
     sending.current = true;
+    setSendingId(next.id);
     void send(next).then((ok) => {
       sending.current = false;
+      setSendingId(null);
       if (ok) setQueue((q) => q.filter((x) => x.id !== next.id));
       else setHeld((h) => [...h, next.id]);
     });
@@ -664,7 +674,7 @@ export function AssistantDock() {
             setSeenId(last?.id ?? null);
             openAssistant();
           }}
-          aria-label={asking ? "Open the assistant: it asks to do something on your Mac" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
+          aria-label={asking ? "Open the assistant: needs an answer" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
           style={tint}
           title="Assistant · drag to move"
           data-assistant-dock
@@ -865,7 +875,7 @@ export function AssistantDock() {
           </button>
         )}
         {!!view?.messages.length && (
-          <button type="button" className={headBtn} onClick={() => void newChat()} aria-label="Start a new chat" title="New chat (this one stays in chat mode's list)">
+          <button type="button" className={headBtn} onClick={() => void newChat()} aria-label="New chat" title="New chat">
             <SquarePen className="size-4" />
           </button>
         )}
@@ -905,7 +915,7 @@ export function AssistantDock() {
             {welcome.showing ? (
               <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
             ) : (
-              <p className="text-base font-semibold">The assistant needs your AI connected first.</p>
+              <p className="text-base font-semibold">Needs an AI provider</p>
             )}
             {(!welcome.showing || welcome.stage === "ready") && (
               <Button size="sm" onClick={() => openSetupAt("agents", true)}>
@@ -995,10 +1005,10 @@ export function AssistantDock() {
           >
             <p className="flex items-center gap-2 font-medium"><KeyRound className="size-4" aria-hidden /> {pending.name} key</p>
             <p className="text-muted-foreground">{pending.why}</p>
-            <Input type="password" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={`Paste your ${pending.name} key`} aria-label={`${pending.name} key`} />
+            <Input type="password" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} aria-label={`${pending.name} key`} />
             <div className="flex gap-2">
               <Button type="submit" size="sm" disabled={!secret.trim()}>Save key</Button>
-              <Button type="button" size="sm" variant="ghost" onClick={async () => { setSecret(""); const r = await cancelSecret(); if (r.ok) setView(r.data); }}>Not now</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={async () => { setSecret(""); const r = await cancelSecret(); if (r.ok) setView(r.data); }}>Cancel</Button>
             </div>
           </form>
         )}
@@ -1009,6 +1019,7 @@ export function AssistantDock() {
           </p>
         )}
         <div ref={bottom} />
+        <ScrollToEnd show={away} onClick={toEnd} />
       </div>
 
       {/* the message box shares the header's and the chat's left and right edges */}
@@ -1022,7 +1033,7 @@ export function AssistantDock() {
           {shownQueue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
               {shownQueue.map((it) => (
-                <QueuedRow key={it.id} text={it.text} extra={attachmentsLabel(it)} held={held.includes(it.id)} thinking={thinking} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />
+                <QueuedRow key={it.id} text={it.text} extra={attachmentsLabel(it)} held={held.includes(it.id)} thinking={thinking} sending={sendingId === it.id} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />
               ))}
             </ul>
           )}
@@ -1030,8 +1041,10 @@ export function AssistantDock() {
           {view && last?.status === "error" && last.limit && !busy && (
             <LimitBanner chat={view.id} limit={last.limit} snoozed={view.snoozed} />
           )}
+          {/* a Review video beside the chats: the box can be its comment box instead (lib/review-feedback) */}
+          <FeedbackBar />
           <div className="relative">
-          <Composer
+          {feedbackOn ? <FeedbackSlot /> : <Composer
             draft={draft}
             setDraft={setDraft}
             onSend={(d) => {
@@ -1051,7 +1064,7 @@ export function AssistantDock() {
                 <AiPicker ai={view.id in picks ? (picks[view.id] ?? undefined) : view.ai} fallback={view.defaultAi} onChange={(ai) => setPicks((p) => ({ ...p, [view.id]: ai }))} />
               ) : null
             }
-          />
+          />}
           </div>
         </div>
       )}
@@ -1076,7 +1089,7 @@ const attachmentsLabel = (it: Queued) =>
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (
-    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code, Codex, Gemini CLI and Grok can) or do things on your Mac for you.`}>
+    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} cannot use the app's tools or run commands on the Mac (Claude Code, Codex, Gemini CLI and Grok can).`}>
       {view.aiName} · no app tools
     </span>
   );
@@ -1204,7 +1217,7 @@ export function Message({
         {m.send && sending ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="truncate" title={m.send.path}>
-              {sending.error ? `"${m.send.name}" didn't send: ${sending.error}` : `Sending to ${m.send.to} · ${sending.pct}%`}
+              {sending.error ? `Could not send "${m.send.name}": ${sending.error}` : `Sending to ${m.send.to} · ${sending.pct}%`}
             </span>
             <button type="button" onClick={onCancelSend} className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground" aria-label={`Stop sending ${m.send.name}`} title="Stop sending">
               <X className="size-3" />
@@ -1220,9 +1233,9 @@ export function Message({
       type="button"
       onClick={onRetry}
       className="mt-1.5 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]"
-      title="Send your last message again"
+      title="Send the last message again"
     >
-      <RotateCcw className="size-3.5" /> Try again
+      <RotateCcw className="size-3.5" /> Retry
     </button>
   );
   if (m.status === "error" && !m.text)
@@ -1232,7 +1245,7 @@ export function Message({
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
         <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
-        <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
+        <p className={cn("text-destructive", enter)}>Reply failed</p>
         {again}
       </div>
     );
@@ -1287,7 +1300,6 @@ export function Message({
           ))}
         </div>
       )}
-      {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
       <MessageMeta className="-ml-1 mt-1" text={working ? undefined : m.text} at={working ? undefined : (m.started ?? m.at) + (m.took ?? 0)} onBranch={working ? undefined : onBranch} />
     </div>
   );
@@ -1308,7 +1320,7 @@ function MessageMeta({ text, at, onBranch, className }: { text?: string; at?: nu
     >
       {text && <CopyButton className={`${metaBtn} [&_svg]:size-3.5`} text={() => text} title="Copy" />}
       {onBranch && (
-        <button type="button" className={metaBtn} onClick={onBranch} aria-label="New chat from here" title="New chat from here (this one stays as it is)">
+        <button type="button" className={metaBtn} onClick={onBranch} aria-label="New chat from here" title="New chat from here">
           <GitFork />
         </button>
       )}
@@ -1322,7 +1334,7 @@ const metaBtn = "flex size-6 shrink-0 items-center justify-center rounded-md hov
 
 function Dots() {
   return (
-    <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Thinking">
+    <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Loading">
       {[0, 1, 2].map((i) => (
         <span key={i} className="size-1.5 rounded-full bg-muted-foreground/70 motion-safe:animate-[ct-dot_1.2s_ease-in-out_infinite]" style={{ animationDelay: `${i * 0.15}s` }} />
       ))}

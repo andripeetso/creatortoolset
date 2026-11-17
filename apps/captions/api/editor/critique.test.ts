@@ -166,7 +166,7 @@ describe("the look at a planned cut before Review", () => {
     expect(fixed.plan.shots[2]).toEqual(PLAN.shots[2]);
     // the new shot takes the slot's place, length and effects
     expect(fixed.plan.shots[1]).toMatchObject({ at: 1, dur: 1, src: { source: "ver_a", inS: 3 }, fx: [{ type: "punch" }], why: "the fight at the gate" });
-    expect(fixed.fix!.first).toEqual({ ok: false, fails: [{ n: 2, why: TOWN }], round: 1 });
+    expect(fixed.fix!.first).toEqual({ ok: false, fails: [{ n: 2, why: TOWN, at: 1, dur: 1 }], round: 1 });
     // one version in Review: the fixed one, which passed
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v).toHaveLength(1);
@@ -181,10 +181,10 @@ describe("the look at a planned cut before Review", () => {
     expect(looks).toHaveLength(2);
     expect(fixes).toHaveLength(1);
     // the first plan is back, with its look: its cut was made again and filed, not looked at a third time
-    expect(readStep(e.id, "shots")!.v1).toEqual({ plan: PLAN, notes: [], critique: { ok: false, fails: [{ n: 2, why: TOWN }], round: 1 } });
+    expect(readStep(e.id, "shots")!.v1).toEqual({ plan: PLAN, notes: [], critique: { ok: false, fails: [{ n: 2, why: TOWN, at: 1, dur: 1 }], round: 1 } });
     const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
     expect(v).toHaveLength(1);
-    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 2, why: TOWN }] });
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 2, why: TOWN, at: 1, dur: 1 }] });
   }, 240_000);
 
   it("a talking-head cut is never looked at: its preview is filed as before", async () => {
@@ -221,7 +221,7 @@ describe("the look at a planned cut before Review", () => {
     expect(await run(e, "draft")).toEqual(doneAll(["draft", "broll", "post", "preview", "critique", "file"]));
     expect(looks).toHaveLength(1);
     expect((await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions.map((x) => x.draft)).toEqual([
-      { edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 2, why: TOWN }, { n: 0, why: "Not fixed before Review: No Mac runs this provider: open Creator Toolset on your Mac" }] },
+      { edit: e.id, name: "v1", by: "mem-a", fails: [{ n: 2, why: TOWN, at: 1, dur: 1 }, { n: 0, why: "Not fixed before Review: No Mac runs this provider: open Creator Toolset on your Mac" }] },
     ]);
     // the plan is the one that was cut: no fix round was started
     expect(readStep(e.id, "shots")!.v1).toEqual({ plan: PLAN, notes: [] });
@@ -264,13 +264,15 @@ describe("the look's parts", () => {
       round: 1,
     });
     expect(parseCritique('{"ok": false, "fails": []}', 4, 2)).toEqual({ ok: true, fails: [], round: 2 });
+    // given the shots, each named one keeps its place in the cut, for Review's timeline
+    expect(parseCritique('{"fails": [{"n": 2, "why": "dark"}]}', [{ at: 0, dur: 1 }, { at: 1, dur: 1.5 }], 1).fails).toEqual([{ n: 2, why: "dark", at: 1, dur: 1.5 }]);
   });
 
   it("a shot of footage measured as badly taken fails for it, unless the AI named it already", () => {
     const shown = [{ a: 0, b: 2, motion: 0.5, flaws: ["blurry"] }, undefined, { a: 4, b: 6, motion: 0.5, flaws: ["too dark", "shaky"] }, { a: 6, b: 8, motion: 0.5, quality: 0.9 }];
-    expect(withFlaws({ ok: false, fails: [{ n: 3, why: "dull" }], round: 1 }, shown)).toEqual({
+    expect(withFlaws({ ok: false, fails: [{ n: 3, why: "dull" }], round: 1 }, shown, [{ at: 0, dur: 1 }])).toEqual({
       ok: false,
-      fails: [{ n: 1, why: "blurry" }, { n: 3, why: "dull" }],
+      fails: [{ n: 1, why: "blurry", at: 0, dur: 1 }, { n: 3, why: "dull" }],
       round: 1,
     });
     expect(withFlaws({ ok: true, fails: [], round: 1 }, [undefined, { a: 0, b: 1, motion: 0 }])).toEqual({ ok: true, fails: [], round: 1 });

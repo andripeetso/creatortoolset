@@ -98,7 +98,7 @@ export function Composer({
     <div className="space-y-1.5">
       {shotFailed && (
         <p role="alert" className="flex items-center gap-2 px-1 text-xs text-destructive motion-safe:animate-in motion-safe:fade-in">
-          <span className="min-w-0 flex-1 truncate">Couldn&apos;t take a screenshot.</span>
+          <span className="min-w-0 flex-1 truncate">Could not take a screenshot</span>
           <button type="button" onClick={() => setShotFailed(false)} aria-label="Dismiss" className="opacity-70 hover:opacity-100">
             <X className="size-3.5" />
           </button>
@@ -112,7 +112,7 @@ export function Composer({
           <span className="min-w-0 flex-1 line-clamp-2 text-muted-foreground" title={quote}>
             About: «{quote}»
           </span>
-          <button type="button" onClick={onDropQuote} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground" aria-label="Don't ask about this" title="Don't ask about this">
+          <button type="button" onClick={onDropQuote} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground" aria-label="Remove quote" title="Remove quote">
             <X className="size-3" />
           </button>
         </div>
@@ -142,7 +142,7 @@ export function Composer({
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{f.name}</span>
                   <span className={cn("block tabular-nums", f.error ? "text-destructive" : "text-muted-foreground")}>
-                    {f.error ? "Didn't upload: remove it and add it again" : f.path ? "On this Mac" : f.done ? "Ready" : `Uploading · ${f.pct}%`}
+                    {f.error ? "Could not upload: remove it and add it again" : f.path ? "On this Mac" : f.done ? "Uploaded" : `Uploading · ${f.pct}%`}
                   </span>
                 </span>
               </div>
@@ -178,7 +178,7 @@ export function Composer({
                   "flex h-14 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-left text-[11px] hover:border-foreground/30",
                   openPaste === i && "border-[color-mix(in_srgb,var(--tint)_60%,transparent)]",
                 )}
-                title="Show what's in it"
+                title="Show text"
               >
                 <FileText className="size-4 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span>
@@ -206,8 +206,15 @@ export function Composer({
       )}
 
       <div
-        className={boxClass(recording)}
+        // The field gets the whole width; its buttons sit on a row under it: attach on the left, the model and Send on the right.
+        className={cn(boxClass(recording), "cursor-text flex-col items-stretch gap-1 pl-1.5")}
         onKeyDown={(e) => recording && e.key === "Escape" && voice.cancel()}
+        onMouseDown={(e) => {
+          // a click on the box's padding or the button row's gaps puts you in the field
+          if ((e.target as HTMLElement).closest("button, textarea, [role=menu]")) return;
+          e.preventDefault();
+          box.current?.focus();
+        }}
       >
         {recording || writing ? (
           <VoiceStatus v={v} />
@@ -221,12 +228,15 @@ export function Composer({
             onPaste={(e) => onPaste(e.clipboardData) && e.preventDefault()}
             placeholder="Message"
             aria-label="Message the assistant"
-            className="max-h-40 min-h-8 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 outline-none placeholder:text-muted-foreground/70"
+            className="max-h-40 min-h-8 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 outline-none placeholder:text-muted-foreground/70"
           />
         )}
 
+        <div className="flex items-center gap-1.5">
         {recording ? (
-          <VoiceDone v={v} />
+          <span className="ml-auto flex items-center gap-1.5">
+            <VoiceDone v={v} />
+          </span>
         ) : (
           <>
             <input
@@ -277,16 +287,19 @@ export function Composer({
                 disabled={writing || draft.images.length >= MAX_PICTURES}
                 className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
                 aria-label="Attach"
-                title="Attach (or drop files here)"
+                title="Attach"
               >
                 <Paperclip className="size-4" />
               </button>
             )}
             <MicButton v={v} />
-            {aiPicker}
-            <SendButton empty={empty} waiting={waiting} blocked={uploading ? "Waiting for the video to upload" : undefined} disabled={writing} onSend={send} onStop={onStop} />
+            <span className="ml-auto flex min-w-0 items-center gap-1.5">
+              {aiPicker}
+              <SendButton empty={empty} waiting={waiting} blocked={uploading ? "Uploading the video" : undefined} disabled={writing} onSend={send} onStop={onStop} />
+            </span>
           </>
         )}
+        </div>
       </div>
       {bigPicture && <PictureOverlay src={bigPicture} onClose={() => setBigPicture(null)} />}
     </div>

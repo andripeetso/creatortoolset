@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import {
   ArrowDown,
@@ -47,7 +48,7 @@ import {
   type DocumentRecord,
   type MediaClip,
 } from "@/lib/documents";
-import { parseDocKind, type DocKind, type GuideDoc } from "@/lib/guide";
+import { guideSaves, parseDocKind, saveLabel, type DocKind, type GuideDoc } from "@/lib/guide";
 import { GuideBody } from "@/components/GuideBody";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { DocumentWysiwyg } from "@/components/DocumentWysiwyg";
@@ -82,6 +83,7 @@ function ComposeForm({
   initial,
   onCreated,
   onUpdated,
+  replace,
   existingId,
   clipId,
 }: {
@@ -91,6 +93,8 @@ function ComposeForm({
   clipId?: string;
   onCreated: (doc: DocumentRecord) => void;
   onUpdated?: (doc: DocumentRecord) => void;
+  /** The open guide's own way to run a Regenerate, in turn with its saves (the Editor's replaceText). */
+  replace?: (run: () => Promise<DocumentRecord>) => Promise<DocumentRecord>;
 }) {
   // the recordings to pick from: saved copy at once, live with Video Notes' changes
   const { data: media } = useCachedLoad<{ clips: MediaClip[] }>("/api/documents/media", listDocumentMedia, { topic: "clips" });
@@ -147,13 +151,16 @@ function ComposeForm({
     setBusy(true);
     try {
       if (existingId) {
-        const patched = await patchDocument(existingId, {
-          prompt,
-          sources: picked,
-          kind,
-        });
-        const next = await generateDocument(existingId);
-        onUpdated?.(next.body || next.guide ? next : patched);
+        const run = async () => {
+          const patched = await patchDocument(existingId, {
+            prompt,
+            sources: picked,
+            kind,
+          });
+          const next = await generateDocument(existingId);
+          return next.body || next.guide ? next : patched;
+        };
+        onUpdated?.(await (replace ? replace(run) : run()));
       } else {
         onCreated(await createDocument(prompt, picked, kind));
       }
@@ -186,7 +193,7 @@ function ComposeForm({
       {ai === false && (
         <p className="flex items-center gap-1.5 text-xs text-amber-400/80">
           <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-          AI keys are missing — documents can’t be generated until they’re set.
+          Needs an AI provider
         </p>
       )}
 
@@ -247,7 +254,7 @@ function ComposeForm({
             ))}
           </div>
         ) : media.clips.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No clips yet.</p>
+          <p className="text-sm text-muted-foreground">No recordings</p>
         ) : (
           <div className="flex flex-col gap-1">
             {media.clips.map((c) => (
@@ -296,7 +303,7 @@ function ComposeForm({
       {picked.length > 0 && (
         <section>
           <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Order and how to use each
+            Order and notes
           </h2>
           <div className="flex flex-col gap-2">
             {picked.map((s, i) => (
@@ -353,7 +360,7 @@ function ComposeForm({
                 <input
                   value={s.note ?? ""}
                   onChange={(e) => setNote(i, e.target.value)}
-                  placeholder="How to use this source (optional)"
+                  placeholder="Note for this source (optional)"
                   className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-violet-500"
                 />
               </div>
@@ -364,17 +371,12 @@ function ComposeForm({
 
       <section>
         <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          {kind === "guide" ? "What to cover" : "Brief"}
+          {kind === "guide" ? "Brief (optional)" : "Brief"}
         </h2>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={4}
-          placeholder={
-            kind === "guide"
-              ? "Optional: who this is for, or which part of the recording to skip…"
-              : "These are three sequential reviews. Use clip 1 first, then…"
-          }
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-violet-500"
         />
       </section>
@@ -392,7 +394,7 @@ function ComposeForm({
             <Loader2 className="h-4 w-4 animate-spin" /> Writing…
           </>
         ) : existingId ? (
-          kind === "guide" ? "Regenerate this guide" : "Regenerate with these sources"
+          kind === "guide" ? "Regenerate guide" : "Regenerate document"
         ) : kind === "guide" ? (
           "Create guide"
         ) : (
@@ -446,7 +448,7 @@ function ShareMenu({
       >
         <p className="text-sm font-medium text-foreground">Share this document</p>
         <label className="mt-3 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          Who can open
+          Access
         </label>
         <div className="relative mt-1.5">
           <select
@@ -459,11 +461,6 @@ function ShareMenu({
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>
-        <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
-          {doc.published
-            ? "Anyone with this link can view."
-            : "Only you can open this document."}
-        </p>
         <div className="mt-3 flex gap-1.5">
           <input
             readOnly
@@ -490,7 +487,10 @@ function ShareMenu({
   );
 }
 
-function Editor({
+/** A document's text as the box holds it: without its title line. */
+const textOf = (body: string) => splitDocumentTitle(parseDocumentMarkdown(body)).rest;
+
+export function Editor({
   doc,
   owns,
   onChange,
@@ -502,13 +502,14 @@ function Editor({
   onDeleted: () => void;
 }) {
   const isGuide = parseDocKind(doc.kind) === "guide";
-  const [name, setName] = useState(doc.name);
-  const [body, setBody] = useState(
-    () => splitDocumentTitle(parseDocumentMarkdown(doc.body)).rest,
-  );
+  // the name box: what is typed in it until the server has it (so a change from elsewhere never takes its place, and
+  // a save that failed keeps it), else the guide's name
+  const [typedName, setName] = useState<string | null>(null);
+  const name = typedName ?? doc.name;
+  const [body, setBody] = useState(() => textOf(doc.body));
   const [guide, setGuide] = useState<GuideDoc | null>(doc.guide ?? null);
   const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [label, setLabel] = useState("Saved");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compose, setCompose] = useState(false);
@@ -518,71 +519,75 @@ function Editor({
     start?: number;
     end?: number;
   } | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // the owner on an account not set to Read: edit, share, sources, regenerate and delete
   const signedIn = useMe();
   const editable = owns && canChange(signedIn, "guides");
 
-  useEffect(() => {
-    setName(doc.name);
-    setBody(splitDocumentTitle(parseDocumentMarkdown(doc.body)).rest);
-    setGuide(doc.guide ?? null);
-  }, [doc.id, doc.name, doc.body, doc.guide]);
-
-  const save = useCallback(
-    async (patch: {
-      name?: string;
-      body?: string;
-      published?: boolean;
-      guide?: GuideDoc;
-    }) => {
-      setSaving(true);
-      setError(null);
-      try {
-        onChange(await patchDocument(doc.id, patch));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setSaving(false);
-      }
-    },
-    [doc.id, onChange],
+  // This guide's saves, one at a time and in order (guideSaves). The Editor is made anew for each guide (its key),
+  // so a save and its answer belong to the guide they were typed in, also after another guide is on screen: the
+  // answer goes to that guide's own saved copy (onChange is the one this guide was shown with).
+  const tell = useRef(onChange);
+  useLayoutEffect(() => {
+    tell.current = onChange;
+  });
+  const [saves] = useState(() =>
+    guideSaves({
+      send: (patch: { name?: string; body?: string; published?: boolean; guide?: GuideDoc }) => {
+        setError(null);
+        return patchDocument(doc.id, patch);
+      },
+      saved: (d: DocumentRecord) => {
+        tell.current(d);
+        setName((typed) => (typed === d.name ? null : typed));
+      },
+      failed: (e) => setError(e instanceof Error ? e.message : String(e)),
+      changed: (counts) => setLabel(saveLabel(counts)),
+      show: (d: DocumentRecord) => {
+        setBody(textOf(d.body));
+        setGuide(d.guide ?? null);
+      },
+    }),
   );
+  // leaving the guide: what was typed goes now, not on a timer nobody is left to hold
+  useEffect(() => () => void saves.flush(), [saves]);
+
+  // each copy of the guide that comes in, a save's answer or a change from elsewhere: the boxes take it unless
+  // something typed here is not saved yet, or it is the answer to this page's own save while editing; that one is
+  // shown when editing ends (guideSaves.arrived)
+  useEffect(() => saves.arrived(doc, editing), [doc, saves, editing]);
+
+  // Regenerate, from the menu or from Sources. What was typed is saved before it runs and nothing is sent while it
+  // does; its text is then the box's, whatever was typed meanwhile (guideSaves.replace).
+  const replaceText = async (run: () => Promise<DocumentRecord>) => {
+    const d = await saves.replace(run);
+    setError(null);
+    setBody(textOf(d.body));
+    setGuide(d.guide ?? null);
+    return d;
+  };
 
   const scheduleBody = (next: string) => {
     setBody(next);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(
-      () => void save({ body: withDocumentTitle(next, name) }),
-      700,
-    );
+    saves.type({ body: withDocumentTitle(next, name) });
   };
 
   const scheduleGuide = (next: GuideDoc) => {
     setGuide(next);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => void save({ guide: next }), 700);
-  };
-
-  const flushSave = () => {
-    if (!saveTimer.current) return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-    if (isGuide && guide) void save({ guide });
-    else void save({ body: withDocumentTitle(body, name) });
+    saves.type({ guide: next });
   };
 
   const commitName = (raw: string) => {
     const next = raw.trim().slice(0, 120);
-    if (!next) {
-      setName(doc.name);
+    if (!next || next === doc.name) {
+      setName(null);
       return;
     }
     setName(next);
-    if (next !== doc.name) {
-      void save(
-        isGuide ? { name: next } : { name: next, body: withDocumentTitle(body, next) },
-      );
+    if (isGuide) void saves.save({ name: next });
+    else {
+      // a document's name is its first line, so this save carries the text: it goes as the text, in place of what waited
+      saves.type({ name: next, body: withDocumentTitle(body, next) });
+      void saves.flush();
     }
   };
 
@@ -592,13 +597,13 @@ function Editor({
       {editable && (
         <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-0.5 sm:mb-4">
           <span className="mr-auto shrink-0 text-[11px] text-muted-foreground">
-            {saving ? "Saving…" : "Saved"}
+            {label}
           </span>
           {editing ? (
             <button
               type="button"
               onClick={() => {
-                flushSave();
+                void saves.flush();
                 setEditing(false);
               }}
               className="flex shrink-0 items-center gap-1.5 rounded-md bg-violet-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-violet-500"
@@ -617,7 +622,7 @@ function Editor({
           )}
           <ShareMenu
             doc={doc}
-            onPublished={(published) => void save({ published })}
+            onPublished={(published) => void saves.save({ published })}
           />
           <button
             type="button"
@@ -651,7 +656,7 @@ function Editor({
                     setBusy(true);
                     setError(null);
                     try {
-                      onChange(await generateDocument(doc.id));
+                      onChange(await replaceText(() => generateDocument(doc.id)));
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));
                     } finally {
@@ -703,6 +708,7 @@ function Editor({
               kind: parseDocKind(doc.kind),
             }}
             onCreated={onChange}
+            replace={replaceText}
             onUpdated={(d) => {
               onChange(d);
               setCompose(false);
@@ -725,7 +731,8 @@ function Editor({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") e.currentTarget.blur();
                   else if (e.key === "Escape") {
-                    setName(doc.name);
+                    // the box shows the saved name before it is left: leaving reads the box, and saves what it says
+                    flushSync(() => setName(null));
                     e.currentTarget.blur();
                   }
                 }}
@@ -762,8 +769,7 @@ function Editor({
               />
             ) : isGuide ? (
               <p className="text-sm text-muted-foreground">
-                This guide has no steps yet. Use Sources or Regenerate to build
-                it from the recording.
+                No steps
               </p>
             ) : (
               <MarkdownBody
@@ -885,7 +891,7 @@ export default function DocumentsPage() {
       {!docId && phone ? (
         <div className="mb-5 w-full max-w-[720px]">
           <DesktopHint>
-            Full Guide Builder is on your desktop. You can still read guides here.
+            Guides can be read here; building one needs a computer.
           </DesktopHint>
         </div>
       ) : null}
@@ -905,7 +911,7 @@ export default function DocumentsPage() {
             </h1>
             {phone ? (
               <DesktopHint>
-                Building a guide needs the desktop editor. Open this on a computer.
+                Building a guide needs a computer.
               </DesktopHint>
             ) : (
               <ComposeForm
@@ -937,6 +943,7 @@ export default function DocumentsPage() {
               </button>
             )}
             <Editor
+              key={current.id}
               doc={current}
               owns={owns}
               onChange={setCurrent}
@@ -949,7 +956,7 @@ export default function DocumentsPage() {
         ) : docs.length === 0 ? (
           <div className="flex flex-col gap-1.5">
               <p className="py-10 text-center text-sm text-zinc-500">
-                No documents yet. Pick a clip to start.
+                No guides
               </p>
           </div>
         ) : (
@@ -971,7 +978,7 @@ export default function DocumentsPage() {
               }}
               view={{ value: view, onChange: setView }}
             />
-            {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+            {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No guides found</p>}
             {view === "grid" ? (
               <FolderGrid size="small">
                 <ToolFolderCards state={folders} pictureOf={guidePicture} />

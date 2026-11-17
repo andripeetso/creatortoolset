@@ -31,4 +31,14 @@ describe("parseMachine", () => {
     expect(disks("x'; rm -rf ~ #")).not.toHaveProperty("share");
     expect(disks("x$(id)")).not.toHaveProperty("share");
   });
+  it("keeps a volume's id, and away only for a share", () => {
+    const [vol, nas, odd] = parseMachine({ cpus: 8, memGb: 16, disks: [
+      { path: "/", name: "Macintosh HD", freeGb: 1, uuid: "AAAA0000-0000-4000-8000-00000000000A", away: true },
+      { path: "/Volumes/F", name: "F", freeGb: 1, network: true, away: true },
+      { path: "/Volumes/G", name: "G", freeGb: 1, uuid: "../x" },
+    ] })!.disks!;
+    expect(vol).toEqual({ path: "/", name: "Macintosh HD", freeGb: 1, uuid: "AAAA0000-0000-4000-8000-00000000000A" });
+    expect(nas).toMatchObject({ network: true, away: true });
+    expect(odd).not.toHaveProperty("uuid");
+  });
 });

@@ -48,9 +48,9 @@ export function SaveAllButton({ token, files, className = "" }: { token: string;
     try {
       const got: File[] = [];
       for (const [i, d] of files.entries()) {
-        setBusy(`Getting ${i + 1} of ${files.length}…`);
+        setBusy(`Downloading ${i + 1} of ${files.length}…`);
         const r = await fetch(shareDeliveryUrl(token, d.id));
-        if (!r.ok) throw new Error(`${d.name}: HTTP ${r.status}`);
+        if (!r.ok) throw new Error(`Could not download ${d.name}`);
         got.push(new File([await r.blob()], d.name, { type: typeOf(d) }));
       }
       setReady(got);
@@ -65,7 +65,7 @@ export function SaveAllButton({ token, files, className = "" }: { token: string;
       <button type="button" disabled={!!busy} onClick={() => void save()} className={btn}>
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Smartphone className="h-4 w-4" />} {busy ?? (ready ? `Save ${files.length} to Photos` : "Save all to phone")}
       </button>
-      {ready && !busy ? <p className="text-center text-[11px] text-zinc-500">Ready: tap again, then Save to Photos.</p> : null}
+      {ready && !busy ? <p className="text-center text-[11px] text-zinc-500">Tap again, then Save to Photos.</p> : null}
       {error ? <p className="text-[11px] text-red-300">{error}</p> : null}
     </div>
   );
@@ -90,7 +90,7 @@ export function FinalsGallery({ token, files, className = "grid-cols-2 sm:grid-c
             <span className="min-w-0 flex-1 truncate" title={d.note ? `${d.name}: ${d.note}` : d.name}>
               {d.name}
             </span>
-            <a href={shareDeliveryUrl(token, d.id, true)} className="shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-zinc-50" title="Download this one">
+            <a href={shareDeliveryUrl(token, d.id, true)} className="shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-zinc-50" title="Download">
               <Download className="h-3.5 w-3.5" />
             </a>
           </figcaption>

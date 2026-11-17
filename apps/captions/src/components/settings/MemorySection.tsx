@@ -99,6 +99,7 @@ function EditRule({ fact, rewriteFirst, onClose, onSaved }: { fact: MemoryFact; 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- on open only
   }, []);
   const save = async () => {
+    if (text.trim() === fact.text) return onClose();
     setBusy(true);
     setError(null);
     try {
@@ -119,10 +120,10 @@ function EditRule({ fact, rewriteFirst, onClose, onSaved }: { fact: MemoryFact; 
       submitLabel="Save"
       onSubmit={save}
       busy={busy}
-      submitDisabled={writing || !text.trim() || text.trim() === fact.text}
+      submitDisabled={writing}
       error={error}
     >
-      <Textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={MEMORY_RULE_MAX} rows={3} disabled={writing} aria-label="Rule" />
+      <Textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={MEMORY_RULE_MAX} rows={3} required disabled={writing} aria-label="Rule" />
       <Button type="button" size="sm" variant="outline" onClick={() => void rewrite()} disabled={writing || busy}>
         {writing ? "Rewriting…" : "Rewrite"}
       </Button>

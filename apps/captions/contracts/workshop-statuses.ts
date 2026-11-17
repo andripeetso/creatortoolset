@@ -7,5 +7,14 @@
 export const SESSION_STATUSES = ["draft", "writing", "ready", "production", "editing", "toPost", "published", "shelved"] as const;
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
 
+/** A draft made from a session: generating until it is ready or fails. */
+export type DraftStatus = "generating" | "ready" | "error";
+/** A chat reply: thinking until it is done or fails. */
+export type ReplyStatus = "thinking" | "done" | "error";
+/** What the AI proposed (a web search, an accuracy check): open until the author says yes or no. */
+export type ProposalStatus = "open" | "accepted" | "declined";
+/** A freelancer's mark on a share link. */
+export type ShareProgressState = "producing" | "done";
+
 /** A chat reply the author stopped ends with this error: a Stop, not a failure (the chat hides it). */
 export const TURN_STOPPED = "Stopped";

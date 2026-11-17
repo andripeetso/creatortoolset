@@ -37,7 +37,7 @@ export function AiPicker({ ai, fallback: given, onChange }: { ai?: Selection; fa
           type="button"
           className="flex h-8 min-w-0 max-w-36 shrink items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label={`AI for this chat: ${label}${ai ? "" : " (default)"}`}
-          title={ai ? `This chat's AI: ${nameOf(shown.instance)}, ${label}` : `Your default AI: ${nameOf(shown.instance)}, ${label}`}
+          title={ai ? `This chat's AI: ${nameOf(shown.instance)}, ${label}` : `Default AI: ${nameOf(shown.instance)}, ${label}`}
         >
           <ProviderLogo driver={driverOf(shown.instance)} inherit className="size-3.5 opacity-80" />
           {/* the default says so in its hover text and list, not on the button: it stays short */}
@@ -50,7 +50,7 @@ export function AiPicker({ ai, fallback: given, onChange }: { ai?: Selection; fa
         <Command className="min-w-0 flex-1 rounded-r-none">
           <CommandInput placeholder="Search models…" />
           <CommandList>
-            <CommandEmpty>No model by that name</CommandEmpty>
+            <CommandEmpty>No models found</CommandEmpty>
             {fallback && (
               <CommandGroup>
                 <CommandItem value="default" onSelect={() => pick(null)}>
@@ -68,7 +68,7 @@ export function AiPicker({ ai, fallback: given, onChange }: { ai?: Selection; fa
                   {(models.length ? models : [""]).map((m) => (
                     <CommandItem key={m} value={`${inst.id} ${inst.name} ${m ? modelName(m) : "default model"}`} onSelect={() => pick({ instance: inst.id, model: m, effort: shown.effort })}>
                       <ProviderLogo driver={inst.driver} className="size-3.5" />
-                      <span className="flex-1 truncate">{m ? modelName(m) : "Its own default model"}</span>
+                      <span className="flex-1 truncate">{m ? modelName(m) : "Default model"}</span>
                       <Check className={cn("size-3.5", !(ai?.instance === inst.id && ai.model === m) && "invisible")} />
                     </CommandItem>
                   ))}

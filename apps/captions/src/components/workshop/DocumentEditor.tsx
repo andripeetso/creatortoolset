@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GripVertical, Loader2, Lock, LockOpen, MessageCircleQuestion, Plus, Shuffle, X } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { MarkdownBody } from "@/components/MarkdownBody";
@@ -40,8 +40,32 @@ function placeholderAt(text: string, caret: number): { from: number; to: number;
   return null;
 }
 
+/**
+ * Text that changes from outside while the field has the cursor (a turn's lines landing in the page being typed in)
+ * leaves the cursor where it was in the text, not at the end. The returned function takes the field after each of
+ * its own inputs and selections.
+ */
+function useKeepCaret(field: React.RefObject<HTMLTextAreaElement | null>, value: string) {
+  const own = useRef({ value, start: 0, end: 0 });
+  const note = (el: HTMLTextAreaElement) => {
+    own.current = { value: el.value, start: el.selectionStart, end: el.selectionEnd };
+  };
+  useLayoutEffect(() => {
+    const el = field.current;
+    const was = own.current;
+    if (!el || was.value === value) return;
+    own.current = { ...was, value };
+    if (document.activeElement !== el) return;
+    // before the change the offset holds; after it, the distance from the end does
+    const at = (i: number) => (value.startsWith(was.value.slice(0, i)) ? i : Math.max(0, value.length - (was.value.length - i)));
+    el.setSelectionRange(at(was.start), at(was.end));
+    note(el);
+  }, [field, value]);
+  return note;
+}
+
 /** One text part of a field: a textarea that fits its text, with its own highlight layers. Offsets are this part's own. */
-function TextArea({
+export function TextArea({
   value,
   disabled,
   onChange,
@@ -93,6 +117,7 @@ function TextArea({
   useEffect(() => {
     if (ref.current) fitHeight(ref.current);
   }, [value]);
+  const noteCaret = useKeepCaret(ref, value);
   useEffect(() => {
     // a font arriving after the first fit re-wraps the lines at the same width
     const refit = () => {
@@ -107,7 +132,10 @@ function TextArea({
       ref={attach}
       value={value}
       disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        noteCaret(e.target);
+        onChange(e.target.value);
+      }}
       onKeyDown={(e) => {
         // ⌘B / ⌘I: **bold** and *italic* for emphasis; the share view renders them
         if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "b" || e.key === "i")) {
@@ -120,9 +148,26 @@ function TextArea({
         }
         onKeyDown?.(e);
       }}
-      onSelect={onSelectRange ? (e) => onSelectRange(e.currentTarget.selectionStart, e.currentTarget.selectionEnd) : undefined}
-      // a drag-select gets the pill, a double- or triple-click doesn't
-      onMouseUp={onSelectRange ? (e) => onSelectRange(e.currentTarget.selectionStart, e.currentTarget.selectionEnd, e.detail > 1 ? undefined : { x: e.clientX + 6, y: e.clientY + 10 }) : undefined}
+      onSelect={(e) => {
+        noteCaret(e.currentTarget);
+        onSelectRange?.(e.currentTarget.selectionStart, e.currentTarget.selectionEnd);
+      }}
+      // a drag-select gets the pill, a double- or triple-click doesn't. The drag often ends outside the field
+      // (past a slide's last word), so the release is caught on the page, not on the field
+      onMouseDown={
+        onSelectRange
+          ? (e) => {
+              const el = e.currentTarget;
+              document.addEventListener(
+                "mouseup",
+                (u) => {
+                  if (document.activeElement === el) onSelectRange(el.selectionStart, el.selectionEnd, u.detail > 1 ? undefined : { x: u.clientX + 6, y: u.clientY + 10 });
+                },
+                { once: true },
+              );
+            }
+          : undefined
+      }
       onKeyUp={
         onSelectRange
           ? (e) => {
@@ -316,6 +361,7 @@ function AutoTextarea({
 export function DocumentEditor({
   doc,
   locked,
+  writing = false,
   quiet = false,
   saving,
   aiAvailable = true,
@@ -338,8 +384,10 @@ export function DocumentEditor({
   doc: WorkshopDocument;
   /** What the last AI turn changed: each block it wrote (by id, also caption / pinned / hooks) as it was before; `on` shades the new words. */
   changes?: AiChanges;
-  /** True while the AI is editing this document — typing is paused. */
+  /** Typing is paused (the piece shown is from memory and may be behind, or it is read-only). */
   locked: boolean;
+  /** A turn is running. The piece stays open: what the author types is theirs, and the turn's edit to it is refused. */
+  writing?: boolean;
   /** Locked without the "AI is editing…" label (refreshing a session shown from memory). */
   quiet?: boolean;
   /** "Not mine" is on: the author's words this session, to mark everything else on the AI's slides. */
@@ -370,12 +418,13 @@ export function DocumentEditor({
   onVersionCaption?: (key: string, text: string) => void;
 }) {
   if (doc.kind === "notes") {
-    return <NotesEditor doc={doc} locked={locked} quiet={quiet} saving={saving} preview={preview} onChange={onChange} />;
+    return <NotesEditor doc={doc} locked={locked} writing={writing} quiet={quiet} saving={saving} preview={preview} onChange={onChange} />;
   }
   return (
     <PieceEditor
       doc={doc}
       locked={locked}
+      writing={writing}
       quiet={quiet}
       saving={saving}
       aiAvailable={aiAvailable}
@@ -463,7 +512,7 @@ function VersionCaption({
           <CopyButton
             text={() => markdownToPlain(shown)}
             label="Copy"
-            title="Copy this version's post description as Instagram takes it"
+            title="Copy this version's post description"
             className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
           />
         ) : null}
@@ -475,9 +524,9 @@ function VersionCaption({
             onWrite(!!text.trim());
           }}
           className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40"
-          title={text.trim() ? "Another take of this version's description" : "Write this version's description"}
+          title={text.trim() ? "Rewrite this version's post description" : "Write this version's post description"}
         >
-          {text.trim() ? "Another" : "Write"}
+          {text.trim() ? "Rewrite" : "Write"}
         </button>
       </div>
       <AutoTextarea
@@ -485,7 +534,7 @@ function VersionCaption({
         disabled={disabled}
         onChange={change}
         sessionId={doc.sessionId}
-        placeholder={doc.caption?.text ? "Uses the main description until this version has its own" : "This version's post description"}
+        placeholder={doc.caption?.text ? "Uses the main post description" : "This version's post description"}
       />
     </>
   );
@@ -495,6 +544,7 @@ function VersionCaption({
 function NotesEditor({
   doc,
   locked,
+  writing = false,
   quiet = false,
   saving,
   preview,
@@ -502,6 +552,7 @@ function NotesEditor({
 }: {
   doc: WorkshopDocument;
   locked: boolean;
+  writing?: boolean;
   /** Locked without the "AI is editing…" label (refreshing a session shown from memory). */
   quiet?: boolean;
   saving: boolean;
@@ -523,10 +574,12 @@ function NotesEditor({
     const id = doc.blocks[0]?.id;
     onChange(next ? [{ ...(id ? { id } : {}), text: next }] : [], { caption: "", pinned: "" });
   };
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  const noteCaret = useKeepCaret(field, text);
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-transparent">
-      {(locked && !quiet) || saving ? (
-        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "AI is editing…" : "saving…"}</span>
+      {writing || (locked && !quiet) || saving ? (
+        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{writing || (locked && !quiet) ? "Writing…" : "Saving…"}</span>
       ) : null}
       {/* the text box and the preview keep their bar's 8px at all times, out of this right padding (index.css) */}
       <div className="min-h-0 flex-1 overflow-hidden px-5 pb-8 pt-8 bars:pr-3">
@@ -536,12 +589,17 @@ function NotesEditor({
           </div>
         ) : (
           <textarea
+            ref={field}
             value={text}
             disabled={locked}
-            onChange={(e) => emit(e.target.value)}
+            onChange={(e) => {
+              noteCaret(e.target);
+              emit(e.target.value);
+            }}
+            onSelect={(e) => noteCaret(e.currentTarget)}
             spellCheck
             aria-label="Notes"
-            placeholder="Write anything — scraps, quotes, a list. This isn't the piece."
+            placeholder="Notes"
             className="h-full w-full resize-none overflow-y-scroll bg-transparent text-[15px] leading-[1.7] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
           />
         )}
@@ -556,6 +614,7 @@ const SLIDE_SURFACE = "rounded-lg bg-muted px-3 py-3.5 ring-1 ring-inset ring-fo
 function PieceEditor({
   doc,
   locked,
+  writing = false,
   quiet = false,
   saving,
   aiAvailable = true,
@@ -577,6 +636,8 @@ function PieceEditor({
 }: {
   doc: WorkshopDocument;
   locked: boolean;
+  /** A turn is running: the text stays open, only what would start a second piece of AI writing waits. */
+  writing?: boolean;
   /** Locked without the "AI is editing…" label (refreshing a session shown from memory). */
   quiet?: boolean;
   saving: boolean;
@@ -670,7 +731,7 @@ function PieceEditor({
   };
   const pickLine = (b: EditorBlock, option: string) => {
     if (!lines || b.text.slice(lines.start, lines.end) !== lines.was) {
-      setLines(lines ? { ...lines, list: [], error: "The text changed since you asked. Select it again." } : null);
+      setLines(lines ? { ...lines, list: [], error: "The text changed: select it again" } : null);
       return;
     }
     setText(b.key, b.text.slice(0, lines.start) + option + b.text.slice(lines.end));
@@ -692,6 +753,11 @@ function PieceEditor({
       ? addedSpans(reelBody(blocks.map((b) => ({ text: b.id && changes.before.has(b.id) ? changes.before.get(b.id)! : b.text }))), reelBody(blocks))
       : undefined;
   const changesOn = !!changes?.on;
+  // a slide the last AI turn rewrote keeps a green border until it is clicked, so the touched slides show at a glance
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
+  const changedBefore = changes?.before;
+  useEffect(() => setSeenIds(new Set()), [changedBefore]);
+  const touched = (b: EditorBlock) => !!b.id && !!changedBefore?.has(b.id) && changedBefore.get(b.id) !== b.text && !seenIds.has(b.id);
   // Cite on a reel's script, its hooks, the post description and the pinned comment: the words and which field they're in
   const citePill = (key: string, text: string, where: Omit<PieceQuote, "text">) => {
     const words = sel?.key === key ? text.slice(sel.start, sel.end).trim() : "";
@@ -726,7 +792,7 @@ function PieceEditor({
   const captionAuthor = caption ? companionAuthor("caption", caption) : null;
   const showCaptionGenerate = !!onGenerateCaption && (!caption.trim() || caption === (doc.caption?.text ?? ""));
   const captionAnother = !!caption.trim();
-  const captionGenerateWhy = !aiAvailable ? "AI is not available" : !hasPiece ? `Write the ${unit.many} first` : captionAnother ? "One different extra finding, still one caption" : "One caption: extra finding plus search terms, not a recap";
+  const captionGenerateWhy = !aiAvailable ? "Needs an AI provider" : !hasPiece ? `Write the ${unit.many} first` : captionAnother ? "Rewrite the post description" : "Write the post description";
   const setText = (key: string, text: string) => emit(blocks.map((b) => (b.key === key ? { ...b, text, author: "user" } : b)));
   const insertAfter = (key: string | null) => {
     const at = key ? blocks.findIndex((b) => b.key === key) + 1 : blocks.length;
@@ -773,8 +839,8 @@ function PieceEditor({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-transparent">
-      {(locked && !quiet) || saving ? (
-        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "AI is editing…" : "saving…"}</span>
+      {writing || (locked && !quiet) || saving ? (
+        <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{writing || (locked && !quiet) ? "Writing…" : "Saving…"}</span>
       ) : null}
       {/* the bar's 8px at all times, out of the right padding (index.css): the text does not move when the piece outgrows its card */}
       <div className="min-h-0 flex-1 overflow-y-scroll px-5 pb-10 pt-8 bars:pr-3">
@@ -871,7 +937,8 @@ function PieceEditor({
                   setDragKey(null);
                   setOverKey(null);
                 }}
-                className={`group flex gap-2 ${doc.kind === "carousel" ? SLIDE_SURFACE : `py-4 ${i < blocks.length - 1 ? "border-b border-border/70" : ""}`} ${b.id && lockedIds.includes(b.id) ? "!ring-amber-400/40" : ""} ${overKey === b.key && dragKey && dragKey !== b.key ? "bg-muted/40" : ""} ${dragKey === b.key ? "opacity-50" : ""}`}
+                onPointerDown={() => (b.id && touched(b) ? setSeenIds((s) => new Set(s).add(b.id!)) : undefined)}
+                className={`group flex gap-2 ${doc.kind === "carousel" ? `${SLIDE_SURFACE} transition-shadow duration-1000 ${touched(b) ? "ring-2 ring-emerald-400/70" : ""}` : `py-4 ${i < blocks.length - 1 ? "border-b border-border/70" : ""}`} ${b.id && lockedIds.includes(b.id) ? "!ring-amber-400/40" : ""} ${overKey === b.key && dragKey && dragKey !== b.key ? "bg-muted/40" : ""} ${dragKey === b.key ? "opacity-50" : ""}`}
               >
                 <button
                   type="button"
@@ -902,7 +969,7 @@ function PieceEditor({
                         type="button"
                         onClick={() => toggleLock(b.id!)}
                         className={`rounded p-0.5 hover:bg-muted ${lockedIds.includes(b.id) ? "text-amber-300" : "text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}
-                        title={lockedIds.includes(b.id) ? `Locked: the AI can't change ${unit.one} ${i + 1}. Click to unlock.` : `Lock ${unit.one} ${i + 1} so the AI can't change it`}
+                        title={lockedIds.includes(b.id) ? `Locked: the AI can't change ${unit.one} ${i + 1}` : `Lock ${unit.one} ${i + 1} so the AI can't change it`}
                         aria-pressed={lockedIds.includes(b.id)}
                         aria-label={lockedIds.includes(b.id) ? `Unlock ${unit.one} ${i + 1}` : `Lock ${unit.one} ${i + 1}`}
                       >
@@ -911,7 +978,7 @@ function PieceEditor({
                     ) : null}
                     <div className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                       {onAsk ? (
-                        <button type="button" disabled={!aiAvailable || !b.text.trim()} onClick={() => startAsk(b)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-violet-300 disabled:opacity-40" title={`Ask about ${unit.one} ${i + 1} in a side chat (it only answers, nothing changes)`}>
+                        <button type="button" disabled={!aiAvailable || !b.text.trim()} onClick={() => startAsk(b)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-violet-300 disabled:opacity-40" title={`Ask about ${unit.one} ${i + 1} in a side chat`}>
                           <MessageCircleQuestion className="h-3 w-3" />
                         </button>
                       ) : null}
@@ -946,12 +1013,12 @@ function PieceEditor({
                         <CiteButton onClick={() => cite(b, i)} />
                       ) : null}
                       {onAsk ? (
-                        <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-violet-300`} title="Ask about the selected words in a side chat. It only answers: nothing on the piece changes.">
+                        <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-violet-300`} title="Ask about the selected words in a side chat">
                           <MessageCircleQuestion className="h-3.5 w-3.5" /> Ask
                         </button>
                       ) : null}
                       {onLines ? (
-                        <button type="button" disabled={locked || !aiAvailable} onClick={() => void askLines(b)} className={`${PILL_BUTTON} text-violet-300`} title="Three other ways to say the selected words. Nothing else on the piece changes.">
+                        <button type="button" disabled={locked || !aiAvailable} onClick={() => void askLines(b)} className={`${PILL_BUTTON} text-violet-300`} title="Three other ways to say the selected words">
                           <Shuffle className="h-3.5 w-3.5" /> Other ways
                         </button>
                       ) : null}
@@ -972,7 +1039,7 @@ function PieceEditor({
                     <div className="mt-2 flex flex-col gap-1 border-t border-border/60 pt-2">
                       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                         {lines.list === null ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        {lines.list === null ? `Other ways to say “${lines.was}”…` : lines.error ? lines.error : `Instead of “${lines.was}”, click one:`}
+                        {lines.list === null ? `Other ways to say “${lines.was}”…` : lines.error ? lines.error : `Instead of “${lines.was}”`}
                         <button type="button" onClick={() => setLines(null)} className="ml-auto rounded p-0.5 hover:bg-muted hover:text-foreground" aria-label="Close the options">
                           <X className="h-3 w-3" />
                         </button>
@@ -991,7 +1058,7 @@ function PieceEditor({
             </div>
             <div className="mt-2 flex items-center gap-3">
               <button type="button" disabled={locked} onClick={() => insertAfter(null)} className="text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-50">
-                + {blocks.length ? `Add a ${unit.one}` : "Start writing, or ask the AI to draft it"}
+                + {`Add a ${unit.one}`}
               </button>
               {hasPiece ? (
                 <CopyButton
@@ -1038,23 +1105,23 @@ function PieceEditor({
                   <>
                   <div className="mb-1.5 flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tick(captionAuthor)}`} title={captionAuthor === "user" ? "Yours" : captionAuthor === "ai" ? "Written by the AI" : undefined} />
-                    <p className="text-[11px] text-muted-foreground" title="Shown under the Instagram post — an extra finding or context the slides don't carry, plus search terms. Not a recap.">
+                    <p className="text-[11px] text-muted-foreground" title="The text under the Instagram post">
                       Post description
                     </p>
                     {caption.trim() ? (
                       <CopyButton
                         text={() => markdownToPlain(caption)}
                         label="Copy"
-                        title="Copy the post description as Instagram takes it: plain text, every line break kept"
+                        title="Copy the post description as plain text"
                         className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
                       />
                     ) : null}
                     {showCaptionGenerate &&
                       (captionAnother ? (
                         <ConfirmButton
-                          label="Another"
-                          confirmLabel="Replace?"
-                          disabled={locked || !aiAvailable || !hasPiece}
+                          label="Rewrite"
+                          confirmLabel="Replace"
+                          disabled={locked || writing || !aiAvailable || !hasPiece}
                           onConfirm={() => onGenerateCaption?.(true)}
                           title={captionGenerateWhy}
                           className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
@@ -1063,13 +1130,13 @@ function PieceEditor({
                       ) : (
                         <button
                           type="button"
-                          disabled={locked || !aiAvailable || !hasPiece}
+                          disabled={locked || writing || !aiAvailable || !hasPiece}
                           onClick={() => onGenerateCaption?.(false)}
                           title={captionGenerateWhy}
-                          aria-label="Generate post description"
+                          aria-label="Write post description"
                           className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
                         >
-                          Generate
+                          Write
                         </button>
                       ))}
                   </div>
@@ -1085,7 +1152,7 @@ function PieceEditor({
                   />
                   {citePill("caption", caption, { field: "caption" })}
                   {caption.length > 1800 ? (
-                    <p className={`mt-1 text-right text-[10px] tabular-nums ${caption.length > 2200 ? "text-red-400" : "text-muted-foreground"}`} title="Instagram cuts a caption at 2,200 characters">
+                    <p className={`mt-1 text-right text-[10px] tabular-nums ${caption.length > 2200 ? "text-red-400" : "text-muted-foreground"}`} title="Instagram cuts a post description at 2,200 characters">
                       {caption.length.toLocaleString("en-US")} / 2,200{caption.length > 2200 ? " · too long for Instagram" : ""}
                     </p>
                   ) : null}
@@ -1105,7 +1172,6 @@ function PieceEditor({
                     changesOn={changesOn}
                     onSelectRange={onQuote ? (start, end, at) => select("pinned", start, end, at) : undefined}
                     className="w-full resize-none bg-transparent text-sm leading-relaxed text-muted-foreground outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
-                    placeholder="Usually empty"
                   />
                   {citePill("pinned", pinned, { field: "pinned" })}
                 </div>
@@ -1119,7 +1185,7 @@ function PieceEditor({
           blocks={blocks}
           caption={caption}
           typeId={doc.carouselType}
-          locked={locked}
+          locked={locked || writing}
           onClose={() => onCloseVisualize?.()}
           onType={(id) => onCarouselType?.(id)}
           onReorder={move}
@@ -1137,28 +1203,26 @@ function fromBlocks(list: Array<{ id: string; text: string; author: "ai" | "user
 }
 
 /**
- * Adopt the server's blocks into the local list. Local blocks match the
- * server's in order (by id, or by text for ones just created); empty new
- * blocks stay where they are. Anything else (an AI edit, a revert) replaces
- * the list wholesale.
+ * Adopt the server's blocks into the local list: its order and its texts. A block keeps its key (so a field keeps
+ * its focus) by its id, or by its text when it was made here and has no id yet. A blank one made here that the
+ * server does not have stays after the block it follows.
  */
 function mergeBlocks(local: EditorBlock[], server: Array<{ id: string; text: string; author: "ai" | "user" }>): EditorBlock[] {
-  const out: EditorBlock[] = [];
-  let si = 0;
-  for (const b of local) {
-    const s = server[si];
-    if (!b.id && !b.text.trim()) {
-      if (s && !s.text.trim()) {
-        out.push({ key: b.key, id: s.id, text: s.text, author: s.author });
-        si++;
-      } else {
-        out.push(b);
-      }
-      continue;
+  const keys = new Map(local.filter((b) => b.id).map((b) => [b.id, b.key]));
+  const fresh = local.filter((b) => !b.id);
+  const out: EditorBlock[] = server.map((s) => {
+    let key = keys.get(s.id);
+    if (!key) {
+      const i = fresh.findIndex((b) => b.text.trim() === s.text.trim());
+      if (i >= 0) key = fresh.splice(i, 1)[0]!.key;
     }
-    if (!s || (b.id ? s.id !== b.id : s.text.trim() !== b.text.trim())) return fromBlocks(server);
-    out.push({ key: b.key, id: s.id, text: s.text, author: s.author });
-    si++;
+    return { key: key ?? s.id, id: s.id, text: s.text, author: s.author };
+  });
+  for (const b of fresh) {
+    if (b.text.trim()) continue;
+    let at = -1;
+    for (let j = local.indexOf(b) - 1; j >= 0 && at < 0; j--) at = out.findIndex((o) => o.key === local[j]!.key);
+    out.splice(at + 1, 0, b);
   }
-  return si === server.length ? out : fromBlocks(server);
+  return out;
 }

@@ -268,3 +268,111 @@ export function mergeGuideEdits(current: GuideDoc, patch: unknown): GuideDoc {
     }),
   };
 }
+
+/**
+ * The Guide Builder editor's save label. `edits` counts what was typed, `tried` is the count a save has gone out for,
+ * `saved` the count the server has, `out` the saves on their way. Saved only when the server has all of it; nothing
+ * after a save that failed (its error is on the page).
+ */
+export const saveLabel = (s: { edits: number; tried: number; saved: number; out: number }) =>
+  s.out > 0 || s.edits > s.tried ? "Saving…" : s.saved < s.edits ? "" : "Saved";
+
+/**
+ * One guide's saves, in the order asked. What is typed waits `wait` ms and replaces what was waiting; requests go out
+ * one at a time, so the answers come back in order and the text typed last is the text sent last. `replace` runs an
+ * action that takes the guide's text from the server (Regenerate): what was typed before it is saved first, nothing is
+ * sent while it runs, and what is typed meanwhile is dropped when it succeeds (when it fails, that is kept and saved
+ * after it). `counts` is what saveLabel reads; `to.changed` is told when it changes. `arrived` takes each copy of the
+ * guide that comes in (a save's answer, a change from another tab or computer) and hands it to `to.show`, the box.
+ * Two copies are kept out of the box: any copy while something typed here is not on the server yet (what is typed wins
+ * until it is saved), and, while the person is `editing`, the answer to a save of their own (the server trims it, so
+ * it would take the space just typed and put back a title just cleared). That answer is shown when editing ends.
+ */
+export function guideSaves<P, R>(
+  to: {
+    send: (patch: P) => Promise<R>;
+    saved: (answer: R) => void;
+    failed: (error: unknown) => void;
+    changed: (counts: Parameters<typeof saveLabel>[0]) => void;
+    show: (copy: R) => void;
+  },
+  wait = 700,
+) {
+  const counts = { edits: 0, tried: 0, saved: 0, out: 0 };
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let waiting: P | null = null;
+  let own: R | undefined; // the answer to the last save
+  let tail: Promise<unknown> = Promise.resolve();
+  // one at a time: each waits for the one before it, whatever that one's answer
+  const inTurn = <T>(job: () => Promise<T>): Promise<T> => {
+    const done = tail.then(job);
+    tail = done.catch(() => {});
+    return done;
+  };
+  const stopTimer = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  // `at`: how much of what was typed this request carries (0: none of it). True when the server has it.
+  const go = async (patch: P, at: number) => {
+    try {
+      const answer = await to.send(patch);
+      counts.saved = Math.max(counts.saved, at);
+      to.saved((own = answer));
+      return true;
+    } catch (e) {
+      to.failed(e);
+      return false;
+    } finally {
+      counts.out--;
+      to.changed(counts);
+    }
+  };
+  /** What was typed goes now, in its turn (Save, leaving the guide). */
+  const flush = () => {
+    stopTimer();
+    return inTurn(async () => {
+      // read when its turn comes: what was typed while it waited goes with it, once
+      const patch = waiting;
+      if (patch === null) return;
+      waiting = null;
+      counts.tried = counts.edits;
+      counts.out++;
+      to.changed(counts);
+      // refused or offline: it waits again (no timer), so Save, or leaving the guide, sends it once more
+      if (!(await go(patch, counts.edits)) && waiting === null) waiting = patch;
+    });
+  };
+  return {
+    counts,
+    flush,
+    arrived(copy: R, editing = false) {
+      if (counts.saved >= counts.edits && !(editing && copy === own)) to.show(copy);
+    },
+    /** Text was typed: `patch` carries all of it. */
+    type(patch: P) {
+      waiting = patch;
+      counts.edits++;
+      to.changed(counts);
+      stopTimer();
+      timer = setTimeout(() => void flush(), wait);
+    },
+    /** A change that is not the text (the name, sharing). */
+    save(patch: P) {
+      counts.out++;
+      to.changed(counts);
+      return inTurn(async () => void (await go(patch, 0)));
+    },
+    replace<T>(run: () => Promise<T>): Promise<T> {
+      void flush();
+      return inTurn(async () => {
+        const result = await run();
+        stopTimer();
+        waiting = null;
+        counts.tried = counts.saved = counts.edits;
+        to.changed(counts);
+        return result;
+      });
+    },
+  };
+}

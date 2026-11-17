@@ -76,7 +76,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-base font-semibold">
-            <CircleHelp className="h-4 w-4 text-violet-400" /> Shortcuts &amp; tips
+            <CircleHelp className="h-4 w-4 text-violet-400" /> Shortcuts
           </h2>
           <button
             onClick={onClose}
@@ -126,13 +126,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
 
         <div className="mt-5 space-y-1.5 border-t border-zinc-800 pt-3 text-[11px] leading-4 text-zinc-500">
           <p>
-            In the transcript, words act as single letters so timings stay glued to the
-            audio — punctuation and spaces edit freely. Use <Key>C</Key> to fix a
-            spelling, or the <span className="text-zinc-400">Edit text</span> button for
-            free-form editing.
-          </p>
-          <p>
-            Press <Key>?</Key> anytime to reopen this guide.
+            In the transcript a word is deleted whole, so its timing stays with the audio; <Key>C</Key> or <span className="text-zinc-400">Edit text</span> changes its spelling.
           </p>
         </div>
       </div>

@@ -13,8 +13,9 @@ export const STORAGE_ROLES = [
   { value: "footage", label: "Footage" },
   { value: "music", label: "Music" },
 ] as const;
-/** "library" is the one Library folder; footage and music are the source lists. */
-export type StorageRole = "footage" | "music" | "library";
+/** "library" is the one Library folder; footage and music are the source lists; "finals" is a workspace's Finals folder,
+ *  one at most (none: the Library's Finished/, finalsFolderOf). */
+export type StorageRole = "footage" | "music" | "finals" | "library";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 
 export const MARKER_FILE = ".creatortoolset-folder";
@@ -36,6 +37,10 @@ export interface Disk {
   /** a network share: how it is shared and its name on the server ("footage"; NFS: the exported path). Never a password or user name */
   fs?: ShareFs;
   share?: string;
+  /** a volume's own id (the Mac's volume UUID, the boot volume's too): the same wherever it is mounted (places.ts rootKey) */
+  uuid?: string;
+  /** a network share whose server did not answer the last check: mounted, but nothing on it can be read now */
+  away?: true;
 }
 
 export const SHARE_FS = ["smb", "nfs", "afp"] as const;
@@ -117,22 +122,33 @@ export interface StorageState {
 /** The footage and music sources: the listed folders, plus the Library's own Footage/ and Music/ (same host, same
  *  reach, one level down). Derived entries carry the Library's id with the role appended. */
 export function sourcesOf(folders: StorageFolder[]): StorageFolder[] {
-  const derived = folders
-    .filter((f) => f.role === "library")
-    .flatMap((lib) => (["footage", "music"] as const).map((role) => {
-      const sub = LIBRARY_SUBFOLDERS[role];
-      return {
-        ...lib,
-        id: `${lib.id}:${role}`,
-        role,
-        name: sub,
-        origin: { host: lib.origin.host, path: `${lib.origin.path}/${sub}` },
-        reach: Object.fromEntries(Object.entries(lib.reach).map(([h, r]) => [h, { ...r, path: `${r.path}/${sub}` }])),
-        ...(lib.mount ? { mount: { ...lib.mount, sub: lib.mount.sub ? `${lib.mount.sub}/${sub}` : sub } } : {}),
-      };
-    }));
+  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => (["footage", "music"] as const).map((role) => inLibrary(lib, role)));
   return [...folders.filter((f) => f.role !== "library"), ...derived];
 }
+
+/** The Library's own subfolder for `role` as a folder of its own: the same host and reach, one level down. */
+function inLibrary(lib: StorageFolder, role: SourceRole | "finals"): StorageFolder {
+  const sub = LIBRARY_SUBFOLDERS[role === "finals" ? "finished" : role];
+  return {
+    ...lib,
+    id: `${lib.id}:${role}`,
+    role,
+    name: sub,
+    origin: { host: lib.origin.host, path: `${lib.origin.path}/${sub}` },
+    reach: Object.fromEntries(Object.entries(lib.reach).map(([h, r]) => [h, { ...r, path: `${r.path}/${sub}` }])),
+    ...(lib.mount ? { mount: { ...lib.mount, sub: lib.mount.sub ? `${lib.mount.sub}/${sub}` : sub } } : {}),
+  };
+}
+
+/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Library's Finished/. */
+export function finalsFolderOf(folders: StorageFolder[]): StorageFolder | undefined {
+  const lib = folders.find((f) => f.role === "library");
+  return folders.find((f) => f.role === "finals") ?? (lib && inLibrary(lib, "finals"));
+}
+
+/** A Workshop project's folder inside the Finals folder: its title, made safe as a file name on a Mac, Linux or Windows. */
+export const finalsDirName = (title: string): string =>
+  title.replace(/[\/\\:*?"<>|\p{Cc}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/^\.+|[. ]+$/g, "").slice(0, 100).trim() || "Untitled";
 
 /** POST /api/devices/storage/library: make the library folder on one computer. `disk` is the folder it goes in;
  *  "/" or "~" means its home folder. */
@@ -141,9 +157,9 @@ export interface MakeLibraryBody {
   disk: string;
 }
 
-/** POST /api/devices/storage/folders: use a folder you already have for a role. */
+/** POST /api/devices/storage/folders: use a folder you already have for a role ("finals" takes the place of the workspace's one). */
 export interface AddFolderBody {
-  role: SourceRole;
+  role: SourceRole | "finals";
   host: string;
   path: string;
 }

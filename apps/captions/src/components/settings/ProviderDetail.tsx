@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { DRIVERS, driverFields, EFFORTS, type Effort, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
@@ -178,8 +178,9 @@ export function ProviderDetail({
         }
       />
 
+      {/* folded only with three rows or more: one or two are drawn open, as rows of the panel */}
       {(fields.home || fields.program || fields.args || fields.env) && (
-        <Advanced summary="Advanced">
+        <Rare fold={[fields.home, fields.program, fields.args, fields.env].filter(Boolean).length >= 3}>
           {fields.home && (
             <Row
               title="Account folder"
@@ -208,11 +209,13 @@ export function ProviderDetail({
               <LinesField label="Variable names" value={inst.envNames ?? []} onCommit={(list) => onChange({ envNames: list.length ? list : undefined })} />
             </Row>
           )}
-        </Advanced>
+        </Rare>
       )}
     </div>
   );
 }
+
+const Rare = ({ fold, children }: { fold: boolean; children: ReactNode }) => (fold ? <Advanced summary="Advanced">{children}</Advanced> : <>{children}</>);
 
 /** A list of short lines (arguments, variable names): saved when the box loses focus, blank lines dropped. */
 function LinesField({ label, value, onCommit }: { label: string; value: string[]; onCommit: (list: string[]) => void }) {

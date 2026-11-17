@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { libraryChanged } from "./access";
-import { blobs, libraryDb, libraryUpload } from "./db";
+import { blobs, finalsUpload, isFinalsCollection, libraryDb, libraryUpload } from "./db";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
 import { kindOf, recordVersion } from "./routes";
@@ -44,7 +44,7 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(versionId) as { id: string; library_id: string; kind: string; title: string; source_key: string; source_path: string | null; from_path: string | null; probe: string | null } | undefined;
-  if (!v) throw new Error("The version is gone");
+  if (!v) throw new Error("Version not found");
   const base = `libraries/${v.library_id}/v/${v.id}`;
   for (const [name, file] of Object.entries(x.files) as [DerivedFile, string][]) {
     if (name === "original") {
@@ -125,8 +125,9 @@ export function sendLater(
   return { assetId, versionId };
 }
 
-/** Whether a file of this name, sent to `libraryId`, goes the computer's way (sendLater) rather than as its original. */
-export const sendsFromComputer = (libraryId: string, filename: string): boolean => kindOf(filename) === "video" && libraryUpload(libraryId) !== "none";
+/** Whether a file of this name, sent to `libraryId` (into `collectionId`), goes the computer's way (sendLater) rather than as its original. */
+export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null): boolean =>
+  kindOf(filename) === "video" && (collectionId && isFinalsCollection(collectionId) ? finalsUpload(libraryId) : libraryUpload(libraryId)) !== "none";
 
 /**
  * What a phone made of a video itself and sends with the upload start (phase 6, 6D; the iPhone's PhoneMade.swift), so this

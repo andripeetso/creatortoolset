@@ -25,18 +25,18 @@ private let waveLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Creator
 ///   answered true once it is up, false when there is no wave (the page then changes at once)
 /// - `"drawn"`: the page has changed under the picture; a picture of the new screen is taken. Answered when the wave is
 ///   over
-/// - `"stop"`: chat mode was switched again; the wave goes at once
+/// - `"stop"`: chat mode was switched again; the wave goes at once, and so does a press that has none up yet
 /// - `"ready"`: the pointer came onto the button; a picture of the screen is taken now, so a press shows the wave at
 ///   once (on a big window, a picture can take half a second: what a press would wait for)
 final class ChatWaveHost {
     private weak var view: WKWebView?
     private var wave: ChatWaveView?
-    /// The answer to "drawn", given when the wave is over (or cut short).
-    private var drawn: ((Any?, String?) -> Void)?
+    /// The answers to "drawn", given when the wave is over (or cut short): every one asked for meanwhile.
+    private var drawn: [(Any?, String?) -> Void] = []
     /// The page is from before holding (it says nothing of `hold`): its own entrances still run after the switch.
     private var oldPage = false
     /// The sound of a held wave (WaveSound.swift); a click makes none.
-    private let sound = WaveSound()
+    let sound: WaveSound
     /// The picture taken when the pointer came onto the button ("ready"), and who waits for one being taken (nil when
     /// none is).
     private var early: (picture: Picture, at: CFTimeInterval)?
@@ -44,9 +44,13 @@ final class ChatWaveHost {
     /// A switch is on its way, from the press until its wave is over: a picture taken meanwhile could be of either
     /// screen, so none is taken or kept.
     private var switching = false
+    /// Counts the presses: a press's picture can come after a later press, and only the last press's makes a wave.
+    private var presses = 0
 
-    init(_ view: WKWebView) {
+    /// (a test gives a sound that plays nothing)
+    init(_ view: WKWebView, sound: WaveSound = WaveSound()) {
         self.view = view
+        self.sound = sound
         // compiled now, so the first switch does not wait for it
         DispatchQueue.global(qos: .utility).async { _ = WaveRenderer.shared }
     }
@@ -56,7 +60,7 @@ final class ChatWaveHost {
         switch body as? String {
         case "drawn":
             guard let view, let wave else { return reply(true, nil) }
-            drawn = reply
+            drawn.append(reply)
             waveLog.notice("new screen drawn at \(Int(wave.elapsed)) ms")
             // (a page from before holding still has its own entrances running: the wave waits for its picture)
             if !oldPage { wave.pageDrawn() }
@@ -75,6 +79,13 @@ final class ChatWaveHost {
             }
         case "stop":
             wave?.finish()
+            // a press whose picture is still being taken has no wave to end yet: the press itself is over. Its
+            // picture then makes none (the page has moved on and would never say "drawn"), and its sound ends
+            if switching, wave == nil {
+                presses += 1
+                sound.end()
+                switching = false
+            }
             reply(true, nil)
         case "ready":
             prepare()
@@ -134,7 +145,11 @@ final class ChatWaveHost {
         let pressed = CACurrentMediaTime()
         wave?.finish()
         guard let view, let renderer = WaveRenderer.shared, let x = start["x"] as? Double, let y = start["y"] as? Double else { return reply(false, nil) }
+        // (a press still waiting for its picture gives way to this one, its sound too)
+        if switching { sound.end() }
         switching = true
+        presses += 1
+        let press = presses
         let rgb = ((start["tint"] as? String) ?? "").split(separator: " ").compactMap { Float($0) }
         let tint = rgb.count == 3 ? SIMD3(rgb[0], rgb[1], rgb[2]) / 255 : SIMD3<Float>(0.49, 0.23, 0.93)
         let dark = start["dark"] as? Bool ?? false
@@ -145,6 +160,9 @@ final class ChatWaveHost {
         if hold { sound.begin() }
         screenNow { [weak self] picture, early in
             let making = CACurrentMediaTime()
+            // pressed again before this picture came: that press's wave is the one (two would be up at once, and the
+            // first to end would answer for both and leave the other where "stop" cannot reach it)
+            if let self, self.presses != press { return reply(false, nil) }
             guard let self, let view = self.view, let picture,
                   let wave = try? ChatWaveView(over: view, was: picture, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed, sound: hold ? self.sound : nil)
             else {
@@ -154,11 +172,13 @@ final class ChatWaveHost {
                 return reply(false, nil)
             }
             self.wave = wave
-            wave.onDone = { [weak self] in
-                self?.wave = nil
-                self?.switching = false
-                self?.drawn?(true, nil)
-                self?.drawn = nil
+            wave.onDone = { [weak self, weak wave] in
+                guard let self, self.wave === wave else { return }
+                self.wave = nil
+                self.switching = false
+                let asked = self.drawn
+                self.drawn = []
+                asked.forEach { $0(true, nil) }
             }
             // The page changes once the picture of the screen as it was is on show, not before: the new screen would
             // flash for a frame (a switch to a light page is drawn that quickly). Should no frame come (its window hidden),

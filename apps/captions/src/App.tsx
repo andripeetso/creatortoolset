@@ -54,6 +54,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
+import { usePageFollowsWorkspace } from "@/lib/page-workspace";
 import { SETTINGS_CLOSED, endIntro, useIntro, useSetupShown, useSetupSync } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
@@ -276,6 +277,7 @@ export default function App() {
   const { pluginRoutes, EditorScreen, EditorEditScreen, LibraryScreen, FinalsScreen } = (screens ??= pluginScreens());
   const look = useAppearance();
   useRootTint(look.projectTint, look.ownColour);
+  usePageFollowsWorkspace();
   const location = useLocation();
   useTelemetry(location.pathname);
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never

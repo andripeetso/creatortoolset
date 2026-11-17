@@ -463,10 +463,42 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE uploads ADD COLUMN made TEXT;
   `,
-  // 27: the level (contracts LOOK_LEVELS) a version's stretches were found at: stretches of another level than the
+  // 27: here or away (places.ts). A version's original is at a root (a share or a volume, contracts/places.ts rootKey) and
+  // a root path inside it, the same for every computer; NULL until known (places.ts backfillRoots). version_places: where
+  // one computer last read the file, or found it gone; only that computer's owner sees or changes the row. mac_path and
+  // mac_device stay as where it was first indexed. library_moves: the last reconnects, one row per folder change (device
+  // '' for a move on the root itself, everyone's; else the computer that found its copies)
+  `
+  ALTER TABLE asset_versions ADD COLUMN root TEXT;
+  ALTER TABLE asset_versions ADD COLUMN root_rel TEXT;
+  CREATE TABLE version_places (
+    version_id TEXT NOT NULL,
+    device TEXT NOT NULL,
+    path TEXT NOT NULL,
+    confirmed_at INTEGER NOT NULL,
+    gone_at INTEGER,
+    PRIMARY KEY (version_id, device)
+  );
+  CREATE INDEX version_places_device ON version_places(device);
+  INSERT INTO version_places (version_id, device, path, confirmed_at)
+    SELECT id, mac_device, mac_path, created_at FROM asset_versions WHERE mac_path IS NOT NULL AND mac_device IS NOT NULL;
+  CREATE TABLE library_moves (
+    library_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('moved','found')),
+    device TEXT NOT NULL,
+    root_key TEXT NOT NULL,
+    root TEXT,
+    from_prefix TEXT NOT NULL,
+    to_prefix TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    UNIQUE (library_id, kind, device, root_key, from_prefix, to_prefix)
+  );
+  `,
+  // 28: the level (contracts LOOK_LEVELS) a version's stretches were found at: stretches of another level than the
   // library's are found again when its shots are described (shots.ts), never matched to that level's lines. NULL: standard
   `ALTER TABLE asset_versions ADD COLUMN look_level TEXT;`,
-  // 28: how well each stretch is taken, measured where the picture is read (look.ts qualityOf): 0..1, and its flaws as a
+  // 29: how well each stretch is taken, measured where the picture is read (look.ts qualityOf): 0..1, and its flaws as a
   // JSON list ("blurry", "too dark", "shaky"). NULL: not measured (a picture read on a computer that sends no measures)
   `
   ALTER TABLE stretches ADD COLUMN quality REAL;

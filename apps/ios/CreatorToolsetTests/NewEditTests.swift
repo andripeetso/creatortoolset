@@ -28,8 +28,7 @@ final class NewEditTests: XCTestCase {
     private var edit: PhoneEdit { PhoneEdit(id: UUID(), server: "s", name: "Phone edit", clips: [a, b], editId: "e1") }
 
     private func clip(_ id: UUID, _ state: UploadItem.State, upload: String) -> UploadItem {
-        var item = UploadItem(id: id, filename: "\(upload).mp4", size: 10, server: "s")
-        item.state = state
+        var item = UploadItem(id: id, filename: "\(upload).mp4", size: 10, server: "s", state: state)
         item.uploadId = upload
         return item
     }

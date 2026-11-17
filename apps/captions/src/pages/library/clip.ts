@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssetCard, AssetDetail, ShareRow, TagCount } from "@contracts/library";
 import { thisMacBridge } from "@/lib/thisMac";
+import { allGranted, askMediaFolder, listMediaFolders } from "@/lib/local-files";
 
 /**
  * What the clip view decides from a clip and its detail (its facts, what its player says, its share links), and the
@@ -120,13 +121,28 @@ export function tagSuggestions(all: TagCount[], have: string[], typed: string): 
     .map((x) => x.tag);
 }
 
+/** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
+export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+
 /** The Mac app shows a clip's file in Finder (<html data-mac-reveal>, apps/mac Reveal.swift). */
 export const canReveal = () => typeof document !== "undefined" && document.documentElement.dataset.macReveal === "1" && !!thisMacBridge();
 
 /** Shows the clip's file in Finder: null when it did, else what went wrong. The Mac app asks the server for the file itself. */
 export async function revealClip(libraryId: string, assetId: string): Promise<string | null> {
   const bridge = thisMacBridge();
-  if (!bridge) return "Show in Finder works in the Mac app";
+  if (!bridge) return "Needs the Mac app";
   const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ library: libraryId, asset: assetId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
-  return r.ok ? null : (r.problem ?? "That file isn't on this Mac.");
+  return r.ok ? null : (r.problem ?? "File not found on this Mac");
+}
+
+/** Shows a Review version's own file in Finder (its `local`, from the server): null when it did, else what went wrong.
+ *  On a server elsewhere the Mac app shows only files inside the folders granted to it, so a folder not granted yet is
+ *  asked for first, from this click, in the app's own open panel. */
+export async function revealReviewFile(assetId: string, n: number, local: string): Promise<string | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return "Needs the Mac app";
+  // the panel closed without a folder that holds it: nothing to say ("")
+  if (!servedHere() && !allGranted([local], await listMediaFolders()) && !allGranted([local], await askMediaFolder(local.slice(0, local.lastIndexOf("/")) || "/"))) return "";
+  const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ review: assetId, v: n })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+  return r.ok ? null : (r.problem ?? "File not found on this Mac");
 }

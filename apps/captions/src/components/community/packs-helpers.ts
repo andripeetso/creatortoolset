@@ -40,7 +40,7 @@ export const PACK_KINDS = {
   guides: "Writing guides",
   captions: "Caption styles",
   editing: "Editing styles",
-  analyzer: "Analyzer guides",
+  analyzer: "Content Analyzer guides",
   home: "Home layouts",
 } as const;
 export type KindId = keyof typeof PACK_KINDS;
@@ -119,23 +119,23 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
   const editor = { stage: "Make", tool: "AI Editor", to: "/editor" } as const;
   if (c.frameworks)
     out.push({ ...workshop, spot: "A piece's Shape menu",
-      does: "You pick up to one per role for a piece: Shape sets the order, Persuasion shapes the ask, Argument shapes the reasoning. The AI writes the piece along the steps of the ones you picked; with none picked, it can look through all of them." });
+      does: "Up to one framework per role (Shape, Persuasion, Argument) can be picked for a piece, which is then written along its steps." });
   if (has("workshop.write"))
-    out.push({ ...workshop, spot: "Every message to the AI on a piece", does: "Added to what the AI is told when it writes and edits your reels, carousels and ads. Not in the Workshop's chat on your Mac, which can read files and search the web." });
+    out.push({ ...workshop, spot: "Writing and editing a piece", does: "Added to the instructions when a piece is written or edited, but not in the Content Workshop chat that runs on the Mac." });
   if (has("workshop.review"))
-    out.push({ ...workshop, spot: "Follower read and Fact check", does: "Added to what the AI is told when it reads a piece as a follower and checks its claims." });
+    out.push({ ...workshop, spot: "Follower read and Fact check", does: "Added to the instructions for Follower read and Fact check." });
   if (has("analyzer.ideas"))
-    out.push({ ...analyzer, spot: "Ideas and tags on each post", does: "Added to what the AI is told when it names a post's idea and tags it." });
+    out.push({ ...analyzer, spot: "Ideas and tags on each post", does: "Added to the instructions for naming a post's idea and tagging it." });
   if (c.captionStyles)
-    out.push({ ...captions, spot: "The style list when you caption a video", does: "New styles to pick from; each is yours to change." });
+    out.push({ ...captions, spot: "The caption style list", does: "Adds styles to the list; each can be edited." });
   if (has("captions.lines"))
-    out.push({ ...captions, spot: "Where captions break into lines", does: "Added to what the AI is told when it splits a transcript into caption lines." });
+    out.push({ ...captions, spot: "Line breaks in captions", does: "Added to the instructions for splitting a transcript into caption lines." });
   if (has("editor.script"))
-    out.push({ ...editor, spot: "The script", does: "Added to what the AI is told when it plans an edit's script." });
+    out.push({ ...editor, spot: "The script", does: "Added to the instructions for planning an edit's script." });
   if (has("editor.cards"))
-    out.push({ ...editor, spot: "The cards", does: "Added to what the AI is told when it picks the lines that get a card, in an edit whose style has an animation style." });
+    out.push({ ...editor, spot: "The cards", does: "Added to the instructions for picking the lines that get a card, in an edit whose style has an animation style." });
   if (c.home)
-    out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Home tools", does: "Sets which tools Home shows, when you press Use on Home. Every switch stays yours to change." });
+    out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Home tools", does: "Use on Home sets which tools Home shows." });
   return out;
 }
 

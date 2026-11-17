@@ -15,7 +15,7 @@ function localDay(): string {
 async function okOrThrow(r: Response): Promise<Response> {
   if (r.ok) return r;
   const j = (await r.json().catch(() => null)) as { error?: string } | null;
-  throw new Error(j?.error || `Request failed (${r.status})`);
+  throw new Error(j?.error || "Could not export");
 }
 
 /** Save a response as a file under the server's name. */
@@ -127,7 +127,7 @@ export function ExportMarkdown({
         </DropdownMenuItem>
         {/* one way to save: the author's Obsidian note, named after the session */}
         <DropdownMenuItem onSelect={() => void saveObsidian(sessionId).then(() => onExported?.(), (e) => onError?.(e))}>
-          <Download className="h-3.5 w-3.5" /> Save as Markdown
+          <Download className="h-3.5 w-3.5" /> Download as Markdown
         </DropdownMenuItem>
         {exports.map((exp) => (
           <DropdownMenuItem key={exp.id} onSelect={() => void runCustom(sessionId, exp).then(() => onExported?.(), (e) => onError?.(e))}>
@@ -149,8 +149,8 @@ export function ExportMarkdown({
       }}
     >
       <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
-        <DialogTitle>Workshop exports</DialogTitle>
-        <DialogDescription>Where a project's note goes when you export it: a download, or the Obsidian plugin writing it into your vault.</DialogDescription>
+        <DialogTitle>Content Workshop exports</DialogTitle>
+        <DialogDescription>Where a project's note goes on export: a download or the Obsidian vault.</DialogDescription>
         <ExportsEditor onSaved={() => void reload()} />
       </DialogContent>
     </Dialog>

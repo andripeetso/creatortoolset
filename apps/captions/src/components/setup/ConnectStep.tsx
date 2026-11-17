@@ -145,7 +145,7 @@ export function PhoneRowView({
   /** what is above this row in the step is not known yet (a first visit): the row is not drawn until it is */
   wait?: boolean;
   now: number;
-  /** the Mac app is here to turn Access from other devices on */
+  /** the Mac app is here to turn Network access on */
   canTurnOn: boolean;
   turningOn: boolean;
   problem: string | null;
@@ -163,19 +163,19 @@ export function PhoneRowView({
         </div>
       </div>
       {code === undefined && <p className={cn("text-xs text-muted-foreground", hold && "h-44")}>Making a code…</p>}
-      {code === null && <p className="text-xs text-muted-foreground">Couldn't make a code. Check the connection, then reopen this step.</p>}
+      {code === null && <p className="text-xs text-muted-foreground">Could not make a code. Check the connection, then reopen this step.</p>}
       {code === "signin" && <p className="text-xs text-muted-foreground">Sign in first, then this code appears here.</p>}
       {code === "local" && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
             Your phone can't reach this computer yet.
             {canTurnOn
-              ? " Turn on Access from other devices, then choose this computer's password once."
-              : " In the Creator Toolset Mac app, turn on Access from other devices and choose this computer's password, then come back here."}
+              ? " Turn on Network access, then choose this computer's password once."
+              : " In the Creator Toolset Mac app, turn on Network access and choose this computer's password, then come back here."}
           </p>
           {canTurnOn && (
             <Button size="sm" variant="outline" disabled={turningOn} onClick={onTurnOn}>
-              Access from other devices
+              Network access
             </Button>
           )}
         </div>
@@ -475,7 +475,7 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
       setLink("");
       setJoinNote({ ok: true, text: `Joined ${j.server}${j.device?.name ? ` as ${j.device.name}` : ""}.` });
       void refresh().catch(() => {});
-    } else setJoinNote({ ok: false, text: j?.message ?? "Couldn't reach this computer. Try again." });
+    } else setJoinNote({ ok: false, text: j?.message ?? "Could not reach this computer. Try again." });
   };
 
   return (

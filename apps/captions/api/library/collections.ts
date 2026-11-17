@@ -220,7 +220,7 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
   }
   let rule = row.rule ?? null;
   if (body?.rule !== undefined) {
-    if (row.kind !== "manual" || rollFolder(db(), libraryId, row.id)) return c.json({ error: "Only a plain folder sorts itself", code: "conflict" }, 409);
+    if (row.kind !== "manual" || rollFolder(db(), libraryId, row.id)) return c.json({ error: "Only a plain folder can have a rule", code: "conflict" }, 409);
     rule = ruleOf(body.rule);
     if (rule && !canJudge(user)) return c.json({ error: NO_JUDGE, code: "needs_key" }, 409);
   }
@@ -346,7 +346,7 @@ async function changeItems(c: Ctx, add: boolean) {
   const row = rowIn(libraryId, c.req.param("cid") ?? "");
   if (!row) return notFound(c);
   const roll = rollFolder(db(), libraryId, row.id);
-  if (row.kind !== "manual" && !roll) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+  if (row.kind !== "manual" && !roll) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   const body = (await c.req.json().catch(() => null)) as { assetIds?: unknown } | null;
   const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string").slice(0, 500) : [];
   if (!asked.length) return c.json({ error: "No assets given", code: "invalid" }, 400);
@@ -639,7 +639,7 @@ collectionApp.post("/:id/pieces/:pid/merge", async (c) => {
   const both = db()
     .prepare("SELECT 1 FROM piece_items a JOIN piece_items b ON b.version_id = a.version_id WHERE a.piece_id = ? AND b.piece_id = ? AND a.version_id IS NOT NULL")
     .get(from.id, target.id);
-  if (both) return c.json({ error: "A version is in both pieces: take it out of one first", code: "conflict" }, 409);
+  if (both) return c.json({ error: "A version is in both pieces: remove it from one first", code: "conflict" }, 409);
   inTx(() => {
     const top = (db().prepare("SELECT COALESCE(MAX(position), 0) AS p FROM piece_items WHERE piece_id = ?").get(target.id) as { p: number }).p;
     db().prepare("UPDATE piece_items SET piece_id = ?, position = position + ?, winner = 0 WHERE piece_id = ?").run(target.id, top, from.id);

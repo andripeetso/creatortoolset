@@ -204,7 +204,7 @@ function DesignPage({ id }: { id: string }) {
       const img = new Image();
       loaded.set(src, img);
       img.onload = () => setVersion((v) => v + 1);
-      img.onerror = () => setError("A picture on a page could not be loaded");
+      img.onerror = () => setError("A picture on a frame could not be loaded");
       img.src = l.type === "image" ? pictureUrl(design.id, src) : drawingUrl(src);
     }
   }, [pages, design, loaded]);
@@ -613,7 +613,7 @@ function DesignPage({ id }: { id: string }) {
       if (stop.signal.aborted) return null;
       const no = e as SendError;
       if (no.code !== "no_mac") throw e;
-      setMacNote({ text: no.device ? `${no.message}: open Creator Toolset on it and try again.` : no.message });
+      setMacNote({ text: no.device ? `${no.message}. Open Creator Toolset on it, then retry.` : no.message });
       return null;
     } finally {
       setMacNote((n) => (n?.stop ? null : n));
@@ -647,7 +647,7 @@ function DesignPage({ id }: { id: string }) {
     const l = mine.length === 1 ? mine[0]! : null;
     if (!design || !base || l?.type !== "image" || cutting) return;
     const img = loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined;
-    if (!img?.naturalWidth) return setError("The picture is not loaded yet: try again in a moment");
+    if (!img?.naturalWidth) return setError("The picture is still loading");
     const onto = base.id;
     setCutting(true);
     setError(null);
@@ -661,7 +661,7 @@ function DesignPage({ id }: { id: string }) {
         const next = splitLayers(page, l.id, { width: img.naturalWidth, height: img.naturalHeight }, a);
         setPage(next);
         setSelected(next.layers.filter((x) => !page.layers.some((y) => y.id === x.id)).map((x) => x.id));
-        if (!a.lines.length && !a.pieces.length) setError("Your Mac found no words and nothing that stands out in this picture: it is as it was, under the name Background");
+        if (!a.lines.length && !a.pieces.length) setError("No words or objects found in this picture: it is one layer named Background");
       }
     } catch (e) {
       setError(message(e));
@@ -827,7 +827,7 @@ function DesignPage({ id }: { id: string }) {
       await addStylePictures(style.id, [new File([blob], "frame.jpg", { type: "image/jpeg" })], "carousel", true);
       void carouselStyles.refresh().catch(() => {});
       const at = `/design?tab=styles&style=${style.id}`;
-      toast(`${pageName(pages[n]!, n)} is in ${style.name}`, { action: { label: "Open", onClick: () => navigate(at) } });
+      toast(`${pageName(pages[n]!, n)} added to ${style.name}`, { action: { label: "Open", onClick: () => navigate(at) } });
     } catch (e) {
       setError(message(e));
     }
@@ -927,11 +927,11 @@ function DesignPage({ id }: { id: string }) {
         }>
         {piece && (
           <Button size="sm" variant="ghost" asChild>
-            <Link to={piece}>Its Workshop piece</Link>
+            <Link to={piece}>Content Workshop piece</Link>
           </Button>
         )}
         <span className="text-xs text-zinc-500" aria-live="polite">
-          {saved === "unsaved" ? "Not saved yet" : saved === "saving" ? "Saving" : ""}
+          {saved === "unsaved" ? "Not saved" : saved === "saving" ? "Saving" : ""}
         </span>
         {!locked && <>
         <Button size="icon" variant="ghost" aria-label="Undo" disabled={!hist.past.length} onClick={() => step(true)}>
@@ -1031,7 +1031,7 @@ function DesignPage({ id }: { id: string }) {
                       <ContextMenuSeparator />
                       {/* the AI makes the layers: its mark where a shortcut would be */}
                       <ContextMenuItem disabled={cutting} onSelect={() => void split()}>
-                        {cutting ? "Your Mac is on it" : "Split into layers"}
+                        {cutting ? "Working…" : "Split into layers"}
                         <CtMark className="ml-auto size-4 text-violet-500" />
                       </ContextMenuItem>
                     </>
@@ -1074,7 +1074,7 @@ function DesignPage({ id }: { id: string }) {
               <div className={cn("absolute left-full top-1/2 ml-2 flex -translate-y-1/2 rounded-xl border p-1.5 shadow-lg", BAR)}>
                 <button type="button" disabled={cutting} onClick={(e) => (void split(), e.currentTarget.blur())} className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm enabled:hover:bg-zinc-500/15 disabled:opacity-50">
                   <CtMark className="h-4 w-4 text-violet-500" />
-                  {cutting ? "Your Mac is on it" : "Split into layers"}
+                  {cutting ? "Working…" : "Split into layers"}
                 </button>
               </div>
             )}

@@ -57,14 +57,14 @@ describe("todoRows", () => {
 
 const row = (id: string, href: string, more: Partial<ActivityRow> = {}): ActivityRow => ({ id, title: "Media Library", detail: `Row ${id}`, state: "working", href, ...more });
 const session = (id: string, working: boolean, ready: boolean) => ({ id, title: `Tiny ${id}`, working, ready }) as SessionSummary;
-const limit = "Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then.";
+const limit = "Your Claude plan's weekly limit is reached; it resets 5pm. They continue then.";
 
 describe("activityLines", () => {
   it("puts working rows and replies being written under Running, and what needs you under Waiting on you", () => {
     const { running, waiting } = activityLines(
       [row("l", "/library"), row("k", "/library", { state: "ready" }), row("mac", "/editor", { actions: [{ id: "s", title: "Stop", run: "stop", label: "x" }] })],
       [session("s1", true, false), session("s2", false, true), session("s3", false, false)],
-      [{ key: "r:a1", to: "/review/a1", text: "Clip a1 is waiting for your review", icon: "review" }],
+      [{ key: "r:a1", to: "/review/a1", text: "Clip a1: needs review", icon: "review" }],
     );
     expect(running.map((l) => l.key)).toEqual(["l", "s:s1"]);
     expect(waiting.map((l) => l.key)).toEqual(["r:a1", "s:s2", "k"]);

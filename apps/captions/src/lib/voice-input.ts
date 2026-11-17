@@ -31,7 +31,7 @@ export async function writeDown(recording: Blob, onProgress: (p: number) => void
   if (res.ok) return (await res.json()) as { text: string; note?: string };
   const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; chosen?: boolean; why?: string };
   // an engine the person picked that can't run says so; only Automatic falls back to the browser's model
-  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Couldn't write that down (${res.status})`);
+  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Could not transcribe (${res.status})`);
   // no engine on the server for this account: the captions' local model, else the first
   const engine = storedEngine();
   // ponytail: a new worker loads the model (from the browser cache) on every message; keep one alive if that's slow
@@ -64,11 +64,16 @@ export function useVoiceInput(onText: (text: string) => void) {
 
   const start = async () => {
     if (control.current) return;
+    // held from the first tap, before the browser has given the mic: a second tap while it asks starts nothing more,
+    // and leaving the page then lets go of the mic as soon as it comes
+    let cancelled = false;
+    control.current = { stop: () => {}, cancel: () => void (cancelled = true) };
     setError(null);
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch (e) {
+      control.current = null;
       const inApp = document.documentElement.classList.contains("mac-app");
       setError(
         e instanceof DOMException && e.name === "NotFoundError"
@@ -77,6 +82,11 @@ export function useVoiceInput(onText: (text: string) => void) {
             ? "Mic blocked. Turn it on in System Settings → Microphone."
             : "Mic blocked. Allow it from the address bar.",
       );
+      return;
+    }
+    if (cancelled) {
+      stream.getTracks().forEach((t) => t.stop());
+      control.current = null;
       return;
     }
     const ctx = new AudioContext();
@@ -105,7 +115,6 @@ export function useVoiceInput(onText: (text: string) => void) {
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => chunks.push(e.data);
     const stopped = new Promise<void>((r) => (recorder.onstop = () => r()));
-    let cancelled = false;
     const limit = setTimeout(() => recorder.state === "recording" && recorder.stop(), MAX_S * 1000);
     control.current = {
       stop: () => recorder.state === "recording" && recorder.stop(),
@@ -136,7 +145,7 @@ export function useVoiceInput(onText: (text: string) => void) {
       void note;
       setError(text ? null : "Didn't catch anything. Try again a little closer to the mic.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't write that down");
+      setError(e instanceof Error ? e.message : "Could not transcribe");
     }
     setProgress(null);
     setPhase("idle");

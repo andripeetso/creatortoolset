@@ -110,11 +110,11 @@ describe("short videos from a long recording: the AI's moments, checked", () => 
     ]);
     expect(lines[1]).toEqual({ id: "M2", text: "this is sentence 10. this is sentence 11. this is sentence 12. this is sentence 13. this is sentence 14. this is sentence 15. this is sentence 16.", takes: [{ first: 10, last: 16, score: 0.9 }] });
     expect(notes).toEqual([
-      "Moment 29-33 runs across two files: dropped",
-      "Moment 20-20 is 5 s, outside 15-90 s: dropped",
-      "Moment 14-18 runs over a better one: dropped",
-      "Moment 1-30 is 179 s, outside 15-90 s: dropped",
-      "Moment 38-44 is not in sentences 1-40: dropped",
+      "Moment 29-33 runs across two files: left out",
+      "Moment 20-20 is 5 s, outside 15-90 s: left out",
+      "Moment 14-18 runs over a better one: left out",
+      "Moment 1-30 is 179 s, outside 15-90 s: left out",
+      "Moment 38-44 is not in sentences 1-40: left out",
     ]);
     // never more than asked for, and never more than the most there can be
     expect(momentMap(raw, sentences, 2, 0).plans.map((p) => p.title)).toEqual(["Moment 1", "The story"]);
@@ -162,7 +162,7 @@ describe("short videos from a long recording: the step", () => {
     });
     const view = await run(e.id);
     expect(view.plans.map((p) => [p.name, p.title])).toEqual([["m1", "Soft landings"], ["m2", "Tuck the chin"]]);
-    expect(view.notes).toContain("Moment 5-9 runs over a better one: dropped");
+    expect(view.notes).toContain("Moment 5-9 runs over a better one: left out");
     expect(readStep(e.id, "first")!.plans.map((p) => p.name)).toEqual(["m1", "m2"]);
     // each moment: its own draft, B-roll step, post, preview and filing
     expect(view.jobs.filter((j) => j.variant).map((j) => `${j.kind} ${j.variant} ${j.state}`).sort()).toEqual(
@@ -228,7 +228,7 @@ describe("short videos from a long recording: the step", () => {
     const view = await run(e.id);
     vi.mocked(aiFor).mockReset();
     vi.mocked(completeWithFallback).mockReset();
-    expect(view.jobs.find((j) => j.kind === "script")!.error).toBe("The AI found no part of the recording that can stand alone (Moment 1-1 is 5 s, outside 15-90 s: dropped)");
+    expect(view.jobs.find((j) => j.kind === "script")!.error).toBe("No part of the recording stands on its own (Moment 1-1 is 5 s, outside 15-90 s: left out)");
     expect(view.plans).toEqual([]);
   });
 });

@@ -43,7 +43,11 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
   submitLabel: string;
   onSubmit: () => void | Promise<void>;
   busy?: boolean;
-  /** Nothing to submit yet (e.g. no choice made): the primary button is off. */
+  /**
+   * The form is not on screen yet (it is loading, or there is nothing to choose from) or is busy with something other
+   * than the save: the primary button waits. Never for a missing value: the button stays on and the field says what is
+   * missing (`required`).
+   */
   submitDisabled?: boolean;
   error?: string | null;
   cancelLabel?: string;

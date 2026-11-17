@@ -257,6 +257,58 @@ and answers:
       sign-in to an outside service), Turn on / Turn off, Test, Retry, Clear (a cache), Empty (the trash).
     - A trade word (MCP, Bearer, PATH, .env) needs its meaning beside it or a plain word instead.
     - A search row's title (`search.ts`) is the title on the page, word for word.
+  - **Settings controls and saving** (owner, 2026-11-16). `settings-wording.test.ts` holds the mechanical ones.
+    - A switch's title names what is on while the switch is on: the title followed by "on" reads right. No negative
+      ("Don't show …"). Never "Enable" / "Disable": in a sentence it is "Turn on" / "Turn off".
+    - A row's title does not repeat its section's or its page's words (inside "Notifications" the row is "Email"). A
+      page with one section does not print the page's name again as the section's title: a `Section` titled as its
+      page prints no title (the frame gives the page's title, `PageTitleContext`), and its action stays at the right.
+    - The line under a title never restates the title. Where the control does not show the current value (a button
+      that opens a dialog), the line is the value ("Every Monday at 9:00", a folder's path).
+    - A switch is only for a change that applies at once. In a form with Save or Create, an on/off choice is a
+      checkbox.
+    - A page, card or dialog either saves each change at once, or is a form with one Save. Never both in one card,
+      never a Save per section. Save is never hidden or greyed out while its form is on screen: pressed with
+      something missing, it says what is missing, at the field (`required`). A submit that is busy may show it.
+    - A save is confirmed only when the change cannot be seen on screen. A save that fails keeps what the person
+      typed.
+    - A main switch at the top of a section turns off everything under it, and the rows under it show only while it
+      is on.
+    - A page with more than about a dozen rows is split. A folded "Advanced" block needs three rows or more.
+    - An error says what happened and what to do next ("Could not load folders" with Retry; "Needs an AI provider").
+  - **App wording** (owner, 2026-11-16: "the same kind of language audit" for the whole app). Every screen, toast,
+    tooltip and server message a person reads follows "Settings wording" above (`src/app-wording.test.ts` holds the
+    mechanical ones, and the few lines kept as the owner's own); what that bullet does not say:
+    - **AI is the default here, so nothing is labelled as AI.** No "AI", "by AI", "AI-made", "smart" on an option, a
+      button, a badge or a section: say what the thing does ("Automatic", "Descriptions", "Suggested"). No wand or
+      sparkle icon: `CtMark` on what is made for the person, else the icon of what the button does. Allowed: the
+      names AI Editor, AI provider, AI apps, the Settings group AI, and a sentence that must name it to be true.
+    - A label is a noun of one to three words, or for an action a specific verb with its object ("Delete video",
+      "Add folder"); never "OK", "Yes", "Got it". No full stop on any one-line label, badge, tab, status or option.
+      A field's label says what goes in it; with a label there is no example placeholder.
+    - Running text is optional and one sentence. An empty list is "No <things>" and its one button; an empty tool
+      screen is a place to drop the raw material with its one button. No line that only says a feature exists.
+    - States: fine shows nothing. Missing is "Needs <thing>". Work in progress is what is being done, with a count
+      where there is one ("Transcribing", "Uploading 3 of 12", "Queued"). An error is "Could not <verb> <thing>" with
+      Retry beside it, never a raw server line, a status code or blame; a thing that is not there is "<Thing> not
+      found". A toast only when the change cannot be seen, in a few words.
+    - Names: the tools by their Home names (`HOME_TILE_NAMES`: Content Analyzer, Content Workshop, Media Library …,
+      never "the Analyzer", "Workshop", "the library" for the tool). Captions are the lines on a video; the text under
+      a post is its post description. Video Notes holds recordings, the Media Library clips, the Designer designs; a
+      Content Analyzer group of posts is a topic; the Content Workshop's panels are Writing, Chat and Browse. This
+      computer / Server, never "this device" or "cloud". One spelling: colour.
+    - Verbs, beside the Settings list: Edit (open to change), Rename, Export (make a file; never "render" on a
+      button), Download (get it), Upload, Copy, Share, Send to <tool>, Analyze (the Content Analyzer's run). Cancel
+      stops what has not happened; Stop stops what is running. In a sentence it is still "try again later".
+    - A tooltip may keep a how-to that is said nowhere else, and a credit or licence line stays. Cut the visible
+      paragraph, never the only place a fact lives.
+    - A screen that asks the person something by design keeps its question: first-run setup's titles ("What do you
+      make?", "Where are your videos?", "How do you work best?"), the new chat screen ("What should we make?"), the
+      chat list's "Needs you". The owner's own labels stay as they are: "Write it for me", "My words only", "New edit
+      defaults", "Headless access", "Sign-in code", the Media Library's "Standard" / "Automatic" / "None", the
+      rolls A-roll and B-roll, the grade panel's control names.
+    - Not app wording: what the AI writes, the prompts, and the tool definitions an AI reads (`api/mcp.ts`,
+      `api/mcp-tools/`; a change there needs the store check first).
 - Plug-ins get in two ways. Compiled in: `scripts/plugins.mjs` writes the registries at build time. From a folder,
   on the Mac app's own server only: `scripts/plugin-build.mjs` builds one folder by itself, `api/lib/folder-plugins.ts`
   loads what the Mac app says is on (`apps/mac` `Plugins.swift` keeps the person's Switch on clicks) and
@@ -270,5 +322,12 @@ and answers:
   by environment variables; keep those limits when you add work to them.
 - Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's
   `as const` array, which the client imports, never retypes), its allowed moves sit next to it as a `Moves` table
-  (`apps/captions/api/lib/transition.ts`), and every write goes through `move()` (`canMove()` in background loops;
+  (`apps/captions/contracts/transition.ts`; `api/lib/transition.ts` hands it on), and every write goes through `move()` (`canMove()` in background loops;
   a route answers 409). Reads never write: a stale `running`/`processing`/`thinking` is reconciled once at startup.
+  A table nothing passes to `move()`/`canMove()` fails `transition.test.ts`; a status only its own run writes needs none.
+- Work that answers later (a job, a request, an `await`) checks it is still wanted before it writes:
+  - A row in SQLite: the write names the state it expects (`WHERE id = ? AND state = 'running'`), so a late answer
+    never moves a job stopped meanwhile (`api/library/jobs.ts`).
+  - A screen: what is in flight is state its button reads, so the button is off while it runs; a ref alone is not
+    enough. An answer for something that changed since (another project, a dialog opened again, Cancel) is dropped.
+  - The Mac and iPhone apps: after an `await`, compare the server, token or run with the one that asked, then assign.

@@ -30,9 +30,9 @@ const COMMENT_ACTOR = "apify~instagram-comment-scraper";
 const RUN_TIMEOUT_S = 300;
 
 export const APIFY_MISSING_MSG =
-  "Reading other creators' posts needs your own Apify key: add it in Settings → API keys";
+  "Needs an Apify key: add it in Settings → API keys";
 export const APIFY_INVALID_MSG =
-  "Apify token is invalid or expired — paste a fresh token from console.apify.com";
+  "Needs a new Apify key: paste one from console.apify.com in Settings → API keys";
 /** How a post or profile was read: the one way left for other creators' posts (snapshots keep it as their source). */
 export type IngestMode = "apify";
 
@@ -285,7 +285,7 @@ async function acquireRunSlot(
   }
   const s = slot;
   while (s.active >= limit) {
-    if (signal?.aborted) throw new InstagramError("Cancelled", "CANCELLED", false);
+    if (signal?.aborted) throw new InstagramError("Stopped", "CANCELLED", false);
     await new Promise<void>((resolve) => {
       const wake = () => {
         signal?.removeEventListener("abort", wake);
@@ -350,7 +350,7 @@ export async function apifyRun(
         const ms = RETRY_DELAYS_MS[attempt]!;
         console.warn(`[instagram] apify: ${(e as Error).message.slice(0, 120)} — retrying in ${Math.round(ms / 1000)}s`);
         await sleep(ms);
-        if (opts.signal?.aborted) throw new InstagramError("Cancelled", "CANCELLED", false);
+        if (opts.signal?.aborted) throw new InstagramError("Stopped", "CANCELLED", false);
       }
     }
   } finally {
@@ -394,7 +394,7 @@ async function apifyRunOnce(
     });
   } catch (e) {
     if (opts.signal?.aborted) {
-      throw new InstagramError("Cancelled", "CANCELLED", false);
+      throw new InstagramError("Stopped", "CANCELLED", false);
     }
     throw new InstagramError(
       `Apify request failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -412,7 +412,7 @@ async function apifyRunOnce(
     const { type, message } = apifyErrorInfo(text);
     if (res.status === 402 && type === "concurrent-runs-limit-exceeded") {
       throw new InstagramError(
-        "Apify is already running as many actors as your plan allows",
+        "Apify is already at the plan’s limit of runs",
         "APIFY",
         true,
       );
@@ -425,7 +425,7 @@ async function apifyRunOnce(
       );
     }
     throw new InstagramError(
-      `Apify actor failed (HTTP ${res.status}): ${message || text.slice(0, 180)}`,
+      `Apify run failed: ${message || text.slice(0, 180)}`,
       res.status === 400 ? "FAILED" : "APIFY",
       res.status >= 500 || res.status === 429,
     );
@@ -434,14 +434,14 @@ async function apifyRunOnce(
   try {
     data = JSON.parse(text);
   } catch {
-    throw new InstagramError("Apify returned malformed JSON", "APIFY", true);
+    throw new InstagramError("Apify sent an answer that could not be read", "APIFY", true);
   }
   if (Array.isArray(data)) return data;
   if (isRec(data) && Array.isArray(data.items)) return data.items;
   const err =
     isRec(data) && isRec(data.error) && typeof data.error.message === "string"
       ? data.error.message
-      : "Unexpected Apify response";
+      : "Apify sent an answer that could not be read";
   throw new InstagramError(err, "APIFY", true);
 }
 
@@ -575,7 +575,7 @@ export function normalizeApifyPost(raw: Rec, fallbackUrl: string): PostInfo {
     );
   }
   if (!shortcode) {
-    throw new InstagramError("Apify returned a post without a shortcode", "FAILED", false);
+    throw new InstagramError("Apify sent an incomplete post", "FAILED", false);
   }
   const creator: PostCreator = {
     username: str(raw.ownerUsername) || "instagram",
@@ -621,7 +621,7 @@ export async function fetchPostViaApify(
   if (!raw) {
     throw new InstagramError(
       /\/share\//i.test(url)
-        ? "Could not resolve this share link via Apify — paste a /p/ or /reel/ URL instead"
+        ? "Could not open this share link: paste the post’s own link (/p/ or /reel/) instead"
         : "Apify returned no post for this link",
       "NOT_FOUND",
       false,

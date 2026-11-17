@@ -321,7 +321,7 @@ signInCallbackApp.post("/link-confirm", async (c) => {
   pendingLinks.delete(id); // single use
   const user = findUser(p.username);
   try {
-    if (!user) throw new Error("That account is gone");
+    if (!user) throw new Error("Account not found");
     linkIdentity(user, p.who);
   } catch (e) {
     return c.html(plainPage("That didn't link", `${escHtml(e instanceof Error ? e.message : String(e))}.`), 400);
@@ -375,7 +375,7 @@ function finish(c: Context, mode: Mode, who: Who, withCookie: boolean) {
   const fail = failTo(c, mode, withCookie);
   if (mode.type === "link") {
     const user = findUser(mode.username);
-    if (!user) return fail("That account is gone");
+    if (!user) return fail("Account not found");
     if (withCookie && !sessionHere(c, mode.username)) {
       // this browser is not signed in here as the account that started the link (the Mac app's sign-in finishes in the
       // system browser): it names the account and links only on a press, so a link sent to someone else shows them

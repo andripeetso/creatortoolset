@@ -1,6 +1,61 @@
+import { canMove, type Moves } from "@contracts/transition";
+
 export type ProjectSaveState = "idle" | "saving" | "saved" | "error";
 export type ClipUploadState =
   "local" | "uploading" | "processing" | "done" | "error";
+
+/*
+ * Caption Studio's three badge states and the moves each makes while one project is open. Every write in store.ts,
+ * persist.ts and local-recovery.ts goes through `badge` below. A start is not a move: the store's first state, a
+ * project opened, restored, imported or closed, and a new clip begin at whatever they are (`from` null). The tables are
+ * built from the writers as they are today; persistence-status.test.ts names the site of every move.
+ */
+
+/** `saveState`, the save to the server. Only a start goes back to idle, and idle is never saved without a save. */
+export const SERVER_SAVE_MOVES: Moves<ProjectSaveState> = {
+  idle: ["saving", "error"],
+  saving: ["saved", "error"],
+  saved: ["saving", "error"],
+  error: ["saving", "saved"],
+};
+
+/**
+ * `localSaveState`, the copy on this browser's disk. Every move happens: the answer of a write is not matched to the
+ * save that asked for it, so it lands on whatever the state has become since.
+ */
+export const LOCAL_SAVE_MOVES: Moves<ProjectSaveState> = {
+  idle: ["saving", "saved", "error"],
+  saving: ["idle", "saved", "error"],
+  saved: ["idle", "saving", "error"],
+  error: ["idle", "saving", "saved"],
+};
+
+/**
+ * `ClipInfo.uploadState`, one clip's source on its way to the server. An upload starts only from local or error, and
+ * nothing writes "processing" (a copy stored by an older version can hold it; a file put back makes it local).
+ */
+export const CLIP_UPLOAD_MOVES: Moves<ClipUploadState> = {
+  local: ["uploading", "done", "error"],
+  uploading: ["done", "error", "local"],
+  processing: ["local"],
+  done: ["local", "error"],
+  error: ["uploading", "local", "done"],
+};
+
+/**
+ * The one writer of the three states. Returns `to`: `saveState: badge(SERVER_SAVE_MOVES, s.saveState, "saving",
+ * "scheduleSave")`. `from` null is a start; `site` names the function that asks. A move its table does not list is
+ * made all the same and reported, because a badge must never stop a save or stay stuck: a warning in the running app,
+ * an error under vitest, so the suites show a table that is short.
+ */
+export function badge<S extends string>(moves: Moves<S>, from: S | null, to: S, site: string): S {
+  if (from !== null && !canMove(moves, from, to)) {
+    const message = `Caption Studio badge (${site}): "${from}" → "${to}" is not in its moves table`;
+    if (import.meta.env.MODE === "test") throw new Error(message);
+    console.warn(message);
+  }
+  return to;
+}
 
 export interface PersistenceClip {
   uploadState: ClipUploadState;
@@ -59,9 +114,9 @@ export function getProjectPersistenceStatus({
       workSafe: false,
       fullySaved: false,
       tone: "danger",
-      badge: "NOT SAVED — LOCAL BACKUP FAILED",
+      badge: "Not saved · local copy failed",
       message:
-        "Browser recovery storage failed. Keep this page open until the project reaches the server.",
+        "The local copy could not be written, so keep this page open until the project is on the server",
     };
   }
 
@@ -72,18 +127,18 @@ export function getProjectPersistenceStatus({
         workSafe: true,
         fullySaved: false,
         tone: "warning",
-        badge: "SAVED LOCALLY — CLOUD SYNC FAILED",
+        badge: "Saved locally · not saved to the server",
         message:
-          "Your edits are recoverable on this device. Cloud sync failed and will retry without blocking local work.",
+          "The edits are in the local copy, and saving to the server is retried",
       };
     }
     return {
       workSafe: false,
       fullySaved: false,
       tone: "danger",
-      badge: "NOT SAVED — SAVE FAILED",
+      badge: "Not saved · save failed",
       message:
-        "The latest project changes did not reach the server. Do not close, refresh, switch projects, or deploy.",
+        "The latest changes are not on the server, so keep this page open",
     };
   }
 
@@ -94,10 +149,10 @@ export function getProjectPersistenceStatus({
         fullySaved: false,
         tone: "warning",
         badge: serverProjectReady
-          ? "PROJECT SAVED — SOURCE UPLOAD FAILED"
-          : "SAVED LOCALLY — SOURCE UPLOAD FAILED",
+          ? "Saved · source video upload failed"
+          : "Saved locally · source video upload failed",
         message:
-          "Your transcript and edits are safe. Only cloud video rendering is unavailable; retrying resumes the source upload.",
+          "The transcript and edits are saved; export on the server needs the source video upload retried",
       };
     }
     return {
@@ -105,10 +160,10 @@ export function getProjectPersistenceStatus({
       fullySaved: false,
       tone: "danger",
       badge: serverProjectReady
-        ? "PARTIALLY SAVED — UPLOAD FAILED"
-        : "NOT SAVED — UPLOAD FAILED",
+        ? "Partly saved · source video upload failed"
+        : "Not saved · source video upload failed",
       message:
-        "One or more source videos failed to upload. Retry the failed upload before leaving this page.",
+        "A source video did not upload; retry the upload before leaving this page",
     };
   }
 
@@ -125,22 +180,22 @@ export function getProjectPersistenceStatus({
         )
       : null;
     const detail = uploading.length
-      ? `UPLOADING ${averageUpload}%`
+      ? `uploading ${averageUpload}%`
       : processing.length
-        ? "SERVER PREPARING VIDEO"
+        ? "preparing video"
         : local.length
-          ? "WAITING TO UPLOAD"
-          : "NO SERVER COPY";
+          ? "waiting to upload"
+          : "not on the server";
     return {
       workSafe: locallySaved,
       fullySaved: false,
       tone: locallySaved ? "warning" : "danger",
       badge: locallySaved
-        ? `SAVED LOCALLY — ${detail}`
-        : `NOT SAVED — ${detail}`,
+        ? `Saved locally · ${detail}`
+        : `Not saved · ${detail}`,
       message: locallySaved
-        ? "Your edits are recoverable on this device while the project connects to the server."
-        : "This project still exists only in this browser tab. Do not close, refresh, switch projects, or deploy until it says SAVED.",
+        ? "The edits are in the local copy until the project is on the server"
+        : "The project is only in this tab, so keep it open until the badge says Saved",
     };
   }
 
@@ -152,29 +207,29 @@ export function getProjectPersistenceStatus({
         )
       : null;
     const pendingLabel = uploading.length
-      ? `VIDEO UPLOADING ${averageUpload}%`
+      ? `source video uploading ${averageUpload}%`
       : processing.length
-        ? "SERVER PREPARING VIDEO"
-        : "VIDEO WAITING TO UPLOAD";
+        ? "preparing video"
+        : "source video waiting to upload";
     if (locallySaved) {
       return {
         workSafe: true,
         fullySaved: false,
         tone: "warning",
-        badge: `EDITS SAVED LOCALLY — ${pendingLabel}`,
+        badge: `Edits saved locally · ${pendingLabel}`,
         message:
-          "Your transcript and edits will restore on this device if you close or refresh. The source upload continues separately for cloud rendering.",
+          "The transcript and edits are in the local copy while the source video uploads",
       };
     }
     return {
       workSafe: saveState === "saved",
       fullySaved: false,
       tone: "warning",
-      badge: `PARTIALLY SAVED — ${pendingCount} CLIP${pendingCount === 1 ? "" : "S"} PENDING`,
+      badge: `Partly saved · ${pendingCount} clip${pendingCount === 1 ? "" : "s"} pending`,
       message:
         saveState === "saved"
-          ? "Your transcript is in the cloud project. The source upload is still pending, so cloud video rendering is not ready yet."
-          : "The latest edits and source video are still being saved. Keep this page open until the local-save badge appears.",
+          ? "The transcript is on the server; export on the server waits for the source video"
+          : "The latest edits and the source video are still being saved, so keep this page open",
     };
   }
 
@@ -183,10 +238,10 @@ export function getProjectPersistenceStatus({
       workSafe: locallySaved,
       fullySaved: false,
       tone: "saving",
-      badge: locallySaved ? "SAVED LOCALLY — SYNCING" : "SAVING",
+      badge: locallySaved ? "Saved locally · saving to the server" : "Saving",
       message: locallySaved
-        ? "Your edits are recoverable on this device and are syncing to the server."
-        : "Project changes are being written to the server. Keep this page open until the badge says SAVED.",
+        ? "The edits are in the local copy and are being saved to the server"
+        : "The changes are being saved to the server, so keep this page open until the badge says Saved",
     };
   }
 
@@ -194,7 +249,7 @@ export function getProjectPersistenceStatus({
     workSafe: true,
     fullySaved: true,
     tone: "saved",
-    badge: "SAVED",
+    badge: "Saved",
     message: null,
   };
 }

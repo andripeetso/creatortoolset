@@ -60,7 +60,8 @@ export function SharePopover({
         setOn(all.some((s) => s.all));
         setLoaded(true);
       },
-      () => setLoaded(true),
+      // not known: the row keeps its loading look and says why (opening it again asks again)
+      (e) => setError(e instanceof Error ? e.message : String(e)),
     );
   }, [open, sessionId]);
 
@@ -86,13 +87,16 @@ export function SharePopover({
     }
   };
   const stop = async () => {
-    if (!link) return;
+    if (!link || busy) return;
+    setBusy(true);
     try {
       await stopShare(sessionId, link.token);
       setLink(null);
       turn(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -103,7 +107,7 @@ export function SharePopover({
         onClick={() => setOpen((o) => !o)}
         className={`${className} ${on ? "!border-emerald-500/50 !text-emerald-300" : ""}`}
         aria-expanded={open}
-        title={on ? "A share link is on: anyone with it can read every piece. Click to copy or stop it." : "Share this project with freelancers and team: one link, every piece, no account"}
+        title={on ? "Share link on: anyone with the link can read every piece" : "Share this project by link"}
       >
         {on ? <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> : <Link2 className="h-3 w-3" />} {on ? "Shared" : "Share"}
       </button>
@@ -125,7 +129,7 @@ export function SharePopover({
                   {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {copied ? "Copied" : "Copy"}
                 </button>
                 {/* over this session (the Mac app has no address bar or back): the page as they see it, plus the comments panels for you */}
-                <button type="button" onClick={() => (setViewing(link.token), setOpen(false))} className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground" title="Open the share page here">
+                <button type="button" onClick={() => (setViewing(link.token), setOpen(false))} className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground" title="Open the share page">
                   <ExternalLink className="h-3 w-3" /> Open
                 </button>
               </div>
@@ -139,7 +143,7 @@ export function SharePopover({
                     <Hammer className="h-3 w-3 text-amber-400" /> In production{link.progress.by ? ` · ${link.progress.by}` : ""}
                   </>
                 ) : (
-                  <span className="text-muted-foreground">Nobody has started on it yet.</span>
+                  <span className="text-muted-foreground">Not started</span>
                 )}
               </p>
               {link.deliveries?.length ? (
@@ -158,17 +162,17 @@ export function SharePopover({
                 </ul>
               ) : null}
               {!readOnly && (
-                <button type="button" onClick={() => void stop()} className="self-start rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-red-400">
-                  Stop this link
+                <button type="button" disabled={busy} onClick={() => void stop()} className="self-start rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-red-400 disabled:opacity-50">
+                  Turn off link
                 </button>
               )}
             </>
           ) : readOnly ? null : (
             <>
               <button type="button" disabled={busy} onClick={() => void make()} className="flex items-center justify-center gap-1.5 rounded-md bg-violet-600 px-2 py-1 text-[12px] font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />} Make a link and copy it
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />} Create and copy link
               </button>
-              <p className="text-[10px] text-muted-foreground">Every piece in this project, live: what you add or change later shows up too. They open it without an account, mark their progress and upload the finals here.</p>
+              <p className="text-[10px] text-muted-foreground">Anyone with the link can read every piece of this project, mark progress and upload the finals.</p>
             </>
           )}
           {error ? <p className="text-[11px] text-red-300">{error}</p> : null}

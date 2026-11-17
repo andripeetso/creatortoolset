@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clipRangeHref,
   isGuideAssetName,
+  guideSaves,
   mergeGuideEdits,
   parseDocKind,
   parseGuidePlan,
   parseStoredGuide,
+  saveLabel,
   planToGuide,
 } from "./guide";
 
@@ -134,5 +136,209 @@ describe("guideToMarkdown", () => {
     expect(md).toContain("# Share a clip");
     expect(md).not.toMatch(/\/clips\//);
     expect(md).not.toMatch(/!\[/);
+  });
+});
+
+describe("the Guide Builder's save label", () => {
+  it("says Saved only when the server has everything typed", () => {
+    expect(saveLabel({ edits: 0, tried: 0, saved: 0, out: 0 })).toBe("Saved");
+    expect(saveLabel({ edits: 3, tried: 3, saved: 3, out: 0 })).toBe("Saved");
+    // typed, the save not gone yet
+    expect(saveLabel({ edits: 4, tried: 3, saved: 3, out: 0 })).toBe("Saving…");
+    // one of two saves has answered
+    expect(saveLabel({ edits: 4, tried: 4, saved: 3, out: 1 })).toBe("Saving…");
+    // the save failed: its error is on the page, the label says nothing
+    expect(saveLabel({ edits: 4, tried: 4, saved: 3, out: 0 })).toBe("");
+  });
+});
+
+describe("a guide's saves (guideSaves)", () => {
+  beforeEach(() => void vi.useFakeTimers());
+  afterEach(() => void vi.useRealTimers());
+  const turn = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+
+  // a guide whose text is one string; the server answers a save when the test says so, with the text it was sent
+  const guide = () => {
+    const sent: { text: string; answer: (ok?: boolean, stored?: string) => void }[] = [];
+    const shown: string[] = [];
+    const labels: string[] = [];
+    // the box, as the page keeps it: what is typed goes in at once, a copy that comes in goes through `arrived`
+    let box = "";
+    const saves = guideSaves<string, string>({
+      send: (text) => new Promise((ok, no) => sent.push({ text, answer: (fine = true, stored = text) => (fine ? ok(stored) : no(new Error("offline"))) })),
+      saved: (text) => {
+        shown.push(text);
+        saves.arrived(text, state.editing);
+      },
+      failed: () => {},
+      changed: (counts) => labels.push(saveLabel(counts)),
+      show: (text) => (box = text),
+    });
+    const type = (text: string) => {
+      box = text;
+      saves.type(text);
+    };
+    const state = { editing: false };
+    return { saves, sent, shown, type, state, box: () => box, texts: () => sent.map((s) => s.text), label: () => labels.at(-1) };
+  };
+
+  it("sends one save at a time, and the text typed last is the text sent last", async () => {
+    const g = guide();
+    g.saves.type("a");
+    await turn(700);
+    expect(g.texts()).toEqual(["a"]);
+    // typed while that save is out: it waits for the answer, however long ago its 700 ms passed
+    g.saves.type("ab");
+    await turn(700);
+    g.saves.type("abc");
+    await turn(700);
+    expect(g.texts()).toEqual(["a"]);
+    g.sent[0]!.answer();
+    await turn();
+    expect(g.texts()).toEqual(["a", "abc"]);
+    expect(g.label()).toBe("Saving…");
+    g.sent[1]!.answer();
+    await turn();
+    // the answers come in the order asked: the older text is never shown after the newer
+    expect(g.shown).toEqual(["a", "abc"]);
+    expect(g.label()).toBe("Saved");
+  });
+
+  it("leaving a guide sends what was typed at once, to that guide, and its timer sends nothing after", async () => {
+    const left = guide();
+    const opened = guide();
+    left.saves.type("typed in the first");
+    void left.saves.flush();
+    await turn();
+    // typing in the guide opened next takes nothing from the first one's save
+    opened.saves.type("typed in the second");
+    await turn(700);
+    expect(left.texts()).toEqual(["typed in the first"]);
+    expect(opened.texts()).toEqual(["typed in the second"]);
+    left.sent[0]!.answer();
+    await turn();
+    expect(left.shown).toEqual(["typed in the first"]);
+    expect(opened.shown).toEqual([]);
+  });
+
+  it("Regenerate: what was typed is saved before it runs, nothing is sent while it runs, what is typed meanwhile is dropped", async () => {
+    const g = guide();
+    g.saves.type("typed before");
+    let started = false;
+    let finish!: (text: string) => void;
+    const regenerated = g.saves.replace(() => {
+      started = true;
+      return new Promise<string>((ok) => (finish = ok));
+    });
+    await turn();
+    expect(g.texts()).toEqual(["typed before"]);
+    expect(started).toBe(false);
+    g.sent[0]!.answer();
+    await turn();
+    expect(started).toBe(true);
+    g.saves.type("typed while it runs");
+    await turn(700);
+    expect(g.texts()).toEqual(["typed before"]);
+    finish("regenerated");
+    expect(await regenerated).toBe("regenerated");
+    await turn(700);
+    // never written over its result, and the label is the regenerated guide's
+    expect(g.texts()).toEqual(["typed before"]);
+    expect(g.label()).toBe("Saved");
+  });
+
+  it("a Regenerate that fails keeps what was typed while it ran, and saves it after", async () => {
+    const g = guide();
+    let fail!: (e: Error) => void;
+    const regenerated = g.saves.replace(() => new Promise<string>((_, no) => (fail = no)));
+    await turn();
+    g.saves.type("typed while it runs");
+    await turn(700);
+    expect(g.texts()).toEqual([]);
+    fail(new Error("no AI"));
+    await expect(regenerated).rejects.toThrow("no AI");
+    await turn();
+    expect(g.texts()).toEqual(["typed while it runs"]);
+  });
+
+  it("what is typed and not saved yet wins over a change from elsewhere; with nothing unsaved the change is shown", async () => {
+    const g = guide();
+    g.type("typed here");
+    // changed from another tab before the save goes out, and again while it is on its way
+    g.saves.arrived("from elsewhere");
+    expect(g.box()).toBe("typed here");
+    await turn(700);
+    g.saves.arrived("from elsewhere, again");
+    expect(g.box()).toBe("typed here");
+    // the save went out as planned, with what was typed; after its answer the box and the server agree
+    expect(g.texts()).toEqual(["typed here"]);
+    g.sent[0]!.answer();
+    await turn();
+    expect(g.box()).toBe("typed here");
+    expect(g.label()).toBe("Saved");
+    g.saves.arrived("from elsewhere, later");
+    expect(g.box()).toBe("from elsewhere, later");
+  });
+
+  it("a text whose save failed stays in the box when a change comes from elsewhere, until it is saved", async () => {
+    const g = guide();
+    g.type("typed here");
+    await turn(700);
+    g.sent[0]!.answer(false);
+    await turn();
+    g.saves.arrived("from elsewhere");
+    expect(g.box()).toBe("typed here");
+    void g.saves.flush();
+    await turn();
+    g.sent[1]!.answer();
+    await turn();
+    expect(g.texts()).toEqual(["typed here", "typed here"]);
+    expect(g.box()).toBe("typed here");
+  });
+
+  it("while editing, the answer to its own save is not put back in the box; a change from elsewhere is, and so is that answer when editing ends", async () => {
+    const g = guide();
+    g.state.editing = true;
+    g.type("hello ");
+    await turn(700);
+    // the server trims what it stores: put back in the box, the space just typed would be gone
+    g.sent[0]!.answer(true, "hello");
+    await turn();
+    expect(g.box()).toBe("hello ");
+    expect(g.label()).toBe("Saved");
+    g.saves.arrived("hello, from elsewhere", true);
+    expect(g.box()).toBe("hello, from elsewhere");
+    // Save ends the editing: the box takes the server's copy
+    g.type("hello again ");
+    void g.saves.flush();
+    await turn();
+    g.sent[1]!.answer(true, "hello again");
+    await turn();
+    expect(g.box()).toBe("hello again ");
+    g.saves.arrived("hello again", false);
+    expect(g.box()).toBe("hello again");
+  });
+
+  it("a save that is not the text (the name, sharing) waits its turn and marks no typed text as saved", async () => {
+    const g = guide();
+    g.saves.type("a");
+    await turn(700);
+    void g.saves.save("shared");
+    await turn();
+    expect(g.texts()).toEqual(["a"]);
+    g.sent[0]!.answer(false);
+    await turn();
+    expect(g.texts()).toEqual(["a", "shared"]);
+    g.sent[1]!.answer();
+    await turn();
+    // the text's save failed: the label says nothing (its error is on the page), not Saved
+    expect(g.label()).toBe("");
+    // Save sends that text again
+    void g.saves.flush();
+    await turn();
+    expect(g.texts()).toEqual(["a", "shared", "a"]);
+    g.sent[2]!.answer();
+    await turn();
+    expect(g.label()).toBe("Saved");
   });
 });

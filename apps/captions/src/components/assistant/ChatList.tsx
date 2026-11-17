@@ -175,7 +175,7 @@ export function ChatList({
   /** Put a chat away until `until`, or bring it back now (null). */
   const snooze = (c: AssistantChat, until: number | null) =>
     void (async () => {
-      if (until !== null && until <= Date.now()) return void toast.error("That time has passed. Choose another.");
+      if (until !== null && until <= Date.now()) return void toast.error("That time has passed");
       const r = await snoozeChat(c.id, until);
       if (r.ok && until !== null) {
         await moveOn(c);
@@ -205,17 +205,17 @@ export function ChatList({
       await renameChat(c.id, name);
       reload();
     })();
-  const copy = (text: string, what: string) => void navigator.clipboard.writeText(text).then(() => toast.success(`${what} copied`, { description: text }), () => toast.error("Could not copy it"));
+  const copy = (text: string, what: string) => void navigator.clipboard.writeText(text).then(() => toast.success(`${what} copied`, { description: text }), () => toast.error("Could not copy"));
   // The write starts inside the click, with the text still on its way: WebKit refuses a copy made after an await.
   const copyWhole = (id: string) => {
     const text = getChat(id).then((r) => (r.ok ? chatText(r.data.messages) : Promise.reject(new Error(r.error))));
     void navigator.clipboard
       .write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })])
-      .then(() => toast.success("Whole chat copied"), () => void text.then(() => toast.error("Could not copy it"), (e: Error) => toast.error(e.message)));
+      .then(() => toast.success("Whole chat copied"), () => void text.then(() => toast.error("Could not copy"), (e: Error) => toast.error(e.message)));
   };
   const remove = (c: AssistantChat) =>
     void (async () => {
-      if (!(await confirmDialog({ title: `Delete "${chatTitle(c)}"?`, body: "The chat and its pictures are deleted for good.", ok: "Delete", danger: true }))) return;
+      if (!(await confirmDialog({ title: `Delete "${chatTitle(c)}"?`, body: "The chat and its pictures are deleted.", ok: "Delete", danger: true }))) return;
       // the open chat is put among the others first: only those can be deleted
       await moveOn(c);
       await deletePast(c.id);
@@ -243,7 +243,7 @@ export function ChatList({
         {/* one that asks you something is back the moment it is put away: it has no clock */}
         {!c.asks && <DropdownMenu onOpenChange={(o) => setMenuOf(o ? c.id : null)}>
           <DropdownMenuTrigger asChild>
-            <button type="button" className={rowBtn} aria-label={`Snooze "${title}"`} title="Snooze: put it away until later">
+            <button type="button" className={rowBtn} aria-label={`Snooze "${title}"`} title="Snooze">
               <Clock className="size-3" />
             </button>
           </DropdownMenuTrigger>
@@ -252,7 +252,7 @@ export function ChatList({
           </DropdownMenuContent>
         </DropdownMenu>}
         {!c.working && (
-          <button type="button" onClick={() => settle(c, true)} className={cn(rowBtn, "-mr-1 gap-1 text-xs")} aria-label={`Settle "${title}"`} title="Settle: done with it, kept">
+          <button type="button" onClick={() => settle(c, true)} className={cn(rowBtn, "-mr-1 gap-1 text-xs")} aria-label={`Settle "${title}"`} title="Settle: mark as done">
             <Check className="size-3.5" />
             Settle
           </button>
@@ -295,13 +295,13 @@ export function ChatList({
                 <span className="relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end">
                   <span className="chat-row-when flex items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums">
                     {c.snoozed ? (
-                      <span className="flex items-center gap-1" title={`Back ${new Date(c.snoozed).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`}>
+                      <span className="flex items-center gap-1" title={`Snoozed until ${new Date(c.snoozed).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`}>
                         <AlarmClock className="size-3" aria-label="Snoozed for" />
                         {snoozeLeft(c.snoozed)}
                       </span>
                     ) : c.asks ? (
                       <>
-                        <span className="size-2 rounded-full bg-[rgb(var(--violet-600))] ring-[3px] ring-[rgb(var(--violet-600)/0.2)]" aria-label="Asks you something" />
+                        <span className="size-2 rounded-full bg-[rgb(var(--violet-600))] ring-[3px] ring-[rgb(var(--violet-600)/0.2)]" aria-label="Needs an answer" />
                         {ago(c.at)}
                       </>
                     ) : c.working ? (
@@ -311,7 +311,7 @@ export function ChatList({
                         <WorkingFor since={c.at} compact />
                       </span>
                     ) : c.limited ? (
-                      <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400" title="A usage limit stopped its reply">
+                      <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400" title="Usage limit reached">
                         <CircleAlert className="size-3" aria-hidden />
                         Limited
                       </span>
@@ -335,7 +335,7 @@ export function ChatList({
               {(c.on || c.last) && (
                 <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
                   {Made && (
-                    <span className="flex max-w-[60%] shrink-0 items-center gap-1 text-foreground/70" title={`It last made: ${c.on!.title}`}>
+                    <span className="flex max-w-[60%] shrink-0 items-center gap-1 text-foreground/70" title={`Last made: ${c.on!.title}`}>
                       <Made className="size-3 shrink-0" aria-hidden />
                       <span className="truncate">{c.on!.title}</span>
                       {c.last && <span aria-hidden>·</span>}
@@ -388,7 +388,7 @@ export function ChatList({
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onSelect={() => remove(c)}>
             <Trash2 />
-            Delete
+            Delete chat
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -457,7 +457,7 @@ export function ChatList({
             <ul className="flex flex-col gap-px">{g.chats.map(row)}</ul>
           </section>
         ))}
-        {!rows.length && !snoozed.length && !settled.length && <p className="px-2.5 py-1 text-[13px] text-muted-foreground">{searching ? "No chat has those words." : filter && byId.get(filter) ? `No chats in ${byId.get(filter)!.name} yet.` : "No chats yet."}</p>}
+        {!rows.length && !snoozed.length && !settled.length && <p className="px-2.5 py-1 text-[13px] text-muted-foreground">{searching ? "No chats found" : filter && byId.get(filter) ? `No chats in ${byId.get(filter)!.name}` : "No chats"}</p>}
         {fold("Snoozed", snoozed, snoozedOpen, () => setShowSnoozed((v) => !v))}
         {fold("Settled", settled, settledOpen, () => setShowSettled((v) => !v))}
       </div>

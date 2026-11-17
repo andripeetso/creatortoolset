@@ -53,6 +53,7 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
   const [busy, setBusy] = useState(false);
   // a new workspace's upload choice (Off by default), kept on its library once it exists
   const [upload, setUpload] = useState<LibraryUpload>("none");
+  const [finalsUpload, setFinalsUpload] = useState<LibraryUpload>("all");
   const [error, setError] = useState<string | null>(null);
   // every project's accounts, from their saved copy (warmed at sign-in), live
   const { items: accounts, refresh } = useCachedList<InstagramAccount>(PROJECT_ACCOUNTS_KEY, () => listAccounts("", { projectId: null }));
@@ -80,8 +81,9 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
           const p = await createProject(fields);
           setEditing(null);
           setMade(p.id);
-          if (upload !== "none") await setWorkspaceUpload(p.id, upload);
+          if (upload !== "none" || finalsUpload !== "all") await setWorkspaceUpload(p.id, { upload, finalsUpload });
           setUpload("none");
+          setFinalsUpload("all");
           if (files.length) await addProjectFiles(p.id, files);
         }, () => {})
       : run(async () => {
@@ -105,6 +107,7 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
         {editing === "new" ? (
           <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)}>
             <UploadRow value={upload} onChange={setUpload} />
+            <UploadRow finals value={finalsUpload} onChange={setFinalsUpload} />
           </ProjectForm>
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (

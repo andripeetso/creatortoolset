@@ -33,7 +33,7 @@ struct FaceBlurView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             TextField("Which faces", text: $who)
                                 .onSubmit { model.save { $0.who = who } }
-                            Text("Your AI looks at each face and picks the ones that match").font(.footnote).foregroundStyle(.secondary)
+                            Text("AI looks at each face and picks the ones that match").font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                     Picker("Look", selection: binding(\.look, settings)) {
@@ -153,7 +153,7 @@ final class FaceBlurModel: ObservableObject {
             switch self {
             case .queued: "Waiting"
             case .scanning: "Finding faces"
-            case .choosing: "Your AI is choosing the faces"
+            case .choosing: "AI is choosing faces"
             case .writing: "Writing the copy"
             case .done: "Saved to Photos"
             case .failed: "Failed"

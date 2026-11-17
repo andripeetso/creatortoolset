@@ -91,7 +91,7 @@ final class ShareModel: ObservableObject {
 
     /// Links one of the candidate sessions to the post; then the usual one-line close.
     func attach(_ candidate: ShareLink.OwnPost.Candidate, to post: ShareLink.OwnPost) async {
-        guard let link, let url = post.url else { return }
+        guard step.picking, let link, let url = post.url else { return }   // a second tap: the first is linking
         step = .linking
         do {
             let title = try await link.link(session: candidate.id, to: url)
@@ -104,6 +104,7 @@ final class ShareModel: ObservableObject {
     }
 
     func send(_ keep: ShareLink.Keep) async {
+        guard step.picking else { return }   // a second tap: the first is sending
         guard let link else {
             step = .notConnected
             return

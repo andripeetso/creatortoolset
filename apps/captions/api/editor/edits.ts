@@ -88,8 +88,8 @@ function refusals(items: TimelineItem[], edits: ItemEdit[]): string[] {
       why.push(`${e.label}: this editor has no layer ${e.track ?? it.track}`);
     else if (e.zoom !== undefined) why.push(`${e.label}: a reframe can't be made into a version here`);
     else if (e.grade) why.push(`${e.label}: a colour change can't be made into a version here`);
-    else if (it.track === "A1" && (e.move || (e.head ?? 0) > 0 || (e.tail ?? 0) > 0)) why.push(`${e.label}: a voice stays with its picture, it can only be cut or taken out`);
-    else if (!e.remove && it.len + (e.head ?? 0) + (e.tail ?? 0) < 1) why.push(`${e.label} is trimmed to nothing: take it out`);
+    else if (it.track === "A1" && (e.move || (e.head ?? 0) > 0 || (e.tail ?? 0) > 0)) why.push(`${e.label}: a voice stays with its picture, it can only be cut or removed`);
+    else if (!e.remove && it.len + (e.head ?? 0) + (e.tail ?? 0) < 1) why.push(`${e.label} is trimmed to nothing: remove it`);
   }
   return why;
 }
@@ -131,7 +131,7 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     // counted from the draft's own item, as its voice is below: the two stay on the same source frame
     const srcAt = (k: number) => orig.in + toSrc(start + k - orig.rec, orig.src);
     const src = tl.sources[orig.src];
-    if (srcAt(0) < 0 || (src && srcAt(len) > src.dur)) throw new EditRefused(`${e?.label ?? p.label}: its footage has no more there`);
+    if (srcAt(0) < 0 || (src && srcAt(len) > src.dur)) throw new EditRefused(`${e?.label ?? p.label}: no more footage there`);
     const [bodyA, bodyB] = [p.rec + Math.max(0, -head), end(p) - Math.max(0, -tail)];
     // a frame it gained takes the voice of the edge it was pulled from
     const silent = (k: number) => !voice || muted(Math.min(bodyB - 1, Math.max(bodyA, start + k)));

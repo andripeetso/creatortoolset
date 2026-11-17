@@ -150,9 +150,9 @@ describe("timeline edits made into a cut", () => {
     };
     expect(refused(edit({ key: "V1:31", label: "Old shot", remove: true }))).toBe("Old shot is not on this version's timeline");
     expect(refused(edit({ key: "A1:30", label: "Voice", move: 4 }), edit({ key: "V2:40", label: "Roll", track: "V3" })))
-      .toBe("Voice: a voice stays with its picture, it can only be cut or taken out. Roll: this editor has no layer V3");
+      .toBe("Voice: a voice stays with its picture, it can only be cut or removed. Roll: this editor has no layer V3");
     expect(refused(edit({ key: "V1:0", label: "Hook", grade: { exposure: 1 } as never }))).toContain("a colour change");
-    expect(refused(edit({ key: "V1:0", label: "Hook", head: 60 }))).toBe("Hook: its footage has no more there");
+    expect(refused(edit({ key: "V1:0", label: "Hook", head: 60 }))).toBe("Hook: no more footage there");
     expect(refused(...["V1:0", "V1:30", "V1:60"].map((key) => edit({ key, remove: true })))).toBe("Nothing would be left of the cut");
   });
 });

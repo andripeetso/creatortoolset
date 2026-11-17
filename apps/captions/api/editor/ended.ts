@@ -1,7 +1,8 @@
 import { workEnded } from "../assistant";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
-import { readEdit, readStep } from "./store";
+import { saidOf, saidWords } from "./preview";
+import { readDraft, readEdit, readStep } from "./store";
 
 /**
  * An edit's run has ended, for the chat it was started from. The worker calls runEnded each time a step moves
@@ -43,14 +44,21 @@ export function runEnded(job: JobRow): void {
       // ready = a planned version whose preview is filed and none of whose own steps failed (a file step done before a
       // step above it failed is from an earlier run)
       const planned = (readStep(edit.id, "plan")?.plans ?? []).map((p) => p.name);
-      const n = planned.filter((v) => rows.some((r) => variantOf(r) === v && r.kind === "file" && r.state === "done") && !rows.some((r) => variantOf(r) === v && bad(r))).length;
+      const ready = planned.filter((v) => rows.some((r) => variantOf(r) === v && r.kind === "file" && r.state === "done") && !rows.some((r) => variantOf(r) === v && bad(r)));
+      const n = ready.length;
+      // what the look before Review left on each, in words (only the chat says it)
+      const left = ready.map((v) => {
+        const d = readDraft(edit.id, v);
+        const w = d ? saidWords(saidOf(d)) : "";
+        return w && n > 1 ? `${v}: ${w}` : w;
+      }).filter(Boolean).join(" ");
       const all = planned.length;
       const name = `“${edit.name}”`;
       if (n)
         end = {
           status: "done",
           detail: n === all ? "Done" : `${n} of ${all} versions done`,
-          say: n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `The first draft of ${name} is ready.` : `${n} versions of ${name} are ready.`,
+          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `The first draft of ${name} is ready.` : `${n} versions of ${name} are ready.`) + (left ? ` ${left}` : ""),
           choices: READY_CHOICES,
         };
     }

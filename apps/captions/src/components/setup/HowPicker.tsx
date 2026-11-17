@@ -10,19 +10,19 @@ const WAYS: Array<{ talk: Talk; name: string; what: string; art: ComponentType }
   {
     talk: "app",
     name: "In the app",
-    what: "Plan, edit and review here. Your files stay on this Mac.",
+    what: "Plan, edit and review in the app.",
     art: AppArt,
   },
   {
     talk: "chat",
-    name: "In my own AI",
-    what: "Keep chatting in Claude Code or Codex. Your files stay on this Mac.",
+    name: "In an AI app",
+    what: "Chat in Claude Code or Codex.",
     art: ChatArt,
   },
   {
     talk: "both",
     name: "Both",
-    what: "Chat in your AI, and see and edit the work here. Files stay on this Mac.",
+    what: "Chat in an AI app, and see and edit the work in the app.",
     art: BothArt,
   },
 ];

@@ -69,8 +69,8 @@ export function FirstOpen() {
   const askAssistant = () => {
     const needs = needNames(r.missing);
     showAssistantNotice({
-      text: `${TOOL_NAMES[shown]} still needs ${needs}. Tap Walk me through it, and I'll go through each one with you, one step at a time.`,
-      chip: { label: "Walk me through it", send: copy },
+      text: `${TOOL_NAMES[shown]} needs ${needs}`,
+      chip: { label: "Set up step by step", send: copy },
     });
     close();
   };
@@ -85,15 +85,15 @@ export function FirstOpen() {
         <DialogContent className="max-h-[min(760px,calc(100dvh-2rem))] w-[min(720px,calc(100vw-2rem))] max-w-none overflow-y-auto sm:max-w-none">
           <DialogTitle>{TOOL_NAMES[shown]}</DialogTitle>
           {notReady ? (
-            <DialogDescription>{`You can use ${TOOL_NAMES[shown]}, but it still needs a few things.`}</DialogDescription>
+            <DialogDescription>{`Some of what ${TOOL_NAMES[shown]} needs is not set up.`}</DialogDescription>
           ) : (
-            <DialogDescription>Ready. These add more, all optional.</DialogDescription>
+            <DialogDescription>These are optional.</DialogDescription>
           )}
           <ToolNeeds tool={shown} have={view.have} title={false} welcome={notReady} />
 
           {notReady && talk === "chat" && (
             <div className="mb-3">
-              <label htmlFor="ct-walk-copy" className="text-xs text-muted-foreground">Copy a question for your AI</label>
+              <label htmlFor="ct-walk-copy" className="text-xs text-muted-foreground">Message for the AI app</label>
               <div className="mt-1 flex gap-2">
                 <textarea id="ct-walk-copy" readOnly value={copy} rows={2} className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
                 <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(copy)}>Copy</Button>
@@ -104,7 +104,7 @@ export function FirstOpen() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             {notReady ? (
               <>
-                <Button size="sm" variant="ghost" onClick={close}>Not now</Button>
+                <Button size="sm" variant="ghost" onClick={close}>Close</Button>
                 <Button size="sm" variant="outline" onClick={fullSetup}>Open full setup</Button>
                 {talk !== "chat" && (
                   connected ? (

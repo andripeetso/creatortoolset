@@ -263,7 +263,7 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
       wait = true;
       waitingOn = deviceStatus(row.id) ?? waitingOn;
     }
-    else if (job?.state === "failed") throw new Error(`Transcribing “${row.title}” failed (${job.error ?? "no reason given"}): retry it in the Media Library`);
+    else if (job?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${job.error ?? "no reason given"}): retry it in the Media Library`);
     else {
       // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
       if (job?.state === "needs_key" && job.actor === asker) versionRoute(asker, row.id);
