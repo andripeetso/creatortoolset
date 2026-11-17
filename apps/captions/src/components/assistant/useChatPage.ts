@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { currentWorkspace } from "@/lib/current-workspace";
 import { pageWorkspace } from "@/lib/page-workspace";
@@ -23,9 +23,29 @@ export function chatPageMove(
   return (remembered && remembered.ws === now.ws ? remembered.path : null) ?? now.card?.href ?? "/";
 }
 
+const KEPT = "ct-chat-pages";
+
+/** The chats' pages this window remembered (sessionStorage: this tab's, through a reload). Empty without storage. */
+export function keptChatPages(): Map<string, ChatPage> {
+  try {
+    return new Map(Object.entries((JSON.parse(sessionStorage.getItem(KEPT) ?? "{}") ?? {}) as Record<string, ChatPage>));
+  } catch {
+    return new Map();
+  }
+}
+
+/** Keeps them for a reload; a window without storage (private, blocked) keeps them in memory only. */
+export function keepChatPages(pages: Map<string, ChatPage>): void {
+  try {
+    sessionStorage.setItem(KEPT, JSON.stringify(Object.fromEntries(pages)));
+  } catch {
+    /* memory only */
+  }
+}
+
 /**
  * In chat mode the page beside the chats belongs to the open chat. Opening another chat puts this one's page aside
- * (remembered for as long as the window is open) and brings that chat's back: where you left it, else the newest thing
+ * (remembered for as long as the tab is open, through a reload too) and brings that chat's back: where you left it, else the newest thing
  * it made (a Workshop piece, an edit, a Review video), else its workspace's Home. While a chat is open, something new
  * it starts opens beside it. In between the page is yours to move around in. Turning chat mode on never moves the page,
  * nor does a reload (a page of another workspace leaves by itself: lib/page-workspace.ts).
@@ -40,11 +60,11 @@ export function useChatPage(active: boolean, shown: boolean, chat: string | unde
   const { pathname, search } = useLocation();
   const here = useRef("");
   here.current = pathname + search;
-  const pages = useRef(new Map<string, ChatPage>());
+  const [pages] = useState(keptChatPages);
   const was = useRef<{ chat: string; card?: string } | null>(null);
   const shownWas = useRef(shown);
   useEffect(() => {
-    const keep = (id: string) => pages.current.set(id, { path: here.current, ws: pageWorkspace() });
+    const keep = (id: string) => keepChatPages(pages.set(id, { path: here.current, ws: pageWorkspace() }));
     if (!active) {
       // the page is hidden or chat mode is off: this chat's page is kept for when it shows again
       if (was.current && shownWas.current) keep(was.current.chat);
@@ -55,7 +75,7 @@ export function useChatPage(active: boolean, shown: boolean, chat: string | unde
     const before = was.current;
     was.current = { chat, card: card?.id };
     if (before && before.chat !== chat && shownWas.current) keep(before.chat);
-    const to = chatPageMove(before, { chat, card, ws: ws ?? currentWorkspace(), bare: !shown }, pages.current.get(chat));
+    const to = chatPageMove(before, { chat, card, ws: ws ?? currentWorkspace(), bare: !shown }, pages.get(chat));
     if (!to) return;
     // a move shows the page by itself (the dock follows the route)
     if (to !== here.current) navigate(to);

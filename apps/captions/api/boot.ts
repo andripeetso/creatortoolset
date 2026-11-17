@@ -16,6 +16,7 @@ import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
 import { reviewApp, uploadRelayApp } from "./review";
 import { libraryApp } from "./library/routes";
+import { uploadTargetApp } from "./library/upload-target";
 import { collectionApp } from "./library/collections";
 import { searchApp } from "./library/search";
 import { relatedApp } from "./library/related";
@@ -483,6 +484,7 @@ app.get("/fs/:token", (c, next) => {
 });
 // plug-ins' Media Library routes first: a plug-in can answer an old path the core library also serves
 mountLibraryRoutes(app, serverPlugins);
+app.route("/api/upload-target", uploadTargetApp);
 app.route("/api/library", publicShareApp);
 app.route("/api/library", libraryApp);
 app.route("/api/library", workshopLibraryApp);

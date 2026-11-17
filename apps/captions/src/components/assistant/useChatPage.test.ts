@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { chatPageMove } from "./useChatPage";
+import { afterEach, describe, expect, it } from "vitest";
+import { chatPageMove, keepChatPages, keptChatPages } from "./useChatPage";
 
 const card = (id: string) => ({ id, href: `/review/${id}` });
 
@@ -24,5 +24,26 @@ describe("chatPageMove", () => {
   });
   it("a new chat gets no page", () => {
     expect(chatPageMove({ chat: "a" }, { chat: "new", ws: "w2", bare: true }, undefined)).toBeNull();
+  });
+});
+
+describe("the chats' pages through a reload", () => {
+  const g = globalThis as { sessionStorage?: unknown };
+  afterEach(() => void delete g.sessionStorage);
+  it("are kept in this tab's sessionStorage and read back after a reload", () => {
+    const store = new Map<string, string>();
+    g.sessionStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    keepChatPages(new Map([["a", { path: "/review/v1", ws: "w1" }]]));
+    const back = keptChatPages();
+    expect(back.get("a")).toEqual({ path: "/review/v1", ws: "w1" });
+    // what chatPageMove reads after the reload: chat a's page comes back in its workspace
+    expect(chatPageMove({ chat: "b" }, { chat: "a", ws: "w1" }, back.get("a"))).toBe("/review/v1");
+  });
+  it("without storage (private window, blocked) the page still works, in memory only", () => {
+    g.sessionStorage = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+    expect(() => keepChatPages(new Map([["a", { path: "/x" }]]))).not.toThrow();
+    expect(keptChatPages().size).toBe(0);
+    delete g.sessionStorage;
+    expect(keptChatPages().size).toBe(0);
   });
 });

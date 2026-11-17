@@ -95,6 +95,10 @@ export interface ServerPlugin {
   connectors?: { publicGrid?: PublicGridReader; readers?: SocialReader[] };
   // Upload relays for Review's big videos (api/review.ts): the server uses one when CT_UPLOAD_RELAY names it and it is available.
   uploadRelays?: UploadRelay[];
+  // Where uploads from a phone go in the workspace a request works in (api/library/upload-target.ts): the name of the
+  // plug-in's own store, which the phone knows how to send to, or null for that workspace's own library. The first
+  // plug-in that answers wins, and the library's own upload without a library id refuses that workspace.
+  uploadsTo?: (username: string) => string | null | Promise<string | null>;
   // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
   deviceJobs?: DeviceJobSlot[];
   // Footage and music folders this plug-in keeps in its own store, for this person: the assistant counts them as the
@@ -395,6 +399,15 @@ function checkDeviceJobs(plugins: ServerPlugin[]): void {
       seen.add(j.kind);
     }
   }
+}
+
+/** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
+export async function pluginUploadsTo(username: string): Promise<string | null> {
+  for (const p of loaded) {
+    const to = await p.uploadsTo?.(username);
+    if (to) return to;
+  }
+  return null;
 }
 
 /** The upload relays every loaded plug-in adds, in load order. */

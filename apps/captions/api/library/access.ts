@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
-import { sharedHere, sharedProjects } from "../lib/workshop/workspace";
+import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb } from "./db";
@@ -127,6 +127,28 @@ export function libraryRole(username: string, libraryId: string): "owner" | null
  */
 export async function mayAdd(user: SessionUser, libraryId: string): Promise<boolean> {
   return !!libraryRole(user.username, libraryId) || ((await givenLibrary(user.username, libraryId)) && mayChange(user, "media"));
+}
+
+/**
+ * The workspace this request names (the app's X-CT-Workspace, or a chat's own, which wins: workspaceScope), checked:
+ * undefined when it names none (an older app or phone, which goes on as before), null when it names one this account
+ * can't see. That one is refused, never answered for another workspace.
+ */
+export async function askedWorkspace(user: SessionUser): Promise<string | null | undefined> {
+  const asked = workspaceScope.getStore()?.id;
+  if (!asked) return undefined;
+  return (await currentWorkspaceId(user)) === asked ? asked : null;
+}
+
+/**
+ * Whether this request may add footage to the library as far as workspaces go (owner, 2026-11-16: "Each workspace is its
+ * own client"): a request that names a workspace adds only to that workspace's libraries, one that names none as before.
+ * Who may add at all stays with mayAdd.
+ */
+export async function inAskedWorkspace(user: SessionUser, libraryId: string): Promise<boolean> {
+  const asked = await askedWorkspace(user);
+  if (asked === undefined) return true;
+  return asked !== null && (await librariesHere(user.username)).some((l) => l.id === libraryId);
 }
 
 /**
