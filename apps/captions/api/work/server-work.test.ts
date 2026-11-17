@@ -293,6 +293,8 @@ describe("the Media Library's work", () => {
     expect(p.waiting).toContainEqual(expect.objectContaining({ step: "files", away: true }));
     // described before (Describe again, a workspace's new words): written from its words, no picture read here
     db.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('ver_l', 'ai', 'A boss fight', 'x', 1)").run();
+    // (a description waits for its transcript: that one is through here)
+    db.exec("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_l' AND kind = 'transcribe'");
     expect(await library.tick(Date.now(), ["describe"])).toBe(true);
     expect(job("describe").error).not.toBe(library.WAITS_FOR_SERVER);
     // that Mac is handed the look with the path the file was sent from
