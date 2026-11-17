@@ -68,6 +68,11 @@ describe("the library's processing line", () => {
     expect(el.textContent).toBe("5 descriptions need an AI provider");
     expect(el.querySelector('[role="progressbar"]')).toBeNull();
   });
+
+  it("leaves out what waits for one of the person's computers: the library page shows nothing for it", async () => {
+    progress = { ...progress, left: 0, clips: 0, share: 0, stages: [], waiting: [{ step: "look", count: 14, missing: "Video work is off on this server", away: true }] };
+    expect((await render()).textContent).toBe("");
+  });
 });
 
 describe("where a chosen folder's files are kept", () => {

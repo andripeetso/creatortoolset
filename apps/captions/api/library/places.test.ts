@@ -79,6 +79,11 @@ add("july", { bytes: 200, quick: q("2"), mac: "/Volumes/footage/2025/July/b.mov"
 add("noprint", { bytes: 300, quick: null, mac: "/Volumes/footage/2025/c.mov", device: anaMac, root: ROOT, rel: "2025/c.mov" });
 add("home", { bytes: 400, quick: q("4"), mac: "/Users/ana/Movies/d.mov", device: anaMac });
 add("upload", { bytes: 500, quick: q("5"), key: "libraries/lib/v/upload/source.mov" });
+// uploaded from ana's Mac off the share (its original is on the server too): one says which computer, one doesn't
+add("sent", { bytes: 600, quick: q("6"), key: "libraries/lib/v/sent/source.mov" });
+add("sentanon", { bytes: 700, quick: q("7"), key: "libraries/lib/v/sentanon/source.mov" });
+d.prepare("UPDATE asset_versions SET from_path = ?, from_device = ? WHERE id = ?").run("/Volumes/footage/2025/Aug/e.mov", anaMac, "sent");
+d.prepare("UPDATE asset_versions SET from_path = ?, from_device = NULL WHERE id = ?").run("/Volumes/footage/2025/Aug/f.mov", "sentanon");
 
 describe("placesFor", () => {
   const v = { root: ROOT, root_rel: "2025/a.mov", mac_path: "/Volumes/footage/2025/a.mov", mac_device: "m1" };
@@ -112,6 +117,10 @@ describe("the places routes", () => {
     expect(bo.json.versions.june!.tries).toEqual(["/Volumes/footage-1/2025/June/a.mov"]);
     // ana's own disk: bo has no way to it, and the line names it by ana's Mac's disk
     expect(bo.json.versions.home).toMatchObject({ tries: [], root: { name: "Macintosh HD" } });
+    // a file uploaded from a share gets its root from the Mac it came from (or its uploader's Macs): bo finds it on his own mount
+    expect(version("sent")).toMatchObject({ root: ROOT, root_rel: "2025/Aug/e.mov" });
+    expect(version("sentanon")).toMatchObject({ root: ROOT, root_rel: "2025/Aug/f.mov" });
+    expect((await call<PlacesAnswer>("bo", `/api/library/lib/places?device=${boMac}&versions=sent`)).json.versions.sent!.tries).toEqual(["/Volumes/footage-1/2025/Aug/e.mov"]);
   });
 
   it("answers only the caller's own computer, and nothing to someone without the library", async () => {
