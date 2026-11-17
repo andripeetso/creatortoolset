@@ -4,7 +4,7 @@ import { MEMORY_RULE_MAX } from "@contracts/memory";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useCachedLoad } from "@/lib/local-cache";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, WorkspacePick, WorkspaceTag, inWorkspace, moveItems, useSettingsWorkspace } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, InUse, ListRow, LoadingRow, RowMenu, Section, WorkspacePick, WorkspaceTag, inWorkspace, moveItems, saveFailed, useSettingsWorkspace } from "./ui";
 
 /** This window's own change reads the list again too. */
 const OWN_TOO = { own: true };
@@ -23,52 +23,99 @@ async function call<T>(path = "", method = "GET", body?: unknown, workspace?: st
  * Settings → Memory: the rules the assistant keeps from one chat to the next (api/memory.ts): the rule it wrote, what
  * the person said under it, and the row's menu: Edit, Rewrite (the AI writes it again, shown in Edit before it is
  * saved), Move to another workspace or to every workspace, Delete. The workspace selector starts on All workspaces
- * (every rule, each with its workspace); one picked shows its own rules and the ones for every workspace.
+ * (every rule, each with its workspace); one picked shows its own rules and the ones for every workspace. Above it,
+ * where new rules are filed: shared by all workspaces, or each workspace its own.
  */
 export function MemorySection() {
   const w = useSettingsWorkspace("list");
   const url = w.all ? "/api/memory?all=1" : "/api/memory";
-  const kept = useCachedLoad<{ facts: MemoryFact[] }>(url, () => call<{ facts: MemoryFact[] }>(w.all ? "?all=1" : "", "GET", undefined, w.id), { ...OWN_TOO, workspace: w.cacheKey });
+  type Kept = { facts: MemoryFact[]; perWorkspace?: boolean };
+  const kept = useCachedLoad<Kept>(url, () => call<Kept>(w.all ? "?all=1" : "", "GET", undefined, w.id), { ...OWN_TOO, workspace: w.cacheKey });
   const [editing, setEditing] = useState<{ fact: MemoryFact; rewrite: boolean } | null>(null);
   const facts = kept.data?.facts;
   const refresh = kept.refresh;
   return (
-    <Section id="memory-rules" title="Rules">
-      <WorkspacePick mode="list" />
-      <Card>
-        {!facts ? (
-          kept.error ? (
-            <ErrorRow title="Could not load rules" detail={kept.error} retry={() => void refresh().catch(() => {})} />
+    <>
+      {kept.data && <Filing perWorkspace={!!kept.data.perWorkspace} shared={kept.data.facts.filter((f) => !f.project).length} saved={refresh} />}
+      <Section id="memory-rules" title="Rules">
+        <WorkspacePick mode="list" />
+        <Card>
+          {!facts ? (
+            kept.error ? (
+              <ErrorRow title="Could not load rules" detail={kept.error} retry={() => void refresh().catch(() => {})} />
+            ) : (
+              <LoadingRow />
+            )
           ) : (
-            <LoadingRow />
-          )
-        ) : (
-          <>
-            {!facts.length && <EmptyRow title="No rules" />}
-            {facts.map((f) => (
-              <ListRow
-                key={f.id}
-                // a rule is one sentence: it wraps rather than being cut
-                title={<span className="whitespace-normal font-normal [overflow-wrap:anywhere]">{f.text}</span>}
-                subtitle={f.said && <span title={f.said}>You said “{f.said}”</span>}
-                status={w.all ? <WorkspaceTag id={f.project?.id} /> : undefined}
-                actions={
-                  <RowMenu
-                    label="Rule actions"
-                    items={[
-                      { label: "Edit", onSelect: () => setEditing({ fact: f, rewrite: false }) },
-                      { label: "Rewrite", onSelect: () => setEditing({ fact: f, rewrite: true }) },
-                      ...moveItems(w.workspaces, f.project?.id, (to) => call(`/${f.id}/workspace`, "PUT", { workspace: to }).then(refresh)),
-                      { label: "Delete", destructive: true, confirm: { title: "Delete this rule?" }, onSelect: () => call(`/${f.id}`, "DELETE").then(refresh) },
-                    ]}
-                  />
-                }
-              />
-            ))}
-          </>
-        )}
+            <>
+              {!facts.length && <EmptyRow title="No rules" />}
+              {facts.map((f) => (
+                <ListRow
+                  key={f.id}
+                  // a rule is one sentence: it wraps rather than being cut
+                  title={<span className="whitespace-normal font-normal [overflow-wrap:anywhere]">{f.text}</span>}
+                  subtitle={f.said && <span title={f.said}>You said “{f.said}”</span>}
+                  status={w.all ? <WorkspaceTag id={f.project?.id} /> : undefined}
+                  actions={
+                    <RowMenu
+                      label="Rule actions"
+                      items={[
+                        { label: "Edit", onSelect: () => setEditing({ fact: f, rewrite: false }) },
+                        { label: "Rewrite", onSelect: () => setEditing({ fact: f, rewrite: true }) },
+                        ...moveItems(w.workspaces, f.project?.id, (to) => call(`/${f.id}/workspace`, "PUT", { workspace: to }).then(refresh)),
+                        { label: "Delete", destructive: true, confirm: { title: "Delete this rule?" }, onSelect: () => call(`/${f.id}`, "DELETE").then(refresh) },
+                      ]}
+                    />
+                  }
+                />
+              ))}
+            </>
+          )}
+        </Card>
+        {editing && <EditRule key={editing.fact.id} fact={editing.fact} rewriteFirst={editing.rewrite} onClose={() => setEditing(null)} onSaved={() => void refresh().catch(() => {})} />}
+      </Section>
+    </>
+  );
+}
+
+const FILING = [
+  { perWorkspace: false, title: "Shared by all workspaces", subtitle: "New rules apply in every workspace unless said for one." },
+  { perWorkspace: true, title: "Each workspace its own", subtitle: "New rules apply only in the workspace they were said in." },
+];
+
+/**
+ * Where new rules are filed (api/memory.ts PUT /workspaces), one row per choice. With each workspace its own, the rules
+ * still shared by all workspaces are counted: each row's menu below moves one to a workspace.
+ */
+function Filing({ perWorkspace, shared, saved }: { perWorkspace: boolean; shared: number; saved: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const use = (on: boolean) => {
+    setBusy(true);
+    call("/workspaces", "PUT", { perWorkspace: on })
+      .then(saved, (e: Error) => saveFailed(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Section id="memory-workspaces" title="Workspaces">
+      <Card>
+        {FILING.map((o) => (
+          <ListRow
+            key={o.title}
+            title={o.title}
+            subtitle={o.subtitle}
+            status={o.perWorkspace && perWorkspace && shared > 0 ? `${shared} ${shared === 1 ? "rule" : "rules"} shared by all workspaces` : undefined}
+            actions={
+              o.perWorkspace === perWorkspace ? (
+                <InUse>In use</InUse>
+              ) : (
+                <Button size="sm" variant="outline" disabled={busy} aria-label={`Use ${o.title}`} onClick={() => use(o.perWorkspace)}>
+                  Use
+                </Button>
+              )
+            }
+          />
+        ))}
       </Card>
-      {editing && <EditRule key={editing.fact.id} fact={editing.fact} rewriteFirst={editing.rewrite} onClose={() => setEditing(null)} onSaved={() => void refresh().catch(() => {})} />}
     </Section>
   );
 }

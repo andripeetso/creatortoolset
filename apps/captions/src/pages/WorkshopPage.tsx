@@ -14,6 +14,7 @@ import { PublishButton } from "@/components/community/PublishDialog";
 import { FrameworkForm, type FrameworkDraft } from "@/components/workshop/FrameworkForm";
 import { KnowledgePanel } from "@/components/workshop/KnowledgePanel";
 import { RuleRow } from "@/components/workshop/RuleRow";
+import { ScopeTags } from "@/components/workshop/RuleWorkspaces";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
 import { SessionMenu } from "@/components/workshop/SessionMenu";
 import { SharePopover } from "@/components/workshop/SharePopover";
@@ -34,7 +35,9 @@ import {
   createRule,
   createSession,
   deleteFramework,
+  deleteFrameworkHere,
   deleteRule,
+  deleteRuleHere,
   AVAILABILITY_LIVE,
   getWorkshopAvailability,
   listFrameworks,
@@ -48,6 +51,7 @@ import {
   shareSession,
   workshopShareUrl,
   type RuleFields,
+  type ScopeInput,
   type PieceKind,
   type SessionPatch,
   type SessionRow,
@@ -277,11 +281,11 @@ export default function WorkshopPage() {
     });
   };
 
-  const saveFramework = (id: string | "new", f: FrameworkDraft) =>
+  const saveFramework = (id: string | "new", f: FrameworkDraft, scope: ScopeInput) =>
     run("framework", () =>
       id === "new"
-        ? createFramework({ ...f, steps: f.steps })
-        : patchFramework(id, { ...f, steps: f.steps }),
+        ? createFramework({ ...f, steps: f.steps, ...scope })
+        : patchFramework(id, { ...f, steps: f.steps, ...scope }),
     );
 
   return (
@@ -528,8 +532,9 @@ export default function WorkshopPage() {
                   rule={r}
                   busy={busy !== null}
                   readOnly={!editable}
-                  onSave={(fields: Partial<RuleFields>) => void run(`rule:${r.id}`, () => patchRule(r.id, fields))}
+                  onSave={(fields: Partial<RuleFields> & ScopeInput) => void run(`rule:${r.id}`, () => patchRule(r.id, fields))}
                   onDelete={() => void run(`delr:${r.id}`, () => deleteRule(r.id))}
+                  onUseShared={() => void run(`rule:${r.id}`, () => deleteRuleHere(r.id))}
                 />
               ))}
             </div>
@@ -548,11 +553,18 @@ export default function WorkshopPage() {
             </div>
             <div className="flex flex-col gap-2">
               {editing === "new" && (
-                <FrameworkForm busy={busy === "framework"} onSave={(f) => void saveFramework("new", f)} onCancel={() => setEditing(null)} />
+                <FrameworkForm busy={busy === "framework"} onSave={(f, scope) => void saveFramework("new", f, scope)} onCancel={() => setEditing(null)} />
               )}
               {frameworks.map((fw) =>
                 editing === fw.id ? (
-                  <FrameworkForm key={fw.id} initial={fw} busy={busy === "framework"} onSave={(f) => void saveFramework(fw.id, f)} onCancel={() => setEditing(null)} />
+                  <FrameworkForm
+                    key={fw.id}
+                    initial={fw}
+                    busy={busy === "framework"}
+                    onSave={(f, scope) => void saveFramework(fw.id, f, scope)}
+                    onCancel={() => setEditing(null)}
+                    onUseShared={() => void run("framework", () => deleteFrameworkHere(fw.id))}
+                  />
                 ) : (
                   <div key={fw.id} className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
@@ -562,6 +574,7 @@ export default function WorkshopPage() {
                           {FRAMEWORK_ROLES.find((r) => r.id === (fw.role ?? "narrative"))?.label ?? fw.role}
                         </span>
                         {fw.seedKey ? <span className="ml-2 text-[10px] text-zinc-600">starter</span> : null}
+                        <ScopeTags item={fw} />
                       </p>
                       {fw.summary ? <p className="mt-0.5 text-[11px] text-zinc-500">{fw.summary}</p> : null}
                       <ol className="mt-1 list-decimal pl-4 text-[11px] text-zinc-400">

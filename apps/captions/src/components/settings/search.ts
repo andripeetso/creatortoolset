@@ -86,6 +86,7 @@ const STATIC_ROWS = [
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Memory: the rules the assistant keeps from one chat to the next
+  { section: "memory", id: "memory-workspaces", title: "Workspaces", keywords: ["memory", "remember", "workspace", "shared", "each", "separate", "apart", "client"] },
   { section: "memory", id: "memory-rules", title: "Rules", keywords: ["memory", "remember", "rule", "chat", "assistant", "forget", "workspace"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },

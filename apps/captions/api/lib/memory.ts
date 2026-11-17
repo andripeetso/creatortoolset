@@ -43,6 +43,12 @@ interface Removed {
 interface Store {
   facts: Kept[];
   removed: Removed[];
+  /**
+   * Settings → Memory, Workspaces: "Each workspace its own" (owner, 2026-11-16: "a simple switch"). Every new fact is
+   * filed to the workspace it was said in, whatever the AI asked. Missing = "Shared by all workspaces": a fact is about
+   * the person unless the AI files it to the workspace. Facts already kept stay where they are filed either way.
+   */
+  perWorkspace?: true;
 }
 
 /** Something the person typed in a chat (api/assistant.ts saidInChat). */
@@ -61,7 +67,7 @@ const fileOf = (username: string) => path.join(env.dataDir, "memory", `${usernam
 function read(username: string): Store {
   try {
     const s = JSON.parse(readFileSync(fileOf(username), "utf-8")) as Partial<Store>;
-    return { facts: s.facts ?? [], removed: s.removed ?? [] };
+    return { facts: s.facts ?? [], removed: s.removed ?? [], ...(s.perWorkspace ? { perWorkspace: true } : {}) };
   } catch {
     return { facts: [], removed: [] };
   }
@@ -128,6 +134,13 @@ export function keep(username: string, quote: unknown, said: Said[], project?: s
       ? "The user removed that from memory. It is kept again only when they say it again."
       : "Not kept: those are not the user's own words in this chat. Quote what they wrote themselves, or keep nothing.",
   };
+}
+
+/** Whether each workspace keeps its own facts (Store.perWorkspace). */
+export const perWorkspace = (username: string): boolean => !!read(username).perWorkspace;
+export function setPerWorkspace(username: string, on: boolean): void {
+  const { facts, removed } = read(username);
+  write(username, { facts, removed, ...(on ? { perWorkspace: true } : {}) });
 }
 
 /** The words a fact was kept from, and its rule (Settings → Memory: Rewrite). */
