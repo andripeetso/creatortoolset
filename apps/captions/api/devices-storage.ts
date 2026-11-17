@@ -8,7 +8,7 @@ import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { inside, libraryPath, localDisks, mediaFolders, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
@@ -21,11 +21,11 @@ import { ensureLibrary } from "./library/access";
  *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1);
  *                                     ?all=1: every workspace's folders
  *   POST   /library   {host, disk}  → make the Library ("Creator Toolset") in `disk` on one of this account's computers
- *   POST   /folders   {role, host, path} → use a folder you already have as footage or music (this computer's also go on
+ *   POST   /folders   {role, host, path} → use a folder you already have as a Media folder (this computer's also go on
  *                                          the Library's watch list, which the Library and the AI Editor read), or as the
  *                                          workspace's Finals folder (role "finals": in place of the one it had; each
  *                                          Workshop project's subfolder is read when the project asks, workshop.ts sessionFinals)
- *   PATCH  /folders/:id {workspace} → move a footage or music folder to another workspace; null = every workspace
+ *   PATCH  /folders/:id {workspace} → move a Media folder to another workspace; null = every workspace
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
  * Each account has its own list in $DATA_DIR/storage/<user>.json, and each workspace its own folders in it (a folder's
@@ -56,7 +56,7 @@ async function readStorage(user: string): Promise<StorageState> {
 async function writeStorage(user: string, st: StorageState): Promise<void> {
   await mkdir(path.dirname(file(user)), { recursive: true });
   const tmp = `${file(user)}.tmp-${process.pid}`;
-  await writeFile(tmp, JSON.stringify(st, null, 2));
+  await writeFile(tmp, JSON.stringify({ ...st, folders: mediaFolders(st.folders) }, null, 2));
   await rename(tmp, file(user));
 }
 
@@ -133,7 +133,7 @@ const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: stri
 
 /**
  * The workspaces that read a folder on this computer through their Library's watch list: the ones that list its path
- * as footage or music ("" for an account with no workspace). `of`: project-of.ts projectOf.
+ * as Media ("" for an account with no workspace). `of`: project-of.ts projectOf.
  */
 async function readersOf(user: string, of: ((own?: string) => string) | null, folders: StorageFolder[], at: StorageFolder["origin"]): Promise<Set<string>> {
   // a Finals folder is read project by project, never as footage (library/watch.ts watchFinals)
@@ -214,7 +214,7 @@ storageApp.get("/", async (c) => {
 });
 
 /** The Library: "Creator Toolset" inside `disk` on one computer ("/" or "~" = its home folder). Choosing another
- *  place applies from then on: nothing moves, and the old Library's Footage and Music stay listed as sources. */
+ *  place applies from then on: nothing moves, and the old Library's Footage stays listed as a Media folder. */
 storageApp.post("/library", async (c) => {
   const user = c.get("user").username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -231,11 +231,9 @@ storageApp.post("/library", async (c) => {
     const now = Date.now();
     if (old) {
       st.folders = st.folders.filter((f) => f !== old);
-      for (const role of ["footage", "music"] as const) {
-        const at = `${old.origin.path}/${LIBRARY_SUBFOLDERS[role]}`;
-        if (!st.folders.some((f) => f.role === role && f.origin.host === old.origin.host && f.origin.path === at))
-          st.folders.push({ id: randomUUID(), role, name: LIBRARY_SUBFOLDERS[role], origin: { host: old.origin.host, path: at }, make: false, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
-      }
+      const at = `${old.origin.path}/${LIBRARY_SUBFOLDERS.footage}`;
+      if (!st.folders.some((f) => f.role === "footage" && f.origin.host === old.origin.host && f.origin.path === at))
+        st.folders.push({ id: randomUUID(), role: "footage", name: LIBRARY_SUBFOLDERS.footage, origin: { host: old.origin.host, path: at }, make: false, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
     }
     const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
     st.folders.push({ id: randomUUID(), role: "library", name: LIBRARY_NAME, origin: { host, path: p }, make: true, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
@@ -245,7 +243,7 @@ storageApp.post("/library", async (c) => {
   return out ? c.json(shown(out, here, user, named)) : c.json({ error: "That folder is already there" }, 400);
 });
 
-/** Use a folder you already have as footage or music, or as the workspace's Finals folder. */
+/** Use a folder you already have as a Media folder, or as the workspace's Finals folder. */
 storageApp.post("/folders", async (c) => {
   const user = c.get("user").username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -256,13 +254,16 @@ storageApp.post("/folders", async (c) => {
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);
   // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
   const p = (raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
+  const { mine: here, workspace, named } = await scopeOf(c);
+  // a folder inside one of this workspace's Media folders is in the Media Library already
+  const outer = role === "footage" && (await readStorage(user)).folders.find((f) => here(f) && f.role === "footage" && f.origin.host === host && !!inside(p, f.origin.path));
+  if (outer) return c.json({ error: `That folder is already in ${outer.name}` }, 400);
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there.
   // A Finals folder is not footage: only its projects' subfolders are read, into Finals (library/watch.ts watchFinals)
   if (role !== "finals" && readHere(user, host)) {
     const refused = await addWatchFolder(user, p);
     if (refused) return c.json({ error: refused }, 400);
   }
-  const { mine: here, workspace, named } = await scopeOf(c);
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
@@ -277,7 +278,7 @@ storageApp.post("/folders", async (c) => {
 });
 
 /**
- * Which of the account's workspaces a footage or music folder is in: `workspaces`, one or more, or null for every
+ * Which of the account's workspaces a Media folder is in: `workspaces`, one or more, or null for every
  * workspace (`workspace`, one id or null, from before).
  * On this computer the Library of each workspace it is now in starts reading it (refused with the reason when the
  * folder is not there now), and the one it left stops. Finished videos stays one folder per workspace: never moved.

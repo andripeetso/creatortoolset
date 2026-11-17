@@ -33,7 +33,7 @@ describe("Storage rows", () => {
 
 describe("every workspace's folders (Settings on All workspaces)", () => {
   const workspaces = [{ id: "ws-a", name: "Tiny Acrobatics" }, { id: "ws-b", name: "Tiny Swimmers" }];
-  const songs: StorageFolder = { id: "f_9", role: "music", name: "Songs", origin: { host: "dev_1", path: "/Volumes/Footage SSD/Songs" }, make: false, createdAt: 0, reach: {} };
+  const songs: StorageFolder = { id: "f_9", role: "footage", name: "Songs", origin: { host: "dev_1", path: "/Volumes/Footage SSD/Songs" }, make: false, createdAt: 0, reach: {} };
   // the workspace tag itself is not asserted: it reads the workspace store, which a static render sees empty
   const shown = (w: Partial<SettingsWorkspace>, folders: StorageFolder[]) => {
     const all = { id: null, all: true, workspaces, many: true, cacheKey: "*", name: () => "", ...w } as unknown as SettingsWorkspace;

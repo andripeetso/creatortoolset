@@ -14,7 +14,7 @@ import { KeptSection } from "./KeptRows";
 import { ServerProjects } from "@/components/AdminPanel";
 
 /**
- * Settings → Folders (the Workspace group): where each workspace's finished videos, footage and music live. The
+ * Settings → Folders (the Workspace group): where each workspace's finished videos and Media folders live. The
  * workspace selector starts on All workspaces (every folder, each with its workspace); one picked shows its own and
  * the ones every workspace uses. A plug-in that owns storage (`replaces.storage`) draws its own rows here for admins,
  * selector and all; a member there has no Folders page (nav.ts sectionsFor: only admins edit that server's folders).

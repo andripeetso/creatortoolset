@@ -65,7 +65,6 @@ describe("where the files are: reach", () => {
   it("no restriction without a footage folder around the path", () => {
     expect(canReach(["/Volumes/X/a.mp4"], [], "pc")).toBe(true);
     expect(canReach(["/Volumes/TEAM2/a.mp4"], [team()], "pc")).toBe(true);
-    expect(canReach(["/Volumes/TEAM/a.mp4"], [{ ...team(), role: "music" }], "pc")).toBe(true);
   });
 
   it("matches on a path boundary: TEAM2 is not inside TEAM", () => {
@@ -162,12 +161,25 @@ describe("where the files are: the library and its files", () => {
     expect(parseStorageFile('{"folders":"x"}')).toEqual({ folders: [] });
   });
 
+  it("one Media list: a music folder from before is Media, and one inside a Media folder in all its workspaces is left out", () => {
+    const at = (id: string, p: string, more: Partial<StorageFolder> = {}): StorageFolder => ({ ...team(), id, origin: { host: "studio-mac", path: p }, ...more });
+    const moo = at("moo", "/Volumes/MONO/MOO", { workspace: "ws-a" });
+    const music = { ...at("music", "/Volumes/MONO/MOO/FOOTAGE/MUSIC", { workspace: "ws-a" }), role: "music" };
+    const wider = at("wider", "/Volumes/MONO/MOO/B", { workspaces: ["ws-a", "ws-b"], workspace: "ws-a" }); // ws-b doesn't have MOO
+    const elsewhere = at("pc", "/Volumes/MONO/MOO/C", { origin: { host: "pc", path: "/Volumes/MONO/MOO/C" } }); // another computer
+    const old = at("old", "/Volumes/MONO2/Songs", { role: "music" as never });
+    const read = parseStorageFile(JSON.stringify({ folders: [moo, music, wider, elsewhere, old] })).folders;
+    expect(read.map((f) => [f.id, f.role])).toEqual([["moo", "footage"], ["wider", "footage"], ["pc", "footage"], ["old", "footage"]]);
+    // a folder in every workspace covers its subfolders in any of them
+    expect(parseStorageFile(JSON.stringify({ folders: [{ ...moo, workspace: "*" }, wider] })).folders.map((f) => f.id)).toEqual(["moo"]);
+  });
+
   it("a readable storage file keeps its folders", () => {
     const f = team();
     expect(parseStorageFile(JSON.stringify({ folders: [f] }))).toEqual({ folders: [f] });
   });
 
-  it("the library folder counts as footage and music sources, and reach follows its subfolders", () => {
+  it("the library folder's Footage counts as a Media folder, and reach follows its subfolders", () => {
     const lib: StorageFolder = {
       id: "lib", role: "library", name: "Creator Toolset", origin: { host: "studio-mac", path: "~/Creator Toolset" },
       make: true, createdAt: 0, reach: { pc: { path: "/Mnt/CT", at: 1 } },
@@ -187,8 +199,8 @@ describe("the Finals folder", () => {
     const own: StorageFolder = { ...lib, id: "fin", role: "finals", name: "Finals", origin: { host: "mac", path: "/Volumes/Drive/Finals" }, reach: {} };
     expect(finalsFolderOf([lib, own])?.id).toBe("fin");
     expect(finalsFolderOf([])).toBeUndefined();
-    // the Library's own Finished/ is no footage or music source
-    expect(sourcesOf([lib]).map((f) => f.role)).toEqual(["footage", "footage"]); // its Footage/ and Music/, both taken into the Media Library
+    // the Library's own Finished/ is no Media folder
+    expect(sourcesOf([lib]).map((f) => f.origin.path)).toEqual(["~/Creator Toolset/Footage"]); // no Music/: one Media list
   });
   it("names a project's folder by its title, safe as a file name", () => {
     expect(finalsDirName("Tiny Acrobatics: rolls / v2?")).toBe("Tiny Acrobatics rolls v2");

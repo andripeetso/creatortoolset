@@ -102,7 +102,7 @@ export interface ServerPlugin {
   uploadsTo?: (username: string) => string | null | Promise<string | null>;
   // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
   deviceJobs?: DeviceJobSlot[];
-  // Footage and music folders this plug-in keeps in its own store, for this person: the assistant counts them as the
+  // Media folders this plug-in keeps in its own store, for this person: the assistant counts them as the
   // workspace's own (its folders note, folder_list). A folder's host may be a name the app doesn't know: any Mac of theirs walks it.
   storageFolders?: (username: string) => Promise<StorageFolder[]>;
   // Replaces a built-in tool: answers that tool's old root paths (the URLs a script or worker still posts to), mounted by

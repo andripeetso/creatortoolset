@@ -48,7 +48,7 @@ function ask(owner: string, want: string, folders: Record<string, string>, test:
   });
 }
 
-/** The footage and music folders of every workspace of `owner`'s, with each computer that reaches them (withMounts). */
+/** The Media folders of every workspace of `owner`'s, with each computer that reaches them (withMounts). */
 async function foldersOf(owner: string): Promise<StorageFolder[]> {
   const raw = await readFile(storageFilePath(env.dataDir, owner), "utf-8").catch(() => "{}");
   const all = withMounts(parseStorageFile(raw).folders, listDevices((x) => x.owner === owner).map((x) => ({ id: x.id, disks: x.report?.machine?.disks })));

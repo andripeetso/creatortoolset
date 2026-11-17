@@ -14,7 +14,7 @@ import { openSetupAt } from "@/lib/setup";
 
 /**
  * Setting up a computer to help with heavy work, on one screen: what it needs (each row quiet when fine, else what to
- * do), the account's footage and music folders with Connect for each it can't read yet (its drives are read again
+ * do), the account's Media folders with Connect for each it can't read yet (its drives are read again
  * straight after, and when the window comes back from the Finder), and a test that reads a file in each folder and
  * times an encode, then sets its Prefer / Normal / Less often / Off from the result. Used by setup's Help screen, Add
  * computer once the new one is on the list, and a computer's Set up in Settings → Computers. Its result is on every
@@ -37,7 +37,7 @@ export function readyLine(d: Pick<Computer, "kinds" | "report">, check: HelperCh
   return `Used for ${work}${from.length ? ` from ${andList(from)}` : ""}.`;
 }
 
-/** The footage and music folders another computer of the account added (each once, however many workspaces list it). */
+/** The Media folders another computer of the account added (each once, however many workspaces list it). */
 export function sharedFolders(storage: StorageView | null, device: string): StorageFolder[] {
   const seen = new Set<string>();
   return sourcesOf(storage?.folders ?? []).filter((f) => {

@@ -44,7 +44,7 @@ export const disksFor = (devices: Computer[], host: string, serverDisks: Disk[] 
 const nameOf = (devices: Computer[], host: string) =>
   host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "Computer not found");
 
-/** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage and Music too). */
+/** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage too). */
 const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.origin.host)} · ${f.origin.path}`;
 
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
@@ -180,7 +180,7 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
 const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
- * Where finished videos, footage and music are kept: Exports is one folder per workspace, the Media folders any
+ * Where finished videos and Media are kept: Exports is one folder per workspace, the Media folders any
  * number, each folder a row with its menu. Used by Settings → Folders and the setup's Folders step.
  * `w`: the workspace Settings shows (workspace-pick.tsx). With all of them shown each row carries its workspace and
  * Finished videos has a row per workspace; left out (setup), the rows are the window's workspace's.
@@ -320,7 +320,7 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
 
 /**
  * The folders the Media Library takes in (footage, music, sound effects: the Library sorts them), under one row with
- * Add folder, each folder indented under it (a music folder from before is one of them: api/lib/storage.ts).
+ * Add folder, each folder indented under it (a music folder from before is one of them: api/lib/storage.ts mediaFolders).
  */
 function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
   storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
@@ -348,11 +348,11 @@ function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
 }
 
 /**
- * One footage or music folder: its name, the computer it is on and its full path, its workspace while every workspace
+ * One Media folder: its name, the computer it is on and its full path, its workspace while every workspace
  * is shown, and its menu: Workspaces (any of them, or all), Remove.
  */
 function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: StorageFolder; storage: StorageView; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
-  // the Library's own Footage and Music come with the Finished videos folder: they are not moved or removed here
+  // the Library's own Footage comes with the Finished videos folder: they are not moved or removed here
   const own = !f.id.includes(":");
   // the folder's workspace keeps copies on the server: asked per folder when every workspace is listed
   const copies = storage.copied ? storage.copied.includes(f.id.split(":")[0]!) : storage.copies;
@@ -475,7 +475,7 @@ export function ConnectDialog({ folder, computer, onClose, onUsed }: { folder: S
 }
 
 /**
- * A folder the person already has, as footage or music, on a drive of one of the account's computers. With two or more
+ * A folder the person already has, as a Media folder, on a drive of one of the account's computers. With two or more
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
  */
 function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
