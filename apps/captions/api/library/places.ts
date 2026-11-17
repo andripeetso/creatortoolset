@@ -230,8 +230,10 @@ export async function confirmPlaces(
 }
 
 /**
- * Lazily, while the library's files lane is idle (worker.ts): versions indexed on a computer with no root yet get the one
- * their origin computer's last reported disks put them on. 500 a turn, through every such version and round again (one
+ * Lazily, while the library's files lane is idle (worker.ts): versions indexed on a computer, or uploaded from one, with no
+ * root yet get the one their origin computer's last reported disks put them on, so every computer that has the same share
+ * connected finds the file there by itself (no folder to add first). An upload whose computer was not named takes the
+ * root from its uploader's computers that hold that path. 500 a turn, through every such version and round again (one
  * whose computer never said its disks, or whose disk names no root, waits for that). True when it set any.
  */
 // ponytail: a version that never gets a root is read again every round (500 a turn); mark it tried per report if that shows
@@ -239,12 +241,17 @@ let rootsAfter = 0;
 export function backfillRoots(): boolean {
   const d = libraryDb();
   const rows = d
-    .prepare("SELECT rowid, id, mac_path, mac_device FROM asset_versions WHERE root IS NULL AND mac_path IS NOT NULL AND mac_device IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT 500")
-    .all(rootsAfter) as { rowid: number; id: string; mac_path: string; mac_device: string }[];
+    .prepare(
+      `SELECT rowid, id, COALESCE(mac_path, from_path) AS path, COALESCE(mac_device, from_device) AS device, created_by FROM asset_versions
+       WHERE root IS NULL AND COALESCE(mac_path, from_path) IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT 500`,
+    )
+    .all(rootsAfter) as { rowid: number; id: string; path: string; device: string | null; created_by: string }[];
   rootsAfter = rows.at(-1)?.rowid ?? 0;
   let n = 0;
   for (const r of rows) {
-    const at = rootAt(r.mac_path, disksOf(r.mac_device));
+    // the root key is the same from every computer that has the share (rootKey), so any of theirs that holds the path names it
+    const disks = r.device ? disksOf(r.device) : listDevices((x) => x.owner === r.created_by).flatMap((x) => disksOf(x.id).filter((k) => k.network));
+    const at = rootAt(r.path, disks);
     if (at) n += Number(d.prepare("UPDATE asset_versions SET root = ?, root_rel = ? WHERE id = ? AND root IS NULL").run(at.key, at.rel, r.id).changes);
   }
   return n > 0;
