@@ -114,6 +114,7 @@ afterAll(async () => {
 
 describe("defaults", () => {
   it("no file is off; the first start writes it off on every server, saying so where it was on", () => {
+    rmSync(path.join(dir, "server-work.json"), { force: true }); // vitest.server-work.ts starts every test file with it on
     expect(sw.readServerWork()).toBeNull();
     expect(sw.serverWorks(null, "anyone")).toBe(false); // no file: off
     sw.settleServerWork();
