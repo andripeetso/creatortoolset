@@ -12,8 +12,7 @@ import type { ProvidersView } from "@contracts/providers";
 const STORAGE = "/api/devices/storage";
 const DEFAULT_LIBRARY_DISK = "~/Movies";
 const ROWS: { role: SourceRole; name: string; why: string }[] = [
-  { role: "footage", name: "Footage", why: "Video you film." },
-  { role: "music", name: "Music", why: "Music you own." },
+  { role: "footage", name: "Media", why: "Footage, music and sound effects." },
 ];
 
 async function send(url: string, method: string, body?: unknown): Promise<void> {
@@ -89,7 +88,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
     setBusy(true);
     setError(null);
     try {
-      await big.check(p, () => add(role, p), { music: role === "music" });
+      await big.check(p, () => add(role, p));
     } finally {
       setBusy(false);
     }
@@ -174,7 +173,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
   return (
     <div className="space-y-5">
       <p className="text-xs text-muted-foreground">
-        Finished videos are saved to <span className="font-mono text-foreground">{libraryShown}</span>.
+        Finished edits are saved to <span className="font-mono text-foreground">{libraryShown}</span>.
       </p>
 
       {ROWS.map((r) => row(r.role, r.name, r.why))}

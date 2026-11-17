@@ -31,4 +31,4 @@ export * from "./kit-dialog";
 export * from "./legacy";
 export { PageAction } from "./page-action";
 export { CopyBox } from "./copy-box";
-export { ALL_WORKSPACES, WorkspacePick, WorkspaceTag, inWorkspace, moveItems, useSettingsWorkspace, type SettingsWorkspace } from "./workspace-pick";
+export { ALL_WORKSPACES, WorkspacePick, WorkspaceTag, WorkspacesDialog, inWorkspace, moveItems, useSettingsWorkspace, type SettingsWorkspace } from "./workspace-pick";

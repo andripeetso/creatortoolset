@@ -60,9 +60,9 @@ const STATIC_ROWS = [
   { section: "appearance", id: "clip-view", title: "Clip view", keywords: ["media library", "clip", "window", "side panel", "open", "player"] },
   { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
   // Folders: where each workspace's footage, music and finished videos live
-  { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
+  { section: "folders", id: "finished-videos", title: "Exports", keywords: ["folder", "finished", "videos", "save", "output", "library"] },
   { section: "folders", id: "finals-folder", title: "Finals", keywords: ["folder", "final video", "finished", "project", "workshop"] },
-  { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
+  { section: "folders", id: "footage-folder", title: "Media", keywords: ["folder", "footage", "library", "clips", "raw", "music", "audio", "sound effects", "sfx"] },
   { section: "library", id: "library-adding", title: "Import", keywords: ["media library", "import", "copy", "in place", "keep in place", "places", "adding files"] },
   { section: "library", id: "library-look", title: "New files", keywords: ["media library", "look for new files", "rescan", "scan", "places", "network drive"] },
   { section: "library", id: "library-sorting", title: "Folders", keywords: ["media library", "organize", "sort", "sorting", "by type", "by content", "ai"] },
@@ -77,7 +77,6 @@ const STATIC_ROWS = [
   { section: "sound-effects", id: "sfx-library", title: "Your library", keywords: ["sound effects", "sfx", "sounds", "folder", "library"] },
   { section: "sound-effects", id: "sfx-starter", title: "Starter set", keywords: ["sound effects", "sfx", "install", "remove", "starter", "kenney", "cc0", "sounds"] },
   { section: "sound-effects", id: "sfx-sources", title: "Sources", keywords: ["sound effects", "sfx", "licence", "license", "cc0", "kenney", "source", "credit"] },
-  { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
   { section: "providers", id: "tool-ai", title: "AI by job", keywords: ["provider", "tool", "job", "override", "different ai", "use default", "model", "thinking"] },

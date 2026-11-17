@@ -65,16 +65,33 @@ async function writeStorage(user: string, st: StorageState): Promise<void> {
  * in them. One used in every workspace stays. The workspace's Media Library, which read them, is deleted with it.
  */
 export async function workspaceStorageFolders(user: string, has: (ws?: string) => boolean): Promise<{ n: number; drop: () => Promise<void> }> {
-  const ids = new Set((await readStorage(user)).folders.filter((f) => f.workspace !== EVERY_WORKSPACE && has(f.workspace)).map((f) => f.id));
+  // one in several workspaces only leaves this one, and goes when this was the last of them
+  const left = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? [f.workspace]).filter((w) => !has(w)));
+  const n = (await readStorage(user)).folders.filter((f) => left(f)?.length === 0).length;
   return {
-    n: ids.size,
+    n,
     drop: () =>
       chained(user, async () => {
         const st = await readStorage(user);
-        st.folders = st.folders.filter((f) => !ids.has(f.id));
+        st.folders = st.folders.flatMap((f) => {
+          const l = left(f);
+          if (!l) return [f];
+          if (!l.length) return [];
+          return f.workspaces && l.length < f.workspaces.length ? [placedIn(f, l as string[])] : [f];
+        });
         await writeStorage(user, st);
       }),
   };
+}
+
+/** The workspaces a folder is in, by id (`of`: project-of.ts projectOf, for one from before), or null for every workspace. */
+const placesOf = (f: StorageFolder, of: (own?: string) => string): string[] | null =>
+  f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? [of(f.workspace)]);
+/** A folder put in these workspaces (null: every workspace): one is its `workspace`, two or more its `workspaces` too. */
+export function placedIn(f: StorageFolder, to: string[] | null): StorageFolder {
+  const { workspaces: _, ...rest } = f;
+  if (!to) return { ...rest, workspace: EVERY_WORKSPACE };
+  return { ...rest, workspace: to[0], ...(to.length > 1 ? { workspaces: to } : {}) };
 }
 
 const str = (x: unknown, max: number) => (typeof x === "string" && x.trim() ? x.trim().slice(0, max) : "");
@@ -123,7 +140,7 @@ async function readersOf(user: string, of: ((own?: string) => string) | null, fo
   const same = folders.filter((f) => f.role !== "library" && f.role !== "finals" && f.origin.host === at.host && f.origin.path === at.path);
   if (!of) return new Set(same.length ? [""] : []);
   const every = same.some((f) => f.workspace === EVERY_WORKSPACE) ? [...(await ownedProjects(user)), ...(await sharedProjects(user))].map((p) => p.id) : [];
-  return new Set([...every, ...same.filter((f) => f.workspace !== EVERY_WORKSPACE).map((f) => of(f.workspace))]);
+  return new Set([...every, ...same.flatMap((f) => placesOf(f, of) ?? [])]);
 }
 
 /** Puts a folder on the watch list of one workspace's Library ("" = the account has no workspace). The refusal, or null. */
@@ -232,7 +249,8 @@ storageApp.post("/library", async (c) => {
 storageApp.post("/folders", async (c) => {
   const user = c.get("user").username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const role = b?.role === "finals" ? "finals" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
+  // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
+  const role = b?.role === "finals" ? "finals" : b?.role === "music" ? "footage" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
   const host = str(b?.host, 120);
   const raw = b?.path;
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);
@@ -259,7 +277,8 @@ storageApp.post("/folders", async (c) => {
 });
 
 /**
- * Move a footage or music folder to another of the account's workspaces, or to every workspace (`workspace: null`).
+ * Which of the account's workspaces a footage or music folder is in: `workspaces`, one or more, or null for every
+ * workspace (`workspace`, one id or null, from before).
  * On this computer the Library of each workspace it is now in starts reading it (refused with the reason when the
  * folder is not there now), and the one it left stops. Finished videos stays one folder per workspace: never moved.
  */
@@ -268,17 +287,23 @@ storageApp.patch("/folders/:id", async (c) => {
   const user = u.username;
   const id = c.req.param("id");
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const to = b?.workspace === null ? EVERY_WORKSPACE : typeof b?.workspace === "string" ? b.workspace : "";
+  const asked = b && "workspaces" in b ? b.workspaces : b?.workspace === null ? null : [b?.workspace];
+  const to = asked === null ? null : Array.isArray(asked) && asked.every((w) => typeof w === "string" && w) ? [...new Set(asked as string[])] : [];
   const of = await projectOf(u);
-  if (!of || !to || (to !== EVERY_WORKSPACE && !(await inProjectOf(u, to)))) return c.json({ error: "Workspace not found" }, 400);
+  if (!of || to?.length === 0) return c.json({ error: "Workspace not found" }, 400);
+  for (const w of to ?? []) if (!(await inProjectOf(u, w))) return c.json({ error: "Workspace not found" }, 400);
   const { mine: here, named } = await scopeOf(c);
   const before = (await readStorage(user)).folders;
   const f = before.find((x) => x.id === id);
   if (!f) return c.json({ error: "Not found" }, 404);
-  if (f.role === "library" || f.role === "finals") return c.json({ error: `${f.role === "library" ? "Finished videos" : "Finals"} is one folder per workspace` }, 400);
-  const moved = (list: StorageFolder[]) => list.map((x) => (x.id === id ? { ...x, workspace: to } : x));
+  if (f.role === "library" || f.role === "finals") return c.json({ error: `${f.role === "library" ? "Exports" : "Finals"} is one folder per workspace` }, 400);
+  const moved = (list: StorageFolder[]) => list.map((x) => (x.id === id ? placedIn(x, to) : x));
   const clash = (list: StorageFolder[]) =>
-    list.some((x) => x.id !== id && x.role === f.role && x.origin.host === f.origin.host && x.origin.path === f.origin.path && (to === EVERY_WORKSPACE || x.workspace === EVERY_WORKSPACE || of(x.workspace) === to));
+    list.some((x) => {
+      if (x.id === id || x.role !== f.role || x.origin.host !== f.origin.host || x.origin.path !== f.origin.path) return false;
+      const in_ = placesOf(x, of);
+      return !to || !in_ || in_.some((w) => to.includes(w));
+    });
   if (clash(before)) return c.json({ error: "That folder is already there" }, 400);
   const watched = readHere(user, f.origin.host);
   const was = watched ? await readersOf(user, of, before, f.origin) : new Set<string>();

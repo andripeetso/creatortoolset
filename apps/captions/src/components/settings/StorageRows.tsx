@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, connectFor, finalsFolderOf, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LIBRARY_NAME, THIS_COMPUTER, connectFor, finalsFolderOf, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports } from "@/lib/thisMac";
-import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, inWorkspace, moveItems, type SettingsWorkspace } from "./ui";
+import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, WorkspacesDialog, inWorkspace, saveFailed, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
 /** The computers an account owns (the list the Storage rows pick from). */
@@ -31,7 +31,7 @@ export const getStorage = () => call<StorageView>(STORAGE_API);
 // a new folder goes to the workspace the call works in; one is moved or removed by its id, whatever workspace it is in
 const makeLibrary = (b: MakeLibraryBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/library`, "POST", b, workspace);
 const addStorageFolder = (b: AddFolderBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b, workspace);
-const moveStorageFolder = (id: string, workspace: string | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspace } satisfies MoveFolderBody);
+const moveStorageFolder = (id: string, workspaces: string[] | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspaces } satisfies MoveFolderBody);
 const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
@@ -176,12 +176,11 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
   );
 }
 
-const roleLabel = (role: SourceRole) => STORAGE_ROLES.find((r) => r.value === role)?.label ?? role;
-/** A folder's workspace as its tag and its menu name it: none for one every workspace uses. */
-const workspaceOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspace ?? null));
+/** The workspaces a folder is in, as its tag and its Workspaces name them: null for one every workspace uses. */
+const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
- * Where finished videos, footage and music are kept: Finished videos is one folder per workspace, footage and music any
+ * Where finished videos, footage and music are kept: Exports is one folder per workspace, the Media folders any
  * number, each folder a row with its menu. Used by Settings → Folders and the setup's Folders step.
  * `w`: the workspace Settings shows (workspace-pick.tsx). With all of them shown each row carries its workspace and
  * Finished videos has a row per workspace; left out (setup), the rows are the window's workspace's.
@@ -201,9 +200,7 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
       {each.map((r, i) => (
         <FinalsRow key={r.id ?? "own"} first={i === 0} workspace={r.id} w={w} here={storage.here} folders={w?.all ? storage.folders.filter((f) => f.workspace === r.id) : storage.folders} {...shared} />
       ))}
-      {STORAGE_ROLES.map((r) => (
-        <SourceRows key={r.value} role={r.value} storage={storage} w={w} {...shared} />
-      ))}
+      <SourceRows storage={storage} w={w} {...shared} />
     </Card>
   );
 }
@@ -224,8 +221,8 @@ function LibraryRow({ library, workspace, tagged, first, devices, serverDisks, o
     <>
       <Row
         id={first ? "finished-videos" : undefined}
-        title="Finished videos"
-        description={where || undefined}
+        title="Exports"
+        description={where || "Where finished edits are saved. A Creator Toolset folder is made in the folder you pick."}
         status={
           tagged || library?.error ? (
             <span className="flex flex-col gap-0.5">
@@ -273,7 +270,7 @@ function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, works
     <FormDialog
       open={open}
       onOpenChange={(o) => { onOpenChange(o); setErr(null); }}
-      title="Finished videos"
+      title="Exports"
       submitLabel={change ? "Change folder" : "Add folder"}
       onSubmit={submit}
       busy={busy}
@@ -321,17 +318,21 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
   );
 }
 
-/** Footage or music: the kind's own row with Add folder, then a row per folder. */
-function SourceRows({ role, storage, devices, serverDisks, w, onChanged }: {
-  role: SourceRole; storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
+/**
+ * The folders the Media Library takes in (footage, music, sound effects: the Library sorts them), under one row with
+ * Add folder, each folder indented under it (a music folder from before is one of them: api/lib/storage.ts).
+ */
+function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
+  storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const mine = sourcesOf(storage.folders).filter((f) => f.role === role);
+  const mine = sourcesOf(storage.folders);
   return (
     <>
       <Row
-        id={role === "footage" ? "footage-folder" : "music-folder"}
-        title={roleLabel(role)}
+        id="footage-folder"
+        title="Media"
+        description="Footage, music and sound effects. The Media Library takes in everything in these folders."
         control={
           <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
             Add folder
@@ -341,14 +342,14 @@ function SourceRows({ role, storage, devices, serverDisks, w, onChanged }: {
       {mine.map((f) => (
         <FolderRow key={f.id} folder={f} storage={storage} devices={devices} w={w} onChanged={onChanged} />
       ))}
-      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role="footage" devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
     </>
   );
 }
 
 /**
  * One footage or music folder: its name, the computer it is on and its full path, its workspace while every workspace
- * is shown, and its menu: Move to another workspace, Use in every workspace, Remove.
+ * is shown, and its menu: Workspaces (any of them, or all), Remove.
  */
 function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: StorageFolder; storage: StorageView; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
   // the Library's own Footage and Music come with the Finished videos folder: they are not moved or removed here
@@ -356,14 +357,17 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
   // the folder's workspace keeps copies on the server: asked per folder when every workspace is listed
   const copies = storage.copied ? storage.copied.includes(f.id.split(":")[0]!) : storage.copies;
   const tagged = !!w?.all;
+  const [picking, setPicking] = useState(false);
   return (
+    <>
     <ListRow
+      className="pl-8 sm:pl-10"
       title={f.name}
       subtitle={<span title={f.origin.path}>{whereOf(f, devices)}</span>}
       status={
         tagged || f.error || devices.length > 1 ? (
           <span className="flex flex-col gap-0.5">
-            {tagged && <WorkspaceTag id={workspaceOf(f)} />}
+            {tagged && <WorkspaceTag id={workspacesOf(f)} />}
             {f.error && <Status tone="broken">{f.error}</Status>}
             <FolderReach folder={f} devices={devices} copies={copies} />
           </span>
@@ -374,7 +378,7 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
           <RowMenu
             label={`Actions for ${f.name}`}
             items={[
-              ...(w ? moveItems(w.workspaces, workspaceOf(f), (to) => moveStorageFolder(f.id, to).then(onChanged)) : []),
+              ...(w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
               {
                 label: "Remove",
                 destructive: true,
@@ -386,6 +390,16 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
         ) : undefined
       }
     />
+    {picking && w && (
+      <WorkspacesDialog
+        title={`Workspaces that use ${f.name}`}
+        workspaces={w.workspaces}
+        on={workspacesOf(f)}
+        save={(to) => moveStorageFolder(f.id, to).then(onChanged, (e: Error) => (saveFailed(e.message), Promise.reject(e)))}
+        onClose={() => setPicking(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -501,7 +515,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
     };
     try {
       // a Finals folder is read project by project, never taken in whole
-      if (role !== "finals" && here.includes(host)) await big.check(p, add, { music: role === "music" });
+      if (role !== "finals" && here.includes(host)) await big.check(p, add);
       else await add();
     } finally {
       setBusy(false);
@@ -509,7 +523,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   };
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : role === "music" ? "Add music folder" : "Add footage folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
       {devices.length === 0 ? (
         <Status tone="attention">Needs a computer</Status>
       ) : (
