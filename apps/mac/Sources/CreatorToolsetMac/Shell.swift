@@ -183,7 +183,9 @@ final class Shell: NSObject, ObservableObject {
                 switch placesAsk(ask) {
                 case .check(let library, let versions)?:
                     let device = DeviceVault.deviceID(for: self.base.host ?? "")
-                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device)) }
+                    // the proxy cache is a server elsewhere's (no worker runs for This Mac)
+                    let cache = !self.runsHere
+                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache)) }
                 case .connect(let root)?:
                     // a share this Mac never had asks first, naming this window's server
                     let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")
@@ -1204,8 +1206,9 @@ struct Site {
     let base: URL
     let cookies: [HTTPCookie]
 
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        let (data, _) = try await send("GET", path, body: nil)
+    /// `timeout`: the longest wait for the server (a server that doesn't answer is a URLError); the system's 60 s by default.
+    func get<T: Decodable>(_ path: String, timeout: TimeInterval? = nil) async throws -> T {
+        let (data, _) = try await send("GET", path, body: nil, timeout: timeout)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
@@ -1228,9 +1231,10 @@ struct Site {
         _ = try await send("DELETE", path, body: nil)
     }
 
-    private func send(_ method: String, _ path: String, body: [String: Any]?) async throws -> (Data, URLResponse) {
+    private func send(_ method: String, _ path: String, body: [String: Any]?, timeout: TimeInterval? = nil) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: URL(string: path, relativeTo: base) ?? base)
         request.httpMethod = method
+        if let timeout { request.timeoutInterval = timeout }
         request.httpShouldHandleCookies = false
         request.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: cookies)
         if let body {

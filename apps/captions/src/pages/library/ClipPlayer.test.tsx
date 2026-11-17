@@ -105,6 +105,40 @@ describe("with it", () => {
     expect(video().getAttribute("src")).toBe("/api/library/media/v1/play#t=4");
   });
 
+  it("the original failing takes this computer's cached proxy before the server's", async () => {
+    answer = { ...original, cached: "ctlocal://media/c" };
+    await open();
+    video().currentTime = 7;
+    answer = { state: "away", root, cached: "ctlocal://media/c" };
+    await fire("error");
+    expect(video().getAttribute("src")).toBe("ctlocal://media/c#t=7");
+    expect(badge()).toBe("Proxy");
+  });
+
+  it("Available offline: a clip kept offline plays from the cache, never asking the server", async () => {
+    answer = { state: "cached", url: "ctlocal://media/c" };
+    await open({ ...card, onMac: undefined, here: true });
+    expect(post.mock.calls[0][0]).toBe('places:check:{"library":"lib","versions":["v1"]}');
+    expect(video().getAttribute("src")).toBe("ctlocal://media/c");
+    expect(badge()).toBe("Proxy");
+  });
+
+  it("the server's proxy failing (the internet went) takes the cached proxy at the same second; without one it fails", async () => {
+    answer = { state: "away", root };
+    await open();
+    expect(video().getAttribute("src")).toBe("/api/library/media/v1/play");
+    // kept offline meanwhile: a playing proxy is not swapped while it plays
+    answer = { state: "away", root, cached: "ctlocal://media/c" };
+    await act(async () => void window.dispatchEvent(new CustomEvent("mac-places", { detail: { at: 2 } })));
+    expect(video().getAttribute("src")).toBe("/api/library/media/v1/play");
+    video().currentTime = 9;
+    await fire("error");
+    expect(video().getAttribute("src")).toBe("ctlocal://media/c#t=9");
+    // the cached file failing has nowhere else to go
+    await fire("error");
+    expect(video().getAttribute("src")).toBe("ctlocal://media/c#t=9");
+  });
+
   it("an answer saying the original went away while it plays takes the proxy", async () => {
     await open();
     video().currentTime = 3;

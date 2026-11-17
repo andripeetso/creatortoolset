@@ -8,7 +8,8 @@ import Foundation
 // gets a status and no contents, and a missing file outside the folders reads as not granted, never as missing.
 // Each folder is also kept by its root (Places.swift): the disk's root key and the folder's path inside it, so a share
 // mounted again at another path (/Volumes/footage-1) is still the folder that was granted. A file on a network disk
-// that doesn't answer gets 503 at once (Places.guarded), never a wait.
+// that doesn't answer gets 503 at once (Places.guarded), never a wait. The proxy cache of the account the window is signed
+// in to on the page's server plays without a grant (ProxyCache.swift); every other account's cache is outside.
 
 enum MediaFiles {
     static let host = "media"
@@ -127,11 +128,13 @@ enum MediaFiles {
     /// A plain path named as a file this app serves: the only paths the places check looks at (Places.swift).
     static func isPlainMedia(_ path: String) -> Bool { isPlain(path) && isMedia(path) }
 
-    static func gate(_ path: String, granted: [String], roots: [RootGrant] = rootGrants, places: Places = .shared) -> Gate {
+    /// `cache`: the proxy cache folder this page may play from (ProxyCache.allowed), nil for none.
+    static func gate(_ path: String, granted: [String], roots: [RootGrant] = rootGrants, cache: String? = nil, places: Places = .shared) -> Gate {
         guard isPlain(path) else { return .status(403) }
         guard type(of: path) != nil else { return .status(415) }
         let disks = places.diskList()
-        return places.guarded(path) { look(path, granted: granted, roots: roots, disks: disks) } ?? .status(503)
+        let allowed = granted + (cache.map { [$0] } ?? [])
+        return places.guarded(path) { look(path, granted: allowed, roots: roots, disks: disks) } ?? .status(503)
     }
 
     private static func look(_ path: String, granted: [String], roots: [RootGrant], disks: [PlaceDisk]) -> Gate {

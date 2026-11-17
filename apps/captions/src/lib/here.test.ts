@@ -17,6 +17,11 @@ describe("pickSource", () => {
     [{ state: "away", root }, { src: "/api/library/media/v1/play", badge: "Proxy" }],
     [{ state: "gone" }, { src: "/api/library/media/v1/play", badge: "Proxy" }],
     [undefined, { src: "/api/library/media/v1/play", badge: "Proxy" }],
+    // the cache before the server's proxy, whatever else is said
+    [{ state: "away", root, cached: "ctlocal://media/c" }, { src: "ctlocal://media/c", badge: "Proxy" }],
+    [{ state: "gone", cached: "ctlocal://media/c" }, { src: "ctlocal://media/c", badge: "Proxy" }],
+    [{ state: "here", path: "/a", needs: "access", folder: "/", cached: "ctlocal://media/c" }, { src: "ctlocal://media/c", badge: "Proxy" }],
+    [{ state: "here", path: "/a", url: "ctlocal://media/a", cached: "ctlocal://media/c" }, { src: "ctlocal://media/a", badge: "Original" }],
   ];
   it.each(rows)("%j", (check, want) => expect(pickSource(check, "v1")).toEqual(want));
 

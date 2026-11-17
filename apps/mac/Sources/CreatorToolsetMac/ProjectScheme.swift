@@ -80,10 +80,11 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         guard let url = request.url else { return urlSchemeTask.didFailWithError(CocoaError(.fileReadUnknown)) }
         let task = urlSchemeTask
         live[ObjectIdentifier(task)] = task
-        let (root, granted) = MainActor.assumeIsolated { (self.root(), self.granted()) }
+        // with the proxy cache of the account signed in on the page's own server (ProxyCache.swift)
+        let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(), ProxyCache.allowed(page: webView.url)) }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
-                       root: root, granted: granted, task: task)
+                       root: root, granted: granted, cache: cache, task: task)
         }
     }
 
@@ -91,11 +92,11 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         live[ObjectIdentifier(urlSchemeTask)] = nil
     }
 
-    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], task: WKURLSchemeTask) {
+    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?, task: WKURLSchemeTask) {
         guard method == "GET" else { return reply(task, url, 405, ["Allow": "GET"]) }
         if url.host == MediaFiles.host {
             guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
-            switch MediaFiles.gate(path, granted: granted) {
+            switch MediaFiles.gate(path, granted: granted, cache: cache) {
             case .status(let status): return reply(task, url, status)
             case .file(let real, let type): return stream(URL(fileURLWithPath: real), type: type, url, range: range, task: task)
             }

@@ -394,9 +394,11 @@ final class Places: @unchecked Sendable {
     /// version's size is here with a `url`, and goes back to the server. A file of that size outside them is here and
     /// needs access (path and folder, so the person can grant it); only its size is read. A try whose disk isn't mounted
     /// or doesn't answer makes it `away` (unless another try is here); `gone` when every try's disk answered and none had
-    /// it. A version with no tries is away on its root, when the server named one.
+    /// it. A version with no tries is away on its root, when the server named one. A version whose proxy is in this
+    /// Mac's cache (`cached`: its ctlocal address, ProxyCache.url) says so beside that, or is `cached` when nothing else is
+    /// known.
     func check(_ versions: [String: VersionPlaces], granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants,
-               size: @escaping (String) -> Int64? = Places.size) -> Checked {
+               size: @escaping (String) -> Int64? = Places.size, cached: (String) -> String? = { _ in nil }) -> Checked {
         let disks = diskList()
         let known = shares
         var out = Checked()
@@ -437,7 +439,6 @@ final class Places: @unchecked Sendable {
                     out.answer[id] = ["state": "here", "path": path, "needs": "access", "folder": folder, "root": v.root?.label ?? disk.label]
                 }
             } else if sawAway || (v.tries.isEmpty && v.root != nil) {
-                // Available offline (the proxy cache) answers `cached` here when the server says v.cached
                 var away: [String: Any] = ["state": "away"]
                 if let root = v.root {
                     away["root"] = root.label
@@ -447,6 +448,9 @@ final class Places: @unchecked Sendable {
             } else if !tries.isEmpty {
                 if allGranted { out.gone.append(id) }
                 out.answer[id] = ["state": "gone"]
+            }
+            if let url = cached(id) {
+                if out.answer[id] == nil { out.answer[id] = ["state": "cached", "url": url] } else { out.answer[id]?["cached"] = url }
             }
         }
         return out
@@ -465,10 +469,20 @@ final class Places: @unchecked Sendable {
     /// `places:check`: the tries from the window's server (a server without the route lists none, so the page plays as
     /// before), checked off the main thread; each answer kept 10 s. What was read here and what is gone goes back to the
     /// server afterwards (POST …/places), each once per run, with the quick fingerprint when the server has none.
-    func answerCheck(library: String, versions: [String], site: Site, device: String?,
+    /// With `cache` (a server elsewhere), each version's proxy in the cache of the window's account there (ProxyCache);
+    /// when the server doesn't answer (no internet), those alone.
+    func answerCheck(library: String, versions: [String], site: Site, device: String?, cache: Bool = false,
                      granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants) async -> [String: Any] {
         guard let device, let encoded = device.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return ["versions": [String: Any]()] }
-        let server = site.base.absoluteString
+        // asked first: an answer kept for one account is never handed to the next
+        let (account, offline) = cache ? await ProxyCache.account(site) : (nil, false)
+        let folder = account.flatMap { ProxyCache.folder(server: site.base, account: $0) }
+        let cached = { (v: String) in folder.flatMap { ProxyCache.url(v, in: $0) } }
+        let alone = { (vs: [String]) -> [String: Any] in
+            ["versions": vs.reduce(into: [String: Any]()) { out, v in if let url = cached(v) { out[v] = ["state": "cached", "url": url] } }]
+        }
+        if offline { return alone(versions) }
+        let server = site.base.absoluteString + "|" + (account ?? "")
         var out: [String: Any] = [:]
         var ask: [String] = []
         lock.withLock {
@@ -477,9 +491,18 @@ final class Places: @unchecked Sendable {
             }
         }
         guard !ask.isEmpty else { return ["versions": out] }
-        let list: PlacesList? = try? await site.get("/api/library/\(library)/places?device=\(encoded)&versions=\(ask.joined(separator: ","))")
+        let list: PlacesList?
+        do {
+            list = try await site.get("/api/library/\(library)/places?device=\(encoded)&versions=\(ask.joined(separator: ","))", timeout: 4)
+        } catch is URLError {
+            return alone(versions)
+        } catch {
+            list = nil
+        }
         let tries = list?.versions ?? [:]
-        let checked = await withCheckedContinuation { c in calls.async { c.resume(returning: self.check(tries, granted: granted, roots: roots)) } }
+        let checked = await withCheckedContinuation { c in
+            calls.async { c.resume(returning: self.check(tries, granted: granted, roots: roots, cached: cached)) }
+        }
         lock.withLock {
             for (v, check) in checked.answer {
                 kept["\(server)|\(library)|\(v)"] = (Date(), check)
