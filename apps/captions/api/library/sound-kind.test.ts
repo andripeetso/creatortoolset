@@ -35,7 +35,7 @@ describe("soundKindOf", () => {
     expect(soundKindOf({ paths: ["/Users/tiny/Sound effects/x.wav"], seconds: 60, song: true })).toBe("music");
   });
   it("the length decides only when it is clear", () => {
-    expect([2, 60, 300].map((s) => soundKindOf({ paths: ["/Users/tiny/Downloads/x.wav"], seconds: s }))).toEqual(["effect", null, "music"]);
+    expect([2, 60, 300].map((s) => soundKindOf({ paths: ["/Users/tiny/Downloads/x.wav"], seconds: s }))).toEqual(["effect", null, null]); // a long one can be a voice recording: only a listen tells
   });
 });
 

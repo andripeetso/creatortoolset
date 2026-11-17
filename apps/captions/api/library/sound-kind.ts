@@ -21,7 +21,7 @@ import { GEMINI_PRICE, parked, watchKey } from "./timeline";
  *   a. a tag the person gave it (never overruled), or one the app gave it before (a rescan does not flip it);
  *   b. a song by its own tags or its name (probe.ts looksLikeSong), or a file from the account's music folders;
  *   c. the words of the folders it came from, the nearest first (FOLDER_WORDS);
- *   d. its length: a few seconds is a sound effect, minutes is music;
+ *   d. its length: a few seconds is a sound effect (anything longer can be a voice recording: owner, 11-17);
  *   e. what is still unclear: Gemini listens to 30 seconds of it, when the library's AI describes new files, its owner
  *      has a Gemini key and the library's monthly budget is not spent. With no listen, the length decides (SHORT_SOUND_S).
  * The app's tag is an "ai" tag: the person can take it off, and then it is never given again (tag_rejections). Gemini
@@ -35,8 +35,6 @@ export const FOLDER_WORDS: Record<Sound, readonly string[]> = {
 };
 /** At most this long: a sound effect by length alone. */
 export const CLEARLY_SHORT_S = 6;
-/** At least this long: music by length alone. */
-export const CLEARLY_LONG_S = 120;
 /** The most of a file Gemini hears. */
 const LISTEN_S = 30;
 const LISTEN_MODEL: GeminiModel = "gemini-3.5-flash-lite";
@@ -60,8 +58,7 @@ export function soundKindOf(e: { song?: boolean; paths: readonly (string | null 
   if (e.song) return "music";
   const byFolder = kindByFolders(e.paths);
   if (byFolder) return byFolder;
-  if (e.seconds <= CLEARLY_SHORT_S) return "effect";
-  return e.seconds >= CLEARLY_LONG_S ? "music" : null;
+  return e.seconds <= CLEARLY_SHORT_S ? "effect" : null;
 }
 
 /** The kind by length alone: what a file with no listen gets. */
