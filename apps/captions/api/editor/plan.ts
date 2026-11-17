@@ -295,7 +295,7 @@ Make exactly the kind of edit the brief asks for, whatever it is: a hard edit cu
 
 Write the edit as shots played one after another from 0, with no gaps. Times are seconds. When a song leads, cut on its beats (given as seconds in the edit) and land the hits (punch, flash, shake, stutter, zoomblur) on its strong beats. An effect's time is inside its shot, from 0.
 
-Never use the same moment of a source twice: each shot is a different stretch of footage. Show each action once too: two stretches with the same thing happening (the same character casting the same skill, the same summon, the same view of a place), from one source or two, count as the same moment unless the brief asks for it again. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. A shot marked blurry, too dark or shaky is badly taken: use it only when no other shot shows what the brief needs. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
+Never use the same moment of a source twice: each shot is a different stretch of footage. Show each action once too: two stretches with the same thing happening (the same character casting the same skill, the same summon, the same view of a place), from one source or two, count as the same moment unless the brief asks for it again. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
 
 Answer with JSON only, in this shape:
 {"plans":[{"kind":"the brief's words for this kind of edit","variation":"what sets this version apart","lead":"song","shots":[{"src":"S1","in":12.5,"dur":1.0,"speed":1,"fx":[{"type":"punch","at":0,"amount":1.2}],"enter":"cut","frame":"fill","sound":"off","why":"a few words"}],"texts":[{"at":0,"dur":1.5,"text":"words on screen","place":"middle"}]}]}
@@ -412,6 +412,8 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   if (len.max) parts.push(len.about ? `Length: about ${len.max} seconds, never longer` : `Length: ${len.min ? `${len.min} to ` : "at most "}${len.max} seconds${len.min ? ", never longer, ending on a downbeat" : ""}`);
   const open = openerOf(i.brief, i.index);
   if (open) parts.push(`Open with: ${tagOf(i.index, open.source.id)}${open.shot ? ` at ${open.shot.a.toFixed(1)}-${open.shot.b.toFixed(1)}${open.shot.desc ? ` (${open.shot.desc})` : ""}` : ""}`);
+  // only when a shot is marked: a prompt without measures stays word for word as it was
+  if (i.index.sources.some((s) => s.shots.some((x) => x.flaws?.length))) parts.push("A shot marked blurry, too dark or shaky is badly taken: use it only when no other shot shows what the brief needs.");
   if (overdone(i.brief)) parts.push("Effects: overdone. Every shot gets at least one effect, the shots on strong beats get stacks of two to four (punch + flash + shake, stutter + zoomblur…), and the sizes vary (fill, fit, blur, letterbox, inset, split).");
   const n = poolSize(i.index);
   const lines = shotLines(i.index);

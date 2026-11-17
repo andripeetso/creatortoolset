@@ -517,5 +517,7 @@ describe("badly taken shots", () => {
     expect(pool.every((x) => !x.flaws)).toBe(true);
     const { user } = planPrompt({ brief: "", versions: 1, targetS: 0, setup: "", index: { sources: [src(shots.slice(0, 2))] }, words: {}, gen: [] });
     expect(user).toContain("motion 0.90 · too dark");
+    expect(user).toContain("A shot marked blurry, too dark or shaky is badly taken");
+    expect(planPrompt({ brief: "", versions: 1, targetS: 0, setup: "", index: { sources: [src(shots.slice(0, 1))] }, words: {}, gen: [] }).user).not.toContain("badly taken");
   });
 });
