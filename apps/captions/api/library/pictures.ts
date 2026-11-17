@@ -4,7 +4,12 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit } from "../../contracts/library";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { aiFor, completeWithFallback } from "../ai-complete";
-import { embedPictureQuery, embedPictures, PICTURE_MODEL, PICTURE_PX, pictureText, pictureTextKept, picturesHere, readsAsEnglish } from "../lib/device-picture";
+import { WORK_MIN } from "../../contracts/work";
+import { offOf } from "../lib/balance";
+import { embedPictureQuery, embedPictures, PICTURE_MODEL, PICTURE_PX, pictureText, pictureTextKept, readsAsEnglish } from "../lib/device-picture";
+import { isOnline, listDevices } from "../lib/devices";
+import { mayRunHere } from "../work/may-run";
+import { libraryWorkspace, serverKind, serverWorks } from "../work/server-work";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { whoFor } from "./describe";
@@ -24,6 +29,24 @@ import { stretchesOf } from "./stretches";
  * reads. Where this server makes none (picturesHere), the person's own computers make them from the same pictures and
  * send only the vectors (work/pictures.ts). Library setting `pictures`.
  */
+
+/**
+ * Whether this server runs the picture model for a clip of `account`'s in `libraryId` (the one rule, work/may-run.ts
+ * mayRunHere): This Mac always (the server is the person's computer); elsewhere only where its video work is on for that
+ * library and no computer of theirs that runs the model is online. A hosted server's video work is a plug-in's grant only.
+ * CT_PICTURE_MODEL=0 keeps the model off this server (the tests: no 655 MB fetch), as CT_CUT_MODEL does the cut model.
+ */
+export function picturesHere(libraryId: string, account: string | null): boolean {
+  if (process.env.CT_PICTURE_MODEL === "0") return false;
+  if (serverKind() === "local") return true;
+  return (
+    mayRunHere({
+      reads: true,
+      open: () => serverWorks(libraryWorkspace(libraryId), account),
+      computer: () => !!account && listDevices((d) => d.owner === account && isOnline(d.id) && !!d.work?.pictures && d.work.v >= WORK_MIN && !offOf(account).has(d.id)).length > 0,
+    }) === "server"
+  );
+}
 
 export const CARD_SEG = -1;
 /** Picture hits a search takes, as search by meaning. */
@@ -153,25 +176,33 @@ let again = false;
  * Returns the clips done.
  */
 export async function catchUpPictures(db = libraryDb()): Promise<number> {
-  if (!picturesHere()) return 0;
   if (running) {
     again = true;
     return 0;
   }
   running = true;
   let n = 0;
+  // the libraries and accounts whose vectors are not made here (picturesHere): left out of this run, asked once each
+  const elsewhere: string[] = [];
   try {
     for (;;) {
       again = false;
       const todo = db
         .prepare(
-          `SELECT d.version_id, d.kind, d.storage_key FROM derivatives d JOIN assets a ON a.current_version_id = d.version_id JOIN libraries l ON l.id = a.library_id
+          `SELECT d.version_id, d.kind, d.storage_key, a.library_id, v.created_by FROM derivatives d JOIN assets a ON a.current_version_id = d.version_id
+             JOIN asset_versions v ON v.id = d.version_id JOIN libraries l ON l.id = a.library_id
            WHERE a.trashed_at IS NULL AND a.kind IN ('video', 'image') AND d.kind IN ('thumb', 'looksheets') AND d.storage_key IS NOT NULL
              AND COALESCE(json_extract(l.settings, '$.pictures'), 1)
+             AND (a.library_id || '/' || IFNULL(v.created_by, '')) NOT IN (SELECT value FROM json_each(?))
              AND NOT EXISTS (SELECT 1 FROM pictures p WHERE p.version_id = d.version_id AND p.model = ? AND (p.seg = -1) = (d.kind = 'thumb'))
            ORDER BY d.version_id IN (SELECT value FROM json_each(?)) DESC, d.kind = 'thumb' DESC, d.version_id LIMIT 20`,
         )
-        .all(PICTURE_MODEL, JSON.stringify(firstClips())) as { version_id: string; kind: string; storage_key: string }[];
+        .all(JSON.stringify(elsewhere), PICTURE_MODEL, JSON.stringify(firstClips())) as { version_id: string; kind: string; storage_key: string; library_id: string; created_by: string | null }[];
+      const away = todo.filter((t) => !picturesHere(t.library_id, t.created_by)).map((t) => `${t.library_id}/${t.created_by ?? ""}`);
+      if (away.length) {
+        elsewhere.push(...new Set(away));
+        continue;
+      }
       for (const t of todo) {
         if (t.kind === "thumb") await cardPicture(db, t.version_id, t.storage_key);
         else {
@@ -194,7 +225,10 @@ export async function catchUpPictures(db = libraryDb()): Promise<number> {
  * Runs the catch-up now (a card picture or a look is done); a run in progress goes round once more. Where the computers
  * make the vectors, their long polls hear of it instead.
  */
-export const wakePictures = (): void => void (picturesHere() ? catchUpPictures() : wakeEditorPolls());
+export const wakePictures = (): void => {
+  void catchUpPictures();
+  void wakeEditorPolls();
+};
 
 /** catchUpPictures now and every minute; the returned function stops it. */
 export function startPictureCatchUp(): () => void {

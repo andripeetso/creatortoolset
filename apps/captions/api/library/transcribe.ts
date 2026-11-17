@@ -15,6 +15,7 @@ import { findUser } from "../users";
 import { accountOf } from "./access";
 import { libraryDb } from "./db";
 import { ffmpegTo } from "./media/run";
+import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
  * The library's `transcribe` job (tasks/media-library-plan.md, sections 5, 6 and 11). It runs as the job's actor, on the
@@ -191,7 +192,7 @@ export async function transcribeFile(
   actor: string | null,
   scratch: string,
   status: string = typeof src === "string" ? src : "",
-  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use, languages), own }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route; own?: Omit<OwnSound, "cut"> } = {}
+  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use, languages), own }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route; own?: Own } = {}
 ): Promise<Transcribed & { provider: Route["provider"]; model?: string }> {
   // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
   if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
@@ -204,11 +205,13 @@ export async function transcribeFile(
     await (cutting = (async () => ffmpegTo(out, ["-i", await file(), ...(route.provider === "device" ? DEVICE_AUDIO : soundArgs(wav))], soon))());
     return out;
   };
+  // a library file's own rule: where this server does no video work, it cuts nothing for it (ownSound)
+  const cutHere = own?.cut ?? cut;
   try {
-    if (!(route.provider === "computer" && own)) await cut();
+    if (!(route.provider === "computer" && own)) await cutHere();
     const t =
       route.provider === "device" ? await device(out, status)
-      : route.provider === "computer" ? await computer(own ? { ...own, cut } : out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
+      : route.provider === "computer" ? await computer(own ? { ...own, cut: cutHere } : out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
       : await openai(out, route.key, languages);
     return { ...t, provider: route.provider, ...(route.provider === "computer" ? { model: route.model } : {}) };
@@ -221,17 +224,18 @@ export async function transcribeFile(
 /**
  * What a computer of `actor`'s needs to cut a library version's sound from its own copy (design 6.1): where the file is
  * on it (the index's path for it, or a storage folder it reaches; with the size to check), else the server's proxy to
- * download into its proxy cache. Never the original: a file it has neither of is cut here, when it asks for the audio.
+ * download into its proxy cache. Never the original: a file it has neither of is cut here when it asks for the audio,
+ * and only where this server's video work is on (`cut` refuses otherwise: a computer with a copy cuts it, a PC helper too).
  */
-export function ownSound(versionId: string, actor: string | null): Omit<OwnSound, "cut"> | undefined {
+export function ownSound(versionId: string, actor: string | null): Own | undefined {
   const r = libraryDb()
     .prepare(
       `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes,
-         d.storage_key AS proxy, d.bytes AS proxy_bytes
-       FROM asset_versions v LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
+         d.storage_key AS proxy, d.bytes AS proxy_bytes, a.library_id
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
     )
     .get(versionId) as
-    | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; from_path: string | null; from_device: string | null; probe: string | null; bytes: number; proxy: string | null; proxy_bytes: number | null }
+    | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; from_path: string | null; from_device: string | null; probe: string | null; bytes: number; proxy: string | null; proxy_bytes: number | null; library_id: string }
     | undefined;
   if (!r || !actor) return undefined;
   // an original uploaded from a computer is still on that computer, where it was sent from (work/library-package.ts)
@@ -240,6 +244,7 @@ export function ownSound(versionId: string, actor: string | null): Omit<OwnSound
   return {
     seconds,
     proxy: r.proxy,
+    ...(serverWorks(libraryWorkspace(r.library_id), actor) ? {} : { cut: () => Promise.reject(new Error(NO_CUT)) }),
     options: (device) => {
       const at = reach?.fileFor(row, device, reach.foldersOf(actor), isThisMachine);
       return {
@@ -250,6 +255,10 @@ export function ownSound(versionId: string, actor: string | null): Omit<OwnSound
     },
   };
 }
+/** A library file's sound, cut on a computer: `cut` set only where this server may not cut it itself. */
+type Own = Omit<OwnSound, "cut"> & { cut?: OwnSound["cut"] };
+const NO_CUT = "This server does no video work: the sound is cut on a computer that has the file";
+
 // editor/reach.ts, loaded once a transcript asks (a static import would close a loop: reach → work → library worker → here)
 let reach: typeof import("../editor/reach") | undefined;
 

@@ -14,6 +14,7 @@ import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
 import { ffmpegTo, withSignal } from "../library/media/run";
 import { soundArgs } from "../library/transcribe";
+import { cutStills } from "../library/describe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
 import { proxiesDir, sizeOf } from "./cache";
@@ -33,8 +34,14 @@ import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
 
 type Made = Pick<LibraryResult, "probe" | "sha256" | "quick" | "fingerprint" | "transcript"> & { files: Partial<Record<LibraryResult["files"][number], string>> };
 
+/** The library job kinds this computer runs (derive), said in its claim: a server hands an older computer only the first ones. */
+export const LIBRARY_HERE = ["send", "probe", "thumb", "proxy", "wave", "sprite", "fingerprint", "transcribe", "describe"];
+
 const LINE: Record<string, string> = {
   send: "Preparing the file to send",
+  probe: "Reading the file",
+  thumb: "Making the card picture",
+  describe: "Picking stills for the description",
   proxy: "Making the proxy",
   wave: "Making the waveform",
   sprite: "Making the strip of frames",
@@ -84,8 +91,15 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
     const quick = await quickPrint(src);
     return { files, probe: p as unknown as Record<string, unknown>, sha256: await sha256File(src), ...(quick ? { quick } : {}), ...(print ? { fingerprint: print } : {}) };
   }
+  if (kind === "probe") {
+    const quick = await quickPrint(src);
+    return { files: {}, probe: (await probe(src)) as unknown as Record<string, unknown>, ...(quick ? { quick } : {}) };
+  }
   const p = lib.probe as unknown as ProbeSummary | undefined;
   if (!p) throw new Error("The file is not probed yet");
+  if (kind === "thumb") return { files: { thumb: (await makeThumb(src, out("thumb.jpg"), p.duration, !!p.cover, p.turn), out("thumb.jpg")) } };
+  // as a Mac's stills: cut upright from the file as it is, the clip's own turn added by the server (describe.ts)
+  if (kind === "describe") return { files: Object.fromEntries((await cutStills(src, p.duration, 0, dir)).map((f, i) => [`still${i}`, f])) };
   if (kind === "proxy") return { files: { proxy: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec), out("proxy.mp4")) } };
   if (kind === "wave") return { files: { wave: (await makeWave(src, out("wave.json"), !!p.acodec), out("wave.json")) } };
   if (kind === "sprite") return { files: { sprite: (await makeSprite(src, out("sprite.jpg"), p.duration, p.turn), out("sprite.jpg")) } };

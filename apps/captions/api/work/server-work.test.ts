@@ -287,9 +287,9 @@ describe("the Media Library's work", () => {
     // the look is not left for video work this server doesn't do: it parks for that Mac (or for an AI first)
     expect(await library.tick(Date.now(), ["look"])).toBe(true);
     expect(job("look").state).toBe("needs_key");
-    // never described: a description needs the picture, so it waits for a computer
+    // never described: a description needs the picture, so it waits for a computer to cut its stills (library-package.ts)
     expect(await library.tick(Date.now(), ["describe"])).toBe(false);
-    expect(job("describe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_SERVER });
+    expect(job("describe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_COMPUTER });
     // waiting, said as such: no "Preparing … left" for work nothing here will run
     const p = await progress("lib_ver_l", "lib");
     expect(p.left).toBe(0);

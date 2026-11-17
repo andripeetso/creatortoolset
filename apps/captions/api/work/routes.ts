@@ -78,6 +78,8 @@ workApp.post("/claim", async (c) => {
   const libraryOnly = library && b?.libraryOnly === true;
   // the computer task kinds it runs (tasks.ts): one that names none is never handed a task
   const tasks = strings(b?.tasks ?? [], 100) ?? [];
+  // the library job kinds it runs beyond the first ones (work/library-package.ts LATER_KINDS): an older one names none
+  const libraryKinds = (library && strings(b?.libraryKinds ?? [], 50)) || [];
   // its load and shares now: load balancing scores it, and a share it has connected gives it the folders on it
   const machine = parseMachine(b?.machine);
   if (machine) noteMachine(d.id, machine);
@@ -92,6 +94,7 @@ workApp.post("/claim", async (c) => {
     ...(kept ? { cache: empty ? { ...kept, bytes: 0, versions: [] } : kept } : {}),
     ...(empty ? { empty } : {}),
     ...(library ? { library: true as const } : {}),
+    ...(libraryKinds.length ? { libraryKinds } : {}),
     ...(pictures && !libraryOnly ? { pictures: true as const } : {}),
     ...(libraryOnly ? { libraryOnly: true as const } : {}),
     ...(tasks.length && !libraryOnly ? { tasks } : {}),

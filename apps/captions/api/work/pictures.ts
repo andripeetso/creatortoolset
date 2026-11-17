@@ -1,6 +1,6 @@
 /**
- * Search by picture's vectors made on the uploader's own computers, where this server makes none (lib/device-picture.ts
- * picturesHere: a hosted server never does). Nothing is queued: a computer that claims work and said it runs the picture
+ * Search by picture's vectors made on the uploader's own computers (library/pictures.ts picturesHere: the server makes
+ * them only as This Mac, or where its video work is on and none of these is online). Nothing is queued: a computer that claims work and said it runs the picture
  * model is handed a clip of its account's that still lacks vectors (contracts/work.ts PicturePackage), once its account
  * may read it (offline.ts mayRead, asked again for its input). It reads the server's card picture and look sheets, or
  * the sheets the Mac the file is on keeps, runs the model and sends only the vectors back: the pictures are never kept
@@ -10,7 +10,8 @@ import { Hono, type Context } from "hono";
 import { readFile } from "node:fs/promises";
 import type { Device } from "../../contracts/providers";
 import { WORK_MIN, WORK_V, type PictureInput, type PicturePackage, type PictureResult } from "../../contracts/work";
-import { PICTURE_DIM, PICTURE_MODEL, picturesHere } from "../lib/device-picture";
+import { PICTURE_DIM, PICTURE_MODEL } from "../lib/device-picture";
+import { serverKind } from "./server-work";
 import { offOf } from "../lib/balance";
 import { deviceForToken, touchDevice } from "../lib/devices";
 import { libraryChanged } from "../library/access";
@@ -76,11 +77,11 @@ const aiStretches = (versionId: string): number[][] =>
   (libraryDb().prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(versionId) as { a: number; b: number }[]).map((s) => [s.a, s.b]);
 
 /** Whether picture work waits that `d` would be handed now: its device runner's long poll starts the worker. */
-export const picturesWait = (d: Device): boolean => !picturesHere() && takesPictures(d) && !busy(d.id) && todo(d).length > 0;
+export const picturesWait = (d: Device): boolean => serverKind() !== "local" && takesPictures(d) && !busy(d.id) && todo(d).length > 0;
 
 /** The clip computer `d` makes vectors for now, or null: one at a time, only what its account may read. */
 export async function claimPictures(d: Device, now = Date.now()): Promise<PicturePackage | null> {
-  if (picturesHere() || !takesPictures(d) || busy(d.id)) return null;
+  if (serverKind() === "local" || !takesPictures(d) || busy(d.id)) return null;
   for (const r of todo(d, now)) {
     if (!(await mayRead(d.owner, r.library_id, r.asset_id, r.version_id))) {
       tried.set(r.version_id, now + RETRY_MS);
