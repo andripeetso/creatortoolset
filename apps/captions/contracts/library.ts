@@ -665,6 +665,8 @@ export interface LibraryCopy {
   offlineSince?: number;
   /** the computer that holds files this copy waits for, while it is offline or the files are only there */
   waitsFor?: string;
+  /** files this copy lacks whose original is on no server and no computer any more ("No original for N files") */
+  noOriginal?: number;
   /** kept by a copier the app does not run (a plug-in's): no menu */
   readOnly?: true;
 }
