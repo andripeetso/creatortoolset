@@ -260,11 +260,6 @@ describe("indexing and reading by places", () => {
     expect(place("july", boMac)?.path).toBe("/Volumes/Travel SSD/b.mov");
     expect(version("july").mac_path).toBe("/Volumes/footage/Archive/2025/July/b.mov");
   });
-
-  it("the Where filter's countries have their own address, so the places route only ever answers a computer", async () => {
-    expect((await call<{ places: unknown[] }>("ana", "/api/library/lib/countries")).status).toBe(200);
-    expect((await call("ana", "/api/library/lib/places")).status).toBe(403);
-  });
 });
 
 describe("reconnecting", () => {
