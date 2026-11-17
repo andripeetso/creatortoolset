@@ -7,7 +7,7 @@ import { askMediaFolder } from "@/lib/local-files";
 import { macSearch, placesSearch, placesSearchState } from "@/lib/thisMac";
 
 /**
- * Under the Missing here filter in the Media Library's sidebar: Find missing files on this Mac (apps/mac
+ * Under the Missing on this computer filter in the Media Library's sidebar: Find missing files on this Mac (apps/mac
  * PlacesSearch.swift) with how far it is, and what moved or was found elsewhere lately, one line per folder change
  * (api/library/places.ts). This Mac also starts a search by itself after it finds files gone; this shows that one too.
  * Files that may be gone ones in a folder the page may not play from are not read: each such folder gets Allow access,

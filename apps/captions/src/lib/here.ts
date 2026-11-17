@@ -29,7 +29,7 @@ export const rootName = (r: RootLabel) => (r.server ? `${r.name} (${r.server})` 
 /** Why the original doesn't play here, in one line (none when it does, or nothing was said). */
 export function awayLine(check: PlaceCheck | undefined): string | null {
   if (check?.state === "away") return check.root ? `The original is on ${rootName(check.root)}, which isn't connected` : "The original's disk isn't connected";
-  if (check?.state === "gone") return "The original is missing here";
+  if (check?.state === "gone") return "The original is missing on this computer";
   return null;
 }
 

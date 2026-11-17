@@ -4,7 +4,10 @@
 // (<html data-mac-local-files="2">, apps/mac TitleBar.swift), and there the files are used as they are. In an older
 // app the page reads one file at a time, whole, and works from that copy, so no two requests ever overlap.
 // From mark "3" the app also serves an edit's original video and sound files as ctlocal://media/<base64url of the
-// path>, only from folders the user granted in the app's own open panel (askMediaFolder; apps/mac MediaFiles.swift).
+// path>, only from folders the user allowed: Settings → Folders folders allowed on this Mac (folderGrant) and the app's
+// own open panel (askMediaFolder; apps/mac MediaFiles.swift).
+
+import { WORDS, diskAway } from "@/lib/wording";
 
 const localFilesMark = () =>
   typeof document === "undefined" ? 0 : Number(document.documentElement.dataset.macLocalFiles) || 0;
@@ -46,18 +49,68 @@ export function commonFolder(paths: string[]): string {
   return out.join("/") || "/";
 }
 
-async function mediaAccess(body: unknown): Promise<string[]> {
+/** The Mac app's answer to one mediaAccess message (null outside the app, or when it fails). */
+async function askMac(body: unknown): Promise<Record<string, unknown> | null> {
   const handler =
     typeof window === "undefined"
       ? undefined
       : (window as unknown as { webkit?: { messageHandlers?: { mediaAccess?: MediaAccess } } }).webkit?.messageHandlers
           ?.mediaAccess;
-  if (!handler) return [];
+  if (!handler) return null;
   try {
-    const answer = (await handler.postMessage(body)) as { granted?: unknown } | null;
-    return Array.isArray(answer?.granted) ? answer.granted.filter((f): f is string => typeof f === "string") : [];
+    const answer = await handler.postMessage(body);
+    return answer && typeof answer === "object" ? (answer as Record<string, unknown>) : null;
   } catch {
-    return [];
+    return null;
+  }
+}
+
+async function mediaAccess(body: unknown): Promise<string[]> {
+  const granted = (await askMac(body))?.granted;
+  return Array.isArray(granted) ? granted.filter((f): f is string => typeof f === "string") : [];
+}
+
+/** Where a path is for this Mac (apps/mac placesState): here, not there, its drive away, or not allowed yet. */
+export type PathState = "here" | "not_here" | "disk_away" | "not_granted" | "needs_ok";
+export type PathStates = { states: Record<string, PathState>; disks: Record<string, string> };
+
+/**
+ * The Mac app's word on each path, read in its Settings → Folders folders (never the page's own grant list). null outside
+ * the app or from an app that doesn't answer it (before the location agent): the caller reads each file then (onDisk).
+ */
+export async function placesState(paths: string[]): Promise<PathStates | null> {
+  const a = await askMac({ placesState: { paths } });
+  if (!a || !a.states || typeof a.states !== "object") return null;
+  return { states: a.states as PathStates["states"], disks: (a.disks && typeof a.disks === "object" ? a.disks : {}) as PathStates["disks"] };
+}
+
+/** "Allow on this Mac", pressed for a Settings → Folders folder (`folder` its id, `path` its path on this Mac). */
+export async function folderGrant(path: string, folder: string): Promise<boolean> {
+  return (await askMac({ folderGrant: { path, folder } }))?.granted === true;
+}
+
+/** The line for a file this Mac said doesn't play here: "<drive> isn't connected", "Needs your OK"; none for not there. */
+export function pathLine(a: { state: PathState; disk?: string } | null | undefined): string | undefined {
+  if (a?.state === "disk_away") return diskAway(a.disk ?? "The drive");
+  if (a?.state === "needs_ok" || a?.state === "not_granted") return WORDS.needsOk;
+  return undefined;
+}
+
+/**
+ * Why a ctlocal://media file didn't play, from the Mac app's answer to a one-byte read: 409 {state:"disk_away", disk}
+ * for a drive that isn't connected, 403 for a folder not allowed, else not there (a network failure says nothing).
+ */
+export async function localFileState(url: string): Promise<{ state: PathState; disk?: string } | null> {
+  try {
+    const r = await fetch(url, { headers: { Range: "bytes=0-0" } });
+    if (r.status === 200 || r.status === 206) return void r.body?.cancel(), { state: "here" };
+    if (r.status === 409) {
+      const b = (await r.json().catch(() => null)) as { state?: string; disk?: string } | null;
+      if (b?.state === "disk_away" && b.disk) return { state: "disk_away", disk: b.disk };
+    }
+    return { state: r.status === 403 ? "not_granted" : "not_here" };
+  } catch {
+    return null;
   }
 }
 
