@@ -15,7 +15,7 @@ export const UPLOAD_LABEL = "Upload to the server";
 const WORDS: Record<LibraryUpload, string> = { none: "Off", proxies: "Proxies only", all: "Originals and proxies" };
 export const UPLOAD_OPTIONS = LIBRARY_UPLOADS.map((value) => ({ value, label: WORDS[value] }));
 const DETAIL: Record<LibraryUpload, string> = {
-  none: "Videos stay on the computer they were added from and play only there.",
+  none: "New videos are not uploaded and play only on the computer they were added from.",
   proxies: "A proxy of each video is uploaded so it plays anywhere, and the original stays on the computer.",
   all: "Each video is uploaded with its proxy, so it plays and downloads anywhere.",
 };
@@ -23,7 +23,7 @@ const DETAIL: Record<LibraryUpload, string> = {
 const FINALS_WORDS: Record<LibraryUpload, string> = { none: "Off", proxies: "Smaller copies", all: "Full files" };
 const FINALS_OPTIONS = LIBRARY_UPLOADS.map((value) => ({ value, label: FINALS_WORDS[value] }));
 const FINALS_DETAIL: Record<LibraryUpload, string> = {
-  none: "Finished videos stay on the computer they were made on and play only there.",
+  none: "New finished videos are not uploaded and play only on the computer they were made on.",
   proxies: "A smaller copy of each finished video is uploaded so it plays anywhere.",
   all: "Each finished video is uploaded whole, so it can be downloaded on a phone.",
 };
