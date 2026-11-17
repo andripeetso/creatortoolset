@@ -7,7 +7,7 @@ import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports } from "@/lib/thisMac";
-import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, inWorkspace, moveItems, type SettingsWorkspace } from "./ui";
+import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, WorkspacesDialog, inWorkspace, saveFailed, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
 /** The computers an account owns (the list the Storage rows pick from). */
@@ -31,7 +31,7 @@ export const getStorage = () => call<StorageView>(STORAGE_API);
 // a new folder goes to the workspace the call works in; one is moved or removed by its id, whatever workspace it is in
 const makeLibrary = (b: MakeLibraryBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/library`, "POST", b, workspace);
 const addStorageFolder = (b: AddFolderBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b, workspace);
-const moveStorageFolder = (id: string, workspace: string | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspace } satisfies MoveFolderBody);
+const moveStorageFolder = (id: string, workspaces: string[] | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspaces } satisfies MoveFolderBody);
 const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
@@ -177,8 +177,8 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
 }
 
 const roleLabel = (role: SourceRole) => STORAGE_ROLES.find((r) => r.value === role)?.label ?? role;
-/** A folder's workspace as its tag and its menu name it: none for one every workspace uses. */
-const workspaceOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspace ?? null));
+/** The workspaces a folder is in, as its tag and its Workspaces name them: null for one every workspace uses. */
+const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
  * Where finished videos, footage and music are kept: Finished videos is one folder per workspace, footage and music any
@@ -348,7 +348,7 @@ function SourceRows({ role, storage, devices, serverDisks, w, onChanged }: {
 
 /**
  * One footage or music folder: its name, the computer it is on and its full path, its workspace while every workspace
- * is shown, and its menu: Move to another workspace, Use in every workspace, Remove.
+ * is shown, and its menu: Workspaces (any of them, or all), Remove.
  */
 function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: StorageFolder; storage: StorageView; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
   // the Library's own Footage and Music come with the Finished videos folder: they are not moved or removed here
@@ -356,14 +356,16 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
   // the folder's workspace keeps copies on the server: asked per folder when every workspace is listed
   const copies = storage.copied ? storage.copied.includes(f.id.split(":")[0]!) : storage.copies;
   const tagged = !!w?.all;
+  const [picking, setPicking] = useState(false);
   return (
+    <>
     <ListRow
       title={f.name}
       subtitle={<span title={f.origin.path}>{whereOf(f, devices)}</span>}
       status={
         tagged || f.error || devices.length > 1 ? (
           <span className="flex flex-col gap-0.5">
-            {tagged && <WorkspaceTag id={workspaceOf(f)} />}
+            {tagged && <WorkspaceTag id={workspacesOf(f)} />}
             {f.error && <Status tone="broken">{f.error}</Status>}
             <FolderReach folder={f} devices={devices} copies={copies} />
           </span>
@@ -374,7 +376,7 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
           <RowMenu
             label={`Actions for ${f.name}`}
             items={[
-              ...(w ? moveItems(w.workspaces, workspaceOf(f), (to) => moveStorageFolder(f.id, to).then(onChanged)) : []),
+              ...(w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
               {
                 label: "Remove",
                 destructive: true,
@@ -386,6 +388,16 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
         ) : undefined
       }
     />
+    {picking && w && (
+      <WorkspacesDialog
+        title={`Workspaces that use ${f.name}`}
+        workspaces={w.workspaces}
+        on={workspacesOf(f)}
+        save={(to) => moveStorageFolder(f.id, to).then(onChanged, (e: Error) => (saveFailed(e.message), Promise.reject(e)))}
+        onClose={() => setPicking(false)}
+      />
+    )}
+    </>
   );
 }
 
