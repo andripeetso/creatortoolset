@@ -174,6 +174,35 @@ describe("picture vectors made on the person's own computers", () => {
     expect((await pictureHits("lib_t", "red", "tiny")).hits!.map((h) => `${h.asset.id}@${h.seconds}`)).toEqual(["long@0"]);
   });
 
+  it("only the uploader's own computers make a clip's vectors, and a library whose owner switched it off gets none", async () => {
+    await clip("theirs", { colour: "blue" });
+    db().prepare("UPDATE asset_versions SET created_by = 'someone' WHERE id = 'v-theirs'").run();
+    expect(await claim()).toBeUndefined();
+    db().prepare("UPDATE asset_versions SET created_by = 'tiny' WHERE id = 'v-theirs'").run();
+    db().prepare(`UPDATE libraries SET settings = '{"pictures":false}' WHERE id = 'lib_t'`).run();
+    try {
+      expect(await claim()).toBeUndefined();
+    } finally {
+      db().prepare("UPDATE libraries SET settings = '{}' WHERE id = 'lib_t'").run();
+    }
+    const p = (await claim())!;
+    expect(p.versionId).toBe("v-theirs");
+    expect(await (await call(`pictures/${p.id}/fail`, { method: "POST", body: "{}" })).json()).toEqual({ ok: true });
+  });
+
+  it("a computer its person set to Off in Load balancing takes no picture work", async () => {
+    await clip("off", { colour: "red" });
+    mkdirSync(path.join(dir, "balance"), { recursive: true });
+    writeFileSync(path.join(dir, "balance", "tiny.json"), JSON.stringify({ on: true, weights: { [pc.device.id]: 0 } }));
+    try {
+      expect(await claim()).toBeUndefined();
+      expect(await workWaits(deviceOf(pc.device.id)!)).toBe(false);
+    } finally {
+      rmSync(path.join(dir, "balance", "tiny.json"));
+    }
+    expect((await claim())?.versionId).toBe("v-off");
+  });
+
   it("a file kept on another Mac is not handed to this one", async () => {
     await clip("other", { colour: "red" });
     db().prepare("UPDATE asset_versions SET source_key = 'mac:other', mac_device = 'dev_elsewhere' WHERE id = 'v-other'").run();

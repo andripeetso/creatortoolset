@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import type { Device } from "../../contracts/providers";
 import { WORK_MIN, WORK_V, type PictureInput, type PicturePackage, type PictureResult } from "../../contracts/work";
 import { PICTURE_DIM, PICTURE_MODEL, picturesHere } from "../lib/device-picture";
+import { offOf } from "../lib/balance";
 import { deviceForToken, touchDevice } from "../lib/devices";
 import { libraryChanged } from "../library/access";
 import { blobs, libraryDb } from "../library/db";
@@ -24,8 +25,8 @@ const LEASE_MS = 5 * 60_000;
 /** A clip whose vectors failed, or whose account may not read it, is not handed out again for this long. */
 const RETRY_MS = 60 * 60_000;
 
-/** A computer whose worker runs the picture model. */
-const takesPictures = (d: Pick<Device, "work">): boolean => !!d.work?.pictures && d.work.v >= WORK_MIN;
+/** A computer whose worker runs the picture model, and that its person did not set to Off in Load balancing. */
+const takesPictures = (d: Device): boolean => !!d.work?.pictures && d.work.v >= WORK_MIN && !offOf(d.owner).has(d.id);
 
 type Hold = { device: string; versionId: string; libraryId: string; assetId: string; owner: string; card: boolean; sheets: PicturePackage["sheets"]; shots: string; until: number };
 // ponytail: in memory, as library-package.ts holders; a restart hands the clips out again

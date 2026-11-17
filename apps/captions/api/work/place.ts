@@ -8,14 +8,13 @@
  * only where its video work is on for the edit's workspace: after the asker's computers (none online can take it), or
  * first where the person set it to Prefer; set to Off, or switched off, never, and the step waits with its line.
  */
-import { readFileSync } from "node:fs";
-import type { Balance, Device } from "../../contracts/providers";
+import type { Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
 import { WORK_MIN, type WorkBeat } from "../../contracts/work";
 import { coreKinds, placeOf, type StepContext } from "../editor/engine";
 import { computers, editOf, either, fileFor, foldersOf, jobFiles, ONLINE_MS, rankOf, type FileRow } from "../editor/reach";
 import { readEdit, readStep } from "../editor/store";
-import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
+import { mayClaim, offOf, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
@@ -44,19 +43,6 @@ const variantOf = (job: Pick<JobRow, "version_id">) => {
   const vid = job.version_id ?? "";
   return vid.slice(vid.indexOf(":") + 1);
 };
-
-/**
- * The owner's computers set to Off in Load balancing (lib/balance.ts, weight 0 while it is on): they take no step, so
- * none of them counts as the one that could, and the step goes to another computer (or, in phase 4, the server).
- */
-function offOf(owner: string): Set<string> {
-  try {
-    const b = JSON.parse(readFileSync(balanceFile(owner), "utf8")) as Partial<Balance>;
-    return b.on === false ? new Set() : new Set(Object.entries(b.weights ?? {}).flatMap(([id, w]) => (w === 0 ? [id] : [])));
-  } catch {
-    return new Set();
-  }
-}
 
 /** How well computer `d` can take `job`: 3 has every file, 2 gets the rest as the server's proxies, 0 never. */
 export function rankFor(d: Device, job: Pick<JobRow, "kind" | "version_id">, rows: FileRow[], folders: StorageFolder[]): number {
