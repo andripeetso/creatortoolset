@@ -34,9 +34,10 @@ async function addFolder(p: string): Promise<string> {
   return folders.find((f) => f.origin.path === p)!.id;
 }
 let scans = 0;
-const list = (folder: string, files: File[], state = "ok") =>
-  app.request("/api/devices/relay/report", { method: "POST", headers: auth, body: JSON.stringify({ reportVersion: 2, folders: [{ id: folder, state, scan: `s${++scans}`, complete: true, files }] }) })
-    .then((r: Response) => r.json() as Promise<{ index: { path: string }[] }>);
+async function list(folder: string, files: File[], state = "ok"): Promise<{ index: { path: string }[] }> {
+  const r = await app.request("/api/devices/relay/report", { method: "POST", headers: auth, body: JSON.stringify({ reportVersion: 2, folders: [{ id: folder, state, scan: `s${++scans}`, complete: true, files }] }) });
+  return (await r.json()) as { index: { path: string }[] };
+}
 async function index(folder: string, f: File): Promise<{ library: string; versionId: string }> {
   const r = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: path.basename(f.path), path: f.path, size: f.bytes, quick: f.quick, frames: [] }) });
   return ((await r.json()) as { versions: { library: string; versionId: string }[] }).versions[0]!;
