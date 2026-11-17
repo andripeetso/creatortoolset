@@ -5,6 +5,7 @@
 // Then, with the device token, on POST /api/devices/relay/job/library-look/:id:
 //   { beat: true }                          keeps the job this Mac's while it reads (once a minute)
 //   { signal: { fps, step, cut, lag } }     the picture as numbers → { stretches: [{ seg, a, b }] }, found by the server
+//                                           (+ one, many: each frame's cut odds, where the cut model ran: CutModel.swift)
 //   { sheet: { segs, jpeg, ph } }           each sheet (base64 JPEG) with its stretches' picture hashes
 //   { done: true, format }                  that was all: the server's AI looks at them once, and they are not kept there
 //   or …/fail { error }                     with a reason a person can read
@@ -40,6 +41,8 @@ struct LibraryLookJob {
     var stopped: @Sendable () -> Bool = { false }
     /// the folders the person gave this app (MediaFiles.swift): a file outside them is never read, whatever the server asks
     var granted: [String] = MediaFiles.granted
+    /// the cut model for the picture read (CutModel.swift), nil: the server measures the cuts
+    var cuts: () -> CutModel? = { CutModel.shared() }
 
     /// What this Mac keeps of a version: the stretches its sheets show, and the sheets.
     struct Kept: Codable, Equatable {
@@ -83,7 +86,7 @@ struct LibraryLookJob {
                 let reading = stretches.isEmpty
                 let opened = try waitAsync { try await LookPicture.open(src, reading: reading) }
                 if reading {
-                    let signal = try LookPicture.read(opened, beat: beat.check)
+                    let signal = try LookPicture.read(opened, cuts: cuts(), beat: beat.check)
                     stretches = Self.found(try send(base, ["signal": signal.body], timeout: 300).data)
                     guard !stretches.isEmpty else { throw LibraryLookRefused(why: "The server found no stretches in the picture.") }
                 }

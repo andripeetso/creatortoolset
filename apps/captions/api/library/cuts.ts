@@ -7,8 +7,10 @@ import { modelBytes } from "../editor/eyeline";
  * decode as look.ts readPicture. Measured on 2026-11-16 (docs: TransNetV2 on a graphics card): on labelled clips it finds
  * 90% of real hard cuts where cutsOf finds 53%, and on game footage none of cutsOf's false cuts (muzzle flashes, fast
  * turns, menus). On an RTX 4080 Super it costs 0.2 min per hour of footage and 0.6 GB of the card; on a processor 8-60
- * min, so everywhere else cutsOf stays. On a Mac it is never used: onnxruntime's CoreML provider runs under half the net
- * and stops the process on the Mac's GPU (a native CoreML build would run it at 0.6 min an hour; not shipped).
+ * min, so everywhere else cutsOf stays. A Mac server never runs it here: onnxruntime's CoreML provider runs under half the
+ * net and stops the process on the Mac's GPU. The Mac app runs its own Core ML conversion on the Mac's GPU (0.56 min an
+ * hour; CutModel.swift) for the files it reads and sends each frame's odds (stretches.ts takeSignal), found here into
+ * cuts by cutsFromModel as the server's own.
  * Which way a file's cuts were found is kept with its stretches (asset_versions.cuts_by); a file is read again only
  * when someone asks for its shots again.
  */

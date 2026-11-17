@@ -85,7 +85,7 @@ export const FOLDER_LIST_KIND = "folder-list";
  * on, of the account that added it, one at a time. The claim's options: `path` (on that Mac), `version`, `duration`
  * (seconds), `format` (the sheets', shots.ts SHEET_FORMAT) and `stretches` (JSON [[a, b], …]; "[]": read the picture).
  *   POST job/library-look/:id   { beat: true }                     → {}   keeps the job the Mac's (its lease, 5 min)
- *   POST job/library-look/:id   { signal: PictureSignal }          → { stretches: [{ seg, a, b }] }, found here
+ *   POST job/library-look/:id   { signal: PictureSignal }          → { stretches: [{ seg, a, b }] }, found here (cuts from its odds when sent)
  *   POST job/library-look/:id   { sheet: { segs, jpeg, ph } }      → {}   one sheet: base64 JPEG, its stretches' picture hashes
  *   POST job/library-look/:id   { done: true, format }             → DeviceEnded: the look lane asks the AI from them once
  *   POST job/library-look/:id/fail   { error } → DeviceEnded

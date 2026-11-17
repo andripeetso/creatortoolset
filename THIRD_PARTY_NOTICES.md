@@ -160,6 +160,12 @@ copy each one's licence next to the files they install.
   converted for Core ML by FluidInference (https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml and
   `-v2-coreml`, CC-BY-4.0). Not in the app: dictation downloads the one chosen into
   `~/Library/Application Support/Creator Toolset/dictation/models/parakeet`.
+- The Media Library's cut model (`Sources/CreatorToolsetMac/CutModel.swift`): TransNetV2 by Tomáš Souček and Jakub
+  Lokoč (github.com/soCzech/TransNetV2), MIT, Copyright (c) 2020 Tomáš Souček, converted for Core ML by
+  `apps/mac/scripts/transnetv2-coreml.py` from the MIT weights the server uses. Not in the app: on a Mac with Apple
+  silicon, the first picture read of a file kept on the Mac downloads it (14 MB, from the release
+  `transnetv2-coreml-1` of the repository the app updates from, SHA-256 pinned in that file) into
+  `~/Library/Application Support/Creator Toolset/models/transnetv2-coreml-1`.
 - The server inside the app (`apps/mac/scripts/build-app.sh` puts it in `Contents/Resources/server`):
   - Node.js 22 for macOS arm64 (the official build from nodejs.org, version and SHA-256 in the script): MIT,
     with the licences of the libraries it includes in `NODE-LICENSE` next to it.

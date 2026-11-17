@@ -26,6 +26,8 @@ enum LookPicture {
         private let back: Int
         private var ring: [[UInt8]] = []
         private var spreadBefore = 0.0
+        /// the cut model's odds of each frame (CutModel.swift), when it read them
+        var odds: (one: [Double], many: [Double])?
 
         init(fps: Double) {
             self.fps = fps
@@ -61,7 +63,9 @@ enum LookPicture {
         /// The body the server takes, each number to six places.
         var body: [String: Any] {
             func r6(_ xs: [Double]) -> [Double] { xs.map { ($0 * 1e6).rounded() / 1e6 } }
-            return ["fps": fps, "step": r6(step), "cut": r6(cut), "lag": r6(lag)]
+            var body: [String: Any] = ["fps": fps, "step": r6(step), "cut": r6(cut), "lag": r6(lag)]
+            if let odds, odds.one.count == step.count { body["one"] = r6(odds.one); body["many"] = r6(odds.many) }
+            return body
         }
     }
 
@@ -96,28 +100,40 @@ enum LookPicture {
     }
 
     /// Every frame of `o` at its rate, picked the way ffmpeg's fps filter picks them (each tick gets the newest frame
-    /// whose time rounds to it or before; the last stays until the video's end), as a Signal. `beat` runs between
-    /// frames and stops the read by throwing.
-    static func read(_ o: Opened, beat: () throws -> Void) throws -> Signal {
+    /// whose time rounds to it or before; the last stays until the video's end), as a Signal. With `cuts`, each frame
+    /// also goes through the cut model (its odds in the Signal); when the model fails on a file, the read goes on
+    /// without it. `beat` runs between frames and stops the read by throwing.
+    static func read(_ o: Opened, cuts: CutModel? = nil, beat: () throws -> Void) throws -> Signal {
         guard let reader = o.reader else { throw MediaError.unreadable }
         defer { reader.cancel() }
         var signal = Signal(fps: o.fps)
+        var windows = cuts.map { CutModel.Windows(odds: $0.odds) }
+        func add(_ f: (grey: [UInt8], tiny: [UInt8]?)) {
+            signal.add(f.grey)
+            guard let tiny = f.tiny else { return }
+            do { try windows?.push(tiny) } catch { drop(error) }
+        }
+        func drop(_ error: Error) {
+            if windows != nil { AppLog.write("cut model: failed on this file, the server measures its cuts: \(error.localizedDescription)") }
+            windows = nil
+        }
         var tick: Int?
-        var held: [UInt8]?
+        var held: (grey: [UInt8], tiny: [UInt8]?)?
         while let frame = try reader.next() {
             try beat()
             let at = Int((frame.time * o.fps).rounded())
             if let h = held, var t = tick {
-                while t < at { signal.add(h); t += 1 }
+                while t < at { add(h); t += 1 }
                 tick = t
             }
             if tick == nil { tick = at }
-            held = grey(frame.buffer, k: o.k)
+            held = (grey(frame.buffer, k: o.k), windows == nil ? nil : CutModel.frame(frame.buffer))
         }
         if let held, var t = tick {
             let last = max(Int((o.end * o.fps).rounded()), signal.step.isEmpty ? t + 1 : t)
-            while t < last { signal.add(held); t += 1 }
+            while t < last { add(held); t += 1 }
         }
+        do { signal.odds = try windows?.end() } catch { drop(error) }
         return signal
     }
 

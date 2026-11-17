@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { STRETCH_TEXT_MAX, type LookLevel, type PictureSignal, type Stretch } from "../../contracts/library";
+import { CUTS_BY_MODEL, cutsFromModel } from "./cuts";
 import { shotsOf } from "./look";
 
 /**
@@ -147,7 +148,8 @@ export function indexStretches(db: DatabaseSync, versionId: string): void {
 
 /** The most frames a picture read elsewhere may send (six hours at 30 a second). */
 export const MAX_SIGNAL_FRAMES = 6 * 3600 * 30;
-const nums = (x: unknown, n: number) => Array.isArray(x) && x.length === n && x.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+const nums = (x: unknown, n: number, max = Infinity) =>
+  Array.isArray(x) && x.length === n && x.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= max);
 
 /** A picture as numbers, checked (contracts PictureSignal): the same count of each, finite and not negative. */
 export function parseSignal(body: unknown): PictureSignal | string {
@@ -157,17 +159,21 @@ export function parseSignal(body: unknown): PictureSignal | string {
   const n = Array.isArray(b.step) ? b.step.length : -1;
   if (n < 1 || n > MAX_SIGNAL_FRAMES) return `step must hold 1 to ${MAX_SIGNAL_FRAMES} frames`;
   if (!nums(b.step, n) || !nums(b.cut, n) || !nums(b.lag, n)) return "step, cut and lag must be as long as each other, of numbers 0 or more";
-  return { fps, step: b.step as number[], cut: b.cut as number[], lag: b.lag as number[] };
+  const odds = b.one !== undefined || b.many !== undefined;
+  if (odds && (!nums(b.one, n, 1) || !nums(b.many, n, 1))) return "one and many must both be as long as step, of numbers 0 to 1";
+  return { fps, step: b.step as number[], cut: b.cut as number[], lag: b.lag as number[], ...(odds ? { one: b.one as number[], many: b.many as number[] } : {}) };
 }
 
 /**
  * A picture read on another computer (the studio's worker, a Mac with the file): its stretches found as the server finds
  * its own (look.ts shotsOf, D4) at the library's level and stored with no line yet (storeStretches), answered in order.
+ * Where that computer ran the cut model, its cuts are found from the model's odds as for the server's own read.
  */
 export function takeSignal(db: DatabaseSync, versionId: string, duration: number, x: PictureSignal, level: LookLevel = "standard"): { seg: number; a: number; b: number; motion: number }[] {
-  const read = { fps: x.fps, step: Float32Array.from(x.step), cut: Float32Array.from(x.cut), lag: Float32Array.from(x.lag) };
+  const cuts = x.one && x.many ? cutsFromModel(x.one, x.many, x.fps) : undefined;
+  const read = { fps: x.fps, step: Float32Array.from(x.step), cut: Float32Array.from(x.cut), lag: Float32Array.from(x.lag), ...(cuts ? { cuts } : {}) };
   const found = shotsOf(read, duration || x.step.length / x.fps, level);
-  storeStretches(db, versionId, found, level);
+  storeStretches(db, versionId, found, level, cuts ? CUTS_BY_MODEL : null);
   return found.map((s, seg) => ({ seg, a: s.a, b: s.b, motion: s.motion }));
 }
 
