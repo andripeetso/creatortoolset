@@ -39,7 +39,7 @@ const FIELDS = { name: "name", brief: "brief", script: "script", versions: "vers
 
 export const editorTools: ToolModule = {
   defs: [
-    { name: "editor_stop", description: "Stop an AI Editor edit: its running and waiting steps end as Stopped. editor_retry carries on from there.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
+    { name: "editor_stop", description: "Stop an Editor edit: its running and waiting steps end as Stopped. editor_retry carries on from there.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
     {
       name: "editor_retry",
       description: "Run an edit's failed step again, also one that was stopped or needs setup (job: its id, as editor_get lists them; leave out for every such step). The steps after it follow.",
@@ -48,14 +48,14 @@ export const editorTools: ToolModule = {
     {
       name: "editor_update",
       description:
-        'Change an AI Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or "none") and flags ({id: true or false}; a wrong id is answered with the ones this edit has). Drafts already cut stay as they are until the edit runs again.',
+        'Change an Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or "none") and flags ({id: true or false}; a wrong id is answered with the ones this edit has). Drafts already cut stay as they are until the edit runs again.',
       inputSchema: {
         type: "object",
         properties: { edit, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, flags: { type: "object", additionalProperties: { type: "boolean" } } },
         required: ["edit"],
       },
     },
-    { name: "editor_delete", description: "Move an AI Editor edit to the trash; what still runs is stopped.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
+    { name: "editor_delete", description: "Move an Editor edit to the trash; what still runs is stopped.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
     {
       name: "editor_feedback",
       description:
