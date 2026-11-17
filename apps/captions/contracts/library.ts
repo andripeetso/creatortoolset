@@ -37,7 +37,7 @@ export interface AssetCard {
   roll?: "a" | "b";
   /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
   finished?: true;
-  /** its file is read in place from a folder on a computer (never copied in): Show in Finder can find it there */
+  /** its file is on a computer: read in place from a folder there, or sent from there (Show in Finder can find it) */
   onComputer?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
@@ -56,7 +56,7 @@ export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];
   transcript?: { provider: string; segments: { start: number; end: number; text: string }[] };
   collections: { id: string; name: string }[];
-  /** the file on this computer (read in place, or kept on the Mac app's own server on this Mac): the admin only (search.ts sourcePathFor) */
+  /** the file on this computer (read in place, kept on the Mac app's own server on this Mac, or where it was sent from): the admin only (search.ts sourcePathFor) */
   sourcePath?: string;
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];

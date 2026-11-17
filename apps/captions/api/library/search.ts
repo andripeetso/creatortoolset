@@ -109,18 +109,20 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
  * Where the clip's file is on this computer, for its Copy path and Show in Finder: the admin only. A clip read in place
  * from a footage folder: that file. A clip kept on this server's own disk: the stored copy, only when the server is the
  * Mac app's own on this Mac (CT_LOCAL=1, never hosted), so a path is never given for a disk the viewer can't open.
+ * Else a clip sent from a Mac keeps the place it was sent from (from_path; its upload drops mac_path), which the Mac
+ * app shows only when the file is still there.
  */
 export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined): string | undefined {
   if (user?.role !== "admin") return undefined;
   const v = db()
-    .prepare("SELECT v.source_key, v.source_path, v.mac_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
-    .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; storage_kind: string } | undefined;
+    .prepare("SELECT v.source_key, v.source_path, v.mac_path, v.from_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
+    .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; from_path: string | null; storage_kind: string } | undefined;
   if (!v) return undefined;
   // a file indexed on a Mac: its path there (Show in Finder finds it on that Mac)
   if (v.source_path || v.mac_path) return v.source_path ?? v.mac_path!;
-  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return undefined;
+  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return v.from_path ?? undefined;
   const file = path.join(env.dataDir, "library", "blobs", ...keyParts(v.source_key)); // the local store's layout (storage/local.ts)
-  return existsSync(file) ? file : undefined;
+  return existsSync(file) ? file : (v.from_path ?? undefined);
 }
 
 /** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */

@@ -50,6 +50,9 @@ describe("library asset query", () => {
     const cards = page(db, "lib_a").items as { id: string; onComputer?: true }[];
     expect(cards.map((c) => [c.id, !!c.onComputer])).toEqual([["a2", false], ["a1", true]]);
     expect(JSON.stringify(cards)).not.toContain("/Users/someone"); // never the path itself
+    // sent from a Mac and kept on the server: still on that Mac
+    db.prepare("UPDATE asset_versions SET from_path = '/Users/someone/Desktop/jump.mp4' WHERE id = 'v_a2'").run();
+    expect((page(db, "lib_a").items as { id: string; onComputer?: true }[]).map((c) => [c.id, !!c.onComputer])).toEqual([["a2", true], ["a1", true]]);
   });
 
   it("filters by kind", () => {

@@ -234,6 +234,21 @@ describe("the clip's path on this computer", () => {
     }
   });
 
+  it("a clip sent from a Mac and kept on the server: where it was sent from, after the stored file on this Mac", () => {
+    libraryDb().prepare("UPDATE asset_versions SET from_path = '/Users/tiny/Desktop/jump.mp4' WHERE id = 'ver-ast-roll-0001'").run();
+    try {
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin)).toBe("/Users/tiny/Desktop/jump.mp4"); // a server somewhere else
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", { role: "user" })).toBeUndefined();
+      onMac(true);
+      vi.stubEnv("CT_LOCAL", "1");
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin)).toBe(path.join(dir, "library", "blobs", "libraries", "lib_a", "v", "ver-ast-roll-0001", "source"));
+    } finally {
+      vi.unstubAllEnvs();
+      Object.defineProperty(process, "platform", { value: platform });
+      libraryDb().prepare("UPDATE asset_versions SET from_path = NULL WHERE id = 'ver-ast-roll-0001'").run();
+    }
+  });
+
   it("a clip kept on this server's disk: the stored file, only on the Mac app's own server on a Mac", () => {
     try {
       onMac(true);
