@@ -186,6 +186,11 @@ final class Shell: NSObject, ObservableObject {
                     Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device)) }
                 case .connect(let root)?:
                     Task { done(await Places.shared.connect(root: root)) }
+                case .search(let library)?:
+                    let device = DeviceVault.deviceID(for: self.base.host ?? "")
+                    Task { done(PlacesSearch.shared.start(library: library, site: await self.client(), device: device, pressed: true)) }
+                case .searchState?:
+                    done(PlacesSearch.shared.state)
                 case nil:
                     done(["problem": "Not an ask this app knows."])
                 }

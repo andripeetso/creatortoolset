@@ -2,8 +2,10 @@ import { useState, type ReactNode } from "react";
 import { placeOf, type ImportMode, type LibrarySettings, type LibrarySummary, type LibraryUpload } from "@contracts/library";
 import { CopyTo, folderName } from "@/components/LibraryProcessing";
 import { SettingsSelect } from "@/components/settings/ui";
-import { checkUpload, updateLibrary } from "@/lib/library";
+import { PLACES_MAX } from "@contracts/places";
+import { checkUpload, reportPlaces, updateLibrary, versionPlaces } from "@/lib/library";
 import { indexOnMac } from "@/lib/onMac";
+import { thisMacDevice } from "@/lib/providers";
 import { chooseFolderOnMac, importPrint, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { UPLOAD_LABEL, UPLOAD_OPTIONS } from "./UploadSelect";
 
@@ -83,24 +85,59 @@ async function each<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   }));
 }
 
+type Known = { versionId: string; path: string; quick: string };
+
+/**
+ * Files the library has, found by Look for new files at a path this computer doesn't read them from: each becomes this
+ * computer's way to its clip (api/library/places.ts confirmPlaces; a file moved on its share moves for everybody). One
+ * this computer reads at a path seen in the same look is a second copy, and stays as it is. How many reconnected.
+ */
+export async function reconnectKnown(libraryId: string, known: Known[], seen: Set<string>): Promise<number> {
+  const device = thisMacDevice();
+  if (!device || !known.length) return 0;
+  const ids = [...new Set(known.map((k) => k.versionId))];
+  const tries: Record<string, string[]> = {};
+  for (let i = 0; i < ids.length; i += PLACES_MAX) {
+    const r = await versionPlaces(libraryId, device, ids.slice(i, i + PLACES_MAX));
+    for (const [id, v] of Object.entries(r.versions)) tries[id] = v.tries.map((t) => t.normalize("NFC"));
+  }
+  const post = new Map<string, Known>();
+  for (const k of known) {
+    const t = tries[k.versionId];
+    // not a clip the caller may see, posted already, or read here already
+    if (!t || post.has(k.versionId) || t.includes(k.path.normalize("NFC")) || t.some((p) => seen.has(p))) continue;
+    post.set(k.versionId, k);
+  }
+  const list = [...post.values()];
+  let n = 0;
+  for (let i = 0; i < list.length; i += PLACES_MAX) n += (await reportPlaces(libraryId, { device, confirmed: list.slice(i, i + PLACES_MAX), gone: [] })).confirmed.length;
+  return n;
+}
+
 /**
  * Look for new files, from the Mac app with the server elsewhere: each place used where it is is read again on this
  * Mac, the files the library has already (by their fingerprint) are left out, and each new one is indexed where it is,
- * read by its address. `onStep` hears how far it is. Resolves to the number added.
+ * read by its address. One the library has at a path this computer doesn't know is reconnected (reconnectKnown). `onStep`
+ * hears how far it is. Resolves to the numbers added and reconnected.
  * ponytail: one check per file found; a batch check on the server when places hold many thousands of files.
  */
-export async function lookForNew(library: LibrarySummary, onStep: (line: string) => void, signal?: AbortSignal): Promise<number> {
+export async function lookForNew(library: LibrarySummary, onStep: (line: string) => void, signal?: AbortSignal): Promise<{ added: number; reconnected: number }> {
   let added = 0;
+  const known: Known[] = [];
+  const seen = new Set<string>();
   for (const place of (library.settings.places ?? []).filter((p) => p.mode === "in-place")) {
     onStep(`Looking in ${folderName(place.path)}`);
     const files = await importScan(place.path);
+    for (const f of files) seen.add(f.path.normalize("NFC"));
     const prints: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 500) Object.assign(prints, await importPrint(files.slice(i, i + 500).map((f) => f.path)));
     const fresh: typeof files = [];
     await each(files, 8, async (f) => {
-      if (!prints[f.path]) return;
-      const there = await checkUpload(library.id, f.size, `mac:${prints[f.path]}`).catch(() => ({ duplicateOf: "?" }));
+      const quick = prints[f.path];
+      if (!quick) return;
+      const there = await checkUpload(library.id, f.size, `mac:${quick}`, quick).catch(() => ({ duplicateOf: "?", versionId: undefined }));
       if (!there.duplicateOf) fresh.push(f);
+      else if (there.versionId) known.push({ versionId: there.versionId, path: f.path, quick });
     });
     for (const f of fresh) {
       signal?.throwIfAborted();
@@ -110,8 +147,15 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
       if ("assetId" in r && r.assetId) added++;
     }
   }
-  return added;
+  signal?.throwIfAborted();
+  const reconnected = await reconnectKnown(library.id, known, seen).catch(() => 0);
+  return { added, reconnected };
 }
+
+/** What Look for new files did, in one line: "Added 3 · reconnected 12", or "No new files". */
+export const lookedLine = (added: number, reconnected: number) =>
+  [added ? `Added ${added.toLocaleString()}` : "", reconnected ? `${added ? "reconnected" : "Reconnected"} ${reconnected.toLocaleString()}` : ""].filter(Boolean).join(" · ") ||
+  "No new files";
 
 /** The two ways in, as words. */
 export const IMPORT_MODES: { value: ImportMode; label: string; detail: string }[] = [

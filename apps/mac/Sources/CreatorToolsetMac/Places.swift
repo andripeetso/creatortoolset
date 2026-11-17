@@ -22,7 +22,8 @@ import Network
 //   it, outside sleep) is not connected again until they connect it themselves.
 // - The page's asks (Shell.swift → `answerCheck`, `connect`): `places:check:{library, versions}` and
 //   `places:connect:{root}`. The paths to try come from the window's server, never from the page.
-// - Find missing files (`places:search…`, the plan's 5.5) is not here yet: it starts from the `gone` answers below.
+// - Find missing files (`places:search:{library}`, `places:search:state`) is PlacesSearch.swift: a check that finds files
+//   gone starts it 30 s later.
 
 // MARK: roots and paths, the same as contracts/places.ts (PlacesTests.swift has its test rows)
 
@@ -181,7 +182,9 @@ private struct PlacesList: Decodable { let versions: [String: VersionPlaces] }
 enum PlacesAsk: Equatable {
     case check(library: String, versions: [String])
     case connect(root: String)
-    // places:search:{library} and places:search:state (Find missing files) go here
+    /// Find missing files (PlacesSearch.swift): start one, and how far it is
+    case search(library: String)
+    case searchState
 }
 
 /// The most versions in one ask (contracts/places.ts PLACES_MAX).
@@ -200,6 +203,8 @@ func placesAsk(_ ask: String) -> PlacesAsk? {
         return .check(library: library, versions: versions)
     }
     if let o = json("places:connect:"), let root = o["root"] as? String, Places.shareParts(root) != nil { return .connect(root: root) }
+    if ask == "places:search:state" { return .searchState }
+    if let o = json("places:search:"), let library = o["library"] as? String, isID(library) { return .search(library: library) }
     return nil
 }
 
@@ -482,7 +487,10 @@ final class Places: @unchecked Sendable {
             lock.unlock()
         }
         guard !confirmed.isEmpty || !gone.isEmpty else { return }
-        Task { try? await site.post("/api/library/\(library)/places", ["device": device, "confirmed": confirmed, "gone": gone]) }
+        Task {
+            try? await site.post("/api/library/\(library)/places", ["device": device, "confirmed": confirmed, "gone": gone])
+            if !gone.isEmpty { PlacesSearch.shared.soon(library: library, site: site, device: device) }
+        }
     }
 
     // MARK: shares this Mac had, connected again
@@ -669,7 +677,8 @@ final class Places: @unchecked Sendable {
         DispatchQueue.main.async { self.onChange?() }
     }
 
-    private func dropAnswers() {
+    /// The check answers kept are stale (a disk changed, or Find missing files found some).
+    func dropAnswers() {
         lock.lock()
         kept = [:]
         lock.unlock()

@@ -10,6 +10,7 @@ import { libraryChanged, mayAdd } from "./access";
 import { blobs, libraryDb } from "./db";
 import { confirmPlaces } from "./places";
 import { readerOf } from "./reader";
+import { assetRef, canSee } from "./sources";
 
 /**
  * Each version's quick fingerprint (asset_versions.quick: size + first and last MiB, work/files.ts quickPrint), and
@@ -61,18 +62,22 @@ export async function backfillQuick(): Promise<boolean> {
 }
 
 /**
- * The caller's versions in `libraryId` that Locate may reconnect: the asked one, gone ones on this server's disk
- * (state missing), and ones indexed on this Mac or on no known Mac (a Mac's file elsewhere is that Mac's). Each with a
- * fingerprint, its path where the library has it, and its size.
+ * The versions in `libraryId` that Locate may reconnect: the asked one, gone ones on this server's disk (state missing),
+ * ones `device` (the caller's own computer) last found gone, and ones indexed on that computer or on no known one (a
+ * computer's file elsewhere is that computer's). The caller's own, and any other with a place on that computer (the
+ * route keeps the ones the caller may see). Each with a fingerprint, its path there (else where the library has it), and
+ * its size.
  */
 export function locatable(libraryId: string, by: string, o: { versionId?: string; device?: string; only?: boolean }) {
   return libraryDb()
     .prepare(
-      `SELECT v.id, COALESCE(v.mac_path, v.source_path) AS path, v.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND v.created_by = ? AND a.trashed_at IS NULL AND v.quick != '' AND COALESCE(v.mac_path, v.source_path) IS NOT NULL
-         AND (v.id = ? OR (? = 0 AND (v.state = 'missing' OR (v.mac_path IS NOT NULL AND (v.mac_device IS NULL OR v.mac_device = ?)))))`,
+      `SELECT v.id, v.asset_id, v.created_by, COALESCE(p.path, v.mac_path, v.source_path) AS path, v.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         LEFT JOIN version_places p ON p.version_id = v.id AND p.device = ?
+       WHERE a.library_id = ? AND (v.created_by = ? OR p.path IS NOT NULL) AND a.trashed_at IS NULL AND v.quick != ''
+         AND COALESCE(p.path, v.mac_path, v.source_path) IS NOT NULL
+         AND (v.id = ? OR (? = 0 AND (v.state = 'missing' OR p.gone_at IS NOT NULL OR (v.mac_path IS NOT NULL AND (v.mac_device IS NULL OR v.mac_device = ?)))))`,
     )
-    .all(libraryId, by, o.versionId ?? "", o.only ? 1 : 0, o.device ?? "") as { id: string; path: string; bytes: number }[];
+    .all(o.device ?? "", libraryId, by, o.versionId ?? "", o.only ? 1 : 0, o.device ?? "") as { id: string; asset_id: string; created_by: string; path: string; bytes: number }[];
 }
 
 /**
@@ -156,14 +161,20 @@ export function parseLocate(body: unknown): { asked: string; gone: string[]; fil
 
 /**
  * GET /api/library/:id/locate?versionId&device[&only=1] → { files: [{ id, path, bytes }] }: what the Mac checks
- * (locatable; only=1: the asked clip alone, to tell whether its file is gone).
+ * (locatable; only=1: the asked clip alone, to tell whether its file is gone). `device` counts only when it is the caller's.
  */
 locateApp.get("/:id/locate", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const q = c.req.query();
-  return c.json({ files: locatable(libraryId, user.username, { versionId: q.versionId, device: q.device, only: q.only === "1" }) });
+  const device = q.device && deviceOf(q.device)?.owner === user.username ? q.device : undefined;
+  const viewer = await readerOf(user.username, libraryId);
+  const files: { id: string; path: string; bytes: number }[] = [];
+  for (const r of locatable(libraryId, user.username, { versionId: q.versionId, device, only: q.only === "1" })) {
+    if (r.created_by === user.username || (viewer && (await canSee(viewer, assetRef(libraryId, r.asset_id, r.id))))) files.push({ id: r.id, path: r.path, bytes: r.bytes });
+  }
+  return c.json({ files });
 });
 
 /** POST /api/library/:id/locate { versionId, gone, files, device } → { reconnected }. */

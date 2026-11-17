@@ -15,7 +15,7 @@ import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
-import { addFrom, copyAvailable, copyRoot, lookForNew } from "./Import";
+import { addFrom, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
@@ -143,8 +143,8 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
         if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Could not look for new files (${r.status})`);
         setLine("Looking for new files…");
       } else {
-        const n = await lookForNew(library, setLine);
-        setLine(n ? `${n.toLocaleString()} new ${n === 1 ? "file" : "files"} added` : "No new files");
+        const { added, reconnected } = await lookForNew(library, setLine);
+        setLine(lookedLine(added, reconnected));
       }
     } catch (e) {
       setLine(null);

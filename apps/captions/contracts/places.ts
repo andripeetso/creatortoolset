@@ -7,7 +7,7 @@
  * disk) is that computer's place. The server lists the paths to try on a computer (best first); the computer that reads
  * the disk says what is there.
  *
- * The Mac app: `<html data-mac-places="1">` when it answers the places asks below, and
+ * The Mac app: `<html data-mac-places="1">` when it answers the places asks below ("2": Find missing files too), and
  * `window.dispatchEvent(new CustomEvent("mac-places", { detail: { at } }))` whenever a disk is connected, goes away or
  * comes back (every answer cached before it is stale).
  */
@@ -125,7 +125,8 @@ export interface PlacesReportAnswer {
   refused: string[];
 }
 
-/** GET /api/library/:lib/places/gone?device=<computer id>: what that computer last found gone and can search for. */
+/** GET /api/library/:lib/places/gone?device=<computer id>[&away=1]: what that computer last found gone and can search for;
+ *  `away=1` also the versions whose root isn't connected there. */
 export interface GoneVersion {
   versionId: string;
   bytes: number;
@@ -134,7 +135,7 @@ export interface GoneVersion {
   /** the root key and root path it was at; null when not known */
   root: string | null;
   rootRel: string | null;
-  /** where that computer last looked */
+  /** where that computer last looked; "" when it never had a path for it */
   path: string;
   /** the file's name */
   name: string;
@@ -200,6 +201,8 @@ export interface PlacesSearchAsk {
   library: string;
 }
 export interface PlacesSearchState {
+  /** the library of the last search ("" before the first) */
+  library: string;
   running: boolean;
   /** entries listed so far */
   looked: number;

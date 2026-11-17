@@ -92,7 +92,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
     ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
     ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
     ...(p.place && /^[A-Z]{2}$/.test(p.place) ? { place: p.place } : {}),
-    ...(device ? { device, ...(p.here === "1" ? { here: true as const } : {}) } : {}),
+    ...(device ? { device, ...(p.here === "1" ? { here: true as const } : {}), ...(p.missing === "1" ? { missing: true as const } : {}) } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
@@ -167,10 +167,14 @@ const placedParams = (device: string) => [device, JSON.stringify(rootsOn(device)
 /** On this computer: its proxy in the computer's cache, or its original there (placedOn). */
 const HERE = `(a.current_version_id IN (SELECT value FROM json_each(?)) OR ${placedOn("a.current_version_id")})`;
 
+/** Missing here: the computer's last look found the current version gone (places.ts); one whose disk is away is not. */
+const MISSING = "a.current_version_id IN (SELECT version_id FROM version_places WHERE device = ? AND gone_at IS NOT NULL)";
+
 /** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
 export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
   return [
     ...(query.here && query.device ? [{ sql: HERE, params: [JSON.stringify(cachedOn(query.device)), ...placedParams(query.device)] }] : []),
+    ...(query.missing && query.device ? [{ sql: MISSING, params: [query.device] }] : []),
     ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
     ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
     ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
