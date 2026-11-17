@@ -532,4 +532,8 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE stretches ADD COLUMN quality REAL;
   ALTER TABLE stretches ADD COLUMN flaws TEXT;
   `,
+  // 32: what found the cuts between a version's stretches (storeStretches): cuts.ts CUTS_BY_MODEL where a graphics card
+  // ran the cut model, NULL where look.ts cutsOf measured them. A library can hold both; a version is read again only
+  // when its shots are asked for again
+  `ALTER TABLE asset_versions ADD COLUMN cuts_by TEXT;`,
 ];

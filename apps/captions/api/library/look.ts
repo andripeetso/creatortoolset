@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import type { IndexShot } from "../../contracts/edit-plan";
 import { LOOK_LEVELS, STRETCH_TAGS, STRETCH_TEXT_MAX, type LookLevel } from "../../contracts/library";
+import type { InferenceSession } from "onnxruntime-node";
 import { ffmpegCommand } from "../ffmpeg-runtime";
+import { cutModel, cutsFromModel, modelWindows, TH, TW } from "./cuts";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { ffmpegSlot, ffmpegTo } from "./media/run";
 
@@ -77,6 +79,8 @@ export interface PictureRead {
   hi?: Float32Array;
   shift?: Float32Array;
   blur?: Float32Array;
+  /** the frames where a new shot starts, when the cut model found them (cuts.ts); else cutsOf finds them */
+  cuts?: number[];
 }
 
 /** Which CX×CY cells of a FW×FH grey frame are flat (their 4×4 pixels spread under 3 grey levels): 1 = flat. */
@@ -144,25 +148,47 @@ export const junkOf = ({ luma, detail, panels, tint = 0 }: { luma: number; detai
 
 /**
  * Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before; from
- * the same decode, each frame SW×SH grey for its move (shiftOf) and SHARP_FPS frames a second SHARP_W across for blur.
+ * the same decode, each frame SW×SH grey for its move (shiftOf) and SHARP_FPS frames a second SHARP_W across for blur;
+ * where this computer's graphics card runs the cut model (cuts.ts), each frame TW×TH for it too.
  */
 export async function readPicture(src: string, fps: number, signal?: AbortSignal): Promise<PictureRead> {
   const rate = fps > 0 ? Math.min(fps, MAX_READ_FPS) : 25;
   const L = Math.max(1, Math.round(LAG_S * rate));
   const size = FW * FH;
+  const model = await cutModel();
+  try {
+    return await readFrames(src, rate, L, size, model, signal);
+  } finally {
+    await model?.release();
+  }
+}
+
+function readFrames(src: string, rate: number, L: number, size: number, model: InferenceSession | null, signal?: AbortSignal): Promise<PictureRead> {
   return ffmpegSlot(
     () =>
       new Promise((resolve, reject) => {
         const sharp = `scale='if(gte(iw,ih),${SHARP_W},-2)':'if(gte(iw,ih),-2,${SHARP_W})':flags=area,format=gray`;
+        const toModel = model ? `;[d]scale=${TW}:${TH},format=rgb24[o4]` : "";
         const p = spawn(
           ffmpegCommand(),
           [
             ...["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn"],
-            ...["-filter_complex", `[0:v]fps=${rate},split=3[a][b][c];[a]scale=${FW}:${FH}:flags=area,format=rgb24[o1];[b]scale=${SW}:${SH}:flags=area,format=gray[o2];[c]fps=${SHARP_FPS},${sharp}[o3]`],
+            ...["-filter_complex", `[0:v]fps=${rate},split=${model ? 4 : 3}[a][b][c]${model ? "[d]" : ""};[a]scale=${FW}:${FH}:flags=area,format=rgb24[o1];[b]scale=${SW}:${SH}:flags=area,format=gray[o2];[c]fps=${SHARP_FPS},${sharp}[o3]${toModel}`],
             ...["-map", "[o1]", "-f", "rawvideo", "pipe:1", "-map", "[o2]", "-f", "rawvideo", "pipe:3", "-map", "[o3]", "-c:v", "pgm", "-f", "image2pipe", "pipe:4"],
+            ...(model ? ["-map", "[o4]", "-f", "rawvideo", "pipe:5"] : []),
           ],
-          { signal, stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"] },
+          { signal, stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", ...(model ? (["pipe"] as const) : [])] },
         );
+        // the cut model's frames, run as they come (a window each 50 frames)
+        const windows = model ? modelWindows(model) : null;
+        let tiny: Buffer = Buffer.alloc(0);
+        if (windows)
+          ((p.stdio as readonly unknown[])[5] as NodeJS.ReadableStream).on("data", (d: Buffer) => {
+            tiny = tiny.length ? Buffer.concat([tiny, d]) : d;
+            const F = TW * TH * 3;
+            for (; tiny.length >= F; tiny = tiny.subarray(F)) windows.push(Buffer.from(tiny.subarray(0, F)));
+            tiny = Buffer.from(tiny);
+          });
         // the move and the blur, read as they come
         const hi: number[] = [];
         const shift: number[] = [];
@@ -246,11 +272,18 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
         });
         p.stderr!.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
         p.on("error", reject);
-        p.on("close", (code) => {
+        p.on("close", async (code) => {
+          // the model's cuts, or cutsOf's when it failed on this file (the card's memory taken by another program);
+          // awaited also when ffmpeg failed, so the model is never released mid-run
+          const cuts = await windows
+            ?.end()
+            .then(({ one, many }) => (one.length === step.length ? cutsFromModel(one, many, rate) : undefined))
+            .catch((e: unknown) => void console.warn("[library] cut model:", e instanceof Error ? e.message : e));
           if (code !== 0) return reject(new Error(err.trim() || `ffmpeg exited ${code}`));
           const all = new Uint8Array(maps.length * CX * CY);
           maps.forEach((m, i) => all.set(m, i * CX * CY));
           resolve({
+            ...(cuts ? { cuts } : {}),
             fps: rate,
             step: Float32Array.from(step),
             cut: Float32Array.from(cut),
@@ -427,7 +460,7 @@ export function splitLong(a: number, b: number, read: PictureRead, level: LookLe
 export function shotsOf(read: PictureRead, dur: number, level: LookLevel = "standard"): IndexShot[] {
   const n = read.step.length;
   if (!n) return dur > 0 ? [{ a: 0, b: dur, motion: 0 }] : [];
-  const edges = [0, ...cutsOf(read), n];
+  const edges = [0, ...(read.cuts ?? cutsOf(read)), n];
   const all: number[] = [0];
   for (let k = 1; k < edges.length; k++) all.push(...splitLong(edges[k - 1]!, edges[k]!, read, level), edges[k]!);
   const per: number[] = [];

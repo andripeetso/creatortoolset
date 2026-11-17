@@ -96,6 +96,11 @@ copy each one's licence next to the files they install.
   downloads the YuNet face detector `face_detection_yunet_2023mar.onnx` (232 KB) from the OpenCV Zoo copy on Hugging
   Face (`opencv/face_detection_yunet`, revision and SHA-256 pinned in that file) into the app's data folder
   (`models/opencv/face_detection_yunet/`). MIT, Copyright (c) 2020 Shiqi Yu (the `LICENSE` in that repository).
+- The Media Library's cut model (`apps/captions/api/library/cuts.ts`): on a Linux computer with an NVIDIA graphics
+  card, the first read of a video downloads TransNetV2 `transnetv2.onnx` (31 MB, an ONNX export of the original
+  weights) from Hugging Face (`elya5/transnetv2`, revision and SHA-256 pinned in that file) into the app's data folder
+  (`models/elya5/transnetv2/`). TransNetV2 by Tomáš Souček and Jakub Lokoč, MIT, Copyright (c) 2020 Tomáš Souček
+  (github.com/soCzech/TransNetV2); the export is published under MIT.
 
 ## Mac app
 

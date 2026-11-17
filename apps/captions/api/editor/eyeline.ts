@@ -98,14 +98,14 @@ const modelFile = (m: ModelSpec) => {
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 /** A model's bytes: kept with the person's data, fetched once through the server's model route (its mirror fallback). */
-async function modelBytes(m: ModelSpec): Promise<Uint8Array> {
+export async function modelBytes(m: ModelSpec): Promise<Uint8Array> {
   const file = modelFile(m);
   const kept = await readFile(file).catch(() => null);
   if (kept && sha(kept) === m.sha256) return kept;
   const r = await hfApp.request(m.url, { headers: { [OWN_COPY]: "1" } });
-  if (!r.ok) throw new Error(`The face model could not be fetched (${r.status})`);
+  if (!r.ok) throw new Error(`The model ${path.basename(m.url)} could not be fetched (${r.status})`);
   const bytes = new Uint8Array(await r.arrayBuffer());
-  if (sha(bytes) !== m.sha256) throw new Error("The face model's checksum does not match");
+  if (sha(bytes) !== m.sha256) throw new Error(`The model ${path.basename(m.url)}'s checksum does not match`);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(`${file}.part`, bytes);
   await rename(`${file}.part`, file);
