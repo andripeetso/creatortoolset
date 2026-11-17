@@ -26,7 +26,7 @@ import { msg } from "./helpers";
 import { AddProviderDialog } from "./AddProviderDialog";
 import { ProviderDetail } from "./ProviderDetail";
 import { DriverMark, PROVIDER_ROW, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
-import { isLocalCli, LocalAiRows, localInstall, localSignIn, useLocalAi } from "./AiSetup";
+import { isLocalCli, LocalAiRows, localInstall, localInstallProgress, localRemoveProgram, localSignIn, useLocalAi } from "./AiSetup";
 import { LocalModelRow } from "./LocalModelRow";
 import { useMyKeys } from "./MyKeysSection";
 import { InUse } from "./kit-controls";
@@ -34,7 +34,7 @@ import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSe
 import type { SearchRowId } from "./search";
 
 /** The tools the Mac app can start a sign-in for: in Terminal (the Mac's signInCommands), Muse Code's in the browser. */
-const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok", "musecode"];
+const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok", "musecode", "antigravity"];
 /** The "Default" choice of a job (a select's option needs a value; "" is not allowed). */
 const USE_DEFAULT = "use-default";
 
@@ -79,6 +79,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const [checking, setChecking] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
+  /** Antigravity's download so far, in percent, while its Install runs */
+  const [installPct, setInstallPct] = useState<number | null>(null);
   // the report each AI was last tested for (the page tests an AI once per report)
   const tried = useRef(new Map<string, number>());
 
@@ -265,17 +267,30 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   // on an own-computer install the app signs in and installs the tool itself (the local routes)
   const signInHere = (inst: ProviderInstance) => {
     setSigningIn(inst.driver);
-    void localSignIn(inst.driver as CliId).then((r) => !r.ok && saveFailed(r.message ?? "Could not start the sign-in."), (e) => saveFailed(msg(e)));
+    void localSignIn(inst.driver as CliId | "antigravity").then((r) => !r.ok && saveFailed(r.message ?? "Could not start the sign-in."), (e) => saveFailed(msg(e)));
   };
   const installHere = async (inst: ProviderInstance) => {
     setInstalling(inst.id);
+    // Antigravity downloads about 100 MB from Google: the button counts it
+    const poll = inst.driver === "antigravity" ? window.setInterval(() => void localInstallProgress().then((p) => setInstallPct(p.total ? Math.floor((p.done / p.total) * 100) : null), () => {}), 1000) : 0;
     try {
-      const r = await localInstall(inst.driver as CliId);
+      const r = await localInstall(inst.driver as CliId | "antigravity");
       if (!r.ok) saveFailed(r.message ?? "Could not install it.");
     } catch (e) {
       saveFailed(msg(e));
     } finally {
+      window.clearInterval(poll);
+      setInstallPct(null);
       setInstalling(null);
+      refreshAll();
+    }
+  };
+  const deleteProgram = async () => {
+    try {
+      await localRemoveProgram();
+    } catch (e) {
+      saveFailed(msg(e));
+    } finally {
       refreshAll();
     }
   };
@@ -302,7 +317,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       if (localHere && isLocalCli(inst.driver))
         return (
           <Button size="sm" variant="outline" disabled={installing === inst.id} onClick={() => void installHere(inst)}>
-            {installing === inst.id ? "Installing…" : "Install"}
+            {installing === inst.id ? (installPct !== null ? `Downloading ${installPct}%` : "Installing…") : "Install"}
           </Button>
         );
       return undefined; // the detail beside the list says how
@@ -453,6 +468,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   onSignIn={statusOf(detailInst).action === "sign-in" && localHere && isLocalCli(detailInst.driver) ? () => signInHere(detailInst) : statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
                   onMove={onDevice(detailInst) ? undefined : (id) => patch(detailInst, { device: id })}
                   onRemove={() => remove(detailInst)}
+                  onDeleteProgram={localHere && detailInst.driver === "antigravity" && reportOf(detailInst)?.drivers.find((d) => d.driver === "antigravity")?.installed ? () => void deleteProgram() : undefined}
                 />
               ) : (
                 <>

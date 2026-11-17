@@ -39,7 +39,7 @@ final class RelayTests: XCTestCase {
                 XCTAssertEqual((error as? RelayError)?.message, onlyRunnableMessage)
             }
         }
-        for driver in ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi"] {
+        for driver in ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "pi"] {
             XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#), root: root).driver, driver)
         }
     }

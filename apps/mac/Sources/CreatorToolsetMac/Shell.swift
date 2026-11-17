@@ -73,6 +73,7 @@ final class Shell: NSObject, ObservableObject {
     private var runner: RelayRunner?
     private var runnerID = UUID()
     private let museLogin = MuseLogin()
+    private let antigravityLogin = AntigravityLogin()
 
     private var lastBlankReload = Date.distantPast
     /// The editor's packed see-through videos on their way in (AlphaVideo.swift): where each is kept, and the video it becomes.
@@ -713,9 +714,10 @@ final class Shell: NSObject, ObservableObject {
     /// it, so Terminal runs it. Only the CLIs in signInCommands; the home must be a folder under the user's home.
     /// Terminal needs no Apple Events permission for this. Coming back to the app re-reports this Mac's sign-ins (init's
     /// didBecomeActive observer), which the page reads while it waits. Muse Code needs no Terminal: Meta's page opens in
-    /// the browser, and a sheet says the code that page asks to confirm.
+    /// the browser, and a sheet says the code that page asks to confirm. Antigravity's Google page opens in the browser too.
     func signIn(driver: String, home: String) {
         let userHome = FileManager.default.homeDirectoryForCurrentUser
+        if driver == "antigravity" { return antigravityLogin.start() }
         if driver == "musecode", let path = binary(driver, home: userHome) {
             return museLogin.start(binary: path) { page, code in
                 DispatchQueue.main.async { [weak self] in

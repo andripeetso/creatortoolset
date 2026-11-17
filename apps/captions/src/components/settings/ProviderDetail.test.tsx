@@ -27,8 +27,10 @@ describe("providerStatus", () => {
   it("trusts a passing check newer than the computer's report over a 'not signed in' in that report", () => {
     const signedOut = { driver: "codex" as const, installed: true, signedIn: false };
     expect(providerStatus({ ...base, found: signedOut, reportAt: 100, check: { ok: true, ms: 0, at: 200 } }).text).toBe("");
-    expect(providerStatus({ ...base, found: signedOut, reportAt: 300, check: { ok: true, ms: 0, at: 200 } }).text).toBe("Not signed in");
-    expect(providerStatus({ ...base, found: { driver: "codex", installed: true, signedIn: false } })).toEqual({ tone: "attention", text: "Not signed in", action: "sign-in" });
+    expect(providerStatus({ ...base, found: signedOut, reportAt: 300, check: { ok: true, ms: 0, at: 200 } }).text).toBe("Needs sign-in");
+    expect(providerStatus({ ...base, found: { driver: "codex", installed: true, signedIn: false } })).toEqual({ tone: "attention", text: "Needs sign-in", action: "sign-in" });
+    // Antigravity with no Google sign-in in its profile answers "Authentication required"
+    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "session/new: Authentication required", at: 1 } })).toEqual({ tone: "attention", text: "Needs sign-in", action: "sign-in" });
   });
 
   it("a passing check with a note (a plan limit) reads as the note, with nothing to press", () => {

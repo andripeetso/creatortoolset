@@ -262,6 +262,13 @@ final class AcpRun {
         return AcpAnswer(text: text.value, stopReason: result["stopReason"] as? String ?? "")
     }
 
+    /// The handshake, then `authenticate` with one of the agent's sign-in methods: a browser sign-in waits there until it
+    /// is done or `timeout` runs out. An error from the agent throws.
+    func signIn(method: String, timeout: Double) throws {
+        _ = try connection.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:]], timeout: 60)
+        _ = try connection.request("authenticate", ["methodId": method], timeout: timeout)
+    }
+
     /// Asks the agent to stop the prompt in progress (session/cancel). The prompt then ends with stopReason "cancelled".
     func cancel() {
         guard let sessionId else { return }

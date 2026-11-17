@@ -21,7 +21,7 @@ final class ConsentTests: XCTestCase {
     }
 
     func testTheAppsOwnProgramsNeedNothing() throws {
-        for driver in ["claude", "codex", "gemini", "grok", "cursor", "opencode", "antigravity", "pi", "musecode"] {
+        for driver in ["claude", "codex", "gemini", "grok", "cursor", "opencode", "pi", "musecode"] {
             XCTAssertEqual(try needs(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#), [], driver)
         }
     }

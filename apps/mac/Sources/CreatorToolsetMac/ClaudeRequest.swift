@@ -25,12 +25,11 @@ let piecesNote = "\n- sessions/INDEX.md — every Workshop project that became a
 let runnableDrivers = ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi", "acp"]
 let onlyRunnableMessage = "This Mac runs Claude, Gemini, Codex, Grok, Muse Code, Cursor, OpenCode, Antigravity, Pi and local ACP commands only for now"
 /// The ACP kinds (contracts/providers.ts isAcpDriver): each starts its agent over stdio (AcpRun.swift). "acp" is the local command
-/// from the setup; the others start the command below, plus the launch arguments. Versions are a snapshot from 2026-11-08: re-check before shipping.
+/// from the setup, Antigravity the program this app downloaded (Antigravity.swift); the others start the command below, plus the launch arguments. Versions are a snapshot from 2026-11-08: re-check before shipping.
 let acpDrivers = ["cursor", "opencode", "antigravity", "pi", "acp"]
 let acpDefaults: [String: AcpLaunch] = [
     "cursor": AcpLaunch(command: "cursor-agent", args: ["acp"]),
     "opencode": AcpLaunch(command: "opencode", args: ["acp"]),
-    "antigravity": AcpLaunch(command: "antigravity-acp", args: []),
     "pi": AcpLaunch(command: "npx", args: ["-y", "pi-acp@0.0.34"]),
 ]
 
@@ -171,7 +170,7 @@ func providerEnv(instance: String, names: [String], read: (String) -> String?) -
 /// the Mac relay request_options: the driver, model, effort, home and resume, checked. A bad one fails the request.
 /// Claude, Gemini, Codex and Grok run on this Mac; any other driver fails with the message above.
 func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDirectoryForCurrentUser,
-                    read: (String) -> String? = providerEnvValue) throws -> RelayOptions {
+                    read: (String) -> String? = providerEnvValue, antigravity: URL = antigravityRoot) throws -> RelayOptions {
     guard runnableDrivers.contains(req.driver) else { throw RelayError(message: onlyRunnableMessage) }
     guard claudeEfforts.contains(req.effort) else { throw RelayError(message: "not an effort: \(req.effort)") }
     let isClaude = req.driver == "claude"
@@ -183,11 +182,19 @@ func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDir
     }
     let home = req.home.isEmpty ? "" : try checkedHome(req.home, root: root)
     var acp: AcpLaunch? = nil
+    var own: [String: String] = [:]
     if acpDrivers.contains(req.driver) {
         guard home.isEmpty else { throw RelayError(message: "\(driverLabel(req.driver)) keeps its own setup: it takes no home") }
         let base: AcpLaunch?
         if req.driver == "acp" {
             base = req.acp
+        } else if req.driver == "antigravity" {
+            // the copy this app downloaded, or the person's own program with its harness beside it; its own profile
+            // folder holds the sign-in, and a run without one stops here rather than waiting on a browser
+            guard let runtime = antigravityRuntime(custom: req.binaryPath, root: antigravity) else { throw RelayError(message: antigravityMissing) }
+            guard antigravitySignedIn(root: antigravity) else { throw RelayError(message: antigravitySignedOut) }
+            base = AcpLaunch(command: runtime.program, args: [])
+            own = antigravityEnv(runtime, root: antigravity)
         } else if !req.binaryPath.isEmpty {
             base = AcpLaunch(command: req.binaryPath, args: [])   // a manual setup's program replaces the default command
         } else {
@@ -211,7 +218,7 @@ func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDir
     if !req.baseUrl.isEmpty && !matches(req.baseUrl, "^https?://[^\\s]{1,300}\\z") {
         throw RelayError(message: "not an endpoint address: \(req.baseUrl)")
     }
-    let env = isClaude || acp != nil ? providerEnv(instance: req.instance, names: req.envNames, read: read) : [:]
+    let env = isClaude || acp != nil ? providerEnv(instance: req.instance, names: req.envNames, read: read).merging(own) { _, mine in mine } : [:]
     return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume, driver: req.driver, baseUrl: isClaude ? req.baseUrl : "", env: env, acp: acp)
 }
 
@@ -791,10 +798,12 @@ func driverEnv(base: [String: String], home: String = "") -> [String: String] {
 }
 
 /// the Mac relay limit_flag: the usage-limit flag. Claude's and Codex's windows (isLimitError: "You've hit your usage
-/// limit"), Muse Code's (the words museFailure gives a closed window, or a 429 about the quota) and Gemini's quota errors;
+/// limit"), Muse Code's (the words museFailure gives a closed window, or a 429 about the quota), Gemini's and Antigravity's quota errors;
 /// the rest have none.
 func limitFlag(_ driver: String, _ text: String) -> Bool {
     if driver == "claude" || driver == "codex" { return isLimitError(text) }
+    // Antigravity passes Google's API error on: "Error 429, Message: Quota exhausted…, Status: RESOURCE_EXHAUSTED"
+    if driver == "antigravity" { return text.range(of: "QUOTA_EXHAUSTED|RESOURCE_EXHAUSTED|Quota exhausted", options: [.regularExpression, .caseInsensitive]) != nil }
     if driver == "musecode" {
         return isLimitError(text) || (text.contains("429") && text.range(of: "quota|usage limit", options: [.regularExpression, .caseInsensitive]) != nil)
     }

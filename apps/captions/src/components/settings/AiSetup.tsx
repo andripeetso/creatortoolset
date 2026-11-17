@@ -26,6 +26,8 @@ export const SIGN_IN: Partial<Record<Driver, string>> = { codex: "codex login", 
 /** The install and sign-in lines for one tool, on its detail page and in the Add provider dialog, when the computer doesn't have it. */
 export function InstallHelp({ driver }: { driver: Driver }) {
   const tool = TOOLS[driver];
+  // Antigravity: the Mac app's own server downloads it (Settings → Providers on This Mac); every server then uses that copy
+  if (driver === "antigravity") return <p className="text-xs text-muted-foreground">Not installed. Install it on This Mac in the Mac app, under Settings → Providers.</p>;
   if (!tool) {
     return <p className="text-xs text-muted-foreground">Not installed on its computer.</p>;
   }
@@ -73,9 +75,10 @@ function Command({ text }: { text: string }) {
 
 /* ---- this computer's own AI apps (the local routes, api/setup.ts): found, installed and signed in from the app ---- */
 
-const LOCAL_CLI: CliId[] = ["claude", "codex", "gemini"];
-/** Whether the local routes can install and sign in this tool (the three CLIs the server knows). */
-export const isLocalCli = (driver: string): driver is CliId => (LOCAL_CLI as string[]).includes(driver);
+type LocalId = CliId | "antigravity";
+const LOCAL_CLI: LocalId[] = ["claude", "codex", "gemini", "antigravity"];
+/** Whether the local routes can install and sign in this tool (the three CLIs the server knows, and Antigravity, which it downloads itself). */
+export const isLocalCli = (driver: string): driver is LocalId => (LOCAL_CLI as string[]).includes(driver);
 
 async function call<T>(url: string, method: "GET" | "POST", body?: unknown, ms?: number): Promise<T> {
   const r = await fetch(url, { method, ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}), ...(ms ? { signal: AbortSignal.timeout(ms) } : {}) });
@@ -94,8 +97,13 @@ export const getLocalAi = () => call<LocalAiView>("/api/setup/ai", "GET", undefi
  * already on its way). Nothing tells a page about a tool set up in Terminal.
  */
 export const useLocalAi = () => useCachedLoad<LocalAiView>("/api/setup/ai", getLocalAi, { topic: ["devices", "setup"], own: true });
-export const localSignIn = (id: CliId) => call<SignInResult>("/api/setup/ai/signin", "POST", { id });
-export const localInstall = (id: CliId) => call<SignInResult>("/api/setup/ai/install", "POST", { id });
+export const localSignIn = (id: LocalId) => call<SignInResult>("/api/setup/ai/signin", "POST", { id });
+/** Antigravity's download is about 100 MB: an hour before a slow connection gives up. */
+export const localInstall = (id: LocalId) => call<SignInResult>("/api/setup/ai/install", "POST", { id }, 61 * 60_000);
+/** Antigravity's download so far, while Install runs. */
+export const localInstallProgress = () => call<{ done: number; total: number }>("/api/setup/ai/progress", "GET");
+/** Deletes the Antigravity program the app downloaded (its sign-in stays). */
+export const localRemoveProgram = () => call<SignInResult>("/api/setup/ai/remove", "POST", {});
 /** Connects it as this account's AI through this computer's Mac app (`device`); without one the answer says to open the app. */
 export const localConnect = (id: CliId, device: string) => call<ConnectResult>("/api/setup/ai/connect", "POST", { id, device });
 

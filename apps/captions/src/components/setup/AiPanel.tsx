@@ -40,7 +40,8 @@ const PROVIDERS = "/api/providers";
  * lists free, Google AI Pro and Ultra, but a real run on a free account was turned away (2026-11-10; contracts/plans.ts
  * noPlanLine), and no run of ours was on a paid one; Grok's and Cursor's sign-ins take
  * the person's account, whose plans their vendors don't list for these programs; Muse Code has no free tier (Everyday,
- * High, Power and Maximum Usage plans). `size`: what its install downloads, said while it runs (measured 2026-11-10).
+ * High, Power and Maximum Usage plans); Antigravity's sign-in takes a Google account. `size`: what its install
+ * downloads, said while it runs (measured 2026-11-10; Antigravity's from its release, 2026-11-17).
  */
 export const AIS: Array<{ id: string; name: string; sub: string; uses: string; size?: string; more?: boolean }> = [
   { id: "codex", name: "ChatGPT", sub: "Codex", uses: "Uses your ChatGPT plan (Plus or higher).", size: "about 110 MB" },
@@ -49,6 +50,8 @@ export const AIS: Array<{ id: string; name: string; sub: string; uses: string; s
   { id: "grok", name: "Grok", sub: "Grok Build", uses: "Uses your Grok account.", size: "about 185 MB" },
   { id: "musecode", name: "Meta", sub: "Muse Code", uses: "Uses your Meta plan (Everyday or higher).", size: "about 470 MB" },
   { id: "cursor", name: "Cursor", sub: "Cursor Agent", uses: "Uses your Cursor account.", size: "about 175 MB", more: true },
+  // Google's agent server, downloaded by the app itself from Google's pinned release (api/lib/antigravity.ts)
+  { id: "antigravity", name: "Antigravity", sub: "Google", uses: "Uses your Google account.", size: "about 98 MB", more: true },
 ];
 const aiOf = (id: string) => AIS.find((a) => a.id === id);
 /** What a person knows each AI by, and its small second line (setup's other screens name them the same way). */
@@ -105,10 +108,12 @@ export const withoutCommands = (raw?: string): string | undefined =>
  * (Connect). One press does everything still missing, and the button names the step it is on. Not signed in is never a
  * failure: a check that says so offers Sign in. The check mark only once it is connected, and then there is no button.
  */
-export function rowView(id: string, row: Known | undefined, result: ConnectResult | undefined, phase: Phase | undefined, code?: string): RowView {
+export function rowView(id: string, row: Known | undefined, result: ConnectResult | undefined, phase: Phase | undefined, code?: string, pct?: number): RowView {
   const name = nameOf(id);
   const ours = !!aiOf(id); // installs and signs in from here
   const size = aiOf(id)?.size;
+  // a download the server counts (Antigravity's): how far it is
+  if (phase === "installing" && pct !== undefined) return { line: `Downloading ${name}: ${pct}% of ${size ?? "its download"}`, button: working("Installing…") };
   if (phase === "installing") return { line: `Installing what ${name} needs on this Mac${size ? ` (${size})` : ""}, which can take a few minutes.`, button: working("Installing…") };
   if (phase === "updating") return { line: `Updating what ${name} needs on this Mac, which can take a few minutes.`, button: working("Updating…") };
   // a sign-in that asks for a code on the vendor's page (Meta's): the code is the line
@@ -178,9 +183,9 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
  * beside it, one plain line, and its one button. A failure is the red line, an account with no plan for it the amber one,
  * each with the program's own words under What it said.
  */
-function AgentRow({ id, row, result, phase, code, unread, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; unread?: boolean; onConnect: () => void }) {
+function AgentRow({ id, row, result, phase, code, pct, unread, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; pct?: number; unread?: boolean; onConnect: () => void }) {
   // not read yet: the row says what it uses and claims nothing about this Mac; its state and button follow the answer
-  const v: RowView = unread ? { line: usesOf(id), button: null } : rowView(id, row, result, phase, code);
+  const v: RowView = unread ? { line: usesOf(id), button: null } : rowView(id, row, result, phase, code, pct);
   const failed = !phase && !!result && !["ready", "mac", "unsupported", "signin"].includes(result.state);
   const noPlan = result?.state === "plan";
   return (
@@ -236,6 +241,8 @@ export interface AiPanelViewProps {
   phases: Phases;
   /** the code a sign-in asks the person to confirm on the vendor's page, by AI */
   codes?: Partial<Record<string, string>>;
+  /** a download in progress, in percent, by AI (Antigravity's) */
+  progress?: Partial<Record<string, number>>;
   onConnect: (id: string) => void;
   showMore?: boolean;
   onShowMore?: () => void;
@@ -247,7 +254,7 @@ export interface AiPanelViewProps {
  * The AIs this computer can connect: ChatGPT, Claude, Google and Grok up front, the rest behind Show more. One that is
  * connected, working or failed is always up front. Pure, for tests.
  */
-export function AiPanelView({ view, results, phases, codes = {}, onConnect, showMore = false, onShowMore, own = true }: AiPanelViewProps) {
+export function AiPanelView({ view, results, phases, codes = {}, progress = {}, onConnect, showMore = false, onShowMore, own = true }: AiPanelViewProps) {
   // Before the first answer (a first open; later the saved copy is there) nothing stands in for the list: the rows are
   // up at once, each with what it uses, and an account the server connects no AI for has its line at once.
   if (view ? !view.local : !own)
@@ -255,7 +262,7 @@ export function AiPanelView({ view, results, phases, codes = {}, onConnect, show
   const behind = (id: string) => (!aiOf(id) || !!aiOf(id)?.more) && !phases[id] && !results[id] && !isConnected(rowOf(view, id));
   const ids = idsOf(view);
   const hidden = ids.some(behind);
-  const row = (id: string) => <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} code={codes[id]} unread={!view} onConnect={() => onConnect(id)} />;
+  const row = (id: string) => <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} code={codes[id]} pct={progress[id]} unread={!view} onConnect={() => onConnect(id)} />;
   return (
     <div className="space-y-2">
       <Card>{ids.filter((id) => showMore || !behind(id)).map(row)}</Card>
@@ -323,6 +330,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   const [providers, setProviders] = useState<ProvidersView | null>(() => readCached<ProvidersView>(user, PROVIDERS));
   const [showMore, setShowMore] = useState(false);
   const [codes, setCodes] = useState<Partial<Record<string, string>>>({});
+  const [progress, setProgress] = useState<Partial<Record<string, number>>>({});
   const timers = useRef<number[]>([]);
 
   // fresh: the server re-reads PATH and the sign-in; a plain read may answer from its last look.
@@ -359,7 +367,17 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
       // the vendor's own installer runs on this computer; the row's line says so until it answers
       const install = async (phase: "installing" | "updating") => {
         setPhase(phase);
+        // Antigravity's download is counted by the server: the line says how far it is
+        const poll =
+          id === "antigravity"
+            ? window.setInterval(async () => {
+                const p = await getJson<{ done: number; total: number }>("/api/setup/ai/progress");
+                if (p?.total) setProgress((s) => ({ ...s, [id]: Math.floor((p.done / p.total) * 100) }));
+              }, 1000)
+            : 0;
         const r = await postJson<SignInResult>("/api/setup/ai/install", { id }, INSTALL_TIMEOUT_MS);
+        window.clearInterval(poll);
+        setProgress((s) => ({ ...s, [id]: undefined }));
         if (!r?.ok) await end(failed(r?.message ?? "Could not reach this computer", r?.raw));
         return !!r?.ok;
       };
@@ -456,7 +474,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
       {providers && (providers.own?.instances.filter((i) => i.enabled).length ?? 0) > 1 && (
         <AnswerPicker view={providers} onPick={(s) => void saveOwn(s).then(setProviders, () => {})} />
       )}
-      <AiPanelView view={view} results={results} phases={phases} codes={codes} onConnect={(id) => void connect(id)} showMore={showMore} onShowMore={() => setShowMore((o) => !o)} own={own} />
+      <AiPanelView view={view} results={results} phases={phases} codes={codes} progress={progress} onConnect={(id) => void connect(id)} showMore={showMore} onShowMore={() => setShowMore((o) => !o)} own={own} />
     </div>
   );
 }

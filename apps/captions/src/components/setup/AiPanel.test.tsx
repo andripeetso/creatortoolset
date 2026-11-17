@@ -18,7 +18,7 @@ const row = (over: Partial<LocalAiRow> & Pick<LocalAiRow, "id" | "name">): Local
 });
 const view = (rows: LocalAiRow[], local = true): LocalAiView => ({ local, rows });
 /** Another AI in the view: Grok and Cursor are always listed, the rest only when found. */
-const other = (id: "grok" | "musecode" | "cursor" | "opencode" | "pi", over: { found?: boolean; signedIn?: boolean | null; connected?: boolean } = {}) => ({ id, found: true, signedIn: null, connected: false, ...over });
+const other = (id: "grok" | "musecode" | "cursor" | "opencode" | "pi" | "antigravity", over: { found?: boolean; signedIn?: boolean | null; connected?: boolean } = {}) => ({ id, found: true, signedIn: null, connected: false, ...over });
 const panel = (v: LocalAiView | null, over: Partial<Parameters<typeof AiPanelView>[0]> = {}) =>
   text(renderToStaticMarkup(<AiPanelView view={v} results={{}} phases={{}} onConnect={() => {}} {...over} />));
 
@@ -69,6 +69,12 @@ describe("the rows: named by what a person knows, in order", () => {
     expect(rowView("cursor", other("cursor", { found: false }), undefined, undefined)).toEqual({ line: "Not on this Mac yet. Uses your Cursor account.", button: { label: "Install" } });
   });
 
+  it("Antigravity installs from here and counts its download", () => {
+    expect(rowView("antigravity", other("antigravity", { found: false, signedIn: false }), undefined, undefined)).toEqual({ line: "Not on this Mac yet. Uses your Google account.", button: { label: "Install" } });
+    expect(rowView("antigravity", other("antigravity", { signedIn: false }), undefined, undefined)).toEqual({ line: "Not signed in yet. Uses your Google account.", button: { label: "Sign in" } });
+    expect(rowView("antigravity", undefined, undefined, "installing", undefined, 45).line).toBe("Downloading Antigravity: 45% of about 98 MB");
+  });
+
   it("up front: ChatGPT, Claude, Google, Grok, Meta; Cursor and any other AI found here behind Show more, open on a press", () => {
     const v = { ...view([claude]), others: [other("grok"), other("cursor", { found: false }), other("opencode")] };
     const closed = panel(v);
@@ -82,7 +88,7 @@ describe("the rows: named by what a person knows, in order", () => {
     expect(open).toContain("Uses OpenCode as it's set up on this Mac.");
     expect(buttons(open).at(-1)).toBe("Show less");
     // no Show more when nothing is behind it; another AI that is not on this Mac has nothing to press and is not listed
-    expect(panel({ ...v, others: [other("grok"), other("cursor", { connected: true })] })).not.toContain("Show more");
+    expect(panel({ ...v, others: [other("grok"), other("cursor", { connected: true }), other("antigravity", { connected: true })] })).not.toContain("Show more");
     expect(panel({ ...view([claude]), others: [other("grok")] }, { showMore: true })).not.toMatch(/OpenCode|>Pi</);
   });
 

@@ -125,6 +125,15 @@ copy each one's licence next to the files they install.
   - SAM 2.1 Hiera Small (`facebook/sam2.1-hiera-small`, 184 MB), Meta's Segment Anything Model 2.1.
   - Grounding DINO Tiny (`IDEA-Research/grounding-dino-tiny`, 689 MB), IDEA Research's text-to-box detector.
 
+## Antigravity (Google), downloaded on your computer
+
+Not in the repository, the Docker image or the Mac app, and never redistributed by this project. Settings →
+Providers → Antigravity → Install downloads Google's own Antigravity agent server for editors (`agy_acp_server` and
+`localharness_external`, release 1.4.5) from Google's download site (`dl.google.com/agy-extensions/releases/`) into
+the app's data folder (`antigravity/runtime/`), checked against the size and SHA-256 pinned in
+`apps/captions/api/lib/antigravity.ts`. It is Google's proprietary software: Google's terms for Antigravity and the
+Google account you sign in with apply to it, not this project's licence. Delete program (the provider's menu) removes it.
+
 ## Mac app
 
 - [Sparkle](https://github.com/sparkle-project/Sparkle) (updates): MIT.
