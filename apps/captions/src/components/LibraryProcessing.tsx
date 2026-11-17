@@ -465,7 +465,7 @@ export interface OrganizeOffer {
  * `keep`: what the library knows of the folder's place (pages/library/Import.tsx): `known`, a place it took before, is
  * not asked again (copied or not as then); `mode`, the library's answer, is the choice a new place's short question starts on.
  */
-type CheckOpts = { music?: boolean; libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer; keep?: { known?: ImportMode; mode?: ImportMode } };
+type CheckOpts = { libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer; keep?: { known?: ImportMode; mode?: ImportMode } };
 
 export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   check: (path: string, add: (copyTo?: string) => unknown, opts?: CheckOpts) => Promise<void>;
@@ -487,26 +487,24 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
     setQueue((q) => q.slice(1));
     if (open.current > 0 && --open.current === 0) waiting.current.splice(0).forEach((f) => f());
   };
-  // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
   const check = async (path: string, add: (copyTo?: string) => unknown, opts: CheckOpts = {}) => {
     // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
     const library = opts.libraryId && opts.organize ? undefined : (await listLibraries().catch(() => []))?.find((l) => !opts.libraryId || l.id === opts.libraryId);
     const libraryId = opts.libraryId ?? library?.id;
     // a copy is offered where the server can make one on this computer (it says where: WatchStatus.copyTo)
-    const to = libraryId && opts.offerCopy && !opts.music ? (await getWatch(libraryId).catch(() => null))?.copyTo : undefined;
+    const to = libraryId && opts.offerCopy ? (await getWatch(libraryId).catch(() => null))?.copyTo : undefined;
     const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}${to ? `&to=${encodeURIComponent(to)}` : ""}`).catch(() => null) : null;
     const size = r?.ok ? ((await r.json()) as FolderSize) : null;
     const big = !!size && size.files >= BIG_DROP;
-    // a music folder is music, not something to sort
     const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (o) => void (await updateLibrary(library.id, offerAnswer(o)).then(onOrganized, () => {})) } : undefined;
-    const organize = opts.music ? undefined : (opts.organize ?? own);
+    const organize = opts.organize ?? own;
     const offer = organize?.offer ? organize : undefined;
     const known = opts.keep?.known;
     // a place the library took before goes in as then
     const keptAs = known === "copy" ? to : undefined;
     if (libraryId && size && (big || (to && !known) || offer)) {
       open.current++;
-      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add, offer, known, mode: opts.keep?.mode }]);
+      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size), big, to, free: size.free, add, offer, known, mode: opts.keep?.mode }]);
     } else await add(keptAs);
   };
   const dialog = asking && (

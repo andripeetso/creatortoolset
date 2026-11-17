@@ -188,7 +188,7 @@ describe("the Finals folder", () => {
     expect(finalsFolderOf([lib, own])?.id).toBe("fin");
     expect(finalsFolderOf([])).toBeUndefined();
     // the Library's own Finished/ is no footage or music source
-    expect(sourcesOf([lib]).map((f) => f.role)).toEqual(["footage", "music"]);
+    expect(sourcesOf([lib]).map((f) => f.role)).toEqual(["footage", "footage"]); // its Footage/ and Music/, both taken into the Media Library
   });
   it("names a project's folder by its title, safe as a file name", () => {
     expect(finalsDirName("Tiny Acrobatics: rolls / v2?")).toBe("Tiny Acrobatics rolls v2");

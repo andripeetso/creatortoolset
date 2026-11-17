@@ -215,10 +215,10 @@ describe("each workspace", () => {
       headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" },
       body: JSON.stringify({ role: "music", host: "this-computer", path: music }),
     });
-    expect(added.status).toBe(200);
+    expect(added.status).toBe(200); // "music" from an older app: added as footage, the Media Library sorts the songs
     expect(((await added.json()) as View).folders.map((f) => f.origin.path)).toEqual([music]);
     expect((await list("ws-a")).map((f) => f.id)).toEqual(before.map((f) => f.id));
-    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Music: ${music}`);
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music}`);
     expect(await foldersNote(USER, "ws-a")).not.toContain(music);
     // Settings shows every workspace: each folder says which one it is in (an older one the first brand's)
     const id = (await list("ws-b"))[0]!.id;
@@ -239,7 +239,7 @@ describe("each workspace", () => {
     expect((await move("ws-a")).status).toBe(200);
     expect(await list("ws-b")).toEqual([]);
     expect(await foldersNote(USER, "ws-b")).toBe("");
-    expect(await foldersNote(USER, "ws-a")).toContain(`- Music: ${music}`);
+    expect(await foldersNote(USER, "ws-a")).toContain(`- Footage: ${music}`);
     expect(watchedIn("ws-a")).toContain(music);
     expect(watchedIn("ws-b")).toEqual([]);
     // every workspace: in each one's list, its chats' line and its Library's watch list
@@ -247,8 +247,8 @@ describe("each workspace", () => {
     expect((await all()).find((f) => f.id === id)!.workspace).toBe("*");
     expect((await list("ws-b")).map((f) => f.id)).toEqual([id]);
     expect((await list("ws-a")).map((f) => f.id)).toContain(id);
-    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Music: ${music}`);
-    expect(await foldersNote(USER, "ws-a")).toContain(`- Music: ${music}`);
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music}`);
+    expect(await foldersNote(USER, "ws-a")).toContain(`- Footage: ${music}`);
     expect(watchedIn("ws-a")).toContain(music);
     expect(watchedIn("ws-b")).toEqual([music]);
     // it is in every workspace already: the same folder is not added to one again

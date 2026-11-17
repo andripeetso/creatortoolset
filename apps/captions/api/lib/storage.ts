@@ -18,7 +18,9 @@ export function storageFilePath(dataDir: string, user: string): string {
 export function parseStorageFile(raw: string): StorageState {
   try {
     const v = JSON.parse(raw) as Partial<StorageState> | null;
-    return { folders: Array.isArray(v?.folders) ? v.folders : [] };
+    // a music folder from before is footage now: everything in a folder goes into the Media Library, which sorts songs
+    // and sound effects by itself (owner, 2026-11-17)
+    return { folders: Array.isArray(v?.folders) ? v.folders.map((f) => (f?.role === "music" ? { ...f, role: "footage" } : f)) : [] };
   } catch (e) {
     console.warn(`[devices-storage] storage file unreadable, treated as empty: ${e instanceof Error ? e.message : e}`);
     return { folders: [] };
@@ -192,18 +194,6 @@ export function uploadRelayView(
       ...plugged,
     ],
   };
-}
-
-/**
- * The account's music folders on this computer (setup's and Settings' Music rows and the Library's own Music/), as real paths: the
- * Media Library takes their files in like any other (thumbnail, waveform), but spends nobody's AI or keys on them.
- */
-export async function musicFolders(dataDir: string, user: string | null, here: (host: string) => boolean = () => false): Promise<string[]> {
-  if (!user) return [];
-  const st = parseStorageFile(await readFile(storageFilePath(dataDir, user), "utf-8").catch(() => "{}"));
-  // `here`: a paired computer that is this machine (Settings → Storage records a folder against it, lib/devices.ts isThisMachine)
-  const dirs = sourcesOf(st.folders).filter((f) => f.role === "music" && (f.origin.host === THIS_COMPUTER || here(f.origin.host))).map((f) => f.origin.path);
-  return Promise.all(dirs.map((d) => realpath(d).catch(() => d)));
 }
 
 /** Whether `file` is inside one of `dirs`. */

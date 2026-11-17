@@ -121,7 +121,6 @@ export async function foldersNote(username: string, workspace?: string): Promise
   const on = (f: StorageFolder) => (f.origin.host === THIS_COMPUTER ? "" : ` (on ${deviceOf(f.origin.host)?.name ?? "another computer"})`);
   const lines = [
     ...mine.filter((f) => f.role === "footage").map((f) => `- Footage: ${f.origin.path}${on(f)}`),
-    ...mine.filter((f) => f.role === "music").map((f) => `- Music: ${f.origin.path}${on(f)}`),
     ...(lib ? [`- Finished videos: ${lib.origin.path}/${LIBRARY_SUBFOLDERS.finished}${on(lib)}`] : []),
   ];
   return lines.length ? `\n\nThis workspace's folders:\n${lines.join("\n")}` : "";

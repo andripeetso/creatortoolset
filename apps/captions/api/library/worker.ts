@@ -9,8 +9,6 @@ import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from 
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, graceHeld, parkJob, requeueExpired, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
-import { isInside, musicFolders } from "../lib/storage";
-import { isThisMachine } from "../lib/devices";
 import { ModelNotReady } from "../lib/device-transcribe";
 import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
@@ -421,11 +419,9 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
 export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<VersionRow, "id" | "library_id" | "kind" | "title" | "source_path" | "from_path">, p: ProbeSummary, actor: string | null): Promise<void> {
   const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(v.id) as { kind: string }[]).map((h) => h.kind));
   const want = (kind: string) => !have.has(kind) && enqueueJob(db, v.library_id, v.id, kind, actor);
-  // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
-  // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
-  // or keys on a song nobody asked about)
+  // one added as a song or a sound effect (its tag, routes.ts SOUNDS) is music: a thumbnail and a waveform, no
+  // transcript, no description, no search by meaning (each would spend their AI or keys on a song nobody asked about)
   let music =
-    (!!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, actor, isThisMachine))) ||
     !!db.prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map((s) => `'${s.tag}'`).join(", ")})`).get(v.id);
   // a song nobody said was one (dropped, downloaded): known by its tags or its name, tagged music by the app
   const song = !music && v.kind !== "image" && looksLikeSong(v.title, p);
