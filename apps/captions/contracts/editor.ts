@@ -14,7 +14,14 @@
  *   GET    /api/editor/:id/drafts/:name    → Draft
  *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|zip   the draft for the user's own editor (a download)
  *   POST   /api/editor/:id/drafts/:name/review   renders the draft's preview again and files it in Review (the creator) → Edit
- *   POST   /api/editor/:id/drafts/:name/cut      { asset, n, edits } (the creator): Review's timeline edits on that version cut into the draft, with no AI → Edit; its next version is made
+ *   POST   /api/editor/:id/drafts/:name/cut      { asset?, n?, edits } (the creator): timeline edits cut into the draft, with no AI → Edit; rendered and filed in Review
+ *                                                 as that video's next version. With asset/n: edits made on that Review version; without: on the draft as it is
+ *                                                 now (Draft.view); `edits` may be [] then, when the draft is not what Review has (clips put on it): it is rendered as it is
+ *   POST   /api/editor/:id/drafts/:name/duplicate  (the creator) → 201 { name }: the draft as a new version (next free v1…v9), no AI; its preview is made
+ *   POST   /api/editor/:id/drafts/:name/clips    AddClip (the creator) → 201 AddedClip: a Media Library clip put on the draft
+ *   PATCH  /api/editor/:id/versions/:name        { label?, trashed? } (the creator) → Edit["marks"]: rename ("" clears) or delete (trashed: false = Undo) a version
+ *   POST   /api/editor/empty                     { name?, projectId? } → 201 { id, draft }: an edit with no footage and one empty draft (v1)
+ *   POST   /api/editor/:id/restore               out of the trash again (Undo of DELETE; the maker and the workspace owner)
  *   GET    /api/editor/:id/sentences       → Sentence[] (what analyze found, for playing a take)
  *   PUT    /api/editor/:id/lines           PlansPatch (the creator): takes swapped or lines reordered → Edit; redrafts what changed
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)
@@ -35,6 +42,7 @@
 
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
 import type { Coverage, Focus, PlanEffect, PlanFrame, PlanText } from "./edit-plan";
+import type { TimelineView } from "./edit-timeline";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -151,6 +159,9 @@ export interface EditSummary {
   last: (Pick<EditJob, "kind" | "state"> & { stopped?: true }) | null;
   /** the project it is in (GET /api/editor; one from before edits had a project is the first brand's); absent for a person with no project */
   projectId?: string;
+  /** GET /api/editor only: how many versions it has (drafts not deleted), and the newest one's Review still (/api/review/assets/<asset>/v/<n>/thumb) */
+  versionCount?: number;
+  still?: { asset: string; n: number };
 }
 
 /** One spoken sentence of the footage (analyze): numbered from 1 across every source, in recording order. */
@@ -225,6 +236,27 @@ export interface Edit extends EditSummary, EditBrief {
   passes?: { waiting: boolean; next: "broll" | "cards" | null };
   /** a planned edit: the footage its cut was made from, and each file left out (Review names those) */
   coverage?: Coverage;
+  /** by version name: the name the person gave it, and when it was deleted (hidden on the project page; drafts and Review stay) */
+  marks?: Record<string, VersionMark>;
+}
+
+export interface VersionMark {
+  label?: string;
+  trashedAt?: number;
+}
+
+/** POST …/drafts/:name/clips: a Media Library clip (its version id) on `track` from frame `rec`, or the first free place after it on that track. */
+export interface AddClip {
+  clip: string;
+  track: TrackId;
+  rec: number;
+  /** a picture clip on V1 brings its sound on A1, linked; false: the picture only */
+  sound?: boolean;
+}
+export interface AddedClip {
+  /** the draft's timeline as it is now (Draft.view) and the key of the clip put on it */
+  view: TimelineView;
+  key: string;
 }
 
 /** One version's cards as the edit page shows them. */
@@ -351,6 +383,10 @@ export interface Draft {
   notes: string[];
   qa: QaReport;
   exportGaps?: ExportGaps;
+  /** GET only: the draft as an editable timeline (keys "<track>:<frame>", what /cut's edits name without asset) */
+  view?: TimelineView;
+  /** GET only: the Review version whose cut is exactly this draft; null when the draft changed since (or was never filed) */
+  filed?: ReviewPreview | null;
 }
 
 /** The editors a draft's timeline file is written for. */

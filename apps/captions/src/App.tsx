@@ -411,6 +411,9 @@ export default function App() {
           <Route path="/design/:id" element={<AppRoute tool="design"><DesignPage /></AppRoute>} />
           <Route path="/editor" element={<AppRoute tool="editor"><EditorScreen /></AppRoute>} />
           <Route path="/editor/:id" element={<AppRoute tool="editor"><EditorEditScreen /></AppRoute>} />
+          {/* a project (a folder of the list: every edit of one video) and a version's timeline; a plug-in that replaces the editor pages reads the same params */}
+          <Route path="/editor/p/:folder" element={<AppRoute tool="editor"><EditorScreen /></AppRoute>} />
+          <Route path="/editor/:id/:draft" element={<AppRoute tool="editor"><EditorEditScreen /></AppRoute>} />
           <Route path="/rp/:ptoken/:assetId" element={<ReviewAssetPage />} />
           {pluginRoutes.map((r) => <Route key={r.path} path={r.path} element={r.element} />)}
           <Route path="*" element={<Navigate to="/" replace />} />

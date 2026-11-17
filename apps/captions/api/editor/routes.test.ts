@@ -291,3 +291,139 @@ describe.skipIf(rootReplaced)("AI Editor: the worker", () => {
     }
   });
 });
+
+describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page", () => {
+  const take = (n: number) => ({ versionId: "ver_a1", name: "Take", fps: 30, tc: 0, dur: 900 + n, w: 1080, h: 1920 });
+  const cutOf = () => {
+    const tracks = emptyTracks();
+    for (const k of [0, 1]) {
+      tracks.V1.items.push({ src: "ver_a1", in: k * 100, len: 30, rec: k * 30, link: `c${k}` });
+      tracks.A1.items.push({ src: "ver_a1", in: k * 100, len: 30, rec: k * 30, link: `c${k}` });
+    }
+    return { name: "Tiny v1", fps: 30, width: 1080, height: 1920, tracks, markers: [], sources: { ver_a1: take(0) } };
+  };
+  const made = async (name = "Tiny cartwheel") => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"], { name }));
+    await call("maker", "POST", `/api/editor/${id}/stop`);
+    return id;
+  };
+  const stopAll = (id: string) => call("maker", "POST", `/api/editor/${id}/stop`);
+  const queued = (e: Edit) => e.jobs.filter((j) => j.state === "queued").map((j) => [j.kind, j.variant]);
+
+  it("files the versions of one video into one project folder when they are made; the list counts versions and shows the newest still", async () => {
+    const a = await made("Tiny Flip");
+    const b = await made("Tiny Flip 25s v2");
+    const { read } = await import("../folders");
+    const d = await read("editor", "maker");
+    expect(d.items[a]).toBeTruthy();
+    expect(d.items[b]).toBe(d.items[a]);
+    // (cut from the same take as the other edits here, so they all share that video's folder: projects.test.ts names it)
+    await saveDraft(a, "v1", { timeline: cutOf(), notes: [] });
+    await saveDraft(a, "v2", { timeline: cutOf(), notes: [] });
+    await saveStep(a, "review", { v1: { assetId: "rev-old", n: 1 }, v2: { assetId: "rev-new", n: 3 } });
+    await saveFiled(a, "rev-old", 1, { variant: "v1", timeline: cutOf() });
+    await new Promise((r) => setTimeout(r, 15));
+    await saveFiled(a, "rev-new", 3, { variant: "v2", timeline: cutOf() });
+    const row = async () => (await json<EditSummary[]>(call("maker", "GET", "/api/editor"))).find((s) => s.id === a)!;
+    expect(await row()).toMatchObject({ versionCount: 2, still: { asset: "rev-new", n: 3 } });
+    // a deleted version is off the count and the still; Undo brings it back
+    expect(await json(call("maker", "PATCH", `/api/editor/${a}/versions/v2`, { trashed: true }))).toEqual({ v2: { trashedAt: expect.any(Number) } });
+    expect(await row()).toMatchObject({ versionCount: 1, still: { asset: "rev-old", n: 1 } });
+    expect(await json(call("maker", "PATCH", `/api/editor/${a}/versions/v2`, { trashed: false }))).toEqual({});
+  });
+
+  it("renames a version (\"\" takes the name off), refuses others and a version that is not there; GET shows the marks", async () => {
+    const id = await made();
+    await saveDraft(id, "v1", { timeline: cutOf(), notes: [] });
+    expect((await call("maker", "PATCH", `/api/editor/${id}/versions/v4`, { label: "x" })).status).toBe(404);
+    expect((await call("other", "PATCH", `/api/editor/${id}/versions/v1`, { label: "x" })).status).toBe(404);
+    expect((await call("maker", "PATCH", `/api/editor/${id}/versions/v1`, { label: 5 })).status).toBe(400);
+    expect(await json(call("maker", "PATCH", `/api/editor/${id}/versions/v1`, { label: "  Hook first  " }))).toEqual({ v1: { label: "Hook first" } });
+    expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).marks).toEqual({ v1: { label: "Hook first" } });
+    expect(await json(call("maker", "PATCH", `/api/editor/${id}/versions/v1`, { label: "" }))).toEqual({});
+  });
+
+  it("duplicates a version as the next free one, named its copy, and makes its post-processing and preview; no draft is 404", async () => {
+    const id = await made();
+    expect((await call("maker", "POST", `/api/editor/${id}/drafts/v1/duplicate`)).status).toBe(404);
+    await saveDraft(id, "v1", { timeline: cutOf(), notes: ["a note"], due: 1 });
+    await saveDraft(id, "v2", { timeline: cutOf(), notes: [] });
+    await call("maker", "PATCH", `/api/editor/${id}/versions/v1`, { label: "Hook first" });
+    expect((await call("other", "POST", `/api/editor/${id}/drafts/v1/duplicate`)).status).toBe(404);
+    const res = await call("maker", "POST", `/api/editor/${id}/drafts/v1/duplicate`);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ name: "v3" });
+    expect(readDraft(id, "v3")).toEqual({ timeline: { ...cutOf(), name: "Tiny v3" }, notes: ["a note"] });
+    const e = await json<Edit>(call("maker", "GET", `/api/editor/${id}`));
+    expect(e.marks?.v3).toEqual({ label: "Hook first copy" });
+    expect(queued(e)).toEqual([["post", "v3"]]);
+    await stopAll(id);
+  });
+
+  it("the timeline page: a draft's view and the Review version it is; edits cut in without a Review version; a changed draft renders as it is", async () => {
+    const id = await made();
+    const timeline = cutOf();
+    await saveDraft(id, "v1", { timeline, notes: ["Cut by hand in Review: 1 timeline edit on version 1"] });
+    const draft = async () => json<{ view: { tracks: { id: string; items: { key: string }[] }[] }; filed: unknown }>(call("maker", "GET", `/api/editor/${id}/drafts/v1`));
+    let d = await draft();
+    expect(d.view.tracks.find((t) => t.id === "V1")!.items.map((i) => i.key)).toEqual(["V1:0", "V1:30"]);
+    expect(d.filed).toBeNull();
+    await saveStep(id, "review", { v1: { assetId: "rev-t", n: 2 } });
+    await saveFiled(id, "rev-t", 2, { variant: "v1", timeline });
+    expect((await draft()).filed).toEqual({ assetId: "rev-t", n: 2 });
+    const cut = (body: object) => call("maker", "POST", `/api/editor/${id}/drafts/v1/cut`, body);
+    // the draft is what Review has: nothing to render without edits
+    expect((await cut({ edits: [] })).status).toBe(400);
+    const e = await json<Edit>(cut({ edits: [{ key: "V1:30", label: "Second line", remove: true }] }));
+    expect(queued(e)).toEqual([["post", "v1"]]);
+    const after = readDraft(id, "v1")!;
+    expect(after.timeline.tracks.V1.items.map((i) => i.rec)).toEqual([0]);
+    expect(after.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit"]);
+    expect(await json(cut({ edits: [] }))).toMatchObject({ error: "This version is still being made" });
+    await stopAll(id);
+    // changed since Review: no edits renders it as it is, with no new revision
+    expect((await draft()).filed).toBeNull();
+    expect(queued(await json<Edit>(cut({ edits: [] })))).toEqual([["post", "v1"]]);
+    expect(readDraft(id, "v1")!.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit"]);
+    await stopAll(id);
+  });
+
+  it("an empty timeline: an edit with no footage and v1; clips are put on it, a picture with its sound, at the first free frame", async () => {
+    libraryDb().prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a1'").run(JSON.stringify({ duration: 2, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }));
+    const res = await call("maker", "POST", "/api/editor/empty", { name: "Tiny blank" });
+    expect(res.status).toBe(201);
+    const { id, draft } = (await res.json()) as { id: string; draft: string };
+    expect(draft).toBe("v1");
+    const e = await json<Edit>(call("maker", "GET", `/api/editor/${id}`));
+    expect(e).toMatchObject({ name: "Tiny blank", sources: [], drafts: ["v1"], jobs: [], workspaceId: "maker" });
+    expect(readDraft(id, "v1")!.timeline).toMatchObject({ fps: 25, width: 1080, height: 1920, sources: {} });
+    const add = (body: object, user = "maker") => call(user, "POST", `/api/editor/${id}/drafts/v1/clips`, body);
+    expect((await add({ clip: "ver_a1", track: "V9", rec: 0 })).status).toBe(400);
+    expect((await add({ clip: "ver_a1", track: "V1", rec: -1 })).status).toBe(400);
+    expect((await add({ clip: "ver_b", track: "V1", rec: 0 })).status).toBe(404);
+    expect((await add({ clip: "ver_a1", track: "V1", rec: 0 }, "other")).status).toBe(404);
+    expect((await add({ clip: "ver_a2", track: "V1", rec: 0 })).status).toBe(409); // no probe yet
+    const first = await add({ clip: "ver_a1", track: "V1", rec: 0 });
+    expect(first.status).toBe(201);
+    expect(((await first.json()) as { key: string }).key).toBe("V1:0");
+    const second = await json<{ key: string; view: { tracks: { id: string; items: { key: string }[] }[] } }>(add({ clip: "ver_a1", track: "V1", rec: 10 }));
+    expect(second.key).toBe("V1:50");
+    expect(second.view.tracks.find((t) => t.id === "A1")!.items.map((i) => i.key)).toEqual(["A1:0", "A1:50"]);
+    const tl = readDraft(id, "v1")!.timeline;
+    expect(tl.tracks.V1.items[1]).toMatchObject({ src: "ver_a1", in: 0, len: 50, rec: 50 });
+    expect(tl.tracks.A1.items[1]!.link).toBe(tl.tracks.V1.items[1]!.link);
+    expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).sources).toEqual(["ver_a1"]);
+    // picture only on V2
+    expect((await json<{ key: string }>(add({ clip: "ver_a1", track: "V2", rec: 0 }))).key).toBe("V2:0");
+    expect(readDraft(id, "v1")!.timeline.tracks.A1.items).toHaveLength(2);
+  });
+
+  it("restore takes an edit out of the trash, for its maker only", async () => {
+    const id = await made();
+    expect((await call("maker", "POST", `/api/editor/${id}/restore`)).status).toBe(404); // not in the trash
+    await call("maker", "DELETE", `/api/editor/${id}`);
+    expect((await call("other", "POST", `/api/editor/${id}/restore`)).status).toBe(404);
+    expect((await call("maker", "POST", `/api/editor/${id}/restore`)).status).toBe(200);
+    expect((await call("maker", "GET", `/api/editor/${id}`)).status).toBe(200);
+  });
+});

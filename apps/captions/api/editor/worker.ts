@@ -131,7 +131,7 @@ export async function tick(now = Date.now()): Promise<boolean> {
  * (store.ts editRole) and every clip it uses (store.ts seesEdit: a teammate refused one by a library policy is stopped).
  */
 const stillReadable = async (actor: string, edit: EditMeta) =>
-  sourcesWorkspace(ownerOf(edit), edit.sources) === edit.workspaceId && !!(await editRole(actor, edit)) && (await seesEdit(actor, edit));
+  (!edit.sources.length || sourcesWorkspace(ownerOf(edit), edit.sources) === edit.workspaceId) && !!(await editRole(actor, edit)) && (await seesEdit(actor, edit));
 
 async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<boolean> {
   const vid = job.version_id ?? "";
@@ -221,7 +221,9 @@ export async function claimForComputer(d: Device, now = Date.now()): Promise<{ j
       continue;
     }
     // only the files the step names, and every one still in the edit's workspace (the draft's B-roll too)
-    if (!(await stillReadable(job.actor ?? "", edit)) || sourcesWorkspace(ownerOf(edit), jobFiles(job).map((f) => f.id)) !== edit.workspaceId) {
+    // (an edit with no footage yet, an empty timeline, has none to check)
+    const files = jobFiles(job).map((f) => f.id);
+    if (!(await stillReadable(job.actor ?? "", edit)) || (files.length > 0 && sourcesWorkspace(ownerOf(edit), files) !== edit.workspaceId)) {
       fail(db, job, "Some footage was deleted or cannot be read by this account");
       continue;
     }

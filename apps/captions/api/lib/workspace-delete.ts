@@ -112,7 +112,7 @@ export const STORES: WorkspaceStore[] = [
   { name: ["Review video", "Review videos"], find: async (a, ws) => (await import("../review")).workspaceVideos(a.username, ws.has) },
   { name: ["Review folder", "Review folders"], find: async (a, ws) => (await import("../review")).workspaceFolders(a.username, ws.has) },
   {
-    name: ["AI Editor edit", "AI Editor edits"],
+    name: ["Editor edit", "Editor edits"],
     find: async (a, ws) => {
       const { allEdits, ownerOf, purgeEdit } = await import("../editor/store");
       const hit = allEdits().filter((e) => ownerOf(e) === a.username && ws.has(e.projectId));

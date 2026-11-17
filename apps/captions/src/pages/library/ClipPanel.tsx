@@ -187,7 +187,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
         {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
           <DropdownMenuItem onSelect={newEdit}>
             <Clapperboard className="h-4 w-4" />
-            New edit
+            New project
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />

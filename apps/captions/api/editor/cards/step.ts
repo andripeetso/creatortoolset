@@ -56,7 +56,7 @@ export const SHEET_MAX_SIDE = 2048;
 export const SHEET_MAX_BYTES = 600_000;
 /** Cards are drawn at the preview's size, and at the cut's frame rate up to this. */
 const MAX_FPS = 60;
-const LABEL = "AI Editor cards";
+const LABEL = "Editor cards";
 const NO_MAC = "no Mac with the Mac app is online";
 
 /** The time, for the two limits above. A test moves it. */

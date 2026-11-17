@@ -216,7 +216,7 @@ export const sharedSwitches = async (username: string): Promise<Record<string, b
 export function setSharedOn(username: string, id: string, on: boolean, shared: SharedSkill[]): Promise<SharedSkill | null> {
   const skill = shared.find((s) => s.id === id);
   if (!skill) return Promise.resolve(null);
-  if (pickedByStyle(skill.place)) return Promise.reject(new SkillError("An AI Editor script skill is picked on an editing style."));
+  if (pickedByStyle(skill.place)) return Promise.reject(new SkillError("An Editor script skill is picked on an editing style."));
   return change(username, (state) => {
     delete state.switched[id];
     state.switched[id] = on;

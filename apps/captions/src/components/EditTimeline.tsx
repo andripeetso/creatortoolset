@@ -693,7 +693,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
 
   return (
     <div className={`select-none rounded-lg border bg-zinc-950 text-[11px] [&_button]:outline-none ${edit ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-900"}`}>
-      <div className="flex items-center gap-2 border-b border-zinc-900 px-2 py-1 text-zinc-500"
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-900 px-2 py-1 text-zinc-500"
         // buttons here don't keep the focus (no ring left on them; Space and Delete stay the timeline's)
         onMouseDown={(e) => {
           if ((e.target as HTMLElement).tagName === "INPUT") return;
@@ -714,7 +714,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
             </button>
           </div>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-1">
           {onEdit && (
             <>
               {edit && holePicked && hole && (
