@@ -1,8 +1,12 @@
-import { useEffect, useId, useMemo } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { create } from "zustand";
 import { PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import type { WorkshopProject } from "@/lib/workshop";
+import { Switch } from "@/components/ui/switch";
+import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, Row } from "./kit-rows";
 import { SettingsSelect } from "./kit-controls";
+import { SettingsDialog, SettingsDialogContent } from "./kit-dialog";
 import { PageAction } from "./page-action";
 
 /**
@@ -113,15 +117,77 @@ export function WorkspacePick({ mode, only }: { mode: "list" | "one"; only?: rea
  * word where a thing with no workspace is used by none, a social account). Shown on a list page while it shows all
  * workspaces (`w.all`); with one workspace picked, or only one to have, it says nothing.
  */
-export function WorkspaceTag({ id, none = "Every workspace" }: { id?: string | null; none?: string }) {
+export function WorkspaceTag({ id, none = "Every workspace" }: { id?: string | null | readonly string[]; none?: string }) {
   const workspaces = useWorkspace((s) => s.projects);
   if (workspaces.length < 2) return null;
-  const p = id ? workspaces.find((x) => x.id === id) : null;
+  // several: each one's dot and name, side by side
+  const ids = typeof id === "string" ? [id] : (id ?? []);
+  if (!ids.length) return <span className="truncate text-xs text-muted-foreground">{none}</span>;
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-      {p && <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />}
-      <span className="truncate">{id ? (p?.name ?? "Another workspace") : none}</span>
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+      {ids.map((one) => {
+        const p = workspaces.find((x) => x.id === one);
+        return (
+          <span key={one} className="inline-flex min-w-0 items-center gap-1.5">
+            {p && <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />}
+            <span className="truncate">{p?.name ?? "Another workspace"}</span>
+          </span>
+        );
+      })}
     </span>
+  );
+}
+
+/**
+ * Which workspaces a thing is in, any number of them (`on`: their ids, null = every workspace): an All workspaces switch
+ * with every workspace listed under it, each saved as it is switched (`save`). The last one on can't be switched off.
+ */
+export function WorkspacesDialog({ title, workspaces, on, save, onClose }: {
+  title: string;
+  workspaces: ReadonlyArray<{ id: string; name: string }>;
+  on: readonly string[] | null;
+  save: (to: string[] | null) => Promise<unknown>;
+  onClose: () => void;
+}) {
+  // shown at once; put back when the save fails
+  const [now, setNow] = useState(on);
+  const set = (to: string[] | null) => {
+    const was = now;
+    setNow(to);
+    save(to).catch(() => setNow(was));
+  };
+  const all = now === null;
+  const isOn = (id: string) => all || now.includes(id);
+  return (
+    <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
+      <SettingsDialogContent className="sm:max-w-md" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <Card>
+          <Row
+            title="All workspaces"
+            description="Includes workspaces added later."
+            // off keeps every workspace on, so nothing disappears until one is switched off
+            control={<Switch checked={all} aria-label="All workspaces" onCheckedChange={(v) => set(v ? null : workspaces.map((p) => p.id))} />}
+          />
+          {workspaces.map((p) => (
+            <Row
+              key={p.id}
+              title={p.name}
+              control={
+                <Switch
+                  checked={isOn(p.id)}
+                  aria-label={p.name}
+                  disabled={!all && now.length === 1 && isOn(p.id)}
+                  onCheckedChange={(v) => set(workspaces.filter((x) => (x.id === p.id ? v : isOn(x.id))).map((x) => x.id))}
+                />
+              }
+            />
+          ))}
+        </Card>
+      </SettingsDialogContent>
+    </SettingsDialog>
   );
 }
 

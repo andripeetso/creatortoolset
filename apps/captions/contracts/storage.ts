@@ -74,6 +74,9 @@ export interface StorageFolder {
   /** the workspace it belongs to (stamped when added), or EVERY_WORKSPACE; none = from before workspaces kept their
    *  own: the first brand's. A list sent to a page names the workspace each folder is in (api/devices-storage.ts) */
   workspace?: string;
+  /** the workspaces it is in when that is two or more (Settings → Folders, a footage or music folder's Workspaces);
+   *  `workspace` is then the first of them, so a reader that knows only `workspace` keeps it to that one */
+  workspaces?: string[];
   /** the share its drive is, on the computer that added it (api/lib/storage.ts mountOf); none: a disk of that computer's own */
   mount?: FolderMount;
 }
@@ -85,8 +88,8 @@ export const EVERY_WORKSPACE = "*";
  * Whether a folder is one workspace's: `inWs` is that workspace's own test (api/lib/project-of.ts inProjectOf; null =
  * nothing is kept apart). Every reader of a workspace's folders asks here, so a folder for every workspace is in each.
  */
-export const folderIn = (f: Pick<StorageFolder, "workspace">, inWs: ((own?: string) => boolean) | null): boolean =>
-  !inWs || f.workspace === EVERY_WORKSPACE || inWs(f.workspace);
+export const folderIn = (f: Pick<StorageFolder, "workspace" | "workspaces">, inWs: ((own?: string) => boolean) | null): boolean =>
+  !inWs || f.workspace === EVERY_WORKSPACE || (f.workspaces ?? [f.workspace]).some((w) => inWs(w));
 
 /** A share's server and name as they may be reported (contracts/providers.ts parseMachine) and put into a command. */
 export const SAFE_SERVER = /^[\w.-]{1,253}$/;
@@ -173,9 +176,8 @@ export interface AddFolderBody {
 }
 
 /** PATCH /api/devices/storage/folders/:id: the workspace a footage or music folder is in; null = every workspace. */
-export interface MoveFolderBody {
-  workspace: string | null;
-}
+/** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before. */
+export type MoveFolderBody = { workspaces: string[] | null } | { workspace: string | null };
 
 /** GET /api/devices/storage: the account's folders, plus the disks of the server's own computer when the server runs on
  *  one (CT_LOCAL=1, the owner's Mac). On a hosted server it is empty, so no one sees another machine's disks. */
