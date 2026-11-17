@@ -9,6 +9,7 @@ import { codexPlan, noPlanLine, planFromCli, type PlanId } from "../../contracts
 import { addInstanceTo, DRIVERS, type Driver, type ProviderInstance } from "../../contracts/providers";
 import { checkInstance } from "../providers";
 import { connectedOwn, modelsFor, ownSettings, parseSettings, saveSettings } from "./providers";
+import { AGY_VERSION, agyInstalled, agySignedIn, installAgy, signInAgy } from "./antigravity";
 import { deviceOf, isOnline, listDevices } from "./devices";
 import { reportedPlan } from "./limits";
 import { dropAiKey, findUser, newAiKey, type UserRecord } from "../users";
@@ -37,6 +38,9 @@ export const mcpName = (appFolder = process.env.CT_APP_FOLDER ?? ""): string => 
 };
 export const MCP_NAME = mcpName();
 const MISSING = "Couldn't find it on this Mac anymore. Check it's still installed.";
+const AGY_MISSING = "Antigravity isn't installed on this computer yet.";
+/** The other AIs this app installs and signs in itself: Grok, Meta and Cursor by their vendors' routes, Antigravity by its own (antigravity.ts). */
+export const setsUp = (id: Driver): boolean => !!VENDOR_AIS[id] || id === "antigravity";
 export const MAC_ONLY = "Open the Creator Toolset Mac app to connect your AI.";
 const PROBE_TTL = 10_000;
 
@@ -280,10 +284,14 @@ export function plainError(raw: string): { state: "signin" | "missing" | "failed
   // Grok Build 1.0.4's own words for a used-up plan; the Mac flags no Grok limit, so they come as a failure
   if (/reached your free Grok Build usage limit/i.test(raw)) return { state: "failed", message: "Your free Grok plan's limit is reached for now. Try again later." };
   if (/hit the rate limit for your plan/i.test(raw)) return { state: "failed", message: "Your Grok plan's limit is reached for now. Try again later." };
+  // Antigravity 1.4.5: Google's API error as the agent passes it on ("Error 429, Message: Quota exhausted…, Status:
+  // RESOURCE_EXHAUSTED", the reason QUOTA_EXHAUSTED)
+  if (/QUOTA_EXHAUSTED|RESOURCE_EXHAUSTED|Quota exhausted/i.test(raw)) return { state: "failed", message: "Your Google account's Antigravity quota is used up for now. Try again later." };
   // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json");
   // "not signed in", "grok login": Grok signed out ("Not signed in. To authenticate without a browser, run: grok login …")
   if (/not logged in|not signed in|grok login|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
   if (/timed out|timeout|did not pick up/i.test(raw)) return { state: "failed", message: "It took too long to answer. Try again." };
+  if (/Antigravity is not installed/i.test(raw)) return { state: "missing", message: AGY_MISSING };
   if (/ENOENT|command not found|no such file/i.test(raw)) return { state: "missing", message: MISSING };
   return { state: "failed", message: "It didn't answer. Try again." };
 }
@@ -402,7 +410,7 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
  * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there; the ones in VENDOR_AIS
  * it also installs and signs in.
  */
-export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", musecode: "muse", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
+export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", musecode: "muse", cursor: "cursor-agent", opencode: "opencode", antigravity: "agy_acp_server.par", pi: "pi" };
 
 /** Whether a JSON file has a value at `keys` (a saved sign-in): false when it is missing or unreadable. */
 const savedAt = (file: string, ...keys: string[]): boolean => {
@@ -488,7 +496,9 @@ export async function otherAis(home = os.homedir()): Promise<Array<{ id: Driver;
   const nvm = nvmVersionDirs(home);
   return ids.flatMap((id) => {
     const name = OTHER_AIS[id]!;
-    const bin = onPath.find((l) => path.basename(l) === name) ?? fallbackCandidates(name, home, nvm).find(copyAt);
+    // Antigravity: the copy this app downloaded (antigravity.ts) before one somebody put on PATH themselves
+    const own = id === "antigravity" ? agyInstalled()?.exe : undefined;
+    const bin = own ?? onPath.find((l) => path.basename(l) === name) ?? fallbackCandidates(name, home, nvm).find(copyAt);
     return bin ? [{ id, bin }] : [];
   });
 }
@@ -559,12 +569,14 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
       ...(mcp === "update" ? { updateCommand: codexUpdateCommand(p.bin ?? "", p.real) } : {}),
     });
   }
-  const others = (Object.keys(OTHER_AIS) as Driver[]).filter((id) => VENDOR_AIS[id] || found.some((f) => f.id === id));
+  const others = (Object.keys(OTHER_AIS) as Driver[]).filter((id) => setsUp(id) || found.some((f) => f.id === id));
   return {
     local: true,
     rows,
     others: others.map((id) => {
       const here = found.some((f) => f.id === id);
+      // Antigravity's sign-in is the token in the app's own profile folder: read for sure, found or not
+      if (id === "antigravity") return { id, found: here, signedIn: agySignedIn(), connected: connected(id) };
       return { id, found: here, signedIn: here && VENDOR_AIS[id] ? vendorSignedIn(id, home, connected(id)) : null, connected: connected(id) };
     }),
   };
@@ -674,6 +686,11 @@ async function installGemini(): Promise<Failed | null> {
  * that answers counts as installed. Nothing is shown as a command to paste.
  */
 export async function installCli(id: Driver): Promise<SignInResult> {
+  if (id === "antigravity") {
+    const failed = await installAgy();
+    shellSaid.clear();
+    return failed ? { ok: false, ...failed } : { ok: true, message: "Antigravity is installed." };
+  }
   const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
   if (!isCli(id) && !vendor) return { ok: false, message: `${nameOf(id)} isn't installed from here.` };
   // Grok's and Cursor's installers download about 180 MB each, Meta's about 470 MB: an hour on a slow connection
@@ -725,6 +742,10 @@ function geminiLogin(bin: string): ChildProcess {
 
 /** Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds until it is done. */
 export async function signIn(id: Driver): Promise<SignInResult> {
+  if (id === "antigravity") {
+    const failed = await signInAgy();
+    return failed ? { ok: false, ...failed } : { ok: true, message: "Your browser opens. Sign in there, then come back here." };
+  }
   const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
   const bin = isCli(id) ? await binFor(id) : vendor && (await otherAis()).find((o) => o.id === id)?.bin;
   if (!bin) return { ok: false, message: MISSING };
@@ -787,8 +808,14 @@ export async function connectCli(username: string, id: Driver, home = os.homedir
   // another AI the Mac app runs: found on this Mac. Its sign-in file not being there never stops the check: the check
   // itself says "not signed in" (plainError), and it is the one that knows
   const found = !isCli(id) && (await otherAis(home)).some((o) => o.id === id);
-  const p: Pick<Probe, "found" | "signedIn" | "home"> = isCli(id) ? await probe(id, true, home) : { found, signedIn: found && VENDOR_AIS[id]?.signedIn(home) ? true : null };
-  if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
+  const p: Pick<Probe, "found" | "signedIn" | "home"> = isCli(id)
+    ? await probe(id, true, home)
+    : { found, signedIn: id === "antigravity" ? agySignedIn() : found && VENDOR_AIS[id]?.signedIn(home) ? true : null };
+  if (!p.found) return { state: "missing", signedIn: null, answered: null, message: id === "antigravity" ? AGY_MISSING : MISSING };
+  // a copy this app downloaded before its pinned release changed: the page installs the current one and connects again
+  const agy = id === "antigravity" ? agyInstalled() : null;
+  if (agy && agy.version !== AGY_VERSION)
+    return { state: "outdated", signedIn: p.signedIn, answered: null, message: `Antigravity ${agy.version} on this computer is older than the ${AGY_VERSION} this app runs. Update it.` };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
   // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
   const device = mac ? deviceOf(mac) : undefined;

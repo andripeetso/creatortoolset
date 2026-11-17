@@ -11,7 +11,8 @@ import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
-import { addMcp, connectCli, installCli, localAiView, planOf, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS, VENDOR_AIS } from "./lib/local-ai";
+import { agyProgress, removeAgy } from "./lib/antigravity";
+import { addMcp, connectCli, installCli, localAiView, planOf, setsUp, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -25,7 +26,7 @@ import {
 } from "./users";
 import { viaTunnel, type AuthVars } from "./auth";
 import { MY_KEYS } from "../contracts/service-keys";
-import type { CliId, LocalAiView } from "../contracts/local-ai";
+import type { CliId, LocalAiView, SignInResult } from "../contracts/local-ai";
 import type { Driver } from "../contracts/providers";
 import { isTool, TOOLS, type Have, type SetupView, type Tool, HOME_TILES, isHomeTile, type HomeTile } from "../contracts/tools";
 import { isPlan, type PlanId } from "../contracts/plans";
@@ -39,10 +40,13 @@ import { isPlan, type PlanId } from "../contracts/plans";
  *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
- *   POST /api/setup/ai/signin  { id }  → SignInResult  starts the tool's own sign-in (the three CLIs, Grok, Meta, Cursor); its browser opens (CT_LOCAL=1)
+ *   POST /api/setup/ai/signin  { id }  → SignInResult  starts the tool's own sign-in (the three CLIs, Grok, Meta, Cursor, Antigravity); its browser opens (CT_LOCAL=1)
  *   POST /api/setup/ai/connect { id, device } → ConnectResult connects it as this account's AI after a real check (always 200)
  *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
- *   POST /api/setup/ai/install { id }  → SignInResult  installs it (the three CLIs, Grok, Meta, Cursor) by the vendor's own route, then checks it runs (CT_LOCAL=1)
+ *   POST /api/setup/ai/install { id }  → SignInResult  installs it (the three CLIs, Grok, Meta, Cursor) by the vendor's own route, Antigravity
+ *                                                  from Google's pinned release (lib/antigravity.ts), then checks it runs (CT_LOCAL=1)
+ *   GET  /api/setup/ai/progress        → { done, total }  Antigravity's download in progress (0 of 0 when none runs)
+ *   POST /api/setup/ai/remove          → SignInResult  deletes the Antigravity program it downloaded (the sign-in stays)
  *   POST /api/setup/join { link }      → { ok, server, device } joins another server behind its one-time link (not hosted)
  */
 
@@ -215,7 +219,7 @@ const cliOf = (v: unknown): CliId | null =>
 const mcpToOf = (u: string): CliId[] => read(u)?.mcpTo ?? [];
 /** Connect also takes the other AIs the Mac app runs (local-ai.ts OTHER_AIS); install and sign-in the three CLIs, Grok, Meta and Cursor (VENDOR_AIS). */
 const aiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.keys(OTHER_AIS).includes(v) ? (v as Driver) : null);
-const setupAiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.hasOwn(VENDOR_AIS, v) ? (v as Driver) : null);
+const setupAiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.hasOwn(OTHER_AIS, v) && setsUp(v as Driver) ? (v as Driver) : null);
 
 setupApp.get("/ai", async (c) => {
   const u = c.get("user").username;
@@ -244,6 +248,19 @@ setupApp.post("/ai/install", async (c) => {
   const id = setupAiOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick an AI this Mac can set up" }, 400);
   return c.json(await installCli(id));
+});
+
+/** Antigravity's download in progress (bytes so far of the total), for the row's line while Install runs; 0 of 0 when none runs. */
+setupApp.get("/ai/progress", (c) => {
+  if (!ownComputer(c.get("user"))) return c.json({ error: MAC_ONLY }, 403);
+  return c.json(agyProgress() ?? { done: 0, total: 0 });
+});
+
+/** Deletes the Antigravity program this app downloaded (its sign-in stays). */
+setupApp.post("/ai/remove", (c) => {
+  if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
+  removeAgy();
+  return c.json({ ok: true } satisfies SignInResult);
 });
 
 setupApp.post("/ai/update", async (c) => {

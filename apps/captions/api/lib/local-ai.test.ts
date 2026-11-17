@@ -38,6 +38,8 @@ const home = path.join(root, "home");
 const codexHome = path.join(root, "codex");
 
 beforeAll(() => {
+  // the app's data folder (Antigravity's download and sign-in): an empty one of the test's own, never this machine's
+  process.env.CT_APP_FOLDER = path.join(root, "app");
   for (const u of ["ana", "ben", "dee", "eve", "fay", "gus", "hal", "ian", "cy", "zed", "joy", "old", "lim"]) createUser(u, "password1", { role: "user" });
 });
 afterAll(() => {
@@ -290,7 +292,7 @@ describe("connect your AI", () => {
     expect(shells).toBe(4);
     expect(versionRuns).toBe(1);
     // Grok and Cursor are found and their sign-in read on every look without starting either
-    expect(views[0]?.others?.map((o) => [o.id, o.found])).toEqual([["grok", true], ["musecode", false], ["cursor", true]]);
+    expect(views[0]?.others?.map((o) => [o.id, o.found])).toEqual([["grok", true], ["musecode", false], ["cursor", true], ["antigravity", false]]);
     expect(vendorRuns).toBe(0);
   });
 
@@ -719,10 +721,12 @@ setTimeout(() => {}, 60000);
       { id: "grok", found: true, signedIn: false, connected: false },
       { id: "musecode", found: false, signedIn: null, connected: false },
       { id: "cursor", found: true, signedIn: false, connected: false },
+      // the app downloads Antigravity itself: listed before it is, its sign-in read from its own profile
+      { id: "antigravity", found: false, signedIn: false, connected: false },
     ]);
     writeFileSync(path.join(h, ".grok", "auth.json"), "{}");
     writeFileSync(path.join(h, ".cursor", "cli-config.json"), JSON.stringify({ version: 1, authInfo: { email: "studio@tinyacrobatics.example" } }));
-    expect((await others())?.map((o) => [o.id, o.signedIn])).toEqual([["grok", true], ["musecode", null], ["cursor", true]]);
+    expect((await others())?.map((o) => [o.id, o.signedIn])).toEqual([["grok", true], ["musecode", null], ["cursor", true], ["antigravity", false]]);
     // Meta: its launcher in ~/.local/bin, signed in once its sign-in file holds Meta's token (an empty file is not)
     shell((line) => (line.startsWith("command -v grok ") ? `${h}/.grok/bin/grok\n` : ""), (p) => p === path.join(h, ".local", "bin", "cursor-agent") || p === path.join(h, ".local", "bin", "muse"));
     mkdirSync(path.join(h, ".config", "muse"), { recursive: true });
@@ -733,7 +737,7 @@ setTimeout(() => {}, 60000);
     // not on this Mac: still listed (setup installs them), sign-in unknown
     shell(() => "");
     expect(await local.localAiView("ana", [], true, path.join(root, "empty-home"))).toMatchObject({
-      others: [{ id: "grok", found: false, signedIn: null }, { id: "musecode", found: false, signedIn: null }, { id: "cursor", found: false, signedIn: null }],
+      others: [{ id: "grok", found: false, signedIn: null }, { id: "musecode", found: false, signedIn: null }, { id: "cursor", found: false, signedIn: null }, { id: "antigravity", found: false, signedIn: false }],
     });
   });
 

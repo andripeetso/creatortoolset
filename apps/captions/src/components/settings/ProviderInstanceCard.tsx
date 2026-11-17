@@ -36,15 +36,17 @@ export function providerStatus(o: {
   if (!o.online) return { tone: "neutral", text: "Computer offline" };
   if (o.report && !o.found?.installed) return { tone: "attention", text: "Not installed", action: "install" };
   const answeredSinceReport = !!o.check?.ok && (o.reportAt === undefined || o.check.at >= o.reportAt);
-  if (o.found?.signedIn === false && !answeredSinceReport) return { tone: "attention", text: "Not signed in", action: "sign-in" };
+  if (o.found?.signedIn === false && !answeredSinceReport) return { tone: "attention", text: "Needs sign-in", action: "sign-in" };
   if (o.check && !o.check.ok) {
     // the account itself turned away (no plan that includes this AI): said as setup says it, with no retry to offer
     const noPlan = noPlanLine(o.check.error ?? "");
     if (noPlan) return { tone: "attention", text: noPlan };
     // the plain reason is in the detail; a sign-in problem gets its fix on the row
-    const signIn = /sign in|log ?in|login/i.test(o.check.error ?? "");
+    // "Authentication required": Antigravity with no Google sign-in in its profile; "not signed in": the Mac app's own words
+    const signIn = /sign in|signed in|log ?in|login|authenticat/i.test(o.check.error ?? "");
     const computer = /did not pick up|is offline|stopped answering/i.test(o.check.error ?? "");
-    return { tone: "broken", text: computer ? "Computer offline" : "Test failed", action: signIn ? "sign-in" : "test" };
+    if (signIn && !computer) return { tone: "attention", text: "Needs sign-in", action: "sign-in" };
+    return { tone: "broken", text: computer ? "Computer offline" : "Test failed", action: "test" };
   }
   // it works, with something to know (a plan limit and when it resets): said plainly, nothing to press
   if (o.check?.ok && o.check.note) return { tone: "neutral", text: o.check.note };

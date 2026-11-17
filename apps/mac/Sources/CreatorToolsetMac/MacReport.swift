@@ -19,7 +19,7 @@ let appGemini = appSupport.appendingPathComponent("node/bin/gemini").path
 let driverBinaries: [String: [String]] = [
     "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex", chatGPTAppCodex], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini", appGemini],
     "cursor": ["cursor-agent"],
-    "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity-acp"], "musecode": ["muse"], "pi": ["pi"],
+    "opencode": ["opencode", "~/.opencode/bin/opencode"], "musecode": ["muse"], "pi": ["pi"],
 ]
 
 /// The folders a GUI app's PATH leaves out (launchd's PATH is short).
@@ -192,6 +192,15 @@ private let signInArgs: [String: [String]] = ["claude": ["auth", "status", "--js
 func driverReport(home: URL, signIn: Bool = limitsReadingOn()) -> [[String: Any]] {
     reportDrivers.map { driver in
         var row: [String: Any] = ["driver": driver.id, "installed": false]
+        // Antigravity: the copy this app downloaded, read from its files (its program never runs for a report: one start
+        // takes seconds), and its sign-in from its own profile
+        if driver.id == "antigravity", let runtime = antigravityRuntime() {
+            row["installed"] = true
+            row["path"] = runtime.program
+            if let version = runtime.version { row["version"] = version }
+            row["signedIn"] = antigravitySignedIn()
+            return row
+        }
         if let path = binary(driver.id, home: home) {
             row["installed"] = true
             row["path"] = path

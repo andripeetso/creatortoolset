@@ -34,6 +34,7 @@ export function ProviderDetail({
   onSignIn,
   onMove,
   onRemove,
+  onDeleteProgram,
 }: {
   inst: ProviderInstance;
   status: ProviderStatus;
@@ -59,6 +60,8 @@ export function ProviderDetail({
   onSignIn?: () => void;
   onMove?: (deviceId: string) => void;
   onRemove: () => void;
+  /** a program the app downloaded for this AI (Antigravity) on this computer: deletes it, the sign-in stays */
+  onDeleteProgram?: () => void;
 }) {
   const driver = DRIVERS.find((d) => d.id === inst.driver);
   const fields = driverFields(inst.driver);
@@ -76,6 +79,9 @@ export function ProviderDetail({
         onTest();
       },
     },
+    ...(onDeleteProgram
+      ? [{ label: "Delete program", destructive: true, onSelect: onDeleteProgram, confirm: { title: "Delete the Antigravity program?", body: "The downloaded program is deleted from this computer; the sign-in stays.", ok: "Delete" } }]
+      : []),
     used.length
       ? { label: "Remove", destructive: true, onSelect: () => { throw new Error(`${inst.name} is in use by ${used.join(", ")}.`); } }
       : { label: "Remove", destructive: true, onSelect: onRemove, confirm: { title: `Remove ${inst.name}?`, body: "Its settings are removed.", ok: "Remove" } },
