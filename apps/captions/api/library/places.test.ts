@@ -80,8 +80,8 @@ add("noprint", { bytes: 300, quick: null, mac: "/Volumes/footage/2025/c.mov", de
 add("home", { bytes: 400, quick: q("4"), mac: "/Users/ana/Movies/d.mov", device: anaMac });
 add("upload", { bytes: 500, quick: q("5"), key: "libraries/lib/v/upload/source.mov" });
 // uploaded from ana's Mac off the share (its original is on the server too): one says which computer, one doesn't
-add("sent", { bytes: 600, quick: q("6"), key: "libraries/lib/v/sent/source.mov" });
-add("sentanon", { bytes: 700, quick: q("7"), key: "libraries/lib/v/sentanon/source.mov" });
+add("sent", { bytes: 610, quick: q("a"), key: "libraries/lib/v/sent/source.mov" });
+add("sentanon", { bytes: 710, quick: q("b"), key: "libraries/lib/v/sentanon/source.mov" });
 d.prepare("UPDATE asset_versions SET from_path = ?, from_device = ? WHERE id = ?").run("/Volumes/footage/2025/Aug/e.mov", anaMac, "sent");
 d.prepare("UPDATE asset_versions SET from_path = ?, from_device = NULL WHERE id = ?").run("/Volumes/footage/2025/Aug/f.mov", "sentanon");
 
