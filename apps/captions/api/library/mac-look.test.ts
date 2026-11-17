@@ -202,7 +202,9 @@ describe("a look of a file kept on a Mac", () => {
 
   it("with a Gemini key the claim asks for a copy to watch; the copy goes to Gemini and is deleted, and a Mac that sends none is named", async () => {
     const { saveMyKey } = await import("../my-keys");
-    const { timelineOf } = await import("./timeline");
+    const { timelineOf, watching, watchTiming } = await import("./timeline");
+    const longPost = watchTiming.post;
+    watchTiming.post = (url, headers, body) => fetch(url, { method: "POST", headers, body });
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");
     const asked: string[] = [];
     vi.stubGlobal(
@@ -230,6 +232,8 @@ describe("a look of a file kept on a Mac", () => {
         }
         await post(road(got.id), { done: true, format: "3x16" });
         await runLooks();
+        await Promise.all([...watching.values()]); // the watch runs beside the look lane; its copy goes right after
+        await new Promise((go) => setTimeout(go, 20));
         expect(job(v).state).toBe("done");
         if (sends) {
           expect(timelineOf(libraryDb(), v)).toEqual([{ a: 3, b: 6, what: "a jump" }]);
@@ -240,6 +244,7 @@ describe("a look of a file kept on a Mac", () => {
         }
       }
     } finally {
+      watchTiming.post = longPost;
       saveMyKey("local", "GEMINI_API_KEY", null);
       vi.unstubAllGlobals();
     }

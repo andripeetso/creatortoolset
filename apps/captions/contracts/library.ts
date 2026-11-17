@@ -145,6 +145,8 @@ export interface LibrarySettings {
   pictures?: boolean;
   look: boolean; // the AI writes a line for each shot of a longer video that isn't a talking take (Shot descriptions)
   timeline: boolean; // with a Gemini key, Gemini watches each of those videos with its sound and writes its timeline (Timelines)
+  /** the Gemini model that watches (WATCH_MODELS); absent: the first */
+  timelineModel?: WatchModel;
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
   /**
    * What a file added from a computer the server is not on sends to the server: "none" (the default) indexes it where it
@@ -183,6 +185,17 @@ export const LOOK_LEVELS: readonly { value: LookLevel; label: string; long: numb
   { value: "detailed", label: "Detailed", long: 4, piece: 2 },
 ];
 export const lookLevelOf = (v: unknown): LookLevel => (LOOK_LEVELS.some((l) => l.value === v) ? (v as LookLevel) : "standard");
+/**
+ * The Gemini models a library's Timelines can watch with (api/library/timeline.ts), the default first. Measured
+ * 2026-11-16 on 9 clips: 3.8 Flash found 42 of 44 moments, with cause across shots, retakes and sound onsets right;
+ * 3.5 Flash-Lite found 34, coarser, at about a third of the cost.
+ */
+export type WatchModel = "gemini-3.8-flash" | "gemini-3.5-flash-lite";
+export const WATCH_MODELS: readonly { value: WatchModel; label: string; note: string }[] = [
+  { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash", note: "Most moments" },
+  { value: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", note: "Fewer moments" },
+];
+export const watchModelOf = (v: unknown): WatchModel => (WATCH_MODELS.some((m) => m.value === v) ? (v as WatchModel) : WATCH_MODELS[0]!.value);
 /** A new library's monthly cap on shot descriptions, in dollars (API-equivalent on an AI provider). */
 export const LOOK_BUDGET_DEFAULT = 20;
 
@@ -289,6 +302,10 @@ export interface LibraryEstimate {
   lookSpent?: number;
   /** the asker has a Gemini key, so the library's Timelines run (api/library/timeline.ts) */
   timelineKey?: boolean;
+  /** a timeline of one hour of footage at the library's level, by model (WATCH_MODELS); absent without a Gemini key */
+  timelineModels?: { model: WatchModel; usd: number }[];
+  /** the library's last watch met the Gemini key's free-tier daily quota (api/library/timeline.ts freeTierStopped) */
+  timelineFreeTier?: true;
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */

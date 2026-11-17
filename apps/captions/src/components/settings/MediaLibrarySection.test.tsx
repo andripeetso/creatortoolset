@@ -38,6 +38,7 @@ const patches: unknown[] = [];
 /** each request with the workspace it named */
 const asked: Array<[string, string | null]> = [];
 let serverHere = false;
+let freeTier = false;
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -45,6 +46,7 @@ beforeEach(() => {
   patches.length = 0;
   asked.length = 0;
   serverHere = false;
+  freeTier = false;
   // the Mac app with the server elsewhere: every section shows
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -61,7 +63,16 @@ beforeEach(() => {
     if (url.endsWith("/usage")) return ok({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] });
     if (url.endsWith("/space")) return ok({ videos: { onMac: 0, inPlace: 0, stored: { bytes: 0, files: 0 } }, proxies: { bytes: 0, files: 0 }, pictures: { bytes: 0, files: 0 }, models: null });
     if (url.includes("/estimate"))
-      return ok({ steps: [], lookSpent: 4.2, lookLevels: [{ level: "light", seconds: 300, usd: 0.9 }, { level: "standard", seconds: 720, usd: 2.64 }, { level: "detailed", seconds: 1440, usd: 5.28 }] });
+      return ok({
+        steps: [],
+        lookSpent: 4.2,
+        timelineKey: true,
+        ...(freeTier ? { timelineFreeTier: true } : {}),
+        timelineModels: [
+          { model: "gemini-3.8-flash", usd: 0.42 },
+          { model: "gemini-3.5-flash-lite", usd: 0.16 },
+        ],
+        lookLevels: [{ level: "light", seconds: 300, usd: 0.9 }, { level: "standard", seconds: 720, usd: 2.64 }, { level: "detailed", seconds: 1440, usd: 5.28 }] });
     return ok({});
   });
 });
@@ -154,7 +165,7 @@ describe("the Media Library's settings", () => {
     expect(text).toContain("About 12 min and $2.64 an hour of footage");
     expect(text).toContain("$4.20 this month");
     // Light and Detailed have Use; Standard, the one in use, says so
-    const uses = [...host!.querySelectorAll("button")].filter((b) => b.textContent === "Use");
+    const uses = [...host!.querySelectorAll('[data-settings-row="library-shot-detail"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
     expect(uses).toHaveLength(2);
     expect(text).toContain("In use");
     await act(async () => uses[1]!.click());
@@ -168,6 +179,25 @@ describe("the Media Library's settings", () => {
     await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
     expect(patches).toEqual([{ settings: { lookLevel: "detailed" } }, { settings: { lookBudget: 35 } }]);
+  });
+
+  it("Timelines list each Gemini model with an hour's cost, 3.8 Flash in use, and save the one picked", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Gemini 3.8 Flash");
+    expect(text).toContain("Most moments, about $0.42 an hour of footage");
+    expect(text).toContain("Fewer moments, about $0.16 an hour of footage");
+    const lite = [...host!.querySelectorAll('[data-settings-row="library-ai"] button')].find((b) => b.textContent === "Use") as HTMLButtonElement;
+    await act(async () => lite.click());
+    expect(patches).toEqual([{ settings: { timelineModel: "gemini-3.5-flash-lite" } }]);
+  });
+
+  it("Timelines say once when the Gemini key is on Google's free tier", async () => {
+    freeTier = true;
+    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+    const text = document.body.textContent ?? "";
+    expect(text.split("free tier").length - 1).toBe(1);
+    expect(text).toContain("The Gemini key is on Google's free tier, about 20 calls a day; billing in Google AI Studio lifts the limit");
   });
 
   it("the upload choice is saved on the library", async () => {

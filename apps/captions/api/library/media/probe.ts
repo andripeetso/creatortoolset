@@ -84,6 +84,13 @@ export async function probe(file: string): Promise<ProbeSummary> {
   return { ...parseProbe(json), country: (await countryOf(json)) || (await photoCountry(file)) };
 }
 
+/** Whether `file` has a sound track; true when ffprobe can't say, so the file is treated as it was before the check. */
+export const hasSound = (file: string): Promise<boolean> =>
+  ffprobe(file, ["-show_streams", "-select_streams", "a"]).then(
+    (j) => !!j.streams?.length,
+    () => true,
+  );
+
 function ffprobe(file: string, args: string[]): Promise<{ format?: Json; streams?: Json[]; stream_groups?: Json[] }> {
   return new Promise((resolve, reject) => {
     const p = spawn("ffprobe", ["-v", "error", ...args, "-of", "json", file]);

@@ -1,10 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
-import { LOOK_LEVELS, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
+import { LOOK_LEVELS, WATCH_MODELS, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { watchKey, watchUsdPerHour } from "./timeline";
+import { freeTierStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
 import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
@@ -282,12 +282,16 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
     out.lookLevels = [];
     // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from measured tokens)
     const watching = librarySetting(libraryId, "timeline") && !!watchKey(username);
+    const model = libraryWatchModel(db, libraryId);
     for (const l of LOOK_LEVELS) {
       const p = await lookPerClip(db, look, 3600, levelShare(l.value), mine);
-      out.lookLevels.push({ level: l.value, seconds: p.seconds / p.at, usd: p.usd + (watching ? watchUsdPerHour(l.value) : 0) });
+      out.lookLevels.push({ level: l.value, seconds: p.seconds / p.at, usd: p.usd + (watching ? watchUsdPerHour(l.value, model) : 0) });
     }
   }
   out.timelineKey = !!watchKey(username);
+  // each model's timeline of an hour at the library's level, so the person picks one with its cost in front of them
+  if (out.timelineKey && freeTierStopped(db, libraryId)) out.timelineFreeTier = true;
+  if (out.timelineKey) out.timelineModels = WATCH_MODELS.map((m) => ({ model: m.value, usd: watchUsdPerHour(libraryLookLevel(libraryId), m.value) }));
   if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);
   if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);
