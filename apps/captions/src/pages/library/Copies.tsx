@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { Link } from "react-router";
 import { ArrowUp, ChevronLeft, Folder, HardDrive, Laptop } from "lucide-react";
 import type { LibraryCopy } from "@contracts/library";
 import { COPY_KIND, FOLDER_LIST_KIND } from "@contracts/devices";
@@ -20,9 +21,9 @@ import { thisMacBridge } from "@/lib/thisMac";
 type Computer = ProvidersView["devices"][number];
 
 const ask = async <T,>(url: string, init?: RequestInit): Promise<T> => {
-  const r = await fetch(url, init);
-  const body = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw Object.assign(new Error(body.error ?? `Request failed (${r.status})`), { status: r.status });
+  const r = await fetch(url, init).catch(() => null);
+  const body = (await r?.json().catch(() => ({}))) as T & { error?: string };
+  if (!r?.ok) throw Object.assign(new Error(body?.error ?? "Could not reach the server. Try again."), { status: r?.status });
   return body;
 };
 
@@ -47,9 +48,10 @@ export function copyLines(c: LibraryCopy, now = Date.now()): { busy: string | nu
   const busy = c.pending > 0 ? `Copying ${c.pending} ${c.pending === 1 ? "file" : "files"}` : c.copying ? "Copying" : null;
   const needs = [
     c.state === "reconnect" && "Needs the folder reconnected",
-    c.state === "full" && "Disk full",
+    c.state === "full" && "Disk full on the computer",
     c.offlineSince && `Offline since ${since(c.offlineSince, now)}`,
     c.waitsFor && `Needs ${c.waitsFor} online`,
+    !!c.noOriginal && `No original for ${c.noOriginal} ${c.noOriginal === 1 ? "file" : "files"}`,
   ].filter((x): x is string => !!x);
   return { busy, needs };
 }
@@ -112,7 +114,7 @@ export function LibraryCopies({ libraryId, className }: { libraryId: string; cla
                     </span>
                   )
                 }
-                actions={!c.readOnly && <RowMenu label="Copy" items={items} />}
+                actions={!c.readOnly && <RowMenu label="Copy options" items={items} />}
               />
             );
           })
@@ -132,33 +134,55 @@ export function LibraryCopies({ libraryId, className }: { libraryId: string; cla
   );
 }
 
+/** A computer of this account's that cannot take a copy yet, and what it needs (null when it can). */
+const computerNeeds = (d: Computer) =>
+  !(d.kinds?.includes(FOLDER_LIST_KIND) && d.kinds.includes(COPY_KIND))
+    ? (d.report?.machine?.os ?? "mac") === "mac"
+      ? "Needs the Mac app updated"
+      : "Needs an update"
+    : !d.online
+      ? `Needs ${d.name} online`
+      : null;
+
+/** Folders a copy can never go to: the top of the disk and the Mac's list of disks. */
+const NOT_A_FOLDER = ["/", "/Volumes"];
+
 /** Add copy: a computer of this account's that can list its folders, then a folder on it. */
 function AddCopy({ libraryId, onClose, onAdded }: { libraryId: string; onClose: () => void; onAdded: (c: LibraryCopy) => void }) {
   const me = useAuth((s) => s.me?.username);
   const providers = useProviders();
-  const computers = (providers.data?.devices ?? []).filter((d) => d.owner === me && d.kinds?.includes(FOLDER_LIST_KIND) && d.kinds.includes(COPY_KIND));
+  const computers = (providers.data?.devices ?? []).filter((d) => d.owner === me);
   const [computer, setComputer] = useState<Computer | null>(null);
   const [path, setPath] = useState("/");
-  const [folders, setFolders] = useState<string[] | null>(null);
+  // the list on screen and the folder it is of: kept (dimmed) while the next one loads, so nothing moves under the pointer
+  const [shown, setShown] = useState<{ at: string; folders: string[] } | null>(null);
+  const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const last = useRef(0);
 
   const open = async (d: Computer, at: string) => {
     const clean = at.replace(/\/+$/, "") || "/";
+    const n = ++last.current;
+    if (d.id !== computer?.id) setShown(null);
     setComputer(d);
     setPath(clean);
-    setFolders(null);
+    setLoading(true);
     setListError(null);
     try {
       const b = await ask<{ folders: string[] }>(`/api/library/${libraryId}/copies/folders?device=${encodeURIComponent(d.id)}&path=${encodeURIComponent(clean)}`);
-      setFolders(b.folders.map((f) => f.split("/").filter(Boolean).pop() ?? f).sort((a, b) => a.localeCompare(b)));
+      if (n !== last.current) return;
+      setShown({ at: clean, folders: b.folders.map((f) => f.split("/").filter(Boolean).pop() ?? f).sort((a, b) => a.localeCompare(b)) });
     } catch (e) {
-      setListError(e instanceof Error ? e.message : String(e));
+      if (n === last.current) setListError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (n === last.current) setLoading(false);
     }
   };
-  const into = (name: string) => (path === "/" ? `/${name}` : `${path}/${name}`);
-  const up = path.slice(0, path.lastIndexOf("/")) || "/";
+  const into = (from: string, name: string) => (from === "/" ? `/${name}` : `${from}/${name}`);
+  const up = (from: string) => from.slice(0, from.lastIndexOf("/")) || "/";
+  const crumbs = path.split("/").filter(Boolean);
   const add = async () => {
     if (!computer) return;
     setBusy(true);
@@ -178,7 +202,16 @@ function AddCopy({ libraryId, onClose, onAdded }: { libraryId: string; onClose: 
   };
 
   return (
-    <FormDialog open onOpenChange={(o) => !o && onClose()} title="Add copy" submitLabel="Add copy" onSubmit={add} busy={busy} submitDisabled={!computer} error={error}>
+    <FormDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title="Add copy"
+      submitLabel="Copy to this folder"
+      onSubmit={add}
+      busy={busy}
+      submitDisabled={!computer || NOT_A_FOLDER.includes(path)}
+      error={error}
+    >
       {!computer ? (
         <Card>
           {providers.error && !providers.data ? (
@@ -186,40 +219,77 @@ function AddCopy({ libraryId, onClose, onAdded }: { libraryId: string; onClose: 
           ) : !providers.data ? (
             <LoadingRow />
           ) : computers.length === 0 ? (
-            <EmptyRow title="No computers" />
+            <>
+              <EmptyRow title="No computers yet" />
+              <div className="px-3 pb-3 sm:px-4">
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/settings/devices?add=1" onClick={onClose}>
+                    Add computer
+                  </Link>
+                </Button>
+              </div>
+            </>
           ) : (
-            computers.map((d) => (
-              <button key={d.id} type="button" className="block w-full text-left hover:bg-muted/50" onClick={() => void open(d, (d.report?.machine?.os ?? "mac") === "mac" ? "/Volumes" : "/")}>
-                <ListRow icon={<Laptop />} title={d.name} status={!d.online && <Status>Offline</Status>} />
-              </button>
-            ))
+            computers.map((d) => {
+              const needs = computerNeeds(d);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  disabled={!!needs}
+                  className="block w-full text-left enabled:hover:bg-muted/50 disabled:cursor-default"
+                  onClick={() => void open(d, (d.report?.machine?.os ?? "mac") === "mac" ? "/Volumes" : "/")}
+                >
+                  <ListRow icon={<Laptop />} title={d.name} status={needs && <Status tone="attention">{needs}</Status>} />
+                </button>
+              );
+            })
           )}
         </Card>
       ) : (
         <>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setComputer(null)}>
-            <ChevronLeft />
-            {computer.name}
-          </Button>
-          <TextField label="Folder" value={path} onCommit={(p) => open(computer, p.startsWith("/") ? p : `/${p}`)} />
-          <Card className="max-h-64 overflow-y-auto">
-            {path !== "/" && (
-              <button type="button" className="block w-full text-left hover:bg-muted/50" onClick={() => void open(computer, up)}>
-                <ListRow icon={<ArrowUp />} title="Up" />
+          <div className="flex flex-wrap items-center gap-0.5 text-sm">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setComputer(null)}>
+              <ChevronLeft />
+              Computers
+            </Button>
+            <nav aria-label="Folder path" className="flex min-w-0 flex-wrap items-center text-muted-foreground">
+              <button type="button" className="rounded px-1 hover:text-foreground" onClick={() => void open(computer, "/")}>
+                {computer.name}
               </button>
-            )}
+              {crumbs.map((c, i) => (
+                <span key={i} className="flex items-center">
+                  <span aria-hidden>/</span>
+                  <button type="button" className="rounded px-1 hover:text-foreground" onClick={() => void open(computer, `/${crumbs.slice(0, i + 1).join("/")}`)}>
+                    {c}
+                  </button>
+                </span>
+              ))}
+            </nav>
+          </div>
+          <TextField label="Folder" value={path} onCommit={(p) => open(computer, p.startsWith("/") ? p : `/${p}`)} />
+          <Card className="max-h-64 overflow-y-scroll">
             {listError ? (
               <ErrorRow title="Could not load folders" detail={listError} retry={() => void open(computer, path)} />
-            ) : !folders ? (
+            ) : !shown ? (
               <LoadingRow />
-            ) : folders.length === 0 ? (
-              <EmptyRow title="No folders" />
             ) : (
-              folders.map((f) => (
-                <button key={f} type="button" className="block w-full text-left hover:bg-muted/50" onClick={() => void open(computer, into(f))}>
-                  <ListRow icon={<Folder />} title={f} />
-                </button>
-              ))
+              <div aria-busy={loading} className={loading ? "opacity-50 transition-opacity" : "transition-opacity"}>
+                {shown.at !== "/" && (
+                  <button type="button" className="block w-full text-left hover:bg-muted/50" onClick={() => void open(computer, up(shown.at))}>
+                    <ListRow icon={<ArrowUp />} title="Up" />
+                  </button>
+                )}
+                {shown.folders.length === 0 ? (
+                  <EmptyRow title="No folders" />
+                ) : (
+                  shown.folders.map((f) => (
+                    <button key={f} type="button" className="block w-full text-left hover:bg-muted/50" onClick={() => void open(computer, into(shown.at, f))}>
+                      <ListRow icon={<Folder />} title={f} />
+                    </button>
+                  ))
+                )}
+              </div>
             )}
           </Card>
         </>
