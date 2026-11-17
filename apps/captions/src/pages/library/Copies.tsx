@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ArrowUp, ChevronLeft, Folder, HardDrive, Laptop } from "lucide-react";
 import type { LibraryCopy } from "@contracts/library";
-import { FOLDER_LIST_KIND } from "@contracts/devices";
+import { COPY_KIND, FOLDER_LIST_KIND } from "@contracts/devices";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, TextField } from "@/components/settings/ui";
@@ -136,7 +136,7 @@ export function LibraryCopies({ libraryId, className }: { libraryId: string; cla
 function AddCopy({ libraryId, onClose, onAdded }: { libraryId: string; onClose: () => void; onAdded: (c: LibraryCopy) => void }) {
   const me = useAuth((s) => s.me?.username);
   const providers = useProviders();
-  const computers = (providers.data?.devices ?? []).filter((d) => d.owner === me && d.kinds?.includes(FOLDER_LIST_KIND));
+  const computers = (providers.data?.devices ?? []).filter((d) => d.owner === me && d.kinds?.includes(FOLDER_LIST_KIND) && d.kinds.includes(COPY_KIND));
   const [computer, setComputer] = useState<Computer | null>(null);
   const [path, setPath] = useState("/");
   const [folders, setFolders] = useState<string[] | null>(null);
