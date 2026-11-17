@@ -2288,14 +2288,40 @@ assistantApp.delete("/past/:id", (c) => {
   const conv = load(u.username);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
   if (!found) return c.json({ error: "Chat not found" }, 404);
-  conv.past = conv.past!.filter((p) => p !== found);
-  dropImages(u.username, found.messages);
-  // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
-  for (const m of found.messages) runsOf(u.username).get(m.id)?.abort();
-  save(u.username);
-  void pump(u.username);
+  dropChats(u.username, new Set([found.id]));
   return c.json(view(u.username, u.role === "admin"));
 });
+
+/** Deletes these chats for good, with their pictures; the open one among them is emptied and a new one starts. */
+function dropChats(username: string, ids: ReadonlySet<string>): void {
+  const conv = load(username);
+  const gone = [{ id: conv.id!, messages: conv.messages }, ...(conv.past ?? [])].filter((c) => ids.has(c.id));
+  conv.past = conv.past?.filter((p) => !ids.has(p.id));
+  if (ids.has(conv.id!)) {
+    conv.messages = [];
+    archive(username, conv); // with no messages it only starts a new chat
+  }
+  for (const c of gone) {
+    dropImages(username, c.messages);
+    // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
+    for (const m of c.messages) runsOf(username).get(m.id)?.abort();
+  }
+  save(username);
+  void pump(username);
+}
+
+/** The account's chats in a workspace being deleted (lib/workspace-delete.ts). A chat with none is the first brand's (chatsOf). */
+export function workspaceChats(username: string, has: (ws?: string) => boolean): { n: number; drop: () => Promise<void> } {
+  const conv = load(username);
+  const ids = new Set([{ ...conv, id: conv.id! }, ...(conv.past ?? [])].filter((c) => c.messages.length && has(c.workspace)).map((c) => c.id));
+  return {
+    n: ids.size,
+    drop: async () => {
+      dropChats(username, ids);
+      tell(username);
+    },
+  };
+}
 
 /** Allow or deny something the reply asked to do on the Mac (only the caller's own replies; anyone else's is not found). */
 assistantApp.post("/approvals/:id", async (c) => {

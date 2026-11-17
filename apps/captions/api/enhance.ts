@@ -648,7 +648,7 @@ function pump(): void {
 }
 
 /** Kill a queued/running job, the Mac's included (files stay). */
-function cancel(id: string): void {
+export function cancel(id: string): void {
   active.delete(id); // runJob checks this before writing results
   away.delete(id);
   cancelled.add(id);
