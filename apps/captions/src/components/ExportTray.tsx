@@ -49,7 +49,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
           </p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {FORMAT_LABELS[job.format] ?? job.format}
-            {job.status === "queued" && " · waiting"}
+            {job.status === "queued" && ` · ${job.note ?? "waiting"}`}
             {job.status === "running" && (job.note ? ` · ${job.note}` : ` · exporting ${Math.round(job.progress * 100)}%`)}
             {job.status === "done" && (
               <>{job.bytes ? ` · ${fmtBytes(job.bytes)}` : ""}</>
