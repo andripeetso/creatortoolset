@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { FileX, SlidersHorizontal } from "lucide-react";
 import type { AssetKind, LibrarySort } from "@contracts/library";
 import { LibraryFacetBar, type FacetChoice } from "@/components/LibraryFacetBar";
 import { Button } from "@/components/ui/button";
@@ -7,8 +7,10 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { listPlaces, listTags, type LibraryFilters } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacDevice } from "@/lib/providers";
+import { macPlaces } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 import { anyFilter, countryName, HereFilter, WhenPicker } from "./Filters";
+import { Missing } from "./Missing";
 
 /**
  * The Media Library's sidebar (LibraryPage.tsx): Sort, When, Where (the countries clips were filmed in, with counts), Tags
@@ -136,7 +138,16 @@ export function LibrarySidebar(p: SidebarProps) {
 
       {thisMacDevice() && (
         <Section title="Computer">
-          <HereFilter value={f} onChange={(here) => set({ here })} />
+          <div className="flex flex-wrap gap-1.5">
+            <HereFilter value={f} onChange={(here) => set({ here })} />
+            {macPlaces() && (
+              <Pill on={!!f.missing} onClick={() => set({ missing: f.missing ? undefined : true })}>
+                <FileX aria-hidden className="h-3.5 w-3.5" />
+                Missing here
+              </Pill>
+            )}
+          </div>
+          {f.missing && <Missing libraryId={p.libraryId} />}
         </Section>
       )}
 

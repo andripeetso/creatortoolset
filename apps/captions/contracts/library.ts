@@ -104,6 +104,8 @@ export interface SearchQuery {
   device?: string;
   /** only clips on that computer (`?here=1`) */
   here?: true;
+  /** only clips that computer last found gone (`?missing=1`, api/library/places.ts): not where they were, their disk there */
+  missing?: true;
   /** only clips with every one of these tags (`?tag=a,b`) */
   tags?: string[];
   /** only clips filmed from / before these times, ms (`?filmedFrom=&filmedTo=`); a clip with no filming time by when it was added. `from`/`to` stay when it was added */

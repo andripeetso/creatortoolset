@@ -1,7 +1,7 @@
 // This Mac's AI, as the Mac app reports it to the page. Only the Mac app has the bridge ("thisMac" handler, TitleBar.swift);
 // in a browser there is none and the functions answer null.
 
-import type { PlacesCheckAnswer, PlacesCheckAsk, PlacesConnectAnswer, PlacesConnectAsk } from "@contracts/places";
+import type { PlacesCheckAnswer, PlacesCheckAsk, PlacesConnectAnswer, PlacesConnectAsk, PlacesSearchAsk, PlacesSearchState } from "@contracts/places";
 
 /** `device`: this Mac's device id on the open server, once paired (null before that). */
 export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean };
@@ -373,13 +373,19 @@ export const macMediaUrl = (path: string) =>
  * Here or away (contracts/places.ts): the Mac app checks where a clip's original is on this computer and connects a
  * share. Only a Mac app that answers these says so (`<html data-mac-places="1">`).
  */
-export const macPlaces = () => typeof document !== "undefined" && document.documentElement.dataset.macPlaces === "1";
+export const macPlaces = () => typeof document !== "undefined" && Number(document.documentElement.dataset.macPlaces) >= 1;
 /** What this computer has of each version's original; versions it has nothing to say about are left out. */
 export const placesCheck = (ask: PlacesCheckAsk) =>
   importAsk<Partial<PlacesCheckAnswer>>(`places:check:${JSON.stringify(ask)}`, macPlaces()).then((r) => r.versions ?? {});
 /** Connects a share (its root key), the login panel allowed: only from a Connect button pressed. */
 export const placesConnect = (root: string) =>
   importAsk<PlacesConnectAnswer>(`places:connect:${JSON.stringify({ root } satisfies PlacesConnectAsk)}`, macPlaces());
+/** Find missing files (apps/mac PlacesSearch.swift): a Mac app with it marks `data-mac-places` "2". */
+export const macSearch = () => typeof document !== "undefined" && Number(document.documentElement.dataset.macPlaces) >= 2;
+/** Starts Find missing files for a library (one at a time on this Mac); answers how far it is. */
+export const placesSearch = (library: string) => importAsk<PlacesSearchState>(`places:search:${JSON.stringify({ library } satisfies PlacesSearchAsk)}`, macSearch());
+/** How far this Mac's Find missing files is. */
+export const placesSearchState = () => importAsk<PlacesSearchState>("places:search:state", macSearch());
 
 /** A video editor on this Mac (apps/mac Editors.swift): work-prefs' editor id, the app's name and version. */
 export type MacEditor = { id: string; name: string; version: string | null };

@@ -171,6 +171,16 @@ Three levels, the same in every screen, doc, notice and AI prompt (tool names st
 
 Never put "project" on screen for the brand-level thing, or "session" for a project.
 
+Where a clip's original is, for each computer (`contracts/places.ts`):
+
+- **Here**: this computer reads the original now; the player says `Original`. **Away**: its disk isn't connected here;
+  the player plays the server's copy and says `Proxy`, and the line under it says the disk "isn't connected".
+  **Gone**: the disk is here and the file isn't where it was: the clip is "Missing here".
+- **Reconnect**: a gone file found again by its size and fingerprint, applied without asking ("Find missing files",
+  "reconnected", "Moved: 2025 → Archive/2025 (48 files)").
+- In code the disk is a **root** (`rootKey`), the path inside it the root path (`root_rel`), and one computer's own
+  path a **place** (`version_places`). On screen never "root", "place", "relink", "offline media" or "device".
+
 ## The words for where work runs
 
 Where the data lives and which machine does the work are two questions. Keep them apart in comments, docs, prompts

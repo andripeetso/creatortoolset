@@ -190,6 +190,11 @@ final class Shell: NSObject, ObservableObject {
                     // a share this Mac never had asks first, naming this window's server
                     let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")
                     Task { done(await Places.shared.connect(root: root, server: server)) }
+                case .search(let library)?:
+                    let device = DeviceVault.deviceID(for: self.base.host ?? "")
+                    Task { done(PlacesSearch.shared.start(library: library, site: await self.client(), device: device, pressed: true)) }
+                case .searchState?:
+                    done(PlacesSearch.shared.state)
                 case nil:
                     done(["problem": "Not an ask this app knows."])
                 }

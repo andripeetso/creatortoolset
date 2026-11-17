@@ -256,7 +256,10 @@ placesApp.post("/:id/places", async (c) => {
   return c.json(await confirmPlaces(a.libraryId, a.viewer, a.dev, list, gone));
 });
 
-/** GET /api/library/:id/places/gone?device → GoneAnswer: what that computer last found gone, with a fingerprint to search by. */
+/**
+ * GET /api/library/:id/places/gone?device[&away=1] → GoneAnswer: what that computer last found gone, with a fingerprint to
+ * search by; `away=1` (Find missing files pressed) also the clips whose root isn't connected there (copies on another disk).
+ */
 placesApp.get("/:id/places/gone", async (c) => {
   const a = await asked(c.get("user"), c.req.param("id"), c.req.query("device"));
   if ("error" in a) return c.json(a.error, a.status);
@@ -266,15 +269,21 @@ placesApp.get("/:id/places/gone", async (c) => {
        WHERE p.device = ? AND p.gone_at IS NOT NULL AND a.library_id = ? AND v.quick IS NOT NULL AND v.quick != ''`,
     )
     .all(a.dev.id, a.libraryId) as { id: string }[]).map((r) => r.id);
-  const gone: GoneVersion[] = (await versionsOf(a.libraryId, a.viewer, a.dev.id, ids)).map((v) => ({
-    versionId: v.id,
-    bytes: v.bytes,
-    quick: v.quick!,
-    root: v.root,
-    rootRel: v.root_rel,
-    path: v.own!,
-    name: base(v.own!),
-  }));
+  // ponytail: the newest 20,000 away; a bigger library away from its share lists the rest after those are found
+  const away =
+    c.req.query("away") === "1"
+      ? (libraryDb()
+          .prepare(
+            `SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+             WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.root IS NOT NULL AND v.root NOT IN (SELECT value FROM json_each(?))
+               AND v.quick IS NOT NULL AND v.quick != '' ORDER BY v.created_at DESC LIMIT 20000`,
+          )
+          .all(a.libraryId, JSON.stringify(rootsOn(a.dev.id))) as { id: string }[]).map((r) => r.id)
+      : [];
+  const gone: GoneVersion[] = (await versionsOf(a.libraryId, a.viewer, a.dev.id, [...new Set([...ids, ...away])])).map((v) => {
+    const path = v.own ?? (v.mac_device === a.dev.id ? v.mac_path : null) ?? "";
+    return { versionId: v.id, bytes: v.bytes, quick: v.quick!, root: v.root, rootRel: v.root_rel, path, name: path ? base(path) : v.title };
+  });
   return c.json({ gone });
 });
 

@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { FolderSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deviceHere } from "@/lib/onMac";
+import { thisMacDevice } from "@/lib/providers";
 import { chooseFolderOnMac, importLocate, macImports } from "@/lib/thisMac";
 
 /**
  * Locate… on a clip whose original is gone from where the library has it (api/library/locate.ts): the person picks the
- * folder it is in now, their Mac fingerprints the files of the right sizes there, and every gone file of theirs found in
- * it reconnects at once. Only in the Mac app: a browser cannot read a folder's paths. A clip on a Mac shows it once
+ * folder it is in now, their Mac fingerprints the files of the right sizes there, and every gone file found in it
+ * reconnects at once (a teammate's clip: this computer's own way to it). Only in the Mac app: a browser cannot read a folder's paths. A clip on a Mac shows it once
  * that Mac says the file is not where the library has it; a clip missing from this server's disk shows it at once.
  */
 
@@ -30,7 +31,7 @@ export function Locate({ libraryId, versionId, missing, onMac }: { libraryId: st
     setSaid(null);
     if (!here || missing || !onMac) return;
     let live = true;
-    void locatable(libraryId, { versionId, only: "1" })
+    void locatable(libraryId, { versionId, only: "1", device: thisMacDevice() ?? "" })
       .then((files) => (files.length ? importLocate(files) : null))
       .then((r) => live && r && setGone(r.gone.includes(versionId)))
       .catch(() => undefined);

@@ -72,8 +72,10 @@ final class PlacesTests: XCTestCase {
 
     override func setUpWithError() throws {
         let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
-        root = base.appendingPathComponent("places-tests/\(UUID().uuidString)", isDirectory: true).resolvingSymlinksInPath()
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // the path as realpath names it (the gate's own form): /private/var, never Foundation's /var
+        let made = base.appendingPathComponent("places-tests/\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+        root = URL(fileURLWithPath: try XCTUnwrap(MediaFiles.realPath(made.path)), isDirectory: true)
     }
 
     override func tearDownWithError() throws {

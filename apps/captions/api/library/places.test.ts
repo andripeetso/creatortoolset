@@ -40,6 +40,7 @@ app.use(async (c, next) => {
   c.set("user", { username: c.req.header("x-user") ?? "", role: "user", off: [], read: [] } as never);
   return next();
 });
+// in boot.ts's order: the library's routes before search's
 app.route("/api/library", libraryApp);
 app.route("/api/library", searchApp);
 const call = async <T>(user: string, url: string, body?: unknown): Promise<{ status: number; json: T }> => {
@@ -259,10 +260,46 @@ describe("indexing and reading by places", () => {
     expect(place("july", boMac)?.path).toBe("/Volumes/Travel SSD/b.mov");
     expect(version("july").mac_path).toBe("/Volumes/footage/Archive/2025/July/b.mov");
   });
+});
 
+describe("reconnecting", () => {
   it("the Where filter's countries have their own address, so the places route only ever answers a computer", async () => {
     expect((await call<{ places: unknown[] }>("ana", "/api/library/lib/countries")).status).toBe(200);
     expect((await call("ana", "/api/library/lib/places")).status).toBe(403);
+  });
+
+  it("Look for new files' check finds a file the library has by its fingerprint, an upload's too, and names the version", async () => {
+    const r = await call("ana", "/api/library/lib/uploads/check", { size: 500, sha256: `mac:${q("5")}`, quick: q("5") });
+    expect(r.json).toEqual({ duplicateOf: "a_upload", versionId: "upload" });
+    // the same fingerprint at another size is another file
+    expect((await call("ana", "/api/library/lib/uploads/check", { size: 501, sha256: `mac:${q("5")}`, quick: q("5") })).json).toEqual({});
+  });
+
+  it("Missing here lists the clips this computer last found gone; a clip whose share is away is not missing", async () => {
+    const missing = async () => (await call<{ items: { id: string }[] }>("bo", `/api/library/lib/assets?device=${boMac}&missing=1`)).json.items.map((i) => i.id);
+    expect(await missing()).toEqual([]);
+    await call("bo", "/api/library/lib/places", { device: boMac, confirmed: [], gone: ["june"] });
+    expect(await missing()).toEqual(["a_june"]);
+    // only the caller's own computer narrows anything
+    expect((await call<{ items: unknown[] }>("bo", `/api/library/lib/assets?device=${anaMac}&missing=1`)).json.items.length).toBeGreaterThan(1);
+  });
+
+  it("a pressed search also gets the clips whose share isn't connected on that computer, with where it read them last", async () => {
+    const ids = async (q: string) => (await call<GoneAnswer>("bo", `/api/library/lib/places/gone?device=${boMac}${q}`)).json.gone.map((g) => g.versionId).sort();
+    expect(await ids("")).toEqual(["june"]);
+    report(boMac, [share("/Volumes/footage-1", { away: true }), travel]);
+    const away = (await call<GoneAnswer>("bo", `/api/library/lib/places/gone?device=${boMac}&away=1`)).json.gone;
+    expect(away.map((g) => g.versionId)).toEqual(expect.arrayContaining(["june", "july", "home"]));
+    expect(away.find((g) => g.versionId === "home")).toMatchObject({ path: "/Volumes/Travel SSD/Movies/d.mov", name: "d.mov" });
+    // one with no place there and indexed elsewhere: no path, its title for a name
+    expect(away.find((g) => g.versionId === "nfd")).toMatchObject({ path: "", name: "nfd" });
+    report(boMac, [share("/Volumes/footage-1", { server: "Office-NAS.local", share: "Footage" }), travel]);
+  });
+
+  it("Locate lists a teammate's clip by their own computer's way to it, and only with their own computer", async () => {
+    const files = async (device: string) => (await call<{ files: { id: string; path: string }[] }>("bo", `/api/library/lib/locate?versionId=june&device=${device}&only=1`)).json.files;
+    expect(await files(boMac)).toEqual([{ id: "june", path: "/Volumes/footage-1/Archive/2025/June/a.mov", bytes: 100 }]);
+    expect(await files(anaMac)).toEqual([]);
   });
 });
 

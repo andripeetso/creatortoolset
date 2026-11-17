@@ -311,8 +311,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the Media Library's copy, progress, cancel, scan and print asks ("import:", Import.swift): src/lib/thisMac.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macImport = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // here or away: the places:check and places:connect asks and the mac-places event (Places.swift; contracts/places.ts)
-        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macPlaces = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // here or away: the places:check and places:connect asks and the mac-places event (Places.swift; contracts/places.ts);
+        // 2: also Find missing files, places:search (PlacesSearch.swift)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macPlaces = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)
