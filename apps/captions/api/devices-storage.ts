@@ -249,7 +249,8 @@ storageApp.post("/library", async (c) => {
 storageApp.post("/folders", async (c) => {
   const user = c.get("user").username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const role = b?.role === "finals" ? "finals" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
+  // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
+  const role = b?.role === "finals" ? "finals" : b?.role === "music" ? "footage" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
   const host = str(b?.host, 120);
   const raw = b?.path;
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);

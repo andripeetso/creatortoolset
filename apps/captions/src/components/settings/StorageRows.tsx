@@ -320,8 +320,7 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
 
 /**
  * The folders the Media Library takes in (footage, music, sound effects: the Library sorts them), under one row with
- * Add folder, each folder indented under it. A music folder from before is listed with them and keeps its role (no AI
- * is spent on its files, lib/storage.ts musicFolders); a new one is footage.
+ * Add folder, each folder indented under it (a music folder from before is one of them: api/lib/storage.ts).
  */
 function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
   storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
@@ -516,7 +515,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
     };
     try {
       // a Finals folder is read project by project, never taken in whole
-      if (role !== "finals" && here.includes(host)) await big.check(p, add, { music: role === "music" });
+      if (role !== "finals" && here.includes(host)) await big.check(p, add);
       else await add();
     } finally {
       setBusy(false);
@@ -524,7 +523,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   };
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : role === "music" ? "Add music folder" : "Add footage folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={devices.length === 0} error={err}>
       {devices.length === 0 ? (
         <Status tone="attention">Needs a computer</Status>
       ) : (

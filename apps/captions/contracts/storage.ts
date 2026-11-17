@@ -9,13 +9,10 @@
  * account's folder under $DATA_DIR/storage/); each computer that reports its folders says where it found each one.
  */
 
-export const STORAGE_ROLES = [
-  { value: "footage", label: "Footage" },
-  { value: "music", label: "Music" },
-] as const;
+export const STORAGE_ROLES = [{ value: "footage", label: "Footage" }] as const;
 /** "library" is the one Library folder; footage and music are the source lists; "finals" is a workspace's Finals folder,
  *  one at most (none: the Library's Finished/, finalsFolderOf). */
-export type StorageRole = "footage" | "music" | "finals" | "library";
+export type StorageRole = "footage" | "music" | "finals" | "library"; // "music": from before, read as footage (api/lib/storage.ts)
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 
 export const MARKER_FILE = ".creatortoolset-folder";
@@ -23,7 +20,7 @@ export const MARKER_FILE = ".creatortoolset-folder";
 export const THIS_COMPUTER = "this-computer";
 /** The library folder's name and the subfolder for each role inside it. */
 export const LIBRARY_NAME = "Creator Toolset";
-export const LIBRARY_SUBFOLDERS: Record<SourceRole | "finished", string> = { footage: "Footage", music: "Music", finished: "Finished" };
+export const LIBRARY_SUBFOLDERS: Record<"footage" | "music" | "finished", string> = { footage: "Footage", music: "Music", finished: "Finished" };
 
 /** A drive or volume a computer reported: its name, where it is mounted, and its space (GB). A network share
  *  also says it is one (`network`) and which machine it lives on (`server`, e.g. the NAS's name). */
@@ -130,15 +127,15 @@ export interface StorageState {
   folders: StorageFolder[];
 }
 
-/** The footage and music sources: the listed folders, plus the Library's own Footage/ and Music/ (same host, same
- *  reach, one level down). Derived entries carry the Library's id with the role appended. */
+/** The folders the Media Library takes in: the listed ones, plus the Library's own Footage/ and Music/ (same host, same
+ *  reach, one level down). Derived entries carry the Library's id with the subfolder appended. */
 export function sourcesOf(folders: StorageFolder[]): StorageFolder[] {
-  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => (["footage", "music"] as const).map((role) => inLibrary(lib, role)));
+  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => (["footage", "music"] as const).map((sub) => ({ ...inLibrary(lib, sub), role: "footage" as const })));
   return [...folders.filter((f) => f.role !== "library"), ...derived];
 }
 
 /** The Library's own subfolder for `role` as a folder of its own: the same host and reach, one level down. */
-function inLibrary(lib: StorageFolder, role: SourceRole | "finals"): StorageFolder {
+function inLibrary(lib: StorageFolder, role: "footage" | "music" | "finals"): StorageFolder {
   const sub = LIBRARY_SUBFOLDERS[role === "finals" ? "finished" : role];
   return {
     ...lib,

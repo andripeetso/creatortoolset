@@ -88,7 +88,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
     setBusy(true);
     setError(null);
     try {
-      await big.check(p, () => add(role, p), { music: role === "music" });
+      await big.check(p, () => add(role, p));
     } finally {
       setBusy(false);
     }
