@@ -240,8 +240,9 @@ const withLogins = (u: SessionUser) => ({
   ...toPublic(u),
   logins: findUser(u.username)?.usage.logins ?? null,
   picture: findUser(u.username) ? pictureOf(findUser(u.username)!) : null,
-  // a team member (an admin account too): the pages hide what deletes the owner's footage, which the server refuses them
-  ...(isTeamMember(u.username) ? { member: true as const } : {}),
+  // a team member (an admin account too): the pages hide what deletes the owner's footage, which the server refuses them.
+  // Teams are hosted only: elsewhere workspaces.json would be made from users.json just to answer this
+  ...(hostedMode() && isTeamMember(u.username) ? { member: true as const } : {}),
   // an install without sign-in has one fixed session user: its saved display name comes from its account record
   ...(u.name ? {} : findUser(u.username)?.displayName ? { name: findUser(u.username)!.displayName } : {}),
 });
