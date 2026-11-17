@@ -5,10 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssetCard } from "@contracts/library";
 import type { LibraryFilters } from "@/lib/library";
 import { AssetRow, AssetTile } from "./ClipCards";
-import { OfflineSwitch, offlineState } from "./ClipPanel";
 import { HereFilter } from "./Filters";
 
-// The Mac app's own computer in the Media Library: the mark on a card, the On this computer filter, Available offline.
+// The Mac app's own computer in the Media Library: the mark on a card, the On this computer filter.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -59,41 +58,5 @@ describe("On this computer", () => {
     delete document.documentElement.dataset.macDevice;
     render();
     expect(host.querySelector("button")).toBeNull();
-  });
-});
-
-describe("Available offline", () => {
-  it("a clip's switch reads the person's list and sets it; a clip in a folder kept offline is on with it", async () => {
-    let list = { versions: [] as string[], collections: [] as string[] };
-    const sent: unknown[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init?: RequestInit) => {
-        if (init?.method === "POST") {
-          const b = JSON.parse(String(init.body)) as { version: string; on: boolean };
-          sent.push(b);
-          list = { ...list, versions: b.on ? [b.version] : [] };
-        }
-        return new Response(JSON.stringify(list), { headers: { "content-type": "application/json" } });
-      }),
-    );
-    await act(async () => root.render(<OfflineSwitch versionId="v1" folders={[]} onError={() => {}} />));
-    const sw = () => host.querySelector<HTMLButtonElement>('[role="switch"]')!;
-    expect(host.textContent).toContain("Available offline");
-    expect(sw().getAttribute("aria-checked")).toBe("false");
-    await act(async () => sw().click());
-    expect(sent).toEqual([{ version: "v1", on: true }]);
-    expect(sw().getAttribute("aria-checked")).toBe("true");
-
-    expect(offlineState({ versions: [], collections: ["f1"] }, "v1", [{ id: "f1", name: "Trips" }])).toEqual({ on: true, folder: "Trips" });
-    expect(offlineState({ versions: ["v1"], collections: [] }, "v1", [{ id: "f1", name: "Trips" }])).toEqual({ on: true });
-  });
-
-  it("is not there outside the Mac app", async () => {
-    delete document.documentElement.dataset.macDevice;
-    vi.stubGlobal("fetch", vi.fn());
-    await act(async () => root.render(<OfflineSwitch versionId="v1" folders={[]} onError={() => {}} />));
-    expect(host.querySelector('[role="switch"]')).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
   });
 });

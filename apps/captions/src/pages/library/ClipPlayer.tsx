@@ -264,7 +264,10 @@ export function ClipPlayer({
           />
         )}
         {(phase === "loading" || (seeking && phase !== "failed")) && !note && a.kind === "video" && (
-          <Loader2 aria-label="Loading" className="pointer-events-none absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80 drop-shadow" />
+          // centred by its box: animate-spin's rotate replaces a translate on the icon itself, which threw it off centre
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <Loader2 aria-label="Loading" className="h-6 w-6 animate-spin text-white/80 drop-shadow" />
+          </div>
         )}
         {(note || awayNote) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/65 p-6 text-center text-white">

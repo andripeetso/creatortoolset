@@ -15,7 +15,7 @@ import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
   createCollection,
@@ -42,7 +42,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
-import { checkUpload, useOffline } from "@/lib/library";
+import { checkUpload } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
 import { undoable } from "@/lib/undo";
@@ -142,7 +142,6 @@ export default function LibraryPage() {
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
   const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
-  const offline = useOffline();
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -666,19 +665,10 @@ export default function LibraryPage() {
         </>
       ) : undefined,
   });
-  /** a tab's right-click menu: the folder's own (Open, Available offline, Rename…, New folder inside, Delete folder);
-   *  Available offline is the person's own, so it is there on Read too (the Mac app only) */
+  /** a tab's right-click menu: the folder's own (Open, Rename…, New folder inside, Delete folder) */
   const folderMenu = (c: Collection) => (
     <>
       <ContextMenuItem onSelect={() => go(c.id)}>Open</ContextMenuItem>
-      {offline.list && holdsClips(c) && (
-        <ContextMenuCheckboxItem
-          checked={offline.list.collections.includes(c.id)}
-          onCheckedChange={(on) => void offline.set({ collection: c.id }, on).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}
-        >
-          Available offline
-        </ContextMenuCheckboxItem>
-      )}
       {!readOnly && (
         <>
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
