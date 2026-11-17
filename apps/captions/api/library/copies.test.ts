@@ -102,6 +102,11 @@ describe("copies of a Media Library", () => {
     expect((await copies())[0]!.pending).toBe(0);
     // the copy is the clip on that computer too
     expect(d.prepare("SELECT path FROM version_places WHERE version_id = ? AND device = ?").get(v, mac.device.id)).toEqual({ path: "/Volumes/Archive/Interviews/Clip ast-a.mov" });
+    // and counts as on this computer: the Media Library's On this computer filter lists it for that Mac only
+    const here = async (device: string) =>
+      ((await (await app.request(`/api/library/lib_c/assets?device=${device}&here=1`)).json()) as { items: { id: string }[] }).items.map((a) => a.id);
+    expect(await here(mac.device.id)).toEqual(["ast-a"]);
+    expect(await here(laptop.device.id)).toEqual([]);
     expect(assetsCopiesLack(["ast-a"]).size).toBe(0);
     await new Promise((r) => setTimeout(r, 50)); // the done's own dropOriginal
     expect(d.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(v)).toEqual({ source_key: `libraries/lib_c/v/${v}/proxy.mp4` });

@@ -373,9 +373,15 @@ export const copyJob: DeviceJobSlot = {
       )
       .run(h.copy, h.key, done.rel, v.bytes, sha || null, now, now);
     const c = db().prepare("SELECT path FROM library_copies WHERE id = ?").get(h.copy) as { path: string } | undefined;
-    // the copy is the clip on that computer too: Show in Finder and playing there find it (a place it has already stays)
+    // the copy is the clip on that computer too: On this computer, Show in Finder and playing the original there find
+    // it (a place it has there already stays; one its last look found gone is the copy now)
     if (c && !h.item)
-      db().prepare("INSERT OR IGNORE INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)").run(h.key, device, path.posix.join(c.path, done.rel), now);
+      db()
+        .prepare(
+          `INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT (version_id, device) DO UPDATE SET path = excluded.path, confirmed_at = excluded.confirmed_at, gone_at = NULL WHERE gone_at IS NOT NULL`,
+        )
+        .run(h.key, device, path.posix.join(c.path, done.rel), now);
     end(h, { state: "ok", free: b.free });
     // a stored original, or one a computer sent, that every copy has now may go
     if (!h.item) {
