@@ -171,6 +171,18 @@ export function setProject(username: string, id: string, project: string | undef
   return next;
 }
 
+/** The facts kept for a workspace being deleted (lib/workspace-delete.ts), `pick` by their workspace, and their delete. */
+export function workspaceFacts(username: string, pick: (project?: string) => boolean): { n: number; drop: () => Promise<void> } {
+  const ids = new Set(read(username).facts.filter((f) => pick(f.project)).map((f) => f.id));
+  return {
+    n: ids.size,
+    drop: async () => {
+      const store = read(username);
+      if (ids.size) write(username, { ...store, facts: store.facts.filter((f) => !ids.has(f.id)) });
+    },
+  };
+}
+
 /** Remove a fact for good; false when the account has none by that id. */
 export function remove(username: string, id: string): boolean {
   const store = read(username);

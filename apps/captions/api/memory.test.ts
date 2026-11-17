@@ -120,8 +120,9 @@ describe("with nothing kept, nothing is different", () => {
     // every file that imports the store (api/lib/memory.ts), by any spelling of its path
     const store = path.join(api, "lib", "memory");
     const readers = all.filter((f) => [...f.src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].some((m) => m[1]!.startsWith(".") && path.resolve(f.dir, m[1]!).replace(/\.ts$/, "") === store));
-    // the dock's turn, the routes of the list (which hand no prompt text to anyone), and the workspace form's draft
-    expect(readers.map((f) => f.name).sort()).toEqual(["assistant.ts", "memory.ts", "workshop.ts"]);
+    // the dock's turn, the routes of the list (which hand no prompt text to anyone), the workspace form's draft, and a
+    // workspace's delete (it counts and deletes the facts kept for it, and hands no text to anyone)
+    expect(readers.map((f) => f.name).sort()).toEqual(["assistant.ts", "lib/workspace-delete.ts", "memory.ts", "workshop.ts"]);
     expect([...all.find((f) => f.name === "workshop.ts")!.src.matchAll(/memoryFor\(/g)].length).toBe(1);
     expect(all.filter((f) => f.src.includes("memoryBlock")).map((f) => f.name).sort()).toEqual(["assistant.ts", "lib/memory.ts"]);
     expect(all.find((f) => f.name === "memory.ts")!.src).not.toContain("memoryBlock");

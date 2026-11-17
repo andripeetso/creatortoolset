@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FindHit } from "@/lib/instagram";
 import type { SocialPlatform } from "@contracts/connectors";
 import type { Selection } from "@contracts/providers";
+import type { WorkspaceContents } from "@contracts/workspaces";
 import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type DraftStatus, type ProposalStatus, type ReplyStatus, type SessionStatus, type ShareProgressState } from "@contracts/workshop-statuses";
 /**
  * Client for the Content Workshop (api/workshop.ts): research sessions on
@@ -326,6 +327,8 @@ export const patchProject = async (id: string, fields: Partial<ProjectFields>) =
   await useWorkspace.getState().load();
   return p;
 };
+/** What deleting a workspace deletes with it (the confirm's counts). */
+export const workspaceContents = (id: string) => fetch(`/api/workshop/projects/${id}/contents`).then((r) => json<WorkspaceContents>(r));
 export const deleteProject = async (id: string) => {
   const out = await fetch(`/api/workshop/projects/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
   await useWorkspace.getState().load();
