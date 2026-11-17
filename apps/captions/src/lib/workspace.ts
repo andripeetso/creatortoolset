@@ -39,6 +39,12 @@ export const fetchWorkspace = async () => json<Workspace>(await fetch("/api/work
 const me = () => useAuth.getState().me?.username ?? null;
 
 /**
+ * A window opened for one workspace (`?ws=<id>`, as the phone app opens its pages) works in it, and the account's
+ * current workspace, where every other device starts, stays as it is: until this window picks another itself.
+ */
+let openedIn: string | null = typeof location === "undefined" ? null : new URLSearchParams(location.search).get("ws");
+
+/**
  * A copy of the projects into the store. A notice's refetch (`keepMine`) keeps the project this window is in while that
  * still exists: a switch in another window changes the list here, not the project. This window's own read follows the
  * server (a project made here becomes the current one).
@@ -47,7 +53,8 @@ export function applyWorkspace(ws: Workspace | null, keepMine = true): void {
   if (!ws) return;
   const s = useWorkspace.getState();
   const keep = keepMine && s.loaded && ws.projects.some((p) => p.id === s.currentProjectId);
-  useWorkspace.setState({ projects: ws.projects, pluginsOff: ws.pluginsOff ?? {}, currentProjectId: keep ? s.currentProjectId : ws.currentProjectId, loaded: true });
+  const asked = openedIn && ws.projects.some((p) => p.id === openedIn) ? openedIn : null;
+  useWorkspace.setState({ projects: ws.projects, pluginsOff: ws.pluginsOff ?? {}, currentProjectId: keep ? s.currentProjectId : (asked ?? ws.currentProjectId), loaded: true });
 }
 
 /** Before the first render (main.tsx): the last projects this account saw. */
@@ -71,6 +78,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     // the switch shows at once and the server is told after: on a busy server the click used to look dead for seconds
     const before = get().currentProjectId;
     const asked = ++switches;
+    openedIn = null;
     set({ currentProjectId: id });
     try {
       const ws = await json<Workspace>(
