@@ -652,8 +652,18 @@ async function unlinkFromLibrary(versionId: string): Promise<void> {
   d.prepare("DELETE FROM derivatives WHERE version_id = ? AND kind = 'proxy'").run(versionId);
 }
 
-/** Makes the library match Review for one video id: added, changed, in the trash, or gone. */
-export async function toLibrary(id: string): Promise<void> {
+/** The toLibrary run of each video id now: the next one waits for it (two at once both found a version missing, then both added it). */
+const mirroring = new Map<string, Promise<void>>();
+
+/** Makes the library match Review for one video id: added, changed, in the trash, or gone. One run at a time per id. */
+export function toLibrary(id: string): Promise<void> {
+  const run = (mirroring.get(id) ?? Promise.resolve()).catch(() => {}).then(() => mirror(id));
+  mirroring.set(id, run);
+  void run.catch(() => {}).finally(() => mirroring.get(id) === run && mirroring.delete(id));
+  return run;
+}
+
+async function mirror(id: string): Promise<void> {
   const { m, live } = await withVersionIds(id);
   const d = libraryDb();
   const row = d.prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;

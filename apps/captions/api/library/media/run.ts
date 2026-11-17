@@ -37,6 +37,11 @@ export function spawnKillable(cmd: string, args: string[]): ChildProcessWithoutN
   return p;
 }
 
+/** Kills every process spawnKillable started that is still alive, at once (this process is about to exit). */
+export function killProcesses(): void {
+  for (const p of alive) p.kill("SIGKILL");
+}
+
 /** Waits until every process spawnKillable started has ended, or `ms` passed; true when none is left. */
 export async function processesGone(ms: number): Promise<boolean> {
   for (const end = Date.now() + ms; alive.size && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));

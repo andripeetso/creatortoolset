@@ -22,6 +22,7 @@ import { searchApp } from "./library/search";
 import { relatedApp } from "./library/related";
 import { publicShareApp, shareApp } from "./library/shares";
 import { libraryJobsAtRisk, releaseRunningJobs, startLibraryWorker } from "./library/worker";
+import { killProcesses } from "./library/media/run";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
@@ -292,6 +293,7 @@ if (process.env.CT_EXIT_WITH_PARENT === "1") {
     // an update or Quit stops us mid-step: those steps run again as soon as we're back, the try not counted
     releaseRunningSteps();
     releaseRunningJobs();
+    killProcesses(); // no ffmpeg outlives us (a library job's on a computer, a step's here)
     process.exit(0);
   });
 }
