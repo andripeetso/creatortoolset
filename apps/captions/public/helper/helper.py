@@ -20,6 +20,7 @@ import re
 import queue
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -33,6 +34,8 @@ import wave
 VERSION = "1"
 HOME = os.environ.get("CT_HELPER_HOME") or os.path.expanduser("~/.local/share/creator-toolset-helper")
 CONFIG = os.path.join(HOME, "config.json")
+# the copy folders whose marker this helper wrote or read: the only folders besides network shares it reads a file from for the server
+COPIES = os.path.join(HOME, "copies.json")
 MODELS = os.path.join(HOME, "models")
 # Hugging Face's own cache and logs go in this folder too, not ~/.cache
 os.environ.setdefault("HF_HOME", os.path.join(HOME, "hf"))
@@ -860,12 +863,52 @@ def marker_for(folder, o):
     folder.copy = o.get("copy")
     if m and m.get("copy") == o.get("copy") and m.get("library") == o.get("library"):
         m.setdefault("files", {})
+        own_copy(folder.root, m["copy"])
         return m
     if o.get("init") == "1" and (m is None or m.get("library") == o.get("library")):
         m = {"library": o["library"], "copy": o["copy"], "files": (m or {}).get("files") or {}}
         write_json(path, m, folder.device)
+        own_copy(folder.root, m["copy"])
         return m
     raise Reconnect()
+
+
+def own_copy(root, copy):
+    """Remembers `root` as a copy folder of this helper's (COPIES), for readable()."""
+    known = read_json(COPIES) or {}
+    if known.get(root) != copy:
+        known[root] = copy
+        os.makedirs(HOME, exist_ok=True)
+        tmp = f"{COPIES}.{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump(known, f)
+        os.replace(tmp, COPIES)
+
+
+def readable(paths, size):
+    """The first of `paths` this helper may read for the server, as its real path: a regular file of `size` bytes with a
+    media extension, inside (prefix + "/") a network share this computer has connected (disks()) or one of its own copy
+    folders whose marker is still its own. Else None: "not on this computer". A server that names any other file (a key
+    in ~/.ssh, found by its size) never gets it read, through a link or otherwise."""
+    roots = [d["path"] for d in disks()]
+    for root, copy in (read_json(COPIES) or {}).items():
+        try:
+            if (read_json(os.path.join(root, MARKER)) or {}).get("copy") == copy:
+                roots.append(root)
+        except OSError:
+            pass  # a share that went away
+    roots = [r for r in (os.path.realpath(x).rstrip("/") for x in roots) if r]
+    for p in paths:
+        if not isinstance(p, str):
+            continue
+        r = os.path.realpath(p)
+        try:
+            st = os.stat(r)
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_size == size and os.path.splitext(r)[1].lower() in MEDIA and any(r.startswith(x + "/") for x in roots):
+            return r
+    return None
 
 
 def sweep(root, device, keep=None):
@@ -988,7 +1031,7 @@ def copy_file(folder, o, fetch, m):
 def write_part(part, size, want, o, paths, fetch, folder):
     """Writes the file to `part`, from a path on this computer at the right size, else the server's `url` (resuming a
     partial with Range when its hash is known: a partial is never taken on its size alone); synced."""
-    src = next((p for p in paths if size_of(p) == size), None)
+    src = readable(paths, size)
 
     def pour(i, out):
         for b in iter(lambda: i.read(CHUNK), b""):
@@ -1020,7 +1063,7 @@ def send_file(o, post):
     size, url = int(o["size"]), o.get("url") or ""
     if not url.startswith("/"):
         raise RuntimeError("The server sent an address that is not its own")
-    src = next((p for p in json.loads(o.get("paths") or "[]") if isinstance(p, str) and size_of(p) == size), None)
+    src = readable(json.loads(o.get("paths") or "[]"), size)
     if src is None:
         return None
     with open(src, "rb") as f:

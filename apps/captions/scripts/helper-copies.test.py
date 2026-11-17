@@ -46,8 +46,15 @@ class Copies(unittest.TestCase):
         os.mkdir(self.root)
         self.asked = []
         self.folder = None
+        # a network share this computer has connected (disks()), and the helper's list of its own copy folders
+        self.share = os.path.join(self.top, "share")
+        os.mkdir(self.share)
+        self.saved = helper.disks, helper.COPIES
+        helper.disks = lambda: [{"path": self.share}]
+        helper.COPIES = os.path.join(self.top, "copies.json")
 
     def tearDown(self):
+        helper.disks, helper.COPIES = self.saved
         shutil.rmtree(self.top)
 
     def job(self, op, device=ME, fetch=None, **o):
@@ -290,7 +297,7 @@ class Copies(unittest.TestCase):
         self.job("check", init="1")
         body = b"0123456789" * 1000
         # a path on this computer with the right size is read, not the server
-        src = os.path.join(self.top, "src.bin")
+        src = os.path.join(self.share, "src.mov")
         with open(src, "wb") as f:
             f.write(body)
         self.assertEqual(self.put("p1", body, "From path.bin", paths=json.dumps(["/nope", src]))["done"]["sha256"], sha(body))
@@ -314,7 +321,7 @@ class Copies(unittest.TestCase):
 
     def test_send(self):
         body = b"the original" * 500
-        src = os.path.join(self.top, "orig.mov")
+        src = os.path.join(self.share, "orig.mov")
         with open(src, "wb") as f:
             f.write(body)
         got = []
@@ -332,6 +339,42 @@ class Copies(unittest.TestCase):
         # not at that size any more: the job fails with why
         h.copy({"id": 9, "options": {**o, "size": "5"}})
         self.assertEqual(calls, [("/api/devices/relay/job/copy/9/fail", {"error": "The original is not on this computer any more"})])
+
+    def test_readable_only_media_on_a_share_or_own_copy(self):
+        """A server can't have the helper read any file it names (a key in ~/.ssh, found by its size)."""
+        key = b"-----BEGIN OPENSSH PRIVATE KEY-----" + b"x" * 364
+        ssh = os.path.join(self.top, "home", ".ssh")
+        os.makedirs(ssh)
+        with open(os.path.join(ssh, "id_ed25519"), "wb") as f:
+            f.write(key)
+        self.assertIsNone(helper.readable([os.path.join(ssh, "id_ed25519")], len(key)))
+        # named with a media extension, or linked from inside the share: still outside it
+        os.symlink(os.path.join(ssh, "id_ed25519"), os.path.join(ssh, "id.mov"))
+        self.assertIsNone(helper.readable([os.path.join(ssh, "id.mov")], len(key)))
+        os.symlink(os.path.join(ssh, "id_ed25519"), os.path.join(self.share, "take.mov"))
+        self.assertIsNone(helper.readable([os.path.join(self.share, "take.mov")], len(key)))
+        # not a media file, even on the share
+        with open(os.path.join(self.share, "notes.txt"), "wb") as f:
+            f.write(b"12345")
+        self.assertIsNone(helper.readable([os.path.join(self.share, "notes.txt")], 5))
+        # a video on the share is read
+        clip = os.path.join(self.share, "Day 1", "Kitchen.MOV")
+        os.makedirs(os.path.dirname(clip))
+        with open(clip, "wb") as f:
+            f.write(b"video")
+        self.assertEqual(helper.readable([os.path.join(self.top, "nope.mov"), clip], 5), os.path.realpath(clip))
+        self.assertIsNone(helper.readable([clip], 6))
+        # a copy folder is read once its marker is this helper's, not before
+        self.write("In copy.mov", b"copy!")
+        self.assertIsNone(helper.readable([self.path("In copy.mov")], 5))
+        self.job("check", init="1")
+        self.assertEqual(helper.readable([self.path("In copy.mov")], 5), os.path.realpath(self.path("In copy.mov")))
+        # send refuses the key: "not on this computer"
+        calls = []
+        h = fake_helper(calls)
+        h.post = lambda url, f, size: self.fail("the key was sent")
+        h.copy({"id": 3, "options": {"op": "send", "key": "k", "size": str(len(key)), "url": "/api/devices/relay/job/copy/3/file", "paths": json.dumps([os.path.join(ssh, "id_ed25519")])}})
+        self.assertEqual(calls, [("/api/devices/relay/job/copy/3/fail", {"error": "The original is not on this computer any more"})])
 
     def test_folder_walk(self):
         for p in ("a/b/c", "a/.hidden", "z.app/inside"):
