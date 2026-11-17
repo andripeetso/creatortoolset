@@ -149,7 +149,7 @@ final class ProjectTests: XCTestCase {
         try Data(count: 1000).write(to: footage.appendingPathComponent("A001.MOV"))
         try Data(count: 1000).write(to: root.appendingPathComponent("B001.mov"))
         let folder = root!, granted = [footage.path]
-        let scheme = ProjectScheme(root: { folder }, granted: { granted })
+        let scheme = ProjectScheme(root: { folder }, granted: { _, _ in granted })
         let web = WKWebView(frame: .zero)
 
         let ok = WrittenTask(MediaFiles.url(path: footage.appendingPathComponent("A001.MOV").path), expectation(description: "ok"), range: "bytes=100-199")

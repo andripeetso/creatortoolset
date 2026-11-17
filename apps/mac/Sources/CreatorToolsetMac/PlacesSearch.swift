@@ -225,7 +225,7 @@ struct MissingSearch {
             let disk = Places.disk(of: path, in: disks)
             access.insert(disk.map { $0.path != "/" } == true ? disk!.path : Self.parent(path))
             return nil
-        case .status: return nil
+        case .status, .diskAway: return nil
         }
     }
 
