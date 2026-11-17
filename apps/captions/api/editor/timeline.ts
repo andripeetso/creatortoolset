@@ -1,17 +1,18 @@
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_EYELINE, TRACKS, type Item, type Line, type Sentence, type Timeline, type TimelineSource, type TrackId, type VersionPlan } from "../../contracts/editor";
+import { DEFAULT_EYELINE, MOMENT_SHAPES, TRACKS, type Item, type Line, type Sentence, type Timeline, type TimelineSource, type TrackId, type VersionPlan } from "../../contracts/editor";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import type { ProbeSummary } from "../library/media/probe";
 import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
-import { framingOf } from "./framing";
+import { fillZoom, followPath, framingOf, reframeTimeline, speakerTargets, windowOf } from "./framing";
 import { measurable } from "./media";
 import { clearPasses, markPasses } from "./passes";
 import { draftPlan } from "./plan";
-import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
+import { facesIn, turnsOf } from "./speakers";
+import { draftNames, editDir, type EditMeta, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -123,6 +124,18 @@ interface SourceRow {
   probe: string | null;
 }
 
+/**
+ * The stretch of its recording a reframed moment is looked at in (speakers.ts): its one take's sentences, first to last.
+ * The draft step reads its faces there; engine.ts sends the step to a computer while they are not kept yet.
+ */
+export function reframeSpan(edit: Pick<EditMeta, "moments" | "shape">, version: VersionPlan, sentences: Sentence[]): { src: string; a: number; b: number } | null {
+  const take = version.lines.length === 1 ? version.lines[0]!.take : null;
+  const first = take && sentences.find((s) => s.n === take.first);
+  const last = take && sentences.find((s) => s.n === take.last);
+  if (!edit.moments || !edit.shape || !first || !last || first.src !== last.src) return null;
+  return { src: first.src, a: Math.round(first.s * 100) / 100, b: Math.round(last.e * 100) / 100 };
+}
+
 export async function draftStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const plan = readStep(edit.id, "plan");
   if (!plan) throw new Error("Write the script first");
@@ -149,6 +162,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
   const sources: Record<string, TimelineSource> = {};
   const words: Record<string, TimedWord[]> = {};
   const energy: Record<string, Float32Array> = {};
+  const keyOf: Record<string, string> = {};
   for (const id of used) {
     if (signal.aborted) return;
     const row = db.prepare("SELECT v.id, a.title, v.source_key, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as
@@ -159,9 +173,11 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     if (!row || !probe || !w) throw new Error("Some footage changed since it was analyzed: run the edit again");
     sources[id] = sourceOf(id, row.title, probe);
     words[id] = w;
+    keyOf[id] = row.source_key;
     energy[id] = await energyOf(id, () => measurable(id, row.source_key), signal);
   }
-  const { timeline, notes } = buildTimeline({
+  const shape = edit.moments && edit.shape && Object.values(sources).some((x) => x.w > 0) ? MOMENT_SHAPES[edit.shape] : null;
+  const built = buildTimeline({
     name: `${edit.name} ${version.name}`,
     plan: version,
     lines: plan.lines,
@@ -172,9 +188,28 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     punch: edit.framing.punch,
     eyeline: { ...analysis.eyeline, ...edit.eyeline },
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
-    // a moment of a long recording keeps the recording's own shape: fitted into another frame it would be a small picture between bars
-    size: edit.moments && Object.values(sources).some((x) => x.w > 0) ? null : edit.size,
+    // a moment of a long recording keeps the recording's own shape (fitted into another frame it would be a small picture
+    // between bars), or is reframed to the shape asked for, the picture following who talks
+    size: edit.moments && Object.values(sources).some((x) => x.w > 0) ? shape : edit.size,
   });
+  const { notes } = built;
+  let timeline = built.timeline;
+  const span = shape && reframeSpan(edit, version, analysis.sentences);
+  if (span && sources[span.src]?.w) {
+    const src = sources[span.src]!;
+    const win = windowOf(src, shape.w, shape.h, fillZoom(src, shape.w, shape.h));
+    let follow: Parameters<typeof reframeTimeline>[1] = {};
+    try {
+      const frames = await facesIn(span.src, () => measurable(span.src, keyOf[span.src]!), span.a, span.b, src, signal);
+      const said = words[span.src]!.filter((w) => w.e > span.a && w.s < span.b);
+      const { turns, tracks } = turnsOf(frames, said);
+      follow = { [span.src]: { keys: followPath(speakerTargets(frames, turns, tracks, win), win), turns } };
+    } catch (e) {
+      if (signal.aborted) return;
+      notes.push(`The picture stays in the middle: who talks could not be found (${(e as Error).message})`);
+    }
+    timeline = reframeTimeline(timeline, follow);
+  }
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
   await saveDraft(edit.id, version.name, { timeline, notes });
   await clearPasses(edit.id, version.name); // cut again: its passes start over

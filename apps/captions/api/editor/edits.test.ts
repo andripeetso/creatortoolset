@@ -64,6 +64,17 @@ describe("timeline edits made into a cut", () => {
     expect(at(h, "V1")).toEqual([[0, 30, 100], [30, 20, 220], [50, 30, 300]]);
   });
 
+  it("a reframed shot cut shorter keeps its window where it was on each frame, and who talks moves with the frames", () => {
+    const t = three();
+    // the second shot's window cuts from the left to the right half a second in
+    t.tracks.V1.items[1]!.path = [{ t: 0, x: 0.1 }, { t: 0.5, x: 0.1 }, { t: 0.5, x: 0.9 }];
+    t.speakers = [{ rec: 30, len: 15, speaker: 1 }, { rec: 45, len: 45, speaker: 2 }];
+    const h = make(t, { key: "V1:30", head: -10 });
+    // a third of a second gone from its head: the cut comes a third of a second sooner
+    expect(h.tracks.V1.items[1]!.path).toEqual([{ t: 0, x: 0.1 }, { t: 0.167, x: 0.1 }, { t: 0.167, x: 0.9 }, { t: 0.667, x: 0.9 }]);
+    expect(h.speakers).toEqual([{ rec: 30, len: 5, speaker: 1 }, { rec: 35, len: 45, speaker: 2 }]);
+  });
+
   it("an edge pulled out shows more of the take with its voice, and the rest moves later", () => {
     const t = make(three(), { key: "V1:30", head: 6, tail: 4 });
     // 6 timeline frames earlier in a 60 fps take = 12 source frames

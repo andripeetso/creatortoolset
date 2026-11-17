@@ -1,6 +1,7 @@
 import { TRACKS, type Item, type Timeline, type TrackId } from "../../contracts/editor";
 import { editedSpan, playPlan, splitView, type ItemEdit, type TimelineItem, type TimelineView } from "../../contracts/edit-timeline";
 import type { TimedWord } from "../library/transcribe";
+import { pathIn } from "./framing";
 
 /**
  * A draft on Review's timeline, and the hand edits made there cut into the draft's next version with no AI.
@@ -139,7 +140,9 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     const { link: _link, ...shot } = orig;
     for (let k0 = 0, k = 1; k <= len; k++) {
       if (k < len && silent(k) === silent(k0)) continue;
-      const here = { in: srcAt(k0), len: k - k0, rec: rec + k0 };
+      // a reframed shot's window path, from where this piece starts in its take
+      const path = orig.path && pathIn(orig.path, (srcAt(k0) - orig.in) / sfps(orig.src), (k - k0) / tl.fps);
+      const here = { in: srcAt(k0), len: k - k0, rec: rec + k0, ...(path?.length ? { path } : {}) };
       if (silent(k0)) tracks.V1.items.push({ ...shot, ...here });
       else {
         const link = `c${++links}`;
@@ -203,6 +206,7 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     sources: Object.fromEntries(Object.entries(tl.sources).filter(([k]) => used.has(k))),
     tracks,
     markers: tl.markers.map((m) => ({ ...m, rec: at(m.rec) })),
+    ...(tl.speakers ? { speakers: tl.speakers.map((x) => ({ ...x, rec: at(x.rec), len: at(x.rec + x.len) - at(x.rec) })).filter((x) => x.len > 0) } : {}),
     ...(tl.plan ? { plan: tl.plan } : {}),
   };
 }

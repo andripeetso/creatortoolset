@@ -7,7 +7,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { EditSummary } from "@contracts/editor";
-import { MAX_MOMENTS, MAX_VERSIONS } from "@contracts/editor";
+import { MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape } from "@contracts/editor";
 import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
@@ -400,6 +400,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
   const [from, setFrom] = useState<"footage" | "script" | "long">("footage");
   const filmed = from !== "script";
   const [moments, setMoments] = useState(10);
+  const [shape, setShape] = useState<MomentShape | "">("9:16");
   const [voice, setVoice] = useState("");
   const [broll, setBroll] = useState(""); // a folder's id; "": all the B-roll
   const [busy, setBusy] = useState(false);
@@ -550,7 +551,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
         ...(spoken
           ? { versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) }
           : from === "long"
-            ? { moments, targetS: Number(targetS) || 0 }
+            ? { moments, targetS: Number(targetS) || 0, ...(shape ? { shape } : {}) }
             : { versions, targetS: Number(targetS) || 0 }),
         // only an account with styles says anything about one: its pick, or null for None
         ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
@@ -778,6 +779,19 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
                   {[3, 5, 10, 15, MAX_MOMENTS].map((n) => (
                     <option key={n} value={n}>
                       {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {from === "long" ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="edit-shape">Shape</Label>
+                <select id="edit-shape" value={shape} onChange={(e) => setShape(e.target.value as MomentShape | "")} title="Cut to this shape, the picture following who talks" className="h-9 w-32 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
+                  <option value="">As filmed</option>
+                  {(Object.keys(MOMENT_SHAPES) as MomentShape[]).map((k) => (
+                    <option key={k} value={k}>
+                      {k}
                     </option>
                   ))}
                 </select>
