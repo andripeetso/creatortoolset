@@ -71,14 +71,14 @@ export interface StorageFolder {
   /** the workspace it belongs to (stamped when added), or EVERY_WORKSPACE; none = from before workspaces kept their
    *  own: the first brand's. A list sent to a page names the workspace each folder is in (api/devices-storage.ts) */
   workspace?: string;
-  /** the workspaces it is in when that is two or more (Settings → Folders, a footage or music folder's Workspaces);
+  /** the workspaces it is in when that is two or more (Settings → Folders, a folder's Workspaces);
    *  `workspace` is then the first of them, so a reader that knows only `workspace` keeps it to that one */
   workspaces?: string[];
   /** the share its drive is, on the computer that added it (api/lib/storage.ts mountOf); none: a disk of that computer's own */
   mount?: FolderMount;
 }
 
-/** A footage or music folder's `workspace` when every workspace uses it (Settings → Folders, "Use in every workspace"). */
+/** A folder's `workspace` when every workspace uses it (Settings → Folders, a folder's Workspaces: All workspaces). */
 export const EVERY_WORKSPACE = "*";
 
 /**
@@ -172,7 +172,6 @@ export interface AddFolderBody {
   path: string;
 }
 
-/** PATCH /api/devices/storage/folders/:id: the workspace a footage or music folder is in; null = every workspace. */
 /** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before. */
 export type MoveFolderBody = { workspaces: string[] | null } | { workspace: string | null };
 

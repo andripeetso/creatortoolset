@@ -19,7 +19,7 @@ import { GEMINI_PRICE, parked, watchKey } from "./timeline";
  * Every sound file in a library is known as music or a sound effect (its tag, SOUNDS): the AI Editor takes songs and
  * sound effects only by those tags or folders. Settled once, when the file is probed, in this order:
  *   a. a tag the person gave it (never overruled), or one the app gave it before (a rescan does not flip it);
- *   b. a song by its own tags or its name (probe.ts looksLikeSong), or a file from the account's music folders;
+ *   b. a song by its own tags or its name (probe.ts looksLikeSong);
  *   c. the words of the folders it came from, the nearest first (FOLDER_WORDS);
  *   d. its length: a few seconds is a sound effect (anything longer can be a voice recording: owner, 11-17);
  *   e. what is still unclear: Gemini listens to 30 seconds of it, when the library's AI describes new files, its owner
