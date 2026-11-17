@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FootageIndex, IndexShot, IndexSource, SongBeats } from "../../contracts/edit-plan";
-import type { Stretch } from "../../contracts/library";
+import type { Stretch, TimelineEvent } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
@@ -18,6 +18,7 @@ import { enqueueJob } from "../library/jobs";
 import { TOO_BIG } from "../library/mac-look";
 import { lookFirst, lookStamp, queueLook } from "../library/shots";
 import { stretchesOf } from "../library/stretches";
+import { timelineOf } from "../library/timeline";
 import { notifyWorkshopOwner } from "../review";
 import { clock, COLS, contactSheet, CX, CY, HUD_MAX, hudOf, junkOf, looks, lookPrompt, median, parseLooked, readPicture, ROWS, RULE, shotsOf } from "../library/look";
 import type { ProbeSummary } from "../library/media/probe";
@@ -182,7 +183,7 @@ type IndexEdit = { id?: string; name?: string; createdBy?: string; projectId?: s
 
 /** What the index gate hands the read: the sources ready to read, and the ones left out with why. */
 export interface IndexGate {
-  ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[]; why?: string }[];
+  ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[]; timeline?: TimelineEvent[]; why?: string }[];
   left: LeftOut[];
 }
 
@@ -205,7 +206,7 @@ export async function indexSources(edit: IndexEdit, signal: AbortSignal, now = D
   const { ready, left } = onComputer.on ? gateOf<IndexGate>() : await indexGate(edit, signal, now);
   const db = libraryDb();
   const sources: IndexSource[] = [];
-  for (const { id, row, probe, lines, why } of ready) {
+  for (const { id, row, probe, lines, timeline, why } of ready) {
     if (signal.aborted) throw signal.reason ?? new Error("Stopped");
     const speech = !!(wordsOf(db, id)?.length || segmentsOf(db, id).length);
     const turned = probe.rotation === 90 || probe.rotation === 270;
@@ -235,7 +236,7 @@ export async function indexSources(edit: IndexEdit, signal: AbortSignal, now = D
       if (read || !picture) await keep(src);
     }
     if (described) src = { ...src, ...size, shots: lines.map((l) => lineShot(l, src!.shots)) };
-    sources.push({ ...src, title: row.title, speech });
+    sources.push({ ...src, title: row.title, speech, ...(timeline?.length ? { timeline } : {}) });
   }
   return { sources, left };
 }
@@ -300,7 +301,8 @@ export async function indexGate(edit: IndexEdit, signal: AbortSignal, now = Date
       pending.push({ id, title: row.title });
       continue;
     }
-    ready.push({ id, row, probe, lines, ...(why ? { why } : {}) });
+    const timeline = timelineOf(db, id);
+    ready.push({ id, row, probe, lines, ...(timeline.length ? { timeline } : {}), ...(why ? { why } : {}) });
   }
   const key = edit.id ?? edit.sources.join(",");
   if (pending.length && !edit.now) {
@@ -427,6 +429,8 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
   const libraryWords = (id: string) =>
     (db.prepare("SELECT text FROM descriptions WHERE version_id = ? ORDER BY source = 'user' DESC LIMIT 1").get(id) as { text: string } | undefined)?.text;
   const sources = index.sources.map((s) => ({ ...s, shots: s.shots.map((x) => ({ ...x })) }));
+  // every source with a picture has its timeline: the plan reads what happens across the footage there, no story is asked for
+  if (sources.filter((s) => s.w > 0 && s.shots.length).every((s) => s.timeline?.length)) ai = { ...ai, story: false };
   const sheets: Sheet[] = [];
   const under = lookedUnder(ai.workspace);
   for (const [si, s] of sources.entries()) {

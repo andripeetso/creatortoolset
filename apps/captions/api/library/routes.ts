@@ -729,6 +729,7 @@ const settingsOf = (json: string): LibrarySettings => {
   return {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
     look: s.look ?? SETTING_DEFAULTS.look,
+    timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
     upload: uploadOf(s.upload),
@@ -782,7 +783,7 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "embed", "proxy"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "proxy"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }

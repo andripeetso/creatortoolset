@@ -32,7 +32,7 @@ vi.mock("@/components/settings/kit-controls", async (orig) => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, look: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: 20 } };
+const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: 20 } };
 const watch = { allowed: false, folders: [], missing: 0 };
 const patches: unknown[] = [];
 /** each request with the workspace it named */

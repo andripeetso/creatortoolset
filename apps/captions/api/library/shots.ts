@@ -32,6 +32,8 @@ import { NeedsKey } from "./transcribe";
 
 /** What the usage tally counts a shot description call as (estimate.ts reads its average cost back). */
 export const LOOK_LABEL = "Media Library shot descriptions";
+/** What the usage tally counts a timeline call on a Gemini key as (timeline.ts): inside the same monthly budget. */
+export const WATCH_LABEL = `${LOOK_LABEL} (Gemini)`;
 /** The look prompt's version, in its context stamp: a change that should describe shots again bumps it. */
 export const LOOK_VERSION = "look-1";
 /** A clip this long or shorter keeps its description as its only line. */
@@ -124,7 +126,7 @@ export function sweepLook(db: DatabaseSync, now = Date.now()): boolean {
   for (const r of rows) {
     if ((swept.get(r.id) ?? 0) > now) continue;
     swept.set(r.id, now + SWEEP_AGAIN_MS);
-    if (r.state && aiFor(whoFor(r.actor), "analyzer", LOOK_LABEL).off) continue;
+    if (r.state && aiFor(whoFor(r.actor), "library", LOOK_LABEL).off) continue;
     if (queueLook(db, r.id, r.actor)) return true;
   }
   return false;
@@ -140,7 +142,7 @@ const monthStart = (now = Date.now()) => {
 export async function lookSpent(workspace: string | undefined, now = Date.now()): Promise<number> {
   let usd = 0;
   for (const labels of Object.values(await macUsageSince(monthStart(now))))
-    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`]) {
+    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL]) {
       const t = labels[label];
       usd += (workspace ? t?.ws?.[workspace]?.costUsd : t?.costUsd) ?? 0;
     }
@@ -173,8 +175,8 @@ const turns = new Map<string, { n: number; q: (() => void)[] }>();
 
 /** How many calls one account's shot descriptions make at once: LOOK_KEY_CALLS on its own key, BACKGROUND_SLOTS on an AI provider (its computer runs that many background requests; more only queue there). */
 export function callsAtOnce(actor: string): number {
-  if (onApiKey(actor, "analyzer", LOOK_LABEL)) return LOOK_KEY_CALLS;
-  return aiFor(whoFor(actor), "analyzer", LOOK_LABEL).only?.includes("mac") ? BACKGROUND_SLOTS : LOOK_KEY_CALLS;
+  if (onApiKey(actor, "library", LOOK_LABEL)) return LOOK_KEY_CALLS;
+  return aiFor(whoFor(actor), "library", LOOK_LABEL).only?.includes("mac") ? BACKGROUND_SLOTS : LOOK_KEY_CALLS;
 }
 
 /** A turn for one call as `actor`, at most `max` at once across every look running: the function that gives it back. */
@@ -223,7 +225,7 @@ export async function lookVersion(db: DatabaseSync, versionId: string, src: () =
 /** Parks the look (NeedsKey) when no one runs it or their AI isn't connected: no picture is read for nothing. */
 export function needLookRoute(actor: string | null): asserts actor is string {
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
-  const route = aiFor(whoFor(actor), "analyzer", LOOK_LABEL);
+  const route = aiFor(whoFor(actor), "library", LOOK_LABEL);
   if (route.off) throw new NeedsKey(route.off);
 }
 
@@ -300,7 +302,7 @@ async function keptSheets(db: DatabaseSync, versionId: string): Promise<KeptShee
  */
 async function writeLines(db: DatabaseSync, versionId: string, actor: string, kept: KeptSheets): Promise<number> {
   const who = whoFor(actor);
-  const route = aiFor(who, "analyzer", LOOK_LABEL);
+  const route = aiFor(who, "library", LOOK_LABEL);
   if (route.off) throw new NeedsKey(route.off);
   const wsId = await workspaceIdOf(db, versionId);
   const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
@@ -337,7 +339,7 @@ async function writeLines(db: DatabaseSync, versionId: string, actor: string, ke
     let value: Record<string, RatedLine>;
     try {
       if (failed) throw failed.e;
-      ({ value } = await completeVisionWithFallback(system, user, batch.map((sh) => ({ jpegBase64: sh.jpeg })), undefined, parse, who, { label: LOOK_LABEL, background: true, preferKey: true }));
+      ({ value } = await completeVisionWithFallback(system, user, batch.map((sh) => ({ jpegBase64: sh.jpeg })), undefined, parse, who, { label: LOOK_LABEL, background: true, preferKey: true, job: "library" }));
     } finally {
       back();
     }

@@ -28,6 +28,8 @@ import { ProviderDetail } from "./ProviderDetail";
 import { DriverMark, PROVIDER_ROW, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
 import { isLocalCli, LocalAiRows, localInstall, localSignIn, useLocalAi } from "./AiSetup";
 import { LocalModelRow } from "./LocalModelRow";
+import { useMyKeys } from "./MyKeysSection";
+import { InUse } from "./kit-controls";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
 
@@ -487,6 +489,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                 <PickRow
                   key={j.id}
                   title={j.label}
+                  recommend={j.recommend}
                   sel={shown.jobs[j.id]}
                   fallback={shown.default}
                   set={shown}
@@ -551,6 +554,22 @@ function TeamBudgetRow({ team, description, onAdd }: { team: NonNullable<Provide
   );
 }
 
+/** The recommended engine's key for a job: added (in use alongside the provider), or the link to add it. */
+function RecommendedKey({ env }: { env: NonNullable<(typeof JOBS)[number]["recommend"]>["key"] }) {
+  const { data: keys } = useMyKeys();
+  const k = Array.isArray(keys) ? keys.find((x) => x.env === env) : undefined;
+  if (!k) return null;
+  return k.set || k.server ? (
+    <InUse>{k.name} key</InUse>
+  ) : (
+    <Status tone="attention">
+      <Link to="/settings/keys" className="underline-offset-4 hover:underline">
+        Needs a {k.name} key
+      </Link>
+    </Status>
+  );
+}
+
 /**
  * One pick: an AI provider, and for a job its model and thinking level in two rows under it. `sel` undefined on a job =
  * "Default" (its status names the provider that is). The Default's own model and thinking level are the provider's (in
@@ -564,10 +583,13 @@ function PickRow({
   set,
   listModels,
   withModel = true,
+  recommend,
   onChange,
 }: {
   id?: SearchRowId;
   title: string;
+  /** an engine that does this job better than a provider (contracts JOBS): its reason, and whether its key is added */
+  recommend?: (typeof JOBS)[number]["recommend"];
   sel?: Selection;
   /** a job's fallback: the Default it uses when it has no pick */
   fallback?: Selection;
@@ -597,7 +619,8 @@ function PickRow({
     <Row
       id={id}
       title={title}
-      status={!explicit ? set.instances.find((i) => i.id === set.default.instance)?.name : undefined}
+      description={recommend?.why}
+      status={recommend ? <RecommendedKey env={recommend.key} /> : !explicit ? set.instances.find((i) => i.id === set.default.instance)?.name : undefined}
       control={
         <SettingsSelect
           label={`${title}: AI provider`}

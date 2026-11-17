@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
@@ -26,7 +26,8 @@ import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { BUDGET_WAITS, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, queueLook, sweepLook } from "./shots";
-import { macSheetsWaiting, takeMacSheets } from "./mac-look";
+import { macSheetsWaiting, takeMacSheets, takeWatchCopy } from "./mac-look";
+import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
@@ -309,7 +310,7 @@ export function startLibraryWorker(): () => void {
           busy = await tick(Date.now(), lane.kinds);
           if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
           // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook)
-          if (!busy && lane.name === "looks") busy = sweepLook(libraryDb());
+          if (!busy && lane.name === "looks") busy = sweepLook(libraryDb()) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
         } catch (e) {
           console.error("[library] worker:", e);
         }
@@ -448,7 +449,15 @@ async function run(job: JobRow): Promise<void> {
       // the sheets a Mac sent are asked about whatever the budget says: they are read, and held only in memory
       if (!macSheetsWaiting(v.id)) await budgetCheck(db, v.id);
       const sheets = takeMacSheets(v.id);
-      if (sheets) return void (await lookFromSheets(db, v.id, job.actor, sheets));
+      if (sheets) {
+        await lookFromSheets(db, v.id, job.actor, sheets);
+        // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
+        const copy = takeWatchCopy(v.id);
+        if (copy) await watchAfter(db, v.id, async () => copy, job.actor).finally(() => rm(copy, { force: true }));
+        // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
+        else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+        return;
+      }
       void wakeEditorPolls(); // the Mac's long poll hears of it at once
       throw new NeedsKey(MAC_WAITS);
     }
@@ -547,6 +556,8 @@ async function run(job: JobRow): Promise<void> {
     await budgetCheck(db, v.id);
     // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
     await lookVersion(db, v.id, lighter, p, job.actor, dir);
+    // with a Gemini key: the timeline, from the same file (timeline.ts); without one nothing more happens
+    await watchAfter(db, v.id, lighter, job.actor);
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }
