@@ -36,6 +36,7 @@ def fake_helper(calls):
     """A Helper with no server: each call it makes is kept in `calls`."""
     h = helper.Helper.__new__(helper.Helper)
     h.call = lambda method, path, body=None, **k: calls.append((path, body)) or {}
+    h.server_folders = []  # the server's folders for this computer: none, its copy folders are its own list (COPIES)
     return h
 
 
@@ -50,7 +51,7 @@ class Copies(unittest.TestCase):
         self.share = os.path.join(self.top, "share")
         os.mkdir(self.share)
         self.saved = helper.disks, helper.COPIES
-        helper.disks = lambda: [{"path": self.share}]
+        helper.disks = lambda: [{"path": self.share, "network": True}]
         helper.COPIES = os.path.join(self.top, "copies.json")
 
     def tearDown(self):
