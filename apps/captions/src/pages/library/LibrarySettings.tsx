@@ -20,12 +20,14 @@ import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
  * The Media Library's settings (the owner's: the places and where the files are kept are theirs only), behind one
- * button beside its search and as Settings → Media Library (the same body, LibrarySettingsBody). Files: how files are
- * imported and the places they came from (./Import.tsx) with Look for new files, and how the library is sorted
- * (./Organize.tsx). The footage folders on the server's own computer (the library's own sheet only: in Settings they
- * are the Folders page's). Storage: what uploads to the server (the row that says where the video files are), and
- * the space the library's own made files take. Search: the switches for what it reads, each saying where it runs. Redo for all clips. The button carries an amber dot
- * while a folder or clip is not found.
+ * button beside its search and as Settings → Media Library (the same body, LibrarySettingsBody). One section per
+ * question, in the order a file meets them: Adding files (how files are imported and the places they came from,
+ * ./Import.tsx, with Look for new files, and how the library is sorted, ./Organize.tsx); the footage folders on the
+ * server's own computer (the library's own sheet only: in Settings they are the Folders page's); Uploads (what of the
+ * footage and the finals goes to the server, and where); Storage (where the video files are, proxies, and the space the
+ * library's own made files take); Descriptions (what is written down about each video, with Shot detail and the
+ * Timeline model under it); Search (how a search matches); All clips (redo). The button carries an amber dot while a
+ * folder or clip is not found.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -42,16 +44,16 @@ const WHERE: Partial<Record<LibraryStepRoute, string>> = {
 
 /** What each switch adds, before where it runs. */
 const WHAT: Record<"describe" | "look" | "timeline" | "embed" | "pictures", string> = {
-  describe: "What is on screen in each video, written down for search.",
-  look: "A line for each shot of a longer video.",
-  timeline: "What happens when in each of those videos, from its picture and sound, made by Gemini.",
-  embed: "Search matches by meaning as well as by exact words.",
-  pictures: "Search matches what the footage shows as well as its words.",
+  describe: "A few sentences on what is on screen in each video, used by search.",
+  look: "A line for each shot of a longer video, used by search.",
+  timeline: "What happens when in each longer video, from its picture and sound.",
+  embed: "A search matches clips by meaning as well as by its exact words.",
+  pictures: "A search matches what is in the picture as well as what is said and written.",
 };
 
 /** The two ways a file is imported, in the words of these settings (the add dialog asks the same in its own, ./Import.tsx). */
 const IMPORT: { value: ImportMode; label: string; detail: string; was: string }[] = [
-  { value: "in-place", label: "Keep in place", detail: "Files are read where they are.", was: "Kept in place" },
+  { value: "in-place", label: "Keep in place", detail: "Files stay in their own folders, and the library reads them from there.", was: "Kept in place" },
   { value: "copy", label: "Copy into the library", detail: "Files are copied into the library's Footage, Audio and Pictures folders.", was: "Copied into the library" },
 ];
 
@@ -62,8 +64,8 @@ const IMPORT: { value: ImportMode; label: string; detail: string; was: string }[
  */
 const SORTING: { value: Organize; label: string; detail: string }[] = [
   { value: "default", label: ORGANIZE_NAME.default, detail: `The library has the folders ${FOLDER_NAMES}.` },
-  { value: "ai", label: ORGANIZE_NAME.ai, detail: "Folders are made to fit the footage, and each new file is filed in one." },
-  { value: "own", label: ORGANIZE_NAME.own, detail: "Files stay in one list." },
+  { value: "ai", label: ORGANIZE_NAME.ai, detail: "Folders are named after the footage in them, and each new file goes into one." },
+  { value: "own", label: ORGANIZE_NAME.own, detail: "Files stay in one list, with no folders." },
 ];
 
 /** A footage folder or a clip the library cannot find: the page's More button carries a dot. */
@@ -100,7 +102,7 @@ export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & { o
 export function LibrarySettingsBody({ library, watch, folders, onChange, onError, inSettings }: BodyProps & { inSettings?: boolean }) {
   return (
     <>
-      <Section title="Files">
+      <Section title="Adding files">
         <Card>
           <ImportRows library={library} watch={watch} onChange={onChange} onError={onError} inSettings={inSettings} />
           <SortingRow library={library} onChange={onChange} onError={onError} />
@@ -257,9 +259,9 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
   );
   return (
     <>
-      <Section id="library-ai" title="Search">
+      <Section id="library-ai" title="Descriptions">
         <Card>
-          {row("describe", "describe", "Descriptions")}
+          {row("describe", "describe", "Clip descriptions")}
           {row("look", "look", "Shot descriptions")}
           {look && (
             <Row
@@ -297,16 +299,20 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
               control={<Switch aria-label="Timelines" checked={timeline} onCheckedChange={(on) => void flip("timeline", on)} />}
             />
           )}
-          {look &&
-            timeline &&
-            // what watches, each Gemini model with what an hour of footage costs at the library's level (estimate.ts timelineModels)
-            WATCH_MODELS.map((m) => {
+        </Card>
+      </Section>
+      {look && <ShotDetail library={library} estimate={est} onChange={onChange} onError={onError} />}
+      {look && timeline && (
+        <Section id="library-timeline-model" title="Timeline model">
+          <Card>
+            {/* what watches, each model with what an hour of footage costs at the library's level (estimate.ts timelineModels) */}
+            {WATCH_MODELS.map((m) => {
               const usd = est?.timelineModels?.find((x) => x.model === m.value)?.usd;
               return (
                 <ListRow
                   key={m.value}
                   title={m.label}
-                  subtitle={usd === undefined ? m.note : `${m.note}, ${aboutUsd(usd)} an hour of footage`}
+                  subtitle={usd === undefined ? m.note : `${m.note}, ${aboutUsd(usd)} for each hour of footage`}
                   actions={
                     m.value === watchModelOf(library.settings.timelineModel) ? (
                       <InUse>In use</InUse>
@@ -327,6 +333,11 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
                 />
               );
             })}
+          </Card>
+        </Section>
+      )}
+      <Section id="library-search" title="Search">
+        <Card>
           {row("embed", "embed", "Search by meaning")}
           {/* made here or on the person's own computers (api/library/pictures.ts): nothing to add; absent on an older server */}
           {library.settings.pictures !== undefined && (
@@ -338,16 +349,12 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
           )}
         </Card>
       </Section>
-      {look && <ShotDetail library={library} estimate={est} onChange={onChange} onError={onError} />}
     </>
   );
 }
 
-/** "About 12 min and $2.64 an hour of footage": a level's time and cost for an hour of footage (estimate.ts lookLevels). */
-const perHour = (seconds: number, usd: number) => {
-  const t = `${aboutTime(seconds)} and ${aboutUsd(usd).replace(/^about /, "")} an hour of footage`;
-  return t.charAt(0).toUpperCase() + t.slice(1);
-};
+/** "$2.64 and about 12 min for each hour of footage": a level's cost and time for an hour of footage (estimate.ts lookLevels). */
+const perHour = (seconds: number, usd: number) => `${aboutUsd(usd).replace(/^about /, "")} and ${aboutTime(seconds)} for each hour of footage`;
 
 /**
  * How densely shots are described (contracts LOOK_LEVELS), each level with the time and cost of an hour of footage on
@@ -390,7 +397,7 @@ function ShotDetail({ library, estimate, onChange, onError }: Pick<BodyProps, "l
         <Row
           id="library-shot-budget"
           title="Monthly budget"
-          description="The most shot descriptions may cost in a month, in dollars."
+          description="Shot descriptions wait for next month once they cost this much, in dollars."
           status={spent !== undefined ? <Status tone={reached ? "attention" : undefined}>{reached ? "Reached: " : ""}${spent.toFixed(2)} this month</Status> : null}
           control={<TextField label="Monthly budget" value={lookBudget === null ? "" : String(lookBudget)} placeholder="No limit" onCommit={budget} className="sm:w-28" />}
         />
@@ -474,7 +481,7 @@ function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps,
       onThisComputer={onThisComputer}
       onSaved={(storage) => onChange({ ...library, storage })}
       videos={(saved) => (space ? videoFacts(space.videos, place(saved)) : undefined)}
-      upload={(description) => <UploadSelect library={library} onChange={onChange} onError={onError} description={description} />}
+      upload={(facts) => <UploadSelect library={library} onChange={onChange} onError={onError} facts={facts} />}
     >
       {(saved, uploadRow) => (
         <SpaceRows library={library} saved={saved} space={space} read={read} videos={space && saved && !uploadRow ? videoPlace(space.videos, place(saved)) : null} onChange={onChange} onError={onError} />
@@ -506,41 +513,46 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
     updateLibrary(library.id, { settings: { proxy: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
+  const proxyFiles = !!space && (cloud || space.proxies.files > 0);
+  const models = !!space?.models && space.models.bytes > 0;
+  if (!videos && cloud && !proxyFiles && !models) return null;
   return (
-    <>
-      {videos && <Row title="Video files" description={videos} />}
-      {!cloud && (
-        <Row
-          id="library-proxies"
-          title="Proxies"
-          description="Smaller copies of 4K, 10-bit and camera files, for smooth playback."
-          control={<Switch aria-label="Proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
-        />
-      )}
-      {space && cloud && <Row title="Proxy files" description={`In ${storeName(cloud)}, ${size(saved?.storedBytes ?? 0)}`} />}
-      {space && !cloud && space.proxies.files > 0 && (
-        <Row
-          title="Proxy files"
-          description={size(space.proxies.bytes)}
-          control={
-            <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
-              Clear
-            </Button>
-          }
-        />
-      )}
-      {space?.models && space.models.bytes > 0 && (
-        <Row
-          title="Speech and search models"
-          description={size(space.models.bytes)}
-          control={
-            <Button size="sm" variant="outline" onClick={() => void clear("models", space.models!.bytes)}>
-              Clear
-            </Button>
-          }
-        />
-      )}
-    </>
+    <Section title="Storage">
+      <Card>
+        {videos && <Row title="Video files" description={videos} />}
+        {!cloud && (
+          <Row
+            id="library-proxies"
+            title="Proxies"
+            description="A smaller copy of each 4K, 10-bit or camera file, so it plays smoothly."
+            control={<Switch aria-label="Proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
+          />
+        )}
+        {space && cloud && <Row title="Proxy files" description={`In ${storeName(cloud)}, ${size(saved?.storedBytes ?? 0)}`} />}
+        {space && !cloud && space.proxies.files > 0 && (
+          <Row
+            title="Proxy files"
+            description={size(space.proxies.bytes)}
+            control={
+              <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
+                Clear
+              </Button>
+            }
+          />
+        )}
+        {space?.models && space.models.bytes > 0 && (
+          <Row
+            title="Speech and search models"
+            description={size(space.models.bytes)}
+            control={
+              <Button size="sm" variant="outline" onClick={() => void clear("models", space.models!.bytes)}>
+                Clear
+              </Button>
+            }
+          />
+        )}
+      </Card>
+    </Section>
   );
 }
 
