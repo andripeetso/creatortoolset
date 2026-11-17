@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
 import { nleAudio, runningAudio } from "@/lib/nle/audio";
-import type { NleItem, NleTimeline } from "@/lib/nle/model";
+import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
 import { picturesAt, picturesSoon, placement, soundPieces, sourceTime, type SoundPiece } from "@/lib/nle/picture";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
 
@@ -177,8 +177,10 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
       const forward = run && r > 0;
       const flashes: number[] = [];
       ctx.globalAlpha = 1;
+      // a gap in the cut is black; past its last clip there is no picture, only the frame's edge on the pasteboard
       ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, W, H);
+      if (f < lengthOf(t)) ctx.fillRect(0, 0, W, H);
+      else ctx.clearRect(0, 0, W, H);
       for (const { item, track } of on) {
         const key = item._k ?? `${item.src}:${item.rec}`;
         const k = f - item.rec;

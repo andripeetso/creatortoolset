@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { NlePlayer, type NleFile } from "./NlePlayer";
 
 // The viewer: the timeline's frame at its own size and shape on a grey pasteboard, edged, so a black picture, a gap or
-// the time past the end still shows where the frame is. Under it: the clock, the play controls, the timeline's size and
+// the time past the last clip (no picture: the pasteboard shows through) still shows where the frame is. Under it: the clock, the play controls, the timeline's size and
 // rate, how large the frame is drawn (Fit, 50 %, 100 %) and the safe-area guides.
 
 type Zoom = "fit" | 0.5 | 1;
@@ -74,7 +74,7 @@ export function NleViewer({ tl, time, playing, rate, urlOf, nameOf, onClick, clo
       {/* the pasteboard scrolls when the frame is drawn larger than it; its bars sit in its own edge, so nothing moves */}
       <div ref={board} className={cn("relative min-h-0 flex-1 bg-[#2a2a2e]", prefs.zoom === "fit" ? "overflow-hidden" : "overflow-scroll")}>
         <div className="flex min-h-full min-w-full items-center justify-center" style={{ padding: PAD, width: prefs.zoom === "fit" ? undefined : W * scale + 2 * PAD, height: prefs.zoom === "fit" ? undefined : H * scale + 2 * PAD }}>
-          <div data-frame className="relative shrink-0 bg-black shadow-[0_0_0_1px_rgb(255_255_255/0.28),0_4px_24px_rgb(0_0_0/0.45)]"
+          <div data-frame className="relative shrink-0 shadow-[0_0_0_1px_rgb(255_255_255/0.28),0_4px_24px_rgb(0_0_0/0.45)]"
             style={{ width: W * scale, height: H * scale }} onClick={onClick}>
             <NlePlayer tl={tl} time={time} playing={playing} rate={rate} urlOf={urlOf} nameOf={nameOf} className="block size-full" />
             {prefs.guides && (

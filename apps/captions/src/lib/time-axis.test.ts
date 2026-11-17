@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampZoom, fitPps, maxZoomOf, rulerMarks, scrollForZoom, scrollToFollow, sliderToZoom, zoomToSlider } from "./time-axis";
+import { clampZoom, clock, fitPps, maxZoomOf, rulerMarks, rulerStep, scrollForZoom, scrollToFollow, sliderToZoom, zoomToSlider } from "./time-axis";
 
 describe("the timelines' time axis", () => {
   it("fits the whole length into the scroller, less what stands before 0:00 and after the end", () => {
@@ -60,5 +60,13 @@ describe("the timelines' time axis", () => {
     expect(zoomToSlider(2, 8)).toBe(333);
     expect(sliderToZoom(500, 16)).toBeCloseTo(4, 6);
     expect(zoomToSlider(3, 1)).toBe(0); // nothing to zoom
+  });
+
+  it("reads hours on a timeline that runs for a day", () => {
+    expect(fitPps(1352, 86400, 152, 0, 0.001)).toBeCloseTo(1200 / 86400, 9); // under a px a second when let
+    expect(rulerStep(1200 / 86400)).toBe(7200); // a day in 1200 px: a mark each 2 h
+    expect(rulerStep(0.1)).toBe(1200);
+    expect(clock(3599)).toBe("59:59");
+    expect(clock(3600 * 5 + 62)).toBe("5:01:02");
   });
 });

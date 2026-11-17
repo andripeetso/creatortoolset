@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Film, Loader2, Magnet, MousePointer2, Music,
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, addTrack, blade, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, paste, place, remove,
-  removeTrack, setTrack, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
+  removeTrack, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
 import { NleInspector } from "./NleInspector";
@@ -42,10 +42,6 @@ let clipboard: { track: string; item: NleItem }[] = [];
 /** A drag of one of the timeline's own sources (Media → In this timeline): its key. */
 const SOURCE_MIME = "application/x-ct-nle-source";
 
-const tc = (f: number, fps: number) => {
-  const s = Math.floor(f / fps);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}:${String(Math.round(f % fps)).padStart(2, "0")}`;
-};
 
 export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly }: {
   initial: NleTimeline;
@@ -94,6 +90,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const shown = live ?? tl;
   const fps = tl.timeline.fps;
   const end = lengthOf(shown) / fps;
+  // the cut's last frame: playing stops on it and End goes to it, so the viewer ends on a picture, never on past-the-end
+  const last = Math.max(0, lengthOf(shown) - 1) / fps;
   const dirty = tl !== saved;
 
   const commit = useCallback((next: NleTimeline) => {
@@ -113,8 +111,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     const step = (now: number) => {
       const t = timeRef.current + ((now - last) / 1000) * rate;
       last = now;
-      if (t >= end && rate > 0) {
-        setTime(end);
+      if (t >= last && rate > 0) {
+        setTime(last);
         setPlaying(false);
         return;
       }
@@ -128,11 +126,11 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [playing, rate, end]);
+  }, [playing, rate, last]);
 
   const play = (on: boolean, r = 1) => {
     nleAudio();
-    if (on && r > 0 && timeRef.current >= end - 0.5 / fps) setTime(0);
+    if (on && r > 0 && timeRef.current >= last - 0.5 / fps) setTime(0);
     setRate(r);
     setPlaying(on);
   };
@@ -245,7 +243,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         const p = e.key === "ArrowUp" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);
         if (p !== undefined) seek(p / fps);
       } else if (e.key === "Home") seek(0);
-      else if (e.key === "End") seek(end);
+      else if (e.key === "End") seek(last);
       else if (k === "z" && e.shiftKey) zoomKeys.current?.(new KeyboardEvent("keydown", { key: "\\" }));
       else if (!zoomKeys.current?.(e)) return;
       e.preventDefault();
@@ -285,8 +283,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
             <NleViewer tl={shown} time={time} playing={playing} rate={rate} urlOf={urlFor} nameOf={nameOfSrc} onClick={() => play(!playing)}
               clock={
                 <span className="font-mono tabular-nums">
-                  <span className="text-[13px] text-zinc-100">{tc(Math.round(time * fps), fps)}</span>
-                  <span className="text-zinc-500"> / {tc(Math.round(end * fps), fps)}</span>
+                  <span className="text-[13px] text-zinc-100">{timecode(Math.round(time * fps), fps)}</span>
+                  <span className="text-zinc-500"> / {timecode(Math.round(end * fps), fps)}</span>
                   {playing && rate !== 1 && <span className="pl-1.5 text-violet-300">{rate}×</span>}
                 </span>
               }
@@ -297,7 +295,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                     className="inline-flex size-7 items-center justify-center rounded-full bg-zinc-200 text-zinc-900 hover:bg-white">
                     {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
                   </button>
-                  <button type="button" aria-label="End" title="End (End)" onClick={() => seek(end)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipForward className="size-3.5" /></button>
+                  <button type="button" aria-label="End" title="End (End)" onClick={() => seek(last)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipForward className="size-3.5" /></button>
                 </>
               } />
           </Panel>

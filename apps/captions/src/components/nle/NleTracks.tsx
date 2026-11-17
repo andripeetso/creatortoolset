@@ -3,7 +3,7 @@ import { Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from 
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
-import { edgesOf, endOf, isVideo, lengthOf, move, roll, slip, trackOrder, trim, withLinked, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { edgesOf, endOf, isVideo, lengthOf, move, roll, slip, timecode, trackOrder, trim, withLinked, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
 import { peaks, wavePath } from "@/lib/waveform";
 import { thumbAt } from "@/lib/nle/thumbs";
@@ -31,6 +31,9 @@ const readHeight = () => {
   }
 };
 const EDGE_PX = 6;
+const DAY = 24 * 3600;
+const MAX_PPS = 600;
+const MAX_PX = 16e6;
 
 type Drag = {
   key: string;
@@ -72,18 +75,17 @@ export const NleTracks = memo(function NleTracks({
   end?: ReactNode;
 }) {
   const fps = tl.timeline.fps;
-  const seconds = Math.max(lengthOf(tl) / fps, 1);
-  // room after the end to pull a clip out into and to drop onto. It grows when the timeline outgrows it, never during a
-  // drag: the clip under the pointer stays where it is
-  const span = useRef(0);
+  const content = lengthOf(tl) / fps;
   const drag = useRef<Drag | null>(null);
-  if (!drag.current && (seconds + 2 > span.current || span.current > seconds * 4 + 8)) span.current = seconds * 1.4 + 3;
-  const shown = span.current;
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const timeRef = useRef(time);
   timeRef.current = time;
-  const axis = useTimeAxis({ scroller, seconds: shown, left: LABEL_W, maxPps: 600, now: () => timeRef.current });
+  // no end: the timeline runs for a day, it opens on (and \ fits) what is on it
+  const axis = useTimeAxis({ scroller, seconds: DAY, left: LABEL_W, maxPps: MAX_PPS, now: () => timeRef.current, fit: Math.max(10, content * 1.04 + 1), minPps: 0.001 });
+  // a browser can't lay out a box much over 30 million px: zoomed in close, the content is drawn for as many hours as
+  // fit in 16 million (7 h at a frame's closest), and always past what is on it and the playhead
+  const shown = Math.min(DAY, Math.max(MAX_PX / axis.pps, content + 3600, time + 60));
   zoomKeys.current = axis.key;
   const pps = axis.pps;
   // the playhead kept in view while it moves
@@ -121,7 +123,9 @@ export const NleTracks = memo(function NleTracks({
       return;
     }
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const grip = e.clientX - box.left < EDGE_PX ? "head" : box.right - e.clientX < EDGE_PX ? "tail" : "body";
+    // a clip a few px wide (zoomed far out) is moved by its middle half, its ends are the quarters
+    const edge = Math.min(EDGE_PX, box.width / 4);
+    const grip = e.clientX - box.left < edge ? "head" : box.right - e.clientX < edge ? "tail" : "body";
     let keys = selected.includes(key) ? selected : [key];
     if (e.shiftKey || e.metaKey) {
       keys = selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key];
@@ -181,7 +185,6 @@ export const NleTracks = memo(function NleTracks({
   const ph = LABEL_W + time * pps;
   const cursor = tool === "blade" ? "cursor-crosshair" : "";
 
-  const lengthF = lengthOf(tl);
   const slider = "h-1 w-20 cursor-pointer accent-zinc-300";
   return (
     <Panel title="Timeline" className="flex-1" bar={
@@ -195,7 +198,7 @@ export const NleTracks = memo(function NleTracks({
             <Rows3 className="size-3.5" />
             <input type="range" aria-label="Track height" min={0.7} max={2.5} step={0.05} value={scale} onChange={(e) => keepHeight(Number(e.target.value))} className={slider} />
           </label>
-          <label className="flex shrink-0 items-center gap-1" title="Zoom (= and -, \ shows it all)">
+          <label className="flex shrink-0 items-center gap-1" title="Zoom (= and -, \ fits the clips)">
             <ZoomIn className="size-3.5" />
             <input type="range" aria-label="Timeline zoom" min={0} max={1000} step={1}
               value={axis.maxZoom > 1 ? Math.round((Math.log(axis.zoom) / Math.log(axis.maxZoom)) * 1000) : 0}
@@ -207,23 +210,18 @@ export const NleTracks = memo(function NleTracks({
     <TimelineFrame scroller={scroller} inner={inner} seconds={shown} pps={pps} labelWidth={LABEL_W} rulerHeight={RULER_H}
       className="min-h-0 flex-1 overflow-y-scroll bg-[#151517]" stickyRuler="bg-[#1d1d20] border-b border-black/60"
       ruler={{ onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && onSeek(frameAt(e.clientX) / fps), className: "cursor-ew-resize" }}
-      rulerLabel={<span className="font-mono text-[11px] tabular-nums text-zinc-300" title="The playhead">{tcOf(Math.round(time * fps), fps)}</span>}
+      rulerLabel={<span className="font-mono text-[11px] tabular-nums text-zinc-300" title="The playhead">{timecode(Math.round(time * fps), fps)}</span>}
       rulerChildren={
         <>
-          <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/35" style={{ left: (lengthF / fps) * pps }} />
           {marks[0] !== null && marks[1] !== null && (
             <div className="absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
-          <div className="pointer-events-none absolute inset-y-0 border-l border-zinc-500" style={{ left: (lengthF / fps) * pps }} title="End" />
           <div className="pointer-events-none absolute bottom-0 z-10 -translate-x-1/2" style={{ left: time * pps }}>
             <div className="h-2.5 w-3 rounded-t-[2px] bg-red-500 [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]" />
           </div>
         </>
       }
       content={{ onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up, className: cn("flex min-h-full flex-col", cursor) }}>
-      {/* after the end: shaded down through every track, so where the timeline stops is plain */}
-      <div aria-hidden className="pointer-events-none absolute top-0 right-0 bottom-0 bg-black/30 bg-[repeating-linear-gradient(135deg,transparent_0_7px,rgb(255_255_255/0.025)_7px_14px)]"
-        style={{ left: LABEL_W + (lengthF / fps) * pps }} />
       {order.map((id) => {
         const t = tl.tracks[id];
         const v = isVideo(id);
@@ -299,10 +297,6 @@ export const NleTracks = memo(function NleTracks({
   );
 });
 
-const tcOf = (f: number, fps: number) => {
-  const s = Math.floor(f / fps);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}:${String(Math.round(f % fps)).padStart(2, "0")}`;
-};
 
 const SOUND_FILE = /\.(wav|aif|aiff|m4a|mp3|flac|caf|aac)$/i;
 const peakOf = new WeakMap<Float32Array, number>();

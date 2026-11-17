@@ -10,9 +10,9 @@ import { clampZoom, fitPps, maxZoomOf, scrollForZoom, scrollToFollow } from "./t
  * `left` and `right` are the px of the scroller's content before 0:00 and after the end; `maxPps` the widest a second
  * gets. A timeline that doesn't open on its whole length gives `startPps`, the width of a second it opens at (never
  * narrower than the whole length fitted, never wider than `maxPps`): taken once the length is known, and again for a
- * new length.
+ * new length. A timeline far longer than what is on it gives `fit`, the seconds it opens on and \ fits (from 0:00).
  */
-export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, now, startPps }: {
+export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, now, startPps, fit, minPps = 1 }: {
   scroller: RefObject<HTMLElement | null>;
   seconds: number;
   left?: number;
@@ -20,6 +20,9 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
   maxPps: number;
   now: () => number;
   startPps?: number;
+  fit?: number;
+  /** the narrowest a second gets (1 px): a timeline of hours needs less to show whole */
+  minPps?: number;
 }) {
   const [width, setWidth] = useState(600);
   const [asked, setZoom] = useState(1);
@@ -31,14 +34,14 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
     ro.observe(el);
     return () => ro.disconnect();
   }, [scroller]);
-  const base = fitPps(width, seconds, left, right);
+  const base = fitPps(width, seconds, left, right, minPps);
   const maxZoom = maxZoomOf(base, maxPps);
   // never past the widest a second gets, also when the scroller got wider or the length shorter since the zoom was set
   const zoom = Math.min(asked, maxZoom);
   const pps = base * zoom;
 
   // several wheel events can land before a render, so the latest zoom and the scroll it wants live here
-  const live = useRef({ zoom: 1, base, maxPps, now, scroll: null as number | null });
+  const live = useRef({ zoom: 1, base, maxPps, now, fit, scroll: null as number | null });
   const zoomTo = (target: number) => {
     const el = scroller.current;
     if (!el) return;
@@ -49,17 +52,27 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
     setZoom(z);
   };
   const zoomBy = (factor: number) => zoomTo(live.current.zoom * factor);
+  /** The whole length, or `fit` seconds from 0:00. */
+  const zoomFit = () => {
+    const el = scroller.current;
+    const f = live.current.fit;
+    if (!el || !f) return zoomTo(1);
+    zoomTo(fitPps(el.clientWidth, f, left, right, minPps) / live.current.base);
+    live.current.scroll = 0;
+    el.scrollLeft = 0;
+  };
   const zoomRef = useRef(zoomBy);
   useLayoutEffect(() => {
-    Object.assign(live.current, { zoom, base, maxPps, now });
+    Object.assign(live.current, { zoom, base, maxPps, now, fit });
     zoomRef.current = zoomBy;
   });
   // the width it opens at: measured on the scroller itself, since the first render has no width yet
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (!el || !startPps || !(seconds > 0)) return;
-    const fit = fitPps(el.clientWidth, seconds, left, right);
-    const z = clampZoom(startPps / fit, fit, maxPps);
+    const want = el && (fit ? fitPps(el.clientWidth, fit, left, right, minPps) : startPps);
+    if (!el || !want || !(seconds > 0)) return;
+    const whole = fitPps(el.clientWidth, seconds, left, right, minPps);
+    const z = clampZoom(want / whole, whole, maxPps);
     live.current.zoom = z;
     setZoom(z);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per length
@@ -96,9 +109,9 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
   const key = (e: KeyboardEvent): boolean => {
     if (e.key === "=" || e.key === "+") zoomBy(1.5);
     else if (e.key === "-" || e.key === "_") zoomBy(1 / 1.5);
-    else if (e.key === "\\") zoomTo(1);
+    else if (e.key === "\\") zoomFit();
     else return false;
     return true;
   };
-  return { base, zoom, maxZoom, pps, zoomTo, zoomBy, follow, key };
+  return { base, zoom, maxZoom, pps, zoomTo, zoomBy, zoomFit, follow, key };
 }
