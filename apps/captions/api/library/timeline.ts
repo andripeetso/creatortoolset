@@ -95,18 +95,16 @@ const WHAT_MAX = 200;
 const NOTE_MAX = 120;
 /**
  * Tokens in a second of footage and out a minute of it (thinking included), by model and level, on an 11:39
- * public-domain NASA video with sound (720p proxy), 2026-11-16/17. Flash-Lite: measured at each level (Light $0.10,
- * Standard $0.14, Detailed $0.22 an hour of footage). 3.8 Flash reads the same tokens in (the same count on all 9 test
- * clips and this one); its out at Standard was measured on the video's first 3 minutes, 1733 a minute, and Light and
- * Detailed are that scaled by Flash-Lite's own ratio between levels (Light $0.46, Standard $0.64, Detailed $0.92).
- * ponytail: 3.8 Flash's Light and Detailed out are scaled, not measured: a free key's 20 calls a day ran out (Google's
- * 503s count too); measure them again once the key has billing on
+ * public-domain NASA video with sound (720p proxy), each level one whole watch through watchVersion, the stretches asked
+ * again included. Flash-Lite, 2026-11-16/17: Light $0.10, Standard $0.14, Detailed $0.22 an hour of footage. 3.8 Flash,
+ * 2026-11-17 on a key with billing on: Light $0.29, Standard $0.38, Detailed $0.81 (its Detailed watch asked a stretch
+ * again, hence the more tokens in). An earlier 1733 out a minute at Standard came from the video's first 3 minutes only.
  */
 const MEASURED: Record<GeminiModel, Record<LookLevel, { inS: number; outMin: number }>> = {
   "gemini-3.8-flash": {
-    light: { inS: 59, outMin: 1349 },
-    standard: { inS: 92, outMin: 1733 },
-    detailed: { inS: 158, outMin: 2206 },
+    light: { inS: 59, outMin: 569 },
+    standard: { inS: 92, outMin: 593 },
+    detailed: { inS: 185, outMin: 1363 },
   },
   "gemini-3.5-flash-lite": {
     light: { inS: 59, outMin: 214 },
