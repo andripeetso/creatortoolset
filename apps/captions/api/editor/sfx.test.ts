@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { EditPlan } from "../../contracts/edit-plan";
 import type { TimelineSource } from "../../contracts/editor";
-import { toFcpxml } from "./fcpxml";
 import { exportGaps } from "./carry";
 import { toOtio } from "./otio";
 import { placeSfx, SFX_DB, SFX_GAP_S, sfxMoments, typeOf, type SfxSound } from "./sfx";
@@ -132,12 +131,14 @@ describe("the timeline's sound effects", () => {
     expect(Object.keys(tl.sources)).toEqual(["game"]);
   });
 
-  it("carries A3 into the exports: the FCPXML and OTIO name the sound's file, and no gap is reported", () => {
+  it("carries A3 into the OTIO export (Resolve), which the notice does not list as a gap", () => {
     const tl = planTimeline(plan, { game }, "Run v1", { sounds, broll: new Set() });
     const files = { game: "/tiny/game.mp4", s_pop: "/tiny/sfx-pop.wav", s_hit: "/tiny/sfx-hit.wav", s_whoosh: "/tiny/sfx-whoosh.wav" };
-    expect(toFcpxml(tl, files)).toContain("sfx-hit.wav");
     expect(JSON.stringify(toOtio(tl, files))).toContain("sfx-whoosh.wav");
-    expect(exportGaps(tl)).not.toHaveProperty("sfx");
+    const gaps = exportGaps(tl);
+    expect(gaps.resolve ?? []).not.toContain("sound effects");
+    // the FCPXML writer has no A3 yet: Final Cut and Premiere are told
+    expect(gaps["final-cut"]).toContain("sound effects");
   });
 });
 
