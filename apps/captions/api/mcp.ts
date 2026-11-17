@@ -219,8 +219,8 @@ export const TOOLS = [
   { name: "workshop_wait", description: "Keep waiting for a workshop_chat reply.", inputSchema: { type: "object", properties: { session: str, reply: str, wait_s: { type: "integer" } }, required: ["session", "reply"] } },
   {
     name: "finals_link_session",
-    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
-    inputSchema: { type: "object", properties: { piece: str, session: str, workshop_piece: str }, required: ["piece", "session"] },
+    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there. Or put a video in Finals as the project's final: version = a version_id use_file (to: library) gave, instead of piece.",
+    inputSchema: { type: "object", properties: { piece: str, version: str, session: str, workshop_piece: str }, required: ["session"] },
   },
   { name: "list_reviews", description: "His videos in Review: approval, versions, latest file, comment counts, link.", inputSchema: { type: "object", properties: {} } },
   {
@@ -659,7 +659,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         body.posted = { remove: code };
       } else if (a.post_url) body.posted = a.post_url;
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
-      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
+      const out = pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
+      // ready to post or published with no final video: the chat asks for the finished file
+      if (out.status === "toPost" || out.status === "published") {
+        const finals = await ws(`/sessions/${a.session}/finals`).catch(() => null);
+        if (finals && !finals.linked && finals.libraryId)
+          out.final = isJob(auth)
+            ? "No final video is in Finals for this project. Ask the user for the finished file; when they drop it in the chat, use_file to: library, then finals_link_session with its version_id."
+            : // an outside app (ChatGPT, Claude) keeps a dropped file to itself: the app's own page takes it
+              "No final video is in Finals for this project. Ask the user for the finished file: they add it with Add final video on the project's page in Creator Toolset.";
+      }
+      return out;
     },
     workshop_new_piece: async (a) => {
       // words that aren't the user's: the piece is made empty, and workshop_chat is next
@@ -702,8 +712,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
-    finals_link_session: async (a) =>
-      ws(`/sessions/${a.session}/finals`, "POST", { pieceId: a.piece, ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) }),
+    finals_link_session: async (a) => {
+      if (!a.piece && !a.version) throw new ToolError("Give piece (a Finals piece's id) or version (a library video's version_id).");
+      const body = { ...(a.version ? { versionId: a.version } : { pieceId: a.piece }), ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) };
+      // a video just added: the library reads its size first (202 meanwhile)
+      for (let i = 0; i < 30; i++) {
+        const r = await ws(`/sessions/${a.session}/finals`, "POST", body);
+        if (!r.waiting) return r;
+        await sleep(2000);
+      }
+      throw new ToolError("The library is still reading this video: call finals_link_session again in a minute.");
+    },
     list_reviews: async () => {
       const folders = new Map((await json<Args[]>("/api/review/projects")).map((p) => [p.id, p.name]));
       return { reviews: (await json<Args[]>("/api/review")).map((r) => {

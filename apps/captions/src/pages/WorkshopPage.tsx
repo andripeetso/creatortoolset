@@ -15,6 +15,7 @@ import { FrameworkForm, type FrameworkDraft } from "@/components/workshop/Framew
 import { KnowledgePanel } from "@/components/workshop/KnowledgePanel";
 import { RuleRow } from "@/components/workshop/RuleRow";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
+import { useAskFinal } from "@/components/workshop/AddFinalDialog";
 import { SessionMenu } from "@/components/workshop/SessionMenu";
 import { SharePopover } from "@/components/workshop/SharePopover";
 import { saveObsidianMany } from "@/components/workshop/ExportMarkdown";
@@ -213,9 +214,13 @@ export default function WorkshopPage() {
       navigate(sessionPath(s.id));
     });
 
+  const [askFinal, finalDialog] = useAskFinal();
   const setPosted = (id: string, posted: SessionPatch["posted"]) =>
     patchSession(id, { posted })
-      .then((m) => setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s))))
+      .then((m) => {
+        setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s)));
+        askFinal(id, m.title, m.status);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const setStatus = (id: string, status: SessionStatus) => {
@@ -231,12 +236,13 @@ export default function WorkshopPage() {
       });
     };
     put(status).then(
-      () =>
-        was &&
-        was !== status &&
-        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
-          for (const s of statusSteps(status, was)) await put(s);
-        }),
+      () => {
+        if (was !== status) askFinal(id, row?.title ?? "", status);
+        if (was && was !== status)
+          undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+            for (const s of statusSteps(status, was)) await put(s);
+          });
+      },
       (e) => setError(e instanceof Error ? e.message : String(e)),
     );
   };
@@ -414,6 +420,7 @@ export default function WorkshopPage() {
                 New project
               </button>}
             </BrowseBar>
+            {finalDialog}
             {!sessionsKnown ? (
               <div aria-hidden className="flex flex-col gap-1.5">
                 {Array.from({ length: 5 }, (_, i) => (
