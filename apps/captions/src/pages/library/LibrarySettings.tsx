@@ -17,6 +17,7 @@ import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
 import { addFrom, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
+import { LibraryCopies } from "./Copies";
 
 /**
  * The Media Library's settings (the owner's: the places and where the files are kept are theirs only), behind one
@@ -107,6 +108,7 @@ export function LibrarySettingsBody({ library, watch, folders, onChange, onError
         </Card>
       </Section>
       {watch.allowed && !inSettings && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
+      <LibraryCopies libraryId={library.id} />
       <Storage library={library} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />
       <AiSwitches library={library} onChange={onChange} onError={onError} />
       <RedoAll library={library} onError={onError} />

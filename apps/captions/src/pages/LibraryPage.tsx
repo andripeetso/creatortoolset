@@ -12,6 +12,7 @@ import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
+import { LibraryCopies } from "./library/Copies";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -1128,6 +1129,7 @@ export default function LibraryPage() {
                 )}
 
                 {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} offer={organize.offer} onOffer={organize.answerOffer} />}
+                {firstScreen && !readOnly && <LibraryCopies libraryId={library.id} className="mx-auto w-full max-w-md" />}
 
                 {next &&
                   (watchesEnd() ? (
