@@ -37,7 +37,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     }
     /// A page that posts `this-mac` (older servers' Settings → This Mac): opens the native panel.
     var onThisMac: (() -> Void)?
-    /// The page's Settings → This Mac (`thismac-<what>`): servers, the AI on this Mac (ThisMacBridge.swift).
+    /// The page's Settings → This Mac (`thismac-<what>`): servers, Take work from this server (ThisMacBridge.swift).
     var onThisMacCommand: ((String) -> Void)?
     /// The page's recorder messages (`record-<what>`, src/lib/mac-record.ts): the native recorder (Recorder.swift).
     var onRecord: ((String) -> Void)?

@@ -1,6 +1,6 @@
 // Settings → This Mac on the site (apps/captions ThisMacSection.tsx): the page sends `thismac-<what>` on the window
 // handler (TitleBar.swift) and every message is answered with this app's state as a `mac-this` event. The app keeps
-// all of it (servers, AI on this Mac); the page only shows it. Worker buttons are plug-in rows (LaunchAgent.swift).
+// all of it (servers, Take work from this server); the page only shows it. Worker buttons are plug-in rows (LaunchAgent.swift).
 import AppKit
 import Foundation
 

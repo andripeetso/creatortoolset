@@ -251,7 +251,7 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
 }
 
 /**
- * This Mac's own switches: AI on this Mac adds this Mac to the account, and then the app's AI jobs run on it; Shared
+ * This Mac's own switches: Take work from this server adds this Mac to the account, and then it takes this server's jobs; Shared
  * drives. Under this Mac's row once it is on the list; before that they are its only rows (a row that could only name
  * this Mac has no action).
  */
@@ -260,11 +260,11 @@ function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
     <>
       <Row
         id="use-this-mac"
-        title="AI on this Mac"
-        description="AI jobs can run on this Mac."
+        title="Take work from this server"
+        description="This Mac runs this server's jobs for your account while the app shows it: AI requests, editor steps and media library work."
         status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
         control={
-          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="AI on this Mac" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
+          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Take work from this server" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
         }
       />
       <SharedDrivesRow bridge={bridge} />
@@ -359,7 +359,7 @@ function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: bo
             <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
               <li>Install the Creator Toolset Mac app on the Mac.</li>
               <li>Open it and sign in with this account.</li>
-              <li>Turn on AI on this Mac.</li>
+              <li>Turn on “Take work from this server” on this Mac.</li>
             </ol>
             {macApp && (
               <Card>
