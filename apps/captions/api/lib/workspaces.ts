@@ -117,6 +117,15 @@ export function workspaceOf(username: string): Workspace | null {
 
 export const memberIn = (w: Workspace, username: string): Member | null => w.members.find((m) => m.username === username) ?? null;
 export const canManage = (role: WorkspaceRole | undefined) => role === "owner";
+/** A member of someone else's team (an admin account too): adds footage, never deletes the owner's (owner, 2026-11-17). */
+export const isTeamMember = (username: string): boolean => {
+  try {
+    const w = workspaceOf(username);
+    return !!w && memberIn(w, username)?.role === "member";
+  } catch {
+    return false; // a workspaces.json that did not parse must not stop sign-in (auth.ts asks here); the routes still refuse
+  }
+};
 
 export function renameWorkspace(w: Workspace, name: string): void {
   const n = name.trim().slice(0, 60);

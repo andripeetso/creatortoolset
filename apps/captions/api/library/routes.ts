@@ -1046,22 +1046,24 @@ libraryApp.get("/versions/:versionId/similar", async (c) => {
   return c.json({ ...found, matches });
 });
 
-/** Into the trash, or back out of it: the uploader or the owner. Other members of the library get 403; outsiders 404. */
+/** A member's answer on a route that removes footage: they see the library, so 403, never 404. */
+const OWNER_ONLY = { error: "Only the library's owner deletes footage", code: "forbidden" } as const;
+
+/**
+ * Into the trash, or back out of it: the library's owner only. A team member the owner gave the workspace (an admin
+ * account too) gets 403 (owner, 2026-11-15/17: members add footage, never delete it); outsiders 404.
+ */
 async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   const user = c.get("user");
   const libraryId = c.req.param("id") ?? "";
   const assetId = c.req.param("assetId") ?? "";
-  // an admin in a workspace the owner gave them may move footage to the trash too: its purge takes the server's and the
-  // cloud's copies, never a file on a computer (trash.ts). A member never deletes.
-  const role =
-    libraryRole(user.username, libraryId) ??
-    (user.role === "admin" && (await givenLibrary(user.username, libraryId)) ? ("admin" as const) : null);
-  const a = role
-    ? (db().prepare("SELECT created_by, trashed_at, current_version_id FROM assets WHERE id = ? AND library_id = ?").get(assetId, libraryId) as
-        | { created_by: string; trashed_at: number | null; current_version_id: string }
-        | undefined)
-    : undefined;
-  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null) || (role === "owner" && !(await mayWrite(user.username, libraryId, assetId, a.current_version_id)))) {
+  if (!libraryRole(user.username, libraryId)) {
+    return (await givenLibrary(user.username, libraryId)) ? c.json(OWNER_ONLY, 403) : c.json({ error: "Not found", code: "not_found" }, 404);
+  }
+  const a = db().prepare("SELECT created_by, trashed_at, current_version_id FROM assets WHERE id = ? AND library_id = ?").get(assetId, libraryId) as
+    | { created_by: string; trashed_at: number | null; current_version_id: string }
+    | undefined;
+  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
   if (inReview(assetId)) return c.json(IN_REVIEW, 409);

@@ -1016,7 +1016,7 @@ export default function LibraryPage() {
                               </Link>
                             </DropdownMenuItem>
                           )}
-                          {trash && watch && libId && (
+                          {trash && !readOnly && watch && libId && (
                             <DropdownMenuItem
                               onSelect={() =>
                                 void confirmDialog({ title: "Empty the trash?", body: "Every clip in the trash is deleted for good.", ok: "Empty trash", danger: true })
@@ -1182,6 +1182,7 @@ export default function LibraryPage() {
         <PickBar
           count={pickedCards.length}
           inTrash={trash}
+          readOnly={readOnly}
           moveTo={moveOptions(collections, into)}
           tags={tags}
           redo={redoKinds(library.settings)}
@@ -1214,6 +1215,7 @@ export default function LibraryPage() {
               asset={preview}
               startAt={startAt}
               inTrash={trash}
+              readOnly={readOnly}
               moveTo={moveOptions(collections, into)}
               onTrash={(t) => void trashMany([preview], t)}
               onPrev={((i) => (i > 0 ? () => openClip(shown[i - 1]!) : undefined))(shown.findIndex((x) => x.id === preview.id))}

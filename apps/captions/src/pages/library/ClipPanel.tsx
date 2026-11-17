@@ -31,6 +31,8 @@ type Props = {
   /** the second the player opens at (a line said in the clip) */
   startAt: number;
   inTrash: boolean;
+  /** someone else's library to look at: nothing to edit, move, turn or delete (only the owner changes or deletes footage) */
+  readOnly?: boolean;
   /** where Move to can take the clip: the top level (id null) and the folders, `depth` under their parents */
   moveTo: { id: string | null; name: string; depth: number }[];
   /** true: to the trash; false: back out of it */
@@ -48,7 +50,7 @@ export function ClipPanel(props: Props) {
   return <Panel key={props.asset.id} {...props} />;
 }
 
-function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
+function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
   const media = useRef<(HTMLVideoElement & HTMLAudioElement) | null>(null);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [reread, setReread] = useState(0);
@@ -167,7 +169,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
   // the description, shot lines and tags are edited where they are (owner, 2026-11-17: no separate edit mode); not in the trash
-  const fixed = inTrash;
+  const fixed = inTrash || !!readOnly;
   // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
   const more = !inTrash && (
     <DropdownMenu>
@@ -188,8 +190,8 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             New project
           </DropdownMenuItem>
         )}
-        {a.kind === "video" && !a.review && <DropdownMenuSeparator />}
-        {a.kind === "video" && !a.review && (
+        {a.kind === "video" && !a.review && !readOnly && <DropdownMenuSeparator />}
+        {a.kind === "video" && !a.review && !readOnly && (
           <>
             <DropdownMenuItem onSelect={(e) => { e.preventDefault(); rotate(270); }}>
               <RotateCcw className="h-4 w-4" />
@@ -201,7 +203,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             </DropdownMenuItem>
           </>
         )}
-        {!a.review && (
+        {!a.review && !readOnly && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={() => onTrash(true)}>
@@ -283,7 +285,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const actions = (
     <div className="flex items-center gap-2">
       {inTrash ? (
-        !a.review && (
+        !a.review && !readOnly && (
           <Button size="sm" variant="outline" onClick={() => onTrash(false)}>
             <RotateCcw className="h-4 w-4" />
             Restore
@@ -299,7 +301,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               </a>
             </Button>
           )}
-          {moveTo.length > 0 && (
+          {moveTo.length > 0 && !readOnly && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="outline">

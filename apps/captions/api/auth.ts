@@ -38,7 +38,7 @@ import {
   listUsers,
 } from "./users";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
-import { acceptInvite, inviteByToken, memberIn, workspaceOf } from "./lib/workspaces";
+import { acceptInvite, inviteByToken, isTeamMember, memberIn, workspaceOf } from "./lib/workspaces";
 import { parseRelayKey } from "./connect/keys";
 import { consumeJti, connectState, tunnelHostname } from "./connect/state";
 import { TicketError, verifyTicket } from "./connect/ticket";
@@ -240,6 +240,8 @@ const withLogins = (u: SessionUser) => ({
   ...toPublic(u),
   logins: findUser(u.username)?.usage.logins ?? null,
   picture: findUser(u.username) ? pictureOf(findUser(u.username)!) : null,
+  // a team member (an admin account too): the pages hide what deletes the owner's footage, which the server refuses them
+  ...(isTeamMember(u.username) ? { member: true as const } : {}),
   // an install without sign-in has one fixed session user: its saved display name comes from its account record
   ...(u.name ? {} : findUser(u.username)?.displayName ? { name: findUser(u.username)!.displayName } : {}),
 });
