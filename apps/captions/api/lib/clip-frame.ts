@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { dropTask, startTask, taskFor, taskWaitLine } from "../work/tasks";
+import { awaitTask, dropTask, startTask, taskFor, taskWaitLine } from "../work/tasks";
 
 /**
  * A frame of a video as a JPEG, made by the `frame` computer task (work/tasks/frames.ts): on one of the person's
@@ -41,11 +41,16 @@ export interface FrameInput {
 
 /** A still made smaller or into another format: `out` names the encoder, `ext` the file. */
 export interface PictureInput {
-  files: { src: string };
+  /** `src`, or for `tile` the numbered pictures (001.png, …) in the order the tile filter lays them */
+  files: Record<string, string>;
   vf?: string;
   out: string[];
   ext: string;
   to: string;
+  /** a JPEG no longer than `side` and no bigger than `bytes`: the quality goes down, then the size, until it fits */
+  fit?: { side: number; bytes: number };
+  /** the numbered pictures tiled into one sheet, each 540 wide and `h` high, `cols` × `rows` */
+  tile?: { h: number; cols: number; rows: number };
 }
 
 const after = new Map<string, (input: FrameInput) => Promise<void> | void>();
@@ -76,17 +81,31 @@ export async function frameAt(ref: string, actor: string, workspace: string | nu
   return { jpeg: input.then ? Buffer.alloc(0) : await readFile(input.to) };
 }
 
-/** A still made into `to` by the `picture` task (always here: a picture, decision 14); false when it cannot be read. */
-export async function pictureInto(actor: string, input: PictureInput): Promise<boolean> {
+/** How long a request waits for one of the person's computers to make a picture it needs now. */
+export const PICTURE_WAIT_MS = 60_000;
+
+/**
+ * A still made into `to` by the `picture` task: on one of `actor`'s computers, or here where the server's video work is
+ * on (a picture is processing too). True when made; else the line why not (no computer can take it now, or it could
+ * not be read).
+ */
+export async function pictureMade(actor: string, input: PictureInput, waitMs = PICTURE_WAIT_MS): Promise<true | string> {
   try {
     const r = await startTask("picture", input.to, actor, null, input);
-    return r.state === "done" && existsSync(input.to);
+    if (r.state === "queued") {
+      if (r.line) return r.line;
+      if ((await awaitTask(r.id, waitMs)) !== "done") return taskFor("picture", input.to)?.state === "failed" ? "That picture could not be read" : FRAME_SOON;
+    }
+    return existsSync(input.to) || "That picture could not be read";
   } catch {
-    return false;
+    return "That picture could not be read";
   } finally {
     dropTask("picture", input.to);
   }
 }
+
+/** pictureMade, as made or not. */
+export const pictureInto = async (actor: string, input: PictureInput): Promise<boolean> => (await pictureMade(actor, input)) === true;
 
 /** The line a frame task `ref` waits with while it is queued for a computer. */
 export function frameWaits(ref: string): string | undefined {

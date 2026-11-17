@@ -102,4 +102,16 @@ describe("computer tasks", () => {
     }
     expect(failed).toEqual([]);
   });
+
+  it("a picture and the studio's frame wait for a computer: never made here with the server's video work off", async () => {
+    writeServerWork({ on: false });
+    const { pictureMade } = await import("../lib/clip-frame");
+    const { frameJpeg } = await import("../review");
+    const { existsSync } = await import("node:fs");
+    const to = path.join(root, "small.jpg");
+    const said = await pictureMade("nobody", { files: { src: source }, out: [], ext: "jpg", to, fit: { side: 64, bytes: 4096 } }, 50);
+    expect(said).toMatch(/^Waits for one of your computers/);
+    expect(existsSync(to)).toBe(false);
+    await expect(frameJpeg(source, 0, 64)).rejects.toThrow(/^Waits for one of your computers/);
+  });
 });

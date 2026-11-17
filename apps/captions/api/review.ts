@@ -793,6 +793,25 @@ async function startFrame(ref: string, m: Meta, input: FrameInput): Promise<Star
   return startTask<FrameInput, null>(FRAME, ref, m.owner, (await workspaceOfVideo(m)) ?? null, input);
 }
 
+/**
+ * The frame of `file` at `t` seconds, `width` wide, `strokes` painted on, as JPEG bytes, made by the review-frame task
+ * (on a computer of `actor`'s unless the server's video work is on); throws the wait line when none made it within a
+ * minute. Kept for the studio plug-in, which imports it by this name; pass `actor` so its computers can take it.
+ */
+export async function frameJpeg(file: string, t: number, width: number, strokes?: FrameInput["strokes"], actor = ""): Promise<Buffer> {
+  const { awaitTask, dropTask, startTask } = await tasks();
+  const ref = `frame:${randomUUID()}`;
+  const dir = path.join(env.dataDir, "review", "frames-asked", ref.slice(6));
+  try {
+    const r = await startTask<FrameInput, null>(FRAME, ref, actor, null, { at: t, width, strokes, src: file, out: path.join(dir, "frame.jpg") });
+    if (r.state === "queued" && (r.line || (await awaitTask(r.id, 60_000)) !== "done")) throw new Error(r.line ?? "No computer made the frame in time");
+    return await readFile(path.join(dir, "frame.jpg"));
+  } finally {
+    dropTask(FRAME, ref);
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** The references a new comment names: ones uploaded to this version. */
 async function cleanRefs(assetId: string, n: number, raw: unknown): Promise<Ref[]> {
   const ids = Array.isArray(raw) ? [...new Set(raw.filter((x): x is string => typeof x === "string" && UUID.test(x)))] : [];

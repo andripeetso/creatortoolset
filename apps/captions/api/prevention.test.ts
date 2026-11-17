@@ -30,12 +30,10 @@ const DECODERS: Record<string, string> = {
   "api/library/cuts.ts": "DECODES look: the cut model in a server look (look.ts)",
   "api/library/timeline.ts": "DECODES look: the watch-part encode only in a server look; a Mac's copy goes whole (askAntigravity)",
   "api/library/pictures.ts": "the picture model's crops of card pictures and sheets: picturesHere (work/place.ts mayRunHere)",
-  "api/library/turn.ts": "turns a card picture JPEG (decision 14), no video or sound",
   "api/library/watch.ts": "textutil reads a script document's text on a Mac server, no video or sound",
   // AI Editor steps: placeOf puts a step that reads video or sound on a computer; the server takes it only through
   // serverMayTake (work/place.ts mayRunHere)
   "api/editor/analyze.ts": "mayRunHere (placeOf)",
-  "api/editor/animation-styles.ts": "pictures only (decision 14): a style's pictures made small, the cards' look sheet tiled from the stills a Mac drew",
   "api/editor/critique.ts": "mayRunHere (placeOf)",
   "api/editor/eyeline.ts": "mayRunHere (placeOf)",
   "api/editor/generate.ts": "mayRunHere (placeOf)",
@@ -79,7 +77,7 @@ const DECODERS: Record<string, string> = {
   "api/boot.ts": "names the runtime; unverified",
 };
 /** The count at the start (local-first plan P0): it may only go down. */
-const DECODERS_AT_START = 58; // 68 at P0; P3 moved ten to computers
+const DECODERS_AT_START = 56; // 68 at P0; P3 moved twelve to computers
 const DECODE = /spawn\(|spawnSync|spawnKillable|execFile\(|execFileSync|execSync|ffmpeg|ffprobe|chromium|playwright|onnx/;
 
 /** T8: every remaining deletion by age under api/, with why it stays. Library and export files have none (decision 8). */

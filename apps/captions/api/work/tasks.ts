@@ -169,6 +169,20 @@ export async function startTask<I, R>(kind: string, ref: string, actor: string, 
   return { state: "queued", id, ...(line ? { line } : {}) };
 }
 
+/**
+ * For a tool that needs the answer within its request (a picture made smaller for an AI to read): waits up to `ms` for
+ * a queued task a computer is about to take. "done" once its apply ran, "failed", or "waiting" when no computer took it
+ * in time (the caller says so; it never runs it here instead).
+ */
+export async function awaitTask(id: number, ms: number): Promise<"done" | "failed" | "waiting"> {
+  for (const end = Date.now() + ms; ; ) {
+    const s = taskOf(id)?.state;
+    if (s === "done" || s === "failed") return s;
+    if (!s || Date.now() >= end) return "waiting";
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 /** Stops a queued task (the tool's Cancel or Delete): a computer that holds one loses it at its next beat. */
 export function dropTask(kind: string, ref: string): void {
   db().prepare("DELETE FROM computer_tasks WHERE kind = ? AND ref = ?").run(kind, ref);
