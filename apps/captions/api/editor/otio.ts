@@ -2,6 +2,7 @@ import path from "node:path";
 import { TRACKS, type Item, type Timeline, type TimelineSource } from "../../contracts/editor";
 import { type Cdl, cdlMeta } from "./grade";
 import { fitted } from "./framing";
+import { dissolveFrames } from "./fcpxml";
 import { meanSpeed } from "./plan";
 
 /**
@@ -12,6 +13,8 @@ import { meanSpeed } from "./plan";
  * media's available_range at the file's own rate. Pan/Tilt are a fraction of the clip's size fitted into the frame,
  * + Tilt moving the picture up. `target_url` is the file's path as given: an absolute path on this machine, or relative
  * to the timeline file in a zip (bare paths are what Resolve itself writes; a file:// URL is not needed).
+ * A planned shot's moves (carry.ts motion) are not keyframed here yet: Resolve's "Key Frames" shape is still being
+ * measured, so the notice lists them for Resolve (carry.ts CARRIES).
  */
 
 /**
@@ -105,6 +108,13 @@ export function toOtio(tl: Timeline, files: Record<string, string>, grade?: Cdl)
     for (const i of [...tl.tracks[id].items].sort((a, b) => a.rec - b.rec)) {
       if (i.rec < at) throw new Error(`${id}: the clip at ${i.rec} overlaps the one before`);
       if (i.rec > at) children.push(gap(i.rec - at, tl.fps));
+      if (video && i.enter === "dissolve") {
+        // a cross dissolve centred on the cut (OTIO's own transition; the first shot's fades in from black)
+        // ponytail: OTIO's documented Transition.1, not yet checked in Resolve
+        const d = dissolveFrames(tl, i);
+        const half = i.rec ? Math.floor(d / 2) : 0;
+        children.push({ OTIO_SCHEMA: "Transition.1", metadata: {}, name: "Cross Dissolve", transition_type: "SMPTE_Dissolve", in_offset: rt(half, tl.fps), out_offset: rt(d - half, tl.fps) });
+      }
       const src = tl.sources[i.src];
       const file = files[i.src];
       if (!src || !file) throw new Error(`${id}: no media for ${i.src}`);

@@ -56,6 +56,18 @@ function twoCuts(): Timeline {
 }
 const files = { ver_a: "/Users/tiny/Footage/Take A.mov", ver_b: "/Users/tiny/Footage/Take B.mov" };
 
+/** A planned edit at 25 fps: a punch-in, a reversed shot at double speed that dissolves in, a whip in with a shake and a freeze. */
+function planned(): Timeline {
+  const probe = { duration: 20, width: 1920, height: 1080, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac", fps: 25 };
+  const tl: Timeline = { name: "Tiny Acrobatics reel", fps: 25, width: 1080, height: 1920, sources: { ver_a: sourceOf("ver_a", "Take A", probe) }, tracks: emptyTracks(), markers: [] };
+  tl.tracks.V1.items = [
+    { src: "ver_a", in: 0, len: 25, rec: 0, zoom: 3.2, fx: [{ type: "punch", at: 0.2, amount: 1.3 }] },
+    { src: "ver_a", in: 100, len: 25, rec: 25, zoom: 3.2, speed: 2, enter: "dissolve", fx: [{ type: "reverse" }] },
+    { src: "ver_a", in: 200, len: 25, rec: 50, zoom: 3.2, enter: "whip", fx: [{ type: "shake", at: 0.2, dur: 0.12, amount: 0.5 }, { type: "freeze", at: 0.6, dur: 0.2 }] },
+  ];
+  return tl;
+}
+
 beforeAll(() => {
   setOff(createUser("mem-a", "password1", { role: "user" }), []);
   libraryDb().exec(`
@@ -113,6 +125,20 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
     expect(xml).toContain("<in>300</in><out>420</out>"); // 60 frames at 29.97 are 120 of Take B's 59.94
     expect(view.markers.map((m) => [m.frame, m.name])).toEqual([[0, "L1"], [45, "L2"]]);
     expect(lane("V1")).toEqual([[0, 45], [45, 60]]);
+  });
+
+  it("a planned edit's moves are keyframes, its reverse and freeze retimes, its dissolve a transition (FCPXML, FCP 7 XML)", () => {
+    const f = { ver_a: files.ver_a };
+    const fcpxml = toFcpxml(planned(), f);
+    matchGolden("planned.fcpxml", fcpxml);
+    expect(fcpxml).toContain('<transition name="Cross Dissolve" offset="90021/25s" duration="8/25s">'); // 0.3 s centred on the cut at 1 s
+    const otio = JSON.stringify(toOtio(planned(), f));
+    expect(otio).toContain('{"OTIO_SCHEMA":"Transition.1","metadata":{},"name":"Cross Dissolve","transition_type":"SMPTE_Dissolve","in_offset":{"OTIO_SCHEMA":"RationalTime.1","rate":25,"value":4},"out_offset":{"OTIO_SCHEMA":"RationalTime.1","rate":25,"value":4}}');
+    const xml = toFcp7Xml(planned(), f);
+    matchGolden("planned.xml", xml);
+    expect(xml).toContain("<in>100</in><out>150</out>"); // double speed: 25 frames span 50 of the file
+    // the cuts still read back where they are
+    expect(importTimeline("Tiny.xml", xml).tracks.find((t) => t.id === "V1")!.items.map((i) => [i.rec, i.len])).toEqual([[0, 25], [25, 25], [50, 25]]);
   });
 
   it("a take with no picture (a voice recording) is a gap on the video track and a clip on the voice track; its B-roll stays", () => {

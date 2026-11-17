@@ -5,6 +5,7 @@ import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
 import { ZipFile } from "yazl";
+import { exportGaps } from "./carry";
 import { toFcp7Xml, toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
 import { notTyped } from "./own-words";
@@ -441,7 +442,7 @@ editorApp.get("/:id/drafts/:name", async (c) => {
         return o ? [[n, o.timeline]] : [];
       }),
   );
-  return c.json({ ...d, qa: qaOf(d.timeline, others) });
+  return c.json({ ...d, qa: qaOf(d.timeline, others), exportGaps: exportGaps(d.timeline, !!(await gradeOf(ownerOf(r.e), r.e.bundle))) });
 });
 
 /** The draft for the user's own editor: OTIO, FCPXML, FCP 7 XML (`xml`, Premiere), or all three in a zip (with download links when the footage is in a bucket). */

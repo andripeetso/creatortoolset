@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" frameDuration="1/25s" width="1080" height="1920"/>
+    <effect id="rx" name="Cross Dissolve" uid="FxPlug:4731E73A-8DAC-4113-9A30-AE85B1761265"/>
+    <format id="r2" frameDuration="1/25s" width="1920" height="1080"/>
+    <asset id="r3" name="Take A" start="0s" duration="20s" hasVideo="1" hasAudio="1" format="r2" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Users/tiny/Footage/Take%20A.mov"/>
+    </asset>
+  </resources>
+  <library>
+    <event name="AI Editor">
+      <project name="Tiny Acrobatics reel">
+        <sequence format="r1" duration="3s" tcStart="3600s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+          <spine>
+            <asset-clip ref="r3" name="Take A" offset="3600s" start="0s" duration="1s" format="r2" tcFormat="NDF">
+              <adjust-transform>
+                <param name="position">
+                  <keyframeAnimation>
+                    <keyframe time="0s" value="0 0"/>
+                    <keyframe time="4/25s" value="0 0"/>
+                    <keyframe time="1/5s" value="0 0"/>
+                    <keyframe time="13/25s" value="0 0"/>
+                    <keyframe time="1s" value="0 0"/>
+                  </keyframeAnimation>
+                </param>
+                <param name="scale">
+                  <keyframeAnimation>
+                    <keyframe time="0s" value="3.2 3.2"/>
+                    <keyframe time="4/25s" value="3.2 3.2"/>
+                    <keyframe time="1/5s" value="4.16 4.16"/>
+                    <keyframe time="13/25s" value="3.2 3.2"/>
+                    <keyframe time="1s" value="3.2 3.2"/>
+                  </keyframeAnimation>
+                </param>
+              </adjust-transform>
+            </asset-clip>
+            <transition name="Cross Dissolve" offset="90021/25s" duration="8/25s">
+              <filter-video ref="rx" name="Cross Dissolve"/>
+            </transition>
+            <asset-clip ref="r3" name="Take A" offset="3601s" start="4s" duration="1s" format="r2" tcFormat="NDF">
+              <timeMap>
+                <timept time="0s" value="2s" interp="linear"/>
+                <timept time="1s" value="0s" interp="linear"/>
+              </timeMap>
+              <adjust-transform position="0 0" scale="3.2 3.2"/>
+            </asset-clip>
+            <asset-clip ref="r3" name="Take A" offset="3602s" start="8s" duration="1s" format="r2" tcFormat="NDF">
+              <timeMap>
+                <timept time="0s" value="0s" interp="linear"/>
+                <timept time="3/5s" value="3/5s" interp="linear"/>
+                <timept time="4/5s" value="3/5s" interp="linear"/>
+                <timept time="1s" value="4/5s" interp="linear"/>
+              </timeMap>
+              <adjust-transform>
+                <param name="position">
+                  <keyframeAnimation>
+                    <keyframe time="8s" value="14.063 0"/>
+                    <keyframe time="203/25s" value="0 0"/>
+                    <keyframe time="204/25s" value="0 0"/>
+                    <keyframe time="41/5s" value="2.189 -0.314"/>
+                    <keyframe time="206/25s" value="-2.468 -1.182"/>
+                    <keyframe time="207/25s" value="2.668 2.572"/>
+                    <keyframe time="208/25s" value="-2.784 -3.73"/>
+                    <keyframe time="209/25s" value="0 0"/>
+                    <keyframe time="9s" value="0 0"/>
+                  </keyframeAnimation>
+                </param>
+                <param name="scale">
+                  <keyframeAnimation>
+                    <keyframe time="8s" value="3.52 3.52"/>
+                    <keyframe time="203/25s" value="3.52 3.52"/>
+                    <keyframe time="204/25s" value="3.52 3.52"/>
+                    <keyframe time="41/5s" value="3.52 3.52"/>
+                    <keyframe time="206/25s" value="3.52 3.52"/>
+                    <keyframe time="207/25s" value="3.52 3.52"/>
+                    <keyframe time="208/25s" value="3.52 3.52"/>
+                    <keyframe time="209/25s" value="3.52 3.52"/>
+                    <keyframe time="9s" value="3.52 3.52"/>
+                  </keyframeAnimation>
+                </param>
+              </adjust-transform>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
