@@ -37,3 +37,38 @@ export function dragSpan(span: { start: number; end: number }, grip: Grip, delta
   else end = clamp(end + delta, start + min, hi);
   return { start, end };
 }
+
+/** A clip on one lane as it stands: where it starts and how long it is. */
+export type LaneSpan = { key: string; rec: number; len: number };
+/** What a clip of the lane becomes: its new start and end, or `gone` (all of it covered). */
+export type Settled = { key: string; rec: number; end: number; gone?: boolean };
+
+/**
+ * The rest of a lane after one clip (`key`) went from `was` to `now`, so that one lane plays one clip at a time.
+ * Ripple: the clips that started at or after its old end move by what its end moved, then anything it still lies over
+ * is overwritten. Overwrite: what it now lies over is cut back to where it starts or ends, or taken out when it covers
+ * all of it. Only the clips that change are returned.
+ */
+export function settle(lane: LaneSpan[], key: string, was: { rec: number; len: number }, now: { rec: number; len: number },
+  mode: "ripple" | "overwrite"): Settled[] {
+  const wasEnd = was.rec + was.len;
+  const d = mode === "ripple" ? now.rec + now.len - wasEnd : 0;
+  const [c0, c1] = [now.rec, now.rec + now.len];
+  const out: Settled[] = [];
+  for (const s of lane) {
+    if (s.key === key) continue;
+    let [a, b] = [s.rec, s.rec + s.len];
+    if (d && a >= wasEnd) [a, b] = [a + d, b + d];
+    if (b > c0 && a < c1) {
+      if (a >= c0 && b <= c1) {
+        out.push({ key: s.key, rec: a, end: b, gone: true });
+        continue;
+      }
+      // ponytail: covered in its middle keeps its start only (a split would keep both ends)
+      if (a < c0) b = c0;
+      else a = c1;
+    }
+    if (a !== s.rec || b !== s.rec + s.len) out.push({ key: s.key, rec: a, end: b });
+  }
+  return out;
+}
