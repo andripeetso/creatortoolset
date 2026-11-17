@@ -84,14 +84,18 @@ private final class AcpSpeech {
     var text = ""
     var lastSend = Date.distantPast
     var stopped = false
+    var finished = false
     var run: AcpRun?
 }
 
 /// the Mac relay answer() for an ACP agent (Cursor, OpenCode, Antigravity, Pi, or a local command): one session in a fresh folder
 /// or the Workshop session's, one prompt. Its text goes out through `send` at most every 0.4 s; a `send` that returns false stops
 /// the prompt. The prompt has no system slot, so the instructions go in front of the request text, as for Gemini. Permission
-/// questions are denied (AcpRun's default). No session is kept (state "").
-func acpAnswer(_ req: RelayRequest, _ opts: RelayOptions, work: URL, send: @escaping (String) -> Bool) throws -> ClaudeAnswer {
+/// questions are denied (AcpRun's default). No session is kept (state ""). The text so far also goes out every
+/// `aliveEvery` seconds while nothing new arrives: the site gives up after 60 s of silence, and an agent can read a file and
+/// think for minutes before it writes (measured: Antigravity on a 3-minute video, 62 s with nothing; longer on 10 minutes).
+func acpAnswer(_ req: RelayRequest, _ opts: RelayOptions, work: URL, send: @escaping (String) -> Bool,
+               aliveEvery: TimeInterval = aliveEverySeconds) throws -> ClaudeAnswer {
     guard let launch = opts.acp else { throw RelayError(message: "\(driverLabel(opts.driver)) has no command to start") }
     guard let program = which(launch.command) else {
         throw RelayError(message: "\(launch.command) is not installed on this Mac")
@@ -128,6 +132,33 @@ func acpAnswer(_ req: RelayRequest, _ opts: RelayOptions, work: URL, send: @esca
     }
     speech.run = run
     defer { run.close() }
+    speech.lastSend = Date()
+    let alive = Thread {
+        while true {
+            Thread.sleep(forTimeInterval: min(1, aliveEvery / 2))
+            speech.lock.lock()
+            if speech.finished || speech.stopped {
+                speech.lock.unlock()
+                return
+            }
+            let due = Date().timeIntervalSince(speech.lastSend) >= aliveEvery
+            if due { speech.lastSend = Date() }
+            let text = speech.text
+            speech.lock.unlock()
+            if due && !send(text) {
+                speech.lock.lock()
+                speech.stopped = true
+                speech.lock.unlock()
+                run.cancel()
+            }
+        }
+    }
+    alive.start()
+    defer {
+        speech.lock.lock()
+        speech.finished = true
+        speech.lock.unlock()
+    }
     let answer: AcpAnswer
     do {
         answer = try run.prompt(prompt)

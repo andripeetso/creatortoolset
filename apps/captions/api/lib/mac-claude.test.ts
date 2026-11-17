@@ -88,6 +88,17 @@ describe("Claude on the Mac", () => {
     await answer;
   });
 
+  it("files for one run only (a timeline's video part) go with the request, never as a hash the Mac keeps", async () => {
+    const part = "base64:AAAAIGZ0eXBpc29t";
+    const wait = post("/wait", { blobs: true });
+    await new Promise((r) => setTimeout(r, 5));
+    const answer = streamMacClaude("sys", "watch", undefined, () => {}, undefined, { files: { "video.mp4": part }, once: true });
+    const req = (await (await wait).json()) as { id: string; files: Record<string, string> };
+    expect(req.files["video.mp4"]).toBe(part);
+    await post(`/${req.id}/done`, { text: "ok" });
+    await answer;
+  });
+
   it("a Workshop folder's session goes to the Mac with its id and comes back with what became of it", async () => {
     const wait = post("/wait");
     await new Promise((r) => setTimeout(r, 5));

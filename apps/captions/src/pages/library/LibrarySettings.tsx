@@ -268,7 +268,17 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
               status={
                 timeline &&
                 est &&
-                (est.timelineKey ? (
+                (watchModelOf(library.settings.timelineModel) === "antigravity" ? (
+                  est.timelineAntigravity ? (
+                    <Status>Uses Antigravity</Status>
+                  ) : (
+                    <Status tone="attention">
+                      <Link to="/settings/providers" className="underline-offset-4 hover:underline">
+                        Needs Antigravity
+                      </Link>
+                    </Status>
+                  )
+                ) : est.timelineKey ? (
                   est.timelineFreeTier ? (
                     <Status tone="attention">The Gemini key is on Google's free tier, about 20 calls a day; billing in Google AI Studio lifts the limit</Status>
                   ) : (
@@ -287,7 +297,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
           )}
           {look &&
             timeline &&
-            // the model that watches, each with what an hour of footage costs at the library's level (estimate.ts timelineModels)
+            // what watches, each Gemini model with what an hour of footage costs at the library's level (estimate.ts timelineModels)
             WATCH_MODELS.map((m) => {
               const usd = est?.timelineModels?.find((x) => x.model === m.value)?.usd;
               return (
