@@ -109,12 +109,12 @@ describe("a Media Library whose upload is proxies only", () => {
   });
 
   it("keeps the original while the Mac it came from has no place for it, or that place is gone", async () => {
-    const id = await upload("lib_p", "Bridge.mp4", false);
+    const id = await upload("lib_p", "Arch.mp4", false);
     const original = version(id).source_key;
     await proxied(id);
     expect(await dropOriginal(id)).toBe(false);
     expect(await blobs.stat(original)).not.toBeNull();
-    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at) VALUES (?, 'mac-1', '/Users/tiny/Movies/Bridge.mp4', 1, 2)").run(id);
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at) VALUES (?, 'mac-1', '/Users/tiny/Movies/Arch.mp4', 1, 2)").run(id);
     expect(await dropOriginal(id)).toBe(false);
     d.prepare("UPDATE version_places SET gone_at = NULL WHERE version_id = ?").run(id);
     expect(await dropOriginal(id)).toBe(true);
