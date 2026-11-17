@@ -1,6 +1,7 @@
 // Copies of a Media Library (copies.ts): only the owner adds them, on their own computers; only the copy's computer takes
 // its jobs; a new copy writes its marker first; each clip's current version goes once, checked by its hash; an older
 // version's path is reused; the server keeps a stored original until every copy has it; Stop copying lets it go.
+// Copying between computers (the live relay) is in copies-relay.test.ts.
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -264,45 +265,6 @@ describe("copies: every version, no starving, late answers, copying between comp
     d.prepare("UPDATE asset_versions SET mac_path = NULL, mac_device = NULL WHERE id = 'vd-ast-none-1'").run();
     expect((await copiesD())[0]).toMatchObject({ pending: 1, noOriginal: 1 });
     d.prepare("DELETE FROM asset_versions WHERE id = 'vd-ast-none-1'").run();
-  });
-
-  it("copies between computers: the one that holds the original sends it, the copy's computer copies it, then the server lets it go", async () => {
-    const body = Buffer.from("only on the laptop");
-    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast-lap', 'lib_d', 'video', 'Lap', 'local', ?)").run(t++);
-    d.prepare(
-      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, state, created_by, created_at, mac_path, mac_device)
-       VALUES ('vd-lap', 'ast-lap', 1, 'mac:q', ?, 'mac:q', 'video/quicktime', 'ready', 'local', ?, '/Users/tiny/lap.mov', ?)`,
-    ).run(body.length, t++, laptop.device.id);
-    d.prepare("UPDATE assets SET current_version_id = 'vd-lap' WHERE id = 'ast-lap'").run();
-    expect(await claim()).toBeNull(); // the Mac can't reach it
-    // Proxies only: no original goes through the server for a copy; the copy says what it needs
-    expect(await claim(laptop.token)).toBeNull();
-    expect((await copiesD())[0]!.needsUpload).toBe(true);
-    d.prepare(`UPDATE libraries SET settings = '{"upload":"all"}' WHERE id = 'lib_d'`).run();
-    // the laptop away: the copy needs it
-    const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
-    try {
-      expect((await copiesD())[0]!.waitsFor).toBe("Tiny's laptop");
-    } finally {
-      later.mockRestore();
-    }
-    const send = (await claim(laptop.token))!;
-    expect(send.options).toMatchObject({ op: "send", key: "vd-lap", size: String(body.length), paths: JSON.stringify(["/Users/tiny/lap.mov"]) });
-    expect(send.options!.url).toBe(`/api/devices/relay/job/copy/${send.id}/file`);
-    const post = (b: Buffer, token = laptop.token) =>
-      app.request(send.options!.url!, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream" }, body: b });
-    expect((await post(body, mac.token)).status).toBe(404);
-    expect((await post(Buffer.from("something else"))).status).toBe(409);
-    expect((await post(body)).status).toBe(200);
-    expect((await copiesD())[0]!.waitsFor).toBeUndefined();
-    const job = (await claim())!;
-    expect(job.options).toMatchObject({ op: "copy", key: "vd-lap", sha256: sha(body) }); // the hash the laptop's file has
-    const file = await app.request(job.options!.url!, { headers: { authorization: `Bearer ${mac.token}` } });
-    expect(Buffer.from(await file.arrayBuffer()).equals(body)).toBe(true);
-    expect((await done(job, body)).status).toBe(200);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(d.prepare("SELECT 1 FROM copy_sends WHERE version_id = 'vd-lap'").get()).toBeUndefined();
-    expect(await claim(laptop.token)).toBeNull();
   });
 
   it("names only the owner's own computers", async () => {

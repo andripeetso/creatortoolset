@@ -29,7 +29,7 @@ import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
-import { copyFile, copyJob } from "./library/copies";
+import { copyFile, copyJob, copyRelayIn } from "./library/copies";
 import { env } from "./lib/env";
 import { workWaits } from "./work/place";
 import { SERVER_PLACE } from "./work/server-work";
@@ -257,6 +257,15 @@ devicesApp.get(`/relay/job/${COPY_KIND}/:id/file`, async (c) => {
   if (!f) return c.json({ error: "Not found" }, 404);
   if ("key" in f) return serveBlob(c, f.key, "application/octet-stream");
   return (await f.open(c.req.raw)) ?? c.json({ error: "Not found" }, 404);
+});
+// a send's bytes for a copy, piped live into the copy's waiting GET: never written here (before the generic file route)
+devicesApp.post(`/relay/job/${COPY_KIND}/:id/file`, async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: "Send the file." }, 400);
+  const r = await copyRelayIn(d.id, jobId(c), body);
+  return "error" in r ? c.json({ error: r.error }, r.status as 400) : c.json({ ...(r.reply as object), ...(await ended(d, true)) });
 });
 devicesApp.post("/relay/job/:kind/:id", async (c) => {
   const d = deviceCaller(c);

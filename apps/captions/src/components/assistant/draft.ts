@@ -68,19 +68,20 @@ export async function droppedFiles(
 }
 
 /**
- * A video or recording in the box. In a browser it uploads as soon as it's added: `id` comes once the upload is made, and
- * the message may go from then on (the server waits for the rest, api/assistant.ts); `done` once it's all in. Dropped in
- * the Mac app it has its `path` there instead and nothing uploads: the message names the path.
+ * A video or recording in the box. In a browser it is kept here (`file`, in memory) and nothing is sent until Send: then
+ * it uploads, `id` comes once the upload is made and the message goes (the server waits for the rest, api/assistant.ts);
+ * `done` once it's all in. Dropped in the Mac app it has its `path` there instead and nothing uploads: the message names
+ * the path.
  */
-export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; done?: boolean; error?: string; path?: string };
+export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; done?: boolean; error?: string; path?: string; file?: File };
 /** What's in the box: the words, pictures, long pastes (sent as files beside the words) and videos. */
 export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[]; folders: string[] };
 export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [], folders: [] };
 export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length && !d.folders.length;
 /** A folder's last name, for its chip. */
 export const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
-/** An upload not made yet, or one failed: the message can't go yet (one still uploading can). */
-export const filesPending = (d: Draft) => d.files.some((f) => (!f.id && !f.path) || f.error);
+/** An upload started on Send but not made yet, or one failed: the message can't go yet (one not sent yet, or still uploading, can). */
+export const filesPending = (d: Draft) => d.files.some((f) => (!f.id && !f.path && !f.file) || f.error);
 
 /**
  * The videos dropped in the Mac app, by their path, while this page lives. One is sent to the server only when a tool
@@ -109,21 +110,37 @@ export function uploadVideo(f: File, on: { pct: (n: number) => void; id: (id: st
 }
 
 /**
- * A video or recording added to the box. With its path (dropped in the Mac app) it is kept here by that path and nothing
- * is sent; otherwise it uploads now. Returns the upload, or null for a kept one.
+ * A video or recording added to the box: kept by its path when dropped in the Mac app, else kept in memory. Nothing is
+ * sent either way (in a browser it uploads on Send, startUploads).
  */
-export function addVideo(f: File, where: string | undefined, patch: (p: Partial<DraftFile>) => void): Upload | null {
-  if (where) {
-    droppedByPath.set(where, f);
-    patch({ path: where, pct: 100, done: true });
-    return null;
+export function addVideo(f: File, where: string | undefined, patch: (p: Partial<DraftFile>) => void): void {
+  if (!where) return patch({ file: f });
+  droppedByPath.set(where, f);
+  patch({ path: where, pct: 100, done: true });
+}
+
+/** Send: each video still in memory starts uploading (once: `uploads` holds the started ones, by chip key). */
+export function startUploads(d: Draft, uploads: Map<string, Upload>, patch: (key: string) => (p: Partial<DraftFile>) => void): void {
+  for (const f of d.files) {
+    if (!f.file || uploads.has(f.key)) continue;
+    const at = patch(f.key);
+    at({ file: undefined });
+    uploads.set(f.key, uploadVideo(f.file, {
+      pct: (pct) => at({ pct }),
+      id: (id) => at({ id }),
+      done: (id) => at({ id, pct: 100, done: true }),
+      error: (error) => at({ error }),
+    }));
   }
-  return uploadVideo(f, {
-    pct: (pct) => patch({ pct }),
-    id: (id) => patch({ id }),
-    done: (id) => patch({ id, pct: 100, done: true }),
-    error: (error) => patch({ error }),
-  });
+}
+
+/** A chip's X: its upload stops and what reached the server is deleted; one not sent yet sends nothing. */
+export function removeUpload(f: DraftFile, uploads: Map<string, Upload>): void {
+  const u = uploads.get(f.key);
+  uploads.delete(f.key);
+  if (u) cancelUpload(u);
+  // put back from a message that didn't go: its upload ended earlier, its server copy is still there
+  else if (f.id) cancelUpload({ ctl: new AbortController(), id: f.id });
 }
 
 /** A video or a recording's sound (by type, or by name when the type is missing). */

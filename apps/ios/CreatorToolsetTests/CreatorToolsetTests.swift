@@ -35,6 +35,31 @@ final class RulesTests: XCTestCase {
         XCTAssertEqual(after(.finish, 500, body: #"{"error":"disk"}"#), .startOver("disk"))
     }
 
+    /// The library's Upload setting turned it away: the server's line as it is, never tried again by itself.
+    func testARefusedUploadShowsTheLineAndStops() {
+        let refused = #"{"error":"This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them.","code":"upload_refused","message":"This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them."}"#
+        let line = "This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them."
+        XCTAssertEqual(after(.patch, 409, body: refused), .failed(line))
+        XCTAssertEqual(after(.finish, 409, body: refused), .failed(line))
+        XCTAssertFalse(APIError.refused(line).transient)
+        XCTAssertEqual(APIError.refused(line).localizedDescription, line)
+    }
+
+    /// A start the server refuses (`api.send`, `api.get`) throws the line, not a 409 to try again.
+    func testAPIDataThrowsTheRefusal() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RefusesUploads.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let api = API(server: URL(string: "https://tinyacrobatics.example")!, cookie: nil)
+        do {
+            _ = try await api.data(api.request("/api/library/l/uploads", method: "POST"), session: session)
+            XCTFail("a refused upload went through")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .refused("This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them."))
+        }
+    }
+
     func testStepRoundTrip() {
         let step = TransferStep(itemId: id, kind: .patch, offset: 33554432, part: 0)
         XCTAssertEqual(TransferStep(encoded: step.encoded), step)
@@ -107,4 +132,19 @@ final class KeychainTests: XCTestCase {
         XCTAssertEqual(SavedServers.read(), saved)
         XCTAssertEqual(SavedServers.read()?.current?.server, server)
     }
+}
+
+/// Answers every request as the library's upload gate does under Upload "none".
+private final class RefusesUploads: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let line = "This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them."
+        let body = try! JSONSerialization.data(withJSONObject: ["error": line, "code": "upload_refused", "message": line])
+        let response = HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

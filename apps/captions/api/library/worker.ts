@@ -246,7 +246,8 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
         db.prepare("UPDATE jobs SET error = NULL WHERE id = ?").run(j.id);
       out.push(j.id);
     }
-    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor) && !readsNoPicture(j)) {
+    // a team proxy of a file only a computer has waits for that computer whatever the switch: this server has no bytes to read
+    else if (decodes.includes(j.kind) && (j.source_key?.startsWith("mac:") ? j.kind === "proxy" : !serverWorks(libraryWorkspace(j.library_id), j.actor)) && !readsNoPicture(j)) {
       out.push(j.id);
       // which computers can read its folder, when that says more than "one of your computers" (library-package.ts libraryWaitLine)
       const line = leaveToComputers.kinds.includes(j.kind) ? (leaveToComputers.line?.(j) ?? WAITS_FOR_COMPUTER) : WAITS_FOR_SERVER;

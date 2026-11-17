@@ -100,7 +100,7 @@ describe("Copies", () => {
     // the time today (14:05 in a 24-hour locale), the date on another day
     expect(needs[1]).toBe(`Offline since ${at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`);
     expect(copyLines(copy({ offlineSince: at.getTime() - 86_400_000 }), now).needs[0]).toBe(`Offline since ${new Date(at.getTime() - 86_400_000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`);
-    expect(needs[2]).toBe("Needs Office Mac online");
+    expect(needs[2]).toBe("Waits for Office Mac");
     expect(copyLines(copy({ state: "full" }), now).needs).toEqual(["Disk full on the computer"]);
     expect(copyLines(copy({ noOriginal: 1 }), now).needs).toEqual(["No original for 1 file"]);
     expect(copyLines(copy({ noOriginal: 3 }), now).needs).toEqual(["No original for 3 files"]);

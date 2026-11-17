@@ -137,6 +137,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
         cache: cacheReport(),
         library: true,
         libraryKinds: LIBRARY_HERE,
+        proof: true,
         ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
         ...(only ? {} : { tasks: taskKinds() }),
         machine: await machineNow(),

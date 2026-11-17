@@ -85,3 +85,19 @@ it("in the Mac app not set up (or switched off), a click opens dictation's setup
   }
   root = undefined;
 });
+
+it("Send goes with a video not sent yet (the dock uploads it then), and waits while one uploads", () => {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  const noop = () => {};
+  const onSend = vi.fn();
+  const chip = { key: "k", name: "take.mov", size: 1, pct: 0 };
+  const box = (file?: File) => <Composer draft={{ ...EMPTY_DRAFT, files: [{ ...chip, ...(file ? { file } : {}) }] }} setDraft={noop} onSend={onSend} onStop={noop} onFiles={noop} onPaste={() => false} quote={null} onDropQuote={noop} waiting={false} />;
+  act(() => root!.render(box(new File(["x"], "take.mov"))));
+  expect(host.textContent).toContain("Uploads on Send");
+  act(() => host!.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click());
+  expect(onSend).toHaveBeenCalledTimes(1);
+  act(() => root!.render(box()));
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.disabled).toBe(true);
+});

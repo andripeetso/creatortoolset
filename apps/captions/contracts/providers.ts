@@ -213,7 +213,7 @@ export interface Device {
    * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step. `tasks`: the computer task kinds it
    * runs (api/work/tasks.ts); absent on an older worker, which is never handed one.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; libraryKinds?: string[]; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[] };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; libraryKinds?: string[]; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[]; proof?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */
