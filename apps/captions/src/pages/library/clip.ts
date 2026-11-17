@@ -125,13 +125,18 @@ export function tagSuggestions(all: TagCount[], have: string[], typed: string): 
 /** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
 export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
-/** The Mac app shows a clip's file in Finder (<html data-mac-reveal>, apps/mac Reveal.swift). */
-export const canReveal = () => typeof document !== "undefined" && document.documentElement.dataset.macReveal === "1" && !!thisMacBridge();
+const revealMark = () => (typeof document === "undefined" ? undefined : document.documentElement.dataset.macReveal);
 
-/** On a server elsewhere the Mac app shows only files inside the folders granted to it, so a folder not granted yet is
- *  asked for first, from this click, in the app's own open panel. false: the panel closed without a folder that holds it. */
+/** The Mac app shows a clip's file in Finder (<html data-mac-reveal>, apps/mac Reveal.swift). */
+export const canReveal = () => (revealMark() === "1" || revealMark() === "2") && !!thisMacBridge();
+
+/** From '2' the Mac app shows a video, sound or picture file in Finder with no folder granted first. */
+export const revealsAnywhere = () => revealMark() === "2";
+
+/** On a server elsewhere an older Mac app shows only files inside the folders granted to it, so a folder not granted yet
+ *  is asked for first, from this click, in the app's own open panel. false: the panel closed without a folder that holds it. */
 async function granted(local: string): Promise<boolean> {
-  return servedHere() || allGranted([local], await listMediaFolders()) || allGranted([local], await askMediaFolder(local.slice(0, local.lastIndexOf("/")) || "/"));
+  return servedHere() || revealsAnywhere() || allGranted([local], await listMediaFolders()) || allGranted([local], await askMediaFolder(local.slice(0, local.lastIndexOf("/")) || "/"));
 }
 
 /** Shows the clip's file in Finder: null when it did, "" when no folder was granted, else what went wrong. The Mac app

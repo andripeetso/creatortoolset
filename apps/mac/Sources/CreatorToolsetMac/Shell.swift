@@ -167,7 +167,7 @@ final class Shell: NSObject, ObservableObject {
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
             }
             // Show in Finder for a library clip or a Review version's own file (Reveal.swift): the path comes from the
-            // window's server; one elsewhere only within the folders granted for original media
+            // window's server; one elsewhere only a video, sound or picture file
             if isRevealAsk(ask) {
                 let clip = revealAsk(ask), review = reviewRevealAsk(ask)
                 guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
@@ -175,7 +175,7 @@ final class Shell: NSObject, ObservableObject {
                 Task {
                     let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
                                else { await self.client().clipPath(library: clip!.library, asset: clip!.asset) }
-                    done(await Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                    done(await Reveal.answer(path, anyFile: here))
                 }
                 return
             }

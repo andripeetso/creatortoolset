@@ -38,6 +38,14 @@ describe("Show in Finder for a clip on a server elsewhere", () => {
     expect(askMediaFolder).not.toHaveBeenCalled();
   });
 
+  it("asks nothing first when the Mac app shows any video file (its mark '2')", async () => {
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "2" } } });
+    vi.mocked(askMediaFolder).mockClear();
+    expect(await revealClip("l1", "a1", "/Users/tiny/Desktop/jump.mp4")).toBeNull();
+    expect(askMediaFolder).not.toHaveBeenCalled();
+    expect(posted).toEqual(['reveal:{"library":"l1","asset":"a1"}']);
+  });
+
   it("on the server on this Mac asks nothing first", async () => {
     vi.stubGlobal("location", { hostname: "localhost" });
     vi.mocked(askMediaFolder).mockClear();
