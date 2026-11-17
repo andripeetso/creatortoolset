@@ -44,6 +44,7 @@ import { chatTitle, useChats } from "./ChatList";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
 import { StartSuggestions, WorkPicker } from "./WorkPicker";
 import { useWorkspace } from "@/lib/workspace";
+import { leftForWorkspace } from "@/lib/page-workspace";
 import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
 import { Steps } from "@/components/chat/Steps";
@@ -138,7 +139,7 @@ function followWorkspace(id: string | null | undefined) {
 export function AssistantDock() {
   const me = useMe();
   const navigate = useNavigate();
-  const { pathname, search } = useLocation();
+  const { pathname, search, state: routeState } = useLocation();
   const { collapsed, set, quote, setQuote, askAbout, images: handed, notice } = useAssistant();
   // Cite on the replies: select words, a pill where you let go; they become the quote of your next message
   const [cite, setCite] = useState<ReturnType<typeof citeAt>>(null);
@@ -282,7 +283,7 @@ export function AssistantDock() {
     .filter((w) => w.href?.startsWith("/"))
     .at(-1);
   const pageWanted = useChatMode((s) => s.page);
-  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, newest && { id: newest.id, href: newest.href }, () => {
+  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, view?.workspace, newest && { id: newest.id, href: newest.href }, () => {
     if (useChatMode.getState().bare) washTo({ bare: false });
   });
   // a new chat has no page (lib/chat-mode.ts `bare`): chat mode shows it as only chats, the question and the message
@@ -315,8 +316,9 @@ export function AssistantDock() {
     if (historyDepth.modal.has(window.history.state?.idx ?? 0)) return;
     const was = routeWas.current;
     routeWas.current = route;
-    // the first page seen (the app loaded on it, or on a dialog over it) is no link followed
-    if (was === null || was === route) return;
+    // the first page seen (the app loaded on it, or on a dialog over it) is no link followed, nor is a page that left
+    // another workspace's thing (lib/page-workspace.ts): a new chat stays without a page
+    if (was === null || was === route || leftForWorkspace(routeState)) return;
     const cm = useChatMode.getState();
     if (!cm.on) return;
     // a window with no room for the page beside the chats: the page is what was asked for, the assistant floats over it
