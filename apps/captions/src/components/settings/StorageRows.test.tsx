@@ -15,7 +15,7 @@ const page = (folders: StorageFolder[]) => renderToStaticMarkup(<Storage devices
 describe("Storage rows", () => {
   it("with nothing set, each kind's row only offers its button", () => {
     const html = page([]);
-    expect(html.match(/>Add folder</g)).toHaveLength(4);
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Finals, Media
     expect(html).not.toContain("Not set");
     expect(html).not.toContain("No folders");
   });
@@ -42,21 +42,21 @@ describe("every workspace's folders (Settings on All workspaces)", () => {
 
   it("Finished videos has a row per workspace: Change where it has a folder, Add folder where it has none", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
-    expect(html.match(/>Finished videos</g)).toHaveLength(2);
-    expect(html.match(/>Change</g)).toHaveLength(2); // its Finished videos and its Finals
-    expect(html.match(/>Add folder</g)).toHaveLength(4); // the other workspace's Finished videos and Finals, Footage, Music
+    expect(html.match(/>Exports</g)).toHaveLength(2);
+    expect(html.match(/>Change</g)).toHaveLength(2); // its Exports and its Finals
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // the other workspace's Exports and Finals, Media
     expect(html).toContain("/Volumes/Footage SSD/Songs");
   });
 
   it("a Finished videos folder of a workspace that is not listed still has its row", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...library, id: "lib_2", workspace: "ws-elsewhere", origin: { host: "dev_1", path: "/Volumes/Other/Creator Toolset" } }]);
-    expect(html.match(/>Finished videos</g)).toHaveLength(3);
+    expect(html.match(/>Exports</g)).toHaveLength(3);
     expect(html).toContain("/Volumes/Other/Creator Toolset");
   });
 
   it("with one workspace picked, Finished videos is one row", () => {
     const html = shown({ id: "ws-a", all: false, cacheKey: "ws-a" }, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
-    expect(html.match(/>Finished videos</g)).toHaveLength(1);
+    expect(html.match(/>Exports</g)).toHaveLength(1);
     expect(html).toContain("/Volumes/Footage SSD/Songs");
   });
 });

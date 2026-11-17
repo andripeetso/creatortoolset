@@ -295,7 +295,7 @@ storageApp.patch("/folders/:id", async (c) => {
   const before = (await readStorage(user)).folders;
   const f = before.find((x) => x.id === id);
   if (!f) return c.json({ error: "Not found" }, 404);
-  if (f.role === "library" || f.role === "finals") return c.json({ error: `${f.role === "library" ? "Finished videos" : "Finals"} is one folder per workspace` }, 400);
+  if (f.role === "library" || f.role === "finals") return c.json({ error: `${f.role === "library" ? "Exports" : "Finals"} is one folder per workspace` }, 400);
   const moved = (list: StorageFolder[]) => list.map((x) => (x.id === id ? placedIn(x, to) : x));
   const clash = (list: StorageFolder[]) =>
     list.some((x) => {
