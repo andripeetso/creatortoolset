@@ -137,6 +137,36 @@ export async function installInMacAi(app: "claude" | "codex", key: string): Prom
 }
 
 /**
+ * Settings → Providers → Install for an AI on this Mac while the window shows a server that is not this Mac: the Mac app
+ * runs the installer itself (ThisMacBridge.swift AiInstall). true = installed; a sentence = why not.
+ */
+export async function installAiOnMac(id: "claude" | "codex" | "gemini" | "antigravity"): Promise<true | string> {
+  const bridge = thisMacBridge();
+  if (!bridge) return "Open this page in the Mac app to install it.";
+  try {
+    const r = ((await bridge.postMessage(`ai-install:${id}`)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+    return r.ok === true ? true : r.problem || "Could not install it. Try again.";
+  } catch {
+    return "Could not install it. Try again.";
+  }
+}
+
+/**
+ * The install's download so far ({ done, total }; 0 of 0 when none runs), or null when the Mac app can't install AIs for
+ * the page: a browser, or a Mac app from before it could (it answers an ask it doesn't know as switched off).
+ */
+export async function aiInstallProgressOnMac(): Promise<{ done: number; total: number } | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return null;
+  try {
+    const r = ((await bridge.postMessage("ai-install-progress")) ?? {}) as unknown as { done?: unknown; total?: unknown };
+    return typeof r.done === "number" && typeof r.total === "number" ? { done: r.done, total: r.total } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * "Network access" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
  * owner's password first, when there is none). Resolves to the problem to show, or null when it is on and the server
  * is restarting.

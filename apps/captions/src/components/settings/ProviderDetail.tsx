@@ -31,6 +31,7 @@ export function ProviderDetail({
   onChange,
   onTest,
   onSignIn,
+  install,
   onMove,
   onRemove,
   onDeleteProgram,
@@ -57,6 +58,8 @@ export function ProviderDetail({
   onTest: () => void;
   /** set only where the Mac app shows this page and the AI is on this Mac: opens the CLI's sign-in in Terminal */
   onSignIn?: () => void;
+  /** the Install button, where the app can install this AI (this Mac); absent: the lines that say how */
+  install?: ReactNode;
   onMove?: (deviceId: string) => void;
   onRemove: () => void;
   /** a program the app downloaded for this AI (Antigravity) on this computer: deletes it, the sign-in stays */
@@ -128,10 +131,12 @@ export function ProviderDetail({
             <Button size="sm" variant="outline" onClick={onSignIn}>
               Sign in
             </Button>
+          ) : status.action === "install" ? (
+            install
           ) : undefined
         }
       >
-        {status.action === "install" && <InstallHelp driver={inst.driver} />}
+        {status.action === "install" && !install && <InstallHelp driver={inst.driver} />}
         {status.action === "sign-in" && !onSignIn && <SignInHelp driver={inst.driver} computer="its computer" />}
         {check && !check.ok && check.error && <p className="break-words text-xs text-muted-foreground">{check.error}</p>}
       </Row>

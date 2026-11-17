@@ -13,6 +13,24 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
     }
 
+    func testThePageMayAskToInstallOnlyTheFourAIsAndReadsTheInstallersAnswer() {
+        XCTAssertEqual(aiInstallAsk("ai-install:gemini"), "gemini")
+        XCTAssertEqual(aiInstallAsk("ai-install:antigravity"), "antigravity")
+        XCTAssertNil(aiInstallAsk("ai-install:grok"))
+        XCTAssertNil(aiInstallAsk("ai-install:claude;rm -rf ~"))
+        XCTAssertNil(aiInstallAsk("ai-install:"))
+        XCTAssertTrue(thisMacAsks.contains("ai-install-progress"))
+
+        // progress lines while it downloads, then the answer; a failure carries the installer's sentence
+        let running = aiInstallOutput("{\"done\":10,\"total\":100}\n{\"done\":42,\"total\":100}\n")
+        XCTAssertEqual(running.progress?["done"] as? Int, 42)
+        XCTAssertNil(running.reply)
+        XCTAssertEqual(aiInstallOutput("{\"done\":100,\"total\":100}\n{\"ok\":true,\"message\":\"Installed\"}\n").reply?["ok"] as? Bool, true)
+        let failed = aiInstallOutput("noise\n{\"ok\":false,\"message\":\"Couldn't install Codex.\"}").reply
+        XCTAssertEqual(failed?["ok"] as? Bool, false)
+        XCTAssertEqual(failed?["problem"] as? String, "Couldn't install Codex.")
+    }
+
     func testPickedFilesAreKeptNewestFirstOnceEachAndOnlyForThisMacsServer() throws {
         XCTAssertTrue(thisMacAsks.contains("files"))
         let a = URL(fileURLWithPath: "/footage/A.mp4"), b = URL(fileURLWithPath: "/footage/B.mp4"), c = URL(fileURLWithPath: "/footage/C.mp4")

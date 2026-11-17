@@ -224,8 +224,18 @@ final class Shell: NSObject, ObservableObject {
                 }
                 return
             }
+            // Settings → Providers → Install on a server that is not this Mac: this Mac's server is not running, so the
+            // app runs its installer itself; a tool installed is reported to the open server at once
+            if let id = aiInstallAsk(ask) {
+                guard let folder = LocalServer.folder else { return done(["ok": false, "problem": "Could not install it here."]) }
+                return AiInstall.shared.run(id, folder: folder) { [weak self] reply in
+                    if reply["ok"] as? Bool == true { self?.runner?.reportNow() }
+                    done(reply)
+                }
+            }
             switch ask {
             case "state": done(self.thisMacState())
+            case "ai-install-progress": done(AiInstall.shared.progress)
             case "access": Task { done(await self.accessFromOtherDevices()) }
             // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
