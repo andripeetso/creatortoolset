@@ -438,6 +438,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                     {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
                   </>
                 }
+                // the same empty status line as an added provider's row, so every name in the list sits at one height
+                status={<span className="block min-h-4" />}
                 actions={
                   <Button size="sm" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
                     Add

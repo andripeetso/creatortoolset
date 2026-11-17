@@ -281,7 +281,7 @@ function TaskDialog({ initial, providers, w, onClose, onSaved }: { initial: Auto
         )}
         <Row
           title="Name"
-          control={<Input value={d.name} onChange={(e) => set({ name: e.target.value })} maxLength={AUTOMATION_NAME_MAX} aria-label="Name" className="h-8 sm:w-72" />}
+          control={<Input value={d.name} onChange={(e) => set({ name: e.target.value })} maxLength={AUTOMATION_NAME_MAX} aria-label="Name" className="h-8 sm:w-64" />}
         />
         <Row title="Instructions">
           <Textarea value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={4} maxLength={AUTOMATION_PROMPT_MAX} aria-label="Instructions" className="text-sm" />
