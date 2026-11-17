@@ -328,11 +328,13 @@ export async function knownShots(versionId: string): Promise<IndexShot[]> {
 }
 
 /** One shot description as the plan reads a shot, with what the picture measured at its middle (`measured`, the same
- * finder's stretches): whether it is junk and where it moves, so its crop follows the action. */
+ * finder's stretches): whether it is junk and where it moves, so its crop follows the action, and how well it is taken
+ * (the library's measure, else this read's). */
 const lineShot = (s: Stretch, measured: IndexShot[] = []): IndexShot => {
   const mid = (s.a + s.b) / 2;
   const m = measured.find((x) => x.a <= mid && mid < x.b);
-  return { a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}), ...(m?.junk ? { junk: m.junk } : {}), ...(m?.moves ? { moves: m.moves } : {}) };
+  const q = typeof s.quality === "number" ? { quality: s.quality, ...(s.flaws?.length ? { flaws: s.flaws } : {}) } : { ...(m?.quality !== undefined ? { quality: m.quality } : {}), ...(m?.flaws ? { flaws: m.flaws } : {}) };
+  return { a: s.a, b: s.b, motion: s.motion, ...(s.text ? { desc: s.text } : {}), action: s.action, clear: s.clear, tags: s.tags, ...(s.ph ? { ph: s.ph } : {}), ...(m?.junk ? { junk: m.junk } : {}), ...(m?.moves ? { moves: m.moves } : {}), ...q };
 };
 
 /** A source whose shots are the library's shot descriptions (each carries its action): the AI doesn't look at it again. */

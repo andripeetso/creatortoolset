@@ -64,6 +64,10 @@ const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const HEX = /^#[0-9a-f]{6}$/i;
 /** A source with a picture to cut (a song's cover art is none). */
 const pictured = (s: IndexSource) => s.w > 0 && s.shots.length > 0;
+/** A shot measured as badly taken (blurry, too dark, shaky: look.ts qualityOf) is picked only when nothing else is left */
+const flawless = (x: IndexShot) => (x.flaws?.length ? 0 : 1);
+/** Its flaws as a line's tail: ` · blurry, shaky` */
+const flawTail = (x: IndexShot) => (x.flaws?.length ? ` · ${x.flaws.join(", ")}` : "");
 
 /* ---------------- which edits are planned ---------------- */
 
@@ -266,7 +270,8 @@ export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
   if (s.shots.length <= n) return s.shots.filter((x) => !isJunk(x));
   const words = wordsOf(brief);
   // junk (a map, a menu, loading, dark, a desktop) is never offered: its change is no action
-  const score = s.shots.map((x, k) => (isJunk(x) ? -Infinity : worth(s.shots, k) + hits(words, x.desc)));
+  // a badly taken shot goes behind every well taken one; of two takes, the better taken counts a little more
+  const score = s.shots.map((x, k) => (isJunk(x) ? -Infinity : worth(s.shots, k) + hits(words, x.desc) - 2 * (1 - flawless(x)) + 0.2 * ((x.quality ?? 1) - 1)));
   const gap = Math.max(POOL_GAP_S, s.dur / 40);
   const picked: number[] = [];
   const free = (k: number) => !picked.includes(k) && picked.every((j) => Math.abs(s.shots[j]!.a - s.shots[k]!.a) >= gap);
@@ -290,7 +295,7 @@ Make exactly the kind of edit the brief asks for, whatever it is: a hard edit cu
 
 Write the edit as shots played one after another from 0, with no gaps. Times are seconds. When a song leads, cut on its beats (given as seconds in the edit) and land the hits (punch, flash, shake, stutter, zoomblur) on its strong beats. An effect's time is inside its shot, from 0.
 
-Never use the same moment of a source twice: each shot is a different stretch of footage. Show each action once too: two stretches with the same thing happening (the same character casting the same skill, the same summon, the same view of a place), from one source or two, count as the same moment unless the brief asks for it again. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
+Never use the same moment of a source twice: each shot is a different stretch of footage. Show each action once too: two stretches with the same thing happening (the same character casting the same skill, the same summon, the same view of a place), from one source or two, count as the same moment unless the brief asks for it again. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. A shot marked blurry, too dark or shaky is badly taken: use it only when no other shot shows what the brief needs. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
 
 Answer with JSON only, in this shape:
 {"plans":[{"kind":"the brief's words for this kind of edit","variation":"what sets this version apart","lead":"song","shots":[{"src":"S1","in":12.5,"dur":1.0,"speed":1,"fx":[{"type":"punch","at":0,"amount":1.2}],"enter":"cut","frame":"fill","sound":"off","why":"a few words"}],"texts":[{"at":0,"dur":1.5,"text":"words on screen","place":"middle"}]}]}
@@ -365,7 +370,7 @@ export function shotLines(index: FootageIndex): Map<string, string[]> {
     if (!keep.has(l)) continue;
     const { x } = l;
     const text = (x.desc ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_TEXT);
-    const line = `${tagOf(index, l.s.id)} ${mmss(x.a)}–${mmss(x.b)} a${x.action ?? 0}${x.clear ? " clear" : ""}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
+    const line = `${tagOf(index, l.s.id)} ${mmss(x.a)}–${mmss(x.b)} a${x.action ?? 0}${x.clear ? " clear" : ""}${flawTail(x)}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
     out.set(l.s.id, [...(out.get(l.s.id) ?? []), line]);
   }
   return out;
@@ -415,7 +420,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
     // the library's shot descriptions: every line (LINES_MAX in all, the busiest kept); else the strongest shots, spread out
     const own = lines.get(s.id);
     const pool = !own && pictured(s) ? shotPool(s, n, i.brief) : [];
-    const shots = own ?? pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
+    const shots = own ?? pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${flawTail(x)}${x.desc ? `: ${x.desc}` : ""}`);
     if (own && own.length < s.shots.length) shots.unshift(`  ${own.length} of its ${s.shots.length} shot lines (the busiest):`);
     else if (!own && pool.length < s.shots.length) shots.unshift(`  ${pool.length} of its ${s.shots.length} shots:`);
     const said = i.words[s.id] ? [`  said: ${i.words[s.id]}`] : [];
@@ -603,7 +608,7 @@ export function nextBest(index: FootageIndex, used: Map<string, Array<[number, n
     if (!pictured(s) || !logged(s)) continue;
     for (const x of s.shots) {
       if (x.a + span > s.dur + 1e-6 || !clearOf(used.get(s.id) ?? [], x.a, span, 0) || junkAt(s, x.a, span) || shownAlready(picturesAt(s, x.a, span), shown)) continue;
-      const key = [x.action ?? 0, x.clear ? 1 : 0, s.id !== not ? 1 : 0, x.b - x.a >= span ? 1 : 0];
+      const key = [flawless(x), x.action ?? 0, x.clear ? 1 : 0, s.id !== not ? 1 : 0, x.b - x.a >= span ? 1 : 0, x.quality ?? 1];
       if (!best || ahead(key, best.key)) best = { source: s, inS: x.a, key };
     }
   }
@@ -611,10 +616,12 @@ export function nextBest(index: FootageIndex, used: Map<string, Array<[number, n
 }
 
 /**
- * A source's shots by action, then clear, in time order otherwise: how a source with shot descriptions is ranked.
+ * A source's shots, well taken first (no flaw: look.ts qualityOf), then by action, then clear, then how well taken, in
+ * time order otherwise: how a source with shot descriptions is ranked.
  * Never by motion: in gameplay, walking moves the whole picture more than a fight does.
  */
-export const byAction = (s: IndexSource): IndexShot[] => [...s.shots].sort((p, q) => (q.action ?? 0) - (p.action ?? 0) || Number(!!q.clear) - Number(!!p.clear));
+export const byAction = (s: IndexSource): IndexShot[] =>
+  [...s.shots].sort((p, q) => flawless(q) - flawless(p) || (q.action ?? 0) - (p.action ?? 0) || Number(!!q.clear) - Number(!!p.clear) || (q.quality ?? 1) - (p.quality ?? 1));
 
 /** A moment not in the edit yet, `span` long: the best free one of the least used source, never a picture the cut shows already (`shown`). */
 function spare(index: FootageIndex, used: Map<string, Array<[number, number]>>, span: number, shown: string[]): { source: IndexSource; inS: number } | undefined {

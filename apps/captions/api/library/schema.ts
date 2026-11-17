@@ -466,4 +466,10 @@ export const MIGRATIONS: string[] = [
   // 27: the level (contracts LOOK_LEVELS) a version's stretches were found at: stretches of another level than the
   // library's are found again when its shots are described (shots.ts), never matched to that level's lines. NULL: standard
   `ALTER TABLE asset_versions ADD COLUMN look_level TEXT;`,
+  // 28: how well each stretch is taken, measured where the picture is read (look.ts qualityOf): 0..1, and its flaws as a
+  // JSON list ("blurry", "too dark", "shaky"). NULL: not measured (a picture read on a computer that sends no measures)
+  `
+  ALTER TABLE stretches ADD COLUMN quality REAL;
+  ALTER TABLE stretches ADD COLUMN flaws TEXT;
+  `,
 ];

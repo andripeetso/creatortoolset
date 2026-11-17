@@ -693,7 +693,14 @@ function ShotLines({
                 className={cn("flex min-w-0 flex-1 gap-2 px-1 py-0.5 text-left text-sm", s.source === "ai" && "text-zinc-400")}
               >
                 <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(s.a)}</span>
-                <span>{s.text}</span>
+                <span>
+                  {s.text}
+                  {s.flaws?.map((f) => (
+                    <span key={f} className="ml-1.5 whitespace-nowrap rounded bg-zinc-500/15 px-1 text-xs text-zinc-500">
+                      {f}
+                    </span>
+                  ))}
+                </span>
               </button>
               {!readOnly && (
                 <button

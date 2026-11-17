@@ -27,7 +27,7 @@ const { MacClaudeError } = await import("../lib/mac-claude");
 const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
-const { critiquePrompt, parseCritique, shotFrames } = await import("./critique");
+const { critiquePrompt, parseCritique, shotFrames, withFlaws } = await import("./critique");
 const { nextFor } = await import("./engine");
 const { shotLog } = await import("./index");
 const { addFeedback, createEdit, readDraft, readEdit, readStep, saveDraft, saveEdit, saveStep } = await import("./store");
@@ -264,6 +264,16 @@ describe("the look's parts", () => {
       round: 1,
     });
     expect(parseCritique('{"ok": false, "fails": []}', 4, 2)).toEqual({ ok: true, fails: [], round: 2 });
+  });
+
+  it("a shot of footage measured as badly taken fails for it, unless the AI named it already", () => {
+    const shown = [{ a: 0, b: 2, motion: 0.5, flaws: ["blurry"] }, undefined, { a: 4, b: 6, motion: 0.5, flaws: ["too dark", "shaky"] }, { a: 6, b: 8, motion: 0.5, quality: 0.9 }];
+    expect(withFlaws({ ok: false, fails: [{ n: 3, why: "dull" }], round: 1 }, shown)).toEqual({
+      ok: false,
+      fails: [{ n: 1, why: "blurry" }, { n: 3, why: "dull" }],
+      round: 1,
+    });
+    expect(withFlaws({ ok: true, fails: [], round: 1 }, [undefined, { a: 0, b: 1, motion: 0 }])).toEqual({ ok: true, fails: [], round: 1 });
   });
 
   it("the last look never moves a shot onto a picture the cut already shows", async () => {
