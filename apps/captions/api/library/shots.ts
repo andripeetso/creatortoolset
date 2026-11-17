@@ -156,7 +156,8 @@ async function readAndKeep(db: DatabaseSync, versionId: string, file: string, p:
   }
 }
 
-async function keptSheets(db: DatabaseSync, versionId: string): Promise<KeptSheets | null> {
+/** The sheets kept for `versionId` (the look made them from the video), or null when there are none of today's format. */
+export async function keptSheets(db: DatabaseSync, versionId: string): Promise<KeptSheets | null> {
   const row = db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'looksheets'").get(versionId) as { storage_key: string | null } | undefined;
   if (!row?.storage_key) return null;
   try {
@@ -230,19 +231,20 @@ async function writeLines(db: DatabaseSync, versionId: string, actor: string, ke
   return calls;
 }
 
+/** The ffmpeg crop of tile `k`'s middle frame on a sheet (look.ts stretchSheet's layout). */
+export function middleCrop(k: number, landscape: boolean): string {
+  const [w, h] = landscape ? [FRAME_W, FRAME_H] : [FRAME_H, FRAME_W];
+  const cols = landscape ? STRETCH_COLS.landscape : STRETCH_COLS.portrait;
+  return `crop=${w}:${h}:${(k % cols) * STRETCH_FRAMES * (w + 8) + (w + 8) + 4}:${Math.floor(k / cols) * (h + 8) + 4}`;
+}
+
 /**
  * The picture hash (look.ts pictureHash) of each stretch's middle frame, read off its sheet (the middle of the tile's
  * three frames, already small): one short ffmpeg run a sheet and no seek in the video. Seeking the video for each
  * middle frame took 105 s for the 200 stretches of a 20-minute file, the sheets themselves 107 s.
  */
 export async function sheetHashes(sheet: string, count: number, landscape: boolean): Promise<string[]> {
-  const [w, h] = landscape ? [FRAME_W, FRAME_H] : [FRAME_H, FRAME_W];
-  const cols = landscape ? STRETCH_COLS.landscape : STRETCH_COLS.portrait;
-  const crops = Array.from({ length: count }, (_, k) => {
-    const x = (k % cols) * STRETCH_FRAMES * (w + 8) + (w + 8) + 4;
-    const y = Math.floor(k / cols) * (h + 8) + 4;
-    return `[t${k}]crop=${w}:${h}:${x}:${y},scale=9:8:flags=area,format=gray${count > 1 ? `[h${k}]` : ""}`;
-  });
+  const crops = Array.from({ length: count }, (_, k) => `[t${k}]${middleCrop(k, landscape)},scale=9:8:flags=area,format=gray${count > 1 ? `[h${k}]` : ""}`);
   const graph =
     `[0:v]split=${count}${Array.from({ length: count }, (_, k) => `[t${k}]`).join("")};${crops.join(";")}` +
     (count > 1 ? `;${crops.map((_, k) => `[h${k}]`).join("")}hstack=inputs=${count}` : "");

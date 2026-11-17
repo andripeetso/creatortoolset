@@ -27,6 +27,8 @@ import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, queueLook } from "./shots";
 import { takeMacSheets } from "./mac-look";
+import { sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
+import { picturesHere } from "../lib/device-picture";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
@@ -291,6 +293,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
 export function startLibraryWorker(): () => void {
   let stopped = false;
   const stopCatchUp = startEmbedCatchUp();
+  const stopPictures = startPictureCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
   void placeUnplaced(); // clips from before the country was kept, from their location tag
   for (const lane of LANES)
@@ -310,6 +313,7 @@ export function startLibraryWorker(): () => void {
   return () => {
     stopped = true;
     stopCatchUp();
+    stopPictures();
   };
 }
 
@@ -436,7 +440,11 @@ async function run(job: JobRow): Promise<void> {
     if (job.kind === "look") {
       needLookRoute(job.actor);
       const sheets = takeMacSheets(v.id);
-      if (sheets) return void (await lookFromSheets(db, v.id, job.actor, sheets));
+      if (sheets) {
+        // search by picture reads the same sheets now: they are not kept here (a model that fails leaves them without)
+        if (picturesHere() && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
+        return void (await lookFromSheets(db, v.id, job.actor, sheets));
+      }
       void wakeEditorPolls(); // the Mac's long poll hears of it at once
       throw new NeedsKey(MAC_WAITS);
     }
@@ -495,6 +503,7 @@ async function run(job: JobRow): Promise<void> {
     const file = out("jpg");
     await makeThumb(await src(), file, p.duration, !!p.cover, p.turn);
     await keep("thumb", file, `${base}/thumb.jpg`);
+    wakePictures();
   } else if (job.kind === "wave") {
     const file = out("json");
     await makeWave(await src(), file, !!p.acodec);
@@ -533,6 +542,7 @@ async function run(job: JobRow): Promise<void> {
   } else if (job.kind === "look") {
     // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
     await lookVersion(db, v.id, lighter, p, job.actor, dir);
+    wakePictures(); // its kept sheets give its shots their picture vectors
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }

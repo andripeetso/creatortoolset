@@ -13,6 +13,7 @@ import { footageProfile, workspaceContext, workspaceOf } from "../lib/workshop/c
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { samePicture } from "../library/look";
+import { PICTURE_FLOOR, pictureScores } from "../library/pictures";
 import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey } from "../library/transcribe";
 import type { StepContext } from "./engine";
@@ -260,13 +261,14 @@ function worth(shots: IndexShot[], k: number): number {
 
 /**
  * Up to `n` of a source's shots, spread over its whole length: the best of each stretch first, then the best left,
- * never two closer than POOL_GAP_S (or a 40th of the source). A shot the brief's words describe counts more.
+ * never two closer than POOL_GAP_S (or a 40th of the source). A shot the brief's words describe counts more, and one
+ * whose picture matches the brief (its `pic`, matchPictures).
  */
 export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
   if (s.shots.length <= n) return s.shots.filter((x) => !isJunk(x));
   const words = wordsOf(brief);
   // junk (a map, a menu, loading, dark, a desktop) is never offered: its change is no action
-  const score = s.shots.map((x, k) => (isJunk(x) ? -Infinity : worth(s.shots, k) + hits(words, x.desc)));
+  const score = s.shots.map((x, k) => (isJunk(x) ? -Infinity : worth(s.shots, k) + hits(words, x.desc) + PIC_WEIGHT * (x.pic ?? 0)));
   const gap = Math.max(POOL_GAP_S, s.dur / 40);
   const picked: number[] = [];
   const free = (k: number) => !picked.includes(k) && picked.every((j) => Math.abs(s.shots[j]!.a - s.shots[k]!.a) >= gap);
@@ -278,6 +280,33 @@ export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
   }
   for (const k of byScore) if (picked.length < n && free(k) && score[k] !== -Infinity) picked.push(k);
   return picked.filter((k) => score[k] !== -Infinity).sort((a, b) => a - b).map((k) => s.shots[k]!);
+}
+
+/** What the best picture match is worth in a shot's score: a bit more than one of the brief's words in its description. */
+const PIC_WEIGHT = 1.5;
+/** A shot this close to the best picture match is marked for the AI as looking like the brief. */
+const LOOKS_LIKE = 0.6;
+const looksLike = (x: IndexShot) => ((x.pic ?? 0) >= LOOKS_LIKE ? ", looks like the brief" : "");
+
+/**
+ * Sets each shot's `pic` from the library's picture vectors (search by picture, library/pictures.ts): how close its
+ * picture is to the brief, over the floor a search lists at, as a share of the best shot's. Nothing where the library
+ * has no vectors for the footage or no picture model here.
+ */
+export async function matchPictures(index: FootageIndex, brief: string, actor: string): Promise<void> {
+  for (const s of index.sources) for (const x of s.shots) delete x.pic; // an index read again for another brief
+  const scores = await pictureScores(index.sources.map((s) => s.id), brief, actor).catch(() => new Map<string, { start: number; score: number }[]>());
+  const best = Math.max(...[...scores.values()].flat().map((r) => r.score));
+  if (!(best > PICTURE_FLOOR)) return;
+  for (const s of index.sources) {
+    const rows = (scores.get(s.id) ?? []).sort((p, q) => p.start - q.start);
+    if (!rows.length) continue;
+    // the library's stretch the shot starts in (both are found by look.ts shotsOf, from the same picture)
+    for (const x of s.shots) {
+      const r = rows.filter((r) => r.start <= x.a + 0.05).at(-1) ?? rows[0]!;
+      x.pic = Math.max(0, (r.score - PICTURE_FLOOR) / (best - PICTURE_FLOOR));
+    }
+  }
 }
 
 const poolSize = (index: FootageIndex) => clamp(Math.floor(POOL_MAX / Math.max(1, index.sources.filter(pictured).length)), POOL_PER_SOURCE.min, POOL_PER_SOURCE.max);
@@ -359,13 +388,15 @@ const mmss = (t: number) => {
  */
 export function shotLines(index: FootageIndex): Map<string, string[]> {
   const all = index.sources.filter((s) => pictured(s) && logged(s)).flatMap((s) => s.shots.map((x) => ({ s, x })));
-  const keep = new Set(all.length <= LINES_MAX ? all : [...all].sort((p, q) => (q.x.action ?? 0) - (p.x.action ?? 0) || Number(!!q.x.clear) - Number(!!p.x.clear)).slice(0, LINES_MAX));
+  // a shot that looks like the brief counts as two steps more action
+  const rank = (x: IndexShot) => (x.action ?? 0) + 2 * (x.pic ?? 0);
+  const keep = new Set(all.length <= LINES_MAX ? all : [...all].sort((p, q) => rank(q.x) - rank(p.x) || Number(!!q.x.clear) - Number(!!p.x.clear)).slice(0, LINES_MAX));
   const out = new Map<string, string[]>();
   for (const l of all) {
     if (!keep.has(l)) continue;
     const { x } = l;
     const text = (x.desc ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_TEXT);
-    const line = `${tagOf(index, l.s.id)} ${mmss(x.a)}–${mmss(x.b)} a${x.action ?? 0}${x.clear ? " clear" : ""}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
+    const line = `${tagOf(index, l.s.id)} ${mmss(x.a)}–${mmss(x.b)} a${x.action ?? 0}${x.clear ? " clear" : ""}${looksLike(x)}${x.tags?.length ? ` · ${x.tags.join(", ")}` : ""}${text ? ` · ${text}` : ""}`;
     out.set(l.s.id, [...(out.get(l.s.id) ?? []), line]);
   }
   return out;
@@ -415,7 +446,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
     // the library's shot descriptions: every line (LINES_MAX in all, the busiest kept); else the strongest shots, spread out
     const own = lines.get(s.id);
     const pool = !own && pictured(s) ? shotPool(s, n, i.brief) : [];
-    const shots = own ?? pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
+    const shots = own ?? pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${looksLike(x)}${x.desc ? `: ${x.desc}` : ""}`);
     if (own && own.length < s.shots.length) shots.unshift(`  ${own.length} of its ${s.shots.length} shot lines (the busiest):`);
     else if (!own && pool.length < s.shots.length) shots.unshift(`  ${pool.length} of its ${s.shots.length} shots:`);
     const said = i.words[s.id] ? [`  said: ${i.words[s.id]}`] : [];
@@ -1223,6 +1254,8 @@ async function planContext(edit: EditMeta, actor: string, sentences: Sentence[],
   if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
   // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
   index = await describeShots(index, { actor, story, workspace: await workspaceSetup(edit, 6000) }, signal);
+  // which shots look like what the brief asks for, by their pictures (search by picture)
+  if (edit.brief.trim()) await matchPictures(index, edit.brief, actor);
   const gen = styles();
   // what footage the workspace holds and what was finished in it (lib/workshop/context.ts, styles.ts); none adds nothing
   const profile = [await footageProfile(edit.projectId), await finishedProfile(ownerOf(edit), edit.projectId ?? "")].filter(Boolean).join("\n");

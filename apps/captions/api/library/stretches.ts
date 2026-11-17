@@ -71,12 +71,14 @@ export interface StretchLine {
 
 /**
  * Stores the stretches found in a version's picture, in order and with no line yet: the AI's rows found before go
- * (stretches are found again only when the picture is read again); the person's own lines stay.
+ * (stretches are found again only when the picture is read again); the person's own lines stay. The shots' picture
+ * vectors go with them (pictures.ts makes them again from the new sheets).
  */
 export function storeStretches(db: DatabaseSync, versionId: string, found: FoundStretch[]): void {
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM stretches WHERE version_id = ? AND source = 'ai'").run(versionId);
+    db.prepare("DELETE FROM pictures WHERE version_id = ? AND seg >= 0").run(versionId);
     const add = db.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, ph, source, created_at) VALUES (?, ?, ?, ?, ?, ?, 'ai', ?)");
     const now = Date.now();
     found.forEach((s, seg) => add.run(versionId, seg, s.a, s.b, s.motion, s.ph || null, now));

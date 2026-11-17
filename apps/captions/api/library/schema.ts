@@ -463,4 +463,16 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE uploads ADD COLUMN made TEXT;
   `,
+  // 27: search by picture (pictures.ts): a vector of what each shot shows, by the stretch it is the middle of (seg as in
+  // stretches) or -1 for the card picture; start_s is where the hit opens. An empty vec: no picture could be read
+  `
+  CREATE TABLE pictures (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    seg INTEGER NOT NULL,
+    start_s REAL NOT NULL,
+    model TEXT NOT NULL,
+    vec BLOB NOT NULL,
+    PRIMARY KEY (version_id, seg)
+  );
+  `,
 ];

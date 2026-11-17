@@ -81,7 +81,7 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   d.exec("BEGIN");
   try {
     if (versions.length) {
-      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "search_segments", "stretches", "search_stretches", "stretch_notes", "jobs"]) {
+      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "jobs"]) {
         d.prepare(`DELETE FROM ${t} WHERE version_id IN (${V})`).run(...versions);
       }
       d.prepare(`DELETE FROM derived_from WHERE version_id IN (${V}) OR source_version_id IN (${V})`).run(...versions, ...versions);

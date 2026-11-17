@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
+import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges, useOffline, type OfflineList } from "@/lib/library";
+import { alikeShots, getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges, useOffline, type OfflineList } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
@@ -57,6 +57,8 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const [now, setNow] = useState(-1);
   const [same, setSame] = useState<SimilarMatch[]>([]);
   const [near, setNear] = useState<AssetCard[]>([]);
+  // More like this: from the whole clip, or from the shot it was asked on (`at`)
+  const [alike, setAlike] = useState<{ at?: number; hits: SearchHit[] }>({ hits: [] });
   const [copiedPath, setCopiedPath] = useState(false);
   const navigate = useNavigate();
   const me = useMe();
@@ -104,6 +106,22 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     );
     return () => void (live = false);
   }, [libraryId, asset.id, inTrash]);
+
+  // shots that look alike, from the picture vectors search by picture keeps (none without them)
+  useEffect(() => {
+    if (inTrash) return;
+    let live = true;
+    alikeShots(libraryId, asset.id).then(
+      (hits) => live && setAlike({ hits }),
+      () => {},
+    );
+    return () => void (live = false);
+  }, [libraryId, asset.id, inTrash]);
+  const alikeAt = (at: number) =>
+    alikeShots(libraryId, asset.id, at).then(
+      (hits) => setAlike({ at, hits }),
+      (e) => onError(message(e)),
+    );
 
   // ← → for the neighbours, Space to play and pause; typing, the share dialog and a focused control keep their keys
   useEffect(() => {
@@ -211,7 +229,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
       window.setTimeout(() => setCopiedPath(false), 1500);
     });
   const reveal = () => path && void revealClip(libraryId, a.id).then((problem) => problem && onError(problem));
-  const open = (id: string) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}`);
+  const open = (id: string, at?: number) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}${at ? `&at=${at}` : ""}`);
 
   const title = <SheetTitle className={cn("min-w-0 flex-1 break-words text-base", win && "pr-8")}>{a.title}</SheetTitle>;
   const head = (
@@ -228,7 +246,17 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
         </div>
       )}
       <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
-      <ShotLines key={`shots-${a.versionId}`} libraryId={libraryId} detail={detail} now={now} readOnly={fixed} onSeek={seek} onSaved={saved} onError={onError} />
+      <ShotLines
+        key={`shots-${a.versionId}`}
+        libraryId={libraryId}
+        detail={detail}
+        now={now}
+        readOnly={fixed}
+        onSeek={seek}
+        onAlike={alike.hits.length || alike.at !== undefined ? alikeAt : undefined}
+        onSaved={saved}
+        onError={onError}
+      />
       {(facts.length > 0 || inFolders.length > 0) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -354,6 +382,32 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     </section>
   );
 
+  // More like this: the same strip; a shot of this clip plays here, another clip opens at its shot
+  const looks = alike.hits.length > 0 && (
+    <section aria-label="More like this" className="flex flex-col gap-1.5">
+      <span className="text-xs text-zinc-500">{alike.at === undefined ? "More like this" : `More like ${clock(alike.at)}`}</span>
+      <ul className="grid grid-cols-4 gap-1.5">
+        {alike.hits.slice(0, 8).map((h) => (
+          <li key={`${h.asset.id}@${h.seconds ?? ""}`}>
+            <button
+              type="button"
+              className="block w-full"
+              title={h.seconds === undefined ? h.asset.title : `${h.asset.title} · ${clock(h.seconds)}`}
+              aria-label={h.seconds === undefined ? h.asset.title : `${h.asset.title} at ${clock(h.seconds)}`}
+              onClick={() => (h.asset.id === asset.id && h.seconds !== undefined ? seek(h.seconds) : open(h.asset.id, h.seconds))}
+            >
+              <img
+                src={`/api/library/media/${h.asset.versionId}/thumb`}
+                alt=""
+                className="aspect-video w-full rounded-md bg-zinc-900 object-cover transition-opacity hover:opacity-80"
+              />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+
   // the clip's earlier files, each downloadable; only once there is more than one
   const versions = (detail?.versions?.length ?? 0) > 1 && detail && (
     <section aria-label="Versions" className="flex flex-col gap-1">
@@ -423,6 +477,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             {versions}
             {similar}
             {related}
+            {looks}
             {jobs}
           </div>
           {/* the assistant's button is hidden while a clip is open (index.css), so the actions need no room for it */}
@@ -441,6 +496,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
       {versions}
       {similar}
       {related}
+      {looks}
       {jobs}
       {share}
     </div>
@@ -624,6 +680,7 @@ function ShotLines({
   now,
   readOnly,
   onSeek,
+  onAlike,
   onSaved,
   onError,
 }: {
@@ -632,6 +689,8 @@ function ShotLines({
   now: number;
   readOnly: boolean;
   onSeek: (s: number) => void;
+  /** More like this on one shot; absent where the clip has no picture vectors */
+  onAlike?: (at: number) => void;
   onSaved: (a: AssetCard) => void;
   onError: (e: string) => void;
 }) {
@@ -688,6 +747,17 @@ function ShotLines({
                 <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(s.a)}</span>
                 <span>{s.text}</span>
               </button>
+              {onAlike && (
+                <button
+                  type="button"
+                  aria-label={`More like the shot at ${clock(s.a)}`}
+                  title="More like this"
+                  onClick={() => onAlike(s.a)}
+                  className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Images className="h-3.5 w-3.5" />
+                </button>
+              )}
               {!readOnly && (
                 <button
                   type="button"

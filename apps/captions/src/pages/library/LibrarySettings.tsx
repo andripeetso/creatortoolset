@@ -41,10 +41,11 @@ const WHERE: Partial<Record<LibraryStepRoute, string>> = {
 };
 
 /** What each switch adds, before where it runs. */
-const WHAT: Record<"describe" | "look" | "embed", string> = {
+const WHAT: Record<"describe" | "look" | "embed" | "pictures", string> = {
   describe: "What is on screen in each video, written down for search.",
   look: "A line for each shot of a longer video.",
   embed: "Search matches by meaning as well as by exact words.",
+  pictures: "Search matches what the footage shows as well as its words.",
 };
 
 /** The two ways a file is imported, in the words of these settings (the add dialog asks the same in its own, ./Import.tsx). */
@@ -225,7 +226,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
     return () => void (live = false);
   }, [library.id, describe, look, embed]);
 
-  const flip = (key: "describe" | "look" | "embed", on: boolean) =>
+  const flip = (key: "describe" | "look" | "embed" | "pictures", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
@@ -258,6 +259,14 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
         {row("describe", "describe", "Descriptions")}
         {row("look", "look", "Shot descriptions")}
         {row("embed", "embed", "Search by meaning")}
+        {/* only where this server makes picture vectors (api/library/pictures.ts): it runs here, nothing to add */}
+        {library.settings.pictures !== undefined && (
+          <Row
+            title="Search by picture"
+            description={WHAT.pictures}
+            control={<Switch aria-label="Search by picture" checked={library.settings.pictures} onCheckedChange={(on) => void flip("pictures", on)} />}
+          />
+        )}
       </Card>
     </Section>
   );

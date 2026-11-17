@@ -67,7 +67,7 @@ const STATIC_ROWS = [
   { section: "library", id: "library-sorting", title: "Folders", keywords: ["media library", "organize", "sort", "sorting", "by type", "by content", "ai"] },
   { section: "library", id: "library-upload", title: "Upload to the server", keywords: ["media library", "upload", "proxies", "cloud", "server", "bucket", "storage"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
-  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "ai"] },
+  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "picture", "ai"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },

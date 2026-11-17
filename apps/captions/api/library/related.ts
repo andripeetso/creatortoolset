@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import type { AuthVars } from "../auth";
-import type { AssetCard } from "../../contracts/library";
+import type { AssetCard, SearchHit } from "../../contracts/library";
 import { libraryDb, librarySetting } from "./db";
 import { cosine, floorOf } from "./embed";
+import { alikeHits } from "./pictures";
 import { CARD, toCard, type CardRow } from "./query";
 import { readerOf, visibleCards } from "./routes";
 import { assetRef, canSee } from "./sources";
@@ -75,4 +76,22 @@ relatedApp.get("/:id/assets/:assetId/related", async (c) => {
   const ordered = ids.flatMap((id) => cards.get(id) ?? []).filter((card) => card.id !== a.id);
   // the viewer's policies first, then the eight: a clip they may not see never takes a place
   return c.json({ related: (await visibleCards(viewer, libraryId, ordered)).slice(0, SHOWN) });
+});
+
+// GET /api/library/:id/assets/:assetId/alike?at → { hits: SearchHit[] }: More like this, the shots that look most like the
+// clip's shot at `at` seconds, or like its card picture (pictures.ts alikeHits); only what the viewer may see
+relatedApp.get("/:id/assets/:assetId/alike", async (c) => {
+  const libraryId = c.req.param("id");
+  const viewer = await readerOf(c.get("user").username, libraryId);
+  const a = viewer
+    ? (libraryDb().prepare("SELECT id, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(c.req.param("assetId"), libraryId) as
+        | { id: string; current_version_id: string | null }
+        | undefined)
+    : undefined;
+  if (!viewer || !a?.current_version_id || !(await canSee(viewer, assetRef(libraryId, a.id, a.current_version_id))))
+    return c.json({ error: "Not found", code: "not_found" }, 404);
+  const at = Number(c.req.query("at"));
+  const hits = alikeHits(libraryId, a.current_version_id, c.req.query("at") !== undefined && Number.isFinite(at) ? at : undefined);
+  const seen = new Set((await visibleCards(viewer, libraryId, hits.map((h) => h.asset))).map((card) => card.id));
+  return c.json({ hits: hits.filter((h: SearchHit) => seen.has(h.asset.id)) });
 });
