@@ -348,6 +348,8 @@ html:not(.dark):has([data-slot$="-overlay"]) body { background: linear-gradient(
 ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
+/* the editor's panels are dark in both themes (components/nle/NleLayout.tsx): their bars too */
+html:not(.dark) [data-nle] ::-webkit-scrollbar-thumb { background: #3f3f46; }
 
 /* Transcript document editor (TranscriptPanel) */
 .cue-line {

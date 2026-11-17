@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Loader2, Magnet, MousePointer2, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, Film, Loader2, Magnet, MousePointer2, Music, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, addTrack, blade, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, paste, place, remove,
@@ -9,13 +9,16 @@ import {
 import { cn } from "@/lib/utils";
 import { NleInspector } from "./NleInspector";
 import { nleAudio } from "@/lib/nle/audio";
-import { NlePlayer, type NleFile } from "./NlePlayer";
+import type { NleFile } from "./NlePlayer";
+import { NleLayout, Panel } from "./NleLayout";
+import { NleViewer } from "./NleViewer";
 
 export type { NleFile };
 import { NleTracks as Timeline, type Tool } from "./NleTracks";
 
-// A non-linear editor for one timeline: the media bin (the page's own) on the left, the viewer in the middle playing the
-// timeline live from its files, the inspector on the right, the timeline below. The page gives the timeline, where its
+// A non-linear editor for one timeline, laid out as editors are (NleLayout): Media on the left (the timeline's own
+// sources, then the page's media bin), the viewer in the middle playing the timeline live from its files, the inspector
+// on the right, the timeline across the bottom. It fills the box it is put in. The page gives the timeline, where its
 // files play from and what Save does; everything else (edits, undo, keys, playback) is here.
 
 /** A clip from the media bin: its file and what is known of it. */
@@ -36,13 +39,15 @@ export interface NleControl {
 }
 
 let clipboard: { track: string; item: NleItem }[] = [];
+/** A drag of one of the timeline's own sources (Media → In this timeline): its key. */
+const SOURCE_MIME = "application/x-ct-nle-source";
 
 const tc = (f: number, fps: number) => {
   const s = Math.floor(f / fps);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}:${String(Math.round(f % fps)).padStart(2, "0")}`;
 };
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, readOnly }: {
+export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -56,6 +61,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   control?: MutableRefObject<NleControl | null>;
   /** what else the transport row says (files not found here, a save that failed) */
   status?: ReactNode;
+  /** what the inspector's Timeline tab says besides the timeline's settings */
+  notes?: ReactNode;
   readOnly?: boolean;
 }) {
   const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(withKeys(initial)));
@@ -203,7 +210,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
+      if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
       const k = e.key.toLowerCase();
       const mod = e.metaKey || e.ctrlKey;
       const f = Math.round(time * fps);
@@ -249,75 +256,101 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
-  const iconBtn = (on: boolean) => cn("inline-flex h-7 items-center gap-1 rounded px-1.5 text-xs", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
+  const iconBtn = (on: boolean) => cn("inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px]", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
+  const sep = <span className="mx-1 h-4 w-px shrink-0 bg-zinc-700/70" />;
+
+  // a drop on a lane: one of the timeline's own sources, or what the page reads from its bin
+  const dropOn = (dt: DataTransfer, at: { track: string; frame: number }) => {
+    const src = dt.getData(SOURCE_MIME);
+    const s = src ? tl.sources[src] : undefined;
+    if (s?.path) {
+      const sfps = s.fps || fps;
+      return lay({ path: s.path, name: nameOfSrc(src), fps: s.fps, w: s.w, h: s.h, ...(s.dur ? { seconds: s.dur / sfps } : {}) }, at);
+    }
+    if (readDrop) void readDrop(dt).then((d) => d && lay(d, at), (e: Error) => toast.error(e.message));
+  };
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col gap-2">
-      <div className={cn("grid min-h-0 gap-2", bin ? "lg:grid-cols-[260px_minmax(0,1fr)_300px]" : "lg:grid-cols-[minmax(0,1fr)_300px]")}>
-        {bin && <aside className="h-[48vh] min-h-[240px] overflow-y-auto rounded-lg border border-zinc-900 bg-zinc-950/60 p-2">{bin}</aside>}
-        <div className="relative flex h-[48vh] min-h-[240px] items-center justify-center overflow-hidden rounded-lg border border-zinc-900 bg-black"
-          onClick={() => play(!playing)}>
-          <NlePlayer tl={shown} time={time} playing={playing} rate={rate} urlOf={urlFor} nameOf={nameOfSrc} className="h-full max-h-full max-w-full" />
-        </div>
-        <aside aria-label="Inspector" className="h-[48vh] min-h-[240px] overflow-x-hidden overflow-y-auto rounded-lg border border-zinc-900 bg-zinc-950/60 p-3 [scrollbar-gutter:stable]">
-          <NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} />
-        </aside>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1 text-xs text-zinc-400">
-        <button type="button" aria-label="Start" title="Start (Home)" onClick={() => seek(0)} className={iconBtn(false)}><SkipBack className="size-3.5" /></button>
-        <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space)" : "Play (Space)"} onClick={() => play(!playing)}
-          className="inline-flex size-7 items-center justify-center rounded-md border border-zinc-800 text-zinc-100 hover:bg-zinc-800">
-          {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
-        </button>
-        <button type="button" aria-label="End" title="End (End)" onClick={() => seek(end)} className={iconBtn(false)}><SkipForward className="size-3.5" /></button>
-        <span className="ml-1 font-mono tabular-nums text-zinc-200">{tc(Math.round(time * fps), fps)}</span>
-        <span className="font-mono tabular-nums text-zinc-600">/ {tc(Math.round(end * fps), fps)}</span>
-        {playing && rate !== 1 && <span className="tabular-nums text-violet-300">{rate}×</span>}
-        <span className="mx-1 h-4 w-px bg-zinc-800" />
-        <button type="button" aria-pressed={tool === "select"} title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
-        <button type="button" aria-pressed={tool === "trim"} title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
-        <button type="button" aria-pressed={tool === "blade"} title="Blade (B): a click cuts there" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
-        <span className="ml-1 inline-flex rounded-md border border-zinc-800 p-0.5">
-          {(["overwrite", "insert"] as const).map((m) => (
-            <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}
-              title={m === "overwrite" ? "A clip put on the timeline replaces what is under it" : "A clip put on the timeline pushes what is after it"}
-              className={cn("rounded px-1.5 py-0.5 capitalize", mode === m ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{m}</button>
-          ))}
-        </span>
-        <button type="button" aria-pressed={snap} title="Snapping (N)" onClick={() => setSnap(!snap)} className={iconBtn(snap)}><Magnet className="size-3.5" /></button>
-        <span className="mx-1 h-4 w-px bg-zinc-800" />
-        <button type="button" title="A video track above the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "V").tl)} className={iconBtn(false)}><Plus className="size-3" />Video</button>
-        <button type="button" title="An audio track below the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "A").tl)} className={iconBtn(false)}><Plus className="size-3" />Audio</button>
-        <span className="mx-1 h-4 w-px bg-zinc-800" />
-        <button type="button" aria-label="Undo" title="Undo (⌘Z)" disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
-        <button type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
-        <div className="ml-auto flex min-w-0 items-center gap-2">
-          {status}
-          {saving && <span className="truncate text-zinc-500">{saving.line}</span>}
-          {!readOnly && (
-            <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
-              title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
-              className="relative inline-flex h-8 min-w-24 items-center justify-center gap-1.5 overflow-hidden rounded-md bg-violet-600 px-3 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-              {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
-              <span className="relative inline-flex items-center gap-1.5">
-                {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                {saving ? (saving.done ? `Saving ${Math.round(saving.done * 100)} %` : "Saving") : dirty ? "Save" : "Saved"}
-              </span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="min-h-32 flex-1 overflow-y-auto">
-      <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} marks={marks} onSeek={seek} onSelect={setSelected}
-        onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
-        onBlade={(f, key) => commit(blade(tl, f, [key]))}
-        onMenu={(at) => setMenu(at)}
-        onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
-        onRemoveTrack={(id) => commit(removeTrack(tl, id))}
-        onDrop={readDrop ? (dt, at) => void readDrop(dt).then((d) => d && lay(d, at), (e: Error) => toast.error(e.message)) : undefined} />
-      </div>
+    <>
+      <NleLayout
+        media={
+          <Panel title="Media" className="flex-1">
+            <Sources tl={tl} nameOf={nameOfSrc} here={urlFor} bin={!!bin}
+              onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
+            {bin && <div className="flex min-h-0 flex-1 flex-col p-2">{bin}</div>}
+          </Panel>
+        }
+        viewer={
+          <Panel title="Viewer" className="flex-1" bar={<span className="min-w-0 truncate text-zinc-500">{tl.timeline.name}</span>}>
+            <NleViewer tl={shown} time={time} playing={playing} rate={rate} urlOf={urlFor} nameOf={nameOfSrc} onClick={() => play(!playing)}
+              clock={
+                <span className="font-mono tabular-nums">
+                  <span className="text-[13px] text-zinc-100">{tc(Math.round(time * fps), fps)}</span>
+                  <span className="text-zinc-500"> / {tc(Math.round(end * fps), fps)}</span>
+                  {playing && rate !== 1 && <span className="pl-1.5 text-violet-300">{rate}×</span>}
+                </span>
+              }
+              transport={
+                <>
+                  <button type="button" aria-label="Start" title="Start (Home)" onClick={() => seek(0)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipBack className="size-3.5" /></button>
+                  <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space, K)" : "Play (Space, L; J plays back)"} onClick={() => play(!playing)}
+                    className="inline-flex size-7 items-center justify-center rounded-full bg-zinc-200 text-zinc-900 hover:bg-white">
+                    {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
+                  </button>
+                  <button type="button" aria-label="End" title="End (End)" onClick={() => seek(end)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipForward className="size-3.5" /></button>
+                </>
+              } />
+          </Panel>
+        }
+        inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} />}
+        timeline={
+          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} marks={marks} onSeek={seek} onSelect={setSelected}
+            onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
+            onBlade={(f, key) => commit(blade(tl, f, [key]))}
+            onMenu={(at) => setMenu(at)}
+            onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
+            onRemoveTrack={(id) => commit(removeTrack(tl, id))}
+            onDrop={readOnly ? undefined : dropOn}
+            tools={
+              <>
+                <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                {sep}
+                <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Edit mode">
+                  {(["overwrite", "insert"] as const).map((m) => (
+                    <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}
+                      title={m === "overwrite" ? "A clip put on the timeline replaces what is under it" : "A clip put on the timeline pushes what is after it"}
+                      className={cn("h-5 rounded-[3px] px-1.5 capitalize", mode === m ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{m}</button>
+                  ))}
+                </span>
+                <button type="button" aria-pressed={snap} aria-label="Snapping" title="Snapping (N)" onClick={() => setSnap(!snap)} className={iconBtn(snap)}><Magnet className="size-3.5" /></button>
+                {sep}
+                <button type="button" title="A video track above the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "V").tl)} className={iconBtn(false)}><Plus className="size-3" />Video</button>
+                <button type="button" title="An audio track below the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "A").tl)} className={iconBtn(false)}><Plus className="size-3" />Audio</button>
+                {sep}
+                <button type="button" aria-label="Undo" title="Undo (⌘Z)" disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
+              </>
+            }
+            end={
+              <>
+                <span className="flex min-w-0 items-center gap-2 truncate">{status}</span>
+                {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
+                {!readOnly && (
+                  <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
+                    title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
+                    className="relative inline-flex h-6 min-w-[5.5rem] shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded bg-violet-600 px-2.5 text-[12px] font-medium text-white hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-300">
+                    {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
+                    <span className="relative inline-flex items-center gap-1.5">
+                      {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      {saving ? (saving.done ? `Saving ${Math.round(saving.done * 100)} %` : "Saving") : dirty ? "Save" : "Saved"}
+                    </span>
+                  </button>
+                )}
+              </>
+            } />
+        } />
 
       {menu && (
         <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
@@ -339,6 +372,55 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+/** Media → In this timeline: the sources its clips play, each with how often it is used; a click selects its clips,
+ *  a drag lays it on a track. One with no file here has an amber mark. */
+function Sources({ tl, nameOf, here, bin, onPick }: {
+  tl: NleTimeline; nameOf: (src: string) => string; here: (src: string) => NleFile | null; bin: boolean; onPick: (src: string) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const uses = new Map<string, { n: number; video: boolean }>();
+  for (const [id, t] of Object.entries(tl.tracks)) for (const i of t.items) {
+    const u = uses.get(i.src) ?? { n: 0, video: false };
+    u.n++;
+    u.video ||= isVideo(id);
+    uses.set(i.src, u);
+  }
+  const list = [...uses.entries()].sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])));
+  return (
+    <div className={cn("flex min-h-0 flex-col border-b border-black/60", bin ? "max-h-[45%] shrink-0" : "flex-1")}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
+        className="flex h-7 shrink-0 items-center gap-1.5 px-2 text-[11px] font-medium text-zinc-300 hover:bg-white/[0.03]">
+        {open ? <ChevronDown className="size-3.5 text-zinc-500" /> : <ChevronRight className="size-3.5 text-zinc-500" />}
+        In this timeline <span className="tabular-nums text-zinc-500">{list.length}</span>
+      </button>
+      {open && (
+        <ul aria-label="In this timeline" className="min-h-0 overflow-x-hidden overflow-y-scroll pb-1">
+          {list.map(([src, u]) => {
+            const away = !here(src);
+            return (
+              <li key={src}>
+                <button type="button" draggable={!!tl.sources[src]?.path} title={String(tl.sources[src]?.path ?? src)}
+                  onDragStart={(e) => { e.dataTransfer.setData(SOURCE_MIME, src); e.dataTransfer.effectAllowed = "copy"; }}
+                  onClick={() => onPick(src)}
+                  className="flex h-7 w-full min-w-0 items-center gap-2 px-2 text-left text-[12px] text-zinc-300 hover:bg-white/[0.05]">
+                  <span className="relative shrink-0 text-zinc-500">
+                    {u.video ? <Film className="size-3.5" /> : <Music className="size-3.5" />}
+                    {away && <span title="Not found here" className="absolute -top-1 -right-1 size-1.5 rounded-full bg-amber-400" />}
+                  </span>
+                  <span className={cn("min-w-0 flex-1 truncate", away && "text-zinc-500")}>{nameOf(src)}</span>
+                  <span className="shrink-0 tabular-nums text-[11px] text-zinc-500" title={`Used ${u.n} time${u.n === 1 ? "" : "s"}`}>{u.n}</span>
+                </button>
+              </li>
+            );
+          })}
+          {!list.length && <li className="px-2 py-3 text-[12px] text-zinc-500">Empty</li>}
+        </ul>
+      )}
+      {bin && <div className="flex h-7 shrink-0 items-center border-t border-black/60 px-2 text-[11px] font-medium text-zinc-300">Library</div>}
     </div>
   );
 }

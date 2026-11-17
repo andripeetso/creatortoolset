@@ -15,7 +15,7 @@ const AHEAD = 512;
  * `labelWidth` is a column of lane names inside the content, before 0:00 (the frame keeps the ruler's part of it in
  * place while the content scrolls; `rulerLabel` goes in it); `right` is the room after the end.
  */
-export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, right = 0, rulerHeight, className, content, ruler, rulerLabel, rulerChildren, children }: {
+export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, right = 0, rulerHeight, stickyRuler, className, content, ruler, rulerLabel, rulerChildren, children }: {
   scroller: RefObject<HTMLDivElement | null>;
   inner: RefObject<HTMLDivElement | null>;
   seconds: number;
@@ -24,6 +24,8 @@ export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, r
   labelWidth?: number;
   right?: number;
   rulerHeight: number;
+  /** the ruler stays at the top while the lanes scroll up and down under it (its classes: its background) */
+  stickyRuler?: string;
   /** the scroller's own classes (its padding, how it sits in its row) */
   className?: string;
   content?: HTMLAttributes<HTMLDivElement>;
@@ -43,9 +45,9 @@ export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, r
       onScroll={(e) => setMoved(Math.floor(e.currentTarget.scrollLeft / AHEAD))}>
       <div ref={inner} {...content} className={cn("relative", content?.className)}
         style={{ width: seconds > 0 && pps > 0 ? labelWidth + seconds * pps + right : "100%" }}>
-        <div className="flex" style={{ height: rulerHeight }}>
+        <div className={cn("flex", stickyRuler && "sticky top-0 z-[35]", stickyRuler)} style={{ height: rulerHeight }}>
           {labelWidth > 0 && (
-            <div className="sticky left-0 z-40 flex shrink-0 items-center bg-zinc-950 px-1" style={{ width: labelWidth }}>{rulerLabel}</div>
+            <div className={cn("sticky left-0 z-40 flex shrink-0 items-center px-1", stickyRuler ? "bg-inherit" : "bg-zinc-950")} style={{ width: labelWidth }}>{rulerLabel}</div>
           )}
           <div {...ruler} className={cn("relative flex-1 overflow-hidden", ruler?.className)}>
             {marks.at.map((t) => (
