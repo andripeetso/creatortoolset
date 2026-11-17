@@ -323,8 +323,8 @@ export interface LibraryEstimate {
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
 export interface LibraryStage {
-  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, embed = search by meaning */
-  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "look" | "embed";
+  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, timeline = Gemini's timelines (progress only, no job of their own), embed = search by meaning */
+  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "look" | "timeline" | "embed";
   done: number;
   /** done, failed and still to do since this run of the queue began: neither number goes down while it runs */
   of: number;

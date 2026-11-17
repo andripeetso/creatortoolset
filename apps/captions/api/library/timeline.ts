@@ -699,8 +699,9 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
     .all(now - RETRY_MS) as { id: string; actor: string; lib: string }[];
   for (const r of rows) {
     if ((swept.get(r.id) ?? 0) > now || watching.has(r.id)) continue;
-    swept.set(r.id, now + RETRY_MS);
+    // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
     if (!canWatch(db, r.lib, r.actor)) continue;
+    swept.set(r.id, now + RETRY_MS);
     if (queueLook(r.id, r.actor)) return true;
   }
   return false;

@@ -4,7 +4,7 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
+import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watching, watchUsdPerHour } from "./timeline";
 import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
@@ -422,6 +422,15 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     const of = c ? c.done + c.failed + c.open : 0;
     const now = working.find((w) => w.kind === kind)?.title;
     if (of) stages.push({ kind, done: c!.done, of, failed: c!.failed, ...(now ? { now } : {}) });
+    // Timelines are no job of their own: Gemini watches each clip after its shot descriptions (timeline.ts watchAfter)
+    if (kind === "look" && of && librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username)) {
+      const t = db
+        .prepare(`SELECT IFNULL(SUM(error IS NULL), 0) AS done, IFNULL(SUM(error IS NOT NULL), 0) AS failed FROM timelines WHERE version_id IN (SELECT value FROM json_each(?))`)
+        .get(JSON.stringify([...run])) as { done: number; failed: number };
+      const on = [...run].find((v) => watching.has(v));
+      const title = on && (db.prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(on) as { title: string } | undefined)?.title;
+      stages.push({ kind: "timeline", done: t.done, of: Math.max(of, t.done + t.failed), failed: t.failed, ...(title ? { now: title } : {}) });
+    }
   }
   const done = counts.reduce((n, r) => n + r.done, 0);
   // time left: each step's jobs at this server's pace, the steps side by side
