@@ -35,6 +35,7 @@ import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
 import { backfillRoots } from "./places";
+import { copiesLack, copiesWake } from "./copies";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -391,7 +392,8 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
-  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies") return false;
+  // held until every copy of the library has it (copies.ts)
+  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies" || copiesLack(versionId)) return false;
   // the rows first: a delete that fails leaves an unread file behind, never a version pointing at nothing
   db.prepare("UPDATE asset_versions SET source_key = ?, mac_path = from_path, mac_device = from_device WHERE id = ?").run(v.proxy, versionId);
   await blobs.delete(v.source_key);
@@ -595,5 +597,6 @@ export function markReady(db: ReturnType<typeof libraryDb>, versionId: string, p
   const want = ["wave", ...(p.vcodec ? ["thumb"] : [])];
   const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(versionId) as { kind: string }[]).map((h) => h.kind));
   // never over `missing`: only the folder walk says an original is back (watch.ts refreshMissing)
-  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ? AND state != 'missing'").run(versionId);
+  // the library's copies hear of it at once (copies.ts)
+  if (want.every((k) => have.has(k)) && db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ? AND state NOT IN ('missing', 'ready')").run(versionId).changes) copiesWake(versionId);
 }

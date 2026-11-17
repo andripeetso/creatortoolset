@@ -107,6 +107,27 @@ export const LIBRARY_LOOK_KIND = "library-look";
  */
 export const HELPER_CHECK_KIND = "helper-check";
 
+/**
+ * The kind that keeps a copy of a Media Library in a folder on the person's own computer (Settings → Media Library →
+ * Copies; api/library/copies.ts; the Mac app's LibraryCopyJob.swift, the Linux helper's helper.py). Claimed on the road
+ * above, only by the computer the copy is on, of the library owner's account, one file at a time. The claim's options:
+ *   `op` "copy": `copy` (its id), `library`, `root` (the folder), `init` ("1": its first job: write the marker if the
+ *        folder has none), `key` (the file's id), `asset`, `n` (its version), `rel` (its path in the folder, fixed at
+ *        first copy), `prev` (the path of the older version there, moved into .versions/ first), `size`, `sha256` (absent:
+ *        check the size only), `paths` (JSON list of paths on this computer to read it from, best first) and `url`
+ *        (relative to the server: GET it with the same token, Range allowed, when no path holds it)
+ *   `op` "check": `copy`, `library`, `root`: each file the marker lists is still there at its size; report the gone ones
+ *   POST job/copy/:id   { beat: true, free? }                           → {}   keeps the job the computer's (3 min)
+ *   POST job/copy/:id   { done: { rel, size, sha256 }, free? }          → DeviceEnded   the file is in the folder at `rel`
+ *   POST job/copy/:id   { gone: [keys], free? }                         → DeviceEnded   a check's answer
+ *   POST job/copy/:id   { state: "reconnect" | "full", free? }          → DeviceEnded   no marker of this copy there, or the disk is full
+ *   POST job/copy/:id/fail   { error }                                  → DeviceEnded   this file could not be copied (tried again in an hour)
+ * The folder holds COPY_MARKER (contracts/library.ts CopyMarker) at its top. A file is written as `.<name>.partial`,
+ * synced, checked and renamed; an older version moves to `.versions/<dir>/<stem> v<n><ext>`; a file at `rel` that is not
+ * this clip's older version and not this very file stays, and the new one goes beside it as "<stem> 2<ext>".
+ */
+export const COPY_KIND = "copy";
+
 /** What the computer found: ffmpeg runs, how fast it encodes, and each folder read or why not. */
 export interface HelperCheckSent {
   ffmpeg: boolean;

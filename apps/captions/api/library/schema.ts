@@ -536,4 +536,35 @@ export const MIGRATIONS: string[] = [
   // ran the cut model, NULL where look.ts cutsOf measured them. A library can hold both; a version is read again only
   // when its shots are asked for again
   `ALTER TABLE asset_versions ADD COLUMN cuts_by TEXT;`,
+  // 33: copies of a library in folders on its owner's computers (copies.ts). state is the computer's last word on the
+  // folder; checked_at its last check of the files there; retry_at holds its jobs back after a reconnect or a full disk.
+  // copy_files: each file in a copy, by version id (or a plug-in item's key), at the path it was put at; a row with
+  // copied_at NULL is a try that failed (error), tried again an hour after tried_at
+  `
+  CREATE TABLE library_copies (
+    id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    device TEXT NOT NULL,
+    path TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','ok','reconnect','full')),
+    last_seen INTEGER,
+    free_bytes INTEGER,
+    checked_at INTEGER,
+    retry_at INTEGER,
+    created_at INTEGER NOT NULL,
+    UNIQUE (device, path)
+  );
+  CREATE INDEX library_copies_library ON library_copies(library_id);
+  CREATE TABLE copy_files (
+    copy_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    rel_path TEXT,
+    size INTEGER,
+    sha256 TEXT,
+    copied_at INTEGER,
+    error TEXT,
+    tried_at INTEGER,
+    PRIMARY KEY (copy_id, version_id)
+  );
+  `,
 ];

@@ -16,6 +16,7 @@ import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
 import { reviewApp, uploadRelayApp } from "./review";
 import { libraryApp } from "./library/routes";
+import { copiesApp } from "./library/copies";
 import { uploadTargetApp } from "./library/upload-target";
 import { collectionApp } from "./library/collections";
 import { searchApp } from "./library/search";
@@ -486,6 +487,7 @@ app.get("/fs/:token", (c, next) => {
 mountLibraryRoutes(app, serverPlugins);
 app.route("/api/upload-target", uploadTargetApp);
 app.route("/api/library", publicShareApp);
+app.route("/api/library", copiesApp);
 app.route("/api/library", libraryApp);
 app.route("/api/library", workshopLibraryApp);
 app.route("/api/library", shareApp);

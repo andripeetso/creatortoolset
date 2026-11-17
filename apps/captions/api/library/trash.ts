@@ -4,6 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
 import { dropMacFrames } from "./on-mac";
+import { assetsCopiesLack } from "./copies";
 
 /**
  * The library's trash purge (tasks/media-library-plan.md, section 5): an asset trashed longer than LIBRARY_TRASH_DAYS
@@ -35,6 +36,7 @@ const inList = (n: number) => Array(n).fill("?").join(", ");
 /** Deletes assets trashed before now − LIBRARY_TRASH_DAYS. Returns how many went. */
 export async function purgeTrash(now = Date.now()): Promise<number> {
   const d = libraryDb();
+  let lacking: Set<string> | undefined;
   // an asset with a job running is left for the next pass: the worker may be writing a derivative for it
   const assets = (
     d
@@ -46,6 +48,8 @@ export async function purgeTrash(now = Date.now()): Promise<number> {
   )
     .map((a) => a.id)
     .filter((id) => !inReview(id))
+    // an original a copy still lacks stays until it has it (copies.ts); Stop copying lets it go
+    .filter((id, _, all) => !(lacking ??= assetsCopiesLack(all)).has(id))
     .slice(0, 500); // ponytail: 500 a pass keeps the IN lists short; the next hour takes the rest
   await deleteAssets(assets);
   await purgeTrashedPieces(now);
