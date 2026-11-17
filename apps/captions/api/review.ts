@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -40,6 +40,8 @@ import { deleteAssets } from "./library/trash";
 import { emitEvent } from "./lib/events";
 import { announceSoon } from "./lib/announce-soon";
 import { announce } from "./lib/sync";
+import type { Started } from "./work/tasks";
+import type { FrameInput, REVIEW_FRAME, Stroke } from "./work/tasks/review";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
 import type { Critique } from "../contracts/edit-plan";
@@ -183,10 +185,6 @@ interface Meta {
   updatedAt: number;
 }
 
-interface Stroke {
-  color: string;
-  points: [number, number][];
-}
 
 interface Comment {
   id: string;
@@ -473,6 +471,8 @@ async function jobVersion(id: string, n: number, patch: Partial<Version>) {
   return m;
 }
 
+/** Serving (local-first decision 5): an uploaded review file is read, given its thumbnail and made playable in a browser
+ *  here, on the server that plays it, whatever Settings → Server's video work says. Its frames are computer tasks. */
 async function processVersion(id: string, n: number): Promise<void> {
   const key = `${id}/${n}`;
   const src = sourcePath(id, n);
@@ -777,69 +777,20 @@ export function cleanDrawing(raw: unknown): Stroke[] | undefined {
   return out.length ? out : undefined;
 }
 
-/** Paint strokes (0–1 points) onto an RGBA frame, about as thick as the page draws them. */
-export function paintStrokes(rgba: Buffer, w: number, h: number, strokes: Stroke[]): void {
-  const r = Math.max(2, Math.round(w / 200));
-  const dot = (cx: number, cy: number, rgb: number[]) => {
-    for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(h - 1, Math.ceil(cy + r)); y++) {
-      for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(w - 1, Math.ceil(cx + r)); x++) {
-        if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) rgba.set([...rgb, 255], (y * w + x) * 4);
-      }
-    }
-  };
-  for (const s of strokes) {
-    const rgb = [1, 3, 5].map((i) => parseInt(s.color.slice(i, i + 2), 16));
-    const pts = s.points.map(([x, y]) => [x * (w - 1), y * (h - 1)]);
-    pts.forEach(([x, y], i) => {
-      const [px, py] = pts[i - 1] ?? [x, y];
-      const steps = Math.max(1, Math.ceil(Math.hypot(x - px, y - py) / (r / 2)));
-      for (let k = 1; k <= steps; k++) dot(px + ((x - px) * k) / steps, py + ((y - py) * k) / steps, rgb);
-    });
-  }
-}
-
-/** ffmpeg with an optional stdin, its stdout as one buffer. */
-function ffmpegPipe(args: string[], input?: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", ...args]);
-    const out: Buffer[] = [];
-    let err = "";
-    p.stdout.on("data", (d: Buffer) => out.push(d));
-    p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
-    p.on("error", reject);
-    p.on("close", (code) => (code === 0 ? resolve(Buffer.concat(out)) : reject(new Error(err || `ffmpeg ${code}`))));
-    p.stdin.on("error", () => {}); // ffmpeg may exit before reading it all
-    p.stdin.end(input);
-  });
-}
-
 // frames decode on request and share links are public: a few at a time
 let framesBusy = 0;
 const FRAMES_AT_ONCE = 3;
 
-/** The frame at t as a JPEG `width` wide, with a comment's drawing painted on it. */
-export async function frameJpeg(file: string, t: number, width: number, strokes?: Stroke[]): Promise<Buffer> {
-  // decoded (so rotated like the player) and scaled; its height follows from the bytes
-  const rgba = await ffmpegPipe([
-    "-ss", String(t), "-i", file, "-frames:v", "1",
-    "-vf", `scale=${width}:-2`, "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
-  ]);
-  const height = rgba.length / (width * 4);
-  if (!Number.isInteger(height) || height < 1) throw new Error("No frame there");
-  if (strokes) paintStrokes(rgba, width, height, strokes);
-  return ffmpegPipe([
-    "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${width}x${height}`, "-i", "pipe:0",
-    "-frames:v", "1", "-q:v", "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1",
-  ], rgba);
-}
-
-/** What an AI reads of a reference: a still at most 1568 px, or one that
- *  moves as 9 frames spread across it in a 3×3 sheet. */
-async function refLook(file: string, kind: Ref["kind"]): Promise<Buffer> {
-  const fit = (px: number) => `scale=w='min(${px},iw)':h='min(${px},ih)':force_original_aspect_ratio=decrease`;
-  const duration = kind === "video" ? ((await probe(file))?.duration ?? 0) : 0;
-  const vf = kind === "image" ? fit(1568) : `fps=${duration > 0 ? 9 / duration : 1},${fit(512)},tile=3x3`;
-  return ffmpegPipe(["-i", file, "-vf", vf, "-frames:v", "1", "-q:v", "3", "-c:v", "mjpeg", "-f", "image2", "pipe:1"]);
+/** A comment's frame or a reference's look (work/tasks/review.ts), made where mayRunHere says: one already queued or
+ *  running is waited for, not started again. Its task goes to the video owner's computers. */
+const FRAME: typeof REVIEW_FRAME = "review-frame";
+// work/tasks reaches the AI Editor's engine, which loads routes that load this file: imported when first used
+const tasks = () => import("./work/tasks");
+async function startFrame(ref: string, m: Meta, input: FrameInput): Promise<Started<null>> {
+  const { startTask, taskFor, taskWaitLine } = await tasks();
+  const had = taskFor(FRAME, ref);
+  if (had?.state === "queued" || had?.state === "running") return { state: "queued", id: had.id, line: taskWaitLine(had) };
+  return startTask<FrameInput, null>(FRAME, ref, m.owner, (await workspaceOfVideo(m)) ?? null, input);
 }
 
 /** The references a new comment names: ones uploaded to this version. */
@@ -2372,16 +2323,24 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const w = Math.round(Math.min(1080, Math.max(160, Number(c.req.query("w")) || 540)) / 2) * 2;
     // a frame or so before the end: seeking past the last frame yields nothing
     const at = Math.max(0, Math.min(t, version.duration - 1 / (version.fps || 25)));
-    if (framesBusy >= FRAMES_AT_ONCE) return c.json({ error: "Busy, try again in a moment" }, 503);
-    framesBusy++;
-    try {
-      const jpeg = await frameJpeg(sourcePath(v.meta.id, n), at, w, cm?.drawing);
-      return c.body(new Uint8Array(jpeg), 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=60" });
-    } catch (e) {
-      return c.json({ error: `Couldn't read that frame: ${(e as Error).message.slice(0, 200)}` }, 500);
-    } finally {
-      framesBusy--;
+    const key = createHash("sha256").update(JSON.stringify([at, w, cm?.drawing ?? null])).digest("hex").slice(0, 20);
+    const out = path.join(versionDir(v.meta.id, n), "frames", `${key}.jpg`);
+    if (!existsSync(out)) {
+      if (framesBusy >= FRAMES_AT_ONCE) return c.json({ error: "Busy, try again in a moment" }, 503);
+      framesBusy++;
+      try {
+        const input: FrameInput = { src: sourcePath(v.meta.id, n), out, at, width: w, strokes: cm?.drawing, ...(version.local ? { paths: { src: version.local } } : {}) };
+        const got = await startFrame(`${v.meta.id}/${n}/${key}`, v.meta, input);
+        if (got.state === "queued") return c.json({ waiting: true, line: got.line ?? null }, 202);
+      } catch (e) {
+        return c.json({ error: `Couldn't read that frame: ${(e as Error).message.slice(0, 200)}` }, 500);
+      } finally {
+        framesBusy--;
+      }
     }
+    const jpeg = await readFile(out).catch(() => null);
+    if (!jpeg) return c.json({ error: "Not ready" }, 409);
+    return c.body(new Uint8Array(jpeg), 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=60" });
   });
 
   /** A reference (an image or a video, ≤ 50 MB: boot.ts's body cap) for the
@@ -2405,7 +2364,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     try {
       await writeBody(c, file);
       ref.bytes = (await stat(file)).size;
-      await writeFile(`${file}.jpg`, await refLook(file, kind));
+      await startFrame(`${v.meta.id}/${n}/refs/${ref.id}`, v.meta, { look: kind, src: file, out: `${file}.jpg` });
     } catch {
       await rm(file, { force: true });
       return c.json({ error: "Could not read that file as an image or a video" }, 400);
@@ -2421,7 +2380,12 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const rid = c.req.param("rid");
     if (!v || !Number.isInteger(n) || !UUID.test(rid)) return c.json({ error: "Not found" }, 404);
     const file = path.join(refsDir(v.meta.id, n), rid);
-    if (c.req.param("file") === "look") return sendFile(c, `${file}.jpg`, "image/jpeg");
+    if (c.req.param("file") === "look") {
+      const { taskFor, taskWaitLine } = await tasks();
+      const t = existsSync(`${file}.jpg`) ? undefined : taskFor(FRAME, `${v.meta.id}/${n}/refs/${rid}`);
+      if (t?.state === "queued" || t?.state === "running") return c.json({ waiting: true, line: taskWaitLine(t) ?? null }, 202);
+      return sendFile(c, `${file}.jpg`, "image/jpeg");
+    }
     const ref = await readFile(`${file}.json`, "utf-8").then((s) => JSON.parse(s) as Ref, () => null);
     return ref ? sendFile(c, file, ref.mime) : c.json({ error: "Not found" }, 404);
   });
