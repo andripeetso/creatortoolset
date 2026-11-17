@@ -142,7 +142,7 @@ const ONE_EACH = {
 describe.skipIf(pluginWorkspaceStores().length > 0)("deleting a workspace", () => {
   it("counts what it holds, its member's work in it too, and deletes exactly that", async () => {
     const before = await contents(B);
-    expect(counts(before)).toEqual({ ...ONE_EACH, memories: 2 }); // alex's and bo's
+    expect(counts(before)).toEqual({ ...ONE_EACH, "memory rules": 2 }); // alex's and bo's
     expect(before.ownFiles).toBe(true);
     // only its owner deletes it
     expect((await call("bo", "DELETE", `/api/workshop/projects/${B}`)).status).toBe(404);
@@ -169,7 +169,7 @@ describe.skipIf(pluginWorkspaceStores().length > 0)("deleting a workspace", () =
     expect(existsSync(at("library", "blobs", "libraries", lib.b))).toBe(false);
     expect(readFileSync(take, "utf-8")).toBe("the person's own video");
     // nothing of B's is left to count, and A's are all still there
-    expect(counts(await contents(A))).toEqual({ ...ONE_EACH, memory: 1 });
+    expect(counts(await contents(A))).toEqual({ ...ONE_EACH, "memory rule": 1 });
   });
 
   it("the first brand takes its unstamped records with it; what is kept for every workspace stays", async () => {

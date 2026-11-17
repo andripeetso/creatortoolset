@@ -196,7 +196,7 @@ export const STORES: WorkspaceStore[] = [
     },
   },
   // a memory, task or context file kept for every workspace has no stamp, and stays
-  { name: ["memory", "memories"], find: async (a, ws) => (await import("./memory")).workspaceFacts(a.username, stamped(ws.has)) },
+  { name: ["memory rule", "memory rules"], find: async (a, ws) => (await import("./memory")).workspaceFacts(a.username, stamped(ws.has)) },
   { name: ["scheduled task", "scheduled tasks"], find: async (a, ws) => (await import("../automations")).workspaceTasks(a.username, stamped(ws.has)) },
   { name: ["folder", "folders"], find: async (a, ws) => (await import("../folders")).workspaceToolFolders(a.username, ws.has) },
   FOOTAGE_FOLDERS,
