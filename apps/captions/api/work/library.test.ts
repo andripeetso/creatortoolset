@@ -305,6 +305,36 @@ describe("library work on the computer that has the file", () => {
     await writeBalance("tiny", { on: true, weights: {} });
     rmSync(path.join(dir, "storage", "tiny.json"));
   }, 60_000);
+
+  it("a job parked for a computer is taken once one comes online: its away line goes, and the claim gets it", async () => {
+    const { WAITS_FOR_COMPUTER, enqueueJob } = await import("../library/jobs");
+    const { progress } = await import("../library/estimate");
+    const id = "ver_park";
+    d.exec(`
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_park', 'lib_p', 'video', 'park', 'tiny', 0, NULL);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, mac_path, mac_device) VALUES
+        ('${id}', 'ast_park', 1, 'mac:${id}', 1, 'x', 'ready', 'tiny', 0, '/Users/tiny/Movies/park.mp4', '${mac.device.id}');
+    `);
+    enqueueJob(d, "lib_p", id, "wave", "tiny");
+    const job = () => d.prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'wave'").get(id) as unknown as JobRow & { held_by: string | null };
+    const awayCount = async () => (await progress("lib_p", "tiny")).waiting.filter((w) => w.away).reduce((n, w) => n + w.count, 0);
+    // parked while no computer was there: the line says so, and the Activity counts it as away
+    d.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(WAITS_FOR_COMPUTER, job().id);
+    const before = await awayCount();
+    // the Mac is online (its claim is fresh): the server leaves the job to it and clears the old line
+    await tick(Date.now(), ["wave"]);
+    expect(job()).toMatchObject({ state: "queued", error: null });
+    expect(await awayCount()).toBe(before - 1);
+    // and the Mac's next claim takes it
+    let got: LibraryPackage | undefined;
+    for (let i = 0; i < 30 && !got; i++) {
+      const lib = (await claimAs(mac.token, { machine: MAC })).lib;
+      if (!lib) break;
+      if (lib.job.versionId === id) got = lib;
+    }
+    expect(got?.job.kind).toBe("wave");
+    expect(job()).toMatchObject({ state: "running", held_by: mac.device.id });
+  });
 });
 
 /** A phone's upload of `file` to `lib`: the server holds the original, no computer has it. */

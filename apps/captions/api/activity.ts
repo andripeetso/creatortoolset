@@ -221,7 +221,8 @@ export function appRows(w: AppWork): ActivityRow[] {
       if (x.limit) add("limit", what, { reason: x.missing });
       else {
         const { text, href } = waitingLine(x);
-        add(`${x.away ? "away" : "key"}:${x.step}`, text, { state: "ready", href });
+        // a step waiting for one of the person's computers is not theirs to act on yet: it stays in the working list, not "Waiting on you"
+        add(`${x.away ? "away" : "key"}:${x.step}`, text, { state: x.away ? "working" : "ready", href });
       }
     }
   }

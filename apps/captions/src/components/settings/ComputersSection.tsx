@@ -208,13 +208,12 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
   ) : null;
   const subtitle = (
     <>
-      {[mine ? "This Mac" : null, kind, state].filter(Boolean).map((part, i) => (
+      {[mine ? "This Mac" : null, kind, state, hw ? <span className="hidden sm:inline">{hw}</span> : null].filter(Boolean).map((part, i) => (
         <span key={i}>
           {i > 0 && " · "}
           {part}
         </span>
       ))}
-      {hw && <span className="hidden sm:inline"> · {hw}</span>}
     </>
   );
   // this Mac is titled with its own name and says "This Mac" first in its line (a long title would cut off)

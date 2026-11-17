@@ -145,9 +145,12 @@ final class LocationAgent: @unchecked Sendable {
             }
             for url in entries {
                 guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isSymbolicLink != true, v.isPackage != true else { continue }
-                if v.isDirectory == true { dirs.append(url); continue }
-                guard v.isRegularFile == true, MediaFiles.isMedia(url.path), let size = v.fileSize else { continue }
-                files.append(ListedFile(path: url.path, bytes: Int64(size), mtime: Int64(((v.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000).rounded())))
+                // under the folder's own path as the person added it: the system may hand back the real path of a
+                // folder reached through a link (/var → /private/var), which the server would not find inside the folder
+                let child = dir.appendingPathComponent(url.lastPathComponent, isDirectory: v.isDirectory == true)
+                if v.isDirectory == true { dirs.append(child); continue }
+                guard v.isRegularFile == true, MediaFiles.isMedia(child.path), let size = v.fileSize else { continue }
+                files.append(ListedFile(path: child.path, bytes: Int64(size), mtime: Int64(((v.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000).rounded())))
             }
         }
         return (files.sorted { $0.path < $1.path }, unreadable.sorted())
