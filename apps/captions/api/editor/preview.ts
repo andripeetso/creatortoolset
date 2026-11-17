@@ -243,11 +243,14 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
   await mkdir(path.dirname(out), { recursive: true });
   const grade = onComputer.on ? (await ask<{ cdl?: Cdl }>("grade")).cdl : await gradeOf(ownerOf(edit), edit.bundle);
   const files = await localFiles(d.timeline, edit.id, true);
-  // a subject clicked in Review is followed here, on the computer that renders (subject.ts)
-  const followed = await followPicked(d.timeline, files, signal, () => sayFor(job, "Setting up the subject tracker, the first time only (about 4 GB)"));
+  // a subject clicked in Review is followed here, on the computer that renders (subject.ts); when it can't be (no card,
+  // the tracker failed: its install, the card's memory), the window stays on the click, the note says why, the cut renders
+  const followed = await followPicked(d.timeline, files, signal, () => sayFor(job, "Setting up the subject tracker, the first time only (about 4 GB)")).catch((e: Error) => e);
   if (signal.aborted) return;
-  if (followed === "held" && !d.notes.includes(HELD_NOTE)) await saveDraft(edit.id, variant, (d = { ...d, notes: [...d.notes, HELD_NOTE] }));
-  else if (followed && followed !== "held") await saveDraft(edit.id, variant, (d = { ...d, timeline: followed, notes: d.notes.filter((n) => n !== HELD_NOTE) }));
+  const others = d.notes.filter((n) => !n.startsWith(HELD_NOTE));
+  const held = followed instanceof Error ? `${HELD_NOTE} (${followed.message})` : followed === "held" ? HELD_NOTE : null;
+  if (held && !d.notes.includes(held)) await saveDraft(edit.id, variant, (d = { ...d, notes: [...others, held] }));
+  else if (followed && !held) await saveDraft(edit.id, variant, (d = { ...d, timeline: followed as Timeline, notes: others }));
   await renderPreview(d.timeline, { ...files, ...postFiles(edit.id, variant) }, out, signal, grade);
   if (signal.aborted || d.due) return;
   await fileInReview(edit, variant, d.timeline, saidOf(d), job.actor);
