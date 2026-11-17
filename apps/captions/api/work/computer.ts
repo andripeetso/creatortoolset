@@ -15,7 +15,7 @@ import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
-import { cancelLibraryJob, runLibraryJob, runPictureJob, scratchRoom, stopLibraryJob, sweepScratch } from "./library";
+import { cancelLibraryJob, LIBRARY_HERE, runLibraryJob, runPictureJob, scratchRoom, stopLibraryJob, sweepScratch } from "./library";
 import { processesGone } from "../library/media/run";
 import { claimLook, looksHere } from "./look";
 import { machineNow } from "./machine";
@@ -136,6 +136,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
         steps: only ? [] : pluginEditorSteps().map((s) => s.id),
         cache: cacheReport(),
         library: true,
+        libraryKinds: LIBRARY_HERE,
         ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
         ...(only ? {} : { tasks: taskKinds() }),
         machine: await machineNow(),

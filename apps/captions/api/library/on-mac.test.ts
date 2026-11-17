@@ -13,6 +13,7 @@ const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { framesDir, parseOnMac } = await import("./on-mac");
 const { spaceApp } = await import("./space");
+const { tick } = await import("./worker");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -45,7 +46,7 @@ describe("parseOnMac", () => {
 });
 
 describe("POST /api/library/:id/on-mac", () => {
-  it("records the file where it is on the Mac: ready at once, its pictures, its description queued, nothing that reads the file", async () => {
+  it("records the file where it is on the Mac: ready at once, its pictures, its description and transcript queued, nothing read here", async () => {
     const r = await post(clip);
     expect(r.status).toBe(200);
     const { assetId, versionId } = (await r.json()) as { assetId: string; versionId: string };
@@ -54,7 +55,11 @@ describe("POST /api/library/:id/on-mac", () => {
     expect(v).toMatchObject({ state: "ready", source_key: `mac:${versionId}`, source_path: null, mac_path: clip.path, sha256: `mac:${quick}`, quick });
     expect(JSON.parse(v.probe!)).toMatchObject({ duration: 1200, width: 1920, height: 1080 });
     expect((d.prepare("SELECT kind FROM derivatives WHERE version_id = ? ORDER BY kind").all(versionId) as { kind: string }[]).map((x) => x.kind)).toEqual(["sprite", "thumb"]);
-    expect((d.prepare("SELECT kind FROM jobs WHERE version_id = ?").all(versionId) as { kind: string }[]).map((x) => x.kind)).toEqual(["describe"]);
+    expect((d.prepare("SELECT kind FROM jobs WHERE version_id = ? ORDER BY kind").all(versionId) as { kind: string }[]).map((x) => x.kind)).toEqual(["describe", "transcribe"]);
+    // its transcript is made on that Mac from the file where it is (worker.ts): with no speech model or key it waits for
+    // one, never fails as a file this server lacks
+    expect(await tick(Date.now(), ["transcribe"])).toBe(true);
+    expect(d.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(versionId)).toEqual({ state: "needs_key" });
     expect(existsSync(path.join(framesDir(versionId), "3.jpg"))).toBe(true);
     // its card says where it is: the drive's name
     const page = (await (await app.request("/api/library/lib_a/assets", { headers: { "x-user": "owner-a" } })).json()) as { items: { id: string; onMac?: string }[] };

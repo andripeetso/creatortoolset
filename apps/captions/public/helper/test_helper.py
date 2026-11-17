@@ -116,6 +116,35 @@ class ContainerPaths(unittest.TestCase):
         self.assertEqual(len(h.sent), n)
 
 
+class OwnSound(unittest.TestCase):
+    """A transcript of a file in this helper's folders: the sound is cut here from its own copy, never asked of the server."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(dir=SCRATCH)
+        self.f = folder(self.d, host="/mnt/tank/Tiny Footage")
+        self.h = Fake([self.f])
+
+    def job(self, path, size):
+        return {"id": 3, "kind": "transcribe", "options": {"version": "v1", "path": path, "bytes": str(size)}}
+
+    def test_no_copy_here_is_none(self):
+        write(os.path.join(self.d, "a.mp4"), b"tinyacrobatics")
+        self.assertIsNone(self.h.own_sound({"id": 3, "kind": "transcribe"}))  # a recording the server holds
+        self.assertIsNone(self.h.own_sound(self.job("/mnt/tank/Tiny Footage/a.mp4", 99)))  # another size: not this file
+        self.assertIsNone(self.h.own_sound(self.job("/etc/passwd", os.path.getsize("/etc/passwd"))))  # off the list
+        self.assertEqual(self.h.sent, [])
+
+    @unittest.skipUnless(helper.shutil.which("ffmpeg") and helper.importlib.util.find_spec("numpy"), "needs ffmpeg and numpy")
+    def test_cuts_its_own_copy(self):
+        src = os.path.join(self.d, "Shoot", "tone.m4a")
+        os.makedirs(os.path.dirname(src))
+        helper.subprocess.run([helper.shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", src], check=True)
+        samples = self.h.own_sound(self.job("/mnt/tank/Tiny Footage/Shoot/tone.m4a", os.path.getsize(src)))
+        self.assertAlmostEqual(len(samples) / 16000, 2, delta=0.1)
+        self.assertGreater(float(abs(samples).max()), 0.1)
+        self.assertEqual(self.h.sent, [])  # nothing asked of the server
+
+
 class Quick(unittest.TestCase):
     def test_same_as_the_server(self):
         d = tempfile.mkdtemp(dir=SCRATCH)

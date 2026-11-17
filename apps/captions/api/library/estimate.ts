@@ -217,7 +217,7 @@ const STEPS: LibraryStep[] = ["files", "transcript", "describe", "look", "embed"
 
 /**
  * The whole run: steps run side by side, so the slowest, except that this computer's transcripts and search entries
- * share the one ffmpeg line with the files (media/run.ts ffmpegSlot), so those add up.
+ * share the one line of heavy runs with the files (media/run.ts), so those add up.
  * ponytail: a description waiting on its transcript is not counted
  */
 function total(steps: { step: LibraryStep; route: LibraryStepRoute; seconds: number }[]): number {

@@ -24,7 +24,11 @@ const { CLAIM_POLL, workApp } = await import("./routes");
 const { computerTakesLibrary, libraryWaitLine } = await import("./library-package");
 const { foldersOf } = await import("../editor/reach");
 const { unreachedShares } = await import("../../contracts/storage");
-const { runLibraryJob } = await import("./library");
+const { LIBRARY_HERE, makeDerived, runLibraryJob } = await import("./library");
+const { writeServerWork } = await import("./server-work");
+const { WAITS_FOR_COMPUTER } = await import("../library/jobs");
+const { cutStills } = await import("../library/describe");
+const { blobs } = await import("../library/db");
 const { quickPrint } = await import("./files");
 const { proxyPath, setCacheAccount } = await import("./cache");
 
@@ -302,3 +306,59 @@ describe("library work on the computer that has the file", () => {
     rmSync(path.join(dir, "storage", "tiny.json"));
   }, 60_000);
 });
+
+/** A phone's upload of `file` to `lib`: the server holds the original, no computer has it. */
+async function phoneUpload(lib: string, file: string): Promise<string> {
+  const size = statSync(file).size;
+  const start = (await (await post(`/api/library/${lib}/uploads`, { filename: path.basename(file), size })).json()) as { id: string };
+  await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
+  return ((await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string }).versionId;
+}
+
+describe("local-first P3f: a probe, a card picture and a description's stills with the server's video work off", () => {
+  it("they wait for a computer with the wait line, nothing runs here, and the computer makes what the server made", async () => {
+    const file = camera("tiny-p3f.mp4", "1280x720");
+    // the server's own run, video work on: the reference
+    const here = await phoneUpload("lib_all", file);
+    expect(await tick(Date.now(), ["probe"])).toBe(true);
+    expect(await tick(Date.now(), ["thumb"])).toBe(true);
+    const thumbOf = async (lib: string, v: string) => readFileSync(await blobs.localCopy(`libraries/${lib}/v/${v}/thumb.jpg`));
+
+    writeServerWork({ on: false });
+    try {
+      const v = await phoneUpload("lib_phone", file);
+      const probeJob = () => d.prepare("SELECT state, error FROM jobs WHERE version_id = ? AND kind = 'probe'").get(v) as { state: string; error: string | null };
+      // no computer that runs probes yet (an older one names no later kinds): it waits, saying so, and nothing ran here
+      expect(await tick(Date.now(), ["probe"])).toBe(false);
+      expect(probeJob()).toEqual({ state: "queued", error: WAITS_FOR_COMPUTER });
+      expect(version(v).probe).toBeNull();
+      expect(derived(v)).toEqual({});
+
+      // a computer that runs them: it probes the original (downloaded, then deleted with the job) and makes the card picture
+      const done: string[] = [];
+      for (let lib = (await claim2()).lib; lib; lib = (await claim2()).lib) {
+        expect(await runLibraryJob(lib, o())).toBe("done");
+        done.push(lib.job.kind);
+      }
+      expect(done).toEqual(expect.arrayContaining(["probe", "thumb"]));
+      expect(readdirSync(path.join(dir, "library-work"))).toEqual([]); // the originals it downloaded went with each job
+      expect(JSON.parse(version(v).probe!)).toEqual(JSON.parse(version(here).probe!));
+      expect(version(v).quick).toBe(await quickPrint(file));
+      expect((await thumbOf("lib_phone", v)).equals(await thumbOf("lib_all", here))).toBe(true);
+      expect(await tick(Date.now(), ["probe", "thumb"])).toBe(false); // nothing left for the server
+
+      // a description's stills: the computer's cut is the server's (describe.ts cutStills), so the AI is shown the same
+      const lib = { v: WORK_V, job: { id: 1, kind: "describe", versionId: v, libraryId: "lib_phone", actor: "tiny" }, file: { id: v, title: "t", bytes: 0 }, probe: JSON.parse(version(v).probe!) } as LibraryPackage;
+      const a = mkdtempSync(path.join(dir, "stills-")), b = mkdtempSync(path.join(dir, "stills-"));
+      const made = await makeDerived(lib, file, a);
+      const server = await cutStills(file, JSON.parse(version(v).probe!).duration, 0, b);
+      expect(Object.keys(made.files)).toEqual(server.map((_, i) => `still${i}`));
+      server.forEach((f, i) => expect(readFileSync((made.files as Record<string, string>)[`still${i}`]!).equals(readFileSync(f))).toBe(true));
+    } finally {
+      writeServerWork({ on: true, v: 2 });
+    }
+  }, 120_000);
+});
+
+/** A claim of a computer whose worker runs every library kind (work/library.ts LIBRARY_HERE). */
+const claim2 = () => claimAs(mac.token, { machine: MAC, libraryKinds: LIBRARY_HERE });

@@ -310,6 +310,19 @@ export async function refreshDescription(db: DatabaseSync, versionId: string, ac
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */
 export const frameTimes = (duration: number) => (duration > 1 ? Array.from({ length: FRAMES }, (_, i) => (duration * (i + 0.5)) / FRAMES) : [0]);
 
+/**
+ * The stills a description shows the AI, cut from `src` turned `turn` degrees into `dir`: here where the server runs the
+ * job, on a computer otherwise (work/library.ts). Each is added to `into` as it is made, so a failed cut leaves none behind.
+ */
+export async function cutStills(src: string, duration: number, turn: number, dir: string, into: string[] = []): Promise<string[]> {
+  for (const t of frameTimes(duration)) {
+    const file = path.join(dir, `describe-${randomUUID()}.jpg`);
+    into.push(file);
+    await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", turned(turn, "scale=512:-2"), "-q:v", "4"]);
+  }
+  return into;
+}
+
 /** The job's AI caller: the platform admin (or the solo install's own account) as admin, anyone else as themselves. */
 export const whoFor = (actor: string) => ({ username: actor, role: isAdminActor(actor) ? ("admin" as const) : (findUser(actor)?.role ?? "user") });
 
@@ -381,11 +394,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
   const files: string[] = [];
   try {
     if (made) files.push(...made);
-    else for (const t of frameTimes(duration)) {
-      const file = path.join(scratch, `describe-${randomUUID()}.jpg`);
-      files.push(file);
-      await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", turned(base, "scale=512:-2"), "-q:v", "4"]);
-    }
+    else await cutStills(src, duration, base, scratch, files);
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
     // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
     const filing = toFile(db, versionId);

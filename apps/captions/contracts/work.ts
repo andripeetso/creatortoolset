@@ -168,7 +168,7 @@ export interface LibraryTranscript {
 export interface LibraryResult {
   v: number;
   outcome: { done: true } | { error: string };
-  files: ("original" | "proxy" | "thumb" | "wave" | "sprite")[];
+  files: ("original" | "proxy" | "thumb" | "wave" | "sprite" | `still${number}`)[];
   probe?: Record<string, unknown>;
   /** the original's SHA-256, read on this computer */
   sha256?: string;

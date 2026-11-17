@@ -441,10 +441,12 @@ class Helper:
                 if job.get("kind") != KIND or job.get("model") not in held():
                     raise RuntimeError(f"This computer does not have {job.get('model')}")
                 self.busy = job["model"]
-                audio = self.call("GET", f"/api/devices/relay/transcribe/{jid}", raw=True, timeout=600)
+                samples = self.own_sound(job)
+                if samples is None:  # a recording only the server has (a Caption Studio upload, the mic): its WAV
+                    samples = read_wav(self.call("GET", f"/api/devices/relay/transcribe/{jid}", raw=True, timeout=600))
                 t0 = time.time()
-                out, gpu_used = self.runner.transcribe(job["model"], read_wav(audio), job.get("languages") or [])
-                log(f"transcript {jid}: {len(out['words'])} words, {len(audio) / 32000:.0f} s of audio in {time.time() - t0:.1f} s",
+                out, gpu_used = self.runner.transcribe(job["model"], samples, job.get("languages") or [])
+                log(f"transcript {jid}: {len(out['words'])} words, {len(samples) / 16000:.0f} s of audio in {time.time() - t0:.1f} s",
                     "on the graphics card" if gpu_used else "on the CPU")
                 r = self.safe(self.call, "POST", f"/api/devices/relay/transcribe/{jid}", out)
             except Removed:
@@ -627,6 +629,28 @@ class Helper:
                     if self.stop:
                         return
                 self.save_cache()
+
+    def own_sound(self, job):
+        """The sound of a library file cut here from this computer's own copy (where the server says it is, with its size,
+        in one of this helper's folders), as 16 kHz mono samples: the server's own cut (api/library/transcribe.ts
+        soundArgs), so the same words, and the server decodes nothing for it. None when the job names no copy here."""
+        o = job.get("options") or {}
+        p, size = o.get("path"), str(o.get("bytes") or "")
+        if not isinstance(p, str) or not p.startswith("/") or not size.isdigit():
+            return None
+        folders = listed(self.server_folders, self.config)
+        here = to_mount(p, folders)
+        if not allowed(here, folders) or not os.path.isfile(here) or os.path.getsize(here) != int(size):
+            return None
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            raise RuntimeError("ffmpeg is not installed on this computer, so it can't read the sound of its own copy")
+        r = subprocess.run([ff, "-nostdin", "-v", "error", "-i", here, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"],
+                           capture_output=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"This computer could not read the sound of {os.path.basename(here)}: {r.stderr.decode(errors='replace').strip()[-200:]}")
+        import numpy
+        return numpy.frombuffer(r.stdout, dtype=numpy.int16).astype(numpy.float32) / 32768
 
     def index(self, f, path):
         """POST /api/devices/relay/index for one file of folder `f` (`path` on the host): what this computer reads of it,

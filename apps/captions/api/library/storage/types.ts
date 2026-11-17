@@ -11,7 +11,7 @@ export interface BlobStore {
   put(key: string, file: string, opts?: { contentType?: string }): Promise<{ bytes: number }>;
   stat(key: string): Promise<{ bytes: number } | null>;
   delete(key: string): Promise<void>;
-  /** A local file for ffmpeg and the editor. Local: the path itself. Remote: downloaded once into the cache. */
+  /** A local file for the media steps and the editor. Local: the path itself. Remote: downloaded once into the cache. */
   localCopy(key: string): Promise<string>;
   /** Local: a path for Range streaming. Remote: a short-lived signed URL (caps.signedUrls) answering with this type or as a download. */
   locate(

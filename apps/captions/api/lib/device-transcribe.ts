@@ -4,7 +4,8 @@ import path from "node:path";
 import { spokenLanguage } from "../../src/workers/spoken-language";
 import { hfApp, OWN_COPY } from "../hfproxy";
 import { ffmpegSlot } from "../library/media/run";
-import { env, hostedMode } from "./env";
+import { serverKind } from "../work/server-work";
+import { env } from "./env";
 
 /**
  * Transcripts made on the person's own computer, for the tools that otherwise need a transcription key: the model
@@ -29,8 +30,11 @@ export const DEVICE_AUDIO = ["-vn", "-ac", "1", "-ar", "16000", "-f", "f32le"];
 /** The speech model is not on this computer yet (its download stopped): a transcript waits and tries again (worker.ts). */
 export class ModelNotReady extends Error {}
 
-/** Whether this server transcribes by itself: one person's own computer, never a hosted server. */
-export const deviceTranscribes = (): boolean => process.env.CT_LOCAL === "1" && !hostedMode();
+/**
+ * Whether this server transcribes by itself: only This Mac, the person's own computer (work/place.ts mayRunHere, rule 1).
+ * Every other server leaves the speech model to the person's computers (lib/computer-transcribe.ts).
+ */
+export const deviceTranscribes = (): boolean => serverKind() === "local";
 
 export interface DeviceWord {
   text: string;

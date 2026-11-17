@@ -18,7 +18,7 @@ import { assetRef, canSee } from "./sources";
  * drop, src/lib/onMac.ts). The video never comes here: the Mac sends what the library needs to list and search it, its
  * length and size, its card picture, its hover strip and a few stills for the AI's description. The version keeps the
  * file's path on that Mac and the Mac's device id; source_key "mac:<version id>" has no blob, so a step that needs the
- * file itself (proxy, transcript, fingerprint) is never run here (worker.ts).
+ * file itself (proxy, fingerprint) is never run here (worker.ts); its transcript is cut on that Mac from the file.
  */
 
 export interface OnMacIndex {
@@ -146,6 +146,9 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   }
   d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
   organizeOnProbe(d, versionId, probe.duration); // a library the AI organizes: a sound or a picture to its folder now
+  // its transcript is made on that Mac from the file where it is (worker.ts): never uploaded for it
+  // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
+  if (kind === "video") enqueueJob(d, libraryId, versionId, "transcribe", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     const dir = framesDir(versionId);
     await mkdir(dir, { recursive: true });
