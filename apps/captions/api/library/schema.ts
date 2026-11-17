@@ -567,4 +567,19 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (copy_id, version_id)
   );
   `,
+  // 34: copying between computers (copies.ts send): the original a computer sent for a copy that only another computer
+  // can write, kept on the store until every copy has it; storage_key NULL with error is a send that failed, asked again
+  // an hour after tried_at. notice_at: when the library's owner was told a copy has taken nothing for two weeks
+  `
+  CREATE TABLE copy_sends (
+    version_id TEXT PRIMARY KEY,
+    storage_key TEXT,
+    bytes INTEGER,
+    sha256 TEXT,
+    error TEXT,
+    tried_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  ALTER TABLE library_copies ADD COLUMN notice_at INTEGER;
+  `,
 ];

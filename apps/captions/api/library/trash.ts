@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
 import { dropMacFrames } from "./on-mac";
-import { assetsCopiesLack } from "./copies";
+import { assetsCopiesLack, copiesNotice } from "./copies";
 
 /**
  * The library's trash purge (tasks/media-library-plan.md, section 5): an asset trashed longer than LIBRARY_TRASH_DAYS
@@ -81,12 +81,14 @@ export async function deleteAssets(assets: string[]): Promise<void> {
     ? [
         ...(d.prepare(`SELECT source_key AS k FROM asset_versions WHERE id IN (${V})`).all(...versions) as { k: string }[]),
         ...(d.prepare(`SELECT storage_key AS k FROM derivatives WHERE storage_key IS NOT NULL AND version_id IN (${V})`).all(...versions) as { k: string }[]),
+        // an original a computer sent for the copies (copies.ts)
+        ...(d.prepare(`SELECT storage_key AS k FROM copy_sends WHERE storage_key IS NOT NULL AND version_id IN (${V})`).all(...versions) as { k: string }[]),
       ].map((r) => r.k)
     : [];
   d.exec("BEGIN");
   try {
     if (versions.length) {
-      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "timelines", "search_timeline", "jobs", "version_places"]) {
+      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "timelines", "search_timeline", "jobs", "version_places", "copy_sends"]) {
         d.prepare(`DELETE FROM ${t} WHERE version_id IN (${V})`).run(...versions);
       }
       d.prepare(`DELETE FROM derived_from WHERE version_id IN (${V}) OR source_version_id IN (${V})`).run(...versions, ...versions);
@@ -137,7 +139,10 @@ export async function deleteLibrary(id: string): Promise<void> {
 
 /** Runs the purge now and every hour. */
 export function startTrashPurge(): void {
-  const run = () => void purgeTrash().catch((e) => console.error("[library] trash purge:", e));
+  const run = () => {
+    void purgeTrash().catch((e) => console.error("[library] trash purge:", e));
+    void copiesNotice().catch((e) => console.error("[library] copies notice:", e));
+  };
   run();
   setInterval(run, HOUR).unref();
 }
