@@ -175,7 +175,7 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
     files,
     caches,
     ...(gate === undefined ? {} : { gate }),
-    ai: { editor: aiFor(who, "editor", "AI Editor").off ?? null, analyzer: aiFor(who, "analyzer", "AI Editor").off ?? null },
+    ai: { editor: aiFor(who, "editor", "Editor").off ?? null, analyzer: aiFor(who, "analyzer", "Editor").off ?? null },
     ...(job.kind === "post" ? { steps: (edit.steps ?? []).map((s) => s.id) } : {}),
     // the account's storage folders as paths on this computer, where files.ts looks for a copy by quick fingerprint
     folders: folders.flatMap((f) => {

@@ -1273,7 +1273,7 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
  * happens across it), the song and its beats, and the prompt's and the repair's parts.
  */
 async function planContext(edit: EditMeta, actor: string, sentences: Sentence[], signal: AbortSignal, story = true) {
-  const route = aiFor(whoFor(actor), "editor", "AI Editor plan");
+  const route = aiFor(whoFor(actor), "editor", "Editor plan");
   if (route.off) throw new NeedsKey(route.off);
   const { left, ...found } = await indexSources(edit, signal);
   let index: FootageIndex = found;

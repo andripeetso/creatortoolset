@@ -204,7 +204,7 @@ function titlesOf(edit: EditMeta, sentences: Sentence[]): Record<string, string>
 export async function scriptStep({ edit, job, signal }: StepContext): Promise<void> {
   const analysis = readStep(edit.id, "analysis");
   if (!analysis) throw new Error("Analyze the footage first");
-  const route = aiFor(whoFor(job.actor!), "editor", "AI Editor script");
+  const route = aiFor(whoFor(job.actor!), "editor", "Editor script");
   if (route.off) throw new NeedsKey(route.off);
   // not cut around speech: asked for, or nobody speaks in the footage. The AI plans shots from the brief (plan.ts)
   if (isPlanned(edit, analysis.sentences)) return planStep({ edit, job, variant: "", signal }, analysis.sentences);

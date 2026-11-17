@@ -42,8 +42,8 @@ async function heldEdit(job: JobRow): Promise<{ edit: EditMeta; actor: string }>
 
 /** The asker's own AI for the step, resolved here: the computer only names which use (the AI Editor's or the Analyzer's). */
 const useOf = (job: unknown): JobId => (job === "analyzer" || job === "library" ? job : "editor");
-const labelOf = (label: unknown) => (typeof label === "string" && label ? label.slice(0, 80) : "AI Editor");
-const routeFor = (actor: string, label = "AI Editor") => aiFor(whoFor(actor), "editor", label);
+const labelOf = (label: unknown) => (typeof label === "string" && label ? label.slice(0, 80) : "Editor");
+const routeFor = (actor: string, label = "Editor") => aiFor(whoFor(actor), "editor", label);
 
 /**
  * One AI call of a computer's step: `{ system, user, job?, label?, retries?, images?, background?, preferKey? }`. The
@@ -89,7 +89,7 @@ const CALLS: Record<string, (h: { edit: EditMeta; actor: string }, args: unknown
   finishedBlock: ({ edit }) => finishedBlock(edit),
   // the edit's own workspace or none; a slot of the AI Editor's only
   packInstructions: ({ edit, actor }, [slot, projectId, tools]) => {
-    if (typeof slot !== "string" || !slot.startsWith("editor.")) throw new Refused("Not an AI Editor slot");
+    if (typeof slot !== "string" || !slot.startsWith("editor.")) throw new Refused("Not an Editor slot");
     return packInstructions(actor, slot as PackSlot, str(projectId) === edit.projectId ? edit.projectId : null, { ai: routeFor(actor), ...(tools === true ? { tools: true } : {}) });
   },
   skillText: ({ edit, actor }, [ids, projectId, tools]) => {

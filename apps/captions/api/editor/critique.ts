@@ -35,7 +35,7 @@ import { styleBlock } from "./styles";
  * fixed, and why.
  */
 
-const LABEL = "AI Editor check";
+const LABEL = "Editor check";
 /** Shots on one sheet: two tiles each */
 const PER_SHEET = (COLS * ROWS) / 2;
 /** A failing shot's reason, in characters */

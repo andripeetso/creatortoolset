@@ -397,7 +397,7 @@ const UI_BRIGHT = 0.2;
 
 // ── contact sheets and the person's AI ──────────────────────────────────────────────────────────────────────────
 
-const LABEL = "AI Editor footage";
+const LABEL = "Editor footage";
 /** Sheets in one call: a call reads up to SHEETS_PER_CALL × COLS × ROWS shots */
 const SHEETS_PER_CALL = 6;
 /** Sheets per source at most: a longer source has every k-th shot looked at, the rest left without words */

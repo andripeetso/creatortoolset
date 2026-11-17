@@ -101,7 +101,7 @@ async function choose(id: string, value: string) {
   });
   await flush();
 }
-/** Picks the clip and presses Create and run; gives back what was sent to POST /api/editor. */
+/** Picks the clip and presses Start; gives back what was sent to POST /api/editor. */
 async function create() {
   const clip = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Take one"))!;
   act(() => clip.click());
@@ -176,7 +176,7 @@ describe("New edit: files dropped on the page", () => {
 });
 
 describe("New edit: opened with a take in hand (the Media Library's New edit on a clip)", () => {
-  it("shows the form at once with the take picked, also for someone who has not answered How do you like to work?, and makes nothing until Create and run", async () => {
+  it("shows the form at once with the take picked, also for someone who has not answered How do you like to work?, and makes nothing until Start", async () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -292,9 +292,9 @@ describe("New edit: a script, nothing filmed", () => {
     await scriptMode();
     expect(field<HTMLSelectElement>("edit-voice")!.value).toBe("v_mine");
     expect([...document.querySelectorAll("#edit-voice optgroup")].map((g) => g.getAttribute("label"))).toEqual(["Your voices", "ElevenLabs voices"]);
-    expect(button("Create and run").disabled).toBe(true);
+    expect(button("Start").disabled).toBe(true);
     await type("edit-spoken", "Roll the mat out.");
-    expect(button("Create and run").disabled).toBe(false);
+    expect(button("Start").disabled).toBe(false);
     await submit();
     expect(calls.find((c) => c.url === "/api/editor/voice")!.body).toEqual({ text: "Roll the mat out.", voice: "v_mine" });
     // one version, as long as the voice; no folder named, so all their B-roll
@@ -340,7 +340,7 @@ describe("New edit: a script, nothing filmed", () => {
     expect(link.getAttribute("href")).toBe("/settings/keys#api-key-ELEVENLABS_API_KEY");
     expect(link.parentElement!.textContent).toContain("Add your ElevenLabs key in Settings → API keys");
     await type("edit-spoken", "Roll the mat out.");
-    expect(button("Create and run").disabled).toBe(true);
+    expect(button("Start").disabled).toBe(true);
   });
 });
 
@@ -358,7 +358,7 @@ describe("New edit: short videos from a long recording", () => {
     expect([...field<HTMLSelectElement>("edit-moments")!.options].map((o) => o.value)).toEqual(["3", "5", "10", "15", "20"]);
     expect(field<HTMLSelectElement>("edit-moments")!.value).toBe("10");
     expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("Length of each (seconds)");
-    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("Describe the short videos (optional)");
+    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("What the short videos should be");
     // a long recording can be sound only: the picker asks the library for videos and recordings there, videos alone elsewhere
     expect(listed.at(-1)).toContain("kind=video%2Caudio");
     expect(listed.find((u) => u.includes("kind="))).toMatch(/kind=video(&|$)/);

@@ -98,10 +98,10 @@ describe.skipIf(!enabled)("AI Editor in the browser", () => {
     await page.goto(new URL("/editor", base).toString());
     await page.getByRole("heading", { name: "Editor" }).waitFor({ timeout: 60_000 });
 
-    await page.getByRole("button", { name: "New edit" }).first().click();
+    await page.getByRole("button", { name: "New project" }).first().click();
     await page.getByRole("button", { name: /Tiny Acrobatics take/ }).click();
     await page.getByLabel("Name").fill("Tiny Acrobatics hook");
-    await page.getByRole("button", { name: "Create and run" }).click();
+    await page.getByRole("button", { name: "Start" }).click();
 
     await page.waitForURL(/\/editor\/[0-9a-f-]{36}$/);
     const version = page.getByRole("article", { name: "Tiny Acrobatics cut" });

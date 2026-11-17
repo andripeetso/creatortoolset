@@ -141,7 +141,7 @@ beforeAll(async () => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const ONE_EACH = {
-  project: 1, chat: 1, "Review video": 1, "AI Editor edit": 1, "Caption Studio project": 1, recording: 1, guide: 1, "enhanced file": 1,
+  project: 1, chat: 1, "Review video": 1, "Editor edit": 1, "Caption Studio project": 1, recording: 1, guide: 1, "enhanced file": 1,
   "story split": 1, "context file": 1, "saved rewrite": 1, design: 1, "Content Analyzer account": 1, "saved post": 1, "idea board": 1,
   "social account": 1, "scheduled task": 1, folder: 1, "footage folder": 1, "Media Library clip": 1, "writing rule": 1, framework: 1,
 };

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { canChange, useMe } from "@/lib/auth";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { Check, ChevronRight, Clapperboard, Folder, Loader2, PanelLeft, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape } from "@contracts/editor";
@@ -15,12 +15,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { droppedFiles, isMediaFile } from "@/components/assistant/draft";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { showAssistantNotice, useAssistant } from "@/lib/assistant";
-import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, runEdit } from "@/lib/editor";
+import { createEdit, createEmpty, deleteEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, patchEdit, restoreEdit, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -30,20 +32,24 @@ import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { Picture } from "@/components/Picture";
 import { AccountAvatar } from "@/components/settings/AccountSection";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
-import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
-import { useToolFolders } from "@/lib/folders";
-import { FolderGrid, ItemCard } from "@/components/browse/Grid";
+import { FolderTrail, ToolFolderCards, ToolFolderRows, ToolFolderSidebar } from "@/components/browse/ToolFolders";
+import { askRename } from "@/components/browse/browse";
+import { useToolFolders, type ToolFoldersState } from "@/lib/folders";
+import { FolderGrid, GridFrame, ItemCard } from "@/components/browse/Grid";
+import { undoable } from "@/lib/undo";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
 import { EditingStyles, StyleSheet, type OpenStyle } from "./editor/EditingStyles";
 import { FirstWay } from "./editor/FirstWay";
 import { FromScript } from "./editor/FromScript";
+import { ProjectPage } from "./editor/ProjectView";
 
 /**
- * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
- * Media Library or dropped on the page, how many versions. Create runs it; the edit page (/editor/:id) follows the steps.
- * Videos and recordings dropped anywhere on the Edits tab open New edit with them in it; a dropped folder gives the ones
- * inside it.
+ * Editor (/editor): the edits I made (a workspace owner: the members' too), grouped in projects, and New project:
+ * footage picked from the Media Library or dropped on the page, what the video should be, Start. A project's page
+ * (/editor/p/:folder) and an edit's (/editor/:id) show its versions; a version's timeline is /editor/:id/:draft.
+ * Videos and recordings dropped anywhere on the Edits tab open New project with them in it; a dropped folder gives the
+ * ones inside it.
  */
 
 /** The videos and recordings of a drop or a file choice; a browser's own list is gone after the event, so this is read at once. */
@@ -94,6 +100,33 @@ export function Maker({ maker, className }: { maker: NonNullable<EditSummary["ma
 }
 
 export default function EditorPage() {
+  // /editor/p/<folder>: a project, every edit of one video (pages/editor/ProjectView.tsx)
+  const { folder: projectFolder } = useParams();
+  if (projectFolder) return <ProjectPage key={projectFolder} folder={projectFolder} />;
+  return <EditorList />;
+}
+
+/** The project's name and its edits' ids, newest change first (null while the list loads; ids [] for a folder that is gone). */
+export function useProjectEdits(folderId: string): { name: string; ids: string[] } | null {
+  const edits = useCachedLoad<EditSummary[]>("/api/editor", listEdits).data;
+  const folders = useToolFolders("editor", edits ?? [], "");
+  if (!edits) return null;
+  return { name: folders.options(null).find((o) => o.id === folderId)?.name ?? "", ids: folders.inside(folderId).map((e) => e.id) };
+}
+
+export const projectUrl = (folderId: string) => `/editor/p/${folderId}`;
+/** An edit's picture: its newest version's still in Review, else its first clip's. */
+const pictureOf = (e: EditSummary) => (e.still ? `/api/review/assets/${e.still.asset}/v/${e.still.n}/thumb` : e.sources[0] ? thumb(e.sources[0]) : undefined);
+const day = (at: number) => new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+const versionsText = (n: number) => `${n} ${n === 1 ? "version" : "versions"}`;
+
+/**
+ * The Editor's list (/editor): a project is the folder that holds every edit of one video (the server files them,
+ * api/editor/projects.ts), shown first, then the edits in none. The folders in a sidebar, search, sort, cards or rows.
+ * A project opens its own page (/editor/p/<folder>), an edit its page. Right-click an edit: Move to, Rename, Delete
+ * (Undo); a project: Rename, Delete (Undo).
+ */
+function EditorList() {
   // Read (Settings → Team → Access): edits and styles open to look at; nothing is created, moved, dropped in or changed
   const editable = canChange(useMe(), "editor");
   // the saved list paints at once; a step that moves (the server's worker, a device) reads it again: lib/local-cache
@@ -103,13 +136,13 @@ export default function EditorPage() {
   const split = useMemo(() => byProject(list.data ?? [], project), [list.data, project]);
   const edits = list.data ? split.here : null;
   const error = edits ? null : list.error || null;
-  // /editor?new=1&folder=<Media Library folder id>&name=<name>: New edit opens with them (the assistant's "Change the setup")
+  // /editor?new=1&folder=<Media Library folder id>&name=<name>: New project opens with them (the assistant's "Change the setup")
   const [params, setParams] = useSearchParams();
-  // a page that hands clips over (the Screen Recorder's Send to AI Editor) puts them in the navigation's state: picked
+  // a page that hands clips over (the Screen Recorder's Send to Editor) puts them in the navigation's state: picked
   const handed = (useLocation().state as { pick?: Picked[] } | null)?.pick;
   const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "", pick: handed } : undefined;
   const [creating, setCreating] = useState(!!start && editable);
-  // footage dropped on the page: New edit opens and takes it
+  // footage dropped on the page: New project opens and takes it
   const [dropped, setDropped] = useState<File[]>([]);
   const [over, setOver] = useState(false);
   const [view, setView] = useBrowseView("editor");
@@ -126,12 +159,31 @@ export default function EditorPage() {
   // the open folder's edits (every folder's when searching); the server sends them newest change first
   const folders = useToolFolders("editor", edits ?? [], find);
   const shown = folders.here.filter((e) => matches(find, e.name) && (!by || e.createdBy === by)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
-  const firstClip = (id: string) => {
-    const v = edits?.find((e) => e.id === id)?.sources[0];
-    return v ? thumb(v) : undefined;
-  };
   const anything = !!edits?.length || folders.folders.length > 0 || !!folders.open;
-  // the person's editing styles: the second tab (/editor?tab=styles), and New edit's Style select. `own`: it is read again after this window's own saves
+  const firstPicture = (id: string) => {
+    const e = edits?.find((x) => x.id === id);
+    return e && pictureOf(e);
+  };
+  const projectMeta = (fid: string) => {
+    const inside = folders.inside(fid);
+    if (!inside.length) return "Empty";
+    return `${versionsText(inside.reduce((n, e) => n + (e.versionCount ?? 0), 0))} · ${day(Math.max(...inside.map((e) => e.updatedAt)))}`;
+  };
+  const fail = (e: unknown) => toast.error(message(e));
+  const act: EditActions = {
+    folders,
+    editable,
+    rename: async (e) => {
+      const name = await askRename("Rename edit", e.name);
+      if (name && name !== e.name) await patchEdit(e.id, { name }).then(() => list.refresh(), fail);
+    },
+    remove: (e) =>
+      void deleteEdit(e.id).then(() => {
+        void list.refresh();
+        undoable("edit deleted", () => restoreEdit(e.id).then(() => list.refresh(), fail));
+      }, fail),
+  };
+  // the person's editing styles: the second tab (/editor?tab=styles), and New project's Style select. `own`: it is read again after this window's own saves
   const styleList = useCachedLoad<EditingStylesView>("/api/editor/styles", listStyles, { own: true });
   const [openStyle, setOpenStyle] = useState<OpenStyle>(null);
   // the person's animation styles: the third tab (/editor?tab=animation)
@@ -166,7 +218,7 @@ export default function EditorPage() {
     return () => void (live = false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wanted, tab]);
-  // on the window, so a file let go beside the sheet or on the dimmed page is taken too and never opens in the window
+  // on the window, so a file let go beside the dialog or on the dimmed page is taken too and never opens in the window
   useEffect(() => {
     if (tab !== "edits") return;
     // lit while files are over the window: each dragover keeps it on for half a second (a leave is not told apart
@@ -252,119 +304,183 @@ export default function EditorPage() {
     );
   }
 
+  const sidebar = <ToolFolderSidebar state={folders} top="All edits" />;
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="Editor">
         {/* the list is the current project's edits, so the project is picked here too, as in the Workshop */}
         <ProjectSwitcher />
-        {editable && anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {editable && <EditorDefaultsButton slots={["grade"]} />}
-        {editable && <Button size="sm" onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" />
-          New edit
-        </Button>}
       </AppBar>
-      <main className={cn("mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
-        {tabs}
-        {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
-        {editable && edits?.length === 0 && !anything && (
-          <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
-            <Clapperboard className="h-6 w-6 text-zinc-500" aria-hidden="true" />
-            <p className="hidden text-sm font-medium sm:block">Drop footage here</p>
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" />
-              New edit
-            </Button>
-          </div>
-        )}
-        <FolderTrail state={folders} top="Editor" />
+      <div className="flex w-full flex-1">
+        {/* stays put while the list scrolls, with its own scroll (the Media Library's sidebar) */}
         {anything && (
-          <BrowseBar
-            search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}
-            chips={makers.length ? { value: by, onChange: setMadeBy, options: [{ id: "", label: "Made by anyone" }, ...makers] } : undefined}
-            sort={{
-              value: sort,
-              onChange: (v) => {
-                setSort(v);
-                persistSort(SORT_KEY, v);
-              },
-              label: "Sort edits",
-              options: [
-                { id: "recent", label: "Recent" },
-                { id: "name", label: "Name" },
-              ],
-            }}
-            view={{ value: view, onChange: setView }}
-          />
+          <aside aria-label="Projects" className="sticky top-[var(--bar-h)] hidden h-[calc(100dvh-var(--bar-h))] w-60 shrink-0 overflow-y-auto border-r border-zinc-500/15 px-3 py-4 [scrollbar-gutter:stable] lg:block">
+            {sidebar}
+          </aside>
         )}
-        {find.trim() && shown.length === 0 && folders.folders.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches</p>}
-        {(shown.length > 0 || folders.folders.length > 0) && view === "grid" && (
-          <FolderGrid size="small">
-            <ToolFolderCards state={folders} pictureOf={firstClip} />
-            {shown.map((e) => (
-              <ItemCard
-                key={e.id}
-                to={`/editor/${e.id}`}
-                picture={e.sources[0] ? thumb(e.sources[0]) : undefined}
-                icon={Clapperboard}
-                name={e.name}
-                meta={
-                  e.maker ? (
-                    <span className="flex min-w-0 items-center gap-1">
-                      <Maker maker={e.maker} />
-                      <span className="shrink-0">· {new Date(e.updatedAt).toLocaleDateString()}</span>
-                    </span>
-                  ) : `${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`
-                }
-                badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
-                drag={editable ? folders.drag(e.id) : undefined}
-                actions={editable && (folders.folders.length > 0 || folders.open) ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
-              />
-            ))}
-          </FolderGrid>
-        )}
-        {view === "list" && folders.folders.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <ToolFolderRows state={folders} />
-          </div>
-        )}
-        {shown.length > 0 && view === "list" && (
-          <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-            {shown.map((e) => (
-              <li key={e.id} className="group flex items-center">
-                <Link to={`/editor/${e.id}`} {...(editable ? folders.drag(e.id) : {})} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
-                  <div className="flex shrink-0 -space-x-3">
-                    {e.sources.slice(0, 3).map((v) => (
-                      // a take with no picture (a voice recording) has no thumbnail: the box stays, with no broken-image icon
-                      <span key={v} className="h-10 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-500/30 bg-zinc-800">
-                        <Picture src={thumb(v)} alt="" className="h-full w-full object-cover" />
-                      </span>
-                    ))}
+        <main className={cn("flex min-w-0 flex-1 flex-col gap-3 px-4 py-4 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
+          {tabs}
+          {edits === null && !error && <GridFrame size="small" count={4} />}
+          {editable && edits?.length === 0 && !anything && (
+            <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
+              <Clapperboard className="h-6 w-6 text-zinc-500" aria-hidden="true" />
+              <p className="hidden text-sm font-medium sm:block">Drop footage here</p>
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <Plus className="h-4 w-4" />
+                New project
+              </Button>
+            </div>
+          )}
+          {anything && (
+            <BrowseBar
+              search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}
+              chips={makers.length ? { value: by, onChange: setMadeBy, options: [{ id: "", label: "Made by anyone" }, ...makers] } : undefined}
+              sort={{
+                value: sort,
+                onChange: (v) => {
+                  setSort(v);
+                  persistSort(SORT_KEY, v);
+                },
+                label: "Sort edits",
+                options: [
+                  { id: "recent", label: "Recent" },
+                  { id: "name", label: "Name" },
+                ],
+              }}
+              view={{ value: view, onChange: setView }}
+              tools={
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 lg:hidden">
+                      <PanelLeft className="h-3.5 w-3.5" /> Projects
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="left" className="w-72 overflow-y-auto p-3 pt-12">
+                    <SheetTitle className="sr-only">Projects</SheetTitle>
+                    {sidebar}
+                  </SheetContent>
+                </Sheet>
+              }
+            >
+              {editable && <NewFolderButton onClick={() => void folders.newFolder()} />}
+              {editable && (
+                <Button size="sm" className="h-8" onClick={() => setCreating(true)}>
+                  <Plus className="h-4 w-4" /> <span className="hidden sm:inline">New project</span>
+                </Button>
+              )}
+            </BrowseBar>
+          )}
+          <FolderTrail state={folders} top="All edits" />
+          {find.trim() && shown.length === 0 && folders.folders.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches</p>}
+          {(shown.length > 0 || folders.folders.length > 0) && view === "grid" && (
+            <FolderGrid size="small">
+              <ToolFolderCards state={folders} pictureOf={firstPicture} open={projectUrl} metaOf={(f) => projectMeta(f.id)} />
+              {shown.map((e) => (
+                <EditMenu key={e.id} e={e} act={act}>
+                  <div>
+                    <ItemCard
+                      to={`/editor/${e.id}`}
+                      picture={pictureOf(e)}
+                      icon={Clapperboard}
+                      name={e.name}
+                      meta={<EditMeta e={e} />}
+                      badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
+                      drag={editable ? folders.drag(e.id) : undefined}
+                    />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{e.name}</div>
-                    <div className="flex min-w-0 items-center gap-1 truncate text-xs text-zinc-500">
-                      {e.maker && <><Maker maker={e.maker} className="shrink-0" /> · </>}
-                      {e.sources.length} {e.sources.length === 1 ? "clip" : "clips"} · {new Date(e.updatedAt).toLocaleString()}
-                      {e.last && ` · ${e.last.kind}`}
-                    </div>
-                  </div>
-                  {e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
-                </Link>
-                {editable && <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />}
-              </li>
-            ))}
-          </ul>
-        )}
-        {error && <p className="text-sm text-red-400">{error}</p>}
-      </main>
+                </EditMenu>
+              ))}
+            </FolderGrid>
+          )}
+          {view === "list" && folders.folders.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <ToolFolderRows state={folders} open={projectUrl} metaOf={(f) => projectMeta(f.id)} />
+            </div>
+          )}
+          {shown.length > 0 && view === "list" && (
+            <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
+              {shown.map((e) => {
+                const pic = pictureOf(e);
+                return (
+                  <EditMenu key={e.id} e={e} act={act}>
+                    <li className="flex items-center">
+                      <Link to={`/editor/${e.id}`} {...(editable ? folders.drag(e.id) : {})} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
+                        {/* a take with no picture (a voice recording) has no thumbnail: the box stays, with no broken-image icon */}
+                        <span className="h-10 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-500/30 bg-zinc-800">
+                          {pic && <Picture src={pic} alt="" className="h-full w-full object-cover" />}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{e.name}</div>
+                          <div className="flex min-w-0 items-center gap-1 truncate text-xs text-zinc-500">
+                            <EditMeta e={e} />
+                          </div>
+                        </div>
+                        {e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
+                      </Link>
+                    </li>
+                  </EditMenu>
+                );
+              })}
+            </ul>
+          )}
+          {error && <p className="text-sm text-red-400">{error}</p>}
+        </main>
+      </div>
       <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} onStyles={styleList.refresh} dropped={dropped} />
     </div>
   );
 }
 
+interface EditActions {
+  folders: ToolFoldersState;
+  editable: boolean;
+  rename: (e: EditSummary) => Promise<void>;
+  remove: (e: EditSummary) => void;
+}
+
+/** "Jordan · 3 versions · 16 Nov": who made it where the workspace has a team, then its versions and its last change. */
+function EditMeta({ e }: { e: EditSummary }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {e.maker && <><Maker maker={e.maker} className="shrink-0" /> ·</>}
+      <span className="truncate">{e.versionCount ? versionsText(e.versionCount) : `${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"}`} · {day(e.updatedAt)}</span>
+    </span>
+  );
+}
+
+/** An edit's right-click: Move to, Rename, Delete (Undo brings it back). */
+function EditMenu({ e, act, children }: { e: EditSummary; act: EditActions; children: ReactNode }) {
+  if (!act.editable) return <>{children}</>;
+  const where = act.folders.options(act.folders.folderOf(e.id));
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-52">
+        {where.length > 0 && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>
+            <ContextMenuSubContent className="max-h-80 overflow-y-auto">
+              {where.map((o) => (
+                <ContextMenuItem key={o.id ?? "top"} onSelect={() => void act.folders.move([e.id], o.id)} style={{ paddingLeft: `${0.5 + o.depth}rem` }}>
+                  {o.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        <ContextMenuItem onSelect={() => void act.rename(e)}>Rename…</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem className="text-red-500" onSelect={() => act.remove(e)}>
+          Delete edit
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 /**
- * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder) or from this
+ * New project: footage from the library (search, a folder, several at once or the whole folder) or from this
  * computer, then what is optional: a name, a style, a description, a script. `dropped`: files let go on the page, added
  * as they arrive; someone who dropped footage, or came with a take picked (`start.pick`), gets the form at once, and
  * "How do you like to work?" on a New edit they open by its button.
@@ -564,40 +680,44 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
     }
   };
 
+  /** No footage: an edit with one empty timeline, opened to put clips on from the media bin. */
+  const empty = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const made = await createEmpty({ name: name.trim() || undefined });
+      navigate(`/editor/${made.id}/${made.draft}`);
+    } catch (e) {
+      setError(message(e));
+      setBusy(false);
+    }
+  };
+
   return (
-    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-2xl">
         {styles && !styles.styles.length && !styles.asked && onStyles && !dropped?.length && !start?.pick?.length ? (
-          <FirstWay onDone={onStyles} />
+          <>
+            <DialogTitle className="sr-only">New project</DialogTitle>
+            <FirstWay onDone={onStyles} />
+          </>
         ) : (
         <form
-          className="flex flex-col gap-4 p-4 pt-12"
+          className="flex min-w-0 flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
             void create();
           }}
         >
           <div>
-            <SheetTitle className="text-base">New edit</SheetTitle>
-            <SheetDescription className={cn("text-xs text-zinc-500", from === "footage" && "sr-only")}>
+            <DialogTitle className="text-base">New project</DialogTitle>
+            <DialogDescription className={cn("text-xs text-zinc-500", from === "footage" && "sr-only")}>
               {from === "long"
                 ? "Each part of a long recording that stands on its own is cut as a short video."
                 : filmed
-                  ? "The picked footage is cut into a video."
+                  ? "The footage, what the video should be, and Start"
                   : "A voice reads the script and the picture is cut from B-roll."}
-            </SheetDescription>
-          </div>
-
-          <div role="group" aria-label="Source of the edit" className="flex flex-wrap gap-1.5">
-            <Button type="button" size="sm" variant={from === "footage" ? "default" : "outline"} onClick={() => setFrom("footage")}>
-              Footage
-            </Button>
-            <Button type="button" size="sm" variant={from === "script" ? "default" : "outline"} onClick={() => setFrom("script")}>
-              A script, nothing filmed
-            </Button>
-            <Button type="button" size="sm" variant={from === "long" ? "default" : "outline"} onClick={() => setFrom("long")}>
-              Short videos from a long recording
-            </Button>
+            </DialogDescription>
           </div>
 
           {!filmed && (
@@ -733,6 +853,33 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
           )}
 
           <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit-brief">{from === "long" ? "What the short videos should be" : "What the video should be"}</Label>
+            <Textarea
+              id="edit-brief"
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              rows={3}
+              placeholder="The hook, who it's for, how long, what to use or leave out"
+            />
+          </div>
+
+          <details className="group text-sm">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-zinc-500 hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" /> Options
+            </summary>
+            <div className="mt-3 flex flex-col gap-4">
+              <div role="group" aria-label="Source of the edit" className="flex flex-wrap gap-1.5">
+                <Button type="button" size="sm" variant={from === "footage" ? "default" : "outline"} onClick={() => setFrom("footage")}>
+                  Footage
+                </Button>
+                <Button type="button" size="sm" variant={from === "script" ? "default" : "outline"} onClick={() => setFrom("script")}>
+                  A script, nothing filmed
+                </Button>
+                <Button type="button" size="sm" variant={from === "long" ? "default" : "outline"} onClick={() => setFrom("long")}>
+                  Short videos from a long recording
+                </Button>
+              </div>
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-name">Name</Label>
             <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={from === "footage" ? "The video's first line" : "Untitled edit"} maxLength={120} />
           </div>
@@ -755,15 +902,6 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
               </select>
             </div>
           )}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit-brief">{from === "long" ? "Describe the short videos (optional)" : "Describe the video (optional)"}</Label>
-            <Textarea
-              id="edit-brief"
-              value={brief}
-              onChange={(e) => setBrief(e.target.value)}
-              rows={3}
-            />
-          </div>
           {from === "footage" && (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-script">Script (optional)</Label>
@@ -813,11 +951,19 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
               <Input id="edit-target" type="number" min={0} max={3600} value={targetS} onChange={(e) => setTargetS(e.target.value)} placeholder="Any" className="w-28" />
             </div>
           </div>
+            </div>
+          </details>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)} className="self-start">
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {filmed || !busy ? "Create and run" : "Making the voice"}
-          </Button>
+          <div className="flex items-center gap-3">
+            <button type="button" disabled={busy} onClick={() => void empty()}
+              className="text-xs text-zinc-500 underline-offset-2 hover:text-foreground hover:underline disabled:opacity-60">
+              Empty timeline
+            </button>
+            <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)} className="ml-auto">
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {filmed || !busy ? "Start" : "Making the voice"}
+            </Button>
+          </div>
         </form>
         )}
         {makingStyle && (
@@ -832,7 +978,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
             }}
           />
         )}
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }

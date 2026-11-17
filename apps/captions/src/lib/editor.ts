@@ -1,9 +1,9 @@
 import type { StepsView } from "@contracts/editor-steps";
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { ItemEdit } from "@contracts/edit-timeline";
-import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionPlan, VoicesView } from "@contracts/editor";
+import type { AddClip, AddedClip, Draft, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
 
-/** The AI Editor's calls to api/editor/routes.ts. */
+/** The Editor's calls to api/editor/routes.ts. */
 
 /** `workspace`: the request works in that workspace, whatever the window is in (Settings' selector; X-CT-Workspace). */
 async function send<T>(url: string, method = "GET", body?: unknown, workspace?: string | null): Promise<T> {
@@ -82,6 +82,17 @@ export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)
 export const reviewDraft = (id: string, name: string) => send<Edit>(`${base(id)}/drafts/${name}/review`, "POST");
 /** Review's timeline edits on version `n` of the draft's Review video, cut into the draft: its next version is made from them. */
 export const makeCut = (id: string, name: string, body: { asset: string; n: number; edits: ItemEdit[] }) => send<Edit>(`${base(id)}/drafts/${name}/cut`, "POST", body);
+/** Save on the timeline page: the edits made on the draft as it is now (Draft.view), cut into it as the same version, then rendered and filed in Review. */
+export const saveCut = (id: string, name: string, edits: ItemEdit[]) => send<Edit>(`${base(id)}/drafts/${name}/cut`, "POST", { edits });
+export const getDraft = (id: string, name: string) => send<Draft>(`${base(id)}/drafts/${encodeURIComponent(name)}`);
+/** The version's timeline as a new version (no AI); its preview is made. */
+export const duplicateVersion = (id: string, name: string) => send<{ name: string }>(`${base(id)}/drafts/${name}/duplicate`, "POST");
+/** Rename ({ label }, "" clears) or delete ({ trashed: true }; false is its Undo) a version. */
+export const markVersion = (id: string, name: string, change: { label: string } | { trashed: boolean }) => send<Record<string, VersionMark>>(`${base(id)}/versions/${name}`, "PATCH", change);
+export const addClip = (id: string, name: string, clip: AddClip) => send<AddedClip>(`${base(id)}/drafts/${name}/clips`, "POST", clip);
+/** An edit with no footage and one empty timeline. */
+export const createEmpty = (body: { name?: string }) => send<{ id: string; draft: string }>("/api/editor/empty", "POST", body);
+export const restoreEdit = (id: string) => send<{ ok: true }>(`${base(id)}/restore`, "POST");
 /** A version's cards (contracts/editor.ts): a card's still, the 👍 that keeps it in the animation style, and making them again. */
 export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
 export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");

@@ -124,7 +124,7 @@ describe("AI Editor script: the step", () => {
       return parse(JSON.stringify(answer));
     });
     expect(await runScript()).toEqual({ state: "done", error: null });
-    expect(vi.mocked(aiFor)).toHaveBeenLastCalledWith(expect.objectContaining({ username: "mem-a" }), "editor", "AI Editor script");
+    expect(vi.mocked(aiFor)).toHaveBeenLastCalledWith(expect.objectContaining({ username: "mem-a" }), "editor", "Editor script");
     const view = viewOf(readEdit(editId)!);
     expect(view.lines.map((l) => l.id)).toEqual(["L1", "L2"]);
     expect(view.plans.map((p) => p.name)).toEqual(["v1", "v2"]);

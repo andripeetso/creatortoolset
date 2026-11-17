@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionMark, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
@@ -65,6 +65,8 @@ export interface EditMeta extends EditBrief {
   feedback?: EditFeedback[];
   /** the person said to cut now (editor_run now): the plan takes the files the Media Library has ready and names the rest */
   now?: boolean;
+  /** by version name: the name the person gave it and when it was deleted on the project page (PATCH versions/:name) */
+  marks?: Record<string, VersionMark>;
   trashedAt?: number;
 }
 
@@ -605,13 +607,14 @@ async function stepsOffIn(username: string, owner: string, projectId?: string): 
  * its name and brief are not the person's own words. Footage of a workspace the team's owner gave them makes an edit
  * in that workspace only (`projectId` must be it), with that workspace's defaults, plug-in steps and styles (ownerOf).
  */
-export async function createEdit(username: string, body: Record<string, unknown>, tool = false, projectId?: string): Promise<EditMeta | null> {
+export async function createEdit(username: string, body: Record<string, unknown>, tool = false, projectId?: string, emptyIn?: string): Promise<EditMeta | null> {
   const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
-  const sources = ids(body.sources);
-  const uploads = sources.length ? [] : ids(body.uploads);
+  // `emptyIn`: an edit with no footage yet in that workspace (POST /api/editor/empty): clips are put on its timeline by hand
+  const sources = emptyIn ? [] : ids(body.sources);
+  const uploads = sources.length || emptyIn ? [] : ids(body.uploads);
   const count = sources.length || uploads.length;
-  if (!count || count > MAX_SOURCES) return null;
-  const ws = sources.length ? await editSources(username, sources) : await uploadsWorkspace(username, uploads);
+  if ((!count && !emptyIn) || count > MAX_SOURCES) return null;
+  const ws = emptyIn ?? (sources.length ? await editSources(username, sources) : await uploadsWorkspace(username, uploads));
   if (!ws) return null;
   const account = ws === homeOf(username) ? username : accountOf(ws);
   // a member's edit is in the given workspace it was asked in, so it shows there and nowhere else
