@@ -60,11 +60,11 @@ const mine = (split: StorySplit | null, user: SessionUser) =>
 function fields(body: Record<string, unknown>, duration: number): Partial<StorySplit> | string {
   const out: Partial<StorySplit> = {};
   if (body.name !== undefined) {
-    if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 160) return "Name it, 160 characters at most";
+    if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 160) return "A name is 1 to 160 characters";
     out.name = body.name.trim();
   }
   if (body.target !== undefined) {
-    if (!num(body.target) || body.target <= 0 || body.target > 600) return "The story length is off";
+    if (!num(body.target) || body.target <= 0 || body.target > 600) return "The story length is not valid";
     out.target = body.target;
   }
   if (body.cuts !== undefined) {
@@ -97,8 +97,8 @@ storiesApp.get("/:id", async (c) => {
 storiesApp.post("/", async (c) => {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const { duration, clip } = body ?? {};
-  if (!body || !num(duration) || duration <= 0 || duration > 86_400) return c.json({ error: "The video's length is off" }, 400);
-  if (clip !== undefined && (typeof clip !== "string" || !clip || clip.length > 80)) return c.json({ error: "Bad library clip" }, 400);
+  if (!body || !num(duration) || duration <= 0 || duration > 86_400) return c.json({ error: "The video's length is not valid" }, 400);
+  if (clip !== undefined && (typeof clip !== "string" || !clip || clip.length > 80)) return c.json({ error: "Media Library clip not valid" }, 400);
   const f = fields(body, duration);
   if (typeof f === "string") return c.json({ error: f }, 400);
   if (!f.name || !f.cuts || f.target === undefined) return c.json({ error: "A split needs a name, its cuts and the story length" }, 400);

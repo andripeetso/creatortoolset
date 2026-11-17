@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "./db";
+import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -25,12 +25,14 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
-import { BUDGET_WAITS, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, queueLook, sweepLook } from "./shots";
+import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
 import { macSheetsWaiting, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
+import { draining } from "../server-update";
+import { backfillRoots } from "./places";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -114,7 +116,7 @@ function waitFor(e: unknown): number {
 
 const MODEL_RETRY_S = 60;
 /** What the clip says while its transcript waits for the speech model (shown in its panel). */
-export const MODEL_WAITS = "The speech model's download stopped: it tries again in a minute.";
+export const MODEL_WAITS = "Waiting for the speech model to download";
 
 /** How a description held for the plan's limit is known (limitLine's words, contracts/plans.ts). */
 export const LIMIT_LIKE = "%limit is reached%";
@@ -186,6 +188,8 @@ const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
 };
 
 const running = new Set<number>();
+/** Jobs this server is running: an update waits for them (/api/health, server-update.ts draining). */
+export const libraryJobsAtRisk = (): number => running.size;
 
 /**
  * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
@@ -282,8 +286,8 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
-    const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
-    if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+    const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
+    if (after?.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   } finally {
     running.delete(job.id);
     if (device) onDevice--;
@@ -307,10 +311,14 @@ export function startLibraryWorker(): () => void {
       const loop = async () => {
         let busy = false;
         try {
-          busy = await tick(Date.now(), lane.kinds);
-          if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
-          // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook)
-          if (!busy && lane.name === "looks") busy = sweepLook(libraryDb()) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
+          // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
+          if (!draining()) {
+            busy = await tick(Date.now(), lane.kinds);
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots();
+            // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook);
+            // then the timelines (timeline.ts sweepWatch): a done look that wants one is queued again
+            if (!busy && lane.name === "looks") busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
+          }
         } catch (e) {
           console.error("[library] worker:", e);
         }
@@ -379,7 +387,7 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
-  if (!v || v.source_key === v.proxy || libraryUpload(v.library_id) !== "proxies") return false;
+  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies") return false;
   // the rows first: a delete that fails leaves an unread file behind, never a version pointing at nothing
   db.prepare("UPDATE asset_versions SET source_key = ?, mac_path = from_path, mac_device = from_device WHERE id = ?").run(v.proxy, versionId);
   await blobs.delete(v.source_key);
@@ -410,7 +418,7 @@ export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<Versi
   want("wave");
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
-  const onlyProxy = v.kind === "video" && !!v.from_path && libraryUpload(v.library_id) === "proxies";
+  const onlyProxy = v.kind === "video" && !!v.from_path && versionUpload(v.id) === "proxies";
   if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") })) want("proxy");
   if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
@@ -436,7 +444,9 @@ async function run(job: JobRow): Promise<void> {
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
-  if (!v) throw new Error("The version is gone");
+  if (!v) throw new Error("Version not found");
+  // a look runs as its uploader, queued long before: one who may no longer see the clip gets nothing read or asked (shots.ts lookAllowed)
+  if (job.kind === "look" && !(await lookAllowed(db, v.id, job.actor))) throw new NeedsKey(NO_ACCESS);
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
   // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
@@ -467,7 +477,7 @@ async function run(job: JobRow): Promise<void> {
     // its stills went with its first description: described again, it is written from its words (its shot
     // descriptions, else the description it has and what is said)
     if (!frames.length) {
-      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
+      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac were not found: add the file again in the Mac app");
     } else {
       const fresh = !described(v.id);
       await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
@@ -574,5 +584,6 @@ async function budgetCheck(db: ReturnType<typeof libraryDb>, versionId: string):
 export function markReady(db: ReturnType<typeof libraryDb>, versionId: string, p: ProbeSummary): void {
   const want = ["wave", ...(p.vcodec ? ["thumb"] : [])];
   const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(versionId) as { kind: string }[]).map((h) => h.kind));
-  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
+  // never over `missing`: only the folder walk says an original is back (watch.ts refreshMissing)
+  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ? AND state != 'missing'").run(versionId);
 }

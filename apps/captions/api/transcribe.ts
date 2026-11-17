@@ -33,7 +33,7 @@ const mayUseCloud = userMayCloudTranscribe;
 
 /** Why `user` can't transcribe in the cloud right now (locked, or no key serves them), or null. */
 export function cloudTranscribeBlock(user: AuthVars["user"]): string | null {
-  if (!mayUseCloud(user)) return "Cloud transcription is locked for your account";
+  if (!mayUseCloud(user)) return "Transcription is locked for this account";
   return keyFor(user, "DEEPGRAM_API_KEY").missing ?? null;
 }
 
@@ -220,7 +220,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
     if (isOutOfCredits(resp.status, detail)) {
       console.warn(`[deepgram] out of credits (${resp.status}): ${detail.slice(0, 200)}`);
       return {
-        error: outOfCreditsMessage("Cloud transcription"),
+        error: outOfCreditsMessage("Transcription"),
         status: 502,
       };
     }
@@ -243,7 +243,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
     if (isOutOfCredits(200, detail)) {
       console.warn(`[deepgram] out of credits: ${detail.slice(0, 200)}`);
       return {
-        error: outOfCreditsMessage("Cloud transcription"),
+        error: outOfCreditsMessage("Transcription"),
         status: 502,
       };
     }
@@ -402,7 +402,7 @@ transcribeApp.post("/", async (c) => {
   // the page says which project it transcribes for: one the server is captioning by itself (captions-job.ts, whose
   // own request names none) gets no second transcript, paid for a second time
   if (captioning.has(c.req.query("project") ?? "")) {
-    return c.json({ error: "This project's captions are already being made: they show here when they are ready", code: "CAPTIONING" }, 409);
+    return c.json({ error: "This project's captions are already being made", code: "CAPTIONING" }, 409);
   }
   // a workspace's videos are heard in its own language (Settings → Workspace → Details)
   const languages = await hereLanguages(user);
@@ -460,7 +460,7 @@ transcribeApp.post("/mic", async (c) => {
     const chosen = (prefs.stt.per.mic ?? prefs.stt.default).engine !== "auto";
     return c.json({ error: s.needs, code: "NEEDS_KEY", chosen }, 402);
   }
-  if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Cloud transcription is locked for your account", code: "CLOUD_LOCKED" }, 403);
+  if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Transcription is locked for this account", code: "CLOUD_LOCKED" }, 403);
   if (Number(c.req.header("content-length") ?? 0) > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
   const audio = new Uint8Array(await c.req.arrayBuffer());
   if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
@@ -486,7 +486,7 @@ transcribeApp.post("/mic", async (c) => {
     return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true }));
   } catch (e) {
     if (e instanceof NeedsKey) return c.json({ error: e.message, code: "NEEDS_KEY" }, 402);
-    return c.json({ error: e instanceof Error ? e.message : "Couldn't write that down" }, 502);
+    return c.json({ error: e instanceof Error ? e.message : "Could not transcribe" }, 502);
   } finally {
     await rm(src, { force: true });
   }

@@ -472,11 +472,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
       {view.teamAi && (
         <div className={cn("mt-8", sub && "hidden lg:block")}>
-          <Section title="Team budget">
-            <Card>
-              <TeamBudgetRow team={view.teamAi} description="Used when no AI provider can run." />
-            </Card>
-          </Section>
+          <Card>
+            <TeamBudgetRow team={view.teamAi} description="Used when no AI provider can run." />
+          </Card>
         </div>
       )}
 

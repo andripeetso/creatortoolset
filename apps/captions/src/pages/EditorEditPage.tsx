@@ -12,6 +12,7 @@ import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, get
 import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
+import { editorsOnMac, openInEditor, type MacEditor } from "@/lib/thisMac";
 import { confirmHeavy } from "@/lib/setup";
 import { Maker, StateBadge, thumb } from "./EditorPage";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
@@ -27,7 +28,7 @@ import { STYLE_NAME_MAX } from "@contracts/editor-styles";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards" };
+const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards", post: "Post-processing" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
@@ -53,6 +54,10 @@ export default function EditorEditPage() {
   // takes with no picture to draw a line on (a voice recording): they have no eye line, and an edit of only those has no Eye line section
   const [blind, setBlind] = useState<string[]>([]);
   const busy = !!edit?.jobs.some((j) => j.state === "queued" || j.state === "running");
+  // the video editors on this Mac (the Mac app only) and the draft being opened in one: "<draft>:<editor>"
+  const [editors, setEditors] = useState<MacEditor[]>([]);
+  const [opening, setOpening] = useState<string | null>(null);
+  useEffect(() => void editorsOnMac().then(setEditors), []);
 
   const act = (p: Promise<Edit>) =>
     p.then((e) => {
@@ -130,7 +135,7 @@ export default function EditorEditPage() {
           </Button>
         )}
         {!edit.locked && (
-          <Button size="sm" variant="ghost" aria-label="Move to the trash" onClick={() => void remove()}>
+          <Button size="sm" variant="ghost" aria-label="Move to trash" onClick={() => void remove()}>
             <Trash2 className="h-4 w-4" />
           </Button>
         )}
@@ -170,7 +175,7 @@ export default function EditorEditPage() {
 
         <section aria-label="Steps" className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Steps</h2>
-          {edit.jobs.length === 0 && <p className="text-sm text-zinc-500">Nothing has run yet.</p>}
+          {edit.jobs.length === 0 && <p className="text-sm text-zinc-500">No steps</p>}
           <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
             {edit.jobs.map((j) => (
               <li key={j.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
@@ -213,7 +218,7 @@ export default function EditorEditPage() {
         <section aria-label="Eye line" className={cn("flex flex-col gap-2", (!editable || edit.jobs.length === 0 || edit.sources.every((v) => blind.includes(v))) && "hidden")}>
           <h2 className="text-sm font-semibold">Eye line</h2>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. The zoom on cuts keeps the eyes at that height. Change it, then draft again (no AI).</p>
+            <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip: the zoom on cuts keeps them at that height.</p>
             {editable && !busy && edit.plans.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => void act(runEdit(id, "draft"))}>
                 Draft again
@@ -226,7 +231,7 @@ export default function EditorEditPage() {
                 key={v}
                 versionId={v}
                 y={edit.eyeline[v] ?? edit.eyelineFound?.[v] ?? DEFAULT_EYELINE}
-                note={edit.eyeline[v] !== undefined ? "Set by you" : edit.eyelineFound?.[v] !== undefined ? "Found" : undefined}
+                note={edit.eyeline[v] !== undefined ? "Set by hand" : edit.eyelineFound?.[v] !== undefined ? "Found" : undefined}
                 onSet={(y) => void act(setEyeline(id, v, y))}
                 onNoPicture={() => setBlind((b) => (b.includes(v) ? b : [...b, v]))}
               />
@@ -358,7 +363,7 @@ export default function EditorEditPage() {
                     {pv ? (
                       <video src={`/api/review/assets/${pv.assetId}/v/${pv.n}/play`} controls preload="metadata" className="max-h-80 w-full rounded-lg bg-black" />
                     ) : (
-                      <p className="rounded-lg bg-zinc-500/10 py-8 text-center text-xs text-zinc-500">No preview yet</p>
+                      <p className="rounded-lg bg-zinc-500/10 py-8 text-center text-xs text-zinc-500">No preview</p>
                     )}
                     {d && d.qa.notes.length > 0 && (
                       <ul className="list-disc pl-5 text-xs text-amber-600">
@@ -392,7 +397,7 @@ export default function EditorEditPage() {
                       </section>
                     )}
                     <div className="flex flex-wrap gap-1.5">
-                      {postHeld && <p className="text-xs text-amber-600">Post-processing did not finish on this version: run it again before you export</p>}
+                      {postHeld && <p className="text-xs text-amber-600">Post-processing did not finish on this version: run it again before exporting</p>}
                       {!postHeld && (["otio", "fcpxml", "zip"] as const).map((f) => (
                         <Button key={f} asChild size="sm" variant="outline">
                           <a href={exportUrl(id, n, f)} download>
@@ -401,9 +406,22 @@ export default function EditorEditPage() {
                           </a>
                         </Button>
                       ))}
+                      {!postHeld && d && editors.map((ed) => (
+                        <Button key={ed.id} size="sm" variant="outline" disabled={opening !== null}
+                          onClick={() => {
+                            setOpening(`${n}:${ed.id}`);
+                            const tl = d.timeline;
+                            void openInEditor({ edit: id, draft: n, editor: ed.id, name: `${edit.name} ${n}`, project: edit.name, fps: tl.fps, width: tl.width, height: tl.height })
+                              .then((r) => (r.problem ? toast.error(r.problem) : r.note && toast(r.note)))
+                              .finally(() => setOpening(null));
+                          }}>
+                          {opening === `${n}:${ed.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                          Open in {ed.name}
+                        </Button>
+                      ))}
                       {editable && pv && (
                         <Button size="sm" variant={cutting === n ? "secondary" : "ghost"} aria-pressed={cutting === n} onClick={() => setCutting(n)}
-                          title="Trim, cut, move and take out clips on this version's timeline, then make the next version from them with no AI">
+                          title="Trim, cut, move and remove clips on this version's timeline, then make the next version from them exactly as they are">
                           <Scissors className="h-3.5 w-3.5" />
                           Edit by hand
                         </Button>
@@ -417,7 +435,7 @@ export default function EditorEditPage() {
                         </Button>
                       )}
 {editable &&                       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
-                        Render preview again
+                        Make preview again
                       </Button>}
                       {editable && edit.style?.animation && (
                         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(makeCardsAgain(id, n))}>

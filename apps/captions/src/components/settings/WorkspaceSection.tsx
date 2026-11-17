@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -133,7 +134,7 @@ export function WorkspaceSection() {
         <Card>
           <Row
             id="team-name"
-            title="Team name"
+            title="Name"
             control={
               <TextField
                 label="Team name"
@@ -370,8 +371,12 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
   );
 }
 
-/** One switch per workspace of the owner's (Member.workspaces, Invite.workspaces), as a plug-in's Workspaces section has them. */
-function WorkspaceSwitches({ brands, given, who, onChange }: { brands: Brand[]; given: string[]; who: string; onChange: (ids: string[]) => void }) {
+/**
+ * One switch per workspace of the owner's (Member.workspaces, Invite.workspaces), as a plug-in's Workspaces section has
+ * them. `check`: a checkbox each, for a form whose button makes the thing (a new invite), where nothing applies at once.
+ */
+function WorkspaceSwitches({ brands, given, who, check, onChange }: { brands: Brand[]; given: string[]; who: string; check?: boolean; onChange: (ids: string[]) => void }) {
+  const pick = (id: string, on: boolean) => onChange(on ? [...given, id] : given.filter((x) => x !== id));
   // the dot is the workspace's own colour, as the switcher and the row tags draw it: the team's list carries no colour
   const own = useWorkspace((s) => s.projects);
   return (
@@ -385,7 +390,13 @@ function WorkspaceSwitches({ brands, given, who, onChange }: { brands: Brand[]; 
               <span className="truncate">{b.name}</span>
             </span>
           }
-          control={<Switch checked={given.includes(b.id)} aria-label={`${b.name} for ${who}`} onCheckedChange={(on) => onChange(on ? [...given, b.id] : given.filter((x) => x !== b.id))} />}
+          control={
+            check ? (
+              <Checkbox checked={given.includes(b.id)} aria-label={`${b.name} for ${who}`} onCheckedChange={(on) => pick(b.id, on === true)} />
+            ) : (
+              <Switch checked={given.includes(b.id)} aria-label={`${b.name} for ${who}`} onCheckedChange={(on) => pick(b.id, on)} />
+            )
+          }
         />
       ))}
     </Card>
@@ -393,27 +404,34 @@ function WorkspaceSwitches({ brands, given, who, onChange }: { brands: Brand[]; 
 }
 
 /**
- * Which of the owner's workspaces a member, or the person an invite is for, works in: a switch each, saved with the
- * button. A workspace the owner no longer has is left out of what is saved.
+ * Which of the owner's workspaces a member, or the person an invite is for, works in: a switch each, saved as it is
+ * switched (a save that fails puts the switch back), and Done closes. A workspace the owner no longer has is left out
+ * of what is saved.
  */
 export function WorkspacesDialog({ who, brands, given, onClose, onSave }: { who: string; brands: Brand[]; given: string[]; onClose: () => void; onSave: (ids: string[]) => Promise<unknown> }) {
   const [ids, setIds] = useState(() => given.filter((id) => brands.some((b) => b.id === id)));
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    setBusy(true);
-    try {
-      await onSave(ids);
-      onClose();
-    } catch (e) {
+  const change = (next: string[]) => {
+    const before = ids;
+    setIds(next);
+    onSave(next).catch((e) => {
       saveFailed(msg(e));
-    } finally {
-      setBusy(false);
-    }
+      setIds(before);
+    });
   };
   return (
-    <FormDialog open onOpenChange={(o) => !o && onClose()} title={`Workspaces for ${who}`} submitLabel="Save" onSubmit={submit} busy={busy}>
-      <WorkspaceSwitches brands={brands} given={ids} who={who} onChange={setIds} />
-    </FormDialog>
+    <SettingsDialog open onOpenChange={(o) => !o && onClose()}>
+      <SettingsDialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Workspaces for {who}</DialogTitle>
+        </DialogHeader>
+        <WorkspaceSwitches brands={brands} given={ids} who={who} onChange={change} />
+        <DialogFooter>
+          <Button size="sm" onClick={onClose}>
+            Done
+          </Button>
+        </DialogFooter>
+      </SettingsDialogContent>
+    </SettingsDialog>
   );
 }
 
@@ -605,7 +623,7 @@ function InviteDialog({
         {!link && brands.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-xs text-muted-foreground">Workspaces</p>
-            <WorkspaceSwitches brands={brands} given={given} who="the invite" onChange={setGiven} />
+            <WorkspaceSwitches check brands={brands} given={given} who="the invite" onChange={setGiven} />
           </div>
         )}
         {link && <code className="block truncate rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">{link}</code>}

@@ -347,7 +347,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key")
     .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
-  // held for the plan's limit, per step: "4 AI descriptions wait", "2 shot descriptions wait"
+  // held for the plan's limit, per step: "4 descriptions paused", "2 shot descriptions paused"
   for (const step of ["look", "describe"] as const) {
     const held = rows.filter((r) => r.held && STEP_OF[r.kind] === step);
     const heldN = held.reduce((n, r) => n + r.n, 0);
@@ -355,7 +355,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     if (budget) waiting.unshift({ step, count: budget, missing: BUDGET_WAITS, limit: true });
     const limited = held.filter((r) => r.error !== BUDGET_WAITS);
     const limitedN = heldN - budget;
-    if (limitedN) waiting.unshift({ step, count: limitedN, missing: `${limited[0]!.error} They carry on by themselves then.`, limit: true });
+    if (limitedN) waiting.unshift({ step, count: limitedN, missing: `${limited[0]!.error} They continue then.`, limit: true });
   }
   if (!left) {
     runs.delete(libraryId);

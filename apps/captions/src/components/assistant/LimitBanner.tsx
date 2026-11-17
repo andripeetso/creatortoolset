@@ -44,7 +44,7 @@ export function LimitBanner({ chat, limit, snoozed }: { chat: string; limit: Non
     setFailed(null);
     const r = await call();
     setPending(false);
-    if (!r.ok) setFailed(`${what}: ${r.error ?? "it didn't save"}`);
+    if (!r.ok) setFailed(`${what}: ${r.error ?? "not saved"}`);
   };
   const button = "shrink-0 rounded px-1 py-0.5 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:pointer-events-none disabled:opacity-50";
   return (
@@ -56,7 +56,7 @@ export function LimitBanner({ chat, limit, snoozed }: { chat: string; limit: Non
         {limit.until && (
           <span className="flex shrink-0 flex-wrap items-center gap-x-3">
             <button type="button" className={button} disabled={pending} onClick={() => void act(() => limitChat(chat, !limit.resume), "Could not change auto-resume")}>
-              {pending ? "Saving..." : limit.resume ? "Cancel auto-resume" : "Resume at reset"}
+              {pending ? "Saving…" : limit.resume ? "Cancel auto-resume" : "Resume at reset"}
             </button>
             <button
               type="button"
@@ -64,7 +64,7 @@ export function LimitBanner({ chat, limit, snoozed }: { chat: string; limit: Non
               disabled={pending || (!snoozed && passed)}
               onClick={() => void act(() => snoozeChat(chat, snoozed ? null : limit.until!), "Could not snooze chat")}
             >
-              {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+              {pending ? "Saving…" : snoozed ? "Wake now" : "Snooze until reset"}
             </button>
           </span>
         )}

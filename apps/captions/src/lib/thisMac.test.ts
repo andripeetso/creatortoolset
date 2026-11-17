@@ -115,8 +115,8 @@ describe("a call that needs a Mac of the person's own", () => {
   });
 
   it("says why when this Mac can't be switched on, and gives any other answer as it is", async () => {
-    bridgeWith(async () => ({ aiOn: false, paired: false, problem: "Could not pair this Mac: offline" }));
-    await expect(onThisMac(async () => Promise.reject(away()), { wait: 1 })).rejects.toThrow("This Mac could not be switched on for it: Could not pair this Mac: offline");
+    bridgeWith(async () => ({ aiOn: false, paired: false, problem: "Could not add this Mac: offline" }));
+    await expect(onThisMac(async () => Promise.reject(away()), { wait: 1 })).rejects.toThrow("This Mac could not be switched on for it: Could not add this Mac: offline");
     const asked: string[] = [];
     bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true }));
     await expect(onThisMac(async () => Promise.reject(new Error("Needs the newest Creator Toolset Mac app")), { wait: 1 })).rejects.toThrow("Needs the newest");

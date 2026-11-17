@@ -10,7 +10,7 @@ let defaultConnectService = URL(string: "https://connect.creatortoolset.com")!
 
 /// The connect service's address, as saved in UserDefaults `connectBroker`: never set = defaultConnectService;
 /// "" = none (forks, own setups). Having one sends nothing by itself: the service is asked only once "Add this Mac to
-/// my account…" is pressed, or for the account's computers while signed in to an account (Shell.brokerComputers).
+/// the account…" is pressed, or for the account's computers while signed in to an account (Shell.brokerComputers).
 func connectBrokerURL(_ saved: String?) -> URL? {
     guard let saved else { return defaultConnectService }
     return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
@@ -106,7 +106,7 @@ extension Shell {
         return accountServers(list, thisComputer: tunnelConfig(data: mine)?.computerId)
     }
 
-    /// "Add this Mac to my account": the server asks the broker for a code, the person approves it on the site, and the
+    /// "Add this Mac to the account": the server asks the broker for a code, the person approves it on the site, and the
     /// server links this computer; then this Mac's tunnel starts. Problems go to the window's notice and are returned
     /// (nil = on the account), for setup's Add this computer (the page's "connect" ask).
     @discardableResult func connectThisComputer() async -> String? {

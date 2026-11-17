@@ -35,7 +35,7 @@ export function ChatModeButton({ className, ...rest }: { className?: string } & 
       onClick={(e) => clickChatMode(ref.current, e)}
       aria-pressed={on}
       aria-label={on ? "Leave chat mode" : "Chat mode"}
-      title={on ? "Leave chat mode (⌘J)" : "Chat mode: your chats beside the page (⌘J)"}
+      title={on ? "Leave chat mode (⌘J)" : "Chat mode: chats beside the page (⌘J)"}
       className={cn(
         "flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-500 outline-none transition-[color,background-color,transform] hover:bg-zinc-500/15 hover:text-current focus-visible:ring-2 focus-visible:ring-[rgb(var(--violet-600))] active:scale-90",
         on && "text-current",

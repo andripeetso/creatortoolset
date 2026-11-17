@@ -55,7 +55,7 @@ describe("a folder added in setup", () => {
   it("is refused with the reason when the path is not a folder on this computer", async () => {
     const r = await addSetupFolder(path.join(dir, "no-such-folder"));
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toMatch(/No such folder on the server/);
+    expect(((await r.json()) as { error: string }).error).toMatch(/Folder not found on the server/);
     const notAFolder = await addSetupFolder(clip);
     expect(notAFolder.status).toBe(400);
   });
@@ -163,10 +163,19 @@ describe("a folder added in Settings for the computer this server runs on", () =
     expect(await watchedPaths()).not.toContain(mine);
   });
 
+  it("a Finals folder takes the place of the one before and is not read as footage", async () => {
+    const finals = (await view()).folders.filter((f) => (f as { role?: string }).role === "finals");
+    expect(finals).toEqual([]);
+    expect((await add(mac, path.join(dir, "Finals A"), "finals")).status).toBe(200);
+    expect((await add(mac, path.join(dir, "Finals B"), "finals")).status).toBe(200);
+    expect((await view()).folders.filter((f) => (f as { role?: string }).role === "finals").map((f) => f.origin.path)).toEqual([path.join(dir, "Finals B")]);
+    expect(await watchedPaths()).not.toContain(path.join(dir, "Finals B"));
+  });
+
   it("a folder that is not there is refused with the reason, as in setup", async () => {
     const r = await add(mac, path.join(dir, "no-such-folder"));
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toMatch(/No such folder on the server/);
+    expect(((await r.json()) as { error: string }).error).toMatch(/Folder not found on the server/);
   });
 
   it("another computer's folder is only recorded: the server cannot read it, so nothing is watched or checked", async () => {

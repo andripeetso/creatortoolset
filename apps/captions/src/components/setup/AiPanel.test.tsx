@@ -97,7 +97,7 @@ describe("the rows: named by what a person knows, in order", () => {
   it("never says Use it or Check on a button, and shows no What it said on a row that is fine", () => {
     for (const html of [panel(view([])), panel(view([codex, claude])), panel(view([connected("claude", "Claude Code")]))]) {
       expect(html).not.toMatch(/>(Use it|In use|Check(ing…| again)?)<\/button>/);
-      expect(html).not.toContain("What it said");
+      expect(html).not.toContain("Details");
     }
   });
 
@@ -128,7 +128,7 @@ describe("the list", () => {
     expect(html).toContain("Uses your ChatGPT plan (Plus or higher).");
     expect(html).not.toMatch(/Looking for|Not on this Mac|Not signed in/);
     // nothing to press on a row until its state is known; Show more is there as it will be
-    expect(buttons(html).filter((b) => /Install|Sign in|Connect|Try again/.test(b))).toEqual([]);
+    expect(buttons(html).filter((b) => /Install|Sign in|Connect|Retry/.test(b))).toEqual([]);
     expect(html).toContain("Show more");
   });
 
@@ -153,8 +153,8 @@ describe("the picker: which AI answers in the app, when two are connected", () =
     const own = settings([inst("local-claude", "claude", "Claude Code"), inst("local-codex", "codex", "Codex")], { instance: "local-claude", model: "claude-opus-5-5", effort: "xhigh" });
     const providers = { own, models: { "local-claude": ["claude-opus-5-5", "claude-sonnet-5"] } } as unknown as ProvidersView;
     const html = renderToStaticMarkup(<AnswerPicker view={providers} onPick={() => {}} />);
-    expect(html).toContain("Answers in the app");
-    expect(html).toContain('aria-label="AI that answers in the app"');
+    expect(html).toContain("Used in the app");
+    expect(html).toContain('aria-label="AI used in the app"');
     expect(html).toContain("Codex");
     expect(html).toContain("claude-sonnet-5");
     const none = { own: null, models: {} } as unknown as ProvidersView;
@@ -180,16 +180,16 @@ describe("what Connect does, one step at a time", () => {
     for (const [phase, label] of Object.entries(labels) as Array<[keyof typeof labels, string]>) {
       expect(rowView("codex", codex, undefined, phase).button).toEqual({ label, disabled: true });
     }
-    expect(rowView("codex", undefined, undefined, "installing").line).toBe("Installing what ChatGPT needs on this Mac (about 110 MB). This can take a few minutes.");
-    expect(rowView("codex", codex, undefined, "updating").line).toBe("Updating what ChatGPT needs on this Mac. This can take a few minutes.");
-    expect(rowView("claude", claude, undefined, "signingIn").line).toBe("Finish signing in in your browser.");
+    expect(rowView("codex", undefined, undefined, "installing").line).toBe("Installing what ChatGPT needs on this Mac (about 110 MB), which can take a few minutes.");
+    expect(rowView("codex", codex, undefined, "updating").line).toBe("Updating what ChatGPT needs on this Mac, which can take a few minutes.");
+    expect(rowView("claude", claude, undefined, "signingIn").line).toBe("Finish signing in in the browser.");
     // what the install downloads is said while it runs, and a sign-in with a code to confirm shows that code
-    expect(rowView("musecode", undefined, undefined, "installing").line).toBe("Installing what Meta needs on this Mac (about 470 MB). This can take a few minutes.");
+    expect(rowView("musecode", undefined, undefined, "installing").line).toBe("Installing what Meta needs on this Mac (about 470 MB), which can take a few minutes.");
     expect(rowView("musecode", other("musecode", { signedIn: false }), undefined, "signingIn", "TINY-2468")).toEqual({ line: "Confirm this code on Meta's page: TINY-2468", button: { label: "Signing in…", disabled: true } });
   });
 
   it("after three minutes still signed out: Sign in again, never a Check button", () => {
-    expect(rowView("claude", claude, undefined, "timedOut")).toEqual({ line: "Still not signed in. Finish in your browser, or sign in again.", button: { label: "Sign in" } });
+    expect(rowView("claude", claude, undefined, "timedOut")).toEqual({ line: "Not signed in: finish in the browser, or sign in again.", button: { label: "Sign in" } });
   });
 
   it("a check that comes back not signed in is the sign-in state, never a failure: Sign in, no red line, no What it said", () => {
@@ -198,7 +198,7 @@ describe("what Connect does, one step at a time", () => {
     const signin: ConnectResult = { state: "signin", signedIn: false, answered: false, message: "Not signed in yet.", raw };
     expect(rowView("grok", other("grok", { signedIn: true }), signin, undefined)).toEqual({ line: "Not signed in yet. Uses your Grok account.", button: { label: "Sign in" } });
     const html = panel({ ...view([claude]), others: [other("grok", { signedIn: true })] }, { results: { grok: signin } });
-    expect(html).not.toContain("What it said");
+    expect(html).not.toContain("Details");
     expect(html).not.toContain("grok login");
     expect(html).not.toContain("text-red-600");
     // Meta signed out, in its own words: Sign in, and its "run /login" never shows
@@ -239,11 +239,11 @@ describe("what Connect does, one step at a time", () => {
     const failed: ConnectResult = { state: "failed", signedIn: true, answered: false, message: "It took too long to answer. Try again.", raw: "timed out" };
     const v = rowView("claude", claude, failed, undefined);
     expect(v.line).toBe("It took too long to answer. Try again.");
-    expect(v.button).toEqual({ label: "Try again" });
+    expect(v.button).toEqual({ label: "Retry" });
     expect(v.raw).toBe("timed out");
     expect(v.connected).toBeFalsy();
     const html = panel(view([claude]), { results: { claude: failed } });
-    expect(html).toContain("What it said");
+    expect(html).toContain("Details");
     expect(html).toContain("timed out");
     expect(html).not.toContain("It didn't answer: It didn't answer");
   });
@@ -254,8 +254,8 @@ describe("what Connect does, one step at a time", () => {
     expect(rowView("codex", codex, noPlan, undefined)).toEqual({ line: "Codex needs ChatGPT Plus or higher, which this account doesn't have.", button: null, raw });
     const html = panel(view([codex]), { results: { codex: noPlan } });
     expect(html).toContain("Codex needs ChatGPT Plus or higher");
-    expect(html).toContain("What it said");
-    expect(buttons(html)).not.toContain("Try again");
+    expect(html).toContain("Details");
+    expect(buttons(html)).not.toContain("Retry");
     expect(html).not.toContain("text-red-600");
     expect(nextStep("plan", { installed: false, updated: false, signedIn: false })).toBe("done");
   });
@@ -264,12 +264,12 @@ describe("what Connect does, one step at a time", () => {
     const odd: ConnectResult = { state: "failed", signedIn: true, answered: false, message: "It didn't answer. Try again.", raw: "Codex: unexpected status 418 I'm a teapot" };
     const html = panel(view([codex]), { results: { codex: odd } });
     expect(html).toContain("It didn't answer. Try again.");
-    expect(html).toContain("What it said");
+    expect(html).toContain("Details");
     expect(html).toContain("unexpected status 418");
     // a program that says only what to run leaves nothing to show: the line and Try again stay, no empty control
     const onlyCommand: ConnectResult = { ...odd, raw: "Please run /login" };
     expect(rowView("codex", codex, onlyCommand, undefined).raw).toBeUndefined();
-    expect(panel(view([codex]), { results: { codex: onlyCommand } })).not.toContain("What it said");
+    expect(panel(view([codex]), { results: { codex: onlyCommand } })).not.toContain("Details");
   });
 
   it("a connected row names the plan its AI says it is on, quietly; nothing when no plan is known", () => {
@@ -289,7 +289,7 @@ describe("what Connect does, one step at a time", () => {
 
   it("connected earlier but signed out now: says so, with Sign in, and no check mark", () => {
     const v = rowView("claude", row({ id: "claude", name: "Claude Code", connected: true, signedIn: false }), undefined, undefined);
-    expect(v.line).toBe("Signed out since last time.");
+    expect(v.line).toBe("Signed out");
     expect(v.button).toEqual({ label: "Sign in" });
     expect(v.connected).toBeFalsy();
   });

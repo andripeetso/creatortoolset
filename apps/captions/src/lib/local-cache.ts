@@ -192,12 +192,14 @@ function fetchInto<T>(k: string, load: () => Promise<T>, changedAt?: number): Pr
     return running;
   }
   const s = stamp(k); // taken now: a Clear while this waits for the stream must still win
+  const ws = currentWorkspace(); // a per-workspace list answers for the workspace at send time: after a switch it is the other one's
   const p = (async () => {
     await syncReady();
     const at = { seq: seqNow(), boot: boot() };
     inflightAt.set(k, at);
+    const sentIn = currentWorkspace();
     const next = await load();
-    if (stamp(k) === s) write(k, next, at);
+    if (stamp(k) === s && (sentIn === ws || !k.includes("#ws="))) write(k, next, at);
     return next;
   })().finally(() => {
     inflight.delete(k);

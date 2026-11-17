@@ -1,6 +1,6 @@
 # Blur faces (AI Editor step)
 
-Blurs or pixelates the faces the person names in "What to blur" ("Every face except the person speaking", the
+Blurs or pixelates the faces the person names in "Faces to blur" ("Every face except the person speaking", the
 default; "the people in the background"; "everyone but me"), in every video a draft shows: the speaker's (V1) and the B-roll
 (V2). It runs after Face refinement and before Voice (`order` 30).
 

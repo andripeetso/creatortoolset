@@ -359,7 +359,7 @@ export function TranscriptPanel() {
     if (!liveFixes?.length) return NO_FIXES;
     return new Map(
       liveFixes.flatMap((f) => {
-        const title = `Fixed from ${f.from === "master" ? "the master clip" : "your script"} — heard “${f.before}”`;
+        const title = `Corrected from ${f.from === "master" ? "the master clip" : "the script"}, heard “${f.before}”`;
         return f.ids.map((id) => [id, title] as const);
       }),
     );
@@ -889,9 +889,9 @@ export function TranscriptPanel() {
           disabled={empty || editorBusy}
           title={
             editorBusy
-              ? "Editing is paused while captions are processing"
+              ? "Locked while captions are processing"
               : isText
-                ? "Done — words become atomic again"
+                ? "Back to whole words"
                 : "Edit words letter by letter"
           }
           className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] disabled:opacity-40 ${
@@ -917,14 +917,14 @@ export function TranscriptPanel() {
             disabled={empty || editorBusy || !ai.allowed || fittingSplits}
             title={
               !ai.allowed
-                ? "The AI caption pass is locked for your account"
+                ? "Match cadence is locked for this account"
                 : dirty
-                  ? "The transcript changed since the cadence pass — re-group the captions to the speech rhythm"
+                  ? "The transcript changed since cadence was matched"
                   : cadenceApplied && narrower
-                    ? "Some lines no longer fit where the cadence match planned its breaks — match again for this box width"
+                    ? "Some lines no longer fit the caption box at this width"
                     : cadenceApplied
-                    ? "Cadence is matched — resizing the box re-lays out the same thoughts. Click to match again."
-                    : "AI: group captions into the thoughts as they're spoken"
+                    ? "Cadence is matched; click to match again"
+                    : "Groups the words into captions by the rhythm of the speech"
             }
             className={
               cadenceApplied && !dirty && !narrower && !editorBusy
@@ -974,7 +974,7 @@ export function TranscriptPanel() {
                         setMenuOpen(false);
                         setScriptOpen(true);
                       }}
-                      title="The script you filmed from: AI uses it to fix mis-heard words"
+                      title="The script the video was filmed from, to correct mis-heard words"
                       className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-zinc-800"
                     >
                       <ScrollText className="h-3 w-3 shrink-0" /> Original script…
@@ -996,7 +996,7 @@ export function TranscriptPanel() {
                   disabled={empty || editorBusy}
                   className="block w-full px-3 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
                 >
-                  No commas
+                  Remove commas
                 </button>
                 <button
                   onClick={() => {
@@ -1006,7 +1006,7 @@ export function TranscriptPanel() {
                   disabled={empty || editorBusy}
                   className="block w-full px-3 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
                 >
-                  No periods
+                  Remove periods
                 </button>
                 <div className="my-1 border-t border-zinc-800" />
                 <button
@@ -1019,7 +1019,7 @@ export function TranscriptPanel() {
                     }
                   }}
                   disabled={transcribing || editorBusy || serverCaptioning}
-                  title={`Discard this transcript and generate a fresh one for ${clipName || "this clip"} with ${engineLabel} — only this clip is affected`}
+                  title={`Replaces the transcript of ${clipName || "this clip"}, transcribed with ${engineLabel}`}
                   className="block w-full px-3 py-1.5 text-left text-[11px] text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"
                 >
                   {transcribing
@@ -1036,9 +1036,7 @@ export function TranscriptPanel() {
       {confirmRe && (
         <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300">
           <span className="flex-1">
-            Replace <b>{clipName || "this clip"}</b>&apos;s transcript? The old
-            captions are cleared first, then a fresh transcript is generated
-            with {engineLabel}. Other clips are not touched.
+            Replace <b>{clipName || "this clip"}</b>&apos;s transcript? Its captions and edits are deleted.
           </span>
           <button
             onClick={() => {
@@ -1092,18 +1090,17 @@ export function TranscriptPanel() {
           <ScrollText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div className="min-w-0 flex-1">
             {liveFixes.length === 0 ? (
-              "Checked against your script: no mis-heard words found."
+              "No mis-heard words found"
             ) : (
               <>
                 <p>
-                  Fixed {liveFixes.length} mis-heard{" "}
+                  Corrected {liveFixes.length} mis-heard{" "}
                   {liveFixes.length === 1 ? "word" : "words"} from{" "}
                   {liveFixes.every((f) => f.from === "master")
                     ? "the master clip"
                     : liveFixes.some((f) => f.from === "master")
-                      ? "your script and the master clip"
-                      : "your script"}
-                  . They&apos;re underlined below.
+                      ? "the script and the master clip"
+                      : "the script"}
                 </p>
                 <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto pr-1 text-[11px]">
                   {liveFixes.map((f) => (
@@ -1115,7 +1112,7 @@ export function TranscriptPanel() {
                             .find((w) => w.id === f.ids[0]);
                           if (word) useStudio.getState().seek(word.start);
                         }}
-                        title="Jump to it"
+                        title="Go to the word"
                         className="rounded px-1 text-left hover:bg-emerald-500/15"
                       >
                         <span className="text-zinc-400 line-through decoration-zinc-500">
@@ -1211,7 +1208,7 @@ export function TranscriptPanel() {
                 Transcription failed — {status.message.replace(/\.+$/, "")}
               </span>
             ) : (
-              "Transcribe the video to get an editable transcript — every line is one caption."
+              "No transcript"
             )}
           </p>
         )}

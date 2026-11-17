@@ -85,7 +85,7 @@ export function Inspector({
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-zinc-800">
-      <div role="tablist" aria-label="What to change" className="flex gap-1 border-b border-zinc-800 p-2">
+      <div role="tablist" aria-label="Look" className="flex gap-1 border-b border-zinc-800 p-2">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -107,7 +107,7 @@ export function Inspector({
       <div role="tabpanel" className="min-h-0 flex-1 space-y-6 overflow-y-scroll p-4 bars:pr-2">
         {shown === "background" &&
           (hasCamera && look.camera?.layout === "split" ? (
-            <p className="text-xs text-zinc-400">Split fills the frame edge to edge: no background, padding, corners or shadow show. Pick Beside on the Camera tab for those.</p>
+            <p className="text-xs text-zinc-400">Split fills the frame edge to edge, with no background, padding, corners or shadow.</p>
           ) : (
             <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} sideCamera={hasCamera && look.camera?.layout === "side"} />
           ))}
@@ -148,7 +148,7 @@ function BackgroundTab({ look, initial, change, canClear, sideCamera }: TabProps
           }
         />
         <p className="text-xs text-zinc-400">
-          {edgeToEdge ? "Just the recording, square corners and all. Turn it off for a background around it." : "The recording on a background, with padding, rounded corners and a shadow."}
+          {edgeToEdge ? "The recording fills the frame, with square corners." : "The recording on a background, with padding, rounded corners and a shadow."}
         </p>
       </Group>
 
@@ -166,7 +166,7 @@ function BackgroundTab({ look, initial, change, canClear, sideCamera }: TabProps
             value={kind}
             options={[
               { id: "gradient", label: "Gradient" },
-              { id: "color", label: "Color" },
+              { id: "color", label: "Colour" },
               ...(canClear ? [{ id: "none" as const, label: "None", title: "Nothing behind the window: Export makes a video with a transparent background" }] : []),
             ]}
             onChange={(k) =>
@@ -182,20 +182,20 @@ function BackgroundTab({ look, initial, change, canClear, sideCamera }: TabProps
                 onChange={(background) => change({ background })}
               />
               <div className="flex gap-2">
-                <ColorField label="Gradient, first color" value={from} onChange={(c) => change({ background: "custom", stops: [c, to] })} />
-                <ColorField label="Gradient, second color" value={to} onChange={(c) => change({ background: "custom", stops: [from, c] })} />
+                <ColorField label="Gradient, first colour" value={from} onChange={(c) => change({ background: "custom", stops: [c, to] })} />
+                <ColorField label="Gradient, second colour" value={to} onChange={(c) => change({ background: "custom", stops: [from, c] })} />
               </div>
             </>
           ) : (
             <>
               <Swatches
-                label="Color"
+                label="Colour"
                 value={COLORS.includes(from.toLowerCase()) ? from.toLowerCase() : null}
                 options={COLORS.map((c) => ({ id: c, label: c, fill: c }))}
                 onChange={(color) => change({ background: "color", color })}
               />
               <div className="flex">
-                <ColorField label="Background color" value={from} onChange={(color) => change({ background: "color", color })} />
+                <ColorField label="Background colour" value={from} onChange={(color) => change({ background: "color", color })} />
               </div>
             </>
           )}
@@ -343,7 +343,7 @@ function ZoomTab({
             }}
             title="One zoom around each run of clicks (with no clicks, where the pointer was at work); replaces the zooms there are"
           >
-            <ZoomIn /> {look.zooms.length ? "Lay them out again" : "Lay out zooms"}
+            <ZoomIn /> {look.zooms.length ? "Lay out zooms again" : "Lay out zooms"}
           </PanelButton>
         )}
       </Group>
@@ -468,7 +468,7 @@ function AimPad({ look, zoom, player, onAim }: { look: ScreenLook; zoom: Zoom; p
 
   return (
     <div className="space-y-2">
-      <div className="text-xs text-zinc-400">Where it looks</div>
+      <div className="text-xs text-zinc-400">Target</div>
       <div
         onPointerDown={press}
         className="relative cursor-crosshair touch-none overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900"
@@ -493,14 +493,14 @@ function SoundTab({ look, change, events }: { look: ScreenLook; change: (patch: 
   const device = (events.audio ?? []).includes("device");
   return (
     <Group>
-      {recorded.voice !== null && <SwitchRow label="Your voice" checked={look.voice !== false} onChange={(voice) => change({ voice })} />}
+      {recorded.voice !== null && <SwitchRow label="Voice" checked={look.voice !== false} onChange={(voice) => change({ voice })} />}
       {recorded.sound !== null ? (
         <SwitchRow label={device ? "Device sound" : "Mac sound"} checked={look.sound !== false} onChange={(sound) => change({ sound })} />
       ) : (
         // a switch for a sound that is not in the recording would do nothing: say where it is turned on instead
         <p className="text-xs text-zinc-400">
-          {device ? "The device's sound" : "The Mac's sound"} wasn't recorded in this take. Turn on {device ? "Record device sound" : "Record Mac sound"} in the
-          recorder's toolbar before you record, and it gets its own switch here.
+          {device ? "The device's sound" : "The Mac's sound"} was not recorded: turn on {device ? "Record device sound" : "Record Mac sound"} in the
+          recorder's toolbar before recording.
         </p>
       )}
     </Group>
@@ -552,7 +552,7 @@ function CameraTab({
     <>
       <Group>
         <SwitchRow label="Show the camera" checked={on} onChange={(show) => place(show ? back : "hidden")} />
-        {on && <Segmented label="Where the camera is" value={cam.layout} options={LAYOUTS} onChange={place} />}
+        {on && <Segmented label="Camera layout" value={cam.layout} options={LAYOUTS} onChange={place} />}
         {cam.layout === "split" && (
           <>
             <SliderRow
@@ -624,7 +624,7 @@ function CameraTab({
         <Group title="Framing">
           {(faces.found || faces.can) && (
             <SwitchRow
-              label="Follow my face"
+              label="Follow the face"
               checked={!!cam.follow && (faces.found || faces.finding !== null)}
               onChange={(follow) => {
                 set({ follow });
@@ -633,14 +633,14 @@ function CameraTab({
             />
           )}
           {faces.finding !== null ? (
-            <p className="text-xs tabular-nums text-zinc-400">Finding your face… {faces.finding}%</p>
+            <p className="text-xs tabular-nums text-zinc-400">Finding the face… {faces.finding}%</p>
           ) : cam.follow && faces.tried && !faces.found ? (
-            <p className="text-xs text-zinc-400">No face was found in the camera.</p>
+            <p className="text-xs text-zinc-400">No face found</p>
           ) : null}
           {following ? (
-            <p className="text-xs text-zinc-400">It moves only when your face does, and slowly. Scroll over the camera in the picture to go closer.</p>
+            <p className="text-xs text-zinc-400">Scroll over the camera in the picture to zoom.</p>
           ) : (
-            <p className="text-xs text-zinc-400">Or drag the camera in the picture, and scroll over it to go closer.</p>
+            <p className="text-xs text-zinc-400">Drag the camera in the picture to move it, scroll over it to zoom.</p>
           )}
           <SliderRow label="Zoom" value={cam.zoom ?? 1} min={1} max={3} step={0.05} format={(v) => `${v.toFixed(1)}×`} initial={1} onChange={(zoom) => set({ zoom })} />
           {!following && (

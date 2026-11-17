@@ -63,7 +63,7 @@ export const PILL_BUTTON = "flex items-center gap-1 rounded-full px-2 py-0.5 hov
 /** The pill's Cite: the selected words go into the message box (both chats and the piece's fields). */
 export function CiteButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className={PILL_BUTTON} title="Cite in the message box: write about it there">
+    <button type="button" onClick={onClick} className={PILL_BUTTON} title="Cite in the message">
       <Quote className="h-3.5 w-3.5" /> Cite
     </button>
   );
@@ -101,7 +101,7 @@ export function CitePopover({ at, comment = "", onSave, onCancel }: { at: { x: n
         ref={box}
         defaultValue={comment}
         rows={3}
-        placeholder="Add an optional comment…"
+        placeholder="Comment (optional)"
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

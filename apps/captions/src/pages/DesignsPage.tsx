@@ -29,7 +29,7 @@ import { AnimationStyles, STYLE_WORDS, type OpenAnimation } from "./editor/Anima
 /**
  * The Designer's start (/design): every design of this account, in the person's own folders, as cards or rows, found
  * by a search and sorted newest first or by name (the same browser as the other tools' start screens:
- * components/browse). Each opens in the designer (/design/:id). New canvas makes an empty canvas (its frames are made
+ * components/browse). Each opens in the designer (/design/:id). New design makes an empty canvas (its frames are made
  * on it: the frame tool offers the picture sizes), in the folder that is open and the brand project the window is in. A
  * carousel piece's design is started from the piece (Design, beside Visualize in the Content Workshop), a cover from a
  * video in Finals: both are listed here too, each with the script or the video it was made from (the script's name
@@ -50,8 +50,8 @@ function carouselChat(): void {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** What it was made from, in words: by its name while that script or video is there, else only what kind of thing it was. */
-const madeFrom = (d: DesignListed) => (!d.from ? "" : "session" in d.from ? (d.madeFrom ? `Script: ${d.madeFrom}` : "From a Workshop carousel") : d.madeFrom ? `Video: ${d.madeFrom}` : "From a video");
-const framesOf = (d: DesignListed) => (d.pages ? `${d.pages} ${d.pages === 1 ? "frame" : "frames"}` : "No frames yet");
+const madeFrom = (d: DesignListed) => (!d.from ? "" : "session" in d.from ? (d.madeFrom ? `Script: ${d.madeFrom}` : "From a Content Workshop carousel") : d.madeFrom ? `Video: ${d.madeFrom}` : "From a video");
+const framesOf = (d: DesignListed) => (d.pages ? `${d.pages} ${d.pages === 1 ? "frame" : "frames"}` : "No frames");
 const SORTS = ["recent", "name"] as const;
 const SORT_KEY = "design:sort";
 /** Every card's picture box, width over height: a frame of any shape (a tall cover, a wide thumbnail) is fitted inside it. */
@@ -129,7 +129,7 @@ export default function DesignsPage() {
   const start = async () => {
     try {
       // an empty canvas: no frame yet (the size is only what a frame made by a click starts as)
-      const d = await createDesign({ format: "portrait", blank: true, pages: 0, name: "Untitled canvas", project: useWorkspace.getState().currentProjectId ?? undefined });
+      const d = await createDesign({ format: "portrait", blank: true, pages: 0, name: "Untitled design", project: useWorkspace.getState().currentProjectId ?? undefined });
       // made with a folder open: it is in that folder
       if (folders.open) await folders.move([d.id], folders.open, false).catch(() => {});
       navigate(`/design/${d.id}`);
@@ -143,9 +143,9 @@ export default function DesignsPage() {
   const hasFiles = (e: React.DragEvent) => tab === "canvases" && [...e.dataTransfer.types].includes("Files");
   const fromPictures = async (given: readonly File[]) => {
     const files = given.filter(isPicture).slice(0, DESIGN_LIMITS.pages);
-    if (!files.length) return setError("Only JPEG, PNG and WebP pictures can start a canvas");
+    if (!files.length) return setError("Only JPEG, PNG and WebP pictures can start a design");
     try {
-      const name = files[0]!.name.replace(/\.[^.]+$/, "").trim().slice(0, DESIGN_LIMITS.name) || "Untitled canvas";
+      const name = files[0]!.name.replace(/\.[^.]+$/, "").trim().slice(0, DESIGN_LIMITS.name) || "Untitled design";
       const d = await createDesign({ format: "portrait", blank: true, pages: 0, name, project: useWorkspace.getState().currentProjectId ?? undefined });
       const got: { picture: string; w: number; h: number }[] = [];
       for (const file of files) got.push({ ...(await pictureSize(file)), picture: await addPicture(d.id, file) });
@@ -157,11 +157,11 @@ export default function DesignsPage() {
     }
   };
   const rename = async (d: DesignListed) => {
-    const name = await askRename("Rename", d.name);
+    const name = await askRename("Rename design", d.name);
     if (name && name !== d.name) await saveDesign(d.id, { name }).then(load, (e) => setError(message(e)));
   };
   const remove = async (d: DesignListed) => {
-    const yes = await confirmDialog({ title: `Delete “${d.name}”?`, body: "Its frames and the pictures added to it are deleted for good. PNGs you saved stay where you saved them.", ok: "Delete", danger: true });
+    const yes = await confirmDialog({ title: `Delete “${d.name}”?`, body: "Its frames and the pictures added to it are deleted. Exported PNGs are kept.", ok: "Delete", danger: true });
     if (yes) await deleteDesign(d.id).then(load, (e) => setError(message(e)));
   };
   /** A design's own buttons: move it to a folder, rename it, delete it. `on`: the classes of one button. */
@@ -209,16 +209,16 @@ export default function DesignsPage() {
             {editable && !!designs?.length && <NewFolderButton onClick={() => void folders.newFolder()} />}
             {editable && <Button size="sm" onClick={() => void start()}>
               <Plus className="h-4 w-4" />
-              New canvas
+              New design
             </Button>}
           </>
         )}
       </AppBar>
       <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-10 sm:px-6">
-        <ToolIntro icon={PenTool} title="Designer" line="Carousels, covers and thumbnails in layers: your AI designs them, you edit anything and save the PNGs" />
+        <ToolIntro icon={PenTool} title="Designer" line="Carousels, covers and thumbnails, designed in layers you can edit" />
         <Tabs value={tab} onValueChange={(t) => setParams(t === "styles" ? { tab: t } : {})} className="mb-4">
           <TabsList>
-            <TabsTrigger value="canvases">Canvases</TabsTrigger>
+            <TabsTrigger value="canvases">Designs</TabsTrigger>
             <TabsTrigger value="styles">Carousel styles</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -230,21 +230,21 @@ export default function DesignsPage() {
           </>
         ) : designs?.length === 0 ? (
           <p className="py-16 text-center text-sm text-zinc-500">
-            Nothing here yet. New canvas opens an empty canvas; Design on a carousel piece in the <Link to="/workshop" className="underline">Content Workshop</Link> starts from its slides.
+            No designs
           </p>
         ) : (
           designs && (
             <>
-              <FolderTrail state={folders} top="Designer" />
+              <FolderTrail state={folders} top="Designs" />
               <BrowseBar
-                search={{ value: find, onChange: setFind, placeholder: "Search canvases (⌘K)" }}
+                search={{ value: find, onChange: setFind, placeholder: "Search designs (⌘K)" }}
                 sort={{
                   value: sort,
                   onChange: (v) => {
                     setSort(v);
                     persistSort(SORT_KEY, v);
                   },
-                  label: "Sort canvases",
+                  label: "Sort designs",
                   options: [
                     { id: "recent", label: "Recent" },
                     { id: "name", label: "Name" },
@@ -252,8 +252,8 @@ export default function DesignsPage() {
                 }}
                 view={{ value: view, onChange: setView }}
               />
-              {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
-              {!find.trim() && folders.open && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">This folder is empty.</p>}
+              {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches</p>}
+              {!find.trim() && folders.open && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No designs</p>}
               {view === "grid" ? (
                 <FolderGrid size="small">
                   <ToolFolderCards state={folders} pictureOf={() => undefined} aspect="square" />

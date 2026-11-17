@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { HardDrive } from "lucide-react";
 import { ServerWorkSection } from "./ServerWorkSection";
+import { ServerUpdateSection } from "./ServerUpdateSection";
 import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useProviders } from "@/lib/providers";
@@ -23,7 +24,8 @@ export function FoldersSection() {
 }
 
 /**
- * Settings → Storage (the Server group): what is not one workspace's. What this account keeps on the server (in every
+ * Settings → Storage (the Server group): what is not one workspace's. For an admin the server's own update, where its
+ * machine runs the updater. What this account keeps on the server (in every
  * workspace), for an admin the drives of the computers, the plug-ins' own storage sections (network storage), and on a hosted server
  * every project on it (was Admin → Projects).
  */
@@ -32,6 +34,7 @@ export function StorageSection() {
   const hosted = useAuth((s) => s.hosted);
   return (
     <>
+      {me?.role === "admin" && <ServerUpdateSection />}
       <KeptSection />
       {!hosted && me?.role === "admin" && <ServerWorkSection />}
       {me?.role === "admin" && <Drives />}

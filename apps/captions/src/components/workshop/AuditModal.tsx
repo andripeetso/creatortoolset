@@ -118,7 +118,7 @@ export function AuditModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card px-4 py-3">
           {r.summary ? <p className="mb-3 text-[13px] leading-relaxed text-foreground">{r.summary}</p> : null}
-          {listed.length === 0 ? <p className="text-[13px] text-muted-foreground">Nothing to reword.</p> : null}
+          {listed.length === 0 ? <p className="text-[13px] text-muted-foreground">Nothing to reword</p> : null}
           <ol className="flex flex-col gap-2">
             {listed.map((c) => (
               <ClaimRow
@@ -135,7 +135,7 @@ export function AuditModal({
           </ol>
           {solid ? (
             <p className="mt-3 text-[12px] text-muted-foreground">
-              {solid} other claim{solid === 1 ? "" : "s"} look solid.
+              {solid} other claim{solid === 1 ? "" : "s"} supported
             </p>
           ) : null}
           {r.citations.length ? (
@@ -151,11 +151,11 @@ export function AuditModal({
             <p className="min-w-0 flex-1 text-[12px] text-muted-foreground">
               {pending.length === 0
                 ? auditFixCount(audit) === 0 && applied.size
-                  ? "Those wordings are in the document."
-                  : "No rewordings to apply."
+                  ? "The rewordings are in the piece"
+                  : "No rewordings to apply"
                 : accepted.length || skipped
                   ? `${accepted.length} accepted${skipped ? ` · ${skipped} skipped` : ""}`
-                  : `${pending.length} rewording${pending.length === 1 ? "" : "s"} for claims that would be false as posted. Accept the ones you want.`}
+                  : `${pending.length} rewording${pending.length === 1 ? "" : "s"} for claims that would be false as posted`}
             </p>
             {!readOnly && <button
               type="button"
@@ -164,7 +164,7 @@ export function AuditModal({
               className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-violet-500 disabled:opacity-40"
             >
               {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              Process{accepted.length ? ` ${accepted.length}` : ""}
+              Apply{accepted.length ? ` ${accepted.length}` : ""}
             </button>}
           </div>
         ) : null}

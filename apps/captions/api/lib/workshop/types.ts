@@ -90,7 +90,6 @@ export interface Rule {
 }
 
 export type DraftKind = "reel" | "carousel" | "ad" | "free";
-export type DraftStatus = "generating" | "ready" | "error";
 
 export interface DraftMeta {
   id: string;
@@ -120,8 +119,8 @@ export interface SessionSource {
   addedAt: number;
 }
 
-export { SESSION_STATUSES, TURN_STOPPED, type SessionStatus } from "../../../contracts/workshop-statuses";
-import type { SessionStatus } from "../../../contracts/workshop-statuses";
+export { SESSION_STATUSES, TURN_STOPPED, type DraftStatus, type ProposalStatus, type ReplyStatus, type SessionStatus, type ShareProgressState } from "../../../contracts/workshop-statuses";
+import type { DraftStatus, ProposalStatus, ReplyStatus, SessionStatus } from "../../../contracts/workshop-statuses";
 
 /**
  * Every move a session's status may make. The pipeline is free (the status menu picks any stage), Shelved is parked:
@@ -202,6 +201,8 @@ export interface SessionMeta {
   note?: { path: string; mtime: number };
   /** When the status last changed (the note sync compares it with the note's mtime). */
   statusAt?: number;
+  /** Its folder in the workspace's Finals folder (contracts/storage.ts finalsDirName of its title then), kept so a rename keeps it. */
+  finalsDir?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -453,7 +454,7 @@ export interface ChatMessage {
   found?: string;
   /** Sent by Creator Toolset itself (a Finals version's description when the finals arrived), not typed by him. */
   auto?: boolean;
-  status?: "thinking" | "done" | "error";
+  status?: ReplyStatus;
   error?: string;
   /** While thinking: what is happening, and who is answering. */
   stage?: "packing" | "thinking" | "writing" | "applying" | "searching" | "researching";
@@ -498,7 +499,7 @@ export interface Proposal {
   depth: "quick" | "deep";
   question?: string;
   reason?: string;
-  status: "open" | "accepted" | "declined";
+  status: ProposalStatus;
 }
 
 export interface Chat {

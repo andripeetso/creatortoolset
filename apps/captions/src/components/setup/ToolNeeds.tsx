@@ -28,7 +28,7 @@ function NeedForm({ need }: { need: Need }) {
   if (need.form === "library")
     return (
       <p className="text-xs text-muted-foreground">
-        The <Link to="/library" className="underline">Media Library</Link> makes your library: where its files live (this Mac's disk, folders it watches in place, or a bucket) is in its storage settings.
+        The <Link to="/library" className="underline">Media Library</Link> creates the library and sets where its files are kept.
       </p>
     );
   return (
@@ -119,7 +119,7 @@ export function ToolNeeds({ tool, have, missingOnly, title = true, welcome }: { 
           <span className={r.ready ? "text-xs font-normal text-emerald-600 dark:text-emerald-400" : "text-xs font-normal text-muted-foreground"}>{r.ready ? "ready" : "needs setting up"}</span>
         </h3>
       )}
-      {!TOOL_NEEDS[tool].length && <p className="text-xs text-muted-foreground">Needs nothing: it works as it is.</p>}
+      {!TOOL_NEEDS[tool].length && <p className="text-xs text-muted-foreground">Needs nothing</p>}
       {needs.length > 0 && (
         <ul className="divide-y divide-border">
           {needs.map((n, i) => <NeedRow key={n.what} need={n} met={met(n)} welcome={welcome} focus={welcome && i === 0} />)}
@@ -174,7 +174,7 @@ export function ToolsPicker({ tools, value, onChange }: { tools: readonly Tool[]
       )}
       {extras.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Extras: switch on the ones you want</p>
+          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Extras</p>
           <div className="grid gap-2 sm:grid-cols-2">{extras.map((t) => card(t, false))}</div>
         </div>
       )}
@@ -200,7 +200,7 @@ export function PlanQuestion({ view, onSave }: { view: SetupView; onSave: (plan:
         ))}
       </select>
       <span className="text-xs text-muted-foreground">
-        {reported && `Your AI account is on ${reported}. `}On Pro or Plus, heavy runs (the AI Editor, deep research, big Analyzer runs) ask first: they can use up the 5-hour limit.
+        {reported && `The AI plan is ${reported}. `}On Pro or Plus, heavy runs (the AI Editor, deep research, big Analyzer runs) ask first: they can use up the 5-hour limit.
       </span>
     </label>
   );

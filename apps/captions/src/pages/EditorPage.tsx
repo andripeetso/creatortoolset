@@ -188,7 +188,7 @@ export default function EditorPage() {
       // a dropped folder is opened into its files; the drop's list is read before the first wait
       void droppedFiles(e.dataTransfer).then(({ files }) => {
         const footage = files.filter(isMediaFile);
-        if (!footage.length) return void toast("No video or recording in what you dropped");
+        if (!footage.length) return void toast("No video or recording dropped");
         setDropped(footage);
         setCreating(true);
       });
@@ -270,7 +270,7 @@ export default function EditorPage() {
         {editable && edits?.length === 0 && !anything && (
           <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
             <Clapperboard className="h-6 w-6 text-zinc-500" aria-hidden="true" />
-            <p className="hidden text-sm font-medium sm:block">Drop your footage here</p>
+            <p className="hidden text-sm font-medium sm:block">Drop footage here</p>
             <Button size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
               New edit
@@ -297,7 +297,7 @@ export default function EditorPage() {
             view={{ value: view, onChange: setView }}
           />
         )}
-        {find.trim() && shown.length === 0 && folders.folders.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches.</p>}
+        {find.trim() && shown.length === 0 && folders.folders.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches</p>}
         {(shown.length > 0 || folders.folders.length > 0) && view === "grid" && (
           <FolderGrid size="small">
             <ToolFolderCards state={folders} pictureOf={firstClip} />
@@ -510,7 +510,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
           // a file the Mac app reads where it lies is not sent: it has no percent
           const up = await uploadFile(target.libraryId, file, (sent, inPlace) => setAdding(`${of}${file.name}${inPlace || !file.size ? "" : ` · ${Math.round((sent / file.size) * 100)}%`}`), target.collectionId);
           const assetId = up.assetId ?? up.duplicateOf;
-          if (!assetId) throw new Error(`${file.name} was not filed in the library`);
+          if (!assetId) throw new Error(`Could not add ${file.name} to the Media Library`);
           await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
           const asset = await getAsset(target.libraryId, assetId);
           setPicked((m) => new Map(m).set(asset.versionId, asset.title));
@@ -580,16 +580,16 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
             <SheetTitle className="text-base">New edit</SheetTitle>
             <SheetDescription className={cn("text-xs text-zinc-500", from === "footage" && "sr-only")}>
               {from === "long"
-                ? "Pick a long recording from your Media Library. The AI finds the parts that stand on their own and cuts each as its own short video, in the recording's own shape."
+                ? "Each part of a long recording that stands on its own is cut as a short video."
                 : filmed
-                  ? "Add your footage, then Create and run."
-                  : "A voice reads your script and the picture is cut from your B-roll. The voice runs on your own ElevenLabs key."}
+                  ? "The picked footage is cut into a video."
+                  : "A voice reads the script and the picture is cut from B-roll."}
             </SheetDescription>
           </div>
 
-          <div role="group" aria-label="What the edit is made from" className="flex flex-wrap gap-1.5">
+          <div role="group" aria-label="Source of the edit" className="flex flex-wrap gap-1.5">
             <Button type="button" size="sm" variant={from === "footage" ? "default" : "outline"} onClick={() => setFrom("footage")}>
-              My footage
+              Footage
             </Button>
             <Button type="button" size="sm" variant={from === "script" ? "default" : "outline"} onClick={() => setFrom("script")}>
               A script, nothing filmed
@@ -608,7 +608,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
             <div className="flex flex-wrap items-center gap-2">
               {libraries.length > 1 && (
                 <select
-                  aria-label="Library"
+                  aria-label="Media Library"
                   value={libId}
                   onChange={(e) => {
                     setLibId(e.target.value);
@@ -623,7 +623,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
                   ))}
                 </select>
               )}
-              <Input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the library" aria-label="Search footage" className="min-w-0 flex-1" />
+              <Input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search footage" aria-label="Search footage" className="min-w-0 flex-1" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -696,10 +696,10 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
             ) : (
               <p className="py-6 text-center text-sm text-zinc-500">
                 {libId ? (
-                  "No videos here."
+                  "No videos"
                 ) : (
                   <>
-                    No Media Library yet.{" "}
+                    Needs a Media Library{" "}
                     <button type="button" className="underline underline-offset-2" onClick={() => openToolSetup("media")}>
                       Set up
                     </button>
@@ -755,13 +755,12 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
             </div>
           )}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit-brief">{from === "long" ? "Describe the short videos you want (optional)" : "Describe the video (optional)"}</Label>
+            <Label htmlFor="edit-brief">{from === "long" ? "Describe the short videos (optional)" : "Describe the video (optional)"}</Label>
             <Textarea
               id="edit-brief"
               value={brief}
               onChange={(e) => setBrief(e.target.value)}
               rows={3}
-              placeholder={from === "long" ? "The clearest advice and the best stories, for new parents." : "A 45-second reel for new parents: the hook, three tips, the call to action."}
             />
           </div>
           {from === "footage" && (
@@ -774,7 +773,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
           <div className={cn("flex flex-wrap gap-4", !filmed && "hidden")}>
             {from === "long" ? (
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="edit-moments">How many, at most</Label>
+                <Label htmlFor="edit-moments">Maximum number</Label>
                 <select id="edit-moments" value={moments} onChange={(e) => setMoments(Number(e.target.value))} className="h-9 w-24 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
                   {[3, 5, 10, 15, MAX_MOMENTS].map((n) => (
                     <option key={n} value={n}>

@@ -107,7 +107,7 @@ export function EditorCutPanel({ editId, name, title, at, working, kept, onKeep,
       .then((e) => {
         setHist(freshHist<ItemEdit[]>([]));
         onMade(e);
-      }, (e: Error) => setRefused(e.message || "Couldn't make the next version"))
+      }, (e: Error) => setRefused(e.message || "Could not make the next version"))
       .finally(() => setMaking(false));
   };
 
@@ -130,7 +130,7 @@ export function EditorCutPanel({ editId, name, title, at, working, kept, onKeep,
         <div className="flex shrink-0 items-center gap-1.5">
           {view && (
             <Button size="sm" disabled={!edits.length || making || working} onClick={make}
-              title="Cut the next version from these timeline edits as you made them, with no AI">
+              title="Cut the next version from these timeline edits exactly as they are">
               {making ? "Starting…" : "Make the next version"}
             </Button>
           )}
@@ -140,7 +140,7 @@ export function EditorCutPanel({ editId, name, title, at, working, kept, onKeep,
         </div>
       </div>
       <video ref={video} src={`${base}/play`} controls playsInline preload="metadata" className="mx-auto max-h-[50vh] max-w-full rounded-lg bg-black" />
-      {view === null && <p className="text-xs text-zinc-500">This version was filed before its timeline could be edited: render its preview again.</p>}
+      {view === null && <p className="text-xs text-zinc-500">This version was filed before its timeline could be edited: make its preview again.</p>}
       {cut && (
         <EditTimeline
           view={cut}
@@ -160,10 +160,10 @@ export function EditorCutPanel({ editId, name, title, at, working, kept, onKeep,
       )}
       {refused && <p role="alert" className="text-xs text-rose-500">{refused}</p>}
       {goes.length > 0 && (
-        <p className="text-xs text-amber-600">On frames you took out, so {goes.length === 1 ? "it goes" : "they go"} too: {goes.join(", ")}.</p>
+        <p className="text-xs text-amber-600">On removed frames, so removed too: {goes.join(", ")}</p>
       )}
       {view && edits.length > 0 && !refused && (
-        <p className="text-xs text-zinc-500">The player shows this version as it is. Your edits are in the next one.</p>
+        <p className="text-xs text-zinc-500">The player shows this version without the edits.</p>
       )}
     </section>
   );

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ArrowUp, Check, Loader2, Mic, Square, X } from "lucide-react";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
 import { tell, useMicMode } from "@/components/settings/ThisMacSection";
@@ -50,7 +51,7 @@ export function VoiceStatus({ v }: { v: ChatVoice }) {
   return (
     <p className="flex h-8 flex-1 items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
       <Loader2 className="size-3.5 animate-spin" aria-hidden />
-      {v.voice.progress !== null && v.voice.progress < 1 ? `Getting the speech model ready · ${Math.round(v.voice.progress * 100)}%` : "Writing it down…"}
+      {v.voice.progress !== null && v.voice.progress < 1 ? `Loading speech model · ${Math.round(v.voice.progress * 100)}%` : "Transcribing…"}
     </p>
   );
 }
@@ -62,7 +63,7 @@ export function VoiceDone({ v }: { v: ChatVoice }) {
       <button type="button" onClick={v.voice.cancel} className={quietBtn} aria-label="Cancel" title="Cancel (Esc)">
         <X className="size-4" />
       </button>
-      <button type="button" onClick={v.voice.toggle} className={cn(ICON_BTN, "bg-[var(--tint)] text-white hover:brightness-110")} aria-label="Done talking" title="Done: write it down">
+      <button type="button" onClick={v.voice.toggle} className={cn(ICON_BTN, "bg-[var(--tint)] text-white hover:brightness-110")} aria-label="Transcribe" title="Transcribe">
         <Check className="size-4" />
       </button>
     </>
@@ -71,7 +72,7 @@ export function VoiceDone({ v }: { v: ChatVoice }) {
 
 export function MicButton({ v }: { v: ChatVoice }) {
   if (v.mic === "none") return null;
-  const label = v.mic === "setup" ? "Dictation, in any app" : "Talk instead of typing";
+  const label = v.mic === "setup" ? "Set up dictation" : "Dictate";
   return (
     <button
       type="button"
@@ -108,14 +109,30 @@ export function VoiceError({ v }: { v: ChatVoice }) {
   );
 }
 
+/** How long Stop ignores a press after it takes Send's place: the second click of a double-click, or a press that was
+ * meant for Send while the message was still going, would stop the reply that message just started. */
+export const STOP_GRACE_MS = 1000;
+
 /**
  * Send; Queue while a reply is being written (it goes when that is done); Stop when a reply is being written and
  * there is nothing to send. `blocked` says why Send can't go yet (an upload still running), as its hover text.
+ * `sending`: the message is on its way (pictures can take a few seconds); the button turns, does nothing and says so.
  */
-export function SendButton({ empty, waiting, blocked, disabled, onSend, onStop }: { empty: boolean; waiting: boolean; blocked?: string; disabled?: boolean; onSend: () => void; onStop: () => void }) {
-  if (waiting && empty)
+export function SendButton({ empty, waiting, blocked, disabled, sending, onSend, onStop }: { empty: boolean; waiting: boolean; blocked?: string; disabled?: boolean; sending?: boolean; onSend: () => void; onStop: () => void }) {
+  const stopping = waiting && empty && !sending;
+  const since = useRef(0);
+  useEffect(() => {
+    if (stopping) since.current = Date.now();
+  }, [stopping]);
+  if (sending)
     return (
-      <button type="button" onClick={onStop} className={cn(ICON_BTN, "bg-foreground text-background hover:opacity-80")} aria-label="Stop the reply" title="Stop">
+      <button type="button" disabled className={cn(ICON_BTN, "bg-[var(--tint)] text-white")} aria-label="Sending" title="Sending">
+        <Loader2 className="size-4 animate-spin" />
+      </button>
+    );
+  if (stopping)
+    return (
+      <button type="button" onClick={() => Date.now() - since.current >= STOP_GRACE_MS && onStop()} className={cn(ICON_BTN, "bg-foreground text-background hover:opacity-80")} aria-label="Stop the reply" title="Stop">
         <Square className="size-3 fill-current" />
       </button>
     );

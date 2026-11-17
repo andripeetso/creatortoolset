@@ -48,7 +48,7 @@ export function SelectedSourcesStrip({
   if (!posts.length) {
     return (
       <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-3 text-center text-[11px] text-zinc-600">
-        No sources yet — search above and add the posts worth reading.
+        No sources
       </p>
     );
   }

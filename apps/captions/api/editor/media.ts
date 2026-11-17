@@ -84,7 +84,7 @@ export async function readable(versionId: string, sourceKey: string): Promise<st
   } catch (e) {
     // indexed on a Mac (library/on-mac.ts): neither the file nor a proxy is here
     const mac = libraryDb().prepare("SELECT mac_path FROM asset_versions WHERE id = ?").get(versionId) as { mac_path: string | null } | undefined;
-    if (mac?.mac_path) throw new Error(`${mac.mac_path} is on a Mac and was not uploaded, so this server can't read it. Turn on Upload video files to the server in the Media Library's settings and add it again`);
+    if (mac?.mac_path) throw new Error(`${mac.mac_path} is on a computer and was not uploaded: set Upload to the server in the Media Library's settings and add it again`);
     const proxy = libraryDb().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as
       | { storage_key: string | null }
       | undefined;

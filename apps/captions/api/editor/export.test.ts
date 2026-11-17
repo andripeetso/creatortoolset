@@ -16,11 +16,11 @@ const app = (await import("../boot")).default;
 const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
 const { blobs, libraryDb } = await import("../library/db");
 const { createEdit, editDir, saveDraft } = await import("./store");
-const { frameDuration, time, toFcpxml } = await import("./fcpxml");
+const { frameDuration, time, toFcp7Xml, toFcpxml } = await import("./fcpxml");
 const { mediaPaths, namesOf } = await import("./media");
 const { otioText, toOtio } = await import("./otio");
 const { emptyTracks, sourceOf } = await import("./timeline");
-const { timelineSources } = await import("../../contracts/timeline-import");
+const { importTimeline, timelineSources } = await import("../../contracts/timeline-import");
 
 const golden = (name: string) => path.join(import.meta.dirname, "golden", name);
 /** Compares with the golden file; UPDATE_GOLDEN=1 writes it instead (read the diff before committing one). */
@@ -102,6 +102,17 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
 
   it("FCPXML of a two-cut timeline matches the golden file", () => {
     matchGolden("two-cuts.fcpxml", toFcpxml(twoCuts(), files));
+  });
+
+  it("FCP 7 XML (Premiere) reads back with the cuts, the files, their in-points and the lines", () => {
+    const xml = toFcp7Xml(twoCuts(), files);
+    const view = importTimeline("Tiny.xml", xml);
+    const lane = (id: string) => view.tracks.find((t) => t.id === id)!.items.map((i) => [i.rec, i.len]);
+    expect(lane("V1")).toEqual(lane("A1"));
+    expect(Object.values(timelineSources("Tiny.xml", xml))).toEqual([files.ver_a, files.ver_b]);
+    expect(xml).toContain("<in>300</in><out>420</out>"); // 60 frames at 29.97 are 120 of Take B's 59.94
+    expect(view.markers.map((m) => [m.frame, m.name])).toEqual([[0, "L1"], [45, "L2"]]);
+    expect(lane("V1")).toEqual([[0, 45], [45, 60]]);
   });
 
   it("a take with no picture (a voice recording) is a gap on the video track and a clip on the voice track; its B-roll stays", () => {

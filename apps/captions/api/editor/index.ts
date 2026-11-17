@@ -174,7 +174,7 @@ const asked = new Set<string>();
 const once = (key: string) => !asked.has(key) && !!asked.add(key);
 
 /** Why a file kept on a Mac with no shot descriptions is left out: nothing of its picture is here. */
-const ON_MAC = "it is kept on a Mac, not uploaded, and has no shot descriptions to cut from";
+const ON_MAC = "it is on a computer, not uploaded, and has no shot descriptions";
 
 /** One of the edit's files the cut can't use, and why in plain words (Coverage.left). */
 export type LeftOut = { id: string; title: string; why: string };
@@ -255,7 +255,7 @@ export async function indexGate(edit: IndexEdit, signal: AbortSignal, now = Date
   for (const id of edit.sources) {
     if (signal.aborted) throw signal.reason ?? new Error("Stopped");
     const row = rowOf(id);
-    if (!row) throw new Error(`A source of the edit is gone from the library (${id})`);
+    if (!row) throw new Error(`Clip not found in the Media Library (${id})`);
     const probe = JSON.parse(row.probe ?? "null") as ProbeSummary | null;
     if (!probe) {
       if (row.state === "failed") left.push({ id, title: row.title, why: "the Media Library could not read it" });
@@ -468,7 +468,7 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
       for (const [k, sh] of batch.entries()) {
         const s = sources[sh.src]!;
         const row = rowOf(s.id);
-        if (!row) throw new Error(`A source of the edit is gone from the library (${s.id})`);
+        if (!row) throw new Error(`Clip not found in the Media Library (${s.id})`);
         const file = path.join(scratch, `${k}.jpg`);
         await contactSheet(
           await measurable(s.id, row.source_key),

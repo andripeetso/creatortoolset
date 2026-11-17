@@ -99,7 +99,7 @@ export function DocumentTabs({
                   }}
                   className="flex items-center gap-1.5 px-2 py-1 text-[11px]"
                   aria-expanded={on && menu === "kind"}
-                  title={d.kind === "notes" ? "Notes" : on ? "Change type — reel, carousel, ad, or free-form" : `${docKindLabel(d.kind)} · ${countUnits(d.kind, d.blocks.length)}`}
+                  title={d.kind === "notes" ? "Notes" : on ? "Change type" : `${docKindLabel(d.kind)} · ${countUnits(d.kind, d.blocks.length)}`}
                 >
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${KIND_DOT[d.kind]}`} />
                   <span className="max-w-[10rem] truncate">{docTabLabel(d)}</span>
@@ -108,10 +108,10 @@ export function DocumentTabs({
                 {d.kind !== "notes" && !readOnly && (
                   <ConfirmButton
                     label={<X className="h-3 w-3" />}
-                    confirmLabel="Delete?"
+                    confirmLabel="Delete"
                     disabled={busy}
                     onConfirm={() => onDelete(d.id)}
-                    title="Delete this document"
+                    title="Delete piece"
                     className={`mr-1 rounded px-0.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50 ${on ? "" : "hidden group-hover:inline"}`}
                     armedClassName="!bg-red-500/15 !text-red-700 dark:!text-red-200"
                   />
@@ -145,7 +145,7 @@ export function DocumentTabs({
             disabled={busy}
             className={btn}
             aria-expanded={menu === "new"}
-            title="Another document — pick reel, carousel, ad, or free-form"
+            title="New piece"
           >
             <Plus className="h-3.5 w-3.5" /> <span className="docbar-narrow:hidden">New</span>
           </button>
@@ -170,7 +170,7 @@ export function DocumentTabs({
         </span>
         }
         {undo && !readOnly ? (
-          <button type="button" onClick={undo.onUndo} disabled={busy} className={`${btn} shrink-0`} title={`Bring back “${undo.label}”`}>
+          <button type="button" onClick={undo.onUndo} disabled={busy} className={`${btn} shrink-0`} title={`Restore “${undo.label}”`}>
             Undo
           </button>
         ) : null}
@@ -178,7 +178,7 @@ export function DocumentTabs({
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {active && active.kind !== "notes" && (
           <span className="relative shrink-0">
-            <button type="button" onClick={() => setMenu((m) => (m === "history" ? null : "history"))} className={btn} title="Versions — keep one with a name to come back to it">
+            <button type="button" onClick={() => setMenu((m) => (m === "history" ? null : "history"))} className={btn} title="Versions">
               <History className="h-3.5 w-3.5 shrink-0" />
               <span className="max-w-[9rem] truncate docbar-narrow:hidden">{versionTrigger(active)}</span>
               {/* narrow: the version's number alone */}
@@ -199,15 +199,15 @@ export function DocumentTabs({
                     value={keepName}
                     onChange={(e) => setKeepName(e.target.value)}
                     disabled={busy}
-                    placeholder="this was good"
-                    aria-label="Name for this version"
+                    placeholder="Version name"
+                    aria-label="Version name"
                     className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
                   />
                   <button type="submit" disabled={busy} className="shrink-0 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50">
                     Keep
                   </button>
                 </form>}
-                <span className="px-2 py-1 text-[10px] text-muted-foreground">{active.versions.length ? "Restore a version, or bookmark one to keep it" : "None yet — Keep saves the current text as a named snapshot."}</span>
+                <span className="px-2 py-1 text-[10px] text-muted-foreground">{active.versions.length ? "Versions" : "No versions"}</span>
                 {[...active.versions].reverse().map((v) => {
                   const current = v.id === active.headVersion;
                   return (
@@ -220,7 +220,7 @@ export function DocumentTabs({
                           onRevert(active.id, v.id);
                         }}
                         className="flex min-w-0 flex-1 items-start gap-2 px-2 py-1 text-left text-[11px] hover:text-foreground disabled:opacity-100"
-                        title={current ? "This is the current text" : "Restore this version"}
+                        title={current ? "Current text" : "Restore version"}
                       >
                         <span className="shrink-0 font-mono text-muted-foreground">{v.id}</span>
                         <span className="min-w-0 flex-1 truncate">{v.label}</span>
@@ -238,7 +238,7 @@ export function DocumentTabs({
                     </span>
                   );
                 })}
-                {active.versions.length > 0 && !active.headVersion ? <span className="px-2 py-1 text-[10px] text-muted-foreground">The text has been edited since the latest version — Keep saves it.</span> : null}
+                {active.versions.length > 0 && !active.headVersion ? <span className="px-2 py-1 text-[10px] text-muted-foreground">Edited since the latest version</span> : null}
               </span>
             )}
           </span>
@@ -255,7 +255,7 @@ export function versionShort(doc: WorkshopDocument): string {
 }
 
 function versionTrigger(doc: WorkshopDocument): string {
-  if (!doc.versions.length) return "no versions";
+  if (!doc.versions.length) return "No versions";
   const last = doc.versions[doc.versions.length - 1]!;
   const head = doc.headVersion ? doc.versions.find((v) => v.id === doc.headVersion) : undefined;
   if (head?.kept) return `${head.id} · ${head.label}`;

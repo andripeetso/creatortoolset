@@ -46,7 +46,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
   const add = async (folder: string, copyTo?: string) => {
     const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId: lib, copyTo }) }).catch(() => null);
     const body = (await r?.json().catch(() => ({}))) as { error?: string } | undefined;
-    if (!r?.ok) return setError(body?.error ?? "Couldn't add that folder. Try again.");
+    if (!r?.ok) return setError(body?.error ?? "Could not add the folder");
     setTyping(false);
     await reload();
   };
@@ -68,7 +68,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
   return (
     <NeedLine
       met={met}
-      name="Where are your videos?"
+      name="Footage folder"
       line={met ? status.folders.map((f) => f.path).join(", ") : undefined}
       button={
         <Button size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => void choose()}>
@@ -84,7 +84,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
             if (path.trim()) void take(path.trim());
           }}
         >
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/Movies/Trip" aria-label="Folder path" className="h-8 min-w-0 flex-1 font-mono" disabled={busy} autoFocus />
+          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="Folder path" aria-label="Folder path" className="h-8 min-w-0 flex-1 font-mono" disabled={busy} autoFocus />
           <Button type="submit" size="sm" disabled={busy || !path.trim()}>
             Add folder
           </Button>

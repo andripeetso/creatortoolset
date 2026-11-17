@@ -54,7 +54,7 @@ function draw(src: CanvasImageSource & { videoWidth?: number; naturalWidth?: num
 const once = (el: HTMLElement, ok: string, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const done = () => (el.removeEventListener(ok, done), el.removeEventListener("error", fail), resolve());
-    const fail = () => (el.removeEventListener(ok, done), reject(new Error("This window can't read the file")));
+    const fail = () => (el.removeEventListener(ok, done), reject(new Error("Could not read the file")));
     el.addEventListener(ok, done);
     el.addEventListener("error", fail);
     signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
@@ -148,7 +148,7 @@ export async function readIndex(file: File | MacFile, signal?: AbortSignal): Pro
 export const deviceHere = async () => ((await thisMacBridge()?.postMessage("state").catch(() => null))?.device ?? undefined);
 
 /** Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent. */
-export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string }> {
+export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
   const [quick, index, device] = await Promise.all([file instanceof File ? quickPrint(file) : file.quick, readIndex(file, signal), deviceHere()]);
   signal?.throwIfAborted();
   const r = await fetch(`/api/library/${libraryId}/on-mac`, {
@@ -157,9 +157,30 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
     body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index }),
     signal,
   });
-  const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; error?: string };
-  if (!r.ok) throw new Error(body.error ?? `Couldn't add it (${r.status})`);
+  const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; duplicate?: true; error?: string };
+  if (!r.ok) throw new Error(body.error ?? "Could not add the file");
   return body;
+}
+
+/**
+ * A file on this Mac into `libraryId` as the upload setting `upload` says: read in place with nothing sent ("none"), or
+ * this Mac sends its proxy, and the file too for "all" (the server's send job). { assetId } or { duplicateOf }.
+ */
+export async function addFromMac(libraryId: string, file: MacFile, path: string, collectionId: string | undefined, upload: "none" | "proxies" | "all"): Promise<{ assetId?: string; duplicateOf?: string }> {
+  const fromDevice = upload === "none" ? undefined : await deviceHere();
+  if (fromDevice) {
+    const r = await fetch(`/api/library/${libraryId}/uploads`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: file.name, size: file.size, collectionId, fromPath: path, fromDevice, quick: file.quick, send: true }),
+    });
+    const body = (await r.json().catch(() => ({}))) as { id?: string; sent?: true; assetId?: string; duplicateOf?: string; error?: string };
+    if (!r.ok) throw new Error(body.error ?? "Could not add the file");
+    if (body.sent || body.duplicateOf) return body;
+    // ponytail: this Mac can't send it (an older Mac app): read in place, nothing sent; the byte upload needs the File
+    if (body.id) void fetch(`/api/library/uploads/${body.id}`, { method: "DELETE" }).catch(() => {});
+  }
+  return indexOnMac(libraryId, file, path, collectionId);
 }
 
 /**

@@ -193,7 +193,7 @@ final class LocalServer: ObservableObject {
         return nil
     }
 
-    /// "Access from other devices" (This Mac): on = the server listens on every interface (phones, the LAN);
+    /// "Network access" (This Mac): on = the server listens on every interface (phones, the LAN);
     /// off = this Mac only. The server lets another device sign in only once the owner has a password of their own.
     var otherDevices: Bool {
         get { UserDefaults.standard.bool(forKey: "serverOtherDevices") }
@@ -235,6 +235,7 @@ final class LocalServer: ObservableObject {
         state = .starting
         Task {
             if let problem = await clearPort() {
+                guard !stopping else { return }   // stopped during the check: off, not failed
                 ServerLog.note(problem)
                 state = .failed(problem)
                 return
@@ -249,7 +250,11 @@ final class LocalServer: ObservableObject {
     /// never let it do. A server that is stuck does not end by itself and gets the SIGTERM as before, mark and all.
     func stop() {
         stopping = true
-        guard let p = process else { return }
+        guard let p = process else {
+            // stopped during the port check or the wait after a crash: nothing starts now, so it is off, not starting
+            if state == .starting { state = .off }
+            return
+        }
         try? input?.fileHandleForWriting.close()
         let grace = Date().addingTimeInterval(0.5)
         while p.isRunning && Date() < grace { usleep(20_000) }
@@ -328,7 +333,7 @@ final class LocalServer: ObservableObject {
         env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
         env["CT_APP_FOLDER"] = appSupport.path
-        // the connect service, when this Mac has one set: the server starts "Add this Mac to my account" with it
+        // the connect service, when this Mac has one set: the server starts "Add this Mac to the account" with it
         if let service = connectService { env["CT_CONNECT_URL"] = service.absoluteString }
         env["CT_EXIT_WITH_PARENT"] = "1"
         env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })

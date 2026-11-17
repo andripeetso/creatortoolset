@@ -51,6 +51,8 @@ const server = vi.hoisted(() => ({
   /** the library is someone else's, given to look at */
   readOnly: false,
   gate: undefined as Promise<void> | undefined,
+  /** a test holds every upload until it lets go */
+  uploading: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -62,6 +64,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   uploadFile: async (_: string, f: File) => {
     server.sent.push(`upload ${f.name}`);
     server.uploaded.push(f.name);
+    await server.uploading;
     return { assetId: "new" };
   },
   updateLibrary: async (_: string, patch: { settings: Record<string, unknown> }) => {
@@ -146,6 +149,7 @@ beforeEach(() => {
   server.uploaded = [];
   server.readOnly = false;
   server.gate = undefined;
+  server.uploading = undefined;
   localStorage.clear();
 });
 afterEach(() => {
@@ -226,15 +230,15 @@ describe("Media Library page", () => {
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
     expect(more(host)).not.toBeNull(); // Library settings, in the More menu
     expect(host.textContent).not.toContain("Where are your videos?");
-    expect(host.textContent).toContain("raw materials");
+    expect(host.textContent).toContain("No clips");
     expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
-    expect(host.textContent).not.toContain("Make the usual folders"); // asked in the first upload's dialog, not on the page
+    expect(host.textContent).not.toContain("Standard"); // asked in the first upload's dialog, not on the page
     expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
     expect(buttons(host)).not.toContain("Skip");
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
   });
 
-  it("the first upload asks how the library sorts files, the usual folders until another is picked, saved before the files go in", async () => {
+  it("the first upload asks how the library sorts files, Standard until another is picked, saved before the files go in", async () => {
     server.items = [];
     const host = await mount();
     const files = [new File(["x"], "tiny-0.mp4", { type: "video/mp4" })];
@@ -278,7 +282,7 @@ describe("Media Library page", () => {
     server.items = [];
     server.trash = [clip("gone")];
     const host = await mount();
-    expect(host.textContent).not.toContain("raw materials");
+    expect(buttons(host)).not.toContain("Choose a folder");
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull();
   });
 
@@ -286,7 +290,8 @@ describe("Media Library page", () => {
     server.items = [];
     server.watch = { allowed: true, folders: [{ path: "/Users/tiny/Movies/Trip", mode: "reference", addedBy: "admin", found: true, imported: 0, files: 0, adding: 0 }], missing: 0 };
     const host = await mount();
-    expect(host.textContent).toContain("No videos in your folder yet.");
+    expect(host.textContent).toContain("No clips");
+    expect(buttons(host)).not.toContain("Choose a folder");
   });
 
   it("shows no Finals: not the folder the Finals tool reads, not a way to make one", async () => {
@@ -400,7 +405,7 @@ describe("Media Library page", () => {
   it("a failed clip says why and a missing one says so", async () => {
     server.items = [clip("bad", { state: "failed" }), clip("away", { state: "missing" })];
     const host = await mount();
-    expect(host.textContent).toContain("Couldn't read this file");
+    expect(host.textContent).toContain("Could not read the file");
     expect(host.textContent).toContain("File not found");
   });
 });
@@ -489,7 +494,7 @@ describe("Media Library picks, menu, keys, link and drop", () => {
   const click = (el: Element, o: MouseEventInit = {}) => act(async () => void el.querySelector("button[data-state]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...o })));
   const key = (k: string, o: KeyboardEventInit = {}, target: EventTarget = window) =>
     act(async () => void target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...o })));
-  const bar = () => document.querySelector('[role="toolbar"][aria-label="Picked clips"]');
+  const bar = () => document.querySelector('[role="toolbar"][aria-label="Selected clips"]');
   beforeEach(() => {
     server.items = [clip("one"), clip("two"), clip("three")];
   });
@@ -579,6 +584,28 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await settle();
     expect(server.uploaded).toEqual(["Tiny drop.mp4"]);
     expect(host.querySelector('[aria-label="Uploads"]')?.textContent).toContain("Tiny drop.mp4");
+  });
+
+  it("a waiting file cancelled and retried goes once: the queue does not send it again when its turn comes", async () => {
+    server.settings = { organize: "own" };
+    const host = await mount();
+    let letGo = () => {};
+    server.uploading = new Promise((r) => (letGo = r));
+    const files = ["Tiny one.mp4", "Tiny two.mp4"].map((n) => new File(["x"], n, { type: "video/mp4" }));
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files, items: files.map(() => ({ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) })) } });
+    await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await settle();
+    await settle();
+    expect(server.uploaded).toEqual(["Tiny one.mp4"]); // on its way; the second waits
+    const press = (find: (b: HTMLButtonElement) => boolean) => act(async () => [...host.querySelectorAll("button")].find(find)!.click());
+    await press((b) => b.getAttribute("aria-label") === "Cancel Tiny two.mp4");
+    await press((b) => b.textContent === "Retry");
+    await settle();
+    letGo();
+    await settle();
+    await settle();
+    expect(server.uploaded).toEqual(["Tiny one.mp4", "Tiny two.mp4"]);
   });
 });
 

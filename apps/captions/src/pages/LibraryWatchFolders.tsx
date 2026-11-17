@@ -107,7 +107,7 @@ export function LibraryWatchFolders({
             if (path.trim()) void add();
           }}
         >
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="Folder path" aria-label="Folder path" className="h-8 min-w-0 flex-1 basis-60" />
+          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="Folder path" aria-label="Folder path" required className="h-8 min-w-0 flex-1 basis-60" />
           {thisMacBridge() && (
             <Button type="button" size="sm" variant="outline" onClick={() => void choose()}>
               Choose…
@@ -127,7 +127,7 @@ export function LibraryWatchFolders({
           {libraryFolders.length > 0 && (
             <SettingsSelect label="Library folder" value={into || NONE} onValueChange={(v) => setInto(v === NONE ? "" : v)} options={[{ value: NONE, label: "No folder" }, ...libraryFolders.map((c) => ({ value: c.id, label: c.name }))]} />
           )}
-          <Button type="submit" size="sm" disabled={!path.trim()}>
+          <Button type="submit" size="sm">
             Add
           </Button>
         </form>

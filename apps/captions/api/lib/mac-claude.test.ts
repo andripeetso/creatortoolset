@@ -75,6 +75,19 @@ describe("Claude on the Mac", () => {
     expect((await run({}))["context/book.md"]).toBe(book);
   });
 
+  it("a picture goes as a hash whatever its size, so a chat's pictures cost one fetch each, not one per turn", async () => {
+    const pic = "base64:/9j/4AAQSkZJRg==";
+    const wait = post("/wait", { blobs: true });
+    await new Promise((r) => setTimeout(r, 5));
+    const answer = streamMacClaude("sys", "read", undefined, () => {}, undefined, { files: { "attached/5f0c2a91/01-1.jpg": pic } });
+    const req = (await (await wait).json()) as { id: string; files: Record<string, string> };
+    expect(req.files["attached/5f0c2a91/01-1.jpg"]).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const blob = await post(`/blob/${req.files["attached/5f0c2a91/01-1.jpg"]!.slice(7)}`);
+    expect(((await blob.json()) as { text: string }).text).toBe(pic);
+    await post(`/${req.id}/done`, { text: "ok" });
+    await answer;
+  });
+
   it("a Workshop folder's session goes to the Mac with its id and comes back with what became of it", async () => {
     const wait = post("/wait");
     await new Promise((r) => setTimeout(r, 5));

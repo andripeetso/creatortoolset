@@ -94,13 +94,18 @@ final class MediaFilesTests: XCTestCase {
         XCTAssertTrue(isFile(MediaFiles.gate(file.path, granted: [composed])))
     }
 
-    func testPickGrantsTheFolder() throws {
-        // a picked folder is granted itself, a picked file its folder (the Media Library's Add from the open panel)
+    func testPickGrantsWhatWasPicked() throws {
+        // a picked folder is granted itself; a picked file only itself, never the folder it is in
         try FileManager.default.createDirectory(at: granted.appendingPathComponent("Day 1"), withIntermediateDirectories: true)
         let clip = URL(fileURLWithPath: try write("Footage/Day 1/clip.mov"))
+        let other = try write("Footage/Day 1/other.mov")
         var got: [String] = []
         MediaFiles.grantPicked([granted, clip]) { got.append($0) }
-        XCTAssertEqual(got, [granted.path, granted.appendingPathComponent("Day 1").path])
+        XCTAssertEqual(got, [granted.path, clip.path])
+        // the file alone opens; its neighbour, not picked, stays shut
+        let only = [clip.path]
+        XCTAssertTrue(isFile(MediaFiles.gate(clip.path, granted: only)))
+        XCTAssertEqual(MediaFiles.gate(other, granted: only), .status(403))
     }
 
     func testNearestExisting() {

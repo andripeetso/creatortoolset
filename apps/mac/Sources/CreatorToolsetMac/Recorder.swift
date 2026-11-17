@@ -691,7 +691,7 @@ final class Recorder: ObservableObject {
             try? await Task.sleep(for: .seconds(1))
             if !stillWanted() { return }   // cancelled during the count-in
         }
-        var made: (capture: Capture?, project: LocalProject?) = (nil, nil)
+        var made: (capture: Capture?, project: LocalProject?, camera: CameraRecorder?) = (nil, nil, nil)
         do {
             // a device on a cable is recorded from its session; anything on the Mac's screen from the capture stream
             let feed = source.isDevice ? nil : try await screenFeed(source, on: screen, mic: micDevice)
@@ -719,7 +719,7 @@ final class Recorder: ObservableObject {
                     let camera = try CameraRecorder(device: cameraDevice, file: project.cameraURL)
                     camera.startSession()
                     capture.onFirstFrame = { host in camera.begin(atHost: host) }
-                    self.camera = camera
+                    made.camera = camera
                 } catch {
                     AppLog.write("recording without the camera: \(error.localizedDescription)")   // the screen still records
                 }
@@ -728,6 +728,7 @@ final class Recorder: ObservableObject {
             else if let device { try capture.start(phone: device, mic: micDevice, sound: setup.systemAudio) }
             guard stillWanted() else { throw CancellationError() }
             self.capture = capture
+            self.camera = made.camera
             self.project = project
             phone = nil   // the recording has its session now, and stops it
             if let feed { watchPointer(capture, rect: feed.rect, folder: project.folder) }   // a device has no pointer
@@ -740,8 +741,7 @@ final class Recorder: ObservableObject {
             AppLog.write("recording \(source.isDevice ? "a device, " : "")\(size.width)×\(size.height), mic \(micDevice != nil), \(source.isDevice ? "its" : "Mac") sound \(setup.systemAudio), camera \(cameraDevice != nil)")
         } catch {
             made.capture?.cancel()
-            camera?.cancel()
-            camera = nil
+            made.camera?.cancel()   // this start's own camera: Stop during the start forgot it, and a later start's is not this one's
             phone?.stop()
             phone = nil
             try? made.project.map { try FileManager.default.removeItem(at: $0.folder) }   // nothing worth keeping yet

@@ -100,5 +100,5 @@ packsApp.post("/export", async (c) => {
     ...(captionStyles.length ? { captionStyles } : {}),
     ...(b.home !== undefined ? { home: b.home } : {}),
   });
-  return r.ok ? c.json({ pack: r.pack, level: r.level }) : c.json({ error: "Not ready to share yet", problems: r.problems }, 400);
+  return r.ok ? c.json({ pack: r.pack, level: r.level }) : c.json({ error: "Not ready to publish", problems: r.problems }, 400);
 });

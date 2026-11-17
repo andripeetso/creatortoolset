@@ -203,6 +203,25 @@ export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, em
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
 export const libraryUpload = (libraryId: string): LibraryUpload =>
   uploadOf((libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
+/** What a final sends from a computer (contracts LibrarySettings.finalsUpload): "all" when it was never set. */
+export const finalsUpload = (libraryId: string): LibraryUpload => {
+  const v = (libraryDb().prepare("SELECT json_extract(settings, '$.finalsUpload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v;
+  return v === null || v === undefined ? "all" : uploadOf(v);
+};
+/** Whether a collection is its library's Finals (finals.ts finalsCollectionId). */
+export const isFinalsCollection = (collectionId: string): boolean =>
+  !!libraryDb().prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(collectionId);
+/** The upload setting one version follows: a final's when its asset is in Finals, else the library's. */
+export function versionUpload(versionId: string): LibraryUpload {
+  const r = libraryDb()
+    .prepare(
+      `SELECT a.library_id AS lib, EXISTS (SELECT 1 FROM collection_items ci JOIN collections c ON c.id = ci.collection_id
+         WHERE ci.asset_id = a.id AND c.parent_id IS NULL AND c.kind = 'manual' AND c.name = 'Finals') AS fin
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
+    )
+    .get(versionId) as { lib: string; fin: number } | undefined;
+  return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
+}
 
 export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFAULTS): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;

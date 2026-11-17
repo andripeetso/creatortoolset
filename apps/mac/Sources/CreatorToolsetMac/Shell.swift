@@ -165,15 +165,24 @@ final class Shell: NSObject, ObservableObject {
                 }
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
             }
-            // Show in Finder for a library clip (Reveal.swift): the path comes from the window's server; one elsewhere
-            // only within the folders granted for original media
+            // Show in Finder for a library clip or a Review version's own file (Reveal.swift): the path comes from the
+            // window's server; one elsewhere only within the folders granted for original media
             if isRevealAsk(ask) {
-                guard let r = revealAsk(ask) else { return done(["problem": Reveal.problem]) }
+                let clip = revealAsk(ask), review = reviewRevealAsk(ask)
+                guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
                 let here = self.runsHere && self.server != nil
                 Task {
-                    let path = await self.client().clipPath(library: r.library, asset: r.asset)
+                    let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
+                               else { await self.client().clipPath(library: clip!.library, asset: clip!.asset) }
                     done(Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
                 }
+                return
+            }
+            // Open in <editor> on an AI Editor draft (Editors.swift): the editors this Mac has, and opening one there
+            if ask == "editors" { return done(["editors": Editors.installed().map(\.reply)]) }
+            if isEditorAsk(ask) {
+                guard let open = openEditorAsk(ask) else { return done(["problem": "Could not open the draft"]) }
+                Task { done(await Editors.open(open, site: await self.client())) }
                 return
             }
             // the Media Library's imports (Import.swift): a copy reads only from this window's recent drops and picks
@@ -385,7 +394,7 @@ final class Shell: NSObject, ObservableObject {
         AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
     }
 
-    /// Access from other devices: on needs the owner's own password first (the server refuses another device's sign-in
+    /// Network access: on needs the owner's own password first (the server refuses another device's sign-in
     /// while it is still APP_SECRET); the window keeps its session through the change. The server restarts on the new
     /// interface. Returns what went wrong, or nil.
     func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
@@ -404,6 +413,8 @@ final class Shell: NSObject, ObservableObject {
             }
         }
         server.otherDevices = on
+        // another server was opened while the password was set: the one here is stopped, and starts with this when opened
+        guard runsHere else { return nil }
         server.stop()
         startServer()
         return nil
@@ -439,6 +450,8 @@ final class Shell: NSObject, ObservableObject {
         stopRunner()
         webView.loadHTMLString(splashPage("Moving your data…"), baseURL: nil)
         let problem = await server.move(to: dest)
+        // another server was opened during the move: the one here stays stopped, and the window stays on that server
+        guard runsHere else { server.stop(); return problem }
         if problem != nil, server.state == .running { open("/") }
         return problem
     }
@@ -514,7 +527,7 @@ final class Shell: NSObject, ObservableObject {
         return ai.running > 0 ? "AI on this Mac: running \(ai.running)" : "AI on this Mac: on"
     }
 
-    /// The Mac's device is known for this site (paired once); "Remove this Mac from my account" needs it.
+    /// The Mac's device is known for this site (paired once); "Remove this Mac from the account" needs it.
     var pairedHere: Bool { DeviceVault.deviceID(for: base.host ?? "") != nil }
 
     // MARK: window and site
@@ -702,6 +715,7 @@ final class Shell: NSObject, ObservableObject {
 
     /// The site's cookies from the web view's store, for the requests below.
     func client() async -> Site {
+        let base = self.base   // the site open when asked, not the one opened while the cookies were read
         let all: [HTTPCookie] = await withCheckedContinuation { continuation in
             webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
         }
@@ -710,7 +724,7 @@ final class Shell: NSObject, ObservableObject {
 
     // MARK: this Mac for the person's AI (Relay.swift)
 
-    /// "Use this Mac for my AI": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
+    /// "AI on this Mac": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
     func setAI(_ on: Bool) {
         aiOn = on
         UserDefaults.standard.set(on, forKey: aiKey)
@@ -724,28 +738,31 @@ final class Shell: NSObject, ObservableObject {
 
     private func startAI() { _ = bringUpAI() }
 
-    /// The pairing in progress, so a second press joins it instead of pairing again.
-    private var pairing: Task<Bool, Never>?
+    /// The pairings in progress, by site, so a second press joins the open site's instead of pairing again.
+    private var pairing: [URL: Task<Bool, Never>] = [:]
 
     /// Pairs this Mac with the open site once, then starts the runner. The task's value: whether the runner is running.
     private func bringUpAI() -> Task<Bool, Never> {
-        if let pairing { return pairing }
+        let site = base
+        if let task = pairing[site] { return task }
         let task = Task { () -> Bool in
-            defer { pairing = nil }
-            guard hasServer else { return false }
-            if DeviceVault.token(for: base.host ?? "") == nil {
+            defer { pairing[site] = nil }
+            // another server opened meanwhile: its own task pairs and starts the runner there
+            guard hasServer, base == site else { return false }
+            if DeviceVault.token(for: site.host ?? "") == nil {
                 do {
                     try await pairThisMac()
                 } catch {
-                    setAIOff("Could not pair this Mac: \(error.localizedDescription)")
+                    if base == site { setAIOff("Could not add this Mac: \(error.localizedDescription)") }
                     return false
                 }
-                guard aiOn else { return false }   // turned off while pairing: the pairing stays, no runner
+                // turned off, or another server opened, while pairing: the pairing stays, no runner
+                guard aiOn, base == site else { return false }
             }
             startRunner()
             return runner != nil
         }
-        pairing = task
+        pairing[site] = task
         return task
     }
 
@@ -761,8 +778,8 @@ final class Shell: NSObject, ObservableObject {
 
     /// POST /api/devices with the window's cookies: the site makes the device and returns its token once.
     private func pairThisMac() async throws {
-        let host = base.host ?? ""
         let client = await client()
+        let host = client.base.host ?? ""   // the site the device is made on, whatever is open when it answers
         let name = Host.current().localizedName ?? macHostName()
         let data = try await client.postData("/api/devices", ["name": name, "version": appVersion])
         let pair = try JSONDecoder().decode(PairReply.self, from: data)
@@ -820,7 +837,7 @@ final class Shell: NSObject, ObservableObject {
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
-        setAIOff("This Mac was removed from your account. Turn it on again to pair it.")
+        setAIOff("This Mac was removed from the account. Turn on AI on this Mac to add it again.")
     }
 
     private func setAIOff(_ message: String?) {
@@ -831,7 +848,7 @@ final class Shell: NSObject, ObservableObject {
         notice = message
     }
 
-    /// "Remove this Mac from my account": stops it, drops its token here and asks the site to remove the device.
+    /// "Remove this Mac from the account": stops it, drops its token here and asks the site to remove the device.
     func forgetThisMac() {
         let host = base.host ?? ""
         let id = DeviceVault.deviceID(for: host)
@@ -1178,6 +1195,11 @@ struct Site {
         _ = try await send("POST", path, body: body)
     }
 
+    /// A GET's raw answer (a timeline file).
+    func data(_ path: String) async throws -> Data {
+        try await send("GET", path, body: nil).0
+    }
+
     func postData(_ path: String, _ body: [String: Any]) async throws -> Data {
         try await send("POST", path, body: body).0
     }
@@ -1221,7 +1243,7 @@ enum SiteError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .status(let code): return code == 401 || code == 403 ? "sign in in the window first" : "the site answered \(code)"
-        case .keychain: return "the Keychain did not keep the device token"
+        case .keychain: return "the Keychain did not keep this Mac's token"
         }
     }
 }

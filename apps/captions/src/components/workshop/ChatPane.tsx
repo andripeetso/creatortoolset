@@ -12,6 +12,7 @@ import { WhatChanged } from "./WhatChanged";
 import { AiPicker } from "@/components/assistant/AiPicker";
 import { ChatPicture } from "@/components/chat/ChatPicture";
 import { useFollowEnd } from "@/components/chat/useFollowEnd";
+import { ScrollToEnd } from "@/components/chat/ScrollToEnd";
 import { QueuedRow } from "@/components/chat/QueuedRow";
 import { ICON_BTN, MicButton, SendButton, VoiceDone, VoiceError, VoiceStatus, boxClass, useChatVoice } from "@/components/chat/MessageBox";
 import { cn } from "@/lib/utils";
@@ -38,14 +39,13 @@ const tookOf = (steps: NonNullable<ChatMessage["steps"]>): number => steps.reduc
 function thinkingHint(m: ChatMessage): string {
   // a Mac answer is named for its CLI ("Claude (Mac)", "Codex (Mac)"); the follower's read is Fable for Claude
   const mac = !!m.provider?.endsWith("(Mac)");
-  const who = m.provider?.startsWith("Codex") ? "Codex" : "Claude";
-  if (m.review) return `· ${who === "Codex" ? "Codex" : "Fable"} reads it like a follower, about a minute`;
+  if (m.review) return "· about a minute";
   const deep = m.audit?.depth === "deep" || m.research?.depth === "deep";
   if (m.audit || m.stage === "researching") {
-    if (deep) return mac ? `· ${who} reads the sources, a few minutes` : "· deep research takes 5–15 min";
-    return mac ? `· ${who} searches the web, about a minute` : "· about a minute";
+    if (deep) return mac ? "· a few minutes" : "· 5–15 min";
+    return "· about a minute";
   }
-  return mac ? `· ${who} thinks ~30 s before it writes` : "· a full draft takes 20–60 s";
+  return mac ? "· writing starts after about 30 s" : "· 20–60 s for a full draft";
 }
 
 export function ChatPane({
@@ -168,7 +168,7 @@ export function ChatPane({
   const liveSteps = live?.steps?.length ?? 0;
 
   // follow the reply only while the reader is at the bottom; a scroll up to re-read stays put
-  const follow = useFollowEnd(() => listRef.current, draftKey, [messages.length, thinking, liveText, liveBlocks, liveSteps]);
+  const { follow, away, toEnd } = useFollowEnd(() => listRef.current, draftKey, [messages.length, thinking, liveText, liveBlocks, liveSteps]);
 
   useEffect(() => {
     if (text) localStorage.setItem(draftKey, text);
@@ -222,7 +222,7 @@ export function ChatPane({
     if (pics.length) void attachImages(pics);
     for (const f of files) {
       const kind = attachKind(f);
-      if (kind === "refused") problems.push(`Can't read ${f.name} yet: send a picture, a text file or a PDF`);
+      if (kind === "refused") problems.push(`${f.name} cannot be read: send a picture, a text file or a PDF`);
       else if (kind === "text") {
         const t = await f.text();
         if (t.length > TEXT_ATTACH_MAX) problems.push(`${f.name} is too long to attach`);
@@ -298,6 +298,10 @@ export function ChatPane({
   });
   // a queued message the server refused stays first and waits for a click (no retry loop)
   const [held, setHeld] = useState(false);
+  // the queued message on its way to the server: its row can't be edited or removed meanwhile
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  // the box's message on its way to the server (pictures take a few seconds): Send shows it, and Stop can't take its place yet
+  const [sendingNow, setSendingNow] = useState(false);
   useEffect(() => {
     try {
       if (queue.length) localStorage.setItem(`${draftKey}:queue`, JSON.stringify(queue.map((it) => ({ ...it, images: it.images.map((im) => ({ ...im, url: "" })) }))));
@@ -310,11 +314,13 @@ export function ChatPane({
     const next = queue[0];
     if (!next || thinking || held || !activeDoc || !aiAvailable || sending.current) return;
     sending.current = true;
+    setSendingId(next.id);
     follow();
     void deliver(next)
       .catch(() => false)
       .then((ok) => {
         sending.current = false;
+        setSendingId(null);
         if (!ok) return setHeld(true);
         next.images.forEach((im) => URL.revokeObjectURL(im.url));
         setQueue((q) => q.filter((x) => x.id !== next.id));
@@ -366,6 +372,7 @@ export function ChatPane({
     const sentImages = images;
     const sentFiles = pendingFiles;
     sending.current = true;
+    setSendingNow(true);
     follow();
     try {
       const ok = await deliver({ id: "", text: sentText, pasted: sentPasted, images: sentImages, files: sentFiles, quotes: quotesIn(sentText) });
@@ -383,6 +390,7 @@ export function ChatPane({
       setPendingFiles((fs) => fs.filter((f) => !fileIds.has(f.id)));
     } finally {
       sending.current = false;
+      setSendingNow(false);
     }
   };
   // Undo puts the question back in the box when the box is empty, so the wording can be changed and sent again.
@@ -432,14 +440,14 @@ export function ChatPane({
         ) : null}
         {messages.length === 0 && (
           <p className="py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
-            Think here; the document is the output only.
-            <br />
-            Pick a workspace in the header for instructions and brand files.
+            No messages
           </p>
         )}
         <div className="flex flex-col gap-2">
-          {/* a reply you stopped (Stop, or Steer) leaves no trace: your message stays, the empty reply goes */}
-          {messages.filter((m) => !(m.role === "assistant" && m.status === "error" && m.error === TURN_STOPPED)).map((m) =>
+          {/* a reply you stopped (Stop, or Steer) leaves no trace once the chat goes on: your message stays, the empty reply
+              goes. Only while it is the last one it says Stopped, so a message that got no answer never looks answered;
+              the next message's reply answers it too (the server names it to the AI). */}
+          {messages.filter((m, i) => !(m.role === "assistant" && m.status === "error" && m.error === TURN_STOPPED && i < messages.length - 1)).map((m) =>
             m.role === "user" ? (
               <div key={m.id} className="ml-2 rounded-2xl bg-muted px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground">
                 <p className="whitespace-pre-wrap">{withChips(m.text, m.quotes, activeDoc?.kind)}</p>
@@ -519,7 +527,6 @@ export function ChatPane({
                     {m.text ? (
                       <div>
                         <LiveReply text={m.text} />
-                        <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
                       </div>
                     ) : null}
                     {m.steps?.length ? <Steps steps={stepRows(m.steps, now)} working /> : null}
@@ -532,6 +539,15 @@ export function ChatPane({
                       <span className="text-muted-foreground/70">{thinkingHint(m)}</span>
                     </p>
                   </div>
+                ) : m.status === "error" && m.error === TURN_STOPPED ? (
+                  <p key={m.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {TURN_STOPPED}
+                    {!readOnly && (
+                      <button type="button" onClick={() => onRetry(m)} disabled={thinking} className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted hover:text-foreground disabled:opacity-40">
+                        <RotateCcw className="h-3 w-3" /> Retry
+                      </button>
+                    )}
+                  </p>
                 ) : m.status === "error" ? (
                   <Notice
                     action={
@@ -540,15 +556,15 @@ export function ChatPane({
                       </button>
                     }
                   >
-                    {m.error || "The turn failed"}
+                    {m.error || "Could not write the reply"}
                   </Notice>
                 ) : m.audit?.result ? (
                   <AuditOpenRow audit={{ ...m.audit, result: m.audit.result }} onOpen={() => onOpenAudit(m)} />
                 ) : (
                   <>
                     {m.review ? (
-                      <p className="mb-1 flex items-center gap-1.5 text-[11px] text-violet-300" title="Another model read only the piece, who your followers are and your most saved posts: none of this conversation">
-                        <Eye className="h-3.5 w-3.5" /> A follower's read · {m.provider ?? "Claude Fable (Mac)"} · saw only the piece
+                      <p className="mb-1 flex items-center gap-1.5 text-[11px] text-violet-300" title="Read from the piece, the audience and the most saved posts only, without this chat">
+                        <Eye className="h-3.5 w-3.5" /> A follower's read · {m.provider ?? "Claude Fable (Mac)"} · the piece only
                       </p>
                     ) : null}
                     <div data-cite>
@@ -564,7 +580,7 @@ export function ChatPane({
                     {m.steps?.length ? <Steps steps={stepRows(m.steps, now)} took={tookOf(m.steps)} /> : null}
                     {m.fetched?.length ? (
                       <p className="mt-1.5 text-[11px] text-violet-200/80">
-                        Pulled in: {m.fetched.map((f) => (f.parts.length ? `@${f.handle} ${f.parts.map((p) => PART_LABELS[p]).join(" + ")}` : f.handle)).join(" · ")}
+                        Loaded: {m.fetched.map((f) => (f.parts.length ? `@${f.handle} ${f.parts.map((p) => PART_LABELS[p]).join(" + ")}` : f.handle)).join(" · ")}
                       </p>
                     ) : null}
                     {m.hits?.length ? (
@@ -577,7 +593,7 @@ export function ChatPane({
                     {m.research?.answer ? <ResearchCard research={m.research} /> : null}
                     {m.proposal && !readOnly ? <ProposalRow proposal={m.proposal} busy={thinking} onRespond={(action, depth, question) => onProposal(m, action, depth, question)} /> : null}
                     {m.flags?.length ? (
-                      <p className="mt-1.5 text-[11px] text-amber-300/90" title="Jev's check of the edited draft against its rules. Nothing was blocked.">
+                      <p className="mt-1.5 text-[11px] text-amber-300/90" title="Rules the edited piece may break; nothing was blocked.">
                         May break: {m.flags.map((f) => `${f.name} (${Math.round(f.p * 100)}%)`).join(" · ")}
                       </p>
                     ) : null}
@@ -588,6 +604,7 @@ export function ChatPane({
             ),
           )}
         </div>
+        <ScrollToEnd show={away} onClick={toEnd} />
       </div>
       <div
         // where this stands in the window's bottom right corner, the assistant's bubble sits above it (dock-place.ts)
@@ -632,12 +649,12 @@ export function ChatPane({
             {queue.map((it, i) => {
               const words = readable(it.text, it.quotes ?? []);
               const extra = [it.images.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...it.pasted.map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
-              return <QueuedRow key={it.id} text={words} extra={extra} held={i === 0 && held} thinking={thinking} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />;
+              return <QueuedRow key={it.id} text={words} extra={extra} held={i === 0 && held} thinking={thinking} sending={sendingId === it.id} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />;
             })}
           </ul>
         )}
-        {!aiAvailable ? <Notice tone="warn" className="mb-2">No AI is set up for you yet: connect one in Settings → Providers.</Notice> : null}
-        {macOff && aiAvailable ? <Notice tone="warn" className="mb-2">Your Mac is offline. Replies run on it, so they wait until it's back.</Notice> : null}
+        {!aiAvailable ? <Notice tone="warn" className="mb-2">Needs an AI provider</Notice> : null}
+        {macOff && aiAvailable ? <Notice tone="warn" className="mb-2">Computer offline: replies are written when it is online</Notice> : null}
         {imageError ? <Notice className="mb-2" onDismiss={() => setImageError(null)}>{imageError}</Notice> : null}
         {pasted.length > 0 && (
           // a paste is a file, so it looks like one
@@ -649,7 +666,7 @@ export function ChatPane({
                     type="button"
                     onClick={() => setOpenPaste((o) => (o === p.id ? null : p.id))}
                     className={`flex h-24 w-28 flex-col gap-1 overflow-hidden rounded-lg border bg-muted p-2 text-left hover:border-foreground/30 ${openPaste === p.id ? "border-violet-500/60" : "border-border"}`}
-                    title="Show what's in it"
+                    title="Open the pasted text"
                   >
                     <span className="flex items-center gap-1 text-[10px] font-medium text-foreground">
                       <FileText className="h-3.5 w-3.5 shrink-0 text-violet-300" />
@@ -665,7 +682,7 @@ export function ChatPane({
                       if (openPaste === p.id) setOpenPaste(null);
                     }}
                     className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-background p-0.5 text-muted-foreground opacity-0 shadow hover:text-foreground group-hover:opacity-100"
-                    title="Remove this paste"
+                    title="Remove pasted text"
                     aria-label={`Remove ${p.name}`}
                   >
                     <X className="h-3 w-3" />
@@ -716,11 +733,12 @@ export function ChatPane({
         )}
         <VoiceError v={v} />
         {!readOnly && <div
-          className={cn(boxClass(v.recording), "cursor-text pl-1.5")}
+          // The field gets the whole width; its buttons sit on a row under it (beside it they squeezed it to half a narrow pane).
+          className={cn(boxClass(v.recording), "cursor-text flex-col items-stretch pl-1.5")}
           onKeyDown={(e) => v.recording && e.key === "Escape" && v.voice.cancel()}
           onMouseDown={(e) => {
-            // The box is bigger than the text field: a click on its padding puts you in it too.
-            if (e.target !== e.currentTarget) return;
+            // The box is bigger than the text field: a click on its padding or the button row's gaps puts you in it too.
+            if ((e.target as HTMLElement).closest("button, [contenteditable]")) return;
             e.preventDefault();
             inputRef.current?.focus();
           }}
@@ -731,7 +749,7 @@ export function ChatPane({
             onChange={setText}
             quotes={quotes}
             disabled={!aiAvailable}
-            placeholder={activeDoc ? "Message" : "Pick a document first"}
+            placeholder={activeDoc ? "Message" : "Pick a piece first"}
             onEnter={() => void send()}
             onPasteFirst={(e) => {
               const pics = clipboardImages(e.clipboardData);
@@ -752,15 +770,19 @@ export function ChatPane({
             onRemoveQuote={(id) => onUnquote?.(id)}
             onAddQuote={(q) => onQuote?.(q)}
           />}
-          {v.recording ? <VoiceDone v={v} /> : <>
-          <button type="button" onClick={() => pickRef.current?.click()} className={cn(ICON_BTN, "text-muted-foreground hover:bg-muted hover:text-foreground")} title="Attach files: pictures, text files, PDFs. Or drop or paste them here." aria-label="Attach files">
+          <div className="flex items-center gap-1.5">
+          {v.recording ? <span className="ml-auto flex items-center gap-1.5"><VoiceDone v={v} /></span> : <>
+          <button type="button" onClick={() => pickRef.current?.click()} className={cn(ICON_BTN, "text-muted-foreground hover:bg-muted hover:text-foreground")} title="Attach pictures, text files or PDFs" aria-label="Attach files">
             <Paperclip className="h-4 w-4" />
           </button>
           <MicButton v={v} />
+          <span className="ml-auto flex min-w-0 items-center gap-1.5">
           {aiChip}
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
-          <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
+          <SendButton empty={!composerBusy} waiting={thinking} sending={sendingNow} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
+          </span>
           </>}
+          </div>
         </div>}
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <input
@@ -774,13 +796,13 @@ export function ChatPane({
             }}
           />
           <span className="relative">
-            <button type="button" onClick={() => setContextOpen((o) => !o)} className={contextOpen ? chipOn : chipIdle} title="What the AI has in front of it" aria-expanded={contextOpen}>
-              <Plus className="h-3.5 w-3.5" /> Context{sources.length ? ` · ${sources.length} source${sources.length === 1 ? "" : "s"}` : ""}{pulledCount ? ` · ${pulledCount} pulled` : ""}
+            <button type="button" onClick={() => setContextOpen((o) => !o)} className={contextOpen ? chipOn : chipIdle} title="Context" aria-expanded={contextOpen}>
+              <Plus className="h-3.5 w-3.5" /> Context{sources.length ? ` · ${sources.length} source${sources.length === 1 ? "" : "s"}` : ""}{pulledCount ? ` · ${pulledCount} loaded` : ""}
             </button>
             {contextOpen && (
               <span className="absolute bottom-full left-0 z-30 mb-1 flex w-80 flex-col gap-1.5 rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl">
-                <span className="text-[10px] text-muted-foreground">In the AI's hands</span>
-                {sources.length === 0 ? <span className="text-[11px] text-muted-foreground">No sources in the project yet. Add some in Browse.</span> : null}
+                <span className="text-[10px] text-muted-foreground">In context</span>
+                {sources.length === 0 ? <span className="text-[11px] text-muted-foreground">No sources</span> : null}
                 {sources.map((src) => {
                   const parts = loaded.find((l) => l.postId === src.id)?.parts ?? [];
                   return (
@@ -790,11 +812,11 @@ export function ChatPane({
                   );
                 })}
                 <span className="text-[10px] leading-relaxed text-muted-foreground">
-                  On-screen text is always in. Ask for more in plain words — “read the transcript of the reel”, “what do people object to” — and the AI pulls it; what it pulls stays loaded. Select text in Read to pin a line with its source.
+                  On-screen text is always included; transcripts and comments are loaded when a message asks for them.
                 </span>
                 {pulledCount ? (
                   <button type="button" onClick={() => { onResetLoaded(); setContextOpen(false); }} className="self-start rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-muted">
-                    Forget what was pulled
+                    Clear loaded text
                   </button>
                 ) : null}
               </span>
@@ -805,7 +827,7 @@ export function ChatPane({
             onClick={() => (deep ? onDeep(false) : void confirmHeavy("research").then((go) => go && onDeep(true)))}
             disabled={!researchAvailable}
             className={`${chip} ${deep ? "border-violet-500/60 bg-violet-500/20 text-violet-950 dark:text-violet-100" : chipIdle} disabled:opacity-50`}
-            title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Research needs your own AI, or your Perplexity key in Settings → API keys"}
+            title={researchAvailable ? "5–15 minutes of web research before the reply, for the next message only." : "Needs an AI provider that can search the web or a Perplexity key"}
             aria-pressed={deep}
           >
             <Telescope className="h-3.5 w-3.5" /> Deep research{deep ? " on" : ""}
@@ -815,7 +837,7 @@ export function ChatPane({
               type="button"
               onClick={() => onMineOnly(!mineOnly)}
               className={`${chip} ${mineOnly ? "border-amber-500/60 bg-amber-500/20 text-amber-950 dark:text-amber-100" : chipIdle}`}
-              title="Talk it, then cut it: say or paste what you mean in your own words, and the AI only picks, trims and orders your sentences into the piece. Every word you didn't say gets marked. Stays on until you switch it off."
+              title="The piece is cut from your own sentences only; every word that is not yours is marked."
               aria-pressed={mineOnly}
             >
               <Mic className="h-3.5 w-3.5" /> My words only{mineOnly ? " on" : ""}
@@ -824,8 +846,8 @@ export function ChatPane({
           {onScope ? (
             <span
               role="radiogroup"
-              aria-label="How much to change"
-              title="How much your next message may change the piece. Slight: only what you point at, the rest stays word for word. Rewrite: the whole piece is open. Stays where you leave it."
+              aria-label="Amount of change"
+              title="The part of the piece the next message may change."
               className="flex items-center rounded-md border border-border bg-background/80 p-0.5 text-[11px]"
             >
               {([["slight", "Slight"], [undefined, "Normal"], ["rewrite", "Rewrite"]] as const).map(([v, label]) => (
@@ -844,7 +866,7 @@ export function ChatPane({
           ) : null}
           {audit}
           {messages.some((m) => m.text.trim()) ? (
-            <CopyButton text={() => chatText(messages)} title="Copy the whole chat as plain text" className={`${chipIdle} ml-auto py-1.5`} />
+            <CopyButton text={() => chatText(messages)} title="Copy chat" className={`${chipIdle} ml-auto py-1.5`} />
           ) : null}
         </div>
       </div>
@@ -951,7 +973,7 @@ function TurnMeta({
   const change = turnDocChange(m);
   if (!(m.provider && !m.audit) && !change) return null;
   const doc = change && "docId" in change ? docs.find((d) => d.id === change.docId) : undefined;
-  const title = doc ? docTabLabel(doc) : "a document";
+  const title = doc ? docTabLabel(doc) : "a piece";
   const kind = doc?.kind ?? "reel";
   // "What changed" needs the text from before the turn, so it opens only when that version was kept
   const compare = change?.kind === "edited" && change.versionBefore && sessionId && doc && m.edits?.blockIds?.length ? m.edits : null;
@@ -961,7 +983,7 @@ function TurnMeta({
         {m.provider && !m.audit ? (
           <span
             className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground"
-            title={m.usage ? `This answer: ${(m.usage.tokens / 1000).toFixed(1)}k tokens · $${m.usage.costUsd.toFixed(2)} API-equivalent. The running total is at the top of the chat.` : undefined}
+            title={m.usage ? `This reply: ${(m.usage.tokens / 1000).toFixed(1)}k tokens · $${m.usage.costUsd.toFixed(2)} API-equivalent` : undefined}
           >
             {m.provider}
           </span>
@@ -970,7 +992,7 @@ function TurnMeta({
           <span>Restored {change.version}</span>
         ) : change?.kind === "created" ? (
           <button type="button" onClick={() => onOpenDoc(change.docId)} className="text-violet-600 hover:underline dark:text-violet-300">
-            Created “{title}” ({countUnits(kind, change.blocks)}) — open
+            Created “{title}” ({countUnits(kind, change.blocks)}) · Open
           </button>
         ) : change?.kind === "edited" && compare ? (
           <button
@@ -978,7 +1000,7 @@ function TurnMeta({
             onClick={() => setShowChanged((o) => !o)}
             aria-expanded={showChanged}
             className="text-left underline decoration-dotted underline-offset-2 hover:text-foreground"
-            title="See the words this turn changed"
+            title="Show what changed"
           >
             {showChanged ? "▾" : "▸"} Edited {editSummary(kind, m.edits?.blockIds ?? [])} in “{title}”
           </button>
@@ -995,8 +1017,8 @@ function TurnMeta({
             className="text-muted-foreground/50 hover:text-foreground disabled:opacity-40"
             title={
               composerBusy
-                ? `Put the text back as it was before this turn (${change.versionBefore}). Your draft is in the box, so the question stays in the chat only.`
-                : `Put the text back as it was before this turn (${change.versionBefore}), and the question back in the box`
+                ? `Restores the text from before this reply (${change.versionBefore})`
+                : `Restores the text from before this reply (${change.versionBefore}) and puts the message back in the box`
             }
           >
             Undo
@@ -1015,7 +1037,7 @@ function ResearchCard({ research }: { research: NonNullable<ChatMessage["researc
   return (
     <div className="mt-2 rounded-lg border border-violet-500/25 bg-violet-500/10 px-2.5 py-2">
       <p className="flex items-center gap-1.5 text-[11px] text-violet-200">
-        <Globe className="h-3.5 w-3.5" /> {research.depth === "deep" ? "Deep research" : "Checked on the web"} · {research.question}
+        <Globe className="h-3.5 w-3.5" /> {research.depth === "deep" ? "Deep research" : "Web search"} · {research.question}
       </p>
       <div className="mt-1 text-[12px] text-zinc-200">
         <MarkdownBody source={research.answer ?? ""} media={false} />
@@ -1051,7 +1073,7 @@ function ProposalRow({
     return (
       <p className="mt-2 text-[11px] text-zinc-500">
         {proposal.kind === "audit" ? "Accuracy audit" : proposal.depth === "deep" ? "Deep research" : "Web search"}
-        {proposal.kind === "research" && proposal.question ? ` · “${proposal.question}”` : ""} — {proposal.status === "accepted" ? "you said yes" : "skipped"}
+        {proposal.kind === "research" && proposal.question ? ` · “${proposal.question}”` : ""} — {proposal.status === "accepted" ? "accepted" : "skipped"}
       </p>
     );
   }
@@ -1061,19 +1083,19 @@ function ProposalRow({
     <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
       {proposal.kind === "audit" ? (
         <p className="flex items-center gap-1.5 text-[12px] text-amber-100">
-          <ShieldCheck className="h-3.5 w-3.5" /> Fact-check the whole piece claim by claim?
+          <ShieldCheck className="h-3.5 w-3.5" /> Accuracy audit of the whole piece, claim by claim
         </p>
       ) : (
         <>
           <p className="flex items-center gap-1.5 text-[12px] text-amber-100">
-            <Globe className="h-3.5 w-3.5" /> It wants to search the web for:
+            <Globe className="h-3.5 w-3.5" /> Web search for
           </p>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             rows={2}
             className="mt-1 w-full resize-none rounded bg-background/70 px-2 py-1 text-[12px] text-foreground outline-none"
-            aria-label="The search question (edit it before it runs)"
+            aria-label="Search question"
           />
         </>
       )}

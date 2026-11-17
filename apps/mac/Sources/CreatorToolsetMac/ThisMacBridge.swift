@@ -1,6 +1,6 @@
 // Settings → This Mac on the site (apps/captions ThisMacSection.tsx): the page sends `thismac-<what>` on the window
 // handler (TitleBar.swift) and every message is answered with this app's state as a `mac-this` event. The app keeps
-// all of it (servers, Use this Mac for my AI); the page only shows it. Worker buttons are plug-in rows (LaunchAgent.swift).
+// all of it (servers, AI on this Mac); the page only shows it. Worker buttons are plug-in rows (LaunchAgent.swift).
 import AppKit
 import Foundation
 
@@ -119,7 +119,7 @@ extension Shell {
         pushThisMac(problem: problem)
     }
 
-    /// "access" from the page: turns on Access from other devices. Without the owner's password yet, this app asks for
+    /// "access" from the page: turns on Network access. Without the owner's password yet, this app asks for
     /// one in a sheet (the page never sees it). The reply carries the problem, or none when it is on.
     func accessFromOtherDevices() async -> [String: Any] {
         guard let server else { return thisMacState(problem: "There is no server on this Mac.") }

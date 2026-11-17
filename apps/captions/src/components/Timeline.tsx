@@ -756,7 +756,7 @@ export function Timeline() {
         <button
           onClick={togglePlay}
           disabled={editorBusy}
-          title={editorBusy ? "Playback is locked while captions are processing" : "Play / pause"}
+          title={editorBusy ? "Locked while captions are processing" : "Play / pause"}
           className="rounded-full bg-violet-600 p-2 text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"
         >
           {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 pl-0.5" />}
@@ -805,8 +805,8 @@ export function Timeline() {
             editorBusy
               ? "Locked while captions are processing"
               : gapsFilled
-                ? "On: every caption stays up until the next one, whatever you change. Click to turn off"
-                : "Keep every caption up until the next one starts, through every change (drag a caption's edge below to adjust one)"
+                ? "Every caption stays on screen until the next one starts"
+                : "Keeps every caption on screen until the next one starts"
           }
           aria-pressed={gapsFilled}
           className={`ml-3 flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] disabled:opacity-40 ${
@@ -839,7 +839,7 @@ export function Timeline() {
           title="Add text on screen at the playhead"
           className="ml-1.5 flex items-center gap-1.5 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
         >
-          <Type className="h-3.5 w-3.5" /> Text
+          <Type className="h-3.5 w-3.5" /> Add text
         </button>
         <button
           onClick={() => {
@@ -860,10 +860,10 @@ export function Timeline() {
           <button
             onClick={snapPosToCues}
             disabled={cues.length === 0 || editorBusy}
-            title="Snap the caption layer's edges to the nearest caption cut, so no caption appears or disappears halfway"
+            title="Snaps the section's edges to the nearest caption start or end"
             className="ml-1.5 flex items-center gap-1.5 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
           >
-            <Magnet className="h-3.5 w-3.5" /> Snap to cuts
+            <Magnet className="h-3.5 w-3.5" /> Snap to captions
           </button>
         )}
         {showLayers && selectedSeg && selectedSeg.x != null && (
@@ -892,7 +892,7 @@ export function Timeline() {
             <button
               onClick={() => void retranscribeRange()}
               disabled={transcribing}
-              title="Re-run the transcription engine on just the selected section — fresh words are spliced in, the rest of the transcript stays"
+              title="Transcribes the selected section again; the rest of the transcript is kept"
               className="flex items-center gap-1.5 py-1 pl-2 hover:text-amber-200 disabled:opacity-40"
             >
               {transcribing ? (
@@ -904,7 +904,7 @@ export function Timeline() {
             </button>
             <button
               onClick={() => setRangeSel(null)}
-              title="Clear the section selection (or just click the tracks)"
+              title="Clear the selection"
               className="rounded-r-md px-1.5 py-1 text-amber-300/60 hover:bg-amber-500/20 hover:text-amber-200"
             >
               <X className="h-3 w-3" />

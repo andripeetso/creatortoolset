@@ -155,7 +155,7 @@ describe("Workspaces… (a member's or an invite's workspaces, from the row's me
     document.body.innerHTML = "";
   });
 
-  it("has one switch per workspace, on for the ones given, and saves the switched list with the button", async () => {
+  it("has one switch per workspace, on for the ones given, saves each switch at once, and Done closes", async () => {
     const saved: string[][] = [];
     let closed = false;
     root = createRoot(document.body.appendChild(document.createElement("div")));
@@ -177,12 +177,10 @@ describe("Workspaces… (a member's or an invite's workspaces, from the row's me
       ["Tiny Tumblers for alex", "false"],
     ]);
     await act(async () => switches[1]!.click());
-    expect(saved).toEqual([]);
-    await act(async () => {
-      [...document.querySelectorAll("button")].find((b) => b.textContent === "Save")!.click();
-      await new Promise((done) => setTimeout(done, 0));
-    });
     expect(saved).toEqual([["b1", "b2"]]);
+    expect(closed).toBe(false);
+    expect([...document.querySelectorAll("button")].map((b) => b.textContent).filter((t) => t === "Save" || t === "Cancel")).toEqual([]);
+    await act(async () => [...document.querySelectorAll("button")].find((b) => b.textContent === "Done")!.click());
     expect(closed).toBe(true);
   });
 });

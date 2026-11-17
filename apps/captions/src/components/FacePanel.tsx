@@ -81,7 +81,7 @@ export function FacePanel({ slot, edit, item, fps, video, onClose }: {
   const chip = "pointer-events-none absolute bottom-2 left-2 select-none rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white";
   const where = !inShot ? "move the playhead onto this shot" : !pos.paused ? "pause to see it" : here?.error ? "" : "on this frame";
   const note = typeof saving === "object" ? saving.error
-    : saving === "done" ? "A new version with this strength is on its way"
+    : saving === "done" ? "Making a new version with this strength"
       : pct === 0 ? "Off: no face refinement" : "100% = the standard look";
 
   return (
@@ -91,7 +91,7 @@ export function FacePanel({ slot, edit, item, fps, video, onClose }: {
       <label className="flex items-center gap-2">
         Strength
         <input type="range" min={0} max={max} step={5} value={pct} list="face-strength-marks" disabled={kept === null}
-          onChange={(e) => (setPct(Number(e.target.value)), setSaving(""))} className="w-56 accent-violet-500" />
+          onChange={(e) => (setPct(Number(e.target.value)), setSaving((s) => (s === "busy" ? s : "")))} className="w-56 accent-violet-500" />
         <datalist id="face-strength-marks"><option value={100} /></datalist>
         <span className="w-10 tabular-nums text-zinc-100">{pct}%</span>
       </label>

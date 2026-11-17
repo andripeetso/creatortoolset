@@ -35,19 +35,19 @@ type Key = Tool | "record" | "finals";
 
 /** What a tile links to and says on hover. The tool's name and order come from TOOL_GROUPS and TOOL_NAMES. */
 const PAGE: Record<Key, { to: string; phoneTo?: string; desc: string }> = {
-  instagram: { to: "/instagram", desc: "Dump interesting posts. Rank, stack topics, remake your own." },
-  workshop: { to: "/workshop", desc: "Search your research, take notes, draft reels, carousels, YouTube scripts, newsletters, X threads and articles." },
-  editor: { to: "/editor", desc: "Raw takes in, draft timelines out: best takes, restarts and pauses cut, a preview in Review." },
-  review: { to: "/review", desc: "Share a cut with one link. Reviewers comment and draw on the exact frame." },
-  media: { to: "/library", desc: "Your footage in one place: upload, search by title and tag, preview." },
-  enhance: { to: "/enhance", desc: "Studio sound for any recording: denoise, de-echo, level." },
-  captions: { to: "/captions?view=projects", phoneTo: "/m/captions", desc: "Transcribe, caption and export: burned-in videos or alpha overlays." },
-  stories: { to: "/stories", desc: "One video in, stories of about 20 s out: cut on the edit's cuts, pauses and beats. ZIP download." },
-  design: { to: "/design", desc: "Carousels, covers and thumbnails in layers: your AI designs them, you move, resize and retype anything, and save the PNGs." },
-  notes: { to: "/clips", desc: "Drop in a recording: transcript, summary, chapters, takeaways." },
-  guides: { to: "/documents", desc: "Turn recordings into SOPs, walkthroughs and guides you can publish." },
+  instagram: { to: "/instagram", desc: "Collect posts you like, rank them, find what works." },
+  workshop: { to: "/workshop", desc: "Research, notes and drafts for reels, carousels and ads." },
+  editor: { to: "/editor", desc: "Raw takes in, draft timelines out." },
+  review: { to: "/review", desc: "Share a cut with one link; comments on the frame." },
+  media: { to: "/library", desc: "Your footage in one place, searchable." },
+  enhance: { to: "/enhance", desc: "Studio sound for any recording." },
+  captions: { to: "/captions?view=projects", phoneTo: "/m/captions", desc: "Transcribe, caption and export." },
+  stories: { to: "/stories", desc: "One video in, stories of about 20 s out." },
+  design: { to: "/design", desc: "Carousels, covers and thumbnails, designed in layers you can edit." },
+  notes: { to: "/clips", desc: "A recording in: transcript, summary, chapters." },
+  guides: { to: "/documents", desc: "Turn recordings into guides and SOPs." },
   // the Mac app's recorder (apps/mac Recorder.swift); Review and Video Notes start it too
-  record: { to: "/record", desc: "Record your screen, a window or an area, with your camera and voice. Zooms where you click." },
+  record: { to: "/record", desc: "Record your screen, a window or an area, with your camera and voice." },
   finals: { to: "/finals", desc: "Your finished reels, carousels and other pieces, with the winner, versions and where each was posted." },
 };
 const NAME: Record<Key, string> = { ...TOOL_NAMES, record: "Screen Recorder", finals: "Finals" };
@@ -247,9 +247,9 @@ export default function ToolsetHome() {
         {/* setup happens on the computer: a phone gets the way there, never the setup itself */}
         {view && !setupFinished(view) && phone && !view.have.includes("project") && (
           <div className="flex flex-col gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3">
-            <p className="text-sm text-zinc-100">Set up Creator Toolset on your computer first. Then add this phone from there.</p>
+            <p className="text-sm text-zinc-100">Set up Creator Toolset on a computer, then add this phone from there.</p>
             <Button size="sm" variant="outline" className="self-start" onClick={() => void shareDownload().then(setShared)}>
-              {shared === "copied" ? "Link copied" : shared === "shown" ? DOWNLOAD_URL.replace("https://", "") : "Share the download link"}
+              {shared === "copied" ? "Link copied" : shared === "shown" ? DOWNLOAD_URL.replace("https://", "") : "Share download link"}
             </Button>
           </div>
         )}
@@ -263,8 +263,7 @@ export default function ToolsetHome() {
             className="intro-late flex items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3 text-left"
           >
             <span>
-              <span className="block text-sm text-zinc-100">Finish setting up</span>
-              <span className="block text-xs text-zinc-400">A few short questions. Your answers are saved.</span>
+              <span className="block text-sm text-zinc-100">Finish setup</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>
@@ -382,7 +381,7 @@ function WorkshopBadge() {
 
 /** What a badge counts, said on hover. */
 const BADGE_MEANS: Partial<Record<Tool, (n: number) => string>> = {
-  workshop: (n) => `${plural(n, "project")} with replies you haven't read`,
+  workshop: (n) => `${plural(n, "project")} with unread replies`,
   editor: (n) => `${plural(n, "edit")} whose last step failed or needs a key`,
   review: (n) => `${plural(n, "video")} to review`,
 };

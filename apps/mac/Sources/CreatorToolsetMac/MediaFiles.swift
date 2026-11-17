@@ -4,7 +4,7 @@ import Foundation
 // (ProjectScheme.swift serves them). The page knows the paths, but this app decides: a file is served only when it is a
 // video or sound file, exists, and its real path (symlinks resolved) is inside a folder the user chose in this app's
 // own open panel (the "mediaAccess" message, TitleBar.swift), dropped on its window (a dropped folder, a loose file's
-// folder), picked for the page in its open panel (a picked folder, a picked file's folder: Shell.swift), chosen as the
+// folder), picked for the page in its open panel (a picked folder, or a picked file alone: Shell.swift), chosen as the
 // folder with the videos (ThisMacBridge.swift chooseFolder) or copied into by a Media Library import (Import.swift). The originals are private footage, so anything else
 // gets a status and no contents, and a missing file outside the folders reads as not granted, never as missing.
 
@@ -34,14 +34,12 @@ enum MediaFiles {
     }
 
     /// The granted folders, as chosen in the open panel.
-    /// A pick in this app's open panel for the page (a file input: the Media Library's Add, an edit's footage): as a drop,
-    /// each chosen folder, and each chosen file's folder. A file indexed in the Media Library from there is read on this
-    /// Mac later (its shot descriptions, its transcript, playing its original), so the pick is the grant, as a drop is.
+    /// A pick in this app's open panel for the page (a file input: the Media Library's Add, an edit's footage): each
+    /// picked folder, and each picked file by itself, never the folder it is in (that holds files nobody picked). A
+    /// file indexed in the Media Library from there is read on this Mac later (its shot descriptions, its transcript,
+    /// playing its original), so the pick is the grant. `gate` takes a granted path that is the file itself.
     static func grantPicked(_ urls: [URL], grant: (String) -> Void = add) {
-        for url in urls {
-            let folder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-            grant(folder ? url.path : url.deletingLastPathComponent().path)
-        }
+        for url in urls { grant(url.path) }
     }
 
     static var granted: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }

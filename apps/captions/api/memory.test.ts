@@ -112,7 +112,7 @@ describe("with nothing kept, nothing is different", () => {
     expect(bytes(mine)).toBe(561);
   });
 
-  it("only the assistant's turn reads the store: no other prompt builder imports it", () => {
+  it("only the assistant's turn reads the store into a prompt; Write it for me on a workspace's form reads the kept lines into its draft", () => {
     const api = path.dirname(fileURLToPath(import.meta.url));
     const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : /\.tsx?$/.test(e.name) && !/\.test\./.test(e.name) ? [path.join(dir, e.name)] : []));
     const all = files(api).map((f) => ({ name: path.relative(api, f), dir: path.dirname(f), src: readFileSync(f, "utf8") }));
@@ -120,8 +120,9 @@ describe("with nothing kept, nothing is different", () => {
     // every file that imports the store (api/lib/memory.ts), by any spelling of its path
     const store = path.join(api, "lib", "memory");
     const readers = all.filter((f) => [...f.src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].some((m) => m[1]!.startsWith(".") && path.resolve(f.dir, m[1]!).replace(/\.ts$/, "") === store));
-    // the dock's turn, and the routes of the list (which hand no prompt text to anyone)
-    expect(readers.map((f) => f.name).sort()).toEqual(["assistant.ts", "memory.ts"]);
+    // the dock's turn, the routes of the list (which hand no prompt text to anyone), and the workspace form's draft
+    expect(readers.map((f) => f.name).sort()).toEqual(["assistant.ts", "memory.ts", "workshop.ts"]);
+    expect([...all.find((f) => f.name === "workshop.ts")!.src.matchAll(/memoryFor\(/g)].length).toBe(1);
     expect(all.filter((f) => f.src.includes("memoryBlock")).map((f) => f.name).sort()).toEqual(["assistant.ts", "lib/memory.ts"]);
     expect(all.find((f) => f.name === "memory.ts")!.src).not.toContain("memoryBlock");
   });

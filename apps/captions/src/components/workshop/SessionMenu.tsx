@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
-import { Archive, ArchiveRestore, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowRightLeft, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Trash2 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
+import { useWorkspace } from "@/lib/workspace";
 import { createDocument, deleteSession, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, statusSteps, useDocKinds, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
 import { markUnread, patchSummary, refreshSummaries, useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 import { undoable } from "@/lib/undo";
@@ -67,6 +68,8 @@ export function SessionMenu({
   const navigate = useNavigate();
   const summary = useSessionSummaries()?.find((r: SessionSummary) => r.id === id);
   const hasReply = !!summary?.replyAt;
+  const workspaces = useWorkspace((s) => s.projects);
+  const here = summary?.projectId ?? useWorkspace.getState().currentProjectId;
 
   useEffect(() => {
     const down = (e: MouseEvent) => {
@@ -120,7 +123,7 @@ export function SessionMenu({
   const mainPieceText = () =>
     listDocuments(id).then((docs) => {
       const piece = docs.find((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim()));
-      if (!piece) throw new Error("There is no written piece to copy yet");
+      if (!piece) throw new Error("No written piece to copy");
       return piece.blocks.map((b) => b.text).join("\n\n");
     });
   const regenerate = () => {
@@ -149,7 +152,7 @@ export function SessionMenu({
     onClose();
     void (async () => {
       const from = (await listDocuments(id)).find((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim()));
-      if (!from) throw new Error("There is no written piece to convert yet");
+      if (!from) throw new Error("No written piece to convert");
       const copy = await duplicateSession(id);
       await patchSession(copy.id, { title: `${title.trim() || "Untitled project"}-${CONVERT_SUFFIX[kind]}`, status: "writing" });
       const doc = await createDocument(copy.id, { kind });
@@ -159,10 +162,22 @@ export function SessionMenu({
       navigate(`${sessionPath(copy.id)}?doc=${doc.id}`);
     })().catch(fail);
   };
+  // the only way a session changes workspace: switching workspace never takes the open one along
+  const move = (to: { id: string; name: string }) => {
+    onClose();
+    const back = here;
+    put({ moveTo: to.id, projectId: to.id })
+      .then(() => {
+        void refreshSummaries(); // it leaves this workspace's list
+        if (open) navigate(WORKSHOP_HOME);
+        if (back) undoable(`moved to ${to.name}`, () => put({ moveTo: back, projectId: back }).then(() => void refreshSummaries()));
+      })
+      .catch(fail);
+  };
   const remove = () => {
     onClose();
     void (async () => {
-      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}” for good?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
       await deleteSession(id);
       if (open) navigate(WORKSHOP_HOME);
       void refreshSummaries();
@@ -228,6 +243,17 @@ export function SessionMenu({
               </button>
             ))}
           </Sub>
+          {workspaces.some((w) => w.id !== here) ? (
+            <Sub icon={<ArrowRightLeft className="h-3.5 w-3.5" />} label="Move to" item={item} flip={flip}>
+              {workspaces
+                .filter((w) => w.id !== here)
+                .map((w) => (
+                  <button key={w.id} type="button" role="menuitem" className={item} onClick={() => move(w)}>
+                    {w.name}
+                  </button>
+                ))}
+            </Sub>
+          ) : null}
           <button type="button" role="menuitem" className={item} onClick={() => change(shelved ? "unshelved" : "shelved", { status: shelved ? "writing" : "shelved" }, statusSteps(shelved ? "writing" : "shelved", status ?? "draft").map((s) => ({ status: s })))}>
             {shelved ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
             {shelved ? "Unshelve" : "Shelve"}

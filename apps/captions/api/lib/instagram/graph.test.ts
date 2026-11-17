@@ -847,7 +847,7 @@ describe("Business Discovery", () => {
     vi.stubEnv("INSTAGRAM_BUSINESS_DISCOVERY", "1");
     const fetchImpl = vi.fn();
     await expect(fetchBusinessDiscovery("tiny),me{x", { fetchImpl: fetchImpl as unknown as typeof fetch })).rejects.toThrow(
-      /not an Instagram handle/,
+      /Not an Instagram username/,
     );
     expect(fetchImpl).not.toHaveBeenCalled();
   });

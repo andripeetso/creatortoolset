@@ -74,12 +74,12 @@ export function VoiceMix({ video, stems: given, url, muted, onLive, save }: {
         setState("live");
         live.current.onLive(true);
       },
-      (err: Error) => {
+      () => {
         if (engine.current !== e) return;
         e.close();
         engine.current = null;
         setState("off");
-        setNote(`The voices didn't load: ${err.message}`);
+        setNote("Could not load the voices");
       },
     );
   };
@@ -123,7 +123,7 @@ export function VoiceMix({ video, stems: given, url, muted, onLive, save }: {
               setMix((m) => ({ ...m, [g.key]: v / 100 }));
               start();
             }}
-            aria-label={`${g.label}: how much is ${name}`}
+            aria-label={`${g.label}: amount of ${name}`}
           />
           <span className="w-9 shrink-0 text-right tabular-nums" title={`${pct(mix[g.key])}% ${name}`}>{pct(mix[g.key])}%</span>
         </div>

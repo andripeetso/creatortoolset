@@ -66,7 +66,7 @@ enum CoverExporter {
         MediaColor.applySDR(to: videoComposition)
 
         guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-            throw MediaError.exportFailed("this device can't make that video.")
+            throw MediaError.exportFailed("that video can't be made here.")
         }
         let partial = partialURL(for: url)
         defer { try? FileManager.default.removeItem(at: partial) }

@@ -156,7 +156,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
       | undefined;
     const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
     const w = wordsOf(db, id);
-    if (!row || !probe || !w) throw new Error("Some footage changed since it was analyzed: run the edit again from analyze");
+    if (!row || !probe || !w) throw new Error("Some footage changed since it was analyzed: run the edit again");
     sources[id] = sourceOf(id, row.title, probe);
     words[id] = w;
     energy[id] = await energyOf(id, () => measurable(id, row.source_key), signal);

@@ -46,11 +46,11 @@ export const listLibraries = () =>
  * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
  * made the way the Media Library page makes one when the workspace has none yet.
  */
-export async function setWorkspaceUpload(workspaceId: string, upload: LibraryUpload): Promise<void> {
+export async function setWorkspaceUpload(workspaceId: string, settings: { upload: LibraryUpload; finalsUpload: LibraryUpload }): Promise<void> {
   const headers = { "content-type": "application/json", "X-CT-Workspace": workspaceId };
   const own = (await fetch("/api/library", { headers }).then((r) => json<{ libraries: LibrarySummary[] }>(r))).libraries.find((l) => !l.readOnly);
   const library: LibrarySummary = own ?? (await fetch("/api/library", { method: "POST", headers, body: JSON.stringify({ name: "Library" }) }).then((r) => json<LibrarySummary>(r)));
-  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings: { upload } }) }).then((r) => json<LibrarySummary>(r));
+  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings }) }).then((r) => json<LibrarySummary>(r));
 }
 
 /** What is going in: `clips` files of `bytes`, `audio` of them sound only (`audioBytes`), from a music folder or not. */
@@ -299,6 +299,8 @@ export async function listAllAssets(libraryId: string, facets?: Record<string, s
 export interface UploadResult {
   assetId?: string;
   duplicateOf?: string;
+  /** already in the library, as a clip this account may not see (no id) */
+  duplicate?: true;
 }
 
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -397,7 +399,7 @@ export async function uploadFile(
         });
         if (r.status === 409) offset = ((await r.json()) as { offset: number }).offset;
         else if (r.ok) offset = Number(r.headers.get("upload-offset"));
-        else throw new Error(`Upload failed (${r.status})`);
+        else throw new Error("Could not upload the file");
         failures = 0;
       } catch (e) {
         if (signal?.aborted || ++failures > 5) throw e;

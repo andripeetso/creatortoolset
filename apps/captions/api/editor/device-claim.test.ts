@@ -123,7 +123,7 @@ describe.skipIf(rootReplaced)("AI Editor on devices", () => {
       expect(await claim(mine.token, ["fake-kind"])).toEqual({ job: null });
       expect(libraryDb().prepare("SELECT state, error FROM edit_jobs WHERE version_id = ?").get(`${editId}:v2`)).toEqual({
         state: "failed",
-        error: "Some footage is gone or no longer yours to read",
+        error: "Some footage was deleted or cannot be read by this account",
       });
     } finally {
       libraryDb().exec("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_a1'");

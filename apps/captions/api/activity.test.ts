@@ -108,7 +108,7 @@ describe("appRows", () => {
     expect(rows.map((r) => [r.detail, r.state, r.href])).toEqual([
       ["Preparing 17 clips · 25%", "working", "/library"],
       ["2 transcripts need a transcription key", "ready", "/settings/keys"],
-      ["5 AI descriptions need an AI provider", "ready", "/settings/providers"],
+      ["5 descriptions need an AI provider", "ready", "/settings/providers"],
     ]);
     expect(rows[0].progress).toBe(0.25);
   });
@@ -125,7 +125,7 @@ describe("appRows", () => {
     expect(rows.map((r) => [r.title, r.detail, r.href])).toEqual([
       ["Tiny vlog", "AI Editor", "/editor/e1"],
       ["tiny.mp4", "Exporting · 40%", "/captions?project=p%201"],
-      ["next.mp4", "Export · waits its turn", "/captions"],
+      ["next.mp4", "Export · queued", "/captions"],
     ]);
     expect(rows[2]).not.toHaveProperty("progress");
   });
@@ -150,13 +150,13 @@ describe("appRows", () => {
     });
     expect(rows.map((r) => [r.title, r.detail, r.href, r.progress])).toEqual([
       ["@tinyacrobatics", "Content Analyzer · reading the post", "/instagram/p1", undefined],
-      ["@tinyacrobatics", "Content Analyzer · waits its turn", "/instagram/p2", undefined],
+      ["@tinyacrobatics", "Content Analyzer · queued", "/instagram/p2", undefined],
       ["@tinyacrobatics", "Content Analyzer · pulling the account", "/instagram/accounts/a1", undefined],
       ["Ideas", "Content Analyzer · finding ideas", "/instagram", undefined],
       ["Tiny walkthrough", "Video Notes · making the note", "/clips/n1", 0.4],
       ["Older note", "Video Notes · writing a section", "/clips/n2", undefined],
       ["voice.wav", "Audio Enhancer · enhancing", "/enhance/s1", 0.3],
-      ["next.wav", "Audio Enhancer · waits its turn", "/enhance/s2", undefined],
+      ["next.wav", "Audio Enhancer · queued", "/enhance/s2", undefined],
       ["Tiny cut", "Review · preparing the video", "/review/r1", 0.5],
       ["Tiny walkthrough", "Guide Builder · writing", "/documents", undefined],
       ["Tiny talk", "Caption Studio · captioning", "/captions?view=projects", undefined],
@@ -245,7 +245,7 @@ describe("pluginMenu and GET /api/activity/menu", () => {
 
 describe("appTools", () => {
   it("lists the app's tools by name in menu order, Finals and the AI Editor included", () => {
-    expect(appTools(admin).map((t) => t.title)).toEqual(["Home", "Workshop", "AI Editor", "Finals", "Analyzer"]);
+    expect(appTools(admin).map((t) => t.title)).toEqual(["Home", "Content Workshop", "AI Editor", "Finals", "Content Analyzer"]);
   });
 
   it("leaves out a tool whose gate the account has switched off, admins excepted", () => {

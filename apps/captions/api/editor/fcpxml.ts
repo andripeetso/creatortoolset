@@ -116,3 +116,65 @@ function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string
   const open = `<asset-clip ref="${id.asset}" name="${esc(s.name)}" offset="${time(t0 + i.rec, tl.fps)}" start="${time(srcFrames(i.rec), s.fps)}" duration="${time(i.len, tl.fps)}" format="${id.format}" tcFormat="NDF"`;
   return inner.length ? [`          ${open}>`, ...inner.map((l) => `            ${l}`), `          </asset-clip>`] : [`          ${open}/>`];
 }
+
+/** An FCP 7 XML rate: whole timebase, NTSC flag for 23.976, 29.97 and 59.94. */
+const rate7 = (fps: number) => `<rate><timebase>${Math.round(fps)}</timebase><ntsc>${Number.isInteger(fps) ? "FALSE" : "TRUE"}</ntsc></rate>`;
+
+/**
+ * The draft as FCP 7 XML (xmeml 4), the timeline Premiere Pro opens as a new project: the speaker track (V1) with its
+ * own sound on A1, and the lines as sequence markers. Clip in/out are in the source's frames.
+ * ponytail: no framing, speed or B-roll yet (FCPXML and OTIO carry those); add when a Premiere user needs them in the XML
+ */
+export function toFcp7Xml(tl: Timeline, files: Record<string, string>): string {
+  const items = [...tl.tracks.V1.items].sort((a, b) => a.rec - b.rec);
+  const written = new Set<string>();
+  const t0 = 3600 * Math.round(tl.fps);
+  const clip = (i: Item, k: number, kind: "video" | "audio") => {
+    const s = tl.sources[i.src];
+    const file = files[i.src];
+    if (!s || !file) throw new Error(`V1: no media for ${i.src}`);
+    const id = `file-${i.src}`;
+    // the file in full the first time it is named, by id after that
+    const fileXml = written.has(id)
+      ? `<file id="${esc(id)}"/>`
+      : (written.add(id),
+        `<file id="${esc(id)}"><name>${esc(s.name)}</name><pathurl>${esc(url(file))}</pathurl>${rate7(s.fps)}<duration>${s.dur}</duration>` +
+          `<timecode>${rate7(s.fps)}<frame>${s.tc}</frame><displayformat>NDF</displayformat></timecode>` +
+          `<media>${s.w ? `<video><samplecharacteristics><width>${s.w}</width><height>${s.h}</height></samplecharacteristics></video>` : ""}<audio><channelcount>2</channelcount></audio></media></file>`);
+    const out = i.in + Math.round((i.len * s.fps) / tl.fps);
+    return `          <clipitem id="${kind}-${k + 1}"><name>${esc(s.name)}</name><duration>${s.dur}</duration>${rate7(s.fps)}` +
+      `<start>${i.rec}</start><end>${i.rec + i.len}</end><in>${i.in}</in><out>${out}</out>${fileXml}` +
+      `<sourcetrack><mediatype>${kind}</mediatype>${kind === "audio" ? "<trackindex>1</trackindex>" : ""}</sourcetrack></clipitem>`;
+  };
+  // the video items first, so each file's full entry is in the video track
+  const video = items.map((i, k) => (tl.sources[i.src]?.w ? clip(i, k, "video") : null)).filter((l): l is string => !!l);
+  const audio = items.map((i, k) => clip(i, k, "audio"));
+  const end = items.reduce((m, i) => Math.max(m, i.rec + i.len), 0);
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<!DOCTYPE xmeml>`,
+    `<xmeml version="4">`,
+    `  <sequence id="sequence-1">`,
+    `    <name>${esc(tl.name)}</name>`,
+    `    <duration>${end}</duration>`,
+    `    ${rate7(tl.fps)}`,
+    `    <timecode>${rate7(tl.fps)}<frame>${t0}</frame><displayformat>NDF</displayformat></timecode>`,
+    `    <media>`,
+    `      <video>`,
+    `        <format><samplecharacteristics>${rate7(tl.fps)}<width>${tl.width}</width><height>${tl.height}</height></samplecharacteristics></format>`,
+    `        <track>`,
+    ...video,
+    `        </track>`,
+    `      </video>`,
+    `      <audio>`,
+    `        <track>`,
+    ...audio,
+    `        </track>`,
+    `      </audio>`,
+    `    </media>`,
+    ...tl.markers.map((m) => `    <marker><name>${esc(m.name)}</name><comment>${esc(m.note)}</comment><in>${m.rec}</in><out>-1</out></marker>`),
+    `  </sequence>`,
+    `</xmeml>`,
+    ``,
+  ].join("\n");
+}

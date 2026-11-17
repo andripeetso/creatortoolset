@@ -52,7 +52,7 @@ describe("libraryWork and its rows", () => {
       ["Uploading 1 file · 40%", "working", null],
       // clip 2 is the one being prepared (clip 3 only waits, clip 1 was through before anyone looked): its one step is to do
       ["Preparing 1 clip · 0%", "working", null],
-      ["1 AI description waits", "working", "Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then."],
+      ["1 description paused", "working", "Your Claude plan's weekly limit is reached; it resets 5pm. They continue then."],
     ]);
     expect(rows.every((r) => r.href === "/library" && r.title === "Media Library")).toBe(true);
   });

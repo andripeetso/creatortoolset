@@ -88,10 +88,10 @@ export function momentMap(raw: RawMoment[], sentences: Sentence[], count: number
     const a = byN.get(m.first);
     const b = byN.get(m.last);
     const range = `${m.first}-${m.last}`;
-    if (!Number.isInteger(m.first) || !Number.isInteger(m.last) || !a || !b || m.first > m.last) notes.push(`Moment ${range} is not in sentences 1-${sentences.length}: dropped`);
-    else if (a.src !== b.src) notes.push(`Moment ${range} runs across two files: dropped`);
-    else if (b.e - a.s < lo || b.e - a.s > hi) notes.push(`Moment ${range} is ${Math.round(b.e - a.s)} s, outside ${Math.round(lo)}-${Math.round(hi)} s: dropped`);
-    else if (kept.some((k) => m.first <= k.last && k.first <= m.last)) notes.push(`Moment ${range} runs over a better one: dropped`);
+    if (!Number.isInteger(m.first) || !Number.isInteger(m.last) || !a || !b || m.first > m.last) notes.push(`Moment ${range} is not in sentences 1-${sentences.length}: left out`);
+    else if (a.src !== b.src) notes.push(`Moment ${range} runs across two files: left out`);
+    else if (b.e - a.s < lo || b.e - a.s > hi) notes.push(`Moment ${range} is ${Math.round(b.e - a.s)} s, outside ${Math.round(lo)}-${Math.round(hi)} s: left out`);
+    else if (kept.some((k) => m.first <= k.last && k.first <= m.last)) notes.push(`Moment ${range} runs over a better one: left out`);
     else if (kept.length < Math.min(count, MAX_MOMENTS)) kept.push({ ...m, src: a.src });
   }
   const lines: Line[] = kept.map((m, k) => ({

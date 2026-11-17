@@ -1,7 +1,5 @@
-import { useEffect } from "react";
 import { Link } from "react-router";
 import { Check, ChevronDown, Plus } from "lucide-react";
-import { useChatMode } from "@/lib/chat-mode";
 import { isPhoneHub } from "@/lib/mobile";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import {
@@ -13,20 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-/** What each page on screen does when the project is changed in its bar (a Workshop session is filed under it, the
- *  Analyzer leaves a post that belongs to the old one). */
-const pagesDo = new Set<(id: string) => void>();
-
 /**
- * Header control: switch the account's current project. `frame`: the copy under the chats in chat mode, which stands
- * in for the page's own (hidden then, index.css) and does what the page's would have done.
+ * Header control: switch the window's workspace. A page that shows one thing of the workspace it leaves goes to its
+ * tool's own page by itself (lib/page-workspace.ts).
  */
-export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) => void; frame?: boolean } = {}) {
-  useEffect(() => {
-    if (frame || !onSelect) return;
-    pagesDo.add(onSelect);
-    return () => void pagesDo.delete(onSelect);
-  }, [frame, onSelect]);
+export function ProjectSwitcher() {
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const projects = useWorkspace((s) => s.projects);
   const loaded = useWorkspace((s) => s.loaded);
@@ -39,7 +28,7 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          data-project-switcher={frame ? undefined : ""}
+          data-project-switcher=""
           title="Current workspace"
           className={`flex max-w-[min(14rem,100%)] items-center gap-1.5 h-7 rounded-md border px-2.5 text-xs text-zinc-200 outline-none hover:bg-zinc-900 data-[state=open]:bg-zinc-900 ${project ? PROJECT_COLORS[projectColor(project)].ring : "border-zinc-800"}`}
         >
@@ -49,7 +38,7 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
           <ChevronDown className="h-3 w-3 shrink-0 text-zinc-500" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={frame ? "start" : "end"} className="w-64">
+      <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">
           Current workspace
         </DropdownMenuLabel>
@@ -62,11 +51,7 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
             <DropdownMenuItem
               key={p.id}
               onSelect={() => {
-                if (p.id === currentProjectId) return;
-                void select(p.id);
-                if (!frame) onSelect?.(p.id);
-                // only chats (the page is not drawn): nothing is done to a page that cannot be seen
-                else if (useChatMode.getState().pane !== 0) for (const does of pagesDo) does(p.id);
+                if (p.id !== currentProjectId) void select(p.id);
               }}
             >
               <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />

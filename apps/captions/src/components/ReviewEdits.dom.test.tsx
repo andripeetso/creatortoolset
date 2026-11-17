@@ -160,7 +160,6 @@ describe("ReviewEdits panel", () => {
   it("an imported timeline (XML, OTIO, EDL) gets the panel too, with its sent edits playing", async () => {
     const removeFirst = { id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } };
     const { bridge } = await mount([removeFirst], { n: 1, fps: 25, timeline: true });
-    expect(host.textContent).toContain("Timeline edits: sent with your next comment");
     expect((bridge.plan() as ReviewPlayPlan).skips).toEqual([[0, 100]]);
   });
 
@@ -173,7 +172,6 @@ describe("ReviewEdits panel", () => {
     const shown = bridge.plan() as ReviewPlayPlan;
     expect(shown.skips).toEqual([[0, 100]]);
     expect(setPlan).toHaveBeenCalled();
-    expect(host.textContent).toContain("Timeline edits: sent with your next comment");
 
     // the toggle is shown because the plan plays something; hiding it clears the player's plan
     await act(async () => button("Edits shown")!.click());
@@ -251,7 +249,6 @@ describe("ReviewEdits panel", () => {
     const shown = bridge.plan() as ReviewPlayPlan;
     expect(shown.looks).toEqual([{ from: 0, to: 100, filter: "url(#review-grade-0)" }]);
     expect(host.querySelector('filter[id="review-grade-0"]')).not.toBeNull();
-    expect(host.textContent).toContain("Timeline edits: sent with your next comment");
   });
 
   it("Color opens the grade panel, and the shot plays the panel's grade live until the panel closes", async () => {
@@ -377,6 +374,50 @@ describe("ReviewEdits panel", () => {
     }
   });
 
+  it("with the Mac app's places, an edit's library clips play from where this computer has them, the rest by path", async () => {
+    const voiced: TimelineView = { ...view, tracks: [
+      { ...view.tracks[0], items: view.tracks[0].items.map((i) => ({ ...i, src: "cam", ins: 2 + i.rec / 25, zoom: 1.25 })) },
+      { id: "A1", name: "A1", items: [{ key: "A1:0", track: "A1", rec: 0, len: 200, label: "Voice", src: "vo", ins: 2 }] },
+    ] };
+    const footage = { key: "smb://office-nas/footage", name: "footage", server: "office-nas" };
+    let vo: object = { state: "here", path: "/Volumes/footage-1/VO/take 1.wav", url: "ctlocal://media/vo" };
+    const check = vi.fn(async (m: string) => (m.startsWith("places:check:") ? { versions: { vo } } : {}));
+    (window as unknown as { webkit: object }).webkit = { messageHandlers: {
+      thisMac: { postMessage: check },
+      mediaAccess: { postMessage: async () => ({ granted: ["/Volumes/Shoot"] }) },
+    } };
+    document.documentElement.dataset.macLocalFiles = "3";
+    document.documentElement.dataset.macPlaces = "1";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url === "/api/library" ? Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: {} }] }) : new Response("x", { status: 206 })));
+    const settle = () => act(async () => {
+      for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+    });
+    try {
+      // "vo" is a library clip (the answer knows it); "cam" is looked for where its path says, in an allowed folder
+      const sources = vi.fn(async () => ({ vo: "/Volumes/footage/VO/take 1.wav", cam: "/Volumes/Shoot/A001.mov" }));
+      const longer = { id: "c1", data: { edits: [{ key: "A1:0", label: "Voice", tail: 25 }, { key: "V1:100", label: "Shot two", tail: 25 }] } };
+      const { bridge } = await mount([longer], undefined, { timeline: async () => voiced }, { sources });
+      await settle();
+      expect(check).toHaveBeenCalledWith('places:check:{"library":"lib","versions":["vo","cam"]}');
+      expect((bridge.plan() as ReviewPlayPlan).sound).toEqual([{ src: "ctlocal://media/vo", at: 0, frames: 225, offset: 2 }]);
+      const cam = `ctlocal://media/${btoa("/Volumes/Shoot/A001.mov").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+      expect((bridge.plan() as ReviewPlayPlan).picture?.[0]?.src).toBe(cam);
+      // the share goes away: the cut plays as rendered, and one line says where its original is
+      vo = { state: "away", root: footage };
+      await act(async () => void window.dispatchEvent(new CustomEvent("mac-places", { detail: { at: 1 } })));
+      await settle();
+      expect((bridge.plan() as ReviewPlayPlan).sound).toBeUndefined();
+      expect(host.textContent).toContain("1 of 1 originals on footage (office-nas), which isn't connected");
+      expect(button("Play edits from the originals")).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      delete (window as unknown as { webkit?: object }).webkit;
+      delete document.documentElement.dataset.macLocalFiles;
+      delete document.documentElement.dataset.macPlaces;
+    }
+  });
+
   it("unmounting clears the plan the player follows", async () => {
     const { bridge } = await mount([{ id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } }]);
     expect(bridge.plan()).not.toBeNull();
@@ -449,17 +490,17 @@ describe("a cut the app's own AI Editor made", () => {
     expect(bridge.pendingLabels().length).toBeGreaterThan(0);
   });
 
-  it("a step that failed shows with its reason and Try again", async () => {
+  it("a step that failed shows with its reason and Retry", async () => {
     const calls = server([job({ id: 9, kind: "preview", state: "failed", error: "Some footage is gone from the library" })],
       () => new Response(JSON.stringify({ id: "e1", jobs: [job({ id: 9, kind: "preview" })] }), { status: 200 }));
     await mount([], own);
     await settle();
-    expect(host.textContent).toContain("The next version wasn't made: Some footage is gone from the library");
-    await act(async () => button("Try again")!.click());
+    expect(host.textContent).toContain("Could not make the next version: Some footage is gone from the library");
+    await act(async () => button("Retry")!.click());
     await settle();
     expect(calls).toEqual([{ url: "/api/editor/e1/jobs/9/retry", body: undefined }]);
     expect(host.textContent).toContain("Making the next version");
-    expect(host.textContent).not.toContain("wasn't made");
+    expect(host.textContent).not.toContain("Could not make");
   });
 
   it("the page takes the next version in when its steps end", async () => {
@@ -473,16 +514,13 @@ describe("a cut the app's own AI Editor made", () => {
     expect(host.textContent).not.toContain("Making the next version");
   });
 
-  it("names the shots the look before Review found still don't hold up, and nothing when the cut passed", async () => {
+  it("says nothing on the page about the shots the look before Review flagged: the chat says them (owner, 2026-11-16)", async () => {
     server([], () => new Response("{}", { status: 200 }));
-    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens" }] } });
+    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens", at: 0, dur: 2 }, { n: 0, why: "The look could not be made" }] } });
     await settle();
-    expect(host.textContent).toContain("Shot 7: walking through town, nothing happens");
-    await act(async () => root.unmount());
-    root = createRoot(host);
-    await mount([], own);
-    await settle();
-    expect(host.textContent).not.toMatch(/Shot \d+:/);
+    expect(host.textContent).not.toContain("walking through town");
+    expect(host.textContent).not.toContain("The look could not be made");
+    expect(host.textContent).not.toContain("Timeline edits");
   });
 
   it("someone the edit is not theirs gets no button, and any other version has none", async () => {
@@ -521,7 +559,7 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     expect(host.textContent).toContain("Making the next version…");
     expect(button("Make the next version")).toBeUndefined(); // one at a time
     await act(async () => say("Rendering a preview"));
-    expect(host.textContent).toContain("Making the next version: Rendering a preview. It shows up here when it is ready.");
+    expect(host.textContent).toContain("Making the next version: Rendering a preview.");
     done();
     await turn();
     expect(ctx.reload).toHaveBeenCalledTimes(1);
@@ -537,7 +575,7 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     await act(async () => button("stub remove")!.click());
     await act(async () => button("Make the next version")!.click());
     await turn();
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe("The next version wasn't made: “Shot one” (V1:0) is not on this draft's timeline");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Could not make the next version: “Shot one” (V1:0) is not on this draft's timeline");
     expect(ctx.reload).not.toHaveBeenCalled();
     expect(bridge.pendingLabels()).toHaveLength(1);
     expect(button("Make the next version")).toBeDefined();
@@ -577,7 +615,6 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     await mount([], { n: 1, fps: 25, timeline: true }, undefined, { next }); // an imported timeline: no AI edit behind it
     await act(async () => button("stub remove")!.click());
     expect(button("Make the next version")).toBeUndefined();
-    expect(host.textContent).toContain("sent with your next comment");
   });
 });
 
@@ -613,7 +650,7 @@ describe("Face (the face refinement strength)", () => {
     });
     await act(async () => button("Use 80% for this edit")!.click());
     expect(face.save).toHaveBeenCalledWith(edit, 0.8);
-    expect(host.textContent).toContain("A new version with this strength is on its way");
+    expect(host.textContent).toContain("Making a new version with this strength");
     stage.remove();
   });
 });

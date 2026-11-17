@@ -66,6 +66,8 @@ export default class CreatorToolsetPlugin extends Plugin {
   private state!: LocalState;
   private lastRun = 0;
   private running = false;
+  /** A sync was asked for while one ran: one more runs when it ends. */
+  private again = false;
   private debounceId: number | undefined;
   /** Each folder note's status as of the last metadata change (in memory). */
   private seen: Record<string, string | undefined> = {};
@@ -171,7 +173,10 @@ export default class CreatorToolsetPlugin extends Plugin {
       if (manual) new Notice("Creator Toolset: sync is paused in settings");
       return;
     }
-    if (this.running) return;
+    if (this.running) {
+      this.again = true;
+      return;
+    }
     const key = this.readKey(manual);
     if (!key) return;
     this.running = true;
@@ -187,6 +192,10 @@ export default class CreatorToolsetPlugin extends Plugin {
     } finally {
       this.running = false;
       this.saveState();
+      if (this.again) {
+        this.again = false;
+        void this.sync(false);
+      }
     }
   }
 

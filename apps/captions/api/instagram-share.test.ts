@@ -19,7 +19,7 @@ app.use("*", async (c, next) => {
 });
 app.route("/", instagramApp);
 
-const LATER = "for later: add your Apify key in Settings → API keys to crawl it";
+const LATER = "for later: needs an Apify key";
 
 type ShareBody = {
   message?: string;
@@ -76,7 +76,7 @@ describe("POST /share", () => {
     const before = postDirs().length;
     const { status, body } = await share("https://instagram.com/reel/SHAREabc123");
     expect(status).toBe(200);
-    expect(body.message).toBe("Already in your library");
+    expect(body.message).toBe("Already saved");
     expect(postDirs()).toHaveLength(before);
   });
 
@@ -86,14 +86,14 @@ describe("POST /share", () => {
     expect(first.body.message).toBe(`Added @some.creator ${LATER}`);
     expect(first.body.accounts[0].username).toBe("some.creator");
     const again = await share("https://www.instagram.com/some.creator/");
-    expect(again.body.message).toBe("@some.creator is already in your library");
+    expect(again.body.message).toBe("@some.creator is already added");
   });
 
   it("refuses text without an Instagram link", async () => {
     for (const text of ["https://www.tiktok.com/@x/video/123", "just words", "", 42]) {
       const { status, body } = await share(text);
       expect(status).toBe(400);
-      expect(body.error).toBe("No Instagram link in what you shared");
+      expect(body.error).toBe("No Instagram link in the shared text");
     }
   });
 });
@@ -121,10 +121,10 @@ describe("Kept for: Content, Format or Know-how", () => {
     const first = await share("https://www.instagram.com/p/MOVEme1/", { savedFor: "format" });
     const id = first.body.posts[0].id;
     const again = await share("https://www.instagram.com/p/MOVEme1/", { knowhow: true });
-    expect(again.body.message).toBe("Already in your library, moved to Know-how");
+    expect(again.body.message).toBe("Already saved, moved to Know-how");
     expect(readPost(id).knowhow).toBe(true);
     const same = await share("https://www.instagram.com/p/MOVEme1/", { knowhow: true });
-    expect(same.body.message).toBe("Already in your library");
+    expect(same.body.message).toBe("Already saved");
   });
 
   it("brings a Know-how post back when it is kept for content", async () => {

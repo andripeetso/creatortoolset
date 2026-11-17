@@ -29,6 +29,8 @@ final class VoiceInput: ObservableObject {
     private let mic: Mic
     private let writeDown: (URL) async throws -> String
     private var starting = false
+    /// The chat was left while the microphone was starting.
+    private var left = false
     private var limit: Task<Void, Never>?
     private var put: (String) -> Void = { _ in }
 
@@ -53,12 +55,17 @@ final class VoiceInput: ObservableObject {
     func record() async {
         guard phase == .idle, !starting else { return }
         starting = true
+        left = false
         defer { starting = false }
         notice = nil
         do {
             try await mic.start()
         } catch {
             notice = Self.say(error)
+            return
+        }
+        guard !left else {   // as cancel does while recording
+            if let file = mic.stop() { try? FileManager.default.removeItem(at: file) }
             return
         }
         phase = .recording(since: Date())
@@ -87,6 +94,7 @@ final class VoiceInput: ObservableObject {
 
     /// Leaving the chat while recording: the recording is thrown away and the mic let go.
     func cancel() {
+        left = starting   // the microphone is still starting: record() throws it away once it has
         guard case .recording = phase else { return }
         limit?.cancel()
         if let file = mic.stop() { try? FileManager.default.removeItem(at: file) }

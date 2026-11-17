@@ -73,7 +73,7 @@ You act in the app only through its tools (the creator-toolset MCP server):
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.
 - media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_smart_folder makes a folder sort itself by what the user says goes in it, and media_share makes a share link for a clip or a folder.
 - design_get, design_make and design_update: the Designer's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers the user edits by hand. You design them yourself, and you are shown each frame as it is drawn. On /design/<id> that id is the design, and the line "Picked:" on screen names the frame and layers the user has picked, by id.
-- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the footage's version ids (talking takes with the script and a B-roll folder, or any clips and a song, cut to the brief) and starts it. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking. The user's notes on a cut go to editor_feedback in their own words, never into the brief: the next version is made from the last one. A kind of edit (a hard edit, a recap, a trailer…) uses its saved style (editor_style_use) or a new one named for it (editor_style_save); a style with no playbook gets one researched and saved first, if you can. An edit waits while the Media Library still describes its footage; when the user says to cut it now, editor_run with now=true. When editor_get lists left_out, say that first.
+- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the footage's version ids (talking takes with the script and a B-roll folder, or any clips and a song, cut to the brief) and starts it. Another version of an edit the user has (\"v3\", \"again\", the same footage) is editor_feedback on that edit, never a new edit: it keeps that edit's footage, notes and Review video. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking. The user's notes on a cut go to editor_feedback in their own words, never into the brief: the next version is made from the last one. A kind of edit (a hard edit, a recap, a trailer…) uses its saved style (editor_style_use) or a new one named for it (editor_style_save); a style with no playbook gets one researched and saved first, if you can. An edit waits while the Media Library still describes its footage; when the user says to cut it now, editor_run with now=true. When editor_get lists left_out, say that first.
 - A cut or video in Review that the user turns down in the chat (it is wrong, bad, not what they asked for), set it to rejected with review_set_approval before anything else, and to changes when they ask for fixes to it instead; approved when they say it is good. Their answer is the review: never leave it waiting for their review.
 - Where the install has them: finals_pieces lists the user's Finals (finished pieces, each with versions and a winner) and gives the ids finals_piece_update, finals_piece_trash and finals_link_session take.
 - schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
@@ -413,18 +413,32 @@ function parseTurn(raw: unknown): TurnInput {
 function readSelection(v: unknown): Selection {
   const x = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   if (typeof x.instance !== "string" || !x.instance || x.instance.length > 60 || typeof x.model !== "string" || (x.model !== "" && !MODEL_RE.test(x.model)) || !(EFFORTS as readonly unknown[]).includes(x.effort))
-    throw new Error("That AI isn't one of yours: pick another in the message box.");
+    throw new Error("That AI provider is not available: pick another in the message box.");
   return { instance: x.instance, model: x.model, effort: x.effort as Selection["effort"] };
 }
 
-/** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
-const attachedName = (name: string, i: number, ext: string, dir = "") => `${dir}attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
+/** A picture's file in the Mac's folder: attached/<message id, 8 chars>/NN-<name>.<ext>, the same for the whole chat. */
+const picturePath = (msgId: string, name: string, i: number, ext: string) => `attached/${msgId.slice(0, 8)}/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
 const pastedName = (name: string, i: number, dir = "") => `${dir}pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
 
-/** The newest message's files for the Mac (the relay writes "base64:" entries as bytes), or undefined with none. */
-function filesFor(input: TurnInput): Record<string, string> | undefined {
+/** A message's stored pictures with their paths in the folder, numbered over the ones that exist (as startHeld reads them). */
+function folderPictures(username: string, m: AssistantMessage): Array<{ path: string; file: string }> {
+  const out: Array<{ path: string; file: string }> = [];
+  for (const im of m.images ?? []) {
+    const found = imageFile(username, im.id);
+    if (found) out.push({ path: picturePath(m.id, im.name, out.length, IMAGE_EXT[found.type]), file: found.file });
+  }
+  return out;
+}
+
+/**
+ * The Mac's files for a turn (the relay writes "base64:" entries as bytes), or undefined with none: every picture the chat
+ * holds, at its path, and the newest message's pastes. Only Claude gets the earlier messages' pictures (`keeps`); any other
+ * AI gets the newest message's, as before.
+ */
+function filesFor(username: string, chat: AssistantMessage[], newest: string, input: TurnInput, keeps: boolean): Record<string, string> | undefined {
   const files: Record<string, string> = {};
-  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)] = `base64:${im.data}`));
+  for (const m of chat) if (m.role === "user" && (keeps || m.id === newest)) for (const p of folderPictures(username, m)) files[p.path] = `base64:${readFileSync(p.file).toString("base64")}`;
   input.pasted.forEach((p, i) => (files[pastedName(p.name, i, input.dir)] = p.text));
   return Object.keys(files).length ? files : undefined;
 }
@@ -458,6 +472,9 @@ function load(username: string): Conv {
   // a reply a restart of the server ended: it can't finish any more and it can't do what it asked. Said in words: the
   // dock shows a failed reply without any as "That didn't work." Not one a computer is still writing (kept: it goes on
   // when that computer's next post arrives) or one running here.
+  // This read writes on purpose, the one exception to "reads never write" (AGENTS.md): in a deploy the old and new
+  // server read the same file, and a reply is adopted or ended at this first read. Moved to startup, it would end a
+  // reply the Mac is about to hand over.
   let kept: Set<string> | undefined;
   for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id] && !runsOf(username).has(m.id)) {
     if ((kept ??= keptTurns()).has(m.id)) continue;
@@ -768,7 +785,7 @@ export function approvalSummary(ask: Pick<MacAsk, "tool" | "description" | "reas
   const said = ask.description.replace(/\s+/g, " ").trim();
   switch (ask.tool) {
     case "Bash":
-      return said ? `Run a command: ${said}` : "Run a command on your Mac";
+      return said ? `Run a command: ${said}` : "Run a command on the Mac";
     case "Write":
       return "Create or replace a file";
     case "Edit":
@@ -778,7 +795,7 @@ export function approvalSummary(ask: Pick<MacAsk, "tool" | "description" | "reas
     case "Read":
     case "Glob":
     case "Grep":
-      return "Look at files outside its own folder";
+      return "Read files outside the assistant's folder";
     case "WebFetch":
     case "WebSearch":
       return "Use the web";
@@ -802,7 +819,7 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
     list.push(a);
     save(username);
     tell(username, turn);
-    attend(username, turn, "asks", `Asks to ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`);
+    attend(username, turn, "asks", `Needs approval · ${a.summary}`);
   } else if (expireApprovals(m)) {
     save(username);
     tell(username, turn);
@@ -848,7 +865,7 @@ export async function askSecret(username: string, env: MyKeyEnv, why: string, tu
   load(username).pending = { env, why, at: Date.now(), ...(turn ? { turn } : {}) };
   save(username);
   tell(username, turn);
-  if (turn) attend(username, turn, "asks", `Asks for your ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
+  if (turn) attend(username, turn, "asks", `Needs the ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
 }
 
 /* ---- the turn ---- */
@@ -1032,15 +1049,23 @@ const asked = (m: AssistantMessage) =>
 /** What a reply started or opened, with its page, so "show me" a few messages later has somewhere to go. */
 const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : w.status === "stopped" ? "stopped" : "made"}: ${w.title} → ${w.href}]`);
 
-/** An earlier message's attachments, by count and name only: their files went with that turn. */
-const marks = (m: AssistantMessage) =>
-  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`)].filter(Boolean).join(" ");
+/** An earlier message's pictures: where the Mac's folder keeps them, or that they are not with this turn (names only). */
+const pictures = (username: string, m: AssistantMessage, folder: boolean): string => {
+  const n = m.images?.length ?? 0;
+  if (!n) return "";
+  const word = n === 1 ? "1 picture" : `${n} pictures`;
+  return folder ? `[${word} in attached/${m.id.slice(0, 8)}/: ${folderPictures(username, m).map((p) => path.basename(p.path)).join(", ")}]` : `[${word}, not with this turn: ${m.images!.map((im) => im.name).join(", ")}]`;
+};
+
+/** An earlier message's attachments: its pictures (where they are, or names only), pastes, videos and folders. */
+const marks = (username: string, m: AssistantMessage, folder: boolean) =>
+  [...cards(m), ...asked(m), pictures(username, m, folder), ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
-function newestFacts(input: TurnInput): string[] {
+function newestFacts(input: TurnInput, msgId: string): string[] {
   const out: string[] = [];
   const n = input.images.length;
-  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)).join(", ")} (the Read tool shows a picture).`);
+  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => picturePath(msgId, im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const f of input.uploading ?? [])
     out.push(`The user attached a video still uploading from their phone: "${f.name}", file id ${f.id}. Go on with it now: use_file waits for it (and says when to call again), and a tool whose description says it takes videos still uploading takes it at once. Never wait for it yourself or ask the user to.`);
@@ -1078,13 +1103,13 @@ export const projectLine = (project: { id: string; name: string }) =>
   `The user's current workspace is ${JSON.stringify(project.name.replace(/\s+/g, " ").trim().slice(0, 60))} (id ${project.id}). Work in it unless they name another: give this id to a tool that takes a workspace (the API calls it a project).`;
 
 /** The prompt: the recent messages, what came with the newest one, then the reply it is for. */
-function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
+function promptFor(username: string, messages: AssistantMessage[], input?: TurnInput, folder = false): string {
   const newest = input ? [...messages].reverse().find((m) => m.role === "user") : undefined;
   const lines = messages
     .filter((m) => m.status !== "thinking")
     .slice(-HISTORY)
-    .map((m) => `${m.role === "user" ? "User" : m.role === "note" ? "Note" : "Assistant"}: ${[m.text, m === newest ? "" : marks(m)].filter(Boolean).join(" ")}`);
-  const facts = input ? newestFacts(input) : [];
+    .map((m) => `${m.role === "user" ? "User" : m.role === "note" ? "Note" : "Assistant"}: ${[m.text, m === newest ? "" : marks(username, m, folder)].filter(Boolean).join(" ")}`);
+  const facts = input ? newestFacts(input, newest?.id ?? "") : [];
   return `${lines.join("\n\n")}${facts.length ? `\n\n${facts.join("\n")}` : ""}\n\nAnswer the user's last message.`;
 }
 
@@ -1226,7 +1251,7 @@ const runTurn = (username: string, replyId: string, route: Route, url: string, p
   });
 
 /** The server restarted under a reply and it could not go on (nothing was running on the Mac yet, or the Mac is gone too). */
-const RESTARTED = "The server restarted while this was being written. Send your message again.";
+const RESTARTED = "The server restarted during the reply. Send the message again.";
 
 /** A scheduled run whose reply went on after a restart has ended: api/automations.ts records it (this file can't import that one). */
 type RunEnded = (username: string, task: string, result: { status: "done" | "error"; text: string; chat?: string }) => void;
@@ -1285,7 +1310,7 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     const m = messageOf(username, replyId);
     // stopped: what it had written stays, marked as stopped
     if (stop.signal.aborted) Object.assign(m ?? {}, { status: "done", text: m?.text ? `${m.text}\n\n*Stopped.*` : "*Stopped.*" });
-    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed.", ...limitOf(username, e) });
+    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "Reply failed", ...limitOf(username, e) });
   } finally {
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
@@ -1344,7 +1369,7 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
     chat: chat.id,
     kind,
     title: chat.title ?? titleOf(chat.messages),
-    body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "The answer failed." : "Answered."),
+    body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "Reply failed" : "New reply"),
     path: `/?chat=${chat.id}`,
     sentAt: chat.messages.slice(0, i).reverse().find((m) => m.role === "user")?.at ?? chat.messages[i]!.at,
   });
@@ -1366,10 +1391,10 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
     how === "stopped"
       ? "*Stopped.*"
       : how === "gone"
-        ? `${lost[0]} isn't in this window any more (the page was reloaded): drop it in the chat again.`
+        ? `${lost[0]} was not sent (the page was reloaded): drop it in the chat again.`
         : m.send
-          ? `${lost[0]} didn't arrive: drop it in the chat again.`
-          : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
+          ? `${lost[0]} was not uploaded: drop it in the chat again.`
+          : `${lost.length > 1 ? `${lost.join(" and ")} were not uploaded` : `${lost[0] ?? "A video"} was not uploaded`}, so this message got no reply: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
   Object.assign(m, { status: how === "lost" ? "error" : "done", text, wait: undefined });
   sayLater(username, m.id);
   save(username);
@@ -1519,7 +1544,7 @@ async function pumpOnce(username: string): Promise<void> {
         ? { for: "videos", videos: 1, text: `Sending "${m.send.name}" to ${m.send.to}` }
         : { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
     } else if (runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
-    else if (busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are answering` };
+    else if (busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are working` };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
@@ -1559,7 +1584,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   // the chat's own AI; one that can't run any more (removed, turned off) answers on the default instead of failing
   const route = (h.ai && routeOf(username, h.admin, h.ai)) || routeOf(username, h.admin);
   if (!route || !asked) {
-    Object.assign(reply, { status: "error", text: route ? "The message is gone." : "Connect your AI first." });
+    Object.assign(reply, { status: "error", text: route ? "Message not found" : "Needs an AI provider" });
     sayLater(username, reply.id);
     attend(username, reply.id, "failed", reply.text);
     return false;
@@ -1574,7 +1599,11 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   if (h.context?.mac) fromMac.add(reply.id);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
   const knows = turnKnows(username, reply.id);
-  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), knows, filesFor(input)).then(() => {
+  const chat = list.slice(0, i + 1);
+  // the chat's earlier pictures go to Claude only, which opens one when it needs it: Grok takes no picture, and Codex is
+  // handed every picture in the folder on every turn
+  const keeps = route.instance.driver === "claude";
+  void runTurn(username, reply.id, route, h.url, promptFor(username, chat, input, keeps), knows, filesFor(username, chat, asked.id, input, keeps)).then(() => {
     // a usage limit stopped it: what it needs to carry on when the limit resets (pump)
     if (!messageOf(username, reply.id)?.limit?.until) return;
     (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, ...(h.ai ? { ai: h.ai } : {}) };
@@ -1753,14 +1782,15 @@ export async function runInChat(
     chat = { id: randomUUID(), messages: [], title: o.task.name, task: o.task.id };
     keepPast(username, conv, [chat, ...(conv.past ?? [])]);
   }
-  if (o.workspace) chat.workspace = o.workspace;
+  // a new chat is the task's workspace's; one it continues stays where it is (a task never moves a chat)
+  if (o.workspace) chat.workspace ??= o.workspace;
   const now = Date.now();
   const asked: AssistantMessage = { id: randomUUID(), role: "user", text: o.prompt, at: now, task: o.task };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
   save(username);
   tell(username, reply.id);
-  const prompt = `${o.preface}\n\n${promptFor(o.fresh ? [asked] : chat.messages)}`;
+  const prompt = `${o.preface}\n\n${promptFor(username, o.fresh ? [asked] : chat.messages)}`;
   const stop = new AbortController();
   const chatId = chat.id; // `chat` may be the open one, whose id changes with a New chat
   runsOf(username).set(reply.id, stop);
@@ -1880,7 +1910,7 @@ assistantApp.post("/folder-list", async (c) => {
 async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const u = c.get("user");
   const target = () => (chatId === undefined ? (load(u.username) as Chat) : chatOf(load(u.username), chatId));
-  if (!target()) return c.json({ error: "That conversation is gone" }, 404);
+  if (!target()) return c.json({ error: "Chat not found" }, 404);
   let input: TurnInput;
   try {
     input = parseTurn(await c.req.json().catch(() => null));
@@ -1892,7 +1922,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   input.fileIds = [...new Set(input.fileIds)];
   for (const id of input.fileIds) {
     const f = await uploadOf(u.username, id);
-    if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
+    if (!f) return c.json({ error: "A video was not found: add it again" }, 400);
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
   // the chat's workspace: its own once it has one, while the account can still open it (workspaceNow); a chat from
@@ -1910,15 +1940,15 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   // the project is named once: by the question whether dropped footage belongs there, else by its own line
   const fit = fitOff ? FIT_OFF_SAID : !project ? undefined : footage && readWorkPrefs(u.username).askFit !== false ? fitLine(project.name) : projectLine(project);
   const conv = load(u.username);
-  if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
+  if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for a reply" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
-  if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
+  if (!route) return c.json({ error: "Needs an AI provider", code: "NO_PROVIDER" }, 409);
   // an AI picked in the message box: one of this account's own that the assistant can run on
-  if (input.ai && !routeOf(u.username, u.role === "admin", input.ai)) return c.json({ error: "That AI can't answer here: pick another in the message box." }, 400);
+  if (input.ai && !routeOf(u.username, u.role === "admin", input.ai)) return c.json({ error: "That AI provider cannot be used here: pick another in the message box." }, 400);
   // read after the last await: a New chat meanwhile swaps what the open chat is
   const chat = target();
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   if (input.ai !== undefined) chat.ai = input.ai ?? undefined;
   const now = Date.now();
   // whoever sends has seen the chat up to here: the reply to this is unread until they look again
@@ -2007,7 +2037,7 @@ assistantApp.get("/chats/search", (c) => {
 assistantApp.get("/chats/:id", (c) => {
   const u = c.get("user");
   const chat = chatOf(load(u.username), c.req.param("id"));
-  return chat ? c.json(view(u.username, u.role === "admin", chat)) : c.json({ error: "That conversation is gone" }, 404);
+  return chat ? c.json(view(u.username, u.role === "admin", chat)) : c.json({ error: "Chat not found" }, 404);
 });
 
 assistantApp.post("/chats/:id/turn", (c) => sendTurn(c, c.req.param("id")));
@@ -2019,7 +2049,7 @@ assistantApp.post("/chats/:id/settle", async (c) => {
   if (typeof b?.settled !== "boolean") return c.json({ error: "Say settled: true or false" }, 400);
   const conv = load(u.username);
   const chat = chatOf(conv, c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   chat.settled = b.settled ? (chat.messages.at(-1)?.at ?? Date.now()) : undefined;
   // done with it: it is no longer pinned nor put away till later
   if (b.settled) chat.pinned = chat.snooze = undefined;
@@ -2033,7 +2063,7 @@ async function changeChat(c: Context<{ Variables: AuthVars }>, change: (chat: Ch
   const u = c.get("user");
   const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
   const chat = chatOf(load(u.username), c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   const refused = change(chat, body);
   if (refused) return c.json({ error: refused }, 400);
   save(u.username);
@@ -2073,12 +2103,12 @@ assistantApp.post("/chats/:id/limit", async (c) => {
     const m = chatOf(load(u.username), c.req.param("id"))?.messages.at(-1);
     return m?.limit?.until ? m : null;
   };
-  if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
+  if (!found()) return c.json({ error: "No reply in that chat is stopped by a usage limit" }, 404);
   // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
   // (what the reply knows of its workspace is read when it carries on, turnKnows)
   const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
   const m = found();
-  if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
+  if (!m) return c.json({ error: "No reply in that chat is stopped by a usage limit" }, 404);
   if (r) (load(u.username).resume ??= {})[m.id] = r;
   m.limit!.resume = b.resume ? true : undefined;
   save(u.username);
@@ -2100,7 +2130,7 @@ assistantApp.post("/chats/:id/title", (c) =>
 assistantApp.post("/chats/:id/unread", (c) =>
   changeChat(c, (chat) => {
     const m = [...chat.messages].reverse().find((x) => x.role === "assistant" && x.status !== "thinking");
-    if (!m) return "Nothing was answered in it yet";
+    if (!m) return "No replies in that chat";
     chat.seen = (m.started ?? m.at) + (m.took ?? 0) - 1;
   }),
 );
@@ -2110,7 +2140,7 @@ assistantApp.post("/chats/:id/seen", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   const chat = chatOf(conv, c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   chat.seen = Date.now();
   // one that came back from being put away has now been looked at: its "Woke" mark goes (every list is told)
   const woke = !!chat.snooze && !isSnoozed(conv, chat);
@@ -2131,9 +2161,9 @@ assistantApp.post("/chats/:id/branch", async (c) => {
   const b = (await c.req.json().catch(() => null)) as { from?: unknown } | null;
   const conv = load(u.username);
   const chat = chatOf(conv, c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   const end = chat.messages.findIndex((m) => m.id === b?.from);
-  if (end < 0) return c.json({ error: "That message is gone" }, 404);
+  if (end < 0) return c.json({ error: "Message not found" }, 404);
   const upTo = chat.messages.slice(0, end + 1);
   if (upTo.some((m) => m.status === "thinking")) return c.json({ error: "That reply is still being written" }, 400);
   const id = randomUUID();
@@ -2208,11 +2238,11 @@ assistantApp.post("/sends/:reply", async (c) => {
   const reply = c.req.param("reply");
   const h = conv.held?.[reply];
   const m = messageOf(u.username, reply);
-  if (!h?.send || !m?.send || m.send.id) return c.json({ error: "Nothing waits for that file" }, 404);
+  if (!h?.send || !m?.send || m.send.id) return c.json({ error: "No message is waiting for that file" }, 404);
   if (b?.gone === true) endHeld(u.username, m, "gone");
   else {
     const id = typeof b?.id === "string" ? b.id : "";
-    if (!(await uploadOf(u.username, id))) return c.json({ error: "No such upload" }, 400);
+    if (!(await uploadOf(u.username, id))) return c.json({ error: "Upload not found" }, 400);
     h.files = [id];
     m.send.id = id;
     save(u.username);
@@ -2244,7 +2274,7 @@ assistantApp.post("/past/:id/open", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
-  if (!found) return c.json({ error: "That conversation is gone" }, 404);
+  if (!found) return c.json({ error: "Chat not found" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   archive(u.username, conv);
   Object.assign(conv, { id: found.id, ...kept(found), messages: found.messages });
@@ -2257,7 +2287,7 @@ assistantApp.delete("/past/:id", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
-  if (!found) return c.json({ error: "That conversation is gone" }, 404);
+  if (!found) return c.json({ error: "Chat not found" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   dropImages(u.username, found.messages);
   // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
@@ -2274,7 +2304,7 @@ assistantApp.post("/approvals/:id", async (c) => {
   if (typeof b?.allow !== "boolean") return c.json({ error: "Say allow: true or false" }, 400);
   const a = answerApproval(u.username, c.req.param("id"), b.allow);
   if (!a) return c.json({ error: "Not found" }, 404);
-  if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Too late: it waited 10 minutes and wasn't done" : "Already answered" }, 409);
+  if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Expired after 10 minutes" : "Already answered" }, 409);
   return c.json(view(u.username, u.role === "admin"));
 });
 
@@ -2293,7 +2323,7 @@ assistantApp.post("/confirms/:id", async (c) => {
   if (q.status !== "waiting" || answering.has(id)) return c.json({ error: "Already answered" }, 409);
   const call = conv.calls?.[id];
   if (!b.yes) q.status = "no";
-  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "It can't be done from here any more: ask again." });
+  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "Expired: ask again" });
   else {
     answering.add(id);
     try {

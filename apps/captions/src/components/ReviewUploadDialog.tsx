@@ -53,14 +53,14 @@ type Check = { seconds?: number; summary?: string; error?: string };
 
 /** The server reads it the same way on upload (api/review.ts), this just says so first. */
 async function checkTimeline(f: File): Promise<Check> {
-  if (f.size > MAX_TIMELINE_BYTES) return { error: "That timeline file is too big" };
+  if (f.size > MAX_TIMELINE_BYTES) return { error: "Timeline file over 30 MB" };
   try {
     const t = importTimeline(f.name, await f.text());
     const seconds = t.duration / t.fps;
     const tracks = `${t.tracks.length} ${t.tracks.length === 1 ? "track" : "tracks"}`;
     return { seconds, summary: `${tracks} · ${timecode(seconds, 0)} at ${+t.fps.toFixed(3)} fps` };
   } catch (e) {
-    return { error: e instanceof TimelineError ? e.message : `Couldn't read ${f.name}` };
+    return { error: e instanceof TimelineError ? e.message : `Could not read ${f.name}` };
   }
 }
 
@@ -141,8 +141,8 @@ export function ReviewUploadDialog({
       >
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription className="text-zinc-500">
-          Any video format. Add each one's timeline file (OTIO, XML, FCPXML or EDL from Resolve, Premiere or Final
-          Cut) and its tracks show under the player, so comments can point at a clip.
+          A video's timeline file (OTIO, XML, FCPXML or EDL from Resolve, Premiere or Final Cut) puts its tracks
+          under the player, so comments can point at a clip.
         </DialogDescription>
         {askName && (
           <input
@@ -221,8 +221,8 @@ export function ReviewUploadDialog({
               {off && (
                 <p className="mt-1.5 flex items-start gap-1.5 pl-6 text-xs text-amber-300">
                   <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
-                  The timeline runs {timecode(r.check!.seconds!, 0)}, the video {timecode(r.seconds!, 0)}. Is it this
-                  video's? It lines up only with a render of the whole timeline.
+                  The timeline runs {timecode(r.check!.seconds!, 0)}, the video {timecode(r.seconds!, 0)}: it lines up
+                  only with a render of the whole timeline.
                 </p>
               )}
             </div>
@@ -230,7 +230,7 @@ export function ReviewUploadDialog({
         })}
         {lone.length > 0 && (
           <p className="text-xs text-red-400">
-            {lone.join(", ")}: which video is it for? Use Timeline file on that video's row.
+            {lone.join(", ")}: not matched to a video. Add it with Timeline file on that video's row.
           </p>
         )}
 

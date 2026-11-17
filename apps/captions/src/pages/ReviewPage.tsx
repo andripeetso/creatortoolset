@@ -394,7 +394,7 @@ export default function ReviewPage() {
       <AppBar tool="Review" to={project || trash ? "/review" : undefined} trail={project?.name ?? (trash ? "Trash" : undefined)}>
           {!project && !trash && (
             <>
-              <TrashLink to="/review?trash=1" title="Trash: deleted videos, restorable for 30 days" />
+              <TrashLink to="/review?trash=1" title="Trash" />
               {editable && <NewFolderButton label="New project" onClick={() => setAdding({ newProject: true })} />}
             </>
           )}
@@ -419,7 +419,7 @@ export default function ReviewPage() {
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         {!project && !trash && (
-          <ToolIntro icon={MessageSquareText} title="Review" line="Share a cut with one link. Reviewers comment on the exact frame." className="mt-4" />
+          <ToolIntro icon={MessageSquareText} title="Review" line="Share a cut with one link; comments on the frame." className="mt-4" />
         )}
         {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
         {note && (
@@ -438,7 +438,7 @@ export default function ReviewPage() {
                   </span>
                   {u.error ? (
                     <button className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))}>
-                      Dismiss
+                      Remove
                     </button>
                   ) : (
                     <span className="tabular-nums text-zinc-500">{u.waiting ? "Waiting" : `${u.pct}%`}</span>
@@ -505,10 +505,10 @@ export default function ReviewPage() {
             <GridFrame />
           )
         ) : q && shown.length === 0 && shownProjects.length === 0 ? (
-          <p className="mt-16 text-center text-sm text-zinc-500">No matches.</p>
+          <p className="mt-16 text-center text-sm text-zinc-500">No matches</p>
         ) : done && shown.length === 0 && shownProjects.length === 0 ? (
           <p className="mt-16 text-center text-sm text-zinc-500">
-            Nothing finished yet. A video lands here once it's marked finished.
+            No finished videos
           </p>
         ) : editable && shown.length === 0 && uploads.length === 0 && (project || shownProjects.length === 0) ? (
           <button
@@ -518,14 +518,6 @@ export default function ReviewPage() {
             <Film className="h-10 w-10 text-zinc-600" />
             <p className="text-base font-medium text-zinc-200">
               {project ? `Drop videos into ${project.name}` : "Drop a video here"}
-            </p>
-            <p className="text-sm text-zinc-500">
-              Any format: ProRes, HEVC and the rest get a web copy automatically. Then share one link and reviewers
-              comment on the exact frame, no account needed.
-            </p>
-            <p className="text-xs text-zinc-600">
-              Add its timeline file too (OTIO, XML, FCPXML or EDL from Resolve, Premiere or Final Cut) and its
-              tracks show under the player.
             </p>
           </button>
         ) : (
@@ -739,7 +731,7 @@ function DeleteProjectDialog({
         <DialogDescription className="text-zinc-400">
           {assets.length === 0
             ? "The project is empty."
-            : `${many ? `Its ${assets.length} videos go` : "Its video goes"} to the Trash with it, comments and share links included. You can restore ${many ? "them" : "it"} from the Trash until it empties.`}
+            : `${many ? `Its ${assets.length} videos move` : "Its video moves"} to the trash and can be restored for 30 days.`}
         </DialogDescription>
         {assets.length > 0 && (
           <ul className="flex max-h-60 flex-col gap-1 overflow-y-auto">
@@ -775,7 +767,7 @@ function DeleteProjectDialog({
             Cancel
           </Button>
           <Button disabled={!ok} onClick={go} className="bg-red-600 text-white hover:bg-red-500">
-            <Trash2 /> {assets.length === 0 ? "Delete project" : `Delete project and ${many ? `${assets.length} videos` : "its video"}`}
+            <Trash2 /> Delete project
           </Button>
         </div>
       </DialogContent>
@@ -1099,13 +1091,13 @@ function AssetCard({
         <ContextMenuItem
           className="text-red-400"
           onClick={() => {
-            void confirmDialog({ title: `Move “${a.name}” to the trash?`, body: "You can restore it for 30 days.", ok: "Move to trash", danger: true, deleting: true })
+            void confirmDialog({ title: `Move “${a.name}” to the trash?`, body: "It can be restored for 30 days.", ok: "Move to trash", danger: true, deleting: true })
               .then((yes) => {
                 if (yes) act(deleteReviewAsset(a.id), (l) => l.filter((x) => x.id !== a.id), { what: "moved to trash", back: () => [restoreReviewAsset(a.id)] });
               });
           }}
         >
-          <Trash2 /> Delete
+          <Trash2 /> Move to trash
         </ContextMenuItem>
         )}
       </ContextMenuContent>
@@ -1143,7 +1135,7 @@ function StackDialog({ asset: a, act, onClose }: { asset?: ReviewAsset; act: Act
       >
         <DialogTitle>Edit stack</DialogTitle>
         <DialogDescription className="text-zinc-500">
-          {busy ? "Wait until every version is ready." : "Drag to reorder. The top one is the main version and names the video."}
+          {busy ? "Wait until every version is ready." : "Drag to reorder: the top version is the main one and names the video."}
         </DialogDescription>
         <div className="flex flex-col gap-1">
           {rows.map((x, i) => (
@@ -1263,7 +1255,7 @@ function TrashView({ editable, onRestored }: { editable: boolean; onRestored: ()
     <>
       {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
       <p className="mb-4 text-sm text-zinc-500">
-        {items.length ? "Deleted videos stay here for 30 days, then they're gone for good." : "The trash is empty."}
+        {items.length ? "Videos in the trash are deleted after 30 days." : "No deleted videos"}
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((a) => (
@@ -1294,7 +1286,7 @@ function TrashView({ editable, onRestored }: { editable: boolean; onRestored: ()
                 title="Delete forever"
                 aria-label="Delete forever"
                 onClick={() => {
-                  void confirmDialog({ title: `Delete “${a.name}” forever?`, body: "This can't be undone.", ok: "Delete forever", danger: true })
+                  void confirmDialog({ title: `Delete “${a.name}” forever?`, ok: "Delete forever", danger: true })
                     .then((yes) => {
                       if (yes) void run(deleteForever(a.id));
                     });

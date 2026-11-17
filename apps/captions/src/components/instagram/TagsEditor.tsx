@@ -92,7 +92,7 @@ export function TagsEditor({
             value={kind}
             onChange={(e) => setKind(e.target.value as TagKind)}
             className="rounded-md border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-400"
-            title="What kind of tag"
+            title="Tag kind"
           >
             {TAG_KINDS.map((k) => (
               <option key={k.id} value={k.id}>

@@ -205,7 +205,7 @@ async function reconcileInterrupted(): Promise<void> {
     if (!meta || (meta.status !== "queued" && meta.status !== "running")) continue;
     if (meta.remote) continue; // a plug-in engine's run: its own sweep decides
     setStatus(meta, "error");
-    meta.error = "Interrupted by a server restart — try again.";
+    meta.error = "Stopped when the server restarted";
     await persist(meta);
   }
 }
@@ -421,10 +421,10 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
       throw new Error(outOfCreditsMessage("Audio enhancement"));
     }
     if (res.status === 401) {
-      throw new Error("ElevenLabs rejected the API key — check it in Settings → API keys.");
+      throw new Error("ElevenLabs did not accept the key. Check it in Settings → API keys.");
     }
     if (res.status === 429) {
-      throw new Error("Audio enhancement is rate limited — try again in a minute.");
+      throw new Error("Too many requests to ElevenLabs. Retry in a minute.");
     }
     throw new Error(`ElevenLabs error ${res.status}: ${detail || "no details"}`);
   }
@@ -891,7 +891,7 @@ enhanceApp.get("/:id/download", async (c) => {
     let type = "audio/mp4";
     let ext = "m4a";
     if (wantVideo) {
-      if (!meta.hasVideo) return c.json({ error: "No video in this session" }, 409);
+      if (!meta.hasVideo) return c.json({ error: "This file has no video" }, 409);
       ext = meta.videoOutExt ?? "mp4";
       const v = blendVideo(id, pct, ext);
       const made = await stat(v).catch(() => null);
@@ -916,7 +916,7 @@ enhanceApp.get("/:id/download", async (c) => {
   }
   if (wantVideo) {
     if (!meta.videoOutExt || !existsSync(enhancedVideo(id, meta.videoOutExt))) {
-      return c.json({ error: "No enhanced video for this session" }, 409);
+      return c.json({ error: "No enhanced video for this file" }, 409);
     }
     const p = enhancedVideo(id, meta.videoOutExt);
     const st = await stat(p);

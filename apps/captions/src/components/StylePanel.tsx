@@ -323,7 +323,7 @@ function PresetRow({
               onClick={() => applyServer(p)}
               title={
                 p.scope === "global"
-                  ? `Global preset (everyone) · by ${p.owner}`
+                  ? `For everyone · by ${p.owner}`
                   : "Your preset"
               }
               className="py-1 pl-2.5 pr-1"
@@ -376,12 +376,12 @@ function PresetRow({
             onClick={() => setNaming(true)}
             title={
               me?.role === "admin"
-                ? "Save the current style as a preset for everyone (same name overrides an existing one)"
-                : "Save the current style as a preset on your account"
+                ? "Saves the current style as a preset for everyone"
+                : "Saves the current style as a preset"
             }
             className="rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-[11px] text-zinc-500 hover:border-zinc-400 hover:text-zinc-300"
           >
-            + Save
+            Save as preset
           </button>
         )}
       </div>
@@ -536,7 +536,7 @@ function TextStylePanel() {
             />
           </div>
         </Row>
-        <Row label="Color">
+        <Row label="Colour">
           <ColorInput
             value={t.color}
             onChange={(v) => updateText(t.id, { color: v })}
@@ -552,7 +552,7 @@ function TextStylePanel() {
             />
             {t.outlineWidth > 0 && (
               <div className="grid grid-cols-2 gap-2">
-                <Row label="Outline color">
+                <Row label="Outline colour">
                   <ColorInput
                     value={t.outlineColor}
                     onChange={(v) => updateText(t.id, { outlineColor: v })}
@@ -598,7 +598,7 @@ function TextStylePanel() {
           </button>
         </div>
         {t.boxEnabled && (
-          <Row label="Box color">
+          <Row label="Box colour">
             <ColorInput
               value={t.boxColor}
               onChange={(v) => updateText(t.id, { boxColor: v })}
@@ -606,9 +606,7 @@ function TextStylePanel() {
           </Row>
         )}
         <p className="mb-3 rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-[11px] leading-4 text-zinc-500">
-          Double-click the text on the video to type in place — Enter adds a
-          line break. Drag it to move, pull the side handles to change the
-          wrap width.
+          Double-click the text on the video to edit it.
         </p>
         <button
           onClick={() => deleteText(t.id)}
@@ -731,7 +729,7 @@ export function StylePanel() {
         </Row>
         {inSection && (
           <p className="-mt-2 mb-3 text-[10px] text-zinc-500">
-            position applies to the current caption section
+            Position applies to this caption section
           </p>
         )}
 
@@ -801,7 +799,7 @@ export function StylePanel() {
             />
             {style.outlineWidth > 0 && (
               <div className="mb-3 grid grid-cols-2 gap-3">
-                <Row label="Outline color">
+                <Row label="Outline colour">
                   <ColorInput
                     value={style.outlineColor}
                     onChange={(v) => setStyle({ outlineColor: v })}
@@ -850,7 +848,7 @@ export function StylePanel() {
         </div>
         {style.boxEnabled && (
           <div className="mb-3 grid grid-cols-2 gap-3">
-            <Row label="Box color">
+            <Row label="Box colour">
               <ColorInput
                 value={style.boxColor}
                 onChange={(v) => setStyle({ boxColor: v })}

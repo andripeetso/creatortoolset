@@ -47,7 +47,7 @@ const USER = /^[a-zA-Z0-9._-]{1,64}$/;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function fileOf(username: string, styleId: string): string {
-  if (!USER.test(username) || !ID.test(styleId)) throw new Error("No such style");
+  if (!USER.test(username) || !ID.test(styleId)) throw new Error("Editing style not found");
   return path.join(env.dataDir, "editor-styles", username, `${styleId}.finished.json`);
 }
 

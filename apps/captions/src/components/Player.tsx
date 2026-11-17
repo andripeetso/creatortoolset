@@ -284,7 +284,7 @@ function CaptionBox({
               void fitSplits();
             }}
             disabled={fittingSplits}
-            title="Some lines no longer fit where the cadence match planned its breaks — plan the breaks for this box width (the thoughts stay)"
+            title="Some lines no longer fit the caption box at this width"
             className="pointer-events-auto absolute -top-8 left-1/2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md bg-violet-600 px-2 py-1 text-[10px] font-medium text-white shadow-lg transition-colors hover:bg-violet-500"
           >
             {fittingSplits ? (
@@ -960,18 +960,18 @@ export function CadenceProcessingStatus({ complete }: { complete: boolean }) {
       complete={complete}
       title="Matching cadence…"
       completeTitle="Cadence matched"
-      completeDetail="Captions are fitted to the speech rhythm and your layout."
+      completeDetail="The captions follow the rhythm of the speech"
       expectedSeconds={estimate.expectedSeconds}
       lowSeconds={estimate.lowSeconds}
       highSeconds={estimate.highSeconds}
       progressLabel="Estimated cadence matching progress"
-      workingMessage={`Still working — estimate based on ${wordCount.toLocaleString()} words${
+      workingMessage={`Estimate from ${wordCount.toLocaleString()} words${
         estimate.learnedFromRuns
           ? ` and ${estimate.learnedFromRuns} recent run${estimate.learnedFromRuns === 1 ? "" : "s"}`
           : ""
-      }.`}
-      completeMessage="Done — playback and editing are unlocked."
-      lockMessage="Playback and editing are locked."
+      }`}
+      completeMessage="Playback and editing are unlocked"
+      lockMessage="Playback and editing are locked"
       onStop={cancelCadence}
     />
   );
@@ -987,16 +987,16 @@ export function ScriptCheckProcessingStatus() {
     <EstimatedProcessingStatus
       operationKey="script-check"
       complete={false}
-      title="Checking against your script…"
+      title="Checking against the script…"
       completeTitle="Script checked"
-      completeDetail="Mis-heard words are fixed from your script."
+      completeDetail="Mis-heard words are corrected from the script"
       expectedSeconds={expectedSeconds}
       lowSeconds={Math.max(5, Math.round(expectedSeconds * 0.5))}
       highSeconds={expectedSeconds * 3}
       progressLabel="Estimated script check progress"
-      workingMessage={`Still working — reading ${wordCount.toLocaleString()} words against your script.`}
-      completeMessage="Done."
-      lockMessage="Playback and editing are locked."
+      workingMessage={`Reading ${wordCount.toLocaleString()} words against the script`}
+      completeMessage="Script checked"
+      lockMessage="Playback and editing are locked"
       onStop={cancelScriptCheck}
     />
   );
@@ -1025,22 +1025,22 @@ export function ExtractionProcessingStatus({
       complete={false}
       title={
         detail?.startsWith("Uploading")
-          ? "Uploading source…"
+          ? "Uploading source video…"
           : "Preparing audio…"
       }
-      completeTitle="Audio ready"
-      completeDetail="The audio is ready for transcription."
+      completeTitle="Audio prepared"
+      completeDetail="The audio can be transcribed"
       expectedSeconds={expectedSeconds}
       lowSeconds={Math.max(2, Math.round(expectedSeconds * 0.4))}
       highSeconds={Math.max(15, expectedSeconds * 3)}
       progressLabel="Estimated audio preparation progress"
       workingMessage={
         detail?.startsWith("Uploading")
-          ? "The upload is resumable; your project is already saved."
-          : "Preparing the clip’s audio without blocking the editor."
+          ? "Sending the source video to the server"
+          : "Reading the clip’s audio"
       }
-      completeMessage="Audio is ready."
-      lockMessage="Playback and editing are locked."
+      completeMessage="Audio prepared"
+      lockMessage="Playback and editing are locked"
       progressOverride={progress}
       progressDetail={detail}
     />
@@ -1065,9 +1065,9 @@ export function ModelLoadingStatus({ progress }: { progress: number }) {
       plain
       operationKey="model-loading"
       complete={false}
-      title={`Getting the speech model ready${mb && !kept ? ` (${mb} MB, only the first time)` : ""}`}
-      completeTitle="Model ready"
-      completeDetail="The transcription model is ready."
+      title={`Loading the speech model${mb && !kept ? ` (${mb} MB, first time only)` : ""}`}
+      completeTitle="Model loaded"
+      completeDetail="The speech model is loaded"
       expectedSeconds={30}
       lowSeconds={5}
       highSeconds={180}
@@ -1097,16 +1097,16 @@ export function OnDeviceTranscriptionStatus({
       plain={!complete}
       operationKey="on-device-transcription"
       complete={complete}
-      title="Listening to your video"
-      completeTitle="Transcription complete"
-      completeDetail="Your captions are ready to review and edit."
+      title="Transcribing on this computer"
+      completeTitle="Transcribed"
+      completeDetail="The captions can be edited"
       expectedSeconds={expectedSeconds}
       lowSeconds={Math.max(15, Math.round(expectedSeconds * 0.5))}
       highSeconds={Math.max(90, expectedSeconds * 4)}
-      progressLabel="Estimated on-device transcription progress"
-      workingMessage="Still working — turning the audio into editable captions on this device."
-      completeMessage="Done — captions are ready to edit."
-      lockMessage="Playback and editing are locked."
+      progressLabel="Estimated transcription progress"
+      workingMessage="Transcribing the audio on this computer"
+      completeMessage="Playback and editing are unlocked"
+      lockMessage="Playback and editing are locked"
     />
   );
 }
@@ -1134,20 +1134,20 @@ export function CloudTranscriptionStatus({
     <EstimatedProcessingStatus
       operationKey="cloud-transcription"
       complete={complete}
-      title={onComputers() ? "Transcribing on your computers…" : "Transcribing in the cloud…"}
-      completeTitle="Transcription complete"
-      completeDetail="Your captions are ready to review and edit."
+      title={onComputers() ? "Transcribing on your computers…" : "Transcribing…"}
+      completeTitle="Transcribed"
+      completeDetail="The captions can be edited"
       expectedSeconds={expectedSeconds}
       lowSeconds={lowSeconds}
       highSeconds={highSeconds}
-      progressLabel="Estimated cloud transcription progress"
+      progressLabel="Estimated transcription progress"
       workingMessage={
         durationLabel
-          ? `Still working — transcribing ${durationLabel} of audio ${onComputers() ? "on your computers" : "in the cloud"}.`
-          : "Still working — turning the audio into editable captions."
+          ? `Transcribing ${durationLabel} of audio${onComputers() ? " on your computers" : ""}`
+          : "Transcribing the audio"
       }
-      completeMessage="Done — captions are ready to edit."
-      lockMessage="Editing controls are locked until captions are ready."
+      completeMessage="Playback and editing are unlocked"
+      lockMessage="Editing is locked until the captions are made"
     />
   );
 }
@@ -1293,7 +1293,7 @@ function EstimatedProcessingStatus({
           {complete
             ? completeMessage
             : overdue
-              ? "Sorry — this is taking longer than estimated. It’s still working."
+              ? "Taking longer than estimated"
               : workingMessage}
         </span>
         {!complete && (

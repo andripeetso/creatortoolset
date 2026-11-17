@@ -1,6 +1,8 @@
 // This Mac's AI, as the Mac app reports it to the page. Only the Mac app has the bridge ("thisMac" handler, TitleBar.swift);
 // in a browser there is none and the functions answer null.
 
+import type { PlacesCheckAnswer, PlacesCheckAsk, PlacesConnectAnswer, PlacesConnectAsk } from "@contracts/places";
+
 /** `device`: this Mac's device id on the open server, once paired (null before that). */
 export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean };
 type Bridge = { postMessage: (m: string) => Promise<ThisMacState> };
@@ -135,13 +137,13 @@ export async function installInMacAi(app: "claude" | "codex", key: string): Prom
 }
 
 /**
- * "Access from other devices" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
+ * "Network access" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
  * owner's password first, when there is none). Resolves to the problem to show, or null when it is on and the server
  * is restarting.
  */
 export async function allowOtherDevices(): Promise<string | null> {
   const bridge = thisMacBridge();
-  if (!bridge) return "Turn on Access from other devices in the Creator Toolset Mac app.";
+  if (!bridge) return "Turn on Network access in the Creator Toolset Mac app.";
   try {
     const s = await bridge.postMessage("access");
     return s.problem ?? null;
@@ -165,7 +167,7 @@ export async function thisMacLinked(): Promise<boolean | undefined> {
 
 /**
  * Setup's Add this computer: the Mac app opens the site's page with this Mac's code in the browser, waits for the yes and
- * starts this Mac's tunnel (the Servers menu's Add this Mac to my account…). Resolves to null once it is on the account,
+ * starts this Mac's tunnel (the Servers menu's Add this Mac to the account…). Resolves to null once it is on the account,
  * else the problem to show.
  */
 export async function connectThisMac(): Promise<string | null> {
@@ -329,10 +331,10 @@ export async function faceBlurTry(
  */
 export const macImports = () => typeof document !== "undefined" && document.documentElement.dataset.macImport === "1";
 
-/** One import ask; throws with the Mac's reason. */
-async function importAsk<T>(ask: string): Promise<T> {
+/** One import ask (or another ask the Mac app says it has, `on`); throws with the Mac's reason. */
+async function importAsk<T>(ask: string, on = macImports()): Promise<T> {
   const bridge = thisMacBridge();
-  if (!bridge || !macImports()) throw new Error("Needs the latest Mac app");
+  if (!bridge || !on) throw new Error("Needs the latest Mac app");
   let r: Record<string, unknown>;
   try {
     r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Record<string, unknown>;
@@ -366,3 +368,33 @@ export const importLocate = (files: { id: string; path: string; bytes: number }[
 /** The address the page reads a file on this Mac by (the Mac app's media scheme): the path, base64url. */
 export const macMediaUrl = (path: string) =>
   `ctlocal://media/${btoa(String.fromCharCode(...new TextEncoder().encode(path))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+
+/**
+ * Here or away (contracts/places.ts): the Mac app checks where a clip's original is on this computer and connects a
+ * share. Only a Mac app that answers these says so (`<html data-mac-places="1">`).
+ */
+export const macPlaces = () => typeof document !== "undefined" && document.documentElement.dataset.macPlaces === "1";
+/** What this computer has of each version's original; versions it has nothing to say about are left out. */
+export const placesCheck = (ask: PlacesCheckAsk) =>
+  importAsk<Partial<PlacesCheckAnswer>>(`places:check:${JSON.stringify(ask)}`, macPlaces()).then((r) => r.versions ?? {});
+/** Connects a share (its root key), the login panel allowed: only from a Connect button pressed. */
+export const placesConnect = (root: string) =>
+  importAsk<PlacesConnectAnswer>(`places:connect:${JSON.stringify({ root } satisfies PlacesConnectAsk)}`, macPlaces());
+
+/** A video editor on this Mac (apps/mac Editors.swift): work-prefs' editor id, the app's name and version. */
+export type MacEditor = { id: string; name: string; version: string | null };
+
+/** The video editors this Mac has, for a draft's Open in <editor>: none in a browser or an older Mac app. */
+export async function editorsOnMac(): Promise<MacEditor[]> {
+  const r = (await thisMacBridge()?.postMessage("editors").catch(() => null)) as unknown as { editors?: MacEditor[] } | null;
+  return Array.isArray(r?.editors) ? r.editors : [];
+}
+
+/** Opens an AI Editor draft in that editor on this Mac, starting the editor when it is closed. The Mac app fetches the
+ *  draft from this server itself. `note`: what the person does next in the editor (an editor that takes no scripts). */
+export async function openInEditor(ask: { edit: string; draft: string; editor: string; name: string; project: string; fps: number; width: number; height: number }): Promise<{ ok?: boolean; note?: string; problem?: string }> {
+  const bridge = thisMacBridge();
+  if (!bridge) return { problem: "Needs the Mac app" };
+  const r = (await bridge.postMessage(`open-editor:${JSON.stringify(ask)}`).catch(() => null)) as unknown as { ok?: boolean; note?: string; problem?: string } | null;
+  return r ?? { problem: "Could not open the draft" };
+}

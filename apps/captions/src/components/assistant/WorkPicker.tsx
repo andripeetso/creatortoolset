@@ -1,8 +1,9 @@
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, ChevronDown, Loader2, PanelRight, Plus } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Loader2, PanelRight, Plus, Search } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useChatMode, washTo } from "@/lib/chat-mode";
-import { useRecentWork, workAt } from "@/lib/work";
+import { useRecentWork, workAt, type WorkItem } from "@/lib/work";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { ago } from "./ChatList";
 
@@ -35,17 +36,7 @@ export function WorkPicker() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="center" className="w-80">
-        <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">Carry on with</DropdownMenuLabel>
-        {items.map((w) => (
-          <DropdownMenuItem key={w.key} onSelect={() => w !== picked && navigate(w.to)}>
-            <w.icon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">{w.title}</span>
-            {w.busy && <Loader2 className="size-3 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              {w.kind} · {ago(w.at)}
-            </span>
-          </DropdownMenuItem>
-        ))}
+        <WorkItems items={items} onPick={(w) => w !== picked && navigate(w.to)} />
         <DropdownMenuSeparator />
         {/* nothing beside the chat (whatever page stands there now is put away): it is told what to make */}
         <DropdownMenuItem onSelect={() => beside && washTo({ bare: true })}>
@@ -54,6 +45,50 @@ export function WorkPicker() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** How many of the newest the menu shows before anything is searched. */
+const SHOWN = 8;
+
+/** The menu's list: the newest few, and a box that finds any of them by name once there are more. */
+function WorkItems({ items, onPick }: { items: WorkItem[]; onPick: (w: WorkItem) => void }) {
+  const [q, setQ] = useState("");
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => box.current?.focus(), []);
+  const find = q.trim().toLowerCase();
+  const shown = find ? items.filter((w) => w.title.toLowerCase().includes(find)) : items.slice(0, SHOWN);
+  return (
+    <>
+      {items.length > SHOWN && (
+        <label className="mb-1 flex h-8 items-center gap-2 border-b px-2 text-muted-foreground">
+          <Search className="size-3.5 shrink-0" aria-hidden />
+          <input
+            ref={box}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            // the menu's own keys (type to jump, arrows) stay with the menu; letters go in the box
+            onKeyDown={(e) => e.key.length === 1 && e.stopPropagation()}
+            placeholder="Search edits and sessions…"
+            aria-label="Search edits and sessions"
+            className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </label>
+      )}
+      <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">{find ? `${shown.length} found` : "Carry on with"}</DropdownMenuLabel>
+      <div className="max-h-80 overflow-y-auto">
+        {shown.map((w) => (
+          <DropdownMenuItem key={w.key} onSelect={() => onPick(w)}>
+            <w.icon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{w.title}</span>
+            {w.busy && <Loader2 className="size-3 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {w.kind} · {ago(w.at)}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </div>
+    </>
   );
 }
 
