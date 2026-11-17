@@ -144,22 +144,24 @@ export function deviceForToken(authorization: string | undefined): Device | null
 
 /**
  * A new app device for `owner`; the token is returned once and never stored. An earlier device of the same owner
- * with the same name is the same Mac paired again (the app re-pairs when its token is lost): it is dropped, so its
- * token stops working and the list keeps one row per Mac. `replaced` are the dropped ids: their providers move to the
- * new one (moveProviders, called by the route).
+ * with the same name is the same Mac paired again (the app re-pairs when its token is lost): its token stops working and
+ * the list keeps one row per Mac. The new row keeps the first one's id, so the folders, balance and file places that
+ * name the computer by id still point at it. `replaced` are the other dropped ids (their providers move to the new one,
+ * moveProviders, called by the route).
  */
 export function pairDevice(owner: string, name: string, version?: string): { device: Device; token: string; replaced: string[] } {
   const token = `ctd_${randomBytes(32).toString("base64url")}`;
+  const same = all().filter((x) => x.owner === owner && x.name === name);
   const d: Stored = {
-    id: `dev_${randomBytes(8).toString("hex")}`,
+    id: same[0]?.id ?? `dev_${randomBytes(8).toString("hex")}`,
     owner,
     name,
     createdAt: Date.now(),
     tokenHash: sha(token),
     ...(version ? { version } : {}),
   };
-  const replaced = all().filter((x) => x.owner === owner && x.name === name).map((x) => x.id);
-  list = all().filter((x) => !replaced.includes(x.id));
+  const replaced = same.slice(1).map((x) => x.id);
+  list = all().filter((x) => !same.some((s) => s.id === x.id));
   list.push(d);
   persist();
   tell(owner);

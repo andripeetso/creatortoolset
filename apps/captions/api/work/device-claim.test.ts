@@ -20,7 +20,7 @@ const app = (await import("../boot")).default;
 const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
 const { libraryDb, blobs } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
-const { deviceOf, devicesSaved, pairDevice, setDeviceWork, touchDevice } = await import("../lib/devices");
+const { deviceForToken, deviceOf, devicesSaved, pairDevice, setDeviceWork, touchDevice } = await import("../lib/devices");
 const { releaseQuietDevices } = await import("../editor/engine");
 const { waitLine } = await import("../editor/reach");
 const { STEPS, tick } = await import("../editor/worker");
@@ -164,6 +164,16 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     queue("fresh", e, "v1");
     expect(await json(post(fresh.token, "/api/devices/relay/wait", { blobs: true, work: 1 }))).toEqual({ work: true });
     expect(deviceOf(fresh.device.id)?.work?.v).toBe(1);
+    settle();
+  });
+
+  it("a Mac re-paired under the same name keeps its id, so its folders and places still read", async () => {
+    const first = pairDevice("again", "Again Mac");
+    const second = pairDevice("again", "Again Mac");
+    expect(second.device.id).toBe(first.device.id);
+    expect(second.replaced).toEqual([]);
+    expect(deviceForToken(`Bearer ${first.token}`)).toBeNull();
+    expect(deviceForToken(`Bearer ${second.token}`)?.id).toBe(first.device.id);
     settle();
   });
 
