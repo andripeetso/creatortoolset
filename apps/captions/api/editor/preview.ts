@@ -231,6 +231,12 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
  * own line), that the look or its fix could not be made and why. Nothing for a cut that passed, or was never due one.
  */
 export const saidOf = (d: Pick<DraftFile, "critique" | "unchecked">): Critique["fails"] => [...(d.critique?.fails ?? []), ...(d.unchecked ? [{ n: 0, why: d.unchecked }] : [])];
+/** saidOf in the chat's words, said with the cut being ready (owner, 2026-11-16: in the chat, not as lines on the Review page). */
+export function saidWords(fails: Critique["fails"]): string {
+  const shots = fails.filter((f) => f.n).map((f) => `shot ${f.n} (${f.why})`);
+  const list = shots.length > 1 ? `${shots.slice(0, -1).join(", ")} and ${shots.at(-1)}` : shots[0];
+  return [list ? `I couldn't fix ${list}.` : "", ...fails.filter((f) => !f.n).map((f) => f.why.replace(/\.?$/, "."))].filter(Boolean).join(" ");
+}
 
 /**
  * The rendered preview into Review as the next version of the draft's Review video, with the timeline it was cut from.

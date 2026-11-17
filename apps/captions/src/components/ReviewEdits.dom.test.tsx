@@ -160,7 +160,6 @@ describe("ReviewEdits panel", () => {
   it("an imported timeline (XML, OTIO, EDL) gets the panel too, with its sent edits playing", async () => {
     const removeFirst = { id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } };
     const { bridge } = await mount([removeFirst], { n: 1, fps: 25, timeline: true });
-    expect(host.textContent).toContain("Timeline edits: sent with the next comment");
     expect((bridge.plan() as ReviewPlayPlan).skips).toEqual([[0, 100]]);
   });
 
@@ -173,7 +172,6 @@ describe("ReviewEdits panel", () => {
     const shown = bridge.plan() as ReviewPlayPlan;
     expect(shown.skips).toEqual([[0, 100]]);
     expect(setPlan).toHaveBeenCalled();
-    expect(host.textContent).toContain("Timeline edits: sent with the next comment");
 
     // the toggle is shown because the plan plays something; hiding it clears the player's plan
     await act(async () => button("Edits shown")!.click());
@@ -251,7 +249,6 @@ describe("ReviewEdits panel", () => {
     const shown = bridge.plan() as ReviewPlayPlan;
     expect(shown.looks).toEqual([{ from: 0, to: 100, filter: "url(#review-grade-0)" }]);
     expect(host.querySelector('filter[id="review-grade-0"]')).not.toBeNull();
-    expect(host.textContent).toContain("Timeline edits: sent with the next comment");
   });
 
   it("Color opens the grade panel, and the shot plays the panel's grade live until the panel closes", async () => {
@@ -473,25 +470,13 @@ describe("a cut the app's own AI Editor made", () => {
     expect(host.textContent).not.toContain("Making the next version");
   });
 
-  it("names the shots the look before Review found still don't hold up, and nothing when the cut passed", async () => {
+  it("says nothing on the page about the shots the look before Review flagged: the chat says them (owner, 2026-11-16)", async () => {
     server([], () => new Response("{}", { status: 200 }));
-    // the one under the playhead is said, the others counted, the whole list one click away
-    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens", at: 0, dur: 2 }, { n: 9, why: "dark" }] } });
+    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens", at: 0, dur: 2 }, { n: 0, why: "The look could not be made" }] } });
     await settle();
-    expect(host.textContent).toContain("Shot 7: walking through town, nothing happens");
-    expect(host.textContent).not.toContain("Shot 9");
-    await act(async () => root.unmount());
-    root = createRoot(host);
-    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 9, why: "dark" }] } });
-    await settle();
-    const line = [...host.querySelectorAll("button")].find((x) => x.textContent === "1 shot flagged by the check before Review")!;
-    await act(async () => line.click());
-    expect(host.textContent).toContain("Shot 9: dark");
-    await act(async () => root.unmount());
-    root = createRoot(host);
-    await mount([], own);
-    await settle();
-    expect(host.textContent).not.toMatch(/Shot \d+:/);
+    expect(host.textContent).not.toContain("walking through town");
+    expect(host.textContent).not.toContain("The look could not be made");
+    expect(host.textContent).not.toContain("Timeline edits");
   });
 
   it("someone the edit is not theirs gets no button, and any other version has none", async () => {
@@ -586,7 +571,6 @@ describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot
     await mount([], { n: 1, fps: 25, timeline: true }, undefined, { next }); // an imported timeline: no AI edit behind it
     await act(async () => button("stub remove")!.click());
     expect(button("Make the next version")).toBeUndefined();
-    expect(host.textContent).toContain("sent with the next comment");
   });
 });
 

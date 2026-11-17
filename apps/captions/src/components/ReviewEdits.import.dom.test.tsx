@@ -51,7 +51,6 @@ it("a version with an imported EDL draws the timeline editor with the file's cli
   await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
 
   expect(api.timeline).toHaveBeenCalledWith(1);
-  expect(host.textContent).toContain("Timeline edits: sent with the next comment");
   expect(host.textContent).toContain("A.MP4");
   expect(host.textContent).toContain("B.MP4");
   expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Edit")).toBe(true);
