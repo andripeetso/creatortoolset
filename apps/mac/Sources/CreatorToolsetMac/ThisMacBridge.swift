@@ -94,7 +94,7 @@ extension Shell {
 
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,
     /// shortcut (opens the recording shortcut's chooser, RecordShortcut.swift), limits:on|off (Plan limits reading),
-    /// dictation:<what>:<value> (Settings → AI → Voice → Dictation).
+    /// dictation:<what>:<value> (Settings → AI → Voice → Dictation), shares:on|off (Settings → Computers → Shared drives).
     func thisMacCommand(_ what: String) {
         let parts = what.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
         let arg = parts.count > 1 ? parts[1] : ""
@@ -114,6 +114,10 @@ extension Shell {
         case "dictation": Dictation.shared.command(arg, parts.count > 2 ? parts[2] : "")
         // recorder:<what>:<value> (Settings → Screen Recorder, RecordTypes.swift RecordPrefs)
         case "recorder": RecordPrefs.command(arg, parts.count > 2 ? parts[2] : "")
+        // shares:on|off: connect the shared drives this Mac had when they answer (Places.swift)
+        case "shares":
+            Places.connectOn = arg == "on"
+            if arg == "on" { Places.shared.lookAgain() }
         default: break
         }
         pushThisMac(problem: problem)
@@ -144,6 +148,7 @@ extension Shell {
         open.message = "Choose the folder with your videos. Nothing is moved."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
+        MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
         return ["path": url.path]
     }
 
@@ -193,6 +198,8 @@ extension Shell {
             "dictation": Dictation.shared.bridgeState(),
             // Settings → Screen Recorder
             "recorder": RecordPrefs.bridgeState(),
+            // Settings → Computers → Shared drives (Places.swift)
+            "shares": Places.connectOn,
         ]
     }
 }

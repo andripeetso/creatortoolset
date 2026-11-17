@@ -8,7 +8,8 @@ import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { readerOf } from "./reader";
-import { ensureLibrary, givenLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
+import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
+import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
@@ -16,14 +17,16 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
+import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
+import { placesApp } from "./places";
 import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -50,6 +53,7 @@ libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
 libraryApp.route("/offline", offlineApp); // GET/POST /offline: Available offline (api/work/offline.ts)
 libraryApp.route("/", locateApp); // GET, POST /:id/locate
+libraryApp.route("/", placesApp); // GET, POST /:id/places, GET /:id/places/gone, /:id/places/moves
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
@@ -178,6 +182,9 @@ export function recordVersion(
   }
   const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
   if (roll) fileRoll(d, assetId, roll);
+  // uploaded into Finals (a project's final, AddFinalDialog): finished from the start, never footage in the Media Library
+  else if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(o.collectionId))
+    fileRoll(d, assetId, "none");
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;
@@ -421,30 +428,48 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
   return c.json({ assetId, versionId: row.id });
 }
 
-// POST /api/library/:id/uploads/check { size, sha256? } → { maybe } | { duplicateOf? }: whether a file is in this library
-// already, before any of it is sent. With only the size: whether a clip of that size is there (the page hashes the file
-// only then). With the sha256: the clip it is, by the same check an upload's finish makes.
+// POST /api/library/:id/uploads/check { size, sha256?, quick? } → { maybe } | { duplicateOf?, versionId? }: whether a file is
+// in this library already, before any of it is sent. With only the size: whether a clip of that size is there (the page
+// hashes the file only then). With the sha256: the clip it is, by the same check an upload's finish makes; with the quick
+// fingerprint too (Look for new files), also a version of that size and fingerprint, an upload's included.
 libraryApp.post("/:id/uploads/check", async (c) => {
   const libraryId = c.req.param("id");
-  if (!(await mayAdd(c.get("user"), libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown } | null;
+  const user = c.get("user");
+  if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown; quick?: unknown } | null;
   const size = Number(b?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
   const live = "FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL";
   if (typeof b?.sha256 !== "string") return c.json({ maybe: !!db().prepare(`SELECT 1 ${live} AND v.bytes = ? LIMIT 1`).get(libraryId, size) });
-  const dup = db().prepare(`SELECT a.id ${live} AND v.sha256 = ? LIMIT 1`).get(libraryId, b.sha256.toLowerCase()) as { id: string } | undefined;
-  return c.json(dup ? { duplicateOf: dup.id } : {});
+  const quick = typeof b.quick === "string" && /^[0-9a-f]{64}$/.test(b.quick) ? b.quick : null;
+  const dup = db()
+    .prepare(`SELECT a.id, v.id AS version ${live} AND (v.sha256 = ?${quick ? " OR (v.quick = ? AND v.bytes = ?)" : ""}) ORDER BY v.id = a.current_version_id DESC LIMIT 1`)
+    .get(libraryId, b.sha256.toLowerCase(), ...(quick ? [quick, size] : [])) as { id: string; version: string } | undefined;
+  return c.json(dup ? { duplicateOf: dup.id, ...(quick ? { versionId: dup.version } : {}) } : {});
 });
 
+/**
+ * POST /api/library/here/uploads { filename, size } → the same as /:id/uploads, into the own library of the workspace this
+ * request works in (upload-target.ts): the phone's upload, which never names a library. The rest of it is the same
+ * upload at /uploads/:uploadId (PATCH, finish), which asks mayAdd again. 409 where a plug-in keeps the workspace's uploads.
+ */
+libraryApp.post("/here/uploads", async (c) => {
+  const t = await uploadTarget(c.get("user"));
+  if ("error" in t) return c.json({ ...t, code: "forbidden" }, 403);
+  if (!t.libraryId) return c.json({ error: "This workspace's uploads go somewhere else", code: "conflict", target: t.target }, 409);
+  return startUpload(c, t.libraryId);
+});
 // POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice?, quick?, send? } → 201 { id, offset, chunkSize }
 // fromPath / fromDevice: where the file is on the Mac it is sent from (a library that keeps only proxies keeps that place)
 // send (with quick, the Mac's quickPrint): a video on the caller's own computer whose worker takes library jobs is not
 // uploaded by the page: 200 { assetId, versionId, sent: true } | { duplicateOf }, and that computer makes the proxy and
 // the small files and sends them, the original too only to a library that keeps originals (derived.ts sendLater)
-libraryApp.post("/:id/uploads", async (c) => {
+libraryApp.post("/:id/uploads", (c) => startUpload(c, c.req.param("id")));
+
+async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: string): Promise<Response> {
   const user = c.get("user");
-  const libraryId = c.req.param("id");
-  if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  // with a workspace named, only that workspace's libraries (a cross-brand id is refused); with none, as before
+  if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
@@ -476,7 +501,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
-    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename)
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
@@ -520,7 +545,7 @@ libraryApp.post("/:id/uploads", async (c) => {
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
-});
+}
 
 /**
  * POST /api/library/:id/in-place { path, size, collectionId?, again? } → { assetId, versionId } | { duplicateOf } |
@@ -534,7 +559,7 @@ libraryApp.post("/:id/uploads", async (c) => {
 libraryApp.post("/:id/in-place", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!libraryRole(user.username, libraryId) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer: upload the file", code: "forbidden" }, 403);
   const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown };
   const given = typeof body.path === "string" ? body.path : "";
@@ -589,7 +614,7 @@ libraryApp.post("/:id/in-place", async (c) => {
 libraryApp.post("/:id/on-mac", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   if (x.collectionId) {
@@ -729,14 +754,19 @@ const settingsOf = (json: string): LibrarySettings => {
   return {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
     look: s.look ?? SETTING_DEFAULTS.look,
+    timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
+    pictures: s.pictures ?? SETTING_DEFAULTS.pictures,
     upload: uploadOf(s.upload),
+    finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
     ...(typeof s.copyTo === "string" && s.copyTo ? { copyTo: s.copyTo } : {}),
     ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
+    lookLevel: lookLevelOf(s.lookLevel),
+    lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
   };
 };
 
@@ -766,7 +796,7 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
 // (a video is filed by its description) and files what is in no folder yet
@@ -780,12 +810,21 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "embed", "proxy"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
   if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
+  // (All clips → Shot descriptions), or an edit asks for its files
+  if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
+  if (s.lookBudget === null || (typeof s.lookBudget === "number" && Number.isFinite(s.lookBudget) && s.lookBudget >= 0 && s.lookBudget <= 1_000_000)) {
+    put("lookBudget", s.lookBudget === null ? null : Math.round(s.lookBudget * 100) / 100);
+    releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
+    libraryChanged(libraryId);
+  }
+  if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
   if (Array.isArray(s.places)) {
@@ -831,7 +870,7 @@ libraryApp.post("/", async (c) => {
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
     .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS, upload: "none" } };
+  const created: LibrarySummary = { id, name, storage: "local", settings: settingsOf("{}") };
   return c.json(created, 201);
 });
 

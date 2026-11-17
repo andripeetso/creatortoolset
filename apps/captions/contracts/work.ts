@@ -89,6 +89,8 @@ export interface WorkClaimBody {
   cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[] };
   /** this worker runs library jobs too (LibraryPackage): a computer that doesn't say so is never handed one */
   library?: true;
+  /** this worker runs the picture model (PicturePackage): a computer that doesn't say so is never handed picture work */
+  pictures?: true;
 }
 
 /** A proxy a person keeps on their computers (Available offline): its version id, the clip's name and the proxy's size. */
@@ -98,7 +100,7 @@ export interface WorkOffline {
   bytes: number;
 }
 
-export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?: LibraryPackage }) & {
+export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?: LibraryPackage; pics?: PicturePackage }) & {
   /** the account this computer works for (the device's owner): its proxy cache is that account's own folder */
   account?: string;
   /** Settings → Storage → Empty: empty the proxy cache now; the proxies kept offline stay */
@@ -163,6 +165,40 @@ export interface LibraryResult {
   fingerprint?: string;
   /** the transcribe job's rows */
   transcript?: LibraryTranscript;
+}
+
+/**
+ * Search by picture's vectors of one clip, made on one of its uploader's computers where the server makes none
+ * (api/work/pictures.ts; the vectors as api/library/pictures.ts makes them). Not a library job: nothing is queued, a
+ * computer is handed the clips still without vectors when it claims, each one its account may read. Routes under
+ * work/pictures/:id/:
+ *   POST beat                        → { ok: boolean }   keep it (lease 5 min)
+ *   GET  input                       → PictureInput      the server's card picture and look sheets of the clip
+ *   POST done   PictureResult        → { ok: boolean }   only the vectors come back; no picture is kept from them
+ *   POST fail   { error }            → { ok: boolean }   tried again in an hour
+ */
+export interface PicturePackage {
+  v: number;
+  id: number;
+  versionId: string;
+  /** the server has a card picture for it */
+  card: boolean;
+  /** where its look's sheets are: on the server (input), here (the Mac the file is on keeps them), or none yet */
+  sheets: "server" | "here" | null;
+  /** sheets "here": the stretches the sheets must show, [[a, b], …]: kept sheets of other stretches are not read */
+  stretches?: number[][];
+}
+
+/** The pictures input gives: the card picture (base64 JPEG) and the look's sheets (api/library/shots.ts LookSheet). */
+export interface PictureInput {
+  card?: string;
+  sheets?: { segs: number[]; jpeg: string }[];
+}
+
+/** One vector a row: seg -1 the card picture, else the stretch; vec base64 of PICTURE_DIM float32s, null: not readable. */
+export interface PictureResult {
+  v: number;
+  rows: { seg: number; vec: string | null }[];
 }
 
 export interface WorkBeat {

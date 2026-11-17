@@ -13,6 +13,7 @@ import { DocumentEditor } from "@/components/workshop/DocumentEditor";
 import { DocumentTabs } from "@/components/workshop/DocumentTabs";
 import { ExportMarkdown } from "@/components/workshop/ExportMarkdown";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
+import { AddFinalButton } from "@/components/workshop/AddFinalDialog";
 import { DeskControls, WorkshopDesk } from "@/components/workshop/WorkshopDesk";
 import { SelectedSourcesStrip } from "@/components/workshop/SelectedSourcesStrip";
 import { SelectionToContext } from "@/components/workshop/SelectionToContext";
@@ -649,9 +650,6 @@ export default function WorkshopSessionPage() {
       .catch(fail);
   };
 
-  // switching workspace leaves this project where it is and opens the other workspace's list (owner, 2026-11-16: a
-  // switch made from here moved the open project into the workspace he switched to)
-  const leaveForWorkspace = useCallback(() => navigate("/workshop"), [navigate]);
   // ---- what the AI changed: the last turn's new words on the open piece light up while it
   // writes, fade out a few seconds after, and the Changes button shows them again
   const lastEdit = [...messages].reverse().find((m) => m.role === "assistant" && m.edits?.docId === activeDoc?.id && !!m.edits?.versionBefore)?.edits;
@@ -1081,6 +1079,7 @@ export default function WorkshopSessionPage() {
         }
       >
         {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} readOnly={readOnly} /> : null}
+        {session && !readOnly ? <AddFinalButton id={session.id} title={session.title} status={session.status} /> : null}
         {session ? <SessionStatusSelect value={session.status} onChange={setStatus} readOnly={readOnly} /> : <Ghost className="h-8 w-[107px]" />}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
@@ -1128,7 +1127,7 @@ export default function WorkshopSessionPage() {
               </button>
             ))
           : null}
-        <ProjectSwitcher onSelect={leaveForWorkspace} />
+        <ProjectSwitcher />
       </AppBar>
 
       <div className="flex min-h-0 flex-1">

@@ -263,6 +263,8 @@ struct VolumeFacts {
     var source: String
     var readOnly: Bool
     var browsable: Bool
+    /// a local volume's UUID (its root key, Places.swift); never a share's
+    var uuid: String? = nil
 }
 
 /// The machine a share lives on, from its mount source ("//user@NAS-1._smb._tcp.local/TEAM" → "nas-1"); nil for a
@@ -316,6 +318,7 @@ func diskReport(_ v: VolumeFacts) -> [String: Any]? {
     ]
     // A share's quota can make the total smaller than the free space: then the total is left out.
     if v.totalBytes >= v.freeBytes { d["totalGb"] = gb(v.totalBytes) }
+    if let uuid = v.uuid, !networkFilesystems.contains(v.fstype) { d["uuid"] = uuid }
     if networkFilesystems.contains(v.fstype) {
         d["network"] = true
         let server = v.fstype.hasPrefix("nfs") ? v.source.split(separator: ":").first.map { String($0).lowercased() } : shareServer(v.source)
@@ -333,36 +336,63 @@ private func cField<T>(_ field: T) -> String {
     withUnsafeBytes(of: field) { raw in String(cString: raw.bindMemory(to: CChar.self).baseAddress!) }
 }
 
-/// Every mounted volume's disk report. A dead network share can hang a statfs call for minutes, so this runs only on
-/// DiskCache's background queue, never on the report path.
-func readDisks() -> [[String: Any]] {
-    let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeIsBrowsableKey], options: []) ?? []
-    return urls.compactMap { url -> [String: Any]? in
-        var st = statfs()
-        guard statfs(url.path, &st) == 0 else { return nil }
-        let browsable = (try? url.resourceValues(forKeys: [.volumeIsBrowsableKey]))?.volumeIsBrowsable ?? true
+/// Every mounted file system as the kernel has it, without asking any of them (MNT_NOWAIT: a dead share's numbers are
+/// its last ones, and the call never waits for its server).
+private func mountedFileSystems() -> [statfs] {
+    let count = getfsstat(nil, 0, MNT_NOWAIT)
+    guard count > 0 else { return [] }
+    let room = Int(count) + 8
+    let list = UnsafeMutablePointer<statfs>.allocate(capacity: room)
+    defer { list.deallocate() }
+    let got = getfsstat(list, Int32(room * MemoryLayout<statfs>.stride), MNT_NOWAIT)
+    return (0..<Int(max(0, got))).map { list[$0] }
+}
+
+/// Where each file system is mounted.
+func mountPaths() -> [String] { mountedFileSystems().map { cField($0.f_mntonname) } }
+
+/// One disk as read: its report, and for a share the address to connect it again (kept on this Mac, not reported).
+struct ReadDisk {
+    var report: [String: Any]
+    var url: String?
+}
+
+/// Every mounted volume's disk report. Never waits on a share (a dead one hung statfs for minutes); a local volume's
+/// UUID comes from its URL keys. The system disk's is its data volume's, where the home folders are.
+func readDisks() -> [ReadDisk] {
+    mountedFileSystems().compactMap { st -> ReadDisk? in
+        let path = cField(st.f_mntonname), fstype = cField(st.f_fstypename), source = cField(st.f_mntfromname)
+        let network = networkFilesystems.contains(fstype)
         let block = Int64(st.f_bsize)
-        return diskReport(VolumeFacts(
-            path: url.path,
+        var facts = VolumeFacts(
+            path: path,
             freeBytes: Int64(st.f_bavail) * block,
             totalBytes: Int64(st.f_blocks) * block,
-            fstype: cField(st.f_fstypename),
-            source: cField(st.f_mntfromname),
-            readOnly: st.f_flags & UInt32(MNT_RDONLY) != 0,
-            browsable: browsable))
+            fstype: fstype,
+            source: source,
+            // the system disk is mounted read-only (sealed); the files people keep on it are on its data volume
+            readOnly: path != "/" && st.f_flags & UInt32(MNT_RDONLY) != 0,
+            browsable: st.f_flags & UInt32(MNT_DONTBROWSE) == 0)
+        guard diskReport(facts) != nil else { return nil }
+        if !network {
+            let data = path == "/" && FileManager.default.fileExists(atPath: "/System/Volumes/Data") ? "/System/Volumes/Data" : path
+            facts.uuid = (try? URL(fileURLWithPath: data).resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString
+        }
+        return diskReport(facts).map { ReadDisk(report: $0, url: network ? shareURL(source: source, fstype: fstype) : nil) }
     }
 }
 
-/// The disks for the report, read once a minute on a background queue. The first call starts the reading, so the first
-/// report can go out without them; after that the report sends the last good list and never waits for a read.
+/// The disks for the report, read once a minute on a background queue and again on every change Places sees. The first
+/// call starts the reading, so the first report can go out without them; after that the report sends the last list,
+/// each network disk marked `away` when its last check had no answer.
 final class DiskCache {
     static let shared = DiskCache()
     private let lock = NSLock()
-    private var disks: [[String: Any]] = []
+    private var disks: [ReadDisk] = []
     private var started = false
     private let queue = DispatchQueue(label: "creatortoolset.disks", qos: .utility)
 
-    func current() -> [[String: Any]] {
+    private func last() -> [ReadDisk] {
         lock.lock()
         let start = !started
         started = true
@@ -372,21 +402,23 @@ final class DiskCache {
         return list
     }
 
-    /// The disks read now, on the caller's thread (a check after a shared drive was connected); kept for the next report.
-    func readNow() -> [[String: Any]] {
+    func current() -> [[String: Any]] { last().map { Places.shared.withAway($0.report) } }
+
+    /// The last read, as the places checks need it.
+    func placeDisks() -> [PlaceDisk] { last().compactMap(PlaceDisk.init) }
+
+    /// The disks read now (a check after a shared drive was connected); kept for the next report.
+    @discardableResult func readNow() -> [[String: Any]] {
         let fresh = readDisks()
         lock.lock()
         disks = fresh
         lock.unlock()
-        return fresh
+        return fresh.map(\.report)
     }
 
     private func refresh() {
         queue.async { [self] in
-            let fresh = readDisks()
-            lock.lock()
-            disks = fresh
-            lock.unlock()
+            readNow()
             queue.asyncAfter(deadline: .now() + 60) { [self] in refresh() }
         }
     }

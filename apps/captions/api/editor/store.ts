@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
@@ -499,6 +499,7 @@ export async function cleanBrief(body: Record<string, unknown>, username: string
   // short videos from a long recording: how many to find. Kept only when asked for, so every other edit is as it was
   const moments = num(body.moments, 0, MAX_MOMENTS);
   if (moments !== undefined && Math.round(moments) >= 1) out.moments = Math.round(moments);
+  if (typeof body.shape === "string" && Object.hasOwn(MOMENT_SHAPES, body.shape)) out.shape = body.shape as MomentShape;
   if (body.brollCollectionId === null) out.brollCollectionId = null;
   else if (typeof body.brollCollectionId === "string") {
     if (!(await collectionOk(username, ws, body.brollCollectionId))) throw new NoCollection("B-roll folder not found");
@@ -724,9 +725,12 @@ function askedBy(e: EditMeta): Pick<Edit, "askedBy"> {
 /** Deletes edits trashed before `before`, with their steps. Returns how many went. */
 export async function purgeEdits(before: number): Promise<number> {
   const gone = allEdits().filter((e) => e.trashedAt && e.trashedAt < before);
-  for (const e of gone) {
-    libraryDb().prepare("DELETE FROM edit_jobs WHERE edit_id = ?").run(e.id);
-    await rm(path.dirname(fileOf(e.id)), { recursive: true, force: true });
-  }
+  for (const e of gone) await purgeEdit(e.id);
   return gone.length;
+}
+
+/** Deletes one edit for good, with its steps and files (stop its work first: worker.ts stopEdit). */
+export async function purgeEdit(id: string): Promise<void> {
+  libraryDb().prepare("DELETE FROM edit_jobs WHERE edit_id = ?").run(id);
+  await rm(path.dirname(fileOf(id)), { recursive: true, force: true });
 }

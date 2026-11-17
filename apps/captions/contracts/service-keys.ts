@@ -17,7 +17,7 @@
 
 export const SERVICE_KEYS = [
   { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
-  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolation in the Audio Enhancer, and a voice made from a script in the AI Editor", where: "https://elevenlabs.io/app/settings/api-keys" },
+  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolation in the Audio Enhancer, and a voice made from a script in the Editor", where: "https://elevenlabs.io/app/settings/api-keys" },
   { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Captions and transcripts in Caption Studio and the Media Library", where: "https://console.deepgram.com" },
   { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
@@ -43,12 +43,13 @@ export type MyKeyGroup = "voice" | "research" | "ai";
 
 export const MY_KEYS = [
   { env: "DEEPGRAM_API_KEY", name: "Deepgram", group: "voice", what: "Captions and transcripts in Caption Studio and the Media Library", where: "https://console.deepgram.com" },
-  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", group: "voice", what: "Voice isolation in the Audio Enhancer, and a voice made from a script in the AI Editor", where: "https://elevenlabs.io/app/settings/api-keys" },
+  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", group: "voice", what: "Voice isolation in the Audio Enhancer, and a voice made from a script in the Editor", where: "https://elevenlabs.io/app/settings/api-keys" },
   { env: "NVIDIA_API_KEY", name: "NVIDIA", group: "voice", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", group: "research", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
   { env: "YOUTUBE_API_KEY", name: "YouTube Data API", group: "research", what: "Public YouTube channels followed in Social accounts", where: "https://console.cloud.google.com/apis/library/youtube.googleapis.com" },
   { env: "OPENAI_API_KEY", name: "OpenAI", group: "ai", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
   { env: "TYPESAFE_API_KEY", name: "TypeSafe Jev", group: "ai", what: "Content Analyzer comments and ideas, and Content Workshop rules" },
+  { env: "GEMINI_API_KEY", name: "Gemini API", group: "ai", what: "Media Library timelines: what happens when in each video, from its picture and sound", where: "https://aistudio.google.com/apikey" },
   // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey); the page hides it then, unless a key is saved
   { env: "ANTHROPIC_API_KEY", name: "Anthropic API", group: "ai", what: "Used by the tools, except Content Workshop, when there is no AI provider", where: "https://console.anthropic.com/settings/keys" },
 ] as const satisfies ReadonlyArray<{ env: string; name: string; group: MyKeyGroup; what: string; where?: string }>;

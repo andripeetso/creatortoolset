@@ -21,6 +21,7 @@ import type {
   ShareInput,
   WatchStatus,
 } from "@contracts/library";
+import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from "@contracts/places";
 import { useEffect, useRef, useState } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
@@ -46,11 +47,11 @@ export const listLibraries = () =>
  * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
  * made the way the Media Library page makes one when the workspace has none yet.
  */
-export async function setWorkspaceUpload(workspaceId: string, upload: LibraryUpload): Promise<void> {
+export async function setWorkspaceUpload(workspaceId: string, settings: { upload: LibraryUpload; finalsUpload: LibraryUpload }): Promise<void> {
   const headers = { "content-type": "application/json", "X-CT-Workspace": workspaceId };
   const own = (await fetch("/api/library", { headers }).then((r) => json<{ libraries: LibrarySummary[] }>(r))).libraries.find((l) => !l.readOnly);
   const library: LibrarySummary = own ?? (await fetch("/api/library", { method: "POST", headers, body: JSON.stringify({ name: "Library" }) }).then((r) => json<LibrarySummary>(r)));
-  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings: { upload } }) }).then((r) => json<LibrarySummary>(r));
+  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings }) }).then((r) => json<LibrarySummary>(r));
 }
 
 /** What is going in: `clips` files of `bytes`, `audio` of them sound only (`audioBytes`), from a music folder or not. */
@@ -132,7 +133,7 @@ export function listTags(libraryId: string): Promise<TagCount[]> {
 
 /** The countries the library's clips were filmed in (ISO 3166-1 alpha-2) with how many each, most first. */
 export function listPlaces(libraryId: string): Promise<{ place: string; count: number }[]> {
-  return fetch(`/api/library/${libraryId}/places`)
+  return fetch(`/api/library/${libraryId}/countries`)
     .then((r) => json<{ places: { place: string; count: number }[] }>(r))
     .then((d) => d.places);
 }
@@ -142,6 +143,12 @@ export const relatedAssets = (libraryId: string, assetId: string) =>
   fetch(`/api/library/${libraryId}/assets/${assetId}/related`)
     .then((r) => json<{ related: AssetCard[] }>(r))
     .then((d) => d.related);
+
+/** More like this: the shots that look most like this clip's shot at `at` seconds, or like the clip (api/library/related.ts); none without picture vectors. */
+export const alikeShots = (libraryId: string, assetId: string, at?: number) =>
+  fetch(`/api/library/${libraryId}/assets/${assetId}/alike${at === undefined ? "" : `?at=${at}`}`)
+    .then((r) => json<{ hits: SearchHit[] }>(r))
+    .then((d) => d.hits);
 
 /** The plug-in sources this account may browse in the library (the built-in library is not one of them). */
 export function listSources(libraryId: string): Promise<{ id: string; label: string }[]> {
@@ -183,13 +190,14 @@ export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =
 /**
  * Titles, tags, descriptions, what is said in the clips and, when it is on, what they mean, best first: a hit with
  * `seconds` is a line said at that second. `meaningGettingReady`: search by meaning is not ready yet (its model is
- * fetched the first time), so these hits are by words.
+ * fetched the first time), so these hits are by words. `picturesPending`: the search's English line for matching
+ * pictures is being written, so asked again soon it finds them too.
  */
 export const searchLibrary = async (
   libraryId: string,
   q: string,
   narrow: { facets?: Record<string, string[]>; kind?: AssetKind; collectionId?: string; roll?: "a" | "b" } & LibraryFilters = {},
-): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean }> => {
+): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean; picturesPending?: boolean }> => {
   const p = new URLSearchParams({ q });
   if (narrow.kind) p.set("kind", narrow.kind);
   if (narrow.collectionId) p.set("collectionId", narrow.collectionId);
@@ -197,11 +205,15 @@ export const searchLibrary = async (
   setFacets(p, narrow.facets);
   setFilters(p, narrow);
   const r = await fetch(`/api/library/${libraryId}/search?${p}`);
-  return { hits: await json<SearchHit[]>(r), meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready" };
+  return {
+    hits: await json<SearchHit[]>(r),
+    meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready",
+    ...(r.headers.get("x-search-pictures") === "pending" ? { picturesPending: true } : {}),
+  };
 };
 
 /** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where, on this computer. */
-export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here">;
+export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here" | "missing">;
 
 /**
  * Those filters as query parameters (api/library/query.ts parseSearch reads them back). In the Mac app the page also
@@ -211,6 +223,7 @@ function setFilters(p: URLSearchParams, f: LibraryFilters) {
   const device = thisMacDevice();
   if (device) p.set("device", device);
   if (device && f.here) p.set("here", "1");
+  if (device && f.missing) p.set("missing", "1");
   if (f.tags?.length) p.set("tag", f.tags.join(","));
   if (f.filmedFrom !== undefined) p.set("filmedFrom", String(f.filmedFrom));
   if (f.filmedTo !== undefined) p.set("filmedTo", String(f.filmedTo));
@@ -252,9 +265,22 @@ export const redoMany = (libraryId: string, kinds: string[], assetIds?: string[]
 /** Many clips' originals as one zip (api/library/bulk.ts). */
 export const libraryZipUrl = (libraryId: string, assetIds: string[]) => `/api/library/${libraryId}/zip?ids=${assetIds.map(encodeURIComponent).join(",")}`;
 
-/** Before an upload: whether a clip of this size is here (`maybe`), or with its sha256 which clip it is (api/library/routes.ts). */
-export const checkUpload = (libraryId: string, size: number, sha256?: string) =>
-  send<{ maybe?: boolean; duplicateOf?: string }>(`/api/library/${libraryId}/uploads/check`, "POST", { size, sha256 });
+/**
+ * Before an upload: whether a clip of this size is here (`maybe`), or with its sha256 which clip it is (api/library/routes.ts);
+ * with the quick fingerprint too, also a version of that size and fingerprint, and which version.
+ */
+export const checkUpload = (libraryId: string, size: number, sha256?: string, quick?: string) =>
+  send<{ maybe?: boolean; duplicateOf?: string; versionId?: string }>(`/api/library/${libraryId}/uploads/check`, "POST", { size, sha256, quick });
+
+/** The paths a computer of the caller's tries for each version (api/library/places.ts; at most PLACES_MAX). */
+export const versionPlaces = (libraryId: string, device: string, versions: string[]) =>
+  send<PlacesAnswer>(`/api/library/${libraryId}/places?${new URLSearchParams({ device, versions: versions.join(",") })}`, "GET");
+
+/** What a computer of the caller's read: each confirmed file becomes its place (api/library/places.ts). */
+export const reportPlaces = (libraryId: string, report: PlacesReport) => send<PlacesReportAnswer>(`/api/library/${libraryId}/places`, "POST", report);
+
+/** The last files that moved or were found elsewhere, one line per folder change (api/library/places.ts). */
+export const placeMoves = (libraryId: string) => send<MovesAnswer>(`/api/library/${libraryId}/places/moves`, "GET").then((r) => r.moves);
 
 /** A Caption Studio project on the clip; resolves once its editing proxy is ready. */
 export const openInCaptions = (libraryId: string, assetId: string) =>
@@ -299,6 +325,8 @@ export async function listAllAssets(libraryId: string, facets?: Record<string, s
 export interface UploadResult {
   assetId?: string;
   duplicateOf?: string;
+  /** already in the library, as a clip this account may not see (no id) */
+  duplicate?: true;
 }
 
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));

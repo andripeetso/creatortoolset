@@ -8,6 +8,8 @@
  * style and the sound), the plan step that writes an EditPlan and the renderer that draws it. Times are seconds.
  */
 
+import type { TimelineEvent } from "./library";
+
 /** One stretch of a source between two picture changes, with how much moves in it. */
 export interface IndexShot {
   a: number;
@@ -27,6 +29,8 @@ export interface IndexShot {
   junk?: string;
   /** where its picture changes, across (16 columns) and down (9 rows), as shares of the whole, the HUD left out */
   moves?: { cols: number[]; rows: number[] };
+  /** how well its picture matches the brief, 0…1 (1: the best match in this footage), when the library has its picture vectors (search by picture) */
+  pic?: number;
 }
 
 export interface IndexSource {
@@ -44,6 +48,8 @@ export interface IndexSource {
   shots: IndexShot[];
   /** the HUD: 16×9 cells (row by row, 1 = HUD) that stay put while the rest of the picture moves */
   hud?: number[];
+  /** what happens when, from Gemini watching it with its sound (the library's timeline, api/library/timeline.ts) */
+  timeline?: TimelineEvent[];
 }
 
 /** A song or any sound to cut to, from `startS` on. */

@@ -105,7 +105,7 @@ describe("Settings → Tools", () => {
     expect(host!.querySelector('[aria-label="Blur faces in new edits"]')).not.toBeNull();
     expect(host!.querySelector('a[href="/community/tool/editor"]')?.textContent).toBe("Browse Community");
     // no Home switch a second time, and no section folded away
-    expect(host!.querySelector('[aria-label="Show AI Editor on Home"]')).toBeNull();
+    expect(host!.querySelector('[aria-label="Show Editor on Home"]')).toBeNull();
     expect([...host!.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(expect.arrayContaining(["New edit defaults", "Plug-ins", "Packs", "Skills for the script"]));
   });
 

@@ -463,4 +463,67 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE uploads ADD COLUMN made TEXT;
   `,
+  // 27: here or away (places.ts). A version's original is at a root (a share or a volume, contracts/places.ts rootKey) and
+  // a root path inside it, the same for every computer; NULL until known (places.ts backfillRoots). version_places: where
+  // one computer last read the file, or found it gone; only that computer's owner sees or changes the row. mac_path and
+  // mac_device stay as where it was first indexed. library_moves: the last reconnects, one row per folder change (device
+  // '' for a move on the root itself, everyone's; else the computer that found its copies)
+  `
+  ALTER TABLE asset_versions ADD COLUMN root TEXT;
+  ALTER TABLE asset_versions ADD COLUMN root_rel TEXT;
+  CREATE TABLE version_places (
+    version_id TEXT NOT NULL,
+    device TEXT NOT NULL,
+    path TEXT NOT NULL,
+    confirmed_at INTEGER NOT NULL,
+    gone_at INTEGER,
+    PRIMARY KEY (version_id, device)
+  );
+  CREATE INDEX version_places_device ON version_places(device);
+  INSERT INTO version_places (version_id, device, path, confirmed_at)
+    SELECT id, mac_device, mac_path, created_at FROM asset_versions WHERE mac_path IS NOT NULL AND mac_device IS NOT NULL;
+  CREATE TABLE library_moves (
+    library_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('moved','found')),
+    device TEXT NOT NULL,
+    root_key TEXT NOT NULL,
+    root TEXT,
+    from_prefix TEXT NOT NULL,
+    to_prefix TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    UNIQUE (library_id, kind, device, root_key, from_prefix, to_prefix)
+  );
+  `,
+  // 28: the level (contracts LOOK_LEVELS) a version's stretches were found at: stretches of another level than the
+  // library's are found again when its shots are described (shots.ts), never matched to that level's lines. NULL: standard
+  `ALTER TABLE asset_versions ADD COLUMN look_level TEXT;`,
+  // 29: a video's timeline (timeline.ts): what happens when, from Gemini watching it with its sound. `events` JSON
+  // (contracts TimelineEvent[]), the level and model it was made at; `error` when the watch failed (tried again a day
+  // later). search_timeline holds each event's words with its start, so a search finds the moment
+  `
+  CREATE TABLE timelines (
+    version_id TEXT PRIMARY KEY REFERENCES asset_versions(id),
+    events TEXT NOT NULL DEFAULT '[]',
+    level TEXT,
+    model TEXT,
+    error TEXT,
+    at INTEGER NOT NULL
+  );
+  CREATE VIRTUAL TABLE search_timeline USING fts5(
+    version_id UNINDEXED, a UNINDEXED, text, tokenize = 'unicode61 remove_diacritics 2'
+  );
+  `,
+  // 30: search by picture (pictures.ts): a vector of what each shot shows, by the stretch it is the middle of (seg as in
+  // stretches) or -1 for the card picture; start_s is where the hit opens. An empty vec: no picture could be read
+  `
+  CREATE TABLE pictures (
+    version_id TEXT NOT NULL REFERENCES asset_versions(id),
+    seg INTEGER NOT NULL,
+    start_s REAL NOT NULL,
+    model TEXT NOT NULL,
+    vec BLOB NOT NULL,
+    PRIMARY KEY (version_id, seg)
+  );
+  `,
 ];

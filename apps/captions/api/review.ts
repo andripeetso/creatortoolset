@@ -343,9 +343,14 @@ function updateProjects<T>(fn: (list: Project[]) => T): Promise<T> {
 const ownsProject = async (owner: string, pid: unknown) =>
   typeof pid === "string" && (await readProjects()).some((p) => p.id === pid && p.owner === owner);
 
+/** The workspace a video is in, read now (videoWorkspace). */
+const workspaceOfVideo = async (m: Meta) => videoWorkspace(m, new Map((await readProjects()).map((p) => [p.id, p.workspace])));
 /** A video filed in a folder is in the folder's workspace, and stays in it when taken out again. */
 const folderWorkspace = async (pid: string | undefined) => (pid ? (await readProjects()).find((p) => p.id === pid)?.workspace : undefined);
 const setWorkspace = (m: Meta, ws: string | undefined) => (ws ? (m.workspace = ws) : delete m.workspace);
+/** The workspace a video is in: its folder's when it is filed in one (`folders`: each folder's workspace by id). */
+const videoWorkspace = (m: Pick<Meta, "projectId" | "workspace">, folders: Map<string, string | undefined>) =>
+  m.projectId && folders.has(m.projectId) ? folders.get(m.projectId) : m.workspace;
 
 /**
  * Which of the person's videos and folders are in the workspace this request works in: a video filed in a folder is in
@@ -355,7 +360,7 @@ async function inWorkspace(username: string) {
   const keep = await inCurrentWorkspace({ username } as SessionUser);
   const folders = new Map((await readProjects()).map((p) => [p.id, p.workspace]));
   return {
-    video: (m: Meta) => !keep || keep(m.projectId && folders.has(m.projectId) ? folders.get(m.projectId) : m.workspace),
+    video: (m: Meta) => !keep || keep(videoWorkspace(m, folders)),
     folder: (p: Project) => !keep || keep(p.workspace),
   };
 }
@@ -1393,7 +1398,7 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   const n = Number(c.req.param("n"));
   const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
   if (!v || !version) return c.json({ error: "Not found" }, 404);
-  if (version.edit || version.draft) return c.json({ error: "A version from the AI Editor has its own timeline" }, 409);
+  if (version.edit || version.draft) return c.json({ error: "A version from the Editor has its own timeline" }, 409);
   const name = cleanText(c.req.query("name"), 160) || "timeline";
   // refuse on the declared length before any of the body is read
   if (Number(c.req.header("content-length") ?? 0) > MAX_TIMELINE_BYTES) {
@@ -1671,13 +1676,7 @@ setInterval(() => void purgeTrash().catch(() => {}), 6 * 3600_000).unref();
 export async function purgeExpiredReview(expired: Expired): Promise<void> {
   for (const m of await allMetas()) {
     const commented = (await stat(commentsPath(m.id)).catch(() => null))?.mtimeMs ?? 0;
-    if (!expired(m.owner, Math.max(m.updatedAt, commented))) continue;
-    for (const [key, child] of children) if (key.startsWith(`${m.id}/`)) child.kill("SIGKILL");
-    await withLock(m.id, async () => {
-      if (m.share) await rm(linkPath(m.share.token), { force: true });
-      await rm(assetDir(m.id), { recursive: true, force: true });
-    });
-    await syncLibrary(m.id);
+    if (expired(m.owner, Math.max(m.updatedAt, commented))) await purgeVideo(m);
   }
   for (const id of await readdir(path.join(ROOT, "trash")).catch(() => [] as string[])) {
     const m = await readTrashed(id);
@@ -1695,6 +1694,57 @@ export async function purgeExpiredReview(expired: Expired): Promise<void> {
     return out;
   });
   for (const p of removed) if (p.share) await rm(linkPath(p.share.token), { force: true });
+}
+
+/** A video out of the trash, deleted for good: its work stops, its share link and files go, and the library drops it. */
+async function purgeVideo(m: Meta): Promise<void> {
+  for (const [key, child] of children) if (key.startsWith(`${m.id}/`)) child.kill("SIGKILL");
+  await withLock(m.id, async () => {
+    if (m.share) await rm(linkPath(m.share.token), { force: true });
+    await rm(assetDir(m.id), { recursive: true, force: true });
+  });
+  await syncLibrary(m.id);
+}
+
+/**
+ * The owner's Review videos in a workspace being deleted (lib/workspace-delete.ts), the trash too: a filed video is in its
+ * folder's workspace. `drop` deletes them for good, with every inbox's notes about them and the owner's notes of that
+ * workspace (a Workshop reply, an AI Editor edit), so no other workspace's bell shows them.
+ */
+export async function workspaceVideos(owner: string, has: (ws?: string) => boolean): Promise<{ n: number; drop: () => Promise<void> }> {
+  const folders = new Map((await readProjects()).map((p) => [p.id, p.workspace]));
+  const trashed = await Promise.all((await readdir(path.join(ROOT, "trash")).catch(() => [] as string[])).map(readTrashed));
+  const live = (await allMetas()).filter((m) => m.owner === owner && has(videoWorkspace(m, folders)));
+  const binned = trashed.filter((m): m is Meta => !!m && m.owner === owner && has(videoWorkspace(m, folders)));
+  return {
+    n: live.length + binned.length,
+    drop: async () => {
+      for (const m of live) await purgeVideo(m);
+      await emptyReviewTrash(binned.map((m) => m.id));
+      const ids = new Set([...live, ...binned].map((m) => m.id));
+      for (const f of await readdir(path.join(ROOT, "notifications")).catch(() => [] as string[])) {
+        const user = f.slice(0, -5);
+        const gone = (x: Note) => ids.has(x.assetId) || (user === owner && !!x.workspace && has(x.workspace));
+        if (f.endsWith(".json")) await updateInbox(user, (list) => void list.splice(0, list.length, ...list.filter((x) => !gone(x))));
+      }
+    },
+  };
+}
+
+/** The owner's Review folders in a workspace being deleted, with their share links (their videos are workspaceVideos'). */
+export async function workspaceFolders(owner: string, has: (ws?: string) => boolean): Promise<{ n: number; drop: () => Promise<void> }> {
+  const ids = new Set((await readProjects()).filter((p) => p.owner === owner && has(p.workspace)).map((p) => p.id));
+  return {
+    n: ids.size,
+    drop: async () => {
+      const gone = await updateProjects((list) => {
+        const out = list.filter((p) => ids.has(p.id));
+        list.splice(0, list.length, ...list.filter((p) => !ids.has(p.id)));
+        return out;
+      });
+      for (const p of gone) if (p.share) await rm(linkPath(p.share.token), { force: true });
+    },
+  };
 }
 
 // ---------- stacks: drop a video on another, or break one apart ----------
@@ -2009,6 +2059,8 @@ interface Note {
   href: string;
   at: number;
   read?: boolean;
+  /** The workspace of what it is about (the bell shows the current workspace's); none on a note from before. */
+  workspace?: string;
 }
 
 const INBOX_CAP = 100;
@@ -2050,6 +2102,7 @@ async function notify(
   try {
     const people = new Set([m.owner, ...(await readComments(m.id)).flatMap((x) => (x.user ? [x.user] : []))]);
     if (actor.user) people.delete(actor.user);
+    const workspace = await workspaceOfVideo(m);
     for (const user of people) {
       const href = USERNAME_RE.test(user) ? await openPath(user, m) : null;
       if (!href) continue;
@@ -2063,6 +2116,7 @@ async function notify(
           ...(note.text ? { text: note.text.slice(0, 140) } : {}),
           href: href + (note.query ?? ""),
           at: Date.now(),
+          ...(workspace ? { workspace } : {}),
         });
       });
     }
@@ -2072,10 +2126,10 @@ async function notify(
 }
 
 /** A freelancer on a Content Workshop share link started or delivered, a Workshop reply finished, or a job failed: tell the owner. */
-export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed" | "waiting"; by: string; name: string; text?: string; href: string; ref: string }): Promise<void> {
+export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed" | "waiting"; by: string; name: string; text?: string; href: string; ref: string; workspace?: string }): Promise<void> {
   if (!USERNAME_RE.test(owner)) return;
   await updateInbox(owner, (list) => {
-    list.unshift({ id: randomUUID(), kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(note.text ? { text: note.text.slice(0, 140) } : {}), href: note.href, at: Date.now() });
+    list.unshift({ id: randomUUID(), kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(note.text ? { text: note.text.slice(0, 140) } : {}), href: note.href, at: Date.now(), ...(note.workspace ? { workspace: note.workspace } : {}) });
   }).catch(() => {});
 }
 
@@ -2144,9 +2198,10 @@ export async function refLooks(assetId: string, n: number, refs: Ref[] = []) {
 export async function notifyReady(id: string, by: string, text: string): Promise<void> {
   const m = await readMeta(id);
   if (!m || !USERNAME_RE.test(m.owner)) return;
+  const workspace = await workspaceOfVideo(m);
   await updateInbox(m.owner, (list) => {
     list.unshift({ id: randomUUID(), kind: "ready", by, assetId: m.id, name: m.name, text: text.slice(0, 140),
-      href: `/review/${m.id}`, at: Date.now() });
+      href: `/review/${m.id}`, at: Date.now(), ...(workspace ? { workspace } : {}) });
   }).catch(() => {});
 }
 
@@ -2161,8 +2216,26 @@ export async function waitingFor(owner: string): Promise<{ asset: string; name: 
       at: m.approval.at ?? m.updatedAt }));
 }
 
+/**
+ * The inbox of the workspace the person is in (owner, 2026-11-16: "It should be the current workspace"): the app's header,
+ * else the one they picked last (the Mac app's badge). A note from before notes named one goes by its video's.
+ */
+async function inboxHere(user: SessionUser): Promise<Note[]> {
+  const list = await readInbox(user.username);
+  const keep = await inCurrentWorkspace(user);
+  if (!keep) return list;
+  const folders = new Map((await readProjects()).map((p) => [p.id, p.workspace]));
+  const old = new Map<string, string | undefined>();
+  for (const x of list) {
+    if (x.workspace || old.has(x.assetId)) continue;
+    const m = (await readMeta(x.assetId)) ?? (await readTrashed(x.assetId));
+    old.set(x.assetId, m ? videoWorkspace(m, folders) : undefined);
+  }
+  return list.filter((x) => keep(x.workspace ?? old.get(x.assetId)));
+}
+
 reviewApp.get("/notifications", async (c) => {
-  const list = await readInbox(c.get("user").username);
+  const list = await inboxHere(c.get("user"));
   return c.json(
     { items: list.slice(0, 50), unread: list.filter((x) => !x.read).length },
     200,
@@ -2170,12 +2243,12 @@ reviewApp.get("/notifications", async (c) => {
   );
 });
 
-/** Mark `ids` read, or everything when no ids are given. */
+/** Mark `ids` read, or every note of the workspace the person is in when no ids are given. */
 reviewApp.post("/notifications/read", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { ids?: unknown } | null;
-  const ids = Array.isArray(body?.ids) ? new Set(body.ids) : null;
+  const ids = Array.isArray(body?.ids) ? new Set(body.ids) : new Set((await inboxHere(c.get("user"))).map((x) => x.id));
   await updateInbox(c.get("user").username, (list) => {
-    for (const x of list) if (!ids || ids.has(x.id)) x.read = true;
+    for (const x of list) if (ids.has(x.id)) x.read = true;
   });
   return c.json({ ok: true });
 });

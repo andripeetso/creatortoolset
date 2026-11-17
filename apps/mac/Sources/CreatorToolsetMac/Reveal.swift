@@ -36,22 +36,30 @@ enum Reveal {
     static let problem = "That file isn't on this Mac."
 
     /// The real path to show, or nil when it may not be shown. `trusted` nil: any existing file (the server on this Mac
-    /// named it); else only inside one of those folders.
+    /// named it); else only inside one of those folders. A file on a network disk that doesn't answer is not shown.
     static func check(_ path: String, trusted: [String]?) -> String? {
         let parts = path.split(separator: "/")
-        guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains("."), let real = realPath(path) else { return nil }
+        guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return nil }
+        return Places.shared.guarded(path) { look(path, trusted: trusted) } ?? nil
+    }
+
+    private static func look(_ path: String, trusted: [String]?) -> String? {
+        guard let real = realPath(path) else { return nil }
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: real, isDirectory: &directory), !directory.boolValue else { return nil }
         guard let trusted else { return real }
         // compared in one Unicode form (a folder's name may be stored decomposed); "/" is never trusted as a whole
         let p = real.precomposedStringWithCanonicalMapping
-        let inside = trusted.compactMap(realPath).filter { $0 != "/" }.map(\.precomposedStringWithCanonicalMapping)
+        let inside = MediaFiles.realFolders(trusted, disks: Places.shared.diskList()).filter { $0 != "/" }
         return inside.contains { p.hasPrefix($0 + "/") } ? real : nil
     }
 
-    /// Shows the file selected in Finder; the reply is { ok } or { problem }.
-    @MainActor static func answer(_ path: String?, trusted: [String]?) -> [String: Any] {
-        guard let path, let real = check(path, trusted: trusted) else { return ["problem": problem] }
+    /// Shows the file selected in Finder; the reply is { ok } or { problem }. The file is looked at off the main thread.
+    @MainActor static func answer(_ path: String?, trusted: [String]?) async -> [String: Any] {
+        let real = await withCheckedContinuation { c in
+            DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: path.flatMap { check($0, trusted: trusted) }) }
+        }
+        guard let real else { return ["problem": problem] }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: real)])
         return ["ok": true]
     }

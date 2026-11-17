@@ -1,4 +1,5 @@
 import type { ExportEditor, ExportGaps, Item, Timeline } from "../../contracts/editor";
+import { panKeys } from "./framing";
 import { sourceSpan } from "./plan";
 
 /**
@@ -19,12 +20,23 @@ const WHIP_S = 0.12;
 const MOVES = new Set(["punch", "zoom", "shake"]);
 
 /**
- * The shot's framing over its own frames, as the preview draws punch, zoom, shake and a whip: one key when it stands
- * still (its zoom and tilt), else a key at every corner of the moves and every frame of a shake, for linear keyframes.
+ * The shot's framing over its own frames, as the preview draws punch, zoom, shake and a whip, plus a reframed shot's
+ * moving window (framing.ts panKeys) added to x: one key when it stands still (its zoom, tilt and window), else a key
+ * at every corner of the moves and the window, and every frame of a shake, for linear keyframes. Every file's
+ * transform reads these, so a window and a move on one shot are one set of keys.
  */
 export function motion(tl: Timeline, i: Item): Key[] {
   const fx = (i.fx ?? []).filter((f) => MOVES.has(f.type));
   const whip = i.enter === "whip";
+  const src = tl.sources[i.src];
+  const pans = src?.w ? panKeys(i, src, tl.width, tl.height, tl.fps) : [];
+  // the window's pan at a frame of the shot, linear between its keys (they are fitted to be)
+  const panAt = (f: number) => {
+    const b = pans.findIndex((k) => k.f >= f);
+    if (b < 0) return pans.at(-1)?.pan ?? 0;
+    const [a, z] = [pans[Math.max(0, b - 1)]!, pans[b]!];
+    return z.f === f || a === z ? z.pan : a.pan + ((z.pan - a.pan) * (f - a.f)) / (z.f - a.f);
+  };
   const at = (t: number) => {
     let z = 1;
     let dx = 0;
@@ -48,11 +60,11 @@ export function motion(tl: Timeline, i: Item): Key[] {
       }
     }
     const slide = whip && t < WHIP_S ? (tl.width / 4) * (1 - t / WHIP_S) : 0;
-    return { zoom: r4((i.zoom ?? 1) * z), x: r4(slide - dx), y: r4((i.tilt ?? 0) * z + dy) };
+    return { zoom: r4((i.zoom ?? 1) * z), x: r4(panAt(Math.round(t * tl.fps)) + slide - dx), y: r4((i.tilt ?? 0) * z + dy) };
   };
-  if (!fx.length && !whip) return [{ f: 0, ...at(0) }];
+  if (!fx.length && !whip && pans.length < 2) return [{ f: 0, ...at(0) }];
   const fps = tl.fps;
-  const frames = new Set([0, i.len]);
+  const frames = new Set([0, i.len, ...pans.map((k) => k.f)]);
   const add = (s: number) => frames.add(Math.round(s * fps));
   if (whip) add(WHIP_S);
   for (const f of fx) {
@@ -102,7 +114,7 @@ type Feature =
 
 /** What each editor's file carries (otio.ts: Resolve, toFcpxml: Final Cut, toFcp7Xml: Premiere). */
 export const CARRIES: Record<ExportEditor, Set<Feature>> = {
-  resolve: new Set(["broll", "music", "sfx", "grade", "dissolve"]),
+  resolve: new Set(["punch", "zoom", "shake", "whip", "broll", "music", "sfx", "grade", "dissolve"]),
   "final-cut": new Set(["punch", "zoom", "shake", "whip", "dissolve", "reverse", "freeze", "ramp"]),
   premiere: new Set(["punch", "zoom", "shake", "whip", "reverse"]),
 };

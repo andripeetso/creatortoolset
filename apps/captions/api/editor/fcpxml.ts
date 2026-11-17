@@ -15,6 +15,9 @@ import { meanSpeed } from "./plan";
  * a scripted import fails); adjust-transform comes in as Resolve's Zoom and Tilt (scale 1.2 and position "0 5" on a
  * 1080 timeline = Zoom 1.2, Tilt 54 px up). Resolve keeps no marker from an FCPXML in any form (on a clip, a chapter
  * marker, a to-do, version 1.9) and writes none into its own: the lines' markers reach Resolve in the OTIO (otio.ts).
+ * A reframed shot's moving window (Item.path) is its position keyed in the clip's own time (keyframeAnimation, linear
+ * between keys every frame it eases, framing.ts panKeys, summed with the shot's moves in carry.ts motion); Final Cut
+ * plays it, Resolve reads moving transforms from an FCPXML less surely than from the OTIO, which carries the same keys.
  * Not yet checked: whether a relative media-rep src (in a zip) relinks without asking.
  *
  * A planned shot's moves (punch, zoom, shake, a whip) are keyframes on adjust-transform, its freezes, ramp and
@@ -126,14 +129,14 @@ function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string
     const d = (i.len * s.fps) / tl.fps;
     inner.push(`<timeMap>`, `  <timept time="0s" value="0s" interp="linear"/>`, `  <timept time="${time(Math.round(d), s.fps)}" value="${time(Math.round(d * speed), s.fps)}" interp="linear"/>`, `</timeMap>`);
   }
-  // position is in % of the frame's height, + up and right
+  // position is in hundredths of the frame's height on both axes, + x right, + y up; a reframed window is in x
   const pos = (k: { x: number; y: number }) => `${pct(k.x, tl.height)} ${pct(k.y, tl.height)}`;
   const keys = motion(tl, i);
   if (keys.length > 1) {
     const anim = (name: string, v: (k: (typeof keys)[number]) => string) => [
       `  <param name="${name}">`,
       `    <keyframeAnimation>`,
-      ...keys.map((k) => `      <keyframe time="${time(srcFrames(i.rec + k.f), s.fps)}" value="${v(k)}"/>`),
+      ...keys.map((k) => `      <keyframe time="${time(srcFrames(i.rec + k.f), s.fps)}" value="${v(k)}" interp="linear" curve="linear"/>`),
       `    </keyframeAnimation>`,
       `  </param>`,
     ];
@@ -177,8 +180,8 @@ const rate7 = (fps: number) => `<rate><timebase>${Math.round(fps)}</timebase><nt
 
 /**
  * The draft as FCP 7 XML (xmeml 4), the timeline Premiere Pro opens as a new project: the speaker track (V1) with its
- * own sound on A1, and the lines as sequence markers. Clip in/out are in the source's frames. Each picture's framing
- * and moves are Basic Motion (scale in % of the file's own size, keyframed), its speed and reverse Time Remap.
+ * own sound on A1, and the lines as sequence markers. Clip in/out are in the source's frames. Each picture's framing,
+ * reframed window and moves are Basic Motion (scale in % of the file's own size, keyframed), its speed and reverse Time Remap.
  * ponytail: no B-roll, music or effects tracks yet; motion and time remap written from the format's description, not
  * yet checked in Premiere (keyframe <when> as source frames, center as a fraction of the frame, + down)
  */

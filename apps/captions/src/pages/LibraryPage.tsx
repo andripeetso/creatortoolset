@@ -253,17 +253,29 @@ export default function LibraryPage() {
     setFound(null);
     if (!libId || !searching) return;
     let live = true;
+    let again: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
     const saved = smart?.query;
-    searchLibrary(libId, words, {
-      facets,
-      kind: kind === "all" ? saved?.kind?.[0] : kind,
-      collectionId: smart ? undefined : (open ?? undefined),
-      roll: roll ?? saved?.roll,
-      ...withSaved(filters, saved),
-    })
-      .then((r) => live && setFound(r))
-      .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
-    return () => void (live = false);
+    // asked again while the search's English line for the pictures is being written, so its picture hits join the list
+    const run = () =>
+      searchLibrary(libId, words, {
+        facets,
+        kind: kind === "all" ? saved?.kind?.[0] : kind,
+        collectionId: smart ? undefined : (open ?? undefined),
+        roll: roll ?? saved?.roll,
+        ...withSaved(filters, saved),
+      })
+        .then((r) => {
+          if (!live) return;
+          setFound(r);
+          if (r.picturesPending && ++tries < 6) again = setTimeout(() => void run(), 2500);
+        })
+        .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
+    void run();
+    return () => {
+      live = false;
+      clearTimeout(again);
+    };
   }, [libId, words, open, smart, facets, kind, roll, searching, filters]);
 
   const openClip = (a: AssetCard, at = 0) => {
@@ -273,6 +285,7 @@ export default function LibraryPage() {
     setPreview(a);
     const p = new URLSearchParams(linked);
     p.delete("asset");
+    p.delete("at");
     p.set("clip", a.id);
     if (libId && libId !== libraries?.[0]?.id) p.set("library", libId);
     else p.delete("library");
@@ -292,12 +305,15 @@ export default function LibraryPage() {
     const p = new URLSearchParams(linked);
     p.delete("clip");
     p.delete("asset");
+    p.delete("at");
     navigate({ search: p.size ? `?${p}` : "" }, { replace: true });
   };
   useEffect(() => {
     if (!clipId) return setPreview(null);
     const lib = linkedLib ?? libId;
     if (!lib || preview?.id === clipId) return;
+    // a link to a shot (More like this) opens at its second
+    setStartAt(Number(new URLSearchParams(window.location.search).get("at")) || 0);
     const known = items.find((a) => a.id === clipId);
     if (known) return setPreview(known);
     let live = true;
@@ -368,7 +384,7 @@ export default function LibraryPage() {
       }
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
       const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here, { signal: ctl.signal, onMac: mac });
-      patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
+      patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {

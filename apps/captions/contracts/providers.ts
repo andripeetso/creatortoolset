@@ -138,14 +138,23 @@ export interface Selection {
   effort: Effort;
 }
 
-/** What a job is, for its default and the usage page. Every AI call names one. */
-export const JOBS = [
+/**
+ * What a job is, for its default and the usage page. Every AI call names one. `recommend`: an engine that does the job
+ * better than a provider, with its one-line reason (Settings → AI by job shows it under the job). "library" with no pick
+ * of its own takes the Content Analyzer's (api/lib/providers.ts pick), as it did before it had its own row.
+ */
+export const JOBS: readonly { id: "workshop" | "captions" | "analyzer" | "notes" | "editor" | "library"; label: string; recommend?: { key: "GEMINI_API_KEY"; why: string } }[] = [
   { id: "workshop", label: "Content Workshop" },
   { id: "captions", label: "Caption Studio" },
   { id: "analyzer", label: "Content Analyzer" },
   { id: "notes", label: "Video Notes and guides" },
-  { id: "editor", label: "AI Editor" },
-] as const;
+  { id: "editor", label: "Editor" },
+  {
+    id: "library",
+    label: "Media Library descriptions",
+    recommend: { key: "GEMINI_API_KEY", why: "Gemini is recommended: it watches the whole video with its sound, at the lowest cost an hour." },
+  },
+];
 export type JobId = (typeof JOBS)[number]["id"];
 
 /**
@@ -196,7 +205,7 @@ export interface Device {
    * the plug-in steps it has, its proxy cache. Kept apart from `kinds`, which the device runner's claim rewrites.
    * `empty`: Settings → Storage → Empty, told on its next claim.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; pictures?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */
@@ -276,6 +285,8 @@ export function parseMachine(v: unknown): Machine | undefined {
     if (server) out.server = server;
     const fs = SHARE_FS.find((f) => f === d?.fs);
     if (fs && server && SAFE_SERVER.test(server) && typeof d?.share === "string" && SAFE_SHARE.test(d.share)) Object.assign(out, { fs, share: d.share });
+    if (typeof d?.uuid === "string" && /^[0-9A-Fa-f-]{8,64}$/.test(d.uuid)) out.uuid = d.uuid;
+    if (out.network && d?.away === true) out.away = true;
     return [out];
   });
   if (disks.length) m.disks = disks;

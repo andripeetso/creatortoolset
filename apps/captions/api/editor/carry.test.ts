@@ -56,10 +56,16 @@ describe("what a timeline file carries of the preview", () => {
     t.tracks.A2.items = [shot()];
     t.plan = { kind: "reel", texts: [{ at: 0, dur: 1, text: "Hi", place: "middle" }] };
     const g = exportGaps(t, true);
-    expect(g.resolve).toEqual(["shake on 2 shots", "glitch on 1 shot", "blurred backgrounds on 1 shot", "freeze frames on 1 shot", "words on screen"]);
+    expect(g.resolve).toEqual(["glitch on 1 shot", "blurred backgrounds on 1 shot", "freeze frames on 1 shot", "words on screen"]);
     expect(g["final-cut"]).toEqual(["glitch on 1 shot", "blurred backgrounds on 1 shot", "words on screen", "B-roll", "music", "colour grade"]);
     expect(g.premiere).toContain("dissolves on 1 shot");
     expect(g.premiere).toContain("freeze frames on 1 shot");
     expect(g.premiere).not.toContain("shake on 2 shots");
+  });
+
+  it("a reframed shot's moving window is carried by every file: no gap", () => {
+    const t = tl([shot({ zoom: 3.16, path: [{ t: 0, x: 0 }, { t: 2, x: 1 }] })]);
+    t.sources.a = { versionId: "a", name: "Talk", fps: 25, tc: 0, dur: 2500, w: 1920, h: 1080 };
+    expect(exportGaps(t)).toEqual({});
   });
 });

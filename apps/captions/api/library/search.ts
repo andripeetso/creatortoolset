@@ -16,6 +16,7 @@ import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { refreshDescription } from "./describe";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
+import { pictureHits } from "./pictures";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, FINISHED, ftsQuery, indexAsset, markHere, parseSearch, toCard, type CardRow } from "./query";
 import { filterClauses } from "./query";
@@ -23,6 +24,7 @@ import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 import { ratedLine } from "./look";
+import { timelineOf } from "./timeline";
 import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
 
 /**
@@ -51,7 +53,7 @@ export function searchClauses(query: SearchQuery): Clause[] {
   ];
 }
 
-/** Asset hits first (title weighs most), then the lines said in clips, then the shots seen in them, each with the second it starts at. */
+/** Asset hits first (title weighs most), then the lines said in clips, then the moments of their timelines, then the shots seen in them, each with the second it starts at. */
 export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: Clause[] = []): SearchHit[] {
   const fts = ftsQuery(q);
   if (!fts) return [];
@@ -86,9 +88,19 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
        ORDER BY bm25(search_stretches) LIMIT ?`,
     )
     .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
+  // the timelines' events (timeline.ts): what happens and what is heard, each with its start
+  const timed = db()
+    .prepare(
+      `SELECT ${CARD}, s.a AS at, snippet(search_timeline, 2, '', '', '…', 16) AS snippet
+       FROM search_timeline s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
+       WHERE search_timeline MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       ORDER BY bm25(search_timeline) LIMIT ?`,
+    )
+    .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
   return [
     ...assets.map((r) => ({ asset: toCard(r) })),
     ...said.map((r) => ({ asset: toCard(r), seconds: startOf(r.version_id, r.seg), snippet: r.snippet })),
+    ...timed.map((r) => ({ asset: toCard(r), seconds: Number(r.at) || 0, snippet: r.snippet })),
     ...seen.map((r) => ({ asset: toCard(r), seconds: r.at ?? 0, snippet: r.snippet })),
   ];
 }
@@ -139,6 +151,7 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
   const shots = stretchesOf(db(), row.version_id)
     .filter((s) => s.text)
     .map((s) => ({ seg: s.seg, a: s.a, b: s.b, text: s.text, source: s.source }));
+  const timeline = timelineOf(db(), row.version_id);
   return {
     ...toCard(row),
     versions,
@@ -146,13 +159,16 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     jobs,
     ...(t ? { transcript: { provider: t.provider, segments: segmentsOf(db(), row.version_id) } } : {}),
     ...(shots.length ? { shots } : {}),
+    ...(timeline.length ? { timeline } : {}),
     ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user)),
   };
 }
 
 // GET /api/library/:id/search?q&collectionId&kind&f.<key> → SearchHit[], best first: full text, fused with the chunks
-// close in meaning when semantic search is on. Hits the viewer may not see are left out. While search by meaning is
-// still getting ready (its model fetched the first time), the hits are by words and X-Search-Meaning says getting-ready.
+// close in meaning when semantic search is on, and the shots whose picture matches when search by picture is (pictures.ts,
+// each opening at its shot; a search not in English matches pictures by its English line). Hits the viewer may not see
+// are left out. While search by meaning is still getting ready (its model fetched the first time), the hits are by words
+// and X-Search-Meaning says getting-ready; X-Search-Pictures says pending while the English line is being written.
 searchApp.get("/:id/search", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -165,9 +181,15 @@ searchApp.get("/:id/search", async (c) => {
   // footage only, by text and by meaning (query.ts FINISHED)
   const where = [...searchClauses(query), { sql: `NOT ${FINISHED}`, params: [] }];
   const text = searchLibrary(libraryId, q, LIMIT, where);
-  const meaning = await semanticHits(libraryId, q, user.username, where).catch(() => null);
-  const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
+  const [meaning, pictured] = await Promise.all([
+    semanticHits(libraryId, q, user.username, where).catch(() => null),
+    pictureHits(libraryId, q, user.username, where).catch(() => ({ hits: null, pending: undefined })),
+  ]);
+  const more = [meaning, pictured.hits].filter((h): h is SearchHit[] => !!h);
+  const hits = more.length ? rrf([text, ...more], hitKey).slice(0, 2 * LIMIT) : text;
   if (!meaning && meaningGettingReady(libraryId, user.username)) c.header("X-Search-Meaning", "getting-ready");
+  // a search not in English: its English line for the pictures is being written, so the page asks again soon
+  if (pictured.pending) c.header("X-Search-Pictures", "pending");
   const seen = markHere(db(), await visibleCards(viewer, libraryId, hits.map((h) => h.asset)), query.device);
   const shown = new Map(seen.map((a) => [a.id, a]));
   return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll)).map((h) => ({ ...h, asset: shown.get(h.asset.id)! }))); // ponytail: narrowed after the top hits
@@ -188,9 +210,9 @@ searchApp.get("/:id/tags", async (c) => {
   return c.json({ tags });
 });
 
-// GET /api/library/:id/places → { places: [{ place, count }] }: the countries clips were filmed in, most clips first, for
-// the Where filter. ponytail: the whole library, as /tags above
-searchApp.get("/:id/places", async (c) => {
+// GET /api/library/:id/countries → { places: [{ place, count }] }: the countries clips were filmed in, most clips first,
+// for the Where filter (…/places is where originals are, places.ts). ponytail: the whole library, as /tags above
+searchApp.get("/:id/countries", async (c) => {
   const libraryId = c.req.param("id");
   if (!(await readerOf(c.get("user").username, libraryId))) return notFound(c);
   const places = db()

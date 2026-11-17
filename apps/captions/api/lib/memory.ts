@@ -43,6 +43,12 @@ interface Removed {
 interface Store {
   facts: Kept[];
   removed: Removed[];
+  /**
+   * Settings → Memory, Workspaces: "Each workspace its own" (owner, 2026-11-16: "a simple switch"). Every new fact is
+   * filed to the workspace it was said in, whatever the AI asked. Missing = "Shared by all workspaces": a fact is about
+   * the person unless the AI files it to the workspace. Facts already kept stay where they are filed either way.
+   */
+  perWorkspace?: true;
 }
 
 /** Something the person typed in a chat (api/assistant.ts saidInChat). */
@@ -61,7 +67,7 @@ const fileOf = (username: string) => path.join(env.dataDir, "memory", `${usernam
 function read(username: string): Store {
   try {
     const s = JSON.parse(readFileSync(fileOf(username), "utf-8")) as Partial<Store>;
-    return { facts: s.facts ?? [], removed: s.removed ?? [] };
+    return { facts: s.facts ?? [], removed: s.removed ?? [], ...(s.perWorkspace ? { perWorkspace: true } : {}) };
   } catch {
     return { facts: [], removed: [] };
   }
@@ -130,6 +136,13 @@ export function keep(username: string, quote: unknown, said: Said[], project?: s
   };
 }
 
+/** Whether each workspace keeps its own facts (Store.perWorkspace). */
+export const perWorkspace = (username: string): boolean => !!read(username).perWorkspace;
+export function setPerWorkspace(username: string, on: boolean): void {
+  const { facts, removed } = read(username);
+  write(username, { facts, removed, ...(on ? { perWorkspace: true } : {}) });
+}
+
 /** The words a fact was kept from, and its rule (Settings → Memory: Rewrite). */
 export const factOf = (username: string, id: string) => read(username).facts.find((f) => f.id === id);
 
@@ -156,6 +169,18 @@ export function setProject(username: string, id: string, project: string | undef
   const next: Kept = { ...rest, ...(project ? { project } : {}) };
   write(username, { ...store, facts: store.facts.map((f) => (f === old ? next : f)) });
   return next;
+}
+
+/** The facts kept for a workspace being deleted (lib/workspace-delete.ts), `pick` by their workspace, and their delete. */
+export function workspaceFacts(username: string, pick: (project?: string) => boolean): { n: number; drop: () => Promise<void> } {
+  const ids = new Set(read(username).facts.filter((f) => pick(f.project)).map((f) => f.id));
+  return {
+    n: ids.size,
+    drop: async () => {
+      const store = read(username);
+      if (ids.size) write(username, { ...store, facts: store.facts.filter((f) => !ids.has(f.id)) });
+    },
+  };
 }
 
 /** Remove a fact for good; false when the account has none by that id. */

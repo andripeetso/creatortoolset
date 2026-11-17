@@ -1,8 +1,9 @@
 import path from "node:path";
 import { TRACKS, type Item, type Timeline, type TimelineSource } from "../../contracts/editor";
 import { type Cdl, cdlMeta } from "./grade";
-import { fitted } from "./framing";
+import { motion } from "./carry";
 import { dissolveFrames } from "./fcpxml";
+import { fitted } from "./framing";
 import { meanSpeed } from "./plan";
 
 /**
@@ -11,10 +12,13 @@ import { meanSpeed } from "./plan";
  *
  * Units: a clip's source_range is in the file's timecode frames at the timeline rate (start timecode + `in`), its
  * media's available_range at the file's own rate. Pan/Tilt are a fraction of the clip's size fitted into the frame,
- * + Tilt moving the picture up. `target_url` is the file's path as given: an absolute path on this machine, or relative
+ * + Tilt moving the picture up. A reframed shot's moving window (Item.path) is Pan keyed by frame from the clip's first
+ * (`Key Frames`: { "<frame>": { Value, Variant Type } }, as Resolve writes Dynamic Zoom's), eased by keys every frame it
+ * moves (framing.ts panKeys), since Resolve eases linearly between keys and its own curve handles are not written.
+ * `target_url` is the file's path as given: an absolute path on this machine, or relative
  * to the timeline file in a zip (bare paths are what Resolve itself writes; a file:// URL is not needed).
- * A planned shot's moves (carry.ts motion) are not keyframed here yet: Resolve's "Key Frames" shape is still being
- * measured, so the notice lists them for Resolve (carry.ts CARRIES).
+ * A planned shot's moves (punch, zoom, shake, a whip) are keyed the same way on Zoom, Pan and Tilt, the window's pan and
+ * the moves' summed into one set of keys (carry.ts motion).
  */
 
 /**
@@ -22,13 +26,13 @@ import { meanSpeed } from "./plan";
  * Resolve 21.2 refuses a whole file whose effect values are whole numbers ("1" where it writes "1.0"), its markers too.
  */
 export const otioText = (o: object): string =>
-  JSON.stringify(o, null, 2).replace(/("(?:rate|value|Default Parameter Value|Parameter Value|maxValue|minValue)": -?\d+)(?=[,\n])/g, "$1.0");
+  JSON.stringify(o, null, 2).replace(/("(?:rate|value|Value|Default Parameter Value|Parameter Value|maxValue|minValue)": -?\d+)(?=[,\n])/g, "$1.0");
 
 const rt = (value: number, rate: number) => ({ OTIO_SCHEMA: "RationalTime.1", rate, value });
 const range = (start: number, dur: number, rate: number) => ({ OTIO_SCHEMA: "TimeRange.1", duration: rt(dur, rate), start_time: rt(start, rate) });
-const param = (id: string, value: number, def: number, lo: number, hi: number) => ({
+const param = (id: string, value: number, def: number, lo: number, hi: number, keys: { f: number; v: number }[] = []) => ({
   "Default Parameter Value": def,
-  "Key Frames": {},
+  "Key Frames": Object.fromEntries(keys.map((k) => [String(k.f), { Value: k.v, "Variant Type": "Double" }])),
   "Parameter ID": id,
   "Parameter Value": value,
   "Variant Type": "Double",
@@ -45,15 +49,21 @@ const effect = (name: string, type: number, params: object[], display = name) =>
 function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: boolean, linkIds: Map<string, number>, grade?: Cdl) {
   const effects: object[] = [];
   const meta: Record<string, unknown> = {};
-  if (video && ((i.zoom ?? 1) !== 1 || i.tilt)) {
-    const { h } = fitted(src, tl.width, tl.height);
-    const zoom = i.zoom ?? 1;
+  // the shot's window and moves (carry.ts motion): Pan a share of the fitted picture's width, Tilt of its height
+  const keys = video ? motion(tl, i) : [];
+  if (keys.length > 1 || (keys[0] && (keys[0].zoom !== 1 || keys[0].x || keys[0].y))) {
+    const { w, h } = fitted(src, tl.width, tl.height);
+    // each value at the first key, and keyed only when it changes
+    const keyed = (id: string, v: (k: (typeof keys)[number]) => number, def: number, lo: number, hi: number) => {
+      const ks = keys.map((k) => ({ f: k.f, v: v(k) }));
+      return param(id, ks[0]!.v, def, lo, hi, ks.some((k) => k.v !== ks[0]!.v) ? ks : []);
+    };
     effects.push(
       effect("Transform", 2, [
-        param("transformationZoomX", zoom, 1, 0, 100),
-        param("transformationZoomY", zoom, 1, 0, 100),
-        param("transformationPan", 0, 0, -4, 4) /* pan stays 0 */,
-        param("transformationTilt", (i.tilt ?? 0) / h, 0, -4, 4),
+        keyed("transformationZoomX", (k) => k.zoom, 1, 0, 100),
+        keyed("transformationZoomY", (k) => k.zoom, 1, 0, 100),
+        keyed("transformationPan", (k) => Math.round((k.x / w) * 1e5) / 1e5, 0, -4, 4),
+        keyed("transformationTilt", (k) => k.y / h, 0, -4, 4),
       ]),
     );
   }

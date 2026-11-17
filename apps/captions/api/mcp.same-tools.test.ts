@@ -76,7 +76,7 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // what every turn of every person now carries: say so in the commit when a number moves
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
-    expect(Buffer.byteLength(def.description)).toBe(186);
+    expect(Buffer.byteLength(def.description)).toBe(183);
     // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the
     // list: 534; upload_file adds 345 (its 182-byte description, path and size); channel_posts 426 (the connected
     // social accounts' numbers and posts, read again first when over an hour old; its 279-byte description, platform and refresh)
@@ -88,7 +88,7 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // description). How edits are written is not in it: the tool hands that over when the timeline is read
     // voice_make adds 497 (the script spoken in one of the person's ElevenLabs voices, a take for a video with nothing filmed; its
     // 315-byte description, text, voice and name)
-    // animation_style_save adds 419 (an animation style set up by talking: its 219-byte description, id, name, brief and pictures)
+    // animation_style_save adds 419 (an animation style set up by talking: its 216-byte description, id, name, brief and pictures)
     // carousel_style_save adds 409 (a carousel style, the Designer's looks, set up the same way: its 210-byte description,
     // id, name, brief and pictures). In main's own list instagram_post grew by 67 (pictures: its slides shown) and
     // instagram_search by 25 (a kind with no words lists that kind's most watched), in the golden
@@ -106,8 +106,8 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // description, edit and text); editor_style_save's playbook adds 242 (what the AI researched about a kind of edit, kept
     // apart from the notes: 55 bytes of description, text and sources). In main's own list review_set_approval grew by 101
     // (words: the person's own message approving a video, which a style learns from), in the golden
-    expect(bytes(dock) - bytes(main(dock))).toBe(8767);
+    expect(bytes(dock) - bytes(main(dock))).toBe(8761);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(8703);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(8697);
   });
 });

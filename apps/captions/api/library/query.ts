@@ -5,6 +5,7 @@ import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
 import { deviceOf } from "../lib/devices";
+import { rootsOn } from "./places";
 
 /**
  * Asset listing for the library (tasks/media-library-plan.md, sections 6 and 8): one SQL statement from a
@@ -91,7 +92,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
     ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
     ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
     ...(p.place && /^[A-Z]{2}$/.test(p.place) ? { place: p.place } : {}),
-    ...(device ? { device, ...(p.here === "1" ? { here: true as const } : {}) } : {}),
+    ...(device ? { device, ...(p.here === "1" ? { here: true as const } : {}), ...(p.missing === "1" ? { missing: true as const } : {}) } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
@@ -154,14 +155,26 @@ const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions p
 /** The versions whose proxy `device`'s cache holds, as its last work claim said (api/work/routes.ts). */
 const cachedOn = (device: string): string[] => deviceOf(device)?.work?.cache?.versions ?? [];
 
-/** On this computer: its proxy in the computer's cache, or the file indexed there. */
-const HERE = `(a.current_version_id IN (SELECT value FROM json_each(?))
-  OR (SELECT hv.mac_device FROM asset_versions hv WHERE hv.id = a.current_version_id) = ?)`;
+/**
+ * The original of version `v` is on the computer (the asker's own, params placedParams): read there when it last looked
+ * (places.ts), on a disk it has connected now (its root), or indexed there and not looked for since.
+ */
+const placedOn = (v: string) => `(EXISTS (SELECT 1 FROM version_places hp WHERE hp.version_id = ${v} AND hp.device = ? AND hp.gone_at IS NULL)
+  OR EXISTS (SELECT 1 FROM asset_versions hv WHERE hv.id = ${v} AND (hv.root IN (SELECT value FROM json_each(?))
+    OR (hv.mac_device = ? AND NOT EXISTS (SELECT 1 FROM version_places hg WHERE hg.version_id = hv.id AND hg.device = ?)))))`;
+const placedParams = (device: string) => [device, JSON.stringify(rootsOn(device)), device, device];
+
+/** On this computer: its proxy in the computer's cache, or its original there (placedOn). */
+const HERE = `(a.current_version_id IN (SELECT value FROM json_each(?)) OR ${placedOn("a.current_version_id")})`;
+
+/** Missing here: the computer's last look found the current version gone (places.ts); one whose disk is away is not. */
+const MISSING = "a.current_version_id IN (SELECT version_id FROM version_places WHERE device = ? AND gone_at IS NOT NULL)";
 
 /** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
 export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
   return [
-    ...(query.here && query.device ? [{ sql: HERE, params: [JSON.stringify(cachedOn(query.device)), query.device] }] : []),
+    ...(query.here && query.device ? [{ sql: HERE, params: [JSON.stringify(cachedOn(query.device)), ...placedParams(query.device)] }] : []),
+    ...(query.missing && query.device ? [{ sql: MISSING, params: [query.device] }] : []),
     ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
     ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
     ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
@@ -300,12 +313,13 @@ const describedAs = (s: string): NonNullable<AssetCard["description"]> => {
   return { source: s.slice(0, i) === "user" ? "user" : "ai", text: s.slice(i + 1) };
 };
 
-/** Marks the cards on `device` (the asker's own computer, parseSearch): its proxy cached there, or the file indexed there. */
+/** Marks the cards on `device` (the asker's own computer, parseSearch): its proxy cached there, or its original there (placedOn). */
 export function markHere(db: DatabaseSync, cards: AssetCard[], device?: string): AssetCard[] {
   if (!device || !cards.length) return cards;
   const cached = new Set(cachedOn(device));
   const there = new Set(
-    (db.prepare("SELECT id FROM asset_versions WHERE mac_device = ? AND id IN (SELECT value FROM json_each(?))").all(device, JSON.stringify(cards.map((c) => c.versionId))) as { id: string }[]).map((r) => r.id),
+    (db.prepare(`SELECT v0.id FROM asset_versions v0 WHERE v0.id IN (SELECT value FROM json_each(?)) AND ${placedOn("v0.id")}`)
+      .all(JSON.stringify(cards.map((c) => c.versionId)), ...placedParams(device)) as { id: string }[]).map((r) => r.id),
   );
   return cards.map((c) => (cached.has(c.versionId) || there.has(c.versionId) ? { ...c, here: true as const } : c));
 }

@@ -95,6 +95,10 @@ export interface ServerPlugin {
   connectors?: { publicGrid?: PublicGridReader; readers?: SocialReader[] };
   // Upload relays for Review's big videos (api/review.ts): the server uses one when CT_UPLOAD_RELAY names it and it is available.
   uploadRelays?: UploadRelay[];
+  // Where uploads from a phone go in the workspace a request works in (api/library/upload-target.ts): the name of the
+  // plug-in's own store, which the phone knows how to send to, or null for that workspace's own library. The first
+  // plug-in that answers wins, and the library's own upload without a library id refuses that workspace.
+  uploadsTo?: (username: string) => string | null | Promise<string | null>;
   // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
   deviceJobs?: DeviceJobSlot[];
   // Footage and music folders this plug-in keeps in its own store, for this person: the assistant counts them as the
@@ -127,9 +131,30 @@ export interface ServerPlugin {
   // Whether this server does video work for an account's work in a workspace (api/work/server-work.ts): true or false
   // decides, undefined leaves it to the server's own setting. On Creator Toolset Cloud only a true answer turns it on.
   serverWork?: (q: { account: string | null; workspace: string | null }) => boolean | undefined;
+  // What the plug-in keeps in a workspace (its own AI Editor edits, say), deleted with the workspace
+  // (api/lib/workspace-delete.ts): the delete confirm counts them and the delete removes them, with the app's files for them.
+  workspaceStores?: WorkspaceStore[];
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
+
+/**
+ * One kind of thing kept in a workspace (api/lib/workspace-delete.ts; ServerPlugin.workspaceStores): what the delete confirm
+ * calls one and many, and `find`, the ones of `account` in workspace `ws` with `drop`, which deletes exactly those and the
+ * app's own files for them (never the person's own folders). `ws.has(stamp)`: whether a record with that workspace stamp
+ * is in it. A record with no stamp is in it when `has(undefined)` says so (the workspace is the first brand); a record
+ * that shows in every workspace is never its alone, so it stays.
+ */
+export interface WorkspaceStore {
+  name: [one: string, many: string];
+  /** The person's own files are behind these records (their folders, footage read in place): the records go, the files
+   *  stay, and the confirm says so. */
+  ownFiles?: true;
+  find: (account: SessionUser, ws: { id: string; has: (stamp?: string) => boolean }) => Promise<{ n: number; drop: () => Promise<unknown> }>;
+}
+
+/** Every loaded plug-in's workspace stores. */
+export const pluginWorkspaceStores = (): WorkspaceStore[] => loaded.flatMap((p) => p.workspaceStores ?? []);
 
 /** A look a plug-in keeps (ServerPlugin.design.looks). `made`: a picture the person made and liked in it; else an inspiration. */
 export interface PluginLook {
@@ -224,8 +249,8 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     for (const r of p.uploadRelays ?? []) adds.push({ text: `Upload relay: ${r.label}` });
     const tools = (p.tools as { defs?: unknown[] } | undefined)?.defs?.length ?? 0;
     if (tools) adds.push({ text: `${tools} ${tools === 1 ? "tool" : "tools"} for your own AI`, to: "/settings/own-ai" });
-    for (const f of p.editFlags ?? []) adds.push({ text: `AI Editor flag: ${f.label}`, to: "/editor" });
-    for (const st of p.editor?.steps ?? []) adds.push({ text: `AI Editor step: ${st.title}`, to: "/settings/tools/editor" });
+    for (const f of p.editFlags ?? []) adds.push({ text: `Editor flag: ${f.label}`, to: "/editor" });
+    for (const st of p.editor?.steps ?? []) adds.push({ text: `Editor step: ${st.title}`, to: "/settings/tools/editor" });
     for (const i of p.packItems ?? []) adds.push({ text: `Pack items: ${i.kind === "designSystems" ? "design systems" : i.kind}` });
     if (p.library) adds.push({ text: "Media Library source", to: "/library" });
     if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });
@@ -374,6 +399,15 @@ function checkDeviceJobs(plugins: ServerPlugin[]): void {
       seen.add(j.kind);
     }
   }
+}
+
+/** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
+export async function pluginUploadsTo(username: string): Promise<string | null> {
+  for (const p of loaded) {
+    const to = await p.uploadsTo?.(username);
+    if (to) return to;
+  }
+  return null;
 }
 
 /** The upload relays every loaded plug-in adds, in load order. */

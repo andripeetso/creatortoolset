@@ -20,7 +20,7 @@ export const YUNET = {
   url: "/opencv/face_detection_yunet/resolve/3cc26e7f1014a5ee5d74a42acee58bafc9d0a310/face_detection_yunet_2023mar.onnx",
   sha256: "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
 };
-const SIZE = 640;
+export const SIZE = 640;
 const STRIDES = [8, 16, 32];
 const MIN_SCORE = 0.6;
 /** Where along the clip the frames are taken. */
@@ -30,12 +30,24 @@ export const SANE: [number, number] = [0.15, 0.6];
 
 export const saneEyeline = (y: number | null | undefined): number | null => (typeof y === "number" && y >= SANE[0] && y <= SANE[1] ? y : null);
 
+/** A face YuNet found, in canvas px: its box (corner, size), score and five points: right eye, left eye, nose, mouth's right and left corners. */
+export interface FoundFace {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  score: number;
+  /** [x, y] × 5 */
+  kps: number[];
+}
+
 /**
- * The eyes' height in the biggest face of one frame, in canvas px, from YuNet's outputs (OpenCV's FaceDetectorYN
- * decode): per stride, a score sqrt(cls × obj), a box and five points, the eyes first.
+ * Every face in one frame, in canvas px, from YuNet's outputs (OpenCV's FaceDetectorYN decode): per stride, a score
+ * sqrt(cls × obj), a box and five points, the eyes first. Overlapping finds of one face are kept once (the best).
  */
-export function eyesOf(out: Record<string, { data: unknown }>): number | null {
-  let best: { area: number; y: number } | null = null;
+export function facesOf(out: Record<string, { data: unknown }>): FoundFace[] {
+  const all: FoundFace[] = [];
+  const clamp = (x: number) => Math.min(1, Math.max(0, x));
   for (const s of STRIDES) {
     const cols = SIZE / s;
     const cls = out[`cls_${s}`]!.data as Float32Array;
@@ -43,44 +55,79 @@ export function eyesOf(out: Record<string, { data: unknown }>): number | null {
     const box = out[`bbox_${s}`]!.data as Float32Array;
     const kps = out[`kps_${s}`]!.data as Float32Array;
     for (let i = 0; i < cls.length; i++) {
-      const clamp = (x: number) => Math.min(1, Math.max(0, x));
-      if (Math.sqrt(clamp(cls[i]!) * clamp(obj[i]!)) < MIN_SCORE) continue;
-      const area = Math.exp(box[i * 4 + 2]!) * Math.exp(box[i * 4 + 3]!) * s * s;
-      const r = Math.floor(i / cols);
-      const y = ((kps[i * 10 + 1]! + r) * s + (kps[i * 10 + 3]! + r) * s) / 2;
-      if (!best || area > best.area) best = { area, y };
+      const score = Math.sqrt(clamp(cls[i]!) * clamp(obj[i]!));
+      if (score < MIN_SCORE) continue;
+      const [c, r] = [i % cols, Math.floor(i / cols)];
+      const [cx, cy] = [(c + box[i * 4]!) * s, (r + box[i * 4 + 1]!) * s];
+      const [w, h] = [Math.exp(box[i * 4 + 2]!) * s, Math.exp(box[i * 4 + 3]!) * s];
+      const pts: number[] = [];
+      for (let k = 0; k < 5; k++) pts.push((kps[i * 10 + 2 * k]! + c) * s, (kps[i * 10 + 2 * k + 1]! + r) * s);
+      all.push({ x: cx - w / 2, y: cy - h / 2, w, h, score, kps: pts });
     }
   }
-  return best?.y ?? null;
+  const iou = (a: FoundFace, b: FoundFace) => {
+    const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+    const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    return (ix * iy) / (a.w * a.h + b.w * b.h - ix * iy);
+  };
+  const kept: FoundFace[] = [];
+  for (const f of all.sort((a, b) => b.score - a.score)) if (kept.every((k) => iou(k, f) < 0.3)) kept.push(f);
+  return kept;
 }
 
-const modelFile = () => path.join(modelsDir(), "opencv", "face_detection_yunet", path.basename(YUNET.url));
+/** The eyes' height in the biggest face of one frame, in canvas px. */
+export function eyesOf(out: Record<string, { data: unknown }>): number | null {
+  const big = facesOf(out).sort((a, b) => b.w * b.h - a.w * a.h)[0];
+  return big ? (big.kps[1]! + big.kps[3]!) / 2 : null;
+}
+
+/**
+ * The face model that tells people apart (SFace, OpenCV's, Apache-2.0, 37 MB): 128 numbers per face, two faces of one
+ * person close together (speakers.ts keeps one person's number across camera cuts with it).
+ */
+export const SFACE = {
+  url: "/opencv/face_recognition_sface/resolve/3d7082438a6e4551e840c9b2bb60b71e8da4b524/face_recognition_sface_2021dec.onnx",
+  sha256: "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+};
+type ModelSpec = typeof YUNET;
+
+const modelFile = (m: ModelSpec) => {
+  const [org, repo] = m.url.split("/").filter(Boolean);
+  return path.join(modelsDir(), org!, repo!, path.basename(m.url));
+};
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-/** The model's bytes: kept with the person's data, fetched once through the server's model route (its mirror fallback). */
-async function modelBytes(): Promise<Uint8Array> {
-  const kept = await readFile(modelFile()).catch(() => null);
-  if (kept && sha(kept) === YUNET.sha256) return kept;
-  const r = await hfApp.request(YUNET.url, { headers: { [OWN_COPY]: "1" } });
+/** A model's bytes: kept with the person's data, fetched once through the server's model route (its mirror fallback). */
+async function modelBytes(m: ModelSpec): Promise<Uint8Array> {
+  const file = modelFile(m);
+  const kept = await readFile(file).catch(() => null);
+  if (kept && sha(kept) === m.sha256) return kept;
+  const r = await hfApp.request(m.url, { headers: { [OWN_COPY]: "1" } });
   if (!r.ok) throw new Error(`The face model could not be fetched (${r.status})`);
   const bytes = new Uint8Array(await r.arrayBuffer());
-  if (sha(bytes) !== YUNET.sha256) throw new Error("The face model's checksum does not match");
-  await mkdir(path.dirname(modelFile()), { recursive: true });
-  await writeFile(`${modelFile()}.part`, bytes);
-  await rename(`${modelFile()}.part`, modelFile());
+  if (sha(bytes) !== m.sha256) throw new Error("The face model's checksum does not match");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(`${file}.part`, bytes);
+  await rename(`${file}.part`, file);
   return bytes;
 }
 
-// ponytail: kept loaded for the server's life (a few MB); give it back on idle if memory ever matters
-let session: Promise<InferenceSession> | undefined;
-const load = () =>
-  (session ??= (async () => {
-    const ort = await import("onnxruntime-node");
-    return ort.InferenceSession.create(await modelBytes(), { executionProviders: ["cpu"], intraOpNumThreads: 2, interOpNumThreads: 1 });
-  })().catch((e) => {
-    session = undefined;
-    throw e;
-  }));
+// ponytail: kept loaded for the server's life (a few MB, SFace 37); give them back on idle if memory ever matters
+const sessions = new Map<string, Promise<InferenceSession>>();
+const loaded = (m: ModelSpec) => {
+  let s = sessions.get(m.url);
+  if (!s) {
+    s = (async () => {
+      const ort = await import("onnxruntime-node");
+      return ort.InferenceSession.create(await modelBytes(m), { executionProviders: ["cpu"], intraOpNumThreads: 2, interOpNumThreads: 1 });
+    })();
+    sessions.set(m.url, s);
+    s.catch(() => sessions.delete(m.url));
+  }
+  return s;
+};
+export const faceModel = () => loaded(YUNET);
+export const idModel = () => loaded(SFACE);
 
 /** One frame at `t` seconds, upright, fitted into the top-left of a 640×640 black canvas, as BGR 0..255 planes (the model's input). */
 function frameAt(src: string, t: number, signal?: AbortSignal): Promise<Float32Array> {
@@ -109,7 +156,7 @@ function frameAt(src: string, t: number, signal?: AbortSignal): Promise<Float32A
  */
 export function findEyeline(src: string, dims: { w: number; h: number; duration: number }, signal?: AbortSignal): Promise<number | null> {
   return ffmpegSlot(async () => {
-    const model = await load();
+    const model = await faceModel();
     const ort = await import("onnxruntime-node");
     const picH = dims.h >= dims.w ? SIZE : (SIZE * dims.h) / dims.w;
     const found: number[] = [];

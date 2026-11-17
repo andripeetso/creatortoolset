@@ -69,6 +69,10 @@ export interface Framework {
   seedKey?: string;
   /** Installed from a community pack (api/lib/packs.ts). An untouched copy has updatedAt === createdAt. */
   from?: { pack: string; version: string };
+  /** The workspaces it applies in; missing = every workspace (rule-workspaces.ts). */
+  only?: string[];
+  /** A workspace's own version, used there in its place: workspace id → its fields (rule-workspaces.ts). */
+  versions?: Record<string, Pick<Framework, "name" | "role" | "summary" | "steps" | "whenToUse" | "pairsWith" | "example"> & { updatedAt: number }>;
   createdAt: number;
   updatedAt: number;
 }
@@ -85,6 +89,10 @@ export interface Rule {
   text: string;
   on: boolean;
   seedKey?: string;
+  /** The workspaces it applies in; missing = every workspace (rule-workspaces.ts). */
+  only?: string[];
+  /** A workspace's own version, used there in its place: workspace id → its fields (rule-workspaces.ts). */
+  versions?: Record<string, Pick<Rule, "name" | "text" | "on"> & { updatedAt: number }>;
   createdAt: number;
   updatedAt: number;
 }
@@ -201,6 +209,8 @@ export interface SessionMeta {
   note?: { path: string; mtime: number };
   /** When the status last changed (the note sync compares it with the note's mtime). */
   statusAt?: number;
+  /** Its folder in the workspace's Finals folder (contracts/storage.ts finalsDirName of its title then), kept so a rename keeps it. */
+  finalsDir?: string;
   createdAt: number;
   updatedAt: number;
 }

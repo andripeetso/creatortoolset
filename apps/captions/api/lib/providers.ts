@@ -327,7 +327,7 @@ const usable = (scope: Scope, i: ProviderInstance, owner?: string): boolean =>
 function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection, owner?: string): Route | null {
   const runnable = s.instances.filter((i) => usable(scope, i, owner));
   if (!runnable.length) return null;
-  for (const sel of [own, s.jobs[job], s.default]) {
+  for (const sel of [own, s.jobs[job], job === "library" ? s.jobs.analyzer : undefined, s.default]) {
     const instance = sel && runnable.find((i) => i.id === sel.instance);
     if (sel && instance) return { scope, selection: sel, instance, device: deviceIdOf(instance) };
   }

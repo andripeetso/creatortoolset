@@ -18,20 +18,20 @@
               <adjust-transform>
                 <param name="position">
                   <keyframeAnimation>
-                    <keyframe time="0s" value="0 0"/>
-                    <keyframe time="4/25s" value="0 0"/>
-                    <keyframe time="1/5s" value="0 0"/>
-                    <keyframe time="13/25s" value="0 0"/>
-                    <keyframe time="1s" value="0 0"/>
+                    <keyframe time="0s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="4/25s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="1/5s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="13/25s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="1s" value="0 0" interp="linear" curve="linear"/>
                   </keyframeAnimation>
                 </param>
                 <param name="scale">
                   <keyframeAnimation>
-                    <keyframe time="0s" value="3.2 3.2"/>
-                    <keyframe time="4/25s" value="3.2 3.2"/>
-                    <keyframe time="1/5s" value="4.16 4.16"/>
-                    <keyframe time="13/25s" value="3.2 3.2"/>
-                    <keyframe time="1s" value="3.2 3.2"/>
+                    <keyframe time="0s" value="3.2 3.2" interp="linear" curve="linear"/>
+                    <keyframe time="4/25s" value="3.2 3.2" interp="linear" curve="linear"/>
+                    <keyframe time="1/5s" value="4.16 4.16" interp="linear" curve="linear"/>
+                    <keyframe time="13/25s" value="3.2 3.2" interp="linear" curve="linear"/>
+                    <keyframe time="1s" value="3.2 3.2" interp="linear" curve="linear"/>
                   </keyframeAnimation>
                 </param>
               </adjust-transform>
@@ -56,28 +56,28 @@
               <adjust-transform>
                 <param name="position">
                   <keyframeAnimation>
-                    <keyframe time="8s" value="14.063 0"/>
-                    <keyframe time="203/25s" value="0 0"/>
-                    <keyframe time="204/25s" value="0 0"/>
-                    <keyframe time="41/5s" value="2.189 -0.314"/>
-                    <keyframe time="206/25s" value="-2.468 -1.182"/>
-                    <keyframe time="207/25s" value="2.668 2.572"/>
-                    <keyframe time="208/25s" value="-2.784 -3.73"/>
-                    <keyframe time="209/25s" value="0 0"/>
-                    <keyframe time="9s" value="0 0"/>
+                    <keyframe time="8s" value="14.063 0" interp="linear" curve="linear"/>
+                    <keyframe time="203/25s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="204/25s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="41/5s" value="2.189 -0.314" interp="linear" curve="linear"/>
+                    <keyframe time="206/25s" value="-2.468 -1.182" interp="linear" curve="linear"/>
+                    <keyframe time="207/25s" value="2.668 2.572" interp="linear" curve="linear"/>
+                    <keyframe time="208/25s" value="-2.784 -3.73" interp="linear" curve="linear"/>
+                    <keyframe time="209/25s" value="0 0" interp="linear" curve="linear"/>
+                    <keyframe time="9s" value="0 0" interp="linear" curve="linear"/>
                   </keyframeAnimation>
                 </param>
                 <param name="scale">
                   <keyframeAnimation>
-                    <keyframe time="8s" value="3.52 3.52"/>
-                    <keyframe time="203/25s" value="3.52 3.52"/>
-                    <keyframe time="204/25s" value="3.52 3.52"/>
-                    <keyframe time="41/5s" value="3.52 3.52"/>
-                    <keyframe time="206/25s" value="3.52 3.52"/>
-                    <keyframe time="207/25s" value="3.52 3.52"/>
-                    <keyframe time="208/25s" value="3.52 3.52"/>
-                    <keyframe time="209/25s" value="3.52 3.52"/>
-                    <keyframe time="9s" value="3.52 3.52"/>
+                    <keyframe time="8s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="203/25s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="204/25s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="41/5s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="206/25s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="207/25s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="208/25s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="209/25s" value="3.52 3.52" interp="linear" curve="linear"/>
+                    <keyframe time="9s" value="3.52 3.52" interp="linear" curve="linear"/>
                   </keyframeAnimation>
                 </param>
               </adjust-transform>

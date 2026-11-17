@@ -64,6 +64,51 @@ describe("timeline edits made into a cut", () => {
     expect(at(h, "V1")).toEqual([[0, 30, 100], [30, 20, 220], [50, 30, 300]]);
   });
 
+  it("a reframed shot cut shorter keeps its window where it was on each frame, and who talks moves with the frames", () => {
+    const t = three();
+    // the second shot's window cuts from the left to the right half a second in
+    t.tracks.V1.items[1]!.path = [{ t: 0, x: 0.1 }, { t: 0.5, x: 0.1 }, { t: 0.5, x: 0.9 }];
+    t.speakers = [{ rec: 30, len: 15, speaker: 1 }, { rec: 45, len: 45, speaker: 2 }];
+    const h = make(t, { key: "V1:30", head: -10 });
+    // a third of a second gone from its head: the cut comes a third of a second sooner
+    expect(h.tracks.V1.items[1]!.path).toEqual([{ t: 0, x: 0.1 }, { t: 0.167, x: 0.1 }, { t: 0.167, x: 0.9 }, { t: 0.667, x: 0.9 }]);
+    expect(h.speakers).toEqual([{ rec: 30, len: 5, speaker: 1 }, { rec: 35, len: 45, speaker: 2 }]);
+  });
+
+  it("a reframed moment's shot: Review shows its window and the paths it can take; a hand holds it or sets who it follows, and that stays on the next versions", () => {
+    // Take A as a wide (16:9) recording cut to 9:16, its window following who talks
+    const t = three();
+    t.sources.A = { ...t.sources.A!, w: 1920, h: 1080 };
+    for (const i of t.tracks.V1.items) Object.assign(i, { zoom: 3.1605, path: [{ t: 0, x: 0.3 }] });
+    t.reframe = { A: { auto: [{ t: 0, x: 0.3 }, { t: 4, x: 0.3 }, { t: 4, x: 0.7 }], speakers: { 1: [{ t: 0, x: 0.1 }], 2: [{ t: 0, x: 0.9 }, { t: 5.5, x: 0.9 }, { t: 5.5, x: 0.6 }] } } };
+    const v = draftView(t);
+    // the second shot: 3.333 s into the take for 1 s
+    expect(v.tracks[0]!.items[1]!.window).toEqual({
+      path: [{ t: 0, x: 0.3 }], from: 3.333, w: Math.round((1 / 3.1605) * 1e4) / 1e4,
+      follow: { 0: [{ t: 0, x: 0.3 }, { t: 0.667, x: 0.3 }, { t: 0.667, x: 0.7 }, { t: 1, x: 0.7 }], 1: [{ t: 0, x: 0.1 }], 2: [{ t: 0, x: 0.9 }] },
+    });
+    expect(v.tracks.find((x) => x.id === "A1")!.items[0]!.window).toBeUndefined();
+
+    const n = make(t, { key: "V1:0", crop: { x: 0.25 } }, { key: "V1:60", crop: { speaker: 2 } });
+    expect(n.tracks.V1.items.map((i) => [i.path, i.crop])).toEqual([
+      [[{ t: 0, x: 0.25 }], { x: 0.25 }],
+      [[{ t: 0, x: 0.3 }], undefined],
+      [[{ t: 0, x: 0.9 }, { t: 0.5, x: 0.9 }, { t: 0.5, x: 0.6 }, { t: 1, x: 0.6 }], { speaker: 2 }],
+    ]);
+    expect(n.reframe).toEqual(t.reframe);
+    // the next version: its first shot trimmed keeps its held window; Speaker 2's shot set back to who talks
+    const m = make(n, { key: "V1:0", head: -6 }, { key: "V1:60", crop: { speaker: 0 } });
+    expect(m.tracks.V1.items[0]).toMatchObject({ path: [{ t: 0, x: 0.25 }], crop: { x: 0.25 } });
+    expect(m.tracks.V1.items[2]!.path).toEqual([{ t: 0, x: 0.7 }]);
+    expect(m.tracks.V1.items[2]!.crop).toBeUndefined();
+    expect(draftView(m).tracks[0]!.items[0]!.window!.crop).toEqual({ x: 0.25 });
+
+    expect(() => make(three(), { key: "V1:0", crop: { x: 0.5 } })).toThrow("V1:0 is not reframed");
+    expect(() => make(t, { key: "V1:0", crop: { speaker: 3 } })).toThrow("Speaker 3 can't be followed in this shot");
+    // as the server keeps them: a window on a talent shot only, x within the picture
+    expect(cleanEdits([edit({ key: "V1:0", crop: { x: 1.5 } }), edit({ key: "A1:0", crop: { speaker: 1 } }), edit({ key: "V1:30", crop: { speaker: 1.5 } as never })])).toEqual([]);
+  });
+
   it("an edge pulled out shows more of the take with its voice, and the rest moves later", () => {
     const t = make(three(), { key: "V1:30", head: 6, tail: 4 });
     // 6 timeline frames earlier in a 60 fps take = 12 source frames

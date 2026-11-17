@@ -7,7 +7,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
-import { LIBRARY_UPLOADS, type LibraryUpload } from "../../contracts/library";
+import { LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, type LibraryUpload, type LookLevel } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -195,16 +195,49 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
 /** A library's on/off setting. describe and embed spend AI on every upload, so they are off until its owner turns them on. */
 /**
  * All start on: describing and shot descriptions run on the uploader's own AI (or park until they connect one), and a
- * big upload says first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts).
+ * big upload says first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts),
+ * search by picture where this server makes picture vectors (pictures.ts).
  */
-export const SETTING_DEFAULTS = { describe: true, look: true, embed: true, proxy: true } as const;
+export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true } as const;
 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
 export const libraryUpload = (libraryId: string): LibraryUpload =>
   uploadOf((libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
+/** What a final sends from a computer (contracts LibrarySettings.finalsUpload): "all" when it was never set. */
+export const finalsUpload = (libraryId: string): LibraryUpload => {
+  const v = (libraryDb().prepare("SELECT json_extract(settings, '$.finalsUpload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v;
+  return v === null || v === undefined ? "all" : uploadOf(v);
+};
+/** Whether a collection is its library's Finals (finals.ts finalsCollectionId). */
+export const isFinalsCollection = (collectionId: string): boolean =>
+  !!libraryDb().prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(collectionId);
+/** The upload setting one version follows: a final's when its asset is in Finals, else the library's. */
+export function versionUpload(versionId: string): LibraryUpload {
+  const r = libraryDb()
+    .prepare(
+      `SELECT a.library_id AS lib, EXISTS (SELECT 1 FROM collection_items ci JOIN collections c ON c.id = ci.collection_id
+         WHERE ci.asset_id = a.id AND c.parent_id IS NULL AND c.kind = 'manual' AND c.name = 'Finals') AS fin
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
+    )
+    .get(versionId) as { lib: string; fin: number } | undefined;
+  return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
+}
 
 export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFAULTS): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;
   return on === null || on === undefined ? SETTING_DEFAULTS[key] : !!on;
 };
+
+/** How densely the library describes shots (contracts LOOK_LEVELS). */
+export const libraryLookLevel = (libraryId: string): LookLevel =>
+  lookLevelOf((libraryDb().prepare("SELECT json_extract(settings, '$.lookLevel') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
+
+/** The library's monthly cap on shot descriptions in dollars: LOOK_BUDGET_DEFAULT until its owner sets one, null when they took it off. */
+export function libraryLookBudget(libraryId: string): number | null {
+  const r = libraryDb().prepare("SELECT json_type(settings, '$.lookBudget') AS t, json_extract(settings, '$.lookBudget') AS v FROM libraries WHERE id = ?").get(libraryId) as
+    | { t: string | null; v: unknown }
+    | undefined;
+  if (!r?.t) return LOOK_BUDGET_DEFAULT;
+  return typeof r.v === "number" && r.v >= 0 ? r.v : null;
+}
