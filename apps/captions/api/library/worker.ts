@@ -234,7 +234,12 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
     .all(now, ...all) as unknown as (JobRow & { source_key: string | null })[];
   const out: number[] = [];
   for (const j of queued) {
-    if (on.includes(j.kind) && test!(j)) out.push(j.id);
+    if (on.includes(j.kind) && test!(j)) {
+      // a computer can take it now: its old "waits for" line goes, or the Activity counts it as away until a claim
+      if (j.error === WAITS_FOR_COMPUTER || j.error === WAITS_FOR_SERVER || /^(Only .+ can read |No computer can read )/.test(j.error ?? ""))
+        db.prepare("UPDATE jobs SET error = NULL WHERE id = ?").run(j.id);
+      out.push(j.id);
+    }
     else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor) && !readsNoPicture(j)) {
       out.push(j.id);
       // which computers can read its folder, when that says more than "one of your computers" (library-package.ts libraryWaitLine)

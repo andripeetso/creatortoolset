@@ -12,7 +12,7 @@
  * claim made now would be handed a step the poll is answered at once with EDITOR_HINT, after any AI request. The device
  * then claims. A poll that lists no `editor` changes nothing and is never answered with the hint. The answer carries
  * `work: true` when a core step placed on a computer waits for this one (contracts/work.ts): the app starts its work
- * package worker, which claims through work/claim. Only a computer that has made a work claim is told it.
+ * package worker, which claims through work/claim. Only a computer whose long poll sends its package version (`work`) is told it.
  *   GET  editor/job/:id/cards                   → CardsDraw       a cards-draw step: what to draw
  *   POST editor/job/:id/cards/:cardId           multipart: `clip` (H.264 mp4, no sound) and `still` three times (PNG, 540 px
  *                                               wide: first, middle and last frame) → { ok: true }; then done or fail
