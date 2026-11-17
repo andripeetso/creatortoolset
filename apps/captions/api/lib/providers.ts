@@ -10,6 +10,7 @@ import {
   JOBS,
   isAcpDriver,
   driverFields,
+  ENV_NAME_RE,
   runsOn,
   type Device,
   type Driver,
@@ -219,7 +220,6 @@ function parseSelection(raw: unknown, instances: ProviderInstance[], what: strin
 
 const HOME_RE = /^\/Users\/[^/]+\/[^\0]{1,200}$/;
 const ABS_PATH_RE = /^\/[^\0]{1,300}$/;
-const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 /**
  * The optional fields of a provider instance, checked, and only the ones the driver's settings page shows (driverFields):
@@ -241,7 +241,7 @@ function parseExtras(i: Record<string, unknown>, driver: Driver, name: string): 
   }
   if (f.env && i.envNames !== undefined) {
     const names = i.envNames as unknown;
-    if (!Array.isArray(names) || names.some((n) => typeof n !== "string" || !ENV_NAME_RE.test(n)) || names.length > 32) throw new Error(`${name}: variable names are letters, digits and _, up to 32`);
+    if (!Array.isArray(names) || names.some((n) => typeof n !== "string" || !ENV_NAME_RE.test(n)) || names.length > 32) throw new Error(`${name}: variable names are letters, digits and _, at most 32 names`);
     out.envNames = [...(names as string[])];
   }
   if (driver === "acp") {

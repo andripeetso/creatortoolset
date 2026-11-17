@@ -122,10 +122,11 @@ export function LibraryWatchFolders({
                 { value: "reference", label: "Keep in place" },
                 { value: "copy", label: "Copy into the library" },
               ]}
+              className="sm:w-auto"
             />
           )}
           {libraryFolders.length > 0 && (
-            <SettingsSelect label="Library folder" value={into || NONE} onValueChange={(v) => setInto(v === NONE ? "" : v)} options={[{ value: NONE, label: "No folder" }, ...libraryFolders.map((c) => ({ value: c.id, label: c.name }))]} />
+            <SettingsSelect label="Library folder" value={into || NONE} onValueChange={(v) => setInto(v === NONE ? "" : v)} options={[{ value: NONE, label: "No folder" }, ...libraryFolders.map((c) => ({ value: c.id, label: c.name }))]} className="sm:w-auto" />
           )}
           <Button type="submit" size="sm">
             Add

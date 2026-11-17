@@ -332,7 +332,7 @@ function TaskDialog({ initial, providers, w, onClose, onSaved }: { initial: Auto
                     { value: "minutes", label: "minutes" },
                     { value: "hours", label: "hours" },
                   ]}
-                  className="w-28 sm:min-w-28"
+                  className="w-28 sm:w-28"
                 />
               </>
             }
