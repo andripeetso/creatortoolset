@@ -112,6 +112,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/work/library-package.ts": "PASS: acceptLibraryFile takes an original only under upload all; /hear is P3f",
   "apps/captions/api/work/library.ts": "PASS: reads the server's own held copy, not a client upload",
   "apps/captions/api/work/result.ts": "OPEN P3b-P3f: work results (serving allowed; processing output text only after P3)",
+  "apps/captions/api/work/tasks.ts": "PASS: a computer task's made files for a task it holds (processing output), never a person's original",
   "apps/captions/api/work/routes.ts": "OPEN P3b-P3f: work results (acceptUpload)",
   "apps/captions/api/workshop.ts": "PASS: deliveries and knowledge files are serving and text",
   "apps/captions/api/documents.ts": "PASS: JSON text",
