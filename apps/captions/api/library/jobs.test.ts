@@ -93,6 +93,7 @@ describe("long jobs and the editor's table", () => {
     // claimed again, it is no one's until its claimer says (work/library-package.ts)
     db.prepare("UPDATE jobs SET state = 'queued' WHERE id = ?").run(held.id);
     expect(claimJob(db, 300, 10 ** 13, "jobs", ["held"])).toMatchObject({ held_by: null, claim_id: null });
+    db.prepare("DELETE FROM jobs WHERE kind IN ('held', 'own')").run(); // the tests after count this table's jobs
   });
 
   it("defer puts a job back in the queue later without counting the attempt", () => {

@@ -166,9 +166,13 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
     for (const k of ["done", "total", "leftS"] as const) delete beat[k];
   };
   let timer: NodeJS.Timeout | undefined;
+  // set once the result goes: a beat still on its way is answered 410 for the job just done, which stops nothing
+  let closing = false;
   const loop = () => {
     timer = setTimeout(async () => {
-      const res = heardFrom(await c.raw(`${base}/beat`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(beat) }).catch(() => null));
+      const answer = await c.raw(`${base}/beat`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(beat) }).catch(() => null);
+      if (closing) return;
+      const res = heardFrom(answer);
       // an older server answers a job it took back with ok: false
       if (res?.ok && ((await res.json().catch(() => null)) as { ok?: boolean } | null)?.ok === false) drop("Taken back");
       if (!ctl.signal.aborted) loop();
@@ -234,6 +238,8 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
     still();
     const { files: _, ...rest } = made;
     const result: LibraryResult = { v: WORK_V, outcome: { done: true }, files: sent, ...rest };
+    closing = true;
+    clearTimeout(timer);
     const res = await call(() => c.raw(`${base}/done`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) }));
     if (((await res.json().catch(() => null)) as { ok?: boolean } | null)?.ok) return "done";
     console.warn(`[work] library job ${lib.job.id}: the server did not take the result (${res.status})`);

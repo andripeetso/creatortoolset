@@ -18,6 +18,7 @@ const { devicesSaved, pairDevice } = await import("../lib/devices");
 // the computer's side: loaded once, as a computer's worker is its own process
 const { runLibraryJob } = await import("./library");
 const { stopForExit } = await import("./computer");
+const { setCacheAccount } = await import("./cache");
 
 /** The server's side, loaded again for each "restart": nothing it held in memory survives one. */
 async function boot() {
@@ -103,6 +104,7 @@ beforeAll(async () => {
     JSON.stringify({ upload: "none", proxy: true, describe: false, embed: false }),
   );
   mac = pairDevice("tiny", "Studio Mac");
+  setCacheAccount("tiny"); // its worker learns it from the claim answer
   expect((await claim()).lib).toBeUndefined(); // its worker says it runs library jobs
 });
 afterAll(async () => {

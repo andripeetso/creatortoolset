@@ -74,15 +74,15 @@ describe("a library job whose account may no longer see the clip", () => {
     ["wave", "light", "GET"],
     ["proxy", "original", "GET"],
     ["transcribe", "hear", "POST"],
-  ])("held already (%s): its %s route answers 404 once the policy refuses, and the job fails", async (kind, route, method) => {
+  ])("held already (%s): its %s route answers 410 (taken back) once the policy refuses, and the job fails", async (kind, route, method) => {
     const id = queue(kind);
     expect((await claim())?.job).toMatchObject({ id, kind });
     const ask = () => call(`lib/${id}/${route}`, method === "POST" ? { method, body: "sound" } : {});
     expect((await ask()).status).toBe(200);
     refused = true;
-    expect((await ask()).status).toBe(404);
+    expect((await ask()).status).toBe(410);
     refused = false;
     expect(stateOf(id)).toEqual({ state: "failed", error: UNSEEN });
-    expect((await ask()).status).toBe(404); // and it is no longer this computer's job
+    expect((await ask()).status).toBe(410); // and it is no longer this computer's job
   });
 });
