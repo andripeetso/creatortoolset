@@ -1,5 +1,5 @@
-import { memo, useEffect, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent } from "react";
-import { Eye, EyeOff, Lock, LockOpen, Volume2, VolumeX, X } from "lucide-react";
+import { memo, useEffect, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
@@ -8,18 +8,28 @@ import { cn } from "@/lib/utils";
 import { peaks, wavePath } from "@/lib/waveform";
 import { thumbAt } from "@/lib/nle/thumbs";
 import type { NleFile } from "./NlePlayer";
+import { Panel } from "./NleLayout";
 
 // The editor's timeline: track headers (name, lock, hide or mute, take off), the clips on their lanes, the ruler and the
 // playhead. A drag shows its result live (`onLive`) and becomes one step of undo when let go (`onCommit`).
 // Select tool: drag a clip to move it (onto any track of its kind; it overwrites what it lands on), an end to trim it,
 // ⌥ + an end to roll the cut. Trim tool: drag a clip to slip it, an end to ripple-trim it, ⌥ + an end to roll.
 // Blade tool: a click cuts the clip there.
+// The panel's title bar carries the editor's tools (`tools`, `end`) and the timeline's own: track height and zoom.
 
 export type Tool = "select" | "trim" | "blade";
 
-const LABEL_W = 136;
-const RULER_H = 22;
-const laneH = (id: string) => (isVideo(id) ? 46 : 38);
+const LABEL_W = 152;
+const RULER_H = 24;
+const HEIGHT_KEY = "ct-nle-track-height";
+const readHeight = () => {
+  try {
+    const v = Number(localStorage.getItem(HEIGHT_KEY));
+    return v >= 0.7 && v <= 2.5 ? v : 1;
+  } catch {
+    return 1;
+  }
+};
 const EDGE_PX = 6;
 
 type Drag = {
@@ -34,7 +44,7 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onRemoveTrack, nameOf, zoomKeys, fileOf,
+  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onRemoveTrack, nameOf, zoomKeys, fileOf, tools, end,
 }: {
   tl: NleTimeline;
   time: number;
@@ -56,6 +66,10 @@ export const NleTracks = memo(function NleTracks({
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
   /** a source's file here (the player's): sound clips show its waveform, video clips its pictures */
   fileOf?: (src: string) => NleFile | null;
+  /** the editor's tools, at the start of the title bar */
+  tools?: ReactNode;
+  /** at its end, before the track height and zoom (what the save says, Save) */
+  end?: ReactNode;
 }) {
   const fps = tl.timeline.fps;
   const seconds = Math.max(lengthOf(tl) / fps, 1);
@@ -76,6 +90,16 @@ export const NleTracks = memo(function NleTracks({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- on the time alone
   useEffect(() => axis.follow(time), [time]);
   const [hover, setHover] = useState<string | null>(null);
+  const [scale, setScale] = useState(readHeight);
+  const laneH = (id: string) => Math.round((isVideo(id) ? 42 : 32) * scale);
+  const keepHeight = (v: number) => {
+    setScale(v);
+    try {
+      localStorage.setItem(HEIGHT_KEY, String(v));
+    } catch {
+      // not kept for next time
+    }
+  };
   const order = trackOrder(tl);
   const picked = new Set(selected);
 
@@ -157,27 +181,56 @@ export const NleTracks = memo(function NleTracks({
   const ph = LABEL_W + time * pps;
   const cursor = tool === "blade" ? "cursor-crosshair" : "";
 
+  const lengthF = lengthOf(tl);
+  const slider = "h-1 w-20 cursor-pointer accent-zinc-300";
   return (
+    <Panel title="Timeline" className="flex-1" bar={
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="mx-1 h-4 w-px shrink-0 bg-zinc-700/70" />
+        {tools}
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          {end}
+          <span className="h-4 w-px shrink-0 bg-zinc-700/70" />
+          <label className="flex shrink-0 items-center gap-1" title="Track height">
+            <Rows3 className="size-3.5" />
+            <input type="range" aria-label="Track height" min={0.7} max={2.5} step={0.05} value={scale} onChange={(e) => keepHeight(Number(e.target.value))} className={slider} />
+          </label>
+          <label className="flex shrink-0 items-center gap-1" title="Zoom (= and -, \ shows it all)">
+            <ZoomIn className="size-3.5" />
+            <input type="range" aria-label="Timeline zoom" min={0} max={1000} step={1}
+              value={axis.maxZoom > 1 ? Math.round((Math.log(axis.zoom) / Math.log(axis.maxZoom)) * 1000) : 0}
+              onChange={(e) => axis.zoomTo(Math.exp((Number(e.target.value) / 1000) * Math.log(Math.max(1, axis.maxZoom))))} className={slider} />
+          </label>
+        </div>
+      </div>
+    }>
     <TimelineFrame scroller={scroller} inner={inner} seconds={shown} pps={pps} labelWidth={LABEL_W} rulerHeight={RULER_H}
-      className="rounded-md border border-zinc-800 bg-zinc-950"
+      className="min-h-0 flex-1 overflow-y-scroll bg-[#151517]" stickyRuler="bg-[#1d1d20] border-b border-black/60"
       ruler={{ onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && onSeek(frameAt(e.clientX) / fps), className: "cursor-ew-resize" }}
-      rulerLabel={<span className="font-mono text-[10px] text-zinc-500">{tl.timeline.width}×{tl.timeline.height}</span>}
+      rulerLabel={<span className="font-mono text-[11px] tabular-nums text-zinc-300" title="The playhead">{tcOf(Math.round(time * fps), fps)}</span>}
       rulerChildren={
         <>
+          <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/35" style={{ left: (lengthF / fps) * pps }} />
           {marks[0] !== null && marks[1] !== null && (
             <div className="absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
-          <div className="pointer-events-none absolute inset-y-0 border-l border-dashed border-zinc-600" style={{ left: seconds * pps }} title="End" />
+          <div className="pointer-events-none absolute inset-y-0 border-l border-zinc-500" style={{ left: (lengthF / fps) * pps }} title="End" />
+          <div className="pointer-events-none absolute bottom-0 z-10 -translate-x-1/2" style={{ left: time * pps }}>
+            <div className="h-2.5 w-3 rounded-t-[2px] bg-red-500 [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]" />
+          </div>
         </>
       }
-      content={{ onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up, className: cursor }}>
+      content={{ onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up, className: cn("flex min-h-full flex-col", cursor) }}>
+      {/* after the end: shaded down through every track, so where the timeline stops is plain */}
+      <div aria-hidden className="pointer-events-none absolute top-0 right-0 bottom-0 bg-black/30 bg-[repeating-linear-gradient(135deg,transparent_0_7px,rgb(255_255_255/0.025)_7px_14px)]"
+        style={{ left: LABEL_W + (lengthF / fps) * pps }} />
       {order.map((id) => {
         const t = tl.tracks[id];
         const v = isVideo(id);
         const off = v ? t.hidden : t.mute;
         return (
-          <div key={id} className="flex border-t border-zinc-900" style={{ height: laneH(id) }}>
-            <div className="sticky left-0 z-20 flex shrink-0 items-center gap-0.5 border-r border-zinc-800 bg-zinc-950 px-1.5 text-[11px]" style={{ width: LABEL_W }}
+          <div key={id} className="flex border-b border-black/50" style={{ height: laneH(id) }}>
+            <div className="sticky left-0 z-20 flex shrink-0 items-center gap-0.5 border-r border-black/60 bg-[#1f1f23] px-1.5 text-[11px]" style={{ width: LABEL_W }}
               onMouseEnter={() => setHover(id)} onMouseLeave={() => setHover(null)}>
               <span className={cn("w-6 shrink-0 rounded px-0.5 text-center font-mono font-semibold", v ? "bg-sky-900/60 text-sky-200" : "bg-emerald-900/60 text-emerald-200")}>{id}</span>
               <span className="min-w-0 flex-1 truncate text-zinc-400" title={t.name ?? id}>{t.name && t.name !== id ? t.name : ""}</span>
@@ -238,10 +291,18 @@ export const NleTracks = memo(function NleTracks({
           </div>
         );
       })}
-      <div className="pointer-events-none absolute top-0 bottom-0 z-30 w-px bg-red-500" style={{ left: ph }} />
+      {/* under the last track: the headers' column goes on to the bottom */}
+      <div className="flex flex-1"><div className="sticky left-0 z-20 shrink-0 border-r border-black/60 bg-[#1f1f23]" style={{ width: LABEL_W }} /></div>
+      <div className="pointer-events-none absolute top-0 bottom-0 z-[15] w-px bg-red-500" style={{ left: ph }} />
     </TimelineFrame>
+    </Panel>
   );
 });
+
+const tcOf = (f: number, fps: number) => {
+  const s = Math.floor(f / fps);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}:${String(Math.round(f % fps)).padStart(2, "0")}`;
+};
 
 const SOUND_FILE = /\.(wav|aif|aiff|m4a|mp3|flac|caf|aac)$/i;
 const peakOf = new WeakMap<Float32Array, number>();
