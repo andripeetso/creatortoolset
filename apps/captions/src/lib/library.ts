@@ -22,7 +22,7 @@ import type {
   WatchStatus,
 } from "@contracts/library";
 import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from "@contracts/places";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { pathOnMac } from "@/lib/thisMac";
