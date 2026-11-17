@@ -36,6 +36,10 @@ export interface Disk {
   /** a network share: how it is shared and its name on the server ("footage"; NFS: the exported path). Never a password or user name */
   fs?: ShareFs;
   share?: string;
+  /** a volume's own id (the Mac's volume UUID, the boot volume's too): the same wherever it is mounted (places.ts rootKey) */
+  uuid?: string;
+  /** a network share whose server did not answer the last check: mounted, but nothing on it can be read now */
+  away?: true;
 }
 
 export const SHARE_FS = ["smb", "nfs", "afp"] as const;

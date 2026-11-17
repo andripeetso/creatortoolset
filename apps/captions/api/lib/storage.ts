@@ -2,6 +2,7 @@ import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { isWindowsPath, joinRoot } from "../../contracts/places";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
 export function libraryPath(disk: string): string {
@@ -54,13 +55,10 @@ export async function localDisks(libraryPath?: string): Promise<Disk[]> {
 /** A folder path without trailing slashes ("/" stays "/"). */
 const norm = (p: string) => p.replace(/(.)\/+$/, "$1");
 
-/** A Windows path ("Z:\…", "\\nas\footage\…"): either separator, letters in any case. */
-const isWindows = (p: string) => /^[A-Za-z]:([\\/]|$)/.test(p) || p.startsWith("\\\\");
-
 /** What of `p` is inside folder `dir`, "/"-separated ("" for the folder itself); null when p is not in it. On a "/"
  *  boundary: "/Volumes/TEAM2" is not inside "/Volumes/TEAM". */
 export function inside(p: string, dir: string): string | null {
-  const win = isWindows(dir);
+  const win = isWindowsPath(dir);
   const fold = (x: string) => (win ? x.replace(/\\/g, "/").toLowerCase() : x);
   const d = fold(win ? dir.replace(/[\\/]+$/, "") : norm(dir));
   const a = fold(p);
@@ -69,12 +67,6 @@ export function inside(p: string, dir: string): string | null {
   return a.startsWith(pre) ? (win ? p.replace(/\\/g, "/") : p).slice(pre.length) : null;
 }
 
-/** `rest` ("/"-separated) inside folder `dir`, written with dir's own separator. */
-const join = (dir: string, rest: string) => {
-  if (!rest) return dir;
-  const sep = isWindows(dir) ? "\\" : "/";
-  return `${dir.replace(/[\\/]+$/, "")}${sep}${rest.split("/").join(sep)}`;
-};
 
 /** Where `host` has `folder`: the path it was made at on its own computer, else where that computer found its marker. */
 export const pathOn = (folder: StorageFolder, host: string): string | undefined =>
@@ -106,7 +98,7 @@ export function folderFor(p: string, folders: StorageFolder[], from?: string): F
 export function hostPath(p: string, folders: StorageFolder[], to: string, from?: string): string | null {
   const m = folderFor(p, folders, from);
   const dir = m ? pathOn(m.folder, to) : undefined;
-  return m && dir !== undefined ? join(dir, m.rest) : null;
+  return m && dir !== undefined ? joinRoot(dir, m.rest) : null;
 }
 
 /** The share a path is on, from its computer's reported disks (the deepest network disk that holds it); undefined for a
@@ -143,7 +135,7 @@ export function withMounts(folders: StorageFolder[], computers: Array<{ id: stri
     for (const [id, list] of disks) {
       if (id === f.origin.host || reach[id]) continue;
       const d = list.find((x) => sameShare(mount, x));
-      if (d) reach[id] = { path: join(d.path, mount.sub), at: 0 };
+      if (d) reach[id] = { path: joinRoot(d.path, mount.sub), at: 0 };
     }
     return { ...f, mount, reach };
   });
