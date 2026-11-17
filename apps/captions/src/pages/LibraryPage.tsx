@@ -60,7 +60,7 @@ import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./librar
 import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
-import { useImportQuestion, type ImportLook } from "./library/Import";
+import { addFrom, lookForNew, useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
@@ -95,6 +95,9 @@ const SORT_IDS = SORTS.map((o) => o.id);
 const SORT_KEY = "library:sort";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** The libraries whose footage folders on this Mac were looked at since the page loaded. */
+const lookedHere = new Set<string>();
 
 export default function LibraryPage() {
   // the lists are saved copies (lib/local-cache): they paint on the first frame and the change stream's library topic
@@ -216,6 +219,21 @@ export default function LibraryPage() {
   const next = searching ? undefined : extra ? extra.next : first.data?.next;
   // the tabs' counts (A-roll, B-roll, photos), read again after every change to the library
   const counts = useCachedLoad<TabCounts>(libId ? `/api/library/${libId}/counts` : null, () => tabCounts(libId!), { own: true });
+  // the Mac app with the server elsewhere: once a page load, the workspace's footage folders on this Mac are looked at
+  // (Import.tsx lookForNew), so a clip uploaded before from one plays from here and counts as On this computer, and a
+  // new file there is added where it is. The owner's (watch is theirs only); quiet unless it changed something.
+  // ponytail: once a page load, every file's fingerprint read again; a folder watch on the Mac when folders get big
+  useEffect(() => {
+    if (!library || readOnly || !watch || addFrom(watch.allowed) !== "mac" || lookedHere.has(library.id)) return;
+    lookedHere.add(library.id);
+    void lookForNew(library, () => {}).then(
+      ({ added, reconnected }) => {
+        if (added || reconnected) reload();
+      },
+      () => lookedHere.delete(library.id),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library?.id, readOnly, !!watch]);
   // in the sort picked, by the server (api/library/query.ts) across every page; a search keeps its own order, best first
   const shown = items;
   const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source || anyFilter(filters);
