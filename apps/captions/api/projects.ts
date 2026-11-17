@@ -2412,6 +2412,19 @@ async function purgeDeletedProject(id: string, meta: Meta): Promise<void> {
   await deleteExportsForProject(id);
 }
 
+/** The account's Caption Studio projects in a workspace being deleted (lib/workspace-delete.ts), the trash too. */
+export async function workspaceProjects(user: Pick<SessionUser, "username" | "role">, has: (ws?: string) => boolean): Promise<{ n: number; drop: () => Promise<void> }> {
+  const metas = (await Promise.all((await projectIds()).map((id) => readMeta(id).catch(() => null)))).filter(
+    (m): m is Meta => !!m && (m.owner === user.username || (user.role === "admin" && !m.owner)) && has(m.projectId),
+  );
+  return {
+    n: metas.length,
+    drop: async () => {
+      for (const m of metas) await purgeDeletedProject(m.id, m);
+    },
+  };
+}
+
 /** Retention (api/retention.ts): delete every project it picks, trash included. */
 export async function purgeExpiredProjects(expired: Expired): Promise<void> {
   for (const id of await projectIds()) {

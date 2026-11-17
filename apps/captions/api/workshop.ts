@@ -41,6 +41,7 @@ import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
 import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
+import { deleteWorkspaceContents, workspaceContents } from "./lib/workspace-delete";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -71,6 +72,7 @@ import { inProjectOf, sharedTo } from "./lib/project-of";
 import { renderContext, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
 import { memoryFor } from "./lib/memory";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
+import { allIn, asIn, sharedAgainIn, type AsIn, type Scoped } from "./lib/workshop/rule-workspaces";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
 import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN, pieceMarkdown } from "../src/lib/workshop-markdown";
@@ -521,7 +523,7 @@ async function readsDone(user: SessionUser): Promise<void> {
     const ws = projectId ? await readProject(projectId, user) : null;
     const where = ws ? `${ws.name}'s` : "Every workspace's";
     const text = `${where} context is ready: ${n.ok} file${n.ok === 1 ? "" : "s"} read and filed${n.failed ? `, ${n.failed} couldn't be read` : ""}`;
-    await notifyWorkshopOwner(user.username, { kind: "workshop", by: "Context", name: ws?.name ?? "Context", text, href: ws ? `/projects?edit=${ws.id}` : "/workshop", ref: projectId || "context" }).catch(() => {});
+    await notifyWorkshopOwner(user.username, { kind: "workshop", by: "Context", name: ws?.name ?? "Context", text, href: ws ? `/projects?edit=${ws.id}` : "/workshop", ref: projectId || "context", workspace: ws?.id }).catch(() => {});
   }
 }
 
@@ -661,12 +663,53 @@ async function ensureRuleSeeds(username: string): Promise<void> {
   });
 }
 
-/** The rules a draft runs under: the ids it asked for, else every rule that is on. */
+/** The rules a draft runs under: the ids it asked for, else every rule that is on; each as used in the project's workspace. */
 async function rulesFor(user: SessionUser, ruleIds: string[] | undefined, project?: Project | null): Promise<Rule[]> {
   await ensureRuleSeeds(user.username); // retired starters leave before a turn reads them
-  const all = (await listRecords<Rule>(DIRS.rules, user)).filter((r) => r.owner === user.username).sort((a, b) => a.createdAt - b.createdAt);
+  const all = allIn((await listRecords<Rule>(DIRS.rules, user)).filter((r) => r.owner === user.username).sort((a, b) => a.createdAt - b.createdAt), project?.id);
   if (ruleIds) return all.filter((r) => ruleIds.includes(r.id));
   return onFor(all, project).filter((r) => r.on);
+}
+
+/** A framework as used in `workspace` (lib/workshop/rule-workspaces.ts); null when it is not there. */
+const frameworkIn = async (id: string, user: SessionUser, workspace?: string | null) => {
+  const f = await readFramework(id, user);
+  return f && asIn(f, workspace);
+};
+
+/**
+ * `workspaces` in a rule's or framework's body, the same choice as a plug-in's: { all: true } (null) or { only: [ids of
+ * the person's workspaces] }; undefined when the body has none. A member picks among the workspaces given to them.
+ */
+async function onlyFrom(body: unknown, user: SessionUser): Promise<string[] | null | undefined> {
+  const w = (body as { workspaces?: { all?: unknown; only?: unknown } } | null)?.workspaces;
+  if (w === undefined) return undefined;
+  if (w?.all === true) return null;
+  const ids = Array.isArray(w?.only) ? [...new Set(w.only)] : [];
+  if (!ids.length) throw new Error("Pick a workspace");
+  const mine = new Set((await getWorkspace(user)).projects.map((p) => p.id));
+  if (!ids.every((id) => typeof id === "string" && mine.has(id))) throw new Error("Workspace not found");
+  return ids as string[];
+}
+
+/**
+ * A rule or framework changed from the workspace this request works in. The fields go to that workspace's own version
+ * when it has one, or when `here: true` asks for one; else to the shared one. `workspaces` sets where it applies.
+ * `shown`: the result as the request's workspace uses it.
+ */
+async function changeScoped<T extends Scoped>(rec: T, body: unknown, user: SessionUser, parse: (base: AsIn<T>) => object): Promise<{ next: T; shown: AsIn<T> }> {
+  const here = await currentWorkspaceId(user);
+  const used = asIn(rec, here);
+  const only = await onlyFrom(body, user);
+  const own = !!used?.changedHere || (body as { here?: unknown } | null)?.here === true;
+  if (own && (!here || !used)) throw new Error("Not used in this workspace");
+  const fields = parse(used ?? asIn(rec)!);
+  const now = Date.now();
+  const next: T = own ? { ...rec, versions: { ...rec.versions, [here!]: { ...fields, updatedAt: now } } } : { ...rec, ...fields };
+  next.updatedAt = now;
+  if (only === null) delete next.only;
+  else if (only) next.only = only;
+  return { next, shown: asIn(next, here) ?? asIn(next)! };
 }
 
 /* ---- sessions ---- */
@@ -1176,7 +1219,7 @@ async function turnFolder(
   if (index) files["sessions/INDEX.md"] = index;
   Object.assign(files, libraryFiles(await libraryForWorkshop(user, session.projectId)));
   await ensureSeeds(user.username);
-  Object.assign(files, frameworkFiles(onFor((await listRecords<Framework>(DIRS.frameworks, user)).filter((f) => f.owner === user.username), project).map(withRole)));
+  Object.assign(files, frameworkFiles(onFor(allIn((await listRecords<Framework>(DIRS.frameworks, user)).filter((f) => f.owner === user.username).map(withRole), project?.id), project)));
   const log = (await readEditLog(session.owner)).filter((p) => inProject(p, session.projectId));
   if (log.length) files["my-edits/INDEX.md"] = editsFile(log);
   return files;
@@ -1267,7 +1310,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     await progress({ stage: "packing" }, true);
     const [project, ...frameworkHits] = await Promise.all([
       projectForAi(session.projectId, user),
-      ...doc.frameworkIds.map((id) => readFramework(id, user)),
+      ...doc.frameworkIds.map((id) => frameworkIn(id, user, session.projectId)),
     ]);
     const frameworks = frameworkHits.filter((f): f is Framework => !!f);
     const rules = await rulesFor(user, doc.ruleIds, project);
@@ -1832,7 +1875,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     liveEnd(assistantId);
     await writerEnded(session, user, ask.docId, failed).catch(() => {});
     const title = session.title || "Untitled";
-    await notifyWorkshopOwner(session.owner, { kind: "workshop", by: "Content Workshop", name: title, text: `${outcome}: ${title}`, href: `/workshop/sessions/${session.id}`, ref: session.id }).catch(() => {});
+    await notifyWorkshopOwner(session.owner, { kind: "workshop", by: "Content Workshop", name: title, text: `${outcome}: ${title}`, href: `/workshop/sessions/${session.id}`, ref: session.id, workspace: session.projectId }).catch(() => {});
   }
 }
 
@@ -2232,12 +2275,20 @@ workshopApp.patch("/projects/:id", async (c) => {
   }
 });
 
+/** What deleting the workspace deletes with it, for the delete confirm (lib/workspace-delete.ts). Its owner only. */
+workshopApp.get("/projects/:id/contents", async (c) => {
+  const user = c.get("user");
+  const project = await readProject(c.req.param("id"), user);
+  if (project?.owner !== user.username) return c.json({ error: "Not found" }, 404);
+  return c.json(await workspaceContents(user, project.id));
+});
+
 workshopApp.delete("/projects/:id", async (c) => {
   const user = c.get("user");
   const project = await readProject(c.req.param("id"), user);
-  if (!project) return c.json({ error: "Not found" }, 404);
-  // its projects keep its id, so no other workspace lists them. They used to lose it, and a project with none is listed
-  // in every workspace (inProject): a deleted client's scripts showed up in all the others (owner, 2026-11-16).
+  if (project?.owner !== user.username) return c.json({ error: "Not found" }, 404);
+  // everything in it goes first, while it still exists: the first brand is worked out from it (owner, 2026-11-16)
+  await deleteWorkspaceContents(user, project.id);
   await rm(projectPath(project.id), { force: true });
   const ws = await getWorkspace(user);
   if (ws.currentProjectId === project.id) await setCurrentProjectId(user, ws.projects[0]?.id ?? null);
@@ -2434,20 +2485,22 @@ workshopApp.get("/frameworks", async (c) => {
   const user = c.get("user");
   await ensureSeeds(user.username);
   const order = new Map(SEED_FRAMEWORKS.map((s, i) => [s.seedKey, i]));
-  return c.json(
-    (await listRecords<Framework>(DIRS.frameworks, user))
-      .filter((f) => f.owner === user.username)
-      .sort((a, b) => (order.get(a.seedKey ?? "") ?? 1000) - (order.get(b.seedKey ?? "") ?? 1000) || a.name.localeCompare(b.name))
-      .map(withRole),
-  );
+  const own = (await listRecords<Framework>(DIRS.frameworks, user))
+    .filter((f) => f.owner === user.username)
+    .sort((a, b) => (order.get(a.seedKey ?? "") ?? 1000) - (order.get(b.seedKey ?? "") ?? 1000) || a.name.localeCompare(b.name))
+    .map(withRole);
+  // the ones that apply in this request's workspace, each as used there (lib/workshop/rule-workspaces.ts)
+  return c.json(allIn(own, await listWorkspaceId(user)));
 });
 
 workshopApp.post("/frameworks", async (c) => {
   const user = c.get("user");
   try {
-    const fields = parseFrameworkInput(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null);
+    const fields = parseFrameworkInput(body);
+    const only = await onlyFrom(body, user);
     const now = Date.now();
-    const fw: Framework = { id: randomUUID(), owner: user.username, ...fields, createdAt: now, updatedAt: now };
+    const fw: Framework = { id: randomUUID(), owner: user.username, ...fields, ...(only ? { only } : {}), createdAt: now, updatedAt: now };
     await writeJsonAtomic(frameworkPath(fw.id), fw);
     return c.json(fw, 201);
   } catch (e) {
@@ -2460,10 +2513,10 @@ workshopApp.patch("/frameworks/:id", async (c) => {
   const fw = await readFramework(c.req.param("id"), user);
   if (!fw) return c.json({ error: "Not found" }, 404);
   try {
-    const fields = parseFrameworkInput(await c.req.json().catch(() => null), fw);
-    const next: Framework = { ...fw, ...fields, updatedAt: Date.now() };
+    const body = await c.req.json().catch(() => null);
+    const { next, shown } = await changeScoped(fw, body, user, (base) => parseFrameworkInput(body, base));
     await writeJsonAtomic(frameworkPath(next.id), next);
-    return c.json(next);
+    return c.json(shown);
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
   }
@@ -2476,18 +2529,32 @@ workshopApp.delete("/frameworks/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+/** This workspace's own version deleted: the shared framework is used here again. */
+workshopApp.delete("/frameworks/:id/here", async (c) => {
+  const user = c.get("user");
+  const fw = await readFramework(c.req.param("id"), user);
+  const here = await currentWorkspaceId(user);
+  if (!fw || !here || !fw.versions?.[here]) return c.json({ error: "Not found" }, 404);
+  const next = { ...sharedAgainIn(fw, here), updatedAt: Date.now() };
+  await writeJsonAtomic(frameworkPath(next.id), next);
+  return c.json(asIn(next, here));
+});
+
 workshopApp.get("/rules", async (c) => {
   const user = c.get("user");
   await ensureRuleSeeds(user.username);
-  return c.json((await listRecords<Rule>(DIRS.rules, user)).filter((r) => r.owner === user.username).sort((a, b) => a.createdAt - b.createdAt));
+  const own = (await listRecords<Rule>(DIRS.rules, user)).filter((r) => r.owner === user.username).sort((a, b) => a.createdAt - b.createdAt);
+  return c.json(allIn(own, await listWorkspaceId(user)));
 });
 
 workshopApp.post("/rules", async (c) => {
   const user = c.get("user");
   try {
-    const fields = parseRuleInput(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null);
+    const fields = parseRuleInput(body);
+    const only = await onlyFrom(body, user);
     const now = Date.now();
-    const rule: Rule = { id: randomUUID(), owner: user.username, ...fields, createdAt: now, updatedAt: now };
+    const rule: Rule = { id: randomUUID(), owner: user.username, ...fields, ...(only ? { only } : {}), createdAt: now, updatedAt: now };
     await writeJsonAtomic(rulePath(rule.id), rule);
     return c.json(rule, 201);
   } catch (e) {
@@ -2500,10 +2567,10 @@ workshopApp.patch("/rules/:id", async (c) => {
   const rule = await readRule(c.req.param("id"), user);
   if (!rule) return c.json({ error: "Not found" }, 404);
   try {
-    const fields = parseRuleInput(await c.req.json().catch(() => null), rule);
-    const next: Rule = { ...rule, ...fields, updatedAt: Date.now() };
+    const body = await c.req.json().catch(() => null);
+    const { next, shown } = await changeScoped(rule, body, user, (base) => parseRuleInput(body, base));
     await writeJsonAtomic(rulePath(next.id), next);
-    return c.json(next);
+    return c.json(shown);
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
   }
@@ -2514,6 +2581,17 @@ workshopApp.delete("/rules/:id", async (c) => {
   if (!rule) return c.json({ error: "Not found" }, 404);
   await rm(rulePath(rule.id), { force: true });
   return c.json({ ok: true });
+});
+
+/** This workspace's own version deleted: the shared rule is used here again. */
+workshopApp.delete("/rules/:id/here", async (c) => {
+  const user = c.get("user");
+  const rule = await readRule(c.req.param("id"), user);
+  const here = await currentWorkspaceId(user);
+  if (!rule || !here || !rule.versions?.[here]) return c.json({ error: "Not found" }, 404);
+  const next = { ...sharedAgainIn(rule, here), updatedAt: Date.now() };
+  await writeJsonAtomic(rulePath(next.id), next);
+  return c.json(asIn(next, here));
 });
 
 /** When each user's sessions were last matched to their posts: the list asks at most every 10 minutes. */
@@ -3431,7 +3509,7 @@ workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
     .map((s) => ({ layout: s.layout, well: s.well ?? "none" }));
 
   const shapes = (
-    await Promise.all(current.frameworkIds.map((id) => readFramework(id, user)))
+    await Promise.all(current.frameworkIds.map((id) => frameworkIn(id, user, meta.projectId)))
   )
     .filter((f): f is Framework => !!f)
     .map((f) => f.name);
@@ -3628,7 +3706,7 @@ workshopApp.post("/sessions/:id/docs/:docId/material", async (c) => {
     caption ? renderPairs(closestRewrites(near, log.filter((p) => p.kind === "description"), meta.projectId, 4), "post descriptions") : "",
   ].filter(Boolean);
   const notes = docs.find((d) => d.kind === "notes")?.blocks.filter((b) => b.text.trim()).map((b) => `${b.author === "ai" ? "(written by an AI, not the author)\n" : ""}${b.text}`).join("\n\n");
-  const frameworks = (await Promise.all(doc.frameworkIds.map((id) => readFramework(id, user)))).filter((f): f is Framework => !!f);
+  const frameworks = (await Promise.all(doc.frameworkIds.map((id) => frameworkIn(id, user, meta.projectId)))).filter((f): f is Framework => !!f);
   const captions = caption ? captionExamplesFor(own?.posts ?? [], docs.filter((d) => d.id !== doc.id && d.caption?.text.trim()).map((d) => d.caption!.text)) : undefined;
   return c.json({
     // ponytail: workspace_files reads the caller's current workspace; a piece in another one lists files it reads only after workshop_set_project
@@ -4318,7 +4396,7 @@ export async function draftRequest(session: SessionMeta, draft: DraftMeta, user:
   }
   const [project, ...frameworkHits] = await Promise.all([
     projectForAi(draft.projectId, user),
-    ...draft.frameworkIds.map((id) => readFramework(id, user)),
+    ...draft.frameworkIds.map((id) => frameworkIn(id, user, draft.projectId)),
   ]);
   const frameworks = frameworkHits.filter((f): f is Framework => !!f);
   const rules = await rulesFor(user, draft.ruleIds, project);
@@ -4760,7 +4838,7 @@ workshopShareApp.post("/:token/progress", async (c) => {
   await updateSession(meta.id, (m) => {
     if (!["published", "shelved"].includes(m.status ?? "draft")) setSessionStatus(m, state === "done" ? "toPost" : "editing", "freelancer progress");
   });
-  await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id, workspace: meta.projectId });
   announce(share.owner, "workshop");
   if (state === "done") sendDeliveriesToFinals(token);
   return c.json({ progress: share.progress });
@@ -4803,7 +4881,7 @@ workshopShareApp.post("/:token/deliveries", async (c) => {
   }
   live.deliveries = [...(live.deliveries ?? []), item];
   await writeJsonAtomic(SHARES_FILE, shares);
-  await notifyWorkshopOwner(share.owner, { kind: "delivered", by: by || "A freelancer", name: meta.title || share.title, text: name, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  await notifyWorkshopOwner(share.owner, { kind: "delivered", by: by || "A freelancer", name: meta.title || share.title, text: name, href: `/workshop/sessions/${meta.id}`, ref: meta.id, workspace: meta.projectId });
   announce(share.owner, "workshop");
   if (live.progress?.state === "done") sendDeliveriesToFinals(token);
   return c.json(item);
