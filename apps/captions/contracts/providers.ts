@@ -276,6 +276,8 @@ export function parseMachine(v: unknown): Machine | undefined {
     if (server) out.server = server;
     const fs = SHARE_FS.find((f) => f === d?.fs);
     if (fs && server && SAFE_SERVER.test(server) && typeof d?.share === "string" && SAFE_SHARE.test(d.share)) Object.assign(out, { fs, share: d.share });
+    if (typeof d?.uuid === "string" && /^[0-9A-Fa-f-]{8,64}$/.test(d.uuid)) out.uuid = d.uuid;
+    if (out.network && d?.away === true) out.away = true;
     return [out];
   });
   if (disks.length) m.disks = disks;

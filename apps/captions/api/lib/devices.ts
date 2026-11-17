@@ -299,8 +299,8 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   // a CLI installed, signed in or on another plan is a change setup shows, and so is the app's new version; the machine's
   // load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
-  // so is a shared drive connected or gone (Storage and the Help screen show which folders it reaches)
-  const shares = (x: MacReport | undefined) => JSON.stringify((x?.machine?.disks ?? []).filter((k) => k.network).map((k) => k.path));
+  // so is a shared drive connected, gone, away or back (Storage and the Help screen show which folders it reaches)
+  const shares = (x: MacReport | undefined) => JSON.stringify((x?.machine?.disks ?? []).filter((k) => k.network).map((k) => [k.path, !!k.away]));
   if (drivers(d.report) !== drivers(r) || shares(d.report) !== shares(r) || (!!version && version !== d.version)) tell(d.owner);
   d.report = r;
   if (version) d.version = version;

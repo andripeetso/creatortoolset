@@ -7,6 +7,10 @@ import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
 import { organizeOnProbe } from "./organize";
 import { kindOf, recordVersion } from "./routes";
+import { deviceOf } from "../lib/devices";
+import { rootAt } from "../lib/storage";
+import { confirmPlaces } from "./places";
+import { readerOf } from "./reader";
 
 /**
  * A file indexed where it is on the person's Mac, for a server that is not on that Mac (the Mac app's Media Library
@@ -81,18 +85,27 @@ export async function macFrames(versionId: string): Promise<string[]> {
 export const dropMacFrames = (versionId: string) => rm(framesDir(versionId), { recursive: true, force: true });
 
 /**
- * Records `x` in `libraryId` as `by`: { duplicateOf } when the library has it already (the same fingerprint, or the same
- * path and size), else the new asset, ready at once with its pictures, its description queued when the library has that on.
+ * Records `x` in `libraryId` as `by`: { duplicateOf } when the library has it already (the same fingerprint and size, an
+ * upload's too, or the same path and size; the caller's computer then has it here: a place, places.ts), else the new
+ * asset, ready at once with its pictures, its description queued when the library has that on.
  */
 export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): Promise<{ assetId: string; versionId: string } | { duplicateOf: string }> {
   const d = libraryDb();
+  // the computer the file is on, when it is the caller's: the file's root from its disks, and its place
+  const device = x.device ? deviceOf(x.device) : undefined;
+  const mine = device?.owner === by ? device : undefined;
   const dup = d
     .prepare(
-      `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.mac_path = ? AND v.bytes = ?)) LIMIT 1`,
+      `SELECT a.id, v.id AS version FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (v.mac_path = ? AND v.bytes = ?)) LIMIT 1`,
     )
-    .get(libraryId, `mac:${x.quick}`, x.path, x.size) as { id: string } | undefined;
-  if (dup) return { duplicateOf: dup.id };
+    .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.path, x.size) as { id: string; version: string } | undefined;
+  if (dup) {
+    const viewer = mine && (await readerOf(by, libraryId));
+    if (viewer) await confirmPlaces(libraryId, viewer, mine, [{ versionId: dup.version, path: x.path, quick: x.quick }]);
+    return { duplicateOf: dup.id };
+  }
+  const at = mine && rootAt(x.path, mine.report?.machine?.disks);
   const versionId = randomUUID();
   const kind = kindOf(x.name);
   const probe = { duration: x.duration ?? 0, width: x.width ?? 0, height: x.height ?? 0, fps: 0, rotation: 0, format: "", vcodec: kind === "audio" ? "" : "mac", pixFmt: "", acodec: "" };
@@ -102,7 +115,9 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId });
     // the Mac probed it: no probe here (it would read a file this server does not have)
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
-    d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ?, quick = ? WHERE id = ?").run(x.path, x.device ?? null, JSON.stringify(probe), x.quick, versionId);
+    d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ?, quick = ?, root = ?, root_rel = ? WHERE id = ?")
+      .run(x.path, x.device ?? null, JSON.stringify(probe), x.quick, at?.key ?? null, at?.rel ?? null, versionId);
+    if (mine) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)").run(versionId, mine.id, x.path, Date.now());
     d.exec("COMMIT");
   } catch (e) {
     d.exec("ROLLBACK");

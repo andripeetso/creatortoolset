@@ -30,6 +30,7 @@ import { takeMacSheets } from "./mac-look";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
+import { backfillRoots } from "./places";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -299,7 +300,7 @@ export function startLibraryWorker(): () => void {
         let busy = false;
         try {
           busy = await tick(Date.now(), lane.kinds);
-          if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
+          if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots();
         } catch (e) {
           console.error("[library] worker:", e);
         }

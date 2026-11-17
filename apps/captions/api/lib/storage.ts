@@ -2,7 +2,7 @@ import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
-import { isWindowsPath, joinRoot } from "../../contracts/places";
+import { isWindowsPath, joinRoot, rootKey } from "../../contracts/places";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
 export function libraryPath(disk: string): string {
@@ -113,13 +113,20 @@ export function mountOf(p: string, disks: Disk[] = []): FolderMount | undefined 
   return d?.fs && d.server && d.share ? { fs: d.fs, server: d.server, share: d.share, sub: best!.sub } : undefined;
 }
 
-/** "nas", "NAS.local" and "nas._smb._tcp.local" are one server; an SMB share's name has no case. */
-const sameShare = (m: FolderMount, d: Disk) => {
-  const host = (x: string) => x.toLowerCase().replace(/(\._smb\._tcp)?\.local\.?$/, "");
-  const name = (x: string) => x.replace(/^\/+|\/+$/g, "");
-  return !!d.network && !!d.server && d.share !== undefined && (!d.fs || d.fs === m.fs) && host(d.server) === host(m.server)
-    && (m.fs === "nfs" ? name(d.share) === name(m.share) : name(d.share).toLowerCase() === name(m.share).toLowerCase());
-};
+/** The root a path is on (places.ts rootKey: a share, or a volume by its id), from its computer's disks: the deepest disk
+ *  that holds it, and the path inside it ("/"-separated, NFC). Undefined when that disk names no root. */
+export function rootAt(p: string, disks: Disk[] = []): { key: string; rel: string; disk: Disk } | undefined {
+  let best: { d: Disk; rel: string } | undefined;
+  for (const d of disks) {
+    const rel = inside(p, d.path);
+    if (rel !== null && (!best || d.path.length > best.d.path.length)) best = { d, rel };
+  }
+  const key = best && rootKey(best.d);
+  return key ? { key, rel: best!.rel.normalize("NFC"), disk: best!.d } : undefined;
+}
+
+/** "nas", "NAS.local" and "nas._smb._tcp.local" are one server; an SMB share's name has no case (rootKey). */
+const sameShare = (m: FolderMount, d: Disk) => !!d.network && rootKey(d) === rootKey(m);
 
 /**
  * The folders with what each computer's disks say: the share a folder is on (from the computer that added it, when it was
