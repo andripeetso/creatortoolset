@@ -10,6 +10,7 @@ import { limitLine, limitMessage, limitResetAt } from "../../contracts/plans";
 import { env, keepsOverRestart } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
+import { leave, onLeave } from "./sync";
 import { noteCallOutcome } from "./providers";
 import { okId } from "./workshop/validate";
 import { workspaceScope } from "./workshop/workspace";
@@ -400,14 +401,15 @@ export const dropUnowned = (): void => adoptKept((o) => !adopters.has(o.keep.kin
 
 let leaving = false;
 /**
- * This process is on its way out: a deploy's reload has the next one listening already. The polls it holds end now,
- * so each computer asks again at once and reaches the next process (a poll cut off by the kill makes the relay wait
- * 30 s), and a post about a running answer is turned away with 503: the relay sends it again, to the next process.
+ * When this process leaves (lib/sync.ts leave): the polls it holds end now, so each computer asks again at once and
+ * reaches the next process (a poll cut off by the kill makes the relay wait 30 s), and a post about a running answer is
+ * turned away with 503: the relay sends it again, to the next process.
  */
-export function leave(): void {
+onLeave(() => {
   leaving = true;
   for (const w of waiters.splice(0)) w.fn(null);
-}
+});
+export { leave };
 
 /**
  * Takes up an answer a restart left running: the promise streamMacClaude would have given, fed by the same Mac. Its

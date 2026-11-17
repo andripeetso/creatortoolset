@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import { announce, announceWrites, currentSeq, syncApp, topicOf } from "./sync";
+import { announce, announceWrites, currentSeq, leave, onLeave, syncApp, topicOf } from "./sync";
 
 type N = { seq: number; topic: string; origin: string | null };
 
@@ -82,5 +82,37 @@ describe("sync", () => {
     });
     const changes = events.filter((e) => e.event === "change").map((e) => JSON.parse(e.data) as N);
     expect(changes.map((c) => [c.topic, c.origin])).toEqual([["review", "tab-2"]]);
+  });
+
+  // last: leave() is for good in this module
+  it("a reload's old process ends the stream cleanly, with a short retry, so the page reconnects before its pill shows", async () => {
+    const app = new Hono<{ Variables: { user: { username: string } } }>();
+    app.use("*", async (c, next) => {
+      c.set("user", { username: "leaver" });
+      await next();
+    });
+    app.route("/api/sync", syncApp as never);
+    const res = await app.request("/api/sync/events");
+    const reader = res.body!.getReader();
+    let text = "";
+    const read = (async () => {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return true;
+        text += new TextDecoder().decode(value);
+      }
+    })();
+    await new Promise((r) => setTimeout(r, 20));
+    const held = { off: false };
+    const undo = onLeave(() => (held.off = true));
+    undo(); // a request that ended first is not called
+    leave();
+    expect(await Promise.race([read, new Promise((r) => setTimeout(() => r(false), 1000))])).toBe(true);
+    expect(text).toMatch(/event: hello/);
+    expect(text).toMatch(/event: bye\ndata: \nretry: 250/);
+    expect(held.off).toBe(false);
+    let late = false;
+    onLeave(() => (late = true)); // registered after leaving: runs at once
+    expect(late).toBe(true);
   });
 });

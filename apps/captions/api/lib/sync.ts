@@ -22,6 +22,28 @@ const latest = new Map<string, Map<string, number>>();
 type Listener = (n: { seq: number; topic: string; origin: string | null; chat?: string }) => void;
 const listeners = new Map<string, Set<Listener>>();
 
+const leaveFns = new Set<() => void>();
+let left = false;
+/**
+ * This process is on its way out: a deploy's reload has the next one listening already (boot.ts, on pm2's SIGINT). Every
+ * request held open here (this stream, the computers' and workers' long polls) ends now, so its caller asks again and
+ * reaches the next process, and the old one exits once nothing is open.
+ */
+export function leave(): void {
+  left = true;
+  for (const fn of [...leaveFns]) fn();
+  leaveFns.clear();
+}
+/** Runs `fn` when this process leaves (at once if it has). Returns the undo, for a request that ended first. */
+export function onLeave(fn: () => void): () => void {
+  if (left) {
+    fn();
+    return () => {};
+  }
+  leaveFns.add(fn);
+  return () => void leaveFns.delete(fn);
+}
+
 /** The topic of an /api address: "/api/review/x" → "review", "/api/x/ba/editor" → "x/ba". Null outside /api. */
 export function topicOf(path: string): string | null {
   const m = /^\/api\/(x\/[^/?#]+|[^/?#]+)/.exec(path);
@@ -73,11 +95,16 @@ syncApp.get("/events", (c) => {
       if (!set) listeners.set(owner, (set = new Set()));
       set.add(send);
       const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "" }), 15_000);
-      stream.onAbort(() => {
+      const end = () => {
         clearInterval(ping);
         set.delete(send);
+        off();
         done();
-      });
+      };
+      // a reload: the stream ends cleanly and the browser opens it again within 250 ms (retry), on the next process,
+      // well before the page's "Reconnecting" (2 s); its hello's new boot id has every list refetch
+      const off = onLeave(() => void stream.writeSSE({ event: "bye", data: "", retry: 250 }).finally(end));
+      stream.onAbort(end);
     });
   });
 });

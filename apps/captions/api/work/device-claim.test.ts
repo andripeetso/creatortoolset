@@ -253,4 +253,21 @@ describe.skipIf(rootReplaced)("the server's own loop", () => {
       settle();
     }
   });
+
+  // last: leave() is for good in this module
+  it("a reload's old process answers a held claim at once, so the computer asks the next one", async () => {
+    const { leave } = await import("../lib/sync");
+    const mac = pairDevice("loop", "Idle Mac");
+    CLAIM_POLL.holdMs = 25_000;
+    try {
+      const t = Date.now();
+      const held = claim(mac.token);
+      await new Promise((r) => setTimeout(r, 50));
+      leave();
+      expect(await held).toEqual({ pkg: null, account: "loop" });
+      expect(Date.now() - t).toBeLessThan(1500);
+    } finally {
+      CLAIM_POLL.holdMs = 0;
+    }
+  });
 });

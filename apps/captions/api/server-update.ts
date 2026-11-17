@@ -20,6 +20,7 @@ import path from "node:path";
 import type { ServerUpdateView } from "../contracts/server-update";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
+import { onLeave } from "./lib/sync";
 
 export const serverUpdateApp = new Hono<{ Variables: AuthVars }>();
 
@@ -29,8 +30,13 @@ const dir = () => path.join(env.dataDir, "server-update");
 const request = () => path.join(dir(), "request");
 const DRAIN_MS = 10 * 60_000;
 
+// a reload's old process (lib/sync.ts leave) claims nothing more: its replacement runs the jobs
+let left = false;
+onLeave(() => (left = true));
+
 /** An update is waiting for this server's running jobs: take no new one (the job loops ask before each claim). */
 export function draining(now = Date.now()): boolean {
+  if (left) return true;
   try {
     return now - statSync(path.join(dir(), "drain")).mtimeMs < DRAIN_MS;
   } catch {

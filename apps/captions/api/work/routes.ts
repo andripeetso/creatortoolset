@@ -9,6 +9,7 @@ import { parseMachine, type Device } from "../../contracts/providers";
 import { WORK_MIN, type WorkClaim, type WorkResult } from "../../contracts/work";
 import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
 import { deviceForToken, deviceOf, noteMachine, setDeviceWork, touchDevice } from "../lib/devices";
+import { onLeave } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { libraryMedia } from "../library/routes";
 import { finishJob, type JobRow } from "../library/jobs";
@@ -94,6 +95,7 @@ workApp.post("/claim", async (c) => {
   const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
   if (v < WORK_MIN) return answer({ pkg: null, update: true });
   const end = Date.now() + CLAIM_POLL.holdMs;
+  let gone = false; // a reload (lib/sync.ts leave): the poll answers "nothing" now, and the computer asks the next process
   for (;;) {
     const got = libraryOnly ? null : await claimForComputer(deviceOf(d.id)!);
     if (got) {
@@ -111,8 +113,13 @@ workApp.post("/claim", async (c) => {
     if (lib) return answer({ pkg: null, lib });
     const pics = libraryOnly ? null : await claimPictures(deviceOf(d.id)!);
     if (pics) return answer({ pkg: null, pics });
-    if (Date.now() >= end || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
-    await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
+    if (Date.now() >= end || gone || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
+    let off = () => {};
+    await new Promise<void>((r) => {
+      setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now())));
+      off = onLeave(() => ((gone = true), r()));
+    });
+    off();
     touchDevice(d.id, c.req.header("user-agent"));
   }
 });
