@@ -29,6 +29,8 @@ const ALLOWED: Record<string, string[]> = {
   Folders: ["plugins/baby-acrobatics/web/EditorStorage.tsx", "src/components/settings/FoldersSection.tsx"],
   // the Video Cleaner's own page, and a workspace's page
   Access: ["plugins/video-cleaner/web/CleanerAccess.tsx", "src/components/settings/WorkspaceSection.tsx"],
+  // the studio plug-in's Computers entry: Settings → Computers draws no title for it, its rows sit under the app's card
+  "Load balancing": ["plugins/baby-acrobatics/web.tsx", "src/components/settings/ServerWorkSection.tsx"],
   // a workspace's page, and the hosted admin board
   Accounts: ["plugins/hosted/web/AdminBoard.tsx", "src/components/settings/WorkspaceSection.tsx"],
   // Settings → Workspace: the form's section, or (no workspace yet) the empty one in its place, never both
@@ -38,9 +40,11 @@ const ALLOWED: Record<string, string[]> = {
 describe("a section title is written in one file", () => {
   it("no two files make a section of the same name (add rows to the one that exists)", () => {
     const byTitle = new Map<string, Set<string>>();
-    for (const f of files)
-      for (const m of readFileSync(path.join(app, f), "utf8").matchAll(/<Section\b[^>]*?\btitle="([^"]+)"/g))
-        byTitle.set(m[1]!, (byTitle.get(m[1]!) ?? new Set()).add(f.split(path.sep).join("/")));
+    for (const f of files.map((f) => f.split(path.sep).join("/"))) {
+      // a <Section title="…">, and in a plug-in's web.tsx each entry's title: "…" (the app draws those as sections)
+      const re = /^plugins\/[^/]+\/web\.tsx$/.test(f) ? /\btitle: "([^"]+)"/g : /<Section\b[^>]*?\btitle="([^"]+)"/g;
+      for (const m of readFileSync(path.join(app, f), "utf8").matchAll(re)) byTitle.set(m[1]!, (byTitle.get(m[1]!) ?? new Set()).add(f));
+    }
     const twice = [...byTitle]
       .filter(([title, at]) => at.size > 1 && ![...at].every((f) => ALLOWED[title]?.includes(f)))
       .map(([title, at]) => `${title}: ${[...at].join(", ")}`);

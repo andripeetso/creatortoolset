@@ -95,6 +95,8 @@ export function ServerWorkSection() {
  */
 /** What Off means, under a computer set to it: no work at all, even when no other computer could take it. */
 export const OFF_LINE = "Off — takes no work";
+/** Sent on window when the Automatic switch changes (detail: the saved Balance), so a plug-in's rows under the card follow it. */
+export const BALANCE_EVENT = "ct-balance";
 
 export function LoadBalancing({ computers }: { computers: Listed[] }) {
   const [view, setView] = useState<ServerWorkView | null>(null);
@@ -142,7 +144,7 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
         <Row
           title="Automatic"
           description="New jobs start on the computer with the most free CPU and memory."
-          control={<Switch checked={balance.on} aria-label="Automatic" onCheckedChange={(on) => void call<Balance>("/api/devices/balance", { on }).then(setBalance, (e) => saveFailed(msg(e)))} />}
+          control={<Switch checked={balance.on} aria-label="Automatic" onCheckedChange={(on) => void call<Balance>("/api/devices/balance", { on }).then((b) => (setBalance(b), window.dispatchEvent(new CustomEvent(BALANCE_EVENT, { detail: b }))), (e) => saveFailed(msg(e)))} />}
         />
         {balance.on && workers.map((d) => row(d.id, d.name, d.report?.machine?.os === "mac" || !d.report?.machine ? <Laptop className="size-4" /> : <Monitor className="size-4" />, weightOf(d.id) === 0 ? OFF_LINE : d.online ? undefined : "Offline"))}
         {balance.on && server && row(SERVER_PLACE, "This server", <Server className="size-4" />, "After your computers, unless set to Prefer")}
