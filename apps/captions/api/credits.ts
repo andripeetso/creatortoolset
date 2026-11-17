@@ -1,4 +1,4 @@
-import type { ActivityRow } from "../contracts/activity";
+import type { ActivityChoice, ActivityRow } from "../contracts/activity";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { env } from "./lib/env";
 import { isAdminActor, keyFor } from "./my-keys";
@@ -56,7 +56,14 @@ const DAY = 24 * 3600_000;
  * most (an inbox note: the Mac app shows it) and sees it on Home's Activity until a call on the key works again.
  * ponytail: in memory; a restart forgets, and the next failed call tells again
  */
-export const creditGone = new Map<string, { name: MyKeyEnv; stopped: string; owners: string[]; at: number }>();
+export const creditGone = new Map<string, { name: MyKeyEnv; stopped: string; owners: string[]; at: number; choices?: Record<string, CreditChoice> }>();
+
+/**
+ * What an owner picked for the work that waits until the credit is back (Gemini only, Home's Activity): its timelines on
+ * Antigravity, picture only, or none (Timelines off in those libraries). Each owner's own (a server key serves several),
+ * kept until a call on the key works again.
+ */
+export type CreditChoice = "antigravity" | "without";
 
 /** Who `key` serves: the accounts it is their own key for (keyFor), else the admins (the server's key). */
 function ownersOf(name: MyKeyEnv, key: string): string[] {
@@ -72,13 +79,28 @@ export function creditOut(name: MyKeyEnv, key: string, stopped: string, now = Da
   const was = creditGone.get(id);
   if (was && now - was.at < DAY) return;
   const owners = ownersOf(name, key);
-  creditGone.set(id, { name, stopped, owners, at: now });
+  creditGone.set(id, { ...was, name, stopped, owners, at: now });
   const text = `Out of credit, so it stopped. Top it up at ${TOP_UP[name] ?? "the service's site"}`;
   void import("./review")
     .then(({ notifyWorkshopOwner }) =>
       Promise.all(owners.map((o) => notifyWorkshopOwner(o, { kind: "failed", by: serviceName(name), name: stopped, text, href: "/settings/keys", ref: `credit:${name}` }))),
     )
     .catch(() => {});
+}
+
+/** What `actor` picked while `key`'s credit is out (CreditChoice), if anything. */
+export const creditChoice = (name: MyKeyEnv, key: string, actor: string | null): CreditChoice | undefined =>
+  key && actor ? creditGone.get(`${name}:${key}`)?.choices?.[actor] : undefined;
+
+/** `username` picked `choice` for `name`'s keys of theirs that are out of credit; false when none is theirs. */
+export function chooseCredit(name: MyKeyEnv, username: string, choice: CreditChoice): boolean {
+  let any = false;
+  for (const g of creditGone.values())
+    if (g.name === name && g.owners.includes(username)) {
+      g.choices = { ...g.choices, [username]: choice };
+      any = true;
+    }
+  return any;
 }
 
 /** A call on `key` worked: its credit is back, its warning goes. */
@@ -88,14 +110,34 @@ export function creditBack(name: MyKeyEnv, key: string): void {
 
 const serviceName = (name: MyKeyEnv) => MY_KEYS.find((k) => k.env === name)?.name ?? name;
 
-/** Home's Activity rows for `username`: each of their keys out of credit, waiting on them. */
-export const creditRows = (username: string): ActivityRow[] =>
+/** The buttons of a key's row: Top up, and for Gemini the waiting timelines on Antigravity (`antigravity`: it runs) or none; Deepgram: the voice settings, where another model can write instead. */
+function choicesOf(name: MyKeyEnv, choice: CreditChoice | undefined, antigravity: boolean): ActivityChoice[] {
+  const top: ActivityChoice = { label: "Top up", url: `https://${TOP_UP[name] ?? ""}` };
+  const out = TOP_UP[name] ? [top] : [];
+  if (name === "DEEPGRAM_API_KEY") out.push({ label: "Use another voice model", url: "/settings/voice" });
+  if (name !== "GEMINI_API_KEY") return out;
+  if (antigravity && choice !== "antigravity") out.push({ label: "Use Antigravity until then", post: "/api/activity/credit/GEMINI_API_KEY/antigravity" });
+  out.push({ label: "Continue without", post: "/api/activity/credit/GEMINI_API_KEY/without" });
+  return out;
+}
+
+/** What a key's row says: what stopped, or what runs instead since its owner picked it. */
+const detailOf = (g: { name: MyKeyEnv; stopped: string }, choice: CreditChoice | undefined) =>
+  choice === "antigravity"
+    ? "Timelines are made on Antigravity, picture only, until it is topped up"
+    : g.name === "GEMINI_API_KEY"
+      ? `${g.stopped} wait · the rest carries on without Gemini`
+      : `${g.stopped} stopped · top up at ${TOP_UP[g.name] ?? "the service's site"}`;
+
+/** Home's Activity rows for `username`: each of their keys out of credit, waiting on them, with what they can do (choicesOf); one they let go on without (Continue without) waits no more. */
+export const creditRows = (username: string, antigravity = false): ActivityRow[] =>
   [...creditGone.values()]
-    .filter((g) => g.owners.includes(username))
+    .filter((g) => g.owners.includes(username) && g.choices?.[username] !== "without")
     .map((g) => ({
       id: `credit:${g.name}`,
       title: `${serviceName(g.name)}: out of credit`,
-      detail: `${g.stopped} stopped · top up at ${TOP_UP[g.name] ?? "the service's site"}`,
+      detail: detailOf(g, g.choices?.[username]),
       state: "ready",
       href: "/settings/keys",
+      choices: choicesOf(g.name, g.choices?.[username], antigravity),
     }));

@@ -9,7 +9,7 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "credits-"));
 process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET;
-const { creditBack, creditGone, creditOut, creditRows, isOutOfCredits, outOfCreditsMessage } = await import("./credits");
+const { chooseCredit, creditBack, creditChoice, creditGone, creditOut, creditRows, isOutOfCredits, outOfCreditsMessage } = await import("./credits");
 const { notifyWorkshopOwner } = await import("./review");
 const { saveMyKey } = await import("./my-keys");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -69,7 +69,17 @@ describe("the out-of-credit warning", () => {
       { kind: "failed", by: "Deepgram", name: "Captions and transcripts", text: "Out of credit, so it stopped. Top it up at console.deepgram.com", href: "/settings/keys", ref: "credit:DEEPGRAM_API_KEY" },
     ]);
     expect(creditRows("local")).toEqual([
-      { id: "credit:DEEPGRAM_API_KEY", title: "Deepgram: out of credit", detail: "Captions and transcripts stopped · top up at console.deepgram.com", state: "ready", href: "/settings/keys" },
+      {
+        id: "credit:DEEPGRAM_API_KEY",
+        title: "Deepgram: out of credit",
+        detail: "Captions and transcripts stopped · top up at console.deepgram.com",
+        state: "ready",
+        href: "/settings/keys",
+        choices: [
+          { label: "Top up", url: "https://console.deepgram.com" },
+          { label: "Use another voice model", url: "/settings/voice" },
+        ],
+      },
     ]);
     expect(creditRows("someone")).toEqual([]);
     // a day on, still empty: told again
@@ -88,10 +98,65 @@ describe("the out-of-credit warning", () => {
     process.env.GEMINI_API_KEY = "gk-server";
     try {
       creditOut("GEMINI_API_KEY", "gk-server", "Media Library timelines");
-      expect(creditRows("local")[0]).toMatchObject({ title: "Gemini API: out of credit", detail: "Media Library timelines stopped · top up at aistudio.google.com/billing" });
+      expect(creditRows("local")[0]).toMatchObject({ title: "Gemini API: out of credit", detail: "Media Library timelines wait · the rest carries on without Gemini" });
     } finally {
       delete process.env.GEMINI_API_KEY;
       creditBack("GEMINI_API_KEY", "gk-server");
+    }
+  });
+});
+
+describe("a choice while the credit is out", () => {
+  const labels = (antigravity: boolean) => creditRows("local", antigravity)[0]?.choices?.map((c) => c.label);
+  it("Gemini: Top up, Antigravity when it runs, or without; the pick is kept a day on and goes with the warning", () => {
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const t0 = Date.now();
+    try {
+      creditOut("GEMINI_API_KEY", "gk-test", "Media Library timelines", t0);
+      expect(labels(false)).toEqual(["Top up", "Continue without"]);
+      expect(labels(true)).toEqual(["Top up", "Use Antigravity until then", "Continue without"]);
+      expect(creditRows("local")[0]!.choices![0]).toEqual({ label: "Top up", url: "https://aistudio.google.com/billing" });
+      expect(chooseCredit("GEMINI_API_KEY", "someone", "without")).toBe(false);
+      expect(chooseCredit("GEMINI_API_KEY", "local", "antigravity")).toBe(true);
+      expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBe("antigravity");
+      expect(creditRows("local", true)[0]).toMatchObject({ detail: "Timelines are made on Antigravity, picture only, until it is topped up" });
+      expect(labels(true)).toEqual(["Top up", "Continue without"]);
+      creditOut("GEMINI_API_KEY", "gk-test", "Media Library timelines", t0 + 25 * 3600_000);
+      expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBe("antigravity");
+      // without: nothing waits on them any more
+      chooseCredit("GEMINI_API_KEY", "local", "without");
+      expect(creditRows("local", true)).toEqual([]);
+      creditBack("GEMINI_API_KEY", "gk-test");
+      expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBeUndefined();
+    } finally {
+      creditBack("GEMINI_API_KEY", "gk-test");
+      saveMyKey("local", "GEMINI_API_KEY", null);
+    }
+  });
+
+  it("a key with two owners: each one's pick is their own", () => {
+    creditGone.set("GEMINI_API_KEY:gk-two", { name: "GEMINI_API_KEY", stopped: "Media Library timelines", owners: ["local", "other"], at: Date.now() });
+    try {
+      chooseCredit("GEMINI_API_KEY", "local", "antigravity");
+      expect(creditChoice("GEMINI_API_KEY", "gk-two", "local")).toBe("antigravity");
+      expect(creditChoice("GEMINI_API_KEY", "gk-two", "other")).toBeUndefined();
+      expect(creditRows("other", true)[0]?.choices?.map((c) => c.label)).toEqual(["Top up", "Use Antigravity until then", "Continue without"]);
+      chooseCredit("GEMINI_API_KEY", "local", "without");
+      expect(creditRows("local", true)).toEqual([]);
+      expect(creditRows("other", true)).toHaveLength(1);
+    } finally {
+      creditBack("GEMINI_API_KEY", "gk-two");
+    }
+  });
+
+  it("a service with no other way: only Top up", () => {
+    saveMyKey("local", "ANTHROPIC_API_KEY", "sk-test");
+    try {
+      creditOut("ANTHROPIC_API_KEY", "sk-test", "AI on the Anthropic API key");
+      expect(labels(true)).toEqual(["Top up"]);
+    } finally {
+      creditBack("ANTHROPIC_API_KEY", "sk-test");
+      saveMyKey("local", "ANTHROPIC_API_KEY", null);
     }
   });
 });

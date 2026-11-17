@@ -259,7 +259,8 @@ export function appRows(w: AppWork): ActivityRow[] {
 async function appActivity(user: SessionUser): Promise<ActivityRow[]> {
   if (user.role === "visitor") return [];
   try {
-    return [...appRows(await appWork(user)), ...(await import("./credits")).creditRows(user.username)];
+    const [{ creditRows }, { antigravityRoute }] = await Promise.all([import("./credits"), import("./library/timeline")]);
+    return [...appRows(await appWork(user)), ...creditRows(user.username, !!antigravityRoute(user.username))];
   } catch (err) {
     console.warn(`[activity] ${err instanceof Error ? err.message : String(err)}`);
     return [];
@@ -274,6 +275,17 @@ export function activityApp(plugins: ServerPlugin[]) {
     const user = c.get("user");
     const [own, added] = await Promise.all([appActivity(user), pluginActivity(plugins, user)]);
     return c.json([...own, ...added]);
+  });
+  // POST /api/activity/credit/GEMINI_API_KEY/antigravity|without: what happens to the timelines waiting on the Gemini credit
+  // of the signed-in account's key (credits.ts chooseCredit, timeline.ts creditWaitsChosen); 404 when none of theirs is out
+  app.post("/credit/GEMINI_API_KEY/:choice", async (c) => {
+    const choice = c.req.param("choice");
+    if (choice !== "antigravity" && choice !== "without") return c.json({ error: "Not found", code: "not_found" }, 404);
+    const user = c.get("user");
+    const [{ chooseCredit }, timeline, { libraryDb }] = await Promise.all([import("./credits"), import("./library/timeline"), import("./library/db")]);
+    if (choice === "antigravity" && !timeline.antigravityRoute(user.username)) return c.json({ error: "Needs Antigravity in Settings → Providers", code: "needs_antigravity" }, 409);
+    if (!chooseCredit("GEMINI_API_KEY", user.username, choice)) return c.json({ error: "Not found", code: "not_found" }, 404);
+    return c.json({ libraries: timeline.creditWaitsChosen(libraryDb(), user.username, choice) });
   });
   app.get("/menu", async (c) => {
     c.header("Cache-Control", "no-store");
