@@ -36,7 +36,7 @@ import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
 import { backfillRoots } from "./places";
-import { copiesLack, copiesWake } from "./copies";
+import { copiesWake } from "./copies";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -400,8 +400,7 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
-  // held until every copy of the library has it (copies.ts)
-  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies" || copiesLack(versionId)) return false;
+  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies") return false;
   // the rows first: a delete that fails leaves an unread file behind, never a version pointing at nothing
   db.prepare("UPDATE asset_versions SET source_key = ?, mac_path = from_path, mac_device = from_device WHERE id = ?").run(v.proxy, versionId);
   await blobs.delete(v.source_key);

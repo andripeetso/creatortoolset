@@ -87,7 +87,6 @@ describe("copies of a Media Library", () => {
     // a phone's upload goes before its own work has run on any computer
     d.prepare("UPDATE asset_versions SET state = 'processing' WHERE id = ?").run(v);
     expect((await copies())[0]!.pending).toBe(1);
-    expect(await dropOriginal(v)).toBe(false); // the copy lacks it
     expect(assetsCopiesLack(["ast-a"]).has("ast-a")).toBe(true);
     const job = (await claim())!;
     expect(job.options).toMatchObject({ op: "copy", key: v, n: "1", rel: "Interviews/Clip ast-a.mov", size: String(body.length), sha256: sha(body) });
@@ -108,7 +107,7 @@ describe("copies of a Media Library", () => {
     expect(await here(mac.device.id)).toEqual(["ast-a"]);
     expect(await here(laptop.device.id)).toEqual([]);
     expect(assetsCopiesLack(["ast-a"]).size).toBe(0);
-    await new Promise((r) => setTimeout(r, 50)); // the done's own dropOriginal
+    expect(await dropOriginal(v)).toBe(true);
     expect(d.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(v)).toEqual({ source_key: `libraries/lib_c/v/${v}/proxy.mp4` });
     expect(await claim()).toBeNull();
   });
@@ -137,10 +136,11 @@ describe("copies of a Media Library", () => {
     await answer(job.id, { state: "reconnect" });
     expect((await copies())[0]!.state).toBe("reconnect");
     expect(await claim()).toBeNull();
-    expect(await dropOriginal(v)).toBe(false);
+    // Proxies only: the server keeps no original for a copy (owner, 11-17: originals stay on the computers)
+    expect(await dropOriginal(v)).toBe(true);
   });
 
-  it("stops copying without touching the folder, and lets the originals it held go", async () => {
+  it("stops copying without touching the folder", async () => {
     const id = (await copies())[0]!.id;
     expect((await app.request(`/api/library/lib_c/copies/${id}`, { method: "DELETE" })).status).toBe(200);
     expect(await copies()).toEqual([]);
@@ -269,6 +269,10 @@ describe("copies: every version, no starving, late answers, copying between comp
     ).run(body.length, t++, laptop.device.id);
     d.prepare("UPDATE assets SET current_version_id = 'vd-lap' WHERE id = 'ast-lap'").run();
     expect(await claim()).toBeNull(); // the Mac can't reach it
+    // Proxies only: no original goes through the server for a copy; the copy says what it needs
+    expect(await claim(laptop.token)).toBeNull();
+    expect((await copiesD())[0]!.needsUpload).toBe(true);
+    d.prepare(`UPDATE libraries SET settings = '{"upload":"all"}' WHERE id = 'lib_d'`).run();
     // the laptop away: the copy needs it
     const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     try {

@@ -105,6 +105,7 @@ describe("Copies", () => {
     expect(copyLines(copy({ noOriginal: 1 }), now).needs).toEqual(["No original for 1 file"]);
     expect(copyLines(copy({ noOriginal: 3 }), now).needs).toEqual(["No original for 3 files"]);
     expect(copyLines(copy({ noOriginal: 0 }), now).needs).toEqual([]);
+    expect(copyLines(copy({ needsUpload: true }), now).needs).toEqual(["Needs Upload to the server"]);
     for (const line of [...needs, "Disk full on the computer", "No original for 3 files", "Copying 12 files"]) expect(line).not.toMatch(/\.$/);
   });
 

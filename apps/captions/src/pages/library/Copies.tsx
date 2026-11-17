@@ -52,6 +52,7 @@ export function copyLines(c: LibraryCopy, now = Date.now()): { busy: string | nu
     c.offlineSince && `Offline since ${since(c.offlineSince, now)}`,
     c.waitsFor && `Needs ${c.waitsFor} online`,
     !!c.noOriginal && `No original for ${c.noOriginal} ${c.noOriginal === 1 ? "file" : "files"}`,
+    c.needsUpload && "Needs Upload to the server",
   ].filter((x): x is string => !!x);
   return { busy, needs };
 }

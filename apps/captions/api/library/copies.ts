@@ -11,7 +11,7 @@ import { walkOnMac } from "../lib/folder-list";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import { pluginCopySources, type DeviceJobSlot } from "../lib/plugin";
 import { accountOf, libraryChanged, libraryRole } from "./access";
-import { blobs, libraryDb } from "./db";
+import { blobs, libraryDb, versionUpload } from "./db";
 import { triesOn } from "./places";
 import { downloadName } from "./routes";
 
@@ -22,8 +22,10 @@ import { downloadName } from "./routes";
  * deleted from a copy. There is no queue: what a copy lacks is the clips' versions minus copy_files, so a new file, a
  * new version and a new copy all show up on the next claim. The copy's computer claims it on the device job road
  * (contracts/devices.ts COPY_KIND), one file at a time, and checks the folder's files once a day. A version only another
- * computer holds is sent here by that computer first (op "send", copy_sends) and kept until every copy has it.
- * The server holds a stored original until every copy has it (copiesLack: worker.ts dropOriginal, trash.ts purgeTrash).
+ * computer holds is sent here by that computer first (op "send", copy_sends) and kept until every copy has it, only where
+ * the library's Upload to the server is "Video files and proxies" (all); with Off or Proxies only the server never keeps
+ * an original for a copy: that copy waits ("Needs Upload to the server") and a Mac upload's original goes as before
+ * (worker.ts dropOriginal). The trash purge leaves what the server has that a copy still lacks (assetsCopiesLack).
  */
 
 /** How long a computer holds a job without a word (it beats every 30 s while it copies). */
@@ -113,7 +115,8 @@ function nextSend(d: string, now: number) {
          AND NOT EXISTS (SELECT 1 FROM copy_sends s WHERE s.version_id = v.id AND s.tried_at > ?)`,
     [d, d, d, now - RETRY_MS],
     (v) => {
-      if (!isOnline(v.target) || triesOn(v, v.target, []).length || [...held.values()].some((h) => h.send && h.key === v.id && now - h.at <= LEASE_MS)) return null;
+      // an original goes through the server only where its library uploads them (owner, 11-17: originals stay on his computers)
+      if (!isOnline(v.target) || versionUpload(v.id) !== "all" || triesOn(v, v.target, []).length || [...held.values()].some((h) => h.send && h.key === v.id && now - h.at <= LEASE_MS)) return null;
       const paths = triesOn(v, d, []);
       return paths.length ? { v, paths } : null;
     },
@@ -128,13 +131,6 @@ function lackingItems(c: CopyRow, now: number): CopyItem[] {
     (db().prepare("SELECT version_id AS k FROM copy_files WHERE copy_id = ? AND (copied_at IS NOT NULL OR tried_at > ?)").all(c.id, now - RETRY_MS) as { k: string }[]).map((r) => r.k),
   );
   return sources.flatMap((s) => s.items(c.library_id)).filter((i) => !have.has(i.key));
-}
-
-/** Whether a version is copied to every copy of its library: a stored original is held until then. */
-export function copiesLack(versionId: string): boolean {
-  return !!db()
-    .prepare(`SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND ${WANTS} AND ${STORED} AND ${SOME_LACK}`)
-    .get(versionId);
 }
 
 /** The assets among `ids` with a version here (stored or sent) that some copy still lacks (the trash purge leaves them). */
@@ -383,14 +379,8 @@ export const copyJob: DeviceJobSlot = {
         )
         .run(h.key, device, path.posix.join(c.path, done.rel), now);
     end(h, { state: "ok", free: b.free });
-    // a stored original, or one a computer sent, that every copy has now may go
-    if (!h.item) {
-      const key = h.key;
-      void import("./worker")
-        .then((w) => w.dropOriginal(key))
-        .then(() => dropSent(key))
-        .catch((e: unknown) => console.error("[library] copies:", e));
-    }
+    // an original a computer sent that every copy has now goes
+    if (!h.item) void dropSent(h.key).catch((e: unknown) => console.error("[library] copies:", e));
     void wakeEditorPolls();
     return { reply: {} };
   },
@@ -507,6 +497,7 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
     const lacks = `${WANTED} AND NOT ${has("?")}`;
     const pending = (db().prepare(`SELECT count(*) AS n ${lacks}`).get(libraryId, c.id) as { n: number }).n + lackingItems(c, Number.MAX_SAFE_INTEGER).length;
     let waitsFor: string | undefined;
+    let needsUpload = false;
     let noOriginal = 0;
     if (pending) {
       // files whose original is nowhere: not here, on no computer, on no disk
@@ -515,15 +506,17 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
           .prepare(`SELECT count(*) AS n ${lacks} AND NOT ${HERE} AND v.mac_path IS NULL AND v.root IS NULL AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.gone_at IS NULL)`)
           .get(libraryId, c.id) as { n: number }
       ).n;
-      // files only another computer holds, while it is offline: the first one named (online, it sends them)
+      // files only another computer holds: while it is offline the first one is named; online, it sends them, where the
+      // library uploads originals (else the copy needs Upload to the server)
       const holders = db()
         .prepare(
-          `SELECT DISTINCT h FROM (SELECT v.mac_device AS h ${lacks} AND NOT ${HERE} AND v.mac_device IS NOT NULL
-             UNION ALL SELECT p.device AS h FROM version_places p WHERE p.gone_at IS NULL AND p.version_id IN (SELECT v.id ${lacks} AND NOT ${HERE})) WHERE h != ? LIMIT 50`,
+          `SELECT DISTINCT id, h FROM (SELECT v.id, v.mac_device AS h ${lacks} AND NOT ${HERE} AND v.mac_device IS NOT NULL
+             UNION ALL SELECT p.version_id AS id, p.device AS h FROM version_places p WHERE p.gone_at IS NULL AND p.version_id IN (SELECT v.id ${lacks} AND NOT ${HERE})) WHERE h != ? LIMIT 50`,
         )
-        .all(libraryId, c.id, libraryId, c.id, c.device) as { h: string }[];
+        .all(libraryId, c.id, libraryId, c.id, c.device) as { id: string; h: string }[];
       const away = holders.find((x) => !isOnline(x.h));
       if (away) waitsFor = nameFor(away.h, viewer);
+      needsUpload = holders.some((x) => isOnline(x.h) && versionUpload(x.id) !== "all");
     }
     const online = isOnline(c.device);
     return {
@@ -536,6 +529,7 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
       state: c.state,
       ...(!online ? { offlineSince: d?.lastSeen ?? c.last_seen ?? c.created_at } : {}),
       ...(waitsFor ? { waitsFor } : {}),
+      ...(needsUpload ? { needsUpload: true as const } : {}),
       ...(noOriginal ? { noOriginal } : {}),
     } as LibraryCopy;
   });
@@ -587,12 +581,8 @@ copiesApp.delete("/:id/copies/:copyId", async (c) => {
   if (!gone) return c.json({ error: "Not found", code: "not_found" }, 404);
   db().prepare("DELETE FROM copy_files WHERE copy_id = ?").run(copyId);
   for (const [k, h] of held) if (h.copy === copyId) held.delete(k);
-  // the originals it held back may go now
-  const { dropOriginal } = await import("./worker");
-  for (const v of db().prepare(`SELECT v.id ${WANTED} AND ${HERE}`).all(id) as { id: string }[]) {
-    await dropOriginal(v.id).catch(() => false);
-    await dropSent(v.id).catch(() => undefined);
-  }
+  // the originals computers sent for it go now
+  for (const v of db().prepare(`SELECT v.id ${WANTED} AND ${SENT}`).all(id) as { id: string }[]) await dropSent(v.id).catch(() => undefined);
   return c.json({ ok: true });
 });
 
