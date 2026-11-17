@@ -121,6 +121,17 @@ real person, business, server or platform account. Examples and fixtures use the
 (handle `tinyacrobatics`). `scripts/check-public.sh` enforces the lists in `scripts/public/`; a hit fails the
 pre-commit hook. Do not name the products a feature was modelled on: describe what the feature does.
 
+**Files and work stay on the person's computers.** Everything works locally unless it was marked to run on the server.
+The server serves: reviews, Finals, uploads to the team and proxies for the team. It processes (decodes, encodes,
+transcribes, renders) only where Settings → Server's video work is on; otherwise the work waits for one of the
+person's computers and never falls through to the server (`mayRunHere`, `api/work/place.ts`). A computer's own file is
+indexed where it is and its bytes come to the server only where the library's Upload setting sends them; a file a
+person uploads by hand is taken (`mayReceive`, `api/library/upload-gate.ts`). Nothing is deleted for its age: people
+empty their trash and remove exports themselves. The Media Library is the only source. Where a file is comes from its
+place record. Never say a file is not on this computer without checking Settings → Folders and the place rows.
+`api/prevention.test.ts` and `api/library/upload-gate.test.ts` hold the lists: a new process the server starts, a new
+route that takes a file and a new deletion by age each need a row there.
+
 **Tests live next to the code.** `foo.ts` is tested by `foo.test.ts` in the same folder. Run the test file you
 changed, then `pnpm test` before a pull request. Keep a new test small: it should fail if the logic breaks.
 

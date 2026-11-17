@@ -176,7 +176,6 @@ async function bucketBytes(libraryIds: string[]): Promise<number> {
 
 async function keepDaysOf(kind: KeptKind): Promise<number | undefined> {
   if (kind === "chat-videos") return 7;
-  if (kind === "exports") return (await import("./exports")).EXPORTS_KEEP_DAYS;
   if (kind === "captions-trash") return (await import("./projects")).PROJECT_TRASH_DAYS;
   if (kind === "review-trash") return (await import("./review")).REVIEW_TRASH_DAYS;
   return undefined;

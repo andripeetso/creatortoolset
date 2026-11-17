@@ -41,8 +41,11 @@ for (const [id, upload] of [["lib_p", '"proxies"'], ["lib_all", '"all"'], ["lib_
   );
 }
 
-/** A file uploaded through the routes, sent from /Users/tiny/Movies/<name> on a Mac. Returns its version id. */
-async function upload(lib: string, name: string): Promise<string> {
+/**
+ * A file uploaded through the routes, sent from /Users/tiny/Movies/<name> on a Mac. Returns its version id. `placed`: that
+ * Mac reports the file where it is (version_places), as its scan does.
+ */
+async function upload(lib: string, name: string, placed = true): Promise<string> {
   const body = Buffer.from(`${lib} ${name} original`);
   const post = (url: string, init: RequestInit = {}) => app.request(url, { method: "POST", ...init });
   const init = (await (
@@ -52,7 +55,9 @@ async function upload(lib: string, name: string): Promise<string> {
     })
   ).json()) as { id: string };
   await app.request(`/api/library/uploads/${init.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(body.length) }, body });
-  return ((await (await post(`/api/library/uploads/${init.id}/finish`)).json()) as { versionId: string }).versionId;
+  const id = ((await (await post(`/api/library/uploads/${init.id}/finish`)).json()) as { versionId: string }).versionId;
+  if (placed && id) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, 'mac-1', ?, ?)").run(id, `/Users/tiny/Movies/${name}`, Date.now());
+  return id;
 }
 
 const version = (id: string) =>
@@ -101,6 +106,18 @@ describe("a Media Library whose upload is proxies only", () => {
     expect(await blobs.stat(original)).toBeNull();
     expect(version(id)).toMatchObject({ source_key: proxy, mac_path: "/Users/tiny/Movies/Cartwheel.mp4", mac_device: "mac-1" });
     expect(await dropOriginal(id)).toBe(false); // once
+  });
+
+  it("keeps the original while the Mac it came from has no place for it, or that place is gone", async () => {
+    const id = await upload("lib_p", "Arch.mp4", false);
+    const original = version(id).source_key;
+    await proxied(id);
+    expect(await dropOriginal(id)).toBe(false);
+    expect(await blobs.stat(original)).not.toBeNull();
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at) VALUES (?, 'mac-1', '/Users/tiny/Movies/Arch.mp4', 1, 2)").run(id);
+    expect(await dropOriginal(id)).toBe(false);
+    d.prepare("UPDATE version_places SET gone_at = NULL WHERE version_id = ?").run(id);
+    expect(await dropOriginal(id)).toBe(true);
   });
 
   it("reads the proxy everywhere after: playback, the AI Editor, the steps; a download says the original is on the Mac", async () => {
@@ -156,7 +173,8 @@ describe("a Media Library whose upload is proxies only", () => {
     const picture = await upload("lib_p", "Pose.jpg");
     d.prepare("UPDATE assets SET kind = 'image' WHERE current_version_id = ?").run(picture);
     const sound = await upload("lib_p", "Song.mp3");
-    const others = [await upload("lib_all", "Split.mp4"), await upload("lib_none", "Split.mp4"), await upload("lib_old", "Split.mp4")];
+    // a library that keeps none takes no file a Mac sends of itself (upload-gate.ts)
+    const others = [await upload("lib_all", "Split.mp4"), await upload("lib_old", "Split.mp4")];
     for (const id of [picture, sound, ...others]) {
       const original = version(id).source_key;
       await proxied(id);

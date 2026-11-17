@@ -240,6 +240,9 @@ export interface ServerWorkView {
   kind: "local" | "hosted" | "server";
   /** the server's row in the person's Load balancing; null on This Mac. `allowed`: it may work for one of their workspaces */
   place: { allowed: boolean; weight: number } | null;
-  /** an admin of a server by address: "This server does video work", and for which workspaces */
-  admin?: { on: boolean; all: boolean; workspaces: { id: string; name: string; owner: string; on: boolean }[] };
+  /**
+   * an admin of a server by address: "This server does video work", and for which workspaces. offByUpdate: an update
+   * turned it off (it was on), shown until the admin changes it
+   */
+  admin?: { on: boolean; offByUpdate: boolean; all: boolean; workspaces: { id: string; name: string; owner: string; on: boolean }[] };
 }

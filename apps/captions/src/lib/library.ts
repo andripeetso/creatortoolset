@@ -186,6 +186,8 @@ export const deleteCollection = (libraryId: string, collectionId: string) =>
 /** Into the trash (`trash` true) or back out of it. */
 export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =>
   send<unknown>(`/api/library/${libraryId}/assets/${assetId}${trash ? "" : "/restore"}`, trash ? "DELETE" : "POST");
+/** Empty trash (the owner): everything in the library's trash is deleted for good. */
+export const emptyTrash = (libraryId: string) => send<{ deleted: number }>(`/api/library/${libraryId}/trash/empty`, "POST");
 
 /**
  * Titles, tags, descriptions, what is said in the clips and, when it is on, what they mean, best first: a hit with

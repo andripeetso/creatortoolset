@@ -113,20 +113,24 @@ afterAll(async () => {
 });
 
 describe("defaults", () => {
-  it("a new server starts with its video work off; one already in use keeps it on", () => {
+  it("no file is off; the first start writes it off on every server, saying so where it was on", () => {
+    rmSync(path.join(dir, "server-work.json"), { force: true }); // vitest.server-work.ts starts every test file with it on
     expect(sw.readServerWork()).toBeNull();
-    expect(sw.serverWorks(null, "anyone")).toBe(true); // no file: as before
+    expect(sw.serverWorks(null, "anyone")).toBe(false); // no file: off
     sw.settleServerWork();
-    expect(sw.readServerWork()).toEqual({ on: false });
+    expect(sw.readServerWork()).toEqual({ on: false, v: 2 }); // a new server: nothing to say
     rmSync(path.join(dir, "server-work.json"));
     createUser("early", "password1", { role: "admin" });
     sw.settleServerWork();
-    expect(sw.readServerWork()).toEqual({ on: true });
-    // written once: a later start leaves the admin's choice alone
-    sw.writeServerWork({ on: false });
+    expect(sw.readServerWork()).toEqual({ on: false, v: 2, offByUpdate: true }); // in use, no file: it was on
+    // a file from before this version that was on goes off, its workspace list kept
+    writeFileSync(path.join(dir, "server-work.json"), JSON.stringify({ on: true, projectIds: ["ws-a"] }));
     sw.settleServerWork();
-    expect(sw.readServerWork()).toEqual({ on: false });
+    expect(sw.readServerWork()).toEqual({ on: false, projectIds: ["ws-a"], v: 2, offByUpdate: true });
+    // written once: a later start leaves the admin's choice alone
     sw.writeServerWork({ on: true });
+    sw.settleServerWork();
+    expect(sw.readServerWork()).toEqual({ on: true, v: 2 });
   });
 
   it("This Mac has no switch and always works", () => {
@@ -324,5 +328,18 @@ describe("Creator Toolset Cloud", () => {
     } finally {
       delete process.env.CT_MODE;
     }
+  });
+});
+
+describe("mayRunHere: where processing runs", () => {
+  it("waits with no computer and the server's work off; the server with it on; a computer of theirs first", async () => {
+    const { mayRunHere } = await import("./place");
+    const q = (open: boolean, computer: boolean, first = false) => ({ reads: true, open: () => open, first: () => first, computer: () => computer });
+    expect(mayRunHere(q(false, false))).toBe("wait");
+    expect(mayRunHere(q(true, false))).toBe("server");
+    expect(mayRunHere(q(true, true))).toBe("computer");
+    expect(mayRunHere(q(false, true))).toBe("computer");
+    expect(mayRunHere(q(true, true, true))).toBe("server"); // Prefer for this server
+    expect(mayRunHere({ ...q(false, false), reads: false })).toBe("server"); // reads no video or sound
   });
 });

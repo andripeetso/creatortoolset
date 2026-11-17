@@ -75,7 +75,7 @@ it("CONTENT_EXPIRES=1: keeps a plain user's files 14 days, team's 28, admin's al
   expect(has("projects/team-old")).toBe(false);
   expect(has("enhance/team-old")).toBe(false);
   expect(has("projects/gone-new")).toBe(false);
-  expect(has(`review/${PLAIN_VIDEO}`)).toBe(false);
+  expect(has(`review/${PLAIN_VIDEO}`)).toBe(true); // a Review video is a Media Library file: age never deletes it
   expect(has(`review/${ORPHAN_VIDEO}`)).toBe(false);
   expect(has("clips/gone-note")).toBe(false);
   expect(has("documents/plain-guide")).toBe(false);

@@ -199,9 +199,6 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
           );
         })}
       </div>
-      <p className="mt-2.5 text-center text-[11px] leading-4 text-zinc-500">
-        Exports are kept for 24 hours.
-      </p>
     </>
   );
 }
@@ -998,7 +995,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
           {selected.server && !useLocalRender && (
             <p className="mt-2.5 text-center text-[11px] leading-4 text-zinc-500">
-              The file downloads when the export is finished and is kept for 24 hours.
+              The file downloads when the export is finished.
             </p>
           )}
           {useLocalRender && (

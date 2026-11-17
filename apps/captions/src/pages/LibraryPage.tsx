@@ -34,6 +34,7 @@ import {
   renameCollection,
   searchLibrary,
   setTrashed,
+  emptyTrash,
   uploadFile,
   audioOf,
   libraryZipUrl,
@@ -46,6 +47,7 @@ import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } fr
 import { checkUpload } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
+import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
@@ -1012,6 +1014,17 @@ export default function LibraryPage() {
                               <Link to="/library?trash=1">
                                 <Trash2 /> Trash
                               </Link>
+                            </DropdownMenuItem>
+                          )}
+                          {trash && watch && libId && (
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                void confirmDialog({ title: "Empty the trash?", body: "Every clip in the trash is deleted for good.", ok: "Empty trash", danger: true })
+                                  .then((ok) => ok && emptyTrash(libId).then(reload))
+                                  .catch((e: unknown) => setError(message(e)))
+                              }
+                            >
+                              <Trash2 /> Empty trash
                             </DropdownMenuItem>
                           )}
                         </DropdownMenuContent>

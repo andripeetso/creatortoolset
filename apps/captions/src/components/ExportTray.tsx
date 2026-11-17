@@ -119,7 +119,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
  * Bottom-right stack of export toasts, above the assistant's pill (AssistantDock, bottom-4 right-4). Exports render on the server, so
  * the tray re-attaches to in-flight or finished jobs after a reload.
  * Finished cards stay until closed (they carry Download
- * Download) or until the server drops the file after 24 hours. The stack
+ * Download). The stack
  * caps out with an overflow counter. It also collapses to
  * a small pill (choice remembered) so long renders don't block editing.
  */

@@ -88,16 +88,19 @@ const KINDS: Record<string, EditKind> = {
   // a planned edit's script indexes its footage, looks at sheets and the song's beats (plan.ts)
   script: { source: "core", next: ["draft"], run: scriptStep, place: (e) => computerIf(isPlanned(e, readStep(e.id, "analysis")?.sentences ?? [])) },
   draft: { source: "core", next: ["broll"], run: draftStep, place: draftPlace },
-  broll: { source: "core", next: ["post"], run: brollStep },
+  // B-roll picks clips by what the library knows of them (probe, descriptions): it reads no video or sound
+  broll: { source: "core", next: ["post"], run: brollStep, place: () => "server" },
   // the cards of an edit whose style names an animation style: queued after its B-roll by nextFor, and for no other edit
-  cards: { source: "core", next: ["post"], run: cardsStep },
+  // it tiles the cards a computer drew (cards-draw) into one sheet: pictures, no footage or sound
+  cards: { source: "core", next: ["post"], run: cardsStep, place: () => "server" },
   // the post-processing steps the edit uses (plug-ins, Settings → AI Editor); with none it only clears its notes
   // with plug-in steps it rewrites the originals, on the computer that has them
   post: { source: "core", next: ["preview"], run: postStep, place: (e) => computerIf(!!e.steps?.length) },
   preview: { source: "core", next: ["file"], run: previewStep, place: () => "computer" },
   // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, or queues the fix round's draft
   critique: { source: "core", next: [], run: critiqueStep, place: () => "computer" },
-  file: { source: "core", next: [], run: fileStep },
+  // marks the cut's library version as made from its sources: rows only, no decoding
+  file: { source: "core", next: [], run: fileStep, place: () => "server" },
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)
   [RESOLVE_KIND]: { source: "device", next: [] },
   // a Mac draws an edit's cards in its sandbox (cards/step.ts asks, cards/device.ts answers)

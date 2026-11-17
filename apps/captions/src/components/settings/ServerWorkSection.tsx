@@ -48,7 +48,11 @@ export function ServerWorkSection() {
       <Card>
         <Row
           title="This server"
-          description="Cuts, previews, proxies, waveforms and transcripts can run on this server, after each person's own computers."
+          description={
+            a.offByUpdate
+              ? "Turned off by an update: video work now runs on each person's own computers unless this is on."
+              : "Cuts, previews, proxies, waveforms and transcripts can run on this server, after each person's own computers."
+          }
           control={<Switch checked={a.on} aria-label="Video work on this server" onCheckedChange={(v) => void save({ on: v })} />}
         />
         {a.on && a.workspaces.length > 0 && (

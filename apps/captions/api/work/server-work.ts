@@ -8,8 +8,8 @@
  * - This Mac (CT_LOCAL=1): no switch, the server is the person's computer: always on.
  * - Creator Toolset Cloud (CT_MODE=hosted): off, unless a plug-in's `serverWork` grants it for the account (7C).
  * - Any other server: Settings → Server, the admin: `$DATA_DIR/server-work.json { on, projectIds? }` (no list = every
- *   workspace). No file = on, as before; a server's first start writes it once (settleServerWork): on where it was
- *   already in use, off for a new one.
+ *   workspace). No file = off: the work runs on each person's own computers unless the admin turns it on. The first start
+ *   of this version writes it off once on every server (settleServerWork), saying so in Settings → Server where it was on.
  * - Each workspace's owner picks whether it uses the server where it is allowed (the Workshop project's `serverWork`,
  *   missing = yes).
  * - Each person's Load balancing has a row for the server (balance weight SERVER_PLACE): Prefer sends work there first,
@@ -28,7 +28,14 @@ export interface ServerWork {
   on: boolean;
   /** only these workspaces (Workshop project ids); missing = every workspace */
   projectIds?: string[];
+  /** the version of the rule the file was written under (VERSION) */
+  v?: number;
+  /** this version's first start turned it off (it was on): Settings → Server says so until the admin changes it */
+  offByUpdate?: boolean;
 }
+
+/** 2: off by default on every server, existing ones included (local-first plan, decision 4). */
+const VERSION = 2;
 
 /** The server's key in a person's load balancing weights (Balance.weights), beside their computers' ids. */
 export const SERVER_PLACE = "server";
@@ -60,11 +67,11 @@ function readJson<T>(f: string): T | null {
   return v;
 }
 
-/** The admin's setting as saved; null = never saved (a server from before the switch: it works, as it did). */
+/** The admin's setting as saved; null = never saved (off). */
 export const readServerWork = (): ServerWork | null => readJson<ServerWork>(file());
 
 export function writeServerWork(s: ServerWork): ServerWork {
-  const out: ServerWork = { on: !!s.on, ...(s.projectIds ? { projectIds: [...new Set(s.projectIds)] } : {}) };
+  const out: ServerWork = { on: !!s.on, ...(s.projectIds ? { projectIds: [...new Set(s.projectIds)] } : {}), v: VERSION, ...(s.offByUpdate ? { offByUpdate: true } : {}) };
   mkdirSync(env.dataDir, { recursive: true });
   const tmp = `${file()}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(out));
@@ -73,15 +80,20 @@ export function writeServerWork(s: ServerWork): ServerWork {
 }
 
 /**
- * The first start of a version with the switch: a server that was already in use (someone signed in, or clips in its library)
- * keeps doing its video work; a new one starts with it off. Written once; This Mac and the Cloud have no file.
+ * The first start of this version: video work off on every server, existing ones included; the work runs on each person's
+ * own computers. A server where it was on (its file, or no file on a server in use: no file was on before) says so once in
+ * Settings → Server. The workspace list is kept for when the admin turns it on. Written once; This Mac and the Cloud have no file.
  */
 export function settleServerWork(): void {
-  if (serverKind() !== "server" || readServerWork()) return;
+  if (serverKind() !== "server") return;
+  const s = readServerWork();
+  if (s?.v === VERSION) return;
   // a new server has only the admin it made itself (users.ts), never signed in to
-  const users = listUsers();
-  const used = users.length > 1 || users.some((u) => u.usage.lastActiveAt > 0) || !!libraryDb().prepare("SELECT 1 FROM assets LIMIT 1").get();
-  writeServerWork({ on: used });
+  const used = () => {
+    const users = listUsers();
+    return users.length > 1 || users.some((u) => u.usage.lastActiveAt > 0) || !!libraryDb().prepare("SELECT 1 FROM assets LIMIT 1").get();
+  };
+  writeServerWork({ on: false, ...(s?.projectIds ? { projectIds: s.projectIds } : {}), offByUpdate: s ? s.on : used() });
 }
 
 /** Whether the server lets video work run on it for `workspace` (a Workshop project id; none = filed in no workspace), asked by `account`. */
@@ -92,7 +104,7 @@ export function serverAllows(workspace: string | null | undefined, account: stri
   if (kind === "hosted") return grant === true;
   if (grant !== undefined) return grant;
   const s = readServerWork();
-  if (!s) return true;
+  if (!s) return false;
   // ponytail: a thing filed in no workspace (from before workspaces) counts only under All workspaces
   return s.on && (!s.projectIds || (!!workspace && s.projectIds.includes(workspace)));
 }

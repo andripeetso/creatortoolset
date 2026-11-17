@@ -107,6 +107,9 @@ describe("copies of a Media Library", () => {
     expect(await here(mac.device.id)).toEqual(["ast-a"]);
     expect(await here(laptop.device.id)).toEqual([]);
     expect(assetsCopiesLack(["ast-a"]).size).toBe(0);
+    // the server's original goes only while the computer it came from still has a place for it (worker.ts dropOriginal)
+    expect(await dropOriginal(v)).toBe(false);
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, 'mac-elsewhere', '/Users/tiny/Movies/Clip.mov', ?)").run(v, Date.now());
     expect(await dropOriginal(v)).toBe(true);
     expect(d.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(v)).toEqual({ source_key: `libraries/lib_c/v/${v}/proxy.mp4` });
     expect(await claim()).toBeNull();
@@ -136,7 +139,10 @@ describe("copies of a Media Library", () => {
     await answer(job.id, { state: "reconnect" });
     expect((await copies())[0]!.state).toBe("reconnect");
     expect(await claim()).toBeNull();
-    // Proxies only: the server keeps no original for a copy (owner, 11-17: originals stay on the computers)
+    // Proxies only: the server keeps no original for a copy (owner, 11-17: originals stay on the computers), once the
+    // computer it came from has a place for it
+    expect(await dropOriginal(v)).toBe(false);
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, 'mac-elsewhere', '/Users/tiny/Movies/Clip b.mov', ?)").run(v, Date.now());
     expect(await dropOriginal(v)).toBe(true);
   });
 

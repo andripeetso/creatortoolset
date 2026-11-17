@@ -67,6 +67,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globalSetup: "./vitest.tmp.ts",
+    setupFiles: ["./vitest.server-work.ts"],
     // No free-disk reserve in tests: the test machine's temp disk may be a small one that other runs fill (a /tmp in
     // memory), and the 20 GB default then refused every file saved to the Media Library. The reserve's own tests
     // (api/library/routes.test.ts) set it themselves. No cut model (api/library/cuts.ts): a test machine with a graphics

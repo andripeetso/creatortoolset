@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
+import { mayReceive } from "./upload-gate";
 import { readerOf } from "./reader";
 import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -27,7 +28,7 @@ import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
 import { placesApp } from "./places";
-import { inReview } from "./trash";
+import { emptyTrash, inReview } from "./trash";
 import { copiesWake } from "./copies";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -329,6 +330,9 @@ async function fileMade(row: UploadRow, versionId: string): Promise<void> {
 const IN_REVIEW = { error: "This video is in Review: change it there", code: "conflict" } as const;
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
+/** The upload gate for an upload under way: a file a computer sends (its place named) or one a person sent. */
+const receives = (row: UploadRow) => mayReceive("original", { id: row.library_id, collectionId: row.collection_id }, row.from_path ? "computer" : "person");
+
 async function ownUpload(c: Context<{ Variables: AuthVars }>): Promise<UploadRow | null> {
   const user = c.get("user");
   const row = db().prepare("SELECT * FROM uploads WHERE id = ?").get(c.req.param("uploadId") ?? "") as UploadRow | undefined;
@@ -509,6 +513,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
   }
+  const gate = mayReceive("original", { id: libraryId, collectionId: collection }, from ? "computer" : "person");
+  if (!gate.ok) return c.json(gate.body, gate.status);
   // what the phone made of the file itself (derived.ts Made): only to a library this server files it for
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
@@ -653,6 +659,9 @@ libraryApp.patch("/uploads/:uploadId", async (c) => {
   if (!row || row.state !== "open") return c.json({ error: "Not found", code: "not_found" }, 404);
   if (row.direct_upload_id) return c.json({ error: "This upload goes straight to the bucket", code: "conflict" }, 409);
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
+  // asked again on each part and at the finish: the setting may change while it runs (what arrived stays until it expires)
+  const gate = receives(row);
+  if (!gate.ok) return c.json(gate.body, gate.status);
   const offset = Number(c.req.header("upload-offset"));
   const length = Number(c.req.header("content-length"));
   if (!Number.isSafeInteger(length) || length < 0) return c.json({ error: "Length Required", code: "invalid" }, 411);
@@ -682,6 +691,8 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
   if (!row) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (row.state !== "open") return c.json({ error: "Already finished", code: "conflict" }, 409);
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
+  const gate = receives(row);
+  if (!gate.ok) return c.json(gate.body, gate.status);
   busy.add(row.id);
   try {
     if (row.direct_upload_id) return await finishDirect(c, row);
@@ -1062,3 +1073,12 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
 libraryApp.delete("/:id/assets/:assetId", (c) => setTrashed(c, true));
 // POST /api/library/:id/assets/:assetId/restore → out of the trash
 libraryApp.post("/:id/assets/:assetId/restore", (c) => setTrashed(c, false));
+// POST /api/library/:id/trash/empty → { deleted }: the owner empties the trash; nothing leaves it for its age
+libraryApp.post("/:id/trash/empty", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (libraryRole(user.username, libraryId) !== "owner" || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const deleted = await emptyTrash(libraryId);
+  if (deleted) libraryChanged(libraryId);
+  return c.json({ deleted });
+});
