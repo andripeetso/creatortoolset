@@ -7,6 +7,10 @@ import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports } from "@/lib/thisMac";
+import { folderGrant } from "@/lib/local-files";
+import { thisMacDevice } from "@/lib/providers";
+import { timeAgo } from "@/lib/exports";
+import { WORDS, diskAway, onComputer, uncheckedOn } from "@/lib/wording";
 import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, WorkspacesDialog, inWorkspace, saveFailed, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
@@ -33,6 +37,7 @@ const makeLibrary = (b: MakeLibraryBody, workspace?: string | null) => call<Stor
 const addStorageFolder = (b: AddFolderBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b, workspace);
 const moveStorageFolder = (id: string, workspaces: string[] | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspaces } satisfies MoveFolderBody);
 const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
+const repointStorageFolder = (id: string, path: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}/re-point`, "POST", { path });
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
 export const disksOf = (d: Computer): Disk[] => d.report?.machine?.disks ?? [];
@@ -42,7 +47,7 @@ export const disksFor = (devices: Computer[], host: string, serverDisks: Disk[] 
   return d && disksOf(d).length ? disksOf(d) : serverDisks;
 };
 const nameOf = (devices: Computer[], host: string) =>
-  host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "Computer not found");
+  host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "A removed computer");
 
 /** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage and Music too). */
 const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.origin.host)} · ${f.origin.path}`;
@@ -340,7 +345,7 @@ function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
         }
       />
       {mine.map((f) => (
-        <FolderRow key={f.id} folder={f} storage={storage} devices={devices} w={w} onChanged={onChanged} />
+        <FolderRow key={f.id} folder={f} devices={devices} w={w} onChanged={onChanged} />
       ))}
       <AddFolderDialog open={open} onOpenChange={setOpen} role="footage" devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
     </>
@@ -351,13 +356,41 @@ function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
  * One footage or music folder: its name, the computer it is on and its full path, its workspace while every workspace
  * is shown, and its menu: Workspaces (any of them, or all), Remove.
  */
-function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: StorageFolder; storage: StorageView; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
+function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
   // the Library's own Footage and Music come with the Finished videos folder: they are not moved or removed here
   const own = !f.id.includes(":");
-  // the folder's workspace keeps copies on the server: asked per folder when every workspace is listed
-  const copies = storage.copied ? storage.copied.includes(f.id.split(":")[0]!) : storage.copies;
   const tagged = !!w?.all;
   const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  // the buttons work on this Mac's own folders, in the Mac app's window, and only when pressed (no prompt opens by itself)
+  const mine = !!thisMacDevice() && f.origin.host === thisMacDevice();
+  const press = (run: () => Promise<unknown>) => async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await run();
+      onChanged();
+    } catch (x) {
+      setProblem(msg(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const allow = mine && f.folderState === "needs_ok" && (
+    <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} onClick={press(() => folderGrant(f.origin.path, f.id))}>
+      {WORDS.allowOnThisMac}
+    </Button>
+  );
+  const repoint = mine && f.folderState === "not_found" && macImports() && (
+    <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy}
+      onClick={press(async () => {
+        const path = await chooseFolderOnMac();
+        if (path) await repointStorageFolder(f.id, path);
+      })}>
+      Re-point
+    </Button>
+  );
   return (
     <>
     <ListRow
@@ -365,13 +398,17 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
       title={f.name}
       subtitle={<span title={f.origin.path}>{whereOf(f, devices)}</span>}
       status={
-        tagged || f.error || devices.length > 1 ? (
-          <span className="flex flex-col gap-0.5">
-            {tagged && <WorkspaceTag id={workspacesOf(f)} />}
-            {f.error && <Status tone="broken">{f.error}</Status>}
-            <FolderReach folder={f} devices={devices} copies={copies} />
+        <span className="flex flex-col gap-0.5">
+          {tagged && <WorkspaceTag id={workspacesOf(f)} />}
+          {f.error && <Status tone="broken">{f.error}</Status>}
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <Status tone={!f.folderState ? undefined : f.folderState === "ok" ? "ok" : "attention"}>{folderLine(f, nameOf(devices, f.origin.host), mine)}</Status>
+            {allow}
+            {repoint}
           </span>
-        ) : undefined
+          {problem && <Status tone="broken">{problem}</Status>}
+          <FolderReach folder={f} devices={devices} />
+        </span>
       }
       actions={
         own ? (
@@ -404,11 +441,30 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
 }
 
 /**
- * Which of the account's computers can read a folder, and how: on its own disks, through the copy the server keeps
- * (the Media Library uploads), or not at all yet. One that isn't connected gets Connect when the folder is on a share.
- * Nothing with one computer.
+ * A folder's state on its computer, from that computer's last report (contracts/places.ts FolderState): "Last checked
+ * 5 min ago", "Folder not found, re-point?", "Needs your OK", "<drive> isn't connected", or "Not checked yet" (on
+ * another computer: "Not checked yet on <computer>"). `mine`: the folder is on this Mac (the window's own computer).
  */
-function FolderReach({ folder, devices, copies }: { folder: StorageFolder; devices: Computer[]; copies?: boolean }) {
+export function folderLine(f: StorageFolder, computer: string, mine: boolean): string {
+  switch (f.folderState) {
+    case "ok":
+      if (f.checkedAt) return `${WORDS.lastChecked} ${timeAgo(f.checkedAt)}`;
+      break;
+    case "not_found":
+      return WORDS.folderNotFound;
+    case "needs_ok":
+      return WORDS.needsOk;
+    case "disk_away":
+      return diskAway(/^\/Volumes\/([^/]+)/.exec(f.origin.path)?.[1] ?? "The drive");
+  }
+  return mine ? WORDS.unchecked : uncheckedOn(computer);
+}
+
+/**
+ * Which of the account's computers can read a folder: its own, and those that found it (a share they mounted). One that
+ * hasn't gets Connect when the folder is on a share. Nothing with one computer.
+ */
+function FolderReach({ folder, devices }: { folder: StorageFolder; devices: Computer[] }) {
   const [connect, setConnect] = useState<Computer | null>(null);
   if (devices.length < 2) return null;
   return (
@@ -419,9 +475,7 @@ function FolderReach({ folder, devices, copies }: { folder: StorageFolder; devic
         const how = !has && folder.mount && os ? connectFor(folder.mount, os) : null;
         return (
           <span key={d.id} className="inline-flex items-center gap-1.5">
-            <Status tone={has ? "ok" : copies ? undefined : "attention"}>
-              {d.name} · {has ? "On this computer" : copies ? "Through the server copy" : "Not connected"}
-            </Status>
+            <Status tone={has ? "ok" : undefined}>{has ? onComputer(d.name) : uncheckedOn(d.name)}</Status>
             {how && (
               <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConnect(d)}>
                 Connect

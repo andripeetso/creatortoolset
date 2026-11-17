@@ -339,8 +339,10 @@ describe("ReviewEdits panel", () => {
     });
     (window as unknown as { webkit: object }).webkit = { messageHandlers: { mediaAccess: { postMessage: post } } };
     document.documentElement.dataset.macLocalFiles = "3";
-    // the Mac app answers a one-byte read of a file in a granted folder
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { status: 206 })));
+    // the Mac app answers a one-byte read of a file in a granted folder (403 outside one: its gate)
+    const pathOf = (url: string) => new TextDecoder().decode(Uint8Array.from(atob(url.slice(16).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      new Response("x", { status: !String(url).startsWith("ctlocal://media/") || granted.some((g) => pathOf(url).startsWith(`${g}/`)) ? 206 : 403 })));
     try {
       const sources = vi.fn(async () => ({ vo: "/Volumes/Shoot/VO/take 1.wav", cam: "/Volumes/Shoot/A001.mov" }));
       const longer = { id: "c1", data: { edits: [{ key: "A1:0", label: "Voice", tail: 25 }, { key: "V1:100", label: "Shot two", tail: 25 }] } };

@@ -35,7 +35,7 @@ const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).cod
 /**
  * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
  * theirs, it is done on this Mac: `onHere` is told so first ("Ana's Mac Studio is unreachable. Doing it on this Mac.",
- * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, Take work from this server, which adds
+ * or this Mac isn't connected to this server), this Mac is switched on for it (Settings → Computers, Take work from this server, which adds
  * it to this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
  * for any other answer, the call's own error.
  */

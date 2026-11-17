@@ -7,13 +7,13 @@ import { cn } from "@/lib/utils";
 
 /**
  * The library's own filters, as the sidebar shows them (./Sidebar.tsx): Tags (every one picked), When (filmed, else
- * added), Where (the country, once a clip has one), On this computer and Missing here (the Mac app). The page hands the value to listAssets and searchLibrary, and keeps
+ * added), Where (the country, once a clip has one), On this computer and Missing on this computer (the Mac app). The page hands the value to listAssets and searchLibrary, and keeps
  * it in a saved search.
  */
 
 export const anyFilter = (f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place || !!f.here || !!f.missing;
 
-/** A saved search's own filters, with the ones picked now in their place (as the server merges a smart folder's). On this computer and Missing here are never saved: they name one computer. */
+/** A saved search's own filters, with the ones picked now in their place (as the server merges a smart folder's). On this computer and Missing on this computer are never saved: they name one computer. */
 export const withSaved = (f: LibraryFilters, saved?: SearchQuery): LibraryFilters => ({
   tags: f.tags?.length ? f.tags : saved?.tags,
   filmedFrom: f.filmedFrom ?? saved?.filmedFrom,
