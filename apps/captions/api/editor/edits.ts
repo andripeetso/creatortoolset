@@ -2,7 +2,7 @@ import { TRACKS, type Item, type Timeline, type TrackId } from "../../contracts/
 import { editedSpan, playPlan, splitView, type ItemEdit, type TimelineItem, type TimelineView } from "../../contracts/edit-timeline";
 import type { TimedWord } from "../library/transcribe";
 import type { PathKey } from "./framing";
-import { fillZoom, pathIn, windowOf } from "./framing";
+import { centreOn, fillZoom, pathIn, pickKey, windowOf } from "./framing";
 
 /**
  * A draft on Review's timeline, and the hand edits made there cut into the draft's next version with no AI.
@@ -121,6 +121,11 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
   if (why.length) throw new EditRefused(why.join(". "));
   const editOf = new Map(edits.map((e) => [e.key, e]));
   const plan = playPlan(cut, edits);
+  // the window centred on a click, until its subject is followed
+  const clickedAt = (i: Item, x: number) => {
+    const s = tl.sources[i.src];
+    return s?.w ? centreOn(x, windowOf(s, tl.width, tl.height, i.zoom ?? fillZoom(s, tl.width, tl.height))) : 0.5;
+  };
   // the frames that go, joined where they touch
   const skips: [number, number][] = [];
   for (const [a, b] of [...plan.skips].sort((x, y) => x[0] - y[0])) {
@@ -161,7 +166,9 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     const set = e?.crop;
     const keys = !set ? (orig.path ? { path: orig.path, from: orig.in / sfps(orig.src) } : null)
       : "x" in set ? { path: [{ t: 0, x: set.x }], from: 0 }
-        : { path: set.speaker ? tl.reframe![orig.src]!.speakers[set.speaker]! : tl.reframe![orig.src]!.auto, from: 0 };
+        // a clicked subject: its path once a computer followed it (preview.ts), held on the click until then
+        : "subject" in set ? { path: tl.reframe?.[orig.src]?.picked?.[pickKey(set.subject)] ?? [{ t: 0, x: clickedAt(orig, set.subject.x) }], from: 0 }
+          : { path: set.speaker ? tl.reframe![orig.src]!.speakers[set.speaker]! : tl.reframe![orig.src]!.auto, from: 0 };
     const hand = crop && !("speaker" in crop && !crop.speaker) ? { crop } : {};
     for (let k0 = 0, k = 1; k <= len; k++) {
       if (k < len && silent(k) === silent(k0)) continue;

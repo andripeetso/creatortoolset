@@ -133,6 +133,11 @@ export function cleanEdits(v: unknown): ItemEdit[] {
       const cx = c ? real(c.x, 0, 1, 10_000) : undefined;
       if (cx !== undefined) x.crop = { x: cx };
       else if (c && Number.isInteger(c.speaker) && (c.speaker as number) >= 0 && (c.speaker as number) <= 50) x.crop = { speaker: c.speaker as number };
+      else if (c?.subject && typeof c.subject === "object") {
+        const s = c.subject as Record<string, unknown>;
+        const [t, sx, sy] = [real(s.t, 0, 1e6, 1000), real(s.x, 0, 1, 10_000), real(s.y, 0, 1, 10_000)];
+        if (t !== undefined && sx !== undefined && sy !== undefined) x.crop = { subject: { t, x: sx, y: sy } };
+      }
       const gain = e.key[0] === "A" ? real(e.gain, -30, 30) : undefined;
       if (gain) x.gain = gain;
       if (e.off === true && /^[VA][2-9]:/.test(e.key)) x.off = true;
@@ -216,7 +221,7 @@ export function describeEdit(e: ItemEdit, fps: number): string {
     e.split?.length && `split ${e.split.length === 1 ? "in two" : `in ${e.split.length + 1}`}`,
     e.zoom !== undefined && `reframed to ${e.zoom.toFixed(2)}×`,
     e.grade && `graded: ${describeGrade(e.grade)}`,
-    e.crop && ("x" in e.crop ? `held at ${Math.round(e.crop.x * 100)}% across` : e.crop.speaker ? `following Speaker ${e.crop.speaker}` : "following who talks"),
+    e.crop && ("x" in e.crop ? `held at ${Math.round(e.crop.x * 100)}% across` : "subject" in e.crop ? "following what was clicked" : e.crop.speaker ? `following Speaker ${e.crop.speaker}` : "following who talks"),
     e.gain && `${e.gain > 0 ? "+" : ""}${e.gain} dB`,
     e.off && "switched off",
   ].filter(Boolean).join(", ");

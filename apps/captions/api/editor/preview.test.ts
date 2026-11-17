@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
@@ -11,6 +11,13 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-preview-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-preview-test-secret";
+
+// the subject tracker as it is, so a test can make it fail once
+vi.mock("./subject", async (actual) => {
+  const real = await actual<typeof import("./subject")>();
+  return { ...real, followPicked: vi.fn(real.followPicked) };
+});
+const subject = await import("./subject");
 
 const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
@@ -189,6 +196,18 @@ describe("AI Editor preview", () => {
     expect(Math.abs(third.duration - 0.5)).toBeLessThanOrEqual(1 / 30 + 0.03);
     expect(readDraft(e.id, "v1")!.timeline.tracks.V1.items).toHaveLength(1);
   }, 180_000);
+
+  it("a subject clicked in Review that the tracker fails on: the window stays on the click, the note says why, the cut is rendered and filed", async () => {
+    vi.mocked(subject.followPicked).mockRejectedValueOnce(new Error("CUDA out of memory"));
+    const made = (await createEdit("mem-a", { name: "Picked hook", sources: ["ver_a"] }))!;
+    const t = timeline();
+    t.tracks.V1.items[0]!.crop = { subject: { t: 0.5, x: 0.4, y: 0.5 } };
+    await saveDraft(made.id, "v1", { timeline: t, notes: [] });
+    await previewStep({ edit: readEdit(made.id)!, job: { id: 0, actor: "mem-a" } as never, variant: "v1", signal: new AbortController().signal });
+    expect(readDraft(made.id, "v1")!.notes).toEqual([`${subject.HELD_NOTE} (CUDA out of memory)`]);
+    const filed = readStep(made.id, "review")!.v1!;
+    expect((await readMeta(filed.assetId))!.versions[0]!.draft).toMatchObject({ edit: made.id, name: "v1" });
+  }, 60_000);
 
   it("a teammate's version is filed in the Review of the edit's workspace, marked with who asked for it", async () => {
     const made = (await createEdit("mem-a", { name: "Team hook", sources: ["ver_a"] }))!;

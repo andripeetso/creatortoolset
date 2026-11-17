@@ -18,8 +18,10 @@ import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
+import { sayFor } from "./progress";
+import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview } from "./plan-render";
-import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
+import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -233,14 +235,23 @@ export const previewFile = (editId: string, variant: string) => path.join(editDi
  * cut the AI made waits for its look (critique.ts), which files it.
  */
 export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {
-  const d = readDraft(edit.id, variant);
+  let d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   // a preview from an older run's copies would be filed in Review as this cut (faces unblurred, say)
   if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = previewFile(edit.id, variant);
   await mkdir(path.dirname(out), { recursive: true });
   const grade = onComputer.on ? (await ask<{ cdl?: Cdl }>("grade")).cdl : await gradeOf(ownerOf(edit), edit.bundle);
-  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, grade);
+  const files = await localFiles(d.timeline, edit.id, true);
+  // a subject clicked in Review is followed here, on the computer that renders (subject.ts); when it can't be (no card,
+  // the tracker failed: its install, the card's memory), the window stays on the click, the note says why, the cut renders
+  const followed = await followPicked(d.timeline, files, signal, () => sayFor(job, "Setting up the subject tracker, the first time only (about 4 GB)")).catch((e: Error) => e);
+  if (signal.aborted) return;
+  const others = d.notes.filter((n) => !n.startsWith(HELD_NOTE));
+  const held = followed instanceof Error ? `${HELD_NOTE} (${followed.message})` : followed === "held" ? HELD_NOTE : null;
+  if (held && !d.notes.includes(held)) await saveDraft(edit.id, variant, (d = { ...d, notes: [...others, held] }));
+  else if (followed && !held) await saveDraft(edit.id, variant, (d = { ...d, timeline: followed as Timeline, notes: others }));
+  await renderPreview(d.timeline, { ...files, ...postFiles(edit.id, variant) }, out, signal, grade);
   if (signal.aborted || d.due) return;
   await fileInReview(edit, variant, d.timeline, saidOf(d), job.actor);
 }

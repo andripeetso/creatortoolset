@@ -114,8 +114,9 @@ export function CameraView({ src, time, style }: { src: string; time: number; st
 
 /**
  * Reframe for a shot cut to another shape from a wider picture (an AI Editor moment, TimelineItem.window): the whole
- * picture at the playhead with the frame over it. Drag the frame to hold it there for the shot, or pick who it follows;
- * each choice is one edit (⌘Z takes it back). Arrows nudge the frame (Shift: further), Esc closes.
+ * picture at the playhead with the frame over it. Drag the frame to hold it there for the shot, click something to
+ * follow it (a computer with a graphics card follows it when the next version is made: api/editor/subject.ts), or pick
+ * who it follows; each choice is one edit (⌘Z takes it back). Arrows nudge the frame (Shift: further), Esc closes.
  */
 export function WindowBox({ item, aspect, src, mediaAt, crop, onCrop, onClose }: {
   item: TimelineItem & { window: NonNullable<TimelineItem["window"]> };
@@ -132,12 +133,16 @@ export function WindowBox({ item, aspect, src, mediaAt, crop, onCrop, onClose }:
 }) {
   const win = item.window;
   const box = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ px: number; x0: number; x: number } | null>(null);
+  const [drag, setDrag] = useState<{ px: number; py: number; x0: number; x: number } | null>(null);
   const now = crop ?? win.crop ?? { speaker: 0 };
   const t = mediaAt - win.from;
   // the frame where the choice puts it now: held, the shot's own path (its own choice), or the path it would follow
   const own = !crop || JSON.stringify(crop) === JSON.stringify(win.crop ?? { speaker: 0 });
-  const x = drag ? drag.x : "x" in now ? now.x : pathAt(own ? win.path : (win.follow[now.speaker] ?? win.path), t);
+  const x = drag ? drag.x
+    : "x" in now ? now.x
+      // a subject clicked: the frame on the click until a computer has followed it
+      : "subject" in now ? (own ? pathAt(win.path, t) : Math.min(1, Math.max(0, (now.subject.x - win.w / 2) / (1 - win.w))))
+        : pathAt(own ? win.path : (win.follow[now.speaker] ?? win.path), t);
   // a choice: back to the shot's own one clears the edit
   const pick = (c: WindowCrop) => onCrop(JSON.stringify(c) === JSON.stringify(win.crop ?? { speaker: 0 }) ? undefined : c);
   const live = useRef({ x, pick, onClose });
@@ -160,20 +165,26 @@ export function WindowBox({ item, aspect, src, mediaAt, crop, onCrop, onClose }:
   const pct = (v: number) => `${v * 100}%`;
   return (
     <div className="space-y-1.5">
-      <div ref={box} className="relative mx-auto touch-none cursor-ew-resize overflow-hidden rounded bg-black"
+      <div ref={box} title="Drag to hold the frame, click something to follow it" className="relative mx-auto touch-none cursor-ew-resize overflow-hidden rounded bg-black"
         style={{ width: "min(100%, 520px)", aspectRatio: String(aspect / win.w) }}
         onPointerDown={(e) => {
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
-          setDrag({ px: e.clientX, x0: x, x });
+          setDrag({ px: e.clientX, py: e.clientY, x0: x, x });
         }}
         onPointerMove={(e) => {
           const r = box.current?.getBoundingClientRect();
           if (!drag || !r || win.w >= 1) return;
           setDrag({ ...drag, x: Math.min(1, Math.max(0, drag.x0 + (e.clientX - drag.px) / (r.width * (1 - win.w)))) });
         }}
-        onPointerUp={() => {
+        onPointerUp={(e) => {
+          const r = box.current?.getBoundingClientRect();
           if (drag && Math.abs(drag.x - drag.x0) > 1e-4) pick({ x: Math.round(drag.x * 1e4) / 1e4 });
+          // a click that didn't drag: follow what is under it
+          else if (drag && r && Math.hypot(e.clientX - drag.px, e.clientY - drag.py) < 4) {
+            const at = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4;
+            pick({ subject: { t: Math.round(mediaAt * 1000) / 1000, x: at((e.clientX - r.left) / r.width), y: at((e.clientY - r.top) / r.height) } });
+          }
           setDrag(null);
         }}
         onPointerCancel={() => setDrag(null)}>
@@ -184,11 +195,12 @@ export function WindowBox({ item, aspect, src, mediaAt, crop, onCrop, onClose }:
       </div>
       <div className="flex flex-wrap items-center gap-1 text-[11px]">
         <span className="text-zinc-500">Follow</span>
-        <button type="button" onClick={() => pick({ speaker: 0 })} className={chip("speaker" in now && !now.speaker)}>Who talks</button>
+        <button type="button" onClick={() => pick({ speaker: 0 })} className={chip("speaker" in now && !now.speaker)}>{speakers.length ? "Who talks" : "Subject"}</button>
         {speakers.map((n) => (
           <button key={n} type="button" onClick={() => pick({ speaker: n })} className={chip("speaker" in now && now.speaker === n)}>Speaker {n}</button>
         ))}
         {"x" in now && <span className="rounded bg-violet-600 px-1.5 py-0.5 text-white">Held</span>}
+        {"subject" in now && <span className="rounded bg-violet-600 px-1.5 py-0.5 text-white">Picked</span>}
         <button type="button" onClick={onClose} className="ml-auto rounded px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-800">Done</button>
       </div>
     </div>

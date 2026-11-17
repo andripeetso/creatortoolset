@@ -325,8 +325,11 @@ export interface Item {
   crop?: WindowCrop;
 }
 
-/** A reframed shot's window set by hand: held at x (Focus.x), or following Speaker n (0 = whoever talks). */
-export type WindowCrop = { x: number } | { speaker: number };
+/**
+ * A reframed shot's window set by hand: held at x (Focus.x), following Speaker n (0 = whoever talks), or following what
+ * the person clicked on (`subject`: `t` seconds in the source, `x` `y` fractions of the picture; api/editor/subject.ts).
+ */
+export type WindowCrop = { x: number } | { speaker: number } | { subject: { t: number; x: number; y: number } };
 
 export interface TimelineSource {
   versionId: string;
@@ -361,10 +364,11 @@ export interface Timeline {
    */
   speakers?: { rec: number; len: number; speaker: number }[];
   /**
-   * A reframed source's window paths in its own seconds (framing.ts): following who talks (`auto`) and each speaker
-   * alone, so a shot cut from it can be set to any of them by hand (edits.ts).
+   * A reframed source's window paths in its own seconds (framing.ts): following who talks, or with no faces the subject
+   * (`auto`), each speaker alone, so a shot cut from it can be set to any of them by hand (edits.ts), and each subject
+   * clicked in Review once a computer has followed it (`picked`, by framing.ts pickKey; preview.ts).
    */
-  reframe?: Record<string, { auto: { t: number; x: number }[]; speakers: Record<number, { t: number; x: number }[]> }>;
+  reframe?: Record<string, { auto: { t: number; x: number }[]; speakers: Record<number, { t: number; x: number }[]>; picked?: Record<string, { t: number; x: number }[]> }>;
   /** a planned edit (api/editor/plan.ts): the kind it is, in the brief's words, and its texts (seconds on the timeline). Absent: cut around speech */
   plan?: { kind: string; texts?: PlanText[] };
 }

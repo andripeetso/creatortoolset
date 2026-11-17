@@ -147,23 +147,23 @@ export const junkOf = ({ luma, detail, panels, tint = 0 }: { luma: number; detai
   luma < DARK ? "dark" : detail < FLAT ? "flat" : panels >= UI_PANELS && tint < UI_TINT ? "ui" : "";
 
 /**
- * Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before; from
- * the same decode, each frame SW×SH grey for its move (shiftOf) and SHARP_FPS frames a second SHARP_W across for blur;
- * where this computer's graphics card runs the cut model (cuts.ts), each frame TW×TH for it too.
+ * Every frame of `src` (or of its stretch a..b s) at up to MAX_READ_FPS, FW×FH grey, compared with the one before and
+ * the one LAG_S before; from the same decode, each frame SW×SH grey for its move (shiftOf) and SHARP_FPS frames a second
+ * SHARP_W across for blur; where this computer's graphics card runs the cut model (cuts.ts), each frame TW×TH for it too.
  */
-export async function readPicture(src: string, fps: number, signal?: AbortSignal): Promise<PictureRead> {
+export async function readPicture(src: string, fps: number, signal?: AbortSignal, span?: { a: number; b: number }): Promise<PictureRead> {
   const rate = fps > 0 ? Math.min(fps, MAX_READ_FPS) : 25;
   const L = Math.max(1, Math.round(LAG_S * rate));
   const size = FW * FH;
   const model = await cutModel();
   try {
-    return await readFrames(src, rate, L, size, model, signal);
+    return await readFrames(src, rate, L, size, model, signal, span);
   } finally {
     await model?.release();
   }
 }
 
-function readFrames(src: string, rate: number, L: number, size: number, model: InferenceSession | null, signal?: AbortSignal): Promise<PictureRead> {
+function readFrames(src: string, rate: number, L: number, size: number, model: InferenceSession | null, signal?: AbortSignal, span?: { a: number; b: number }): Promise<PictureRead> {
   return ffmpegSlot(
     () =>
       new Promise((resolve, reject) => {
@@ -172,7 +172,7 @@ function readFrames(src: string, rate: number, L: number, size: number, model: I
         const p = spawn(
           ffmpegCommand(),
           [
-            ...["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn"],
+            ...["-hide_banner", "-loglevel", "error", "-nostdin", ...(span ? ["-ss", String(span.a), "-t", String(Math.max(0.1, span.b - span.a))] : []), "-i", src, "-an", "-sn"],
             ...["-filter_complex", `[0:v]fps=${rate},split=${model ? 4 : 3}[a][b][c]${model ? "[d]" : ""};[a]scale=${FW}:${FH}:flags=area,format=rgb24[o1];[b]scale=${SW}:${SH}:flags=area,format=gray[o2];[c]fps=${SHARP_FPS},${sharp}[o3]${toModel}`],
             ...["-map", "[o1]", "-f", "rawvideo", "pipe:1", "-map", "[o2]", "-f", "rawvideo", "pipe:3", "-map", "[o3]", "-c:v", "pgm", "-f", "image2pipe", "pipe:4"],
             ...(model ? ["-map", "[o4]", "-f", "rawvideo", "pipe:5"] : []),
