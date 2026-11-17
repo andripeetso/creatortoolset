@@ -28,6 +28,7 @@ import { spaceApp } from "./space";
 import { locateApp } from "./locate";
 import { placesApp } from "./places";
 import { inReview } from "./trash";
+import { copiesWake } from "./copies";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
@@ -187,6 +188,8 @@ export function recordVersion(
     fileRoll(d, assetId, "none");
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
+  // the library's copies take it as soon as the caller's transaction is in (copies.ts)
+  setImmediate(() => copiesWake(o.versionId));
   return assetId;
 }
 

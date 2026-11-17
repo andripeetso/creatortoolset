@@ -648,3 +648,43 @@ export interface StretchLines {
   stamp: string;
   lines: { seg: number; text: string; action: number; clear: boolean; tags: string[]; ph: string }[];
 }
+
+/** The file at the top of a copy's folder (contracts/devices.ts COPY_KIND): which copy it is, and each file copied, by key. */
+export const COPY_MARKER = ".creatortoolset-copy.json";
+export interface CopyMarker {
+  library: string;
+  copy: string;
+  files: Record<string, { asset: string; n: number; rel: string; size: number; sha256: string }>;
+}
+
+/** A copy of the library in a folder on a computer (Settings → Media Library → Copies; api/library/copies.ts). */
+export interface LibraryCopy {
+  id: string;
+  /** the computer's id and name; the folder on it */
+  device: string;
+  computer: string;
+  path: string;
+  /** files not in the copy yet */
+  pending: number;
+  /** a file is being copied now */
+  copying: boolean;
+  /** "reconnect": the folder or its marker is not there; "full": its disk is full */
+  state: "new" | "ok" | "reconnect" | "full";
+  /** when its computer was last heard from, while it is offline */
+  offlineSince?: number;
+  /** the computer that holds files this copy waits for, while it is offline or the files are only there */
+  waitsFor?: string;
+  /** files this copy lacks whose original is on no server and no computer any more ("No original for N files") */
+  noOriginal?: number;
+  /** kept by a copier the app does not run (a plug-in's): no menu */
+  readOnly?: true;
+}
+
+/** One file a plug-in adds to every copy of a library (ServerPlugin.copySource): `key` stable, `rel` its path in the copy. */
+export interface CopyItem {
+  key: string;
+  asset: string;
+  rel: string;
+  size: number;
+  sha256?: string;
+}

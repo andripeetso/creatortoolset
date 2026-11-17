@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
+import { COPY_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
@@ -26,6 +26,7 @@ import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
+import { copyFile, copyJob } from "./library/copies";
 import { env } from "./lib/env";
 import { workWaits } from "./work/place";
 import { SERVER_PLACE } from "./work/server-work";
@@ -57,9 +58,10 @@ export const devicesApp = new Hono<{ Variables: AuthVars }>();
 
 /**
  * The jobs on the device job road: the app's own folder listing (lib/folder-list.ts), computer check
- * (lib/helper-check.ts) and shot descriptions of a file on a Mac (library/mac-look.ts), then each plug-in's.
+ * (lib/helper-check.ts), shot descriptions of a file on a Mac (library/mac-look.ts) and the Media Library's copies
+ * (library/copies.ts), then each plug-in's.
  */
-const deviceJobs = () => [folderListJob, helperCheckJob, macLookJob, ...pluginDeviceJobs()];
+const deviceJobs = () => [folderListJob, helperCheckJob, macLookJob, copyJob, ...pluginDeviceJobs()];
 
 /** The device behind a ctd_ token on an editor route; a 401 when there is none. Keeps the device here (it is alive). */
 function deviceCaller(c: Context): Device | null {
@@ -220,6 +222,15 @@ devicesApp.get("/relay/job/:kind/:id", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const input = await slotOf(c)?.input(d.id, jobId(c));
   return input ? new Response(Readable.toWeb(createReadStream(input.file)) as ReadableStream, { headers: { "content-type": input.type } }) : c.json({ error: "Not found" }, 404);
+});
+// a copy's file (library/copies.ts): the stored original, Range allowed, only to the computer that holds the job
+devicesApp.get(`/relay/job/${COPY_KIND}/:id/file`, async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const f = await copyFile(d.id, jobId(c));
+  if (!f) return c.json({ error: "Not found" }, 404);
+  if ("key" in f) return serveBlob(c, f.key, "application/octet-stream");
+  return (await f.open(c.req.raw)) ?? c.json({ error: "Not found" }, 404);
 });
 devicesApp.post("/relay/job/:kind/:id", async (c) => {
   const d = deviceCaller(c);
@@ -385,7 +396,7 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
   // a folder listing goes to the computer that holds it, a look is placed per file (library/mac-look.ts placedOn), a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
   // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
   // hold it back from every one that has them
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || k === COPY_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */

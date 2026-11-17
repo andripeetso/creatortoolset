@@ -19,7 +19,8 @@ struct FolderListJob {
     static let seconds: TimeInterval = 10
 
     /// Why this folder is not walked, in words for the person; nil when it may be. `drive`: a drive's own top folder is fine.
-    static func refused(_ given: String, drive: Bool) -> String? {
+    /// `browse`: one level of folders for Add copy's folder browser, so "/", "/Volumes" and the home folder are fine too.
+    static func refused(_ given: String, drive: Bool, browse: Bool = false) -> String? {
         guard given.hasPrefix("/") else { return "Not a full path: \(given)" }
         // a folder macOS keeps private (Desktop, Documents, a removable drive) is said to be unreadable, never shown empty
         if (try? FileManager.default.contentsOfDirectory(atPath: given)) == nil, FileManager.default.fileExists(atPath: given) {
@@ -30,7 +31,7 @@ struct FolderListJob {
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { return "No such folder on this Mac: \(given)" }
         let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
         let volume = (try? url.resourceValues(forKeys: [.isVolumeKey]))?.isVolume ?? false
-        if url.path == "/" || url.path == home || url.deletingLastPathComponent().path == "/" || (volume && !drive) {
+        if !browse, url.path == "/" || url.path == home || url.deletingLastPathComponent().path == "/" || (volume && !drive) {
             return "\(url.path) is a whole disk or home folder: name the folder the files are in."
         }
         return nil
@@ -82,9 +83,10 @@ struct FolderListJob {
         let base = "/api/devices/relay/job/\(folderListKind)/\(step.id)"
         // "~/…" is this Mac's home folder
         let given = ((step.options["path"] ?? "") as NSString).expandingTildeInPath
-        var why = Self.refused(given, drive: step.options["disk"] == "1")
+        let depth = min(6, max(1, Int(step.options["depth"] ?? "") ?? 6))
+        let drive = step.options["disk"] == "1"
+        var why = Self.refused(given, drive: drive, browse: drive && depth == 1)
         if why == nil {
-            let depth = min(6, max(1, Int(step.options["depth"] ?? "") ?? 6))
             let body = Self.walk(URL(fileURLWithPath: given).resolvingSymlinksInPath(), depth: depth)
             if let reply = try? api.call("POST", base, body, tries: 3) {
                 if reply.status == 200 { return (.done, RelayRunner.editorWaits(reply.data)) }

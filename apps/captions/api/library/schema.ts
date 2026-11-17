@@ -568,7 +568,53 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (asset_id, tag)
   );
   `,
-  // 35: which computer holds a library job it claimed (its device id) and that claim's id (work/library-package.ts): a
+  // 35: copies of a library in folders on its owner's computers (copies.ts). state is the computer's last word on the
+  // folder; checked_at its last check of the files there; retry_at holds its jobs back after a reconnect or a full disk.
+  // copy_files: each file in a copy, by version id (or a plug-in item's key), at the path it was put at; a row with
+  // copied_at NULL is a try that failed (error), tried again an hour after tried_at
+  `
+  CREATE TABLE library_copies (
+    id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    device TEXT NOT NULL,
+    path TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','ok','reconnect','full')),
+    last_seen INTEGER,
+    free_bytes INTEGER,
+    checked_at INTEGER,
+    retry_at INTEGER,
+    created_at INTEGER NOT NULL,
+    UNIQUE (device, path)
+  );
+  CREATE INDEX library_copies_library ON library_copies(library_id);
+  CREATE TABLE copy_files (
+    copy_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    rel_path TEXT,
+    size INTEGER,
+    sha256 TEXT,
+    copied_at INTEGER,
+    error TEXT,
+    tried_at INTEGER,
+    PRIMARY KEY (copy_id, version_id)
+  );
+  `,
+  // 36: copying between computers (copies.ts send): the original a computer sent for a copy that only another computer
+  // can write, kept on the store until every copy has it; storage_key NULL with error is a send that failed, asked again
+  // an hour after tried_at. notice_at: when the library's owner was told a copy has taken nothing for two weeks
+  `
+  CREATE TABLE copy_sends (
+    version_id TEXT PRIMARY KEY,
+    storage_key TEXT,
+    bytes INTEGER,
+    sha256 TEXT,
+    error TEXT,
+    tried_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  ALTER TABLE library_copies ADD COLUMN notice_at INTEGER;
+  `,
+  // 37: which computer holds a library job it claimed (its device id) and that claim's id (work/library-package.ts): a
   // restart of this server keeps the holder, and a computer's beat, file or result counts only on the claim it holds
   `
   ALTER TABLE jobs ADD COLUMN held_by TEXT;
