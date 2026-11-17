@@ -1,8 +1,12 @@
-import { useEffect, useState, type CSSProperties, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-react";
 import { SPRITE_FRAMES, type AssetCard, type AssetDetail } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { awayLine, pickSource, useHere, type Source } from "@/lib/here";
+import { listLibraries } from "@/lib/library";
+import { askMediaFolder } from "@/lib/local-files";
+import { macPlaces, placesConnect } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 import { across, clock, frameAt, frameStyle } from "./ClipCards";
 import { copyReady, original, playerNote, type PlayerNote } from "./clip";
@@ -16,6 +20,10 @@ import { copyReady, original, playerNote, type PlayerNote } from "./clip";
  * A clip with its own turn (a screen recorded on its side) is turned here, the file never is. The window's own controls
  * would turn with it, so it has none: a click plays or pauses, and the strip under it goes to a moment.
  * ponytail: no volume or full screen on a turned clip; its own controls if he asks for them
+ * In a Mac app that checks where originals are (lib/here.ts), a clip whose original is on a computer plays it from this
+ * one when it is here (badge Original), else a proxy (badge Proxy). What plays is chosen once the answer is in, and kept:
+ * the original going away (an error, 3 s stalled, or the next answer while it plays) takes the proxy at the same second
+ * and keeps playing; an original coming back is taken at the next play after a pause, or at once after a button here.
  */
 
 type Phase = "loading" | "playing" | "paused" | "failed";
@@ -46,7 +54,17 @@ export function ClipPlayer({
   // window does not answer from what it kept of the failed one
   const [plainFailed, setPlainFailed] = useState(false);
   const retry = plainFailed && copyReady(detail);
-  const src = `/api/library/media/${a.versionId}/play${retry ? "?r=1" : ""}${startAt ? `#t=${startAt}` : ""}`;
+  const server = `/api/library/media/${a.versionId}/play${retry ? "?r=1" : ""}`;
+  const places = macPlaces() && !!a.onMac;
+  const [here, again] = useHere(places ? a.libraryId : null, [a.versionId]);
+  const check = here?.[a.versionId];
+  // what plays, once this computer has answered; `at` the second it starts at when it took over from another
+  const [pin, setPin] = useState<Source & { at?: number }>();
+  useEffect(() => void (places && here && !pin && setPin(pickSource(check, a.versionId))), [places, here, pin, check, a.versionId]);
+  const onServer = !places || !!pin?.src.startsWith("/api/");
+  const base = !places ? server : !pin ? "" : onServer ? server : pin.src;
+  const start = pin?.at ?? startAt;
+  const src = base && `${base}${start ? `#t=${start}` : ""}`;
   // what the element at `src` last said; a new address starts as loading
   const [seen, setSeen] = useState<{ src: string; phase: Phase }>({ src: "", phase: "loading" });
   const phase = seen.src === src ? seen.phase : "loading";
@@ -59,9 +77,27 @@ export function ClipPlayer({
   // what of the file the window has fetched, as parts of its length, drawn along the strip's foot
   const [fetched, setFetched] = useState<[number, number][]>([]);
 
+  // another source takes over at the second playing now
+  const take = (s: Source) => void (s.src !== pin?.src && setPin({ ...s, at: media.current?.currentTime }));
+  // the original stopped answering: the proxy, and this computer asked again
+  const leave = () => {
+    if (pin?.badge !== "Original") return;
+    take(pickSource(check?.state === "here" ? undefined : check, a.versionId));
+    void again();
+  };
+  const stall = useRef(0);
+  useEffect(() => () => clearTimeout(stall.current), [src]);
+  // a pause on this source: the next play takes what this computer says now
+  const pausedOn = useRef("");
   useEffect(() => {
     const v = media.current;
-    if (!v) return;
+    if (pin?.badge === "Original" && check && !(check.state === "here" && check.url) && v && !v.paused) leave();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on a new answer only
+  }, [check]);
+
+  useEffect(() => {
+    const v = media.current;
+    if (!v || !src) return;
     v.play().catch((e: unknown) => {
       // a file it cannot play says so through `error`; an abort is the panel moving on
       if ((e as DOMException)?.name !== "NotAllowedError") return;
@@ -73,15 +109,88 @@ export function ClipPlayer({
 
   // a missing original is explained under the title, once; the player keeps its picture
   const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
-  const note = said === "missing" ? null : said;
+  // nothing plays here: the original isn't on this computer and the server has no proxy of it
+  const away = phase === "failed" && places && onServer ? awayLine(check) : null;
+  const note = said === "missing" || away ? null : said;
+  // the library's owner, with proxies not uploaded: told why it plays only where the originals are
+  const [noUpload, setNoUpload] = useState(false);
+  useEffect(() => {
+    if (!away) return;
+    let gone = false;
+    listLibraries().then((ls) => {
+      const l = ls.find((x) => x.id === a.libraryId);
+      if (!gone) setNoUpload(!!l && !l.readOnly && l.settings.upload === "none");
+    }, () => {});
+    return () => {
+      gone = true;
+    };
+  }, [!!away, a.libraryId]); // eslint-disable-line react-hooks/exhaustive-deps -- once it shows
+  const awayNote = away && <Away line={away} noUpload={noUpload} />;
+
+  // the original is here in a folder the page may not play from yet, or on a share that needs its login: one button
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const press = (run: () => Promise<string | null>) => async () => {
+    setBusy(true);
+    setProblem("");
+    try {
+      const failed = await run();
+      if (failed) return setProblem(failed);
+      take(pickSource((await again())[a.versionId], a.versionId));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const access = check?.state === "here" && check.needs === "access" ? check : null;
+  const share = check?.state === "away" && check.needs === "connect" ? check.root : undefined;
+  const buttons = (access || share) && (
+    <div className="flex flex-wrap items-center gap-2 py-1.5 text-xs text-zinc-400">
+      {access && (
+        <Button size="sm" variant="secondary" disabled={busy} onClick={press(() => askMediaFolder(access.folder).then(() => null))}>
+          Allow access to {access.root?.name ?? access.folder.split("/").filter(Boolean).pop() ?? access.folder}
+        </Button>
+      )}
+      {share && (
+        <Button size="sm" variant="secondary" disabled={busy} onClick={press(() => placesConnect(share.key).then((r) => ("ok" in r ? null : `Could not connect ${share.name}`), () => `Could not connect ${share.name}`))}>
+          Connect
+        </Button>
+      )}
+      {problem && <span>{problem}</span>}
+    </div>
+  );
+  const badge = places && pin && phase !== "failed" && (
+    <span
+      title={pin.badge === "Proxy" ? (awayLine(check) ?? undefined) : undefined}
+      className="rounded bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white"
+    >
+      {pin.badge}
+    </span>
+  );
   const picture = a.thumbUrl;
   const turn = a.kind === "video" ? a.turn : undefined;
   const side = turn === 90 || turn === 270;
 
   const events = {
-    onPlaying: () => to("playing"),
-    onPause: () => to("paused"),
-    onWaiting: () => to("loading"),
+    onPlaying: () => {
+      clearTimeout(stall.current);
+      to("playing");
+    },
+    onPlay: () => {
+      if (pausedOn.current !== src) return;
+      pausedOn.current = "";
+      if (places && pin) take(pickSource(check, a.versionId));
+    },
+    onPause: () => {
+      clearTimeout(stall.current);
+      pausedOn.current = src;
+      to("paused");
+    },
+    onWaiting: () => {
+      to("loading");
+      clearTimeout(stall.current);
+      if (pin?.badge === "Original") stall.current = window.setTimeout(leave, 3000);
+    },
+    onCanPlay: () => clearTimeout(stall.current),
     onSeeking: () => setSeekingAt(src),
     onSeeked: () => setSeekingAt(""),
     onProgress: () => {
@@ -91,6 +200,7 @@ export function ClipPlayer({
       setFetched(Array.from({ length: b.length }, (_, i) => [b.start(i) / v.duration, b.end(i) / v.duration]));
     },
     onError: () => {
+      if (pin?.badge === "Original") return leave();
       if (!retry) setPlainFailed(true);
       to("failed");
     },
@@ -105,8 +215,10 @@ export function ClipPlayer({
   if (a.kind === "audio" && !fill) {
     return (
       <>
-        <audio key={src} ref={media} src={src} controls preload="auto" className="w-full" {...events} />
+        <audio key={src} ref={media} src={src || undefined} controls preload="auto" className="w-full" {...events} />
         {note && <Note note={note} file={original(a, detail)} />}
+        {awayNote}
+        {buttons}
       </>
     );
   }
@@ -128,12 +240,12 @@ export function ClipPlayer({
         style={{ ...shape, ...(picture ? { backgroundImage: `url("${picture}")` } : {}) }}
       >
         {a.kind === "audio" ? (
-          <audio key={src} ref={media} src={src} controls preload="auto" className="absolute inset-x-4 bottom-4 w-[calc(100%-2rem)]" {...events} />
+          <audio key={src} ref={media} src={src || undefined} controls preload="auto" className="absolute inset-x-4 bottom-4 w-[calc(100%-2rem)]" {...events} />
         ) : (
           <video
             key={src}
             ref={media}
-            src={src}
+            src={src || undefined}
             // the picture is upright already: on a turned video it would be turned twice
             poster={turn ? undefined : picture}
             controls={phase !== "failed" && !turn}
@@ -149,27 +261,31 @@ export function ClipPlayer({
         {(phase === "loading" || (seeking && phase !== "failed")) && !note && a.kind === "video" && (
           <Loader2 aria-label="Loading" className="pointer-events-none absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80 drop-shadow" />
         )}
-        {note && (
+        {(note || awayNote) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/65 p-6 text-center text-white">
-            <Note note={note} file={original(a, detail)} />
+            {note ? <Note note={note} file={original(a, detail)} /> : awayNote}
           </div>
         )}
-        {muted && phase !== "failed" && (
-          <Button
-            size="sm"
-            className="absolute left-2 top-2 bg-black/70 text-white hover:bg-black/80"
-            onClick={() => {
-              const v = media.current;
-              if (!v) return;
-              v.muted = false;
-              setMuted(false);
-              if (v.paused) void v.play().catch(() => {});
-            }}
-          >
-            <Volume2 className="h-4 w-4" />
-            Sound on
-          </Button>
-        )}
+        {/* the badge first: it is there before Sound on, which then never moves */}
+        <div className="absolute left-2 top-2 flex items-center gap-2">
+          {badge}
+          {muted && phase !== "failed" && (
+            <Button
+              size="sm"
+              className="bg-black/70 text-white hover:bg-black/80"
+              onClick={() => {
+                const v = media.current;
+                if (!v) return;
+                v.muted = false;
+                setMuted(false);
+                if (v.paused) void v.play().catch(() => {});
+              }}
+            >
+              <Volume2 className="h-4 w-4" />
+              Sound on
+            </Button>
+          )}
+        </div>
         {onPrev && (
           <button type="button" aria-label="Previous clip" onClick={onPrev} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
             <ChevronLeft className="h-5 w-5" />
@@ -182,6 +298,7 @@ export function ClipPlayer({
         )}
       </div>
       {strip && <Filmstrip {...strip} now={now} media={media} seeking={seeking} fetched={fetched} />}
+      {buttons && <div className="shrink-0 px-2">{buttons}</div>}
     </div>
   );
 }
@@ -300,6 +417,16 @@ export function ClipImage({ asset: a, fill }: { asset: AssetCard; fill: boolean 
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** Nothing plays here: where the original is, and for the owner why there is no proxy to play instead. */
+function Away({ line, noUpload }: { line: string; noUpload: boolean }) {
+  return (
+    <div className="flex max-w-sm flex-col items-center gap-1.5 text-sm">
+      <p>{line}</p>
+      {noUpload && <p className="text-xs opacity-70">Proxies aren't uploaded for this library, so it plays only where the originals are.</p>}
+    </div>
   );
 }
 
