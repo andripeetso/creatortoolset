@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  addSource, addTrack, blade, copyOf, duplicate, find, freeTrack, lengthOf, move, paste, place, remove, removeTrack, roll,
-  setItems, setSpeed, setTrack, slip, toSaved, trim, unlink, withKeys, type NleTimeline,
+  addSource, addTrack, blade, copyOf, duplicate, endOf, find, freeTrack, lengthOf, move, paste, place, remove, removeTrack, roll,
+  setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
 } from "./model";
 
 // A reel: two talking shots on V1 with their voice on A1 (linked), a B-roll clip on V2 and a song on A2.
@@ -31,6 +31,20 @@ describe("nle model", () => {
     expect(saved.timeline.start).toBe(90000);
     expect(saved.tracks.V1.items[0]).toEqual({ src: "cam", rec: 0, len: 75, in: 100, link: 1, line: "L01", why: "the hook", zoom: 1.2 });
     expect(JSON.stringify(saved)).not.toContain("_k");
+  });
+
+  it("writes a timecode, with hours from an hour", () => {
+    expect(timecode(59, 30)).toBe("0:01:29");
+    expect(timecode(30 * 3725 + 3, 30)).toBe("1:02:05:03");
+  });
+
+  it("moves a clip hours out and back: there is no end", () => {
+    const tl = reel();
+    const k = key(tl, "V2", 90);
+    const out = move(tl, [k], 30 * 3600 * 10);
+    expect(lengthOf(out)).toBe(endOf(find(out, k)!.item));
+    expect(lengthOf(out)).toBeGreaterThan(30 * 3600 * 10);
+    expect(lengthOf(move(out, [k], -30 * 3600 * 10))).toBe(150);
   });
 
   it("is as long as the last clip on any track, past the talent too", () => {

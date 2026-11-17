@@ -10,8 +10,8 @@ export interface AxisView {
   left: number;
 }
 
-/** Px a second takes when the whole length fits the scroller: zoom 1. Never under 1. */
-export const fitPps = (width: number, seconds: number, left = 0, right = 0): number => Math.max(1, (width - left - right) / Math.max(seconds, 0.1));
+/** Px a second takes when the whole length fits the scroller: zoom 1. Never under `floor` (1). */
+export const fitPps = (width: number, seconds: number, left = 0, right = 0, floor = 1): number => Math.max(floor, (width - left - right) / Math.max(seconds, 0.1));
 
 /** How far the zoom goes: until a second is `maxPps` px wide. At least 1 (a length that already fills more than that still fits). */
 export const maxZoomOf = (base: number, maxPps: number): number => Math.max(1, maxPps / base);
@@ -41,7 +41,7 @@ export const sliderToZoom = (at: number, maxZoom: number): number => Math.exp((a
 
 /** Seconds between the ruler's marks, so that they stand at least 64 px apart. */
 export function rulerStep(pxPerSecond: number): number {
-  return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => s * pxPerSecond >= 64) ?? 1200;
+  return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 10800].find((s) => s * pxPerSecond >= 64) ?? 21600;
 }
 
 /**
@@ -58,9 +58,10 @@ export function rulerMarks(pps: number, seconds: number, fromPx = 0, toPx = Infi
   return { step, at };
 }
 
-/** m:ss, with tenths when `fine`. */
+/** m:ss (h:mm:ss from an hour), with tenths when `fine`. */
 export function clock(t: number, fine = false): string {
   const s = Math.max(0, t);
-  const whole = `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  const m = Math.floor(s / 60);
+  const whole = `${m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}` : m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   return fine ? `${whole}.${Math.floor((s % 1) * 10)}` : whole;
 }

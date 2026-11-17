@@ -106,6 +106,14 @@ const live = (t: NleTrack) => t.enabled !== false && !t.hidden && !t.mute;
 export const lengthOf = (tl: NleTimeline): number =>
   Math.max(0, ...Object.values(tl.tracks).filter(live).flatMap((t) => t.items.filter((i) => i.enabled !== false).map(endOf)));
 
+/** m:ss:ff, h:mm:ss:ff from an hour. */
+export const timecode = (f: number, fps: number): string => {
+  const s = Math.floor(f / fps);
+  const m = Math.floor(s / 60);
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${m >= 60 ? `${Math.floor(m / 60)}:${p2(m % 60)}` : m}:${p2(s % 60)}:${p2(Math.round(f % fps))}`;
+};
+
 export function find(tl: NleTimeline, key: string): { track: string; item: NleItem } | null {
   for (const [track, t] of Object.entries(tl.tracks)) {
     const item = t.items.find((i) => i._k === key);
