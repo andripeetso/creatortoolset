@@ -7,7 +7,7 @@ import { SETTINGS_SEARCH_INDEX, searchSettings } from "./search";
 
 /** The sections of a full install (every page), with their titles, the way SettingsPage builds them. */
 const ALL = new Map<string, string>([
-  ["general", "General"], ["appearance", "Appearance"], ["tools", "Tools"], ["folders", "Folders"], ["storage", "Storage"], ["library", "Media Library"], ["providers", "Providers"], ["voice", "Voice"],
+  ["general", "General"], ["appearance", "Appearance"], ["tools", "Tools"], ["folders", "Folders"], ["storage", "Storage"], ["library", "Media Library"], ["sound-effects", "Sound effects"], ["providers", "Providers"], ["voice", "Voice"],
   ["devices", "Computers"], ["automations", "Scheduled tasks"], ["memory", "Memory"], ["usage", "Usage"], ["connectors", "Social accounts"],
   ["keys", "API keys"], ["own-ai", "Headless access"], ["servers", "Servers"], ["team", "Team"], ["admin", "Admin"],
   ["account", "Account"],
@@ -112,6 +112,10 @@ describe("search ranking", () => {
   it("leaves the Mac app's own rows out of a browser's results", () => {
     expect(searchSettings("recording shortcut", ALL).some((h) => h.id === "recording-shortcut")).toBe(false);
     expect(searchSettings("recording shortcut", ALL, undefined, false, true)[0]?.id).toBe("recording-shortcut");
+  });
+
+  it("finds the Mac's take-work switch by its old name too", () => {
+    for (const q of ["take work", "AI on this Mac"]) expect(searchSettings(q, ALL, undefined, false, true)[0]?.id).toBe("use-this-mac");
   });
 
   it("finds the Screen Recorder's settings only in a Mac app that has them, on that tool's page", () => {

@@ -167,7 +167,7 @@ final class Shell: NSObject, ObservableObject {
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
             }
             // Show in Finder for a library clip or a Review version's own file (Reveal.swift): the path comes from the
-            // window's server; one elsewhere only within the folders granted for original media
+            // window's server; one elsewhere only a video, sound or picture file
             if isRevealAsk(ask) {
                 let clip = revealAsk(ask), review = reviewRevealAsk(ask)
                 guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
@@ -175,7 +175,7 @@ final class Shell: NSObject, ObservableObject {
                 Task {
                     let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
                                else { await self.client().clipPath(library: clip!.library, asset: clip!.asset) }
-                    done(await Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                    done(await Reveal.answer(path, anyFile: here))
                 }
                 return
             }
@@ -224,8 +224,18 @@ final class Shell: NSObject, ObservableObject {
                 }
                 return
             }
+            // Settings → Providers → Install on a server that is not this Mac: this Mac's server is not running, so the
+            // app runs its installer itself; a tool installed is reported to the open server at once
+            if let id = aiInstallAsk(ask) {
+                guard let folder = LocalServer.folder else { return done(["ok": false, "problem": "Could not install it here."]) }
+                return AiInstall.shared.run(id, folder: folder) { [weak self] reply in
+                    if reply["ok"] as? Bool == true { self?.runner?.reportNow() }
+                    done(reply)
+                }
+            }
             switch ask {
             case "state": done(self.thisMacState())
+            case "ai-install-progress": done(AiInstall.shared.progress)
             case "access": Task { done(await self.accessFromOtherDevices()) }
             // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
@@ -555,8 +565,8 @@ final class Shell: NSObject, ObservableObject {
     }
 
     var aiLine: String {
-        guard aiOn else { return "AI on this Mac: off" }
-        return ai.running > 0 ? "AI on this Mac: running \(ai.running)" : "AI on this Mac: on"
+        guard aiOn else { return "Taking work: off" }
+        return ai.running > 0 ? "Taking work: running \(ai.running)" : "Taking work: on"
     }
 
     /// The Mac's device is known for this site (paired once); "Remove this Mac from the account" needs it.
@@ -757,7 +767,7 @@ final class Shell: NSObject, ObservableObject {
 
     // MARK: this Mac for the person's AI (Relay.swift)
 
-    /// "AI on this Mac": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
+    /// "Take work from this server": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
     func setAI(_ on: Bool) {
         aiOn = on
         UserDefaults.standard.set(on, forKey: aiKey)
@@ -870,7 +880,7 @@ final class Shell: NSObject, ObservableObject {
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
-        setAIOff("This Mac was removed from the account. Turn on AI on this Mac to add it again.")
+        setAIOff("This Mac was removed from the account. Turn on “Take work from this server” to add this Mac again.")
     }
 
     private func setAIOff(_ message: String?) {

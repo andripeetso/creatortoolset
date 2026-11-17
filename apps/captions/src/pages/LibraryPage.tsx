@@ -15,7 +15,7 @@ import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
   createCollection,
@@ -42,7 +42,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
-import { checkUpload, useOffline } from "@/lib/library";
+import { checkUpload } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
 import { undoable } from "@/lib/undo";
@@ -142,7 +142,6 @@ export default function LibraryPage() {
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
   const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
-  const offline = useOffline();
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -278,11 +277,19 @@ export default function LibraryPage() {
     };
   }, [libId, words, open, smart, facets, kind, roll, searching, filters]);
 
+  const opened = useRef("");
   const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
     if (a.id.startsWith("ext_")) return;
     setStartAt(at);
     setPreview(a);
+    opened.current = a.id;
+    // picked by a tag: a video opens where its shot or a line said names the tag (a search's hit for it), when one does
+    const tags = filters.tags ?? [];
+    if (!at && tags.length && a.kind === "video" && libId)
+      void searchLibrary(libId, tags.join(" "))
+        .then((r) => r.hits.find((h) => h.asset.id === a.id && h.seconds !== undefined)?.seconds)
+        .then((s) => s && opened.current === a.id && setStartAt(s), () => {});
     const p = new URLSearchParams(linked);
     p.delete("asset");
     p.delete("at");
@@ -658,19 +665,10 @@ export default function LibraryPage() {
         </>
       ) : undefined,
   });
-  /** a tab's right-click menu: the folder's own (Open, Available offline, Rename…, New folder inside, Delete folder);
-   *  Available offline is the person's own, so it is there on Read too (the Mac app only) */
+  /** a tab's right-click menu: the folder's own (Open, Rename…, New folder inside, Delete folder) */
   const folderMenu = (c: Collection) => (
     <>
       <ContextMenuItem onSelect={() => go(c.id)}>Open</ContextMenuItem>
-      {offline.list && holdsClips(c) && (
-        <ContextMenuCheckboxItem
-          checked={offline.list.collections.includes(c.id)}
-          onCheckedChange={(on) => void offline.set({ collection: c.id }, on).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}
-        >
-          Available offline
-        </ContextMenuCheckboxItem>
-      )}
       {!readOnly && (
         <>
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>

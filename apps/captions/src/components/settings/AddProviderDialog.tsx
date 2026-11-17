@@ -152,8 +152,8 @@ function Tile({ driver, label, selected, disabled, sub, onClick }: { driver: Dri
 
 /**
  * Settings → Providers → Add provider: one dialog for every path. Pick the tool; if the computer has more than one folder for
- * it, pick the account (only then); name it. A tool the computer lacks or is signed out of gets its one help line. The
- * fields are kit rows: the name on the left, its control on the right.
+ * it, pick the account (only then); name it. A tool the computer lacks is installed first where the app can (this Mac),
+ * else it gets its help lines, as does one signed out. The fields are kit rows: the name on the left, its control on the right.
  */
 export function AddProviderDialog({
   deviceName,
@@ -162,6 +162,9 @@ export function AddProviderDialog({
   initialDriver,
   onClose,
   onAdd,
+  canInstall,
+  onInstall,
+  installing,
 }: {
   deviceName: string;
   report: MacReport | null;
@@ -171,6 +174,12 @@ export function AddProviderDialog({
   onClose: () => void;
   /** Adds the AI to the page's set (the page sets its computer). Throws a sentence when it can't. */
   onAdd: (inst: ProviderInstance) => Promise<void>;
+  /** whether the app can install this tool on the computer (this Mac) */
+  canInstall?: (d: Driver) => boolean;
+  /** installs it: true, or the sentence that says why not */
+  onInstall?: (d: Driver) => Promise<true | string>;
+  /** the install's progress while it runs ("Installing…", "Downloading 42%") */
+  installing?: string;
 }) {
   const [driver, setDriver] = useState<Driver | null>(initialDriver ?? null);
   const [showMore, setShowMore] = useState(false);
@@ -203,6 +212,8 @@ export function AddProviderDialog({
   const duplicate = !!driver && instances.some((i) => i.driver === driver && (i.home ?? "") === chosenHome.trim());
   const toolLabel = DRIVERS.find((d) => d.id === driver)?.label ?? entry?.label ?? "";
   const signIn = driver ? SIGN_IN[driver] : undefined;
+  const missing = !!driver && !!found && !found.installed && !!report;
+  const installFirst = missing && !!onInstall && !!canInstall?.(driver!);
 
   const pick = (d: Driver) => {
     setDriver(d);
@@ -218,8 +229,12 @@ export function AddProviderDialog({
     if (!label.trim()) return setError("Needs a name");
     if (duplicate) return setError("This account is already added on this computer.");
     if (driver === "acp" && !command.trim()) return setError("Needs a command");
-    setBusy(true);
     setError(null);
+    if (installFirst) {
+      const r = await onInstall!(driver);
+      if (r !== true) return setError(r);
+    }
+    setBusy(true);
     try {
       // the page sets the computer it adds to
       await onAdd(buildInstance({ driver, home: chosenHome, name: label, device: "", takenIds: instances.map((i) => i.id), command }));
@@ -236,9 +251,10 @@ export function AddProviderDialog({
       open
       onOpenChange={(open) => !open && onClose()}
       title="Add provider"
-      submitLabel="Add provider"
+      submitLabel={installing ?? "Add provider"}
       onSubmit={submit}
       busy={busy}
+      submitDisabled={!!installing}
       error={error ?? catalogError}
     >
       <ToolGrid
@@ -279,7 +295,7 @@ export function AddProviderDialog({
         />
       )}
 
-      {driver && found && !found.installed && report && <InstallHelp driver={driver} />}
+      {missing && !installFirst && driver && <InstallHelp driver={driver} />}
       {driver && runs && found?.installed && found.signedIn === false && signIn && (
         <p className="text-xs text-muted-foreground">
           Then sign in on {deviceName}: run <code>{signIn}</code> once in Terminal.

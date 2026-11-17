@@ -15,8 +15,10 @@ import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
-import { cancelLibraryJob, runLibraryJob, runPictureJob, stopLibraryJob } from "./library";
+import { cancelLibraryJob, runLibraryJob, runPictureJob, scratchRoom, stopLibraryJob, sweepScratch } from "./library";
 import { processesGone } from "../library/media/run";
+import { claimLook, looksHere } from "./look";
+import { machineNow } from "./machine";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 
 /**
@@ -100,20 +102,40 @@ const runsPictureModel = (): boolean => {
   }
 };
 
+/**
+ * CT_WORKER_KINDS=library: a computer that takes only Media Library jobs (a headless Linux box beside the Mac): no editor
+ * step, no pictures. It sweeps its scratch at start (one job at a time, so none is live) and asks for no job while its
+ * disk has less than CT_LIBRARY_SCRATCH_GB (20) free.
+ */
+export const libraryOnly = () => process.env.CT_WORKER_KINDS === "library";
+
 /** Claims and runs steps until 10 minutes pass with none, or the server asks for a newer app. */
 export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "update"> {
   const c = client(o);
+  const only = libraryOnly();
   await reportLeftover(o).catch((e) => console.warn("[work] leftover step:", e));
+  if (only) await sweepScratch();
   let idleSince = Date.now();
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
+    if (only && !(await scratchRoom())) {
+      console.warn("[work] too little free disk for library work; asking again in a minute");
+      await new Promise((r) => setTimeout(r, 60_000));
+      continue;
+    }
+    // a look of a file on a share this computer connects (look.ts): a Linux library worker only
+    if (looksHere() && (await claimLook(c).catch((e) => void console.warn("[work] look:", e instanceof Error ? e.message : e)))) {
+      idleSince = Date.now();
+      continue;
+    }
     let claim: WorkClaim;
     try {
       claim = await c.post<WorkClaim>("work/claim", {
         v: WORK_V,
-        steps: pluginEditorSteps().map((s) => s.id),
+        steps: only ? [] : pluginEditorSteps().map((s) => s.id),
         cache: cacheReport(),
         library: true,
-        ...(runsPictureModel() ? { pictures: true } : {}),
+        ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
+        machine: await machineNow(),
       });
     } catch (e) {
       console.warn("[work] claim:", e instanceof Error ? e.message : e);
@@ -128,6 +150,10 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
       await runJob(claim.pkg, o);
       trimCache();
       idleSince = Date.now();
+    } else if (claim.lib && claim.lib.v > WORK_V) {
+      // a package newer than this worker reads: handed back, and the worker stops for an update
+      await c.post(`work/lib/${claim.lib.job.id}/fail`, { error: "This computer needs a newer Creator Toolset" }).catch(() => {});
+      return "update";
     } else if (claim.lib) {
       await runLibraryJob(claim.lib, o);
       idleSince = Date.now();

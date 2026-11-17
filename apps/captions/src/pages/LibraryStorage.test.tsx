@@ -54,7 +54,7 @@ async function render(s: LibraryStorage, onThisComputer = true, after: LibrarySt
 }
 
 const local: LibraryStorage = { kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] };
-const uploadOf = (el: HTMLElement) => el.querySelector('select[aria-label="Upload to the server"]') as HTMLSelectElement;
+const uploadOf = (el: HTMLElement) => el.querySelector('select[aria-label="Footage upload"]') as HTMLSelectElement;
 const saveOf = (el: HTMLElement) => [...el.querySelectorAll("button")].find((b) => b.textContent === "Save");
 const choose = (select: HTMLSelectElement, value: string) =>
   act(async () => {
@@ -70,9 +70,9 @@ const type = (input: HTMLInputElement, value: string) =>
   });
 
 describe("library storage", () => {
-  it("a library holding files on a server: no dead choices", async () => {
+  it("a library holding files on a server: no dead choices, and no empty Uploads section", async () => {
     const el = await render(local, false);
-    expect(el.textContent).toBe("Storage");
+    expect(el.textContent).toBe("");
     expect(el.querySelectorAll("input, button, select")).toHaveLength(0);
   });
 
@@ -90,7 +90,7 @@ describe("library storage", () => {
 
   it("an empty library: the choice, and no Save while there is no form", async () => {
     const el = await render({ ...local, locked: false });
-    expect([...uploadOf(el).options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Video files and proxies"]);
+    expect([...uploadOf(el).options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Originals and proxies"]);
     expect(saveOf(el)).toBeUndefined();
   });
 

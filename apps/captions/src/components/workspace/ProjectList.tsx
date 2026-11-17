@@ -107,8 +107,8 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
       <div className="flex flex-col gap-2">
         {editing === "new" ? (
           <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)}>
-            <UploadRow value={upload} onChange={setUpload} />
-            <UploadRow finals value={finalsUpload} onChange={setFinalsUpload} />
+            <UploadRow title="Footage upload" value={upload} onChange={setUpload} />
+            <UploadRow finals title="Finals upload" value={finalsUpload} onChange={setFinalsUpload} />
           </ProjectForm>
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (

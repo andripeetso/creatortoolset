@@ -1,12 +1,13 @@
 import { useCachedLoad } from "@/lib/local-cache";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Link } from "react-router";
 import { CircleAlert, Eye, Inbox, KeyRound, Loader2, MessageSquare, Pause, X, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { canUse, useMe, type Me } from "@/lib/auth";
 import type { EditSummary } from "@contracts/editor";
-import type { ActivityRow } from "@contracts/activity";
+import type { ActivityChoice, ActivityRow } from "@contracts/activity";
 import { listEdits } from "@/lib/editor";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
@@ -110,6 +111,8 @@ export interface Line {
   reason?: string;
   /** the Review video a row waits on: it can be cleared */
   asset?: string;
+  /** what can be done about it (a key out of credit: Top up, …) */
+  choices?: ActivityChoice[];
 }
 
 /**
@@ -127,6 +130,7 @@ export function activityLines(server: ActivityRow[], sessions: SessionSummary[],
     icon,
     ...(r.progress !== undefined ? { progress: r.progress } : {}),
     ...(r.reason ? { reason: r.reason } : {}),
+    ...(r.choices?.length ? { choices: r.choices } : {}),
   });
   const session = (s: SessionSummary, detail: string, icon: Line["icon"]): Line => ({ key: `s:${s.id}`, to: `/workshop/sessions/${s.id}`, title: s.title, detail, icon });
   return {
@@ -251,7 +255,7 @@ function ActivityButton({ me }: { me: Me }) {
         <div className="max-h-96 overflow-y-scroll pb-1">
           {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">No activity</p>}
           <Part label="Running" lines={running} />
-          <Part label="Waiting on you" lines={waiting} onClear={(ids) => void clear(ids)} />
+          <Part label="Waiting on you" lines={waiting} onClear={(ids) => void clear(ids)} onChoice={(c) => void choose(c).then(() => server.refresh())} />
         </div>
       </PopoverContent>
     </Popover>
@@ -262,7 +266,7 @@ function ActivityButton({ me }: { me: Me }) {
  * `onClear`: the rows that wait on a Review video get a button that takes them off the list, and the part one for all of
  * them. The one for all asks once more in its own place ("Clear 11?"): it sits above the rows' buttons, where a miss lands.
  */
-function Part({ label, lines, onClear }: { label: string; lines: Line[]; onClear?: (assets: string[]) => void }) {
+function Part({ label, lines, onClear, onChoice }: { label: string; lines: Line[]; onClear?: (assets: string[]) => void; onChoice?: (c: ActivityChoice) => void }) {
   const [sure, setSure] = useState(false);
   if (!lines.length) return null;
   const clearable = onClear ? lines.flatMap((l) => l.asset ?? []) : [];
@@ -287,31 +291,65 @@ function Part({ label, lines, onClear }: { label: string; lines: Line[]; onClear
       {lines.map((l) => {
         const Icon = l.reason ? Pause : ICON[l.icon];
         return (
-          <div key={l.key} className="flex items-stretch hover:bg-accent">
-            <Link to={l.to} className="flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-xs">
-              <Icon className={`mt-px h-3.5 w-3.5 shrink-0 ${TONE[l.icon]} ${l.icon === "running" && !l.reason ? "motion-safe:animate-spin" : ""}`} />
-              <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="line-clamp-3 min-w-0 break-words">
-                  {l.title}
-                  {l.detail && <span className="text-muted-foreground">{` ${l.detail}`}</span>}
+          <div key={l.key}>
+            <div className="flex items-stretch hover:bg-accent">
+              <Link to={l.to} className="flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-xs">
+                <Icon className={`mt-px h-3.5 w-3.5 shrink-0 ${TONE[l.icon]} ${l.icon === "running" && !l.reason ? "motion-safe:animate-spin" : ""}`} />
+                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="line-clamp-3 min-w-0 break-words">
+                    {l.title}
+                    {l.detail && <span className="text-muted-foreground">{` ${l.detail}`}</span>}
+                  </span>
+                  {l.progress !== undefined && !l.reason && <Progress value={l.progress * 100} className="h-1" />}
+                  {l.reason && <span className="text-amber-700 dark:text-amber-300">{l.reason}</span>}
                 </span>
-                {l.progress !== undefined && !l.reason && <Progress value={l.progress * 100} className="h-1" />}
-                {l.reason && <span className="text-amber-700 dark:text-amber-300">{l.reason}</span>}
-              </span>
-            </Link>
-            {onClear && l.asset && (
-              <button
-                onClick={() => onClear([l.asset!])}
-                title="Clear"
-                aria-label={`Clear: ${l.title}`}
-                className="shrink-0 px-3 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
+              </Link>
+              {onClear && l.asset && (
+                <button
+                  onClick={() => onClear([l.asset!])}
+                  title="Clear"
+                  aria-label={`Clear: ${l.title}`}
+                  className="shrink-0 px-3 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {l.choices && onChoice && <Choices choices={l.choices} onChoice={onChoice} />}
           </div>
         );
       })}
     </section>
   );
+}
+
+/** A waiting row's buttons, under it: a service's page opens in the browser, an app page here, the others ask the server. */
+function Choices({ choices, onChoice }: { choices: ActivityChoice[]; onChoice: (c: ActivityChoice) => void }) {
+  const look = "rounded-md border px-2 py-0.5 text-[11px] font-medium hover:bg-accent outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  return (
+    <div className="flex flex-wrap gap-1.5 pb-2 pl-8 pr-3">
+      {choices.map((c) =>
+        c.url?.startsWith("https://") ? (
+          <a key={c.label} href={c.url} target="_blank" rel="noreferrer" className={look}>
+            {c.label}
+          </a>
+        ) : c.url ? (
+          <Link key={c.label} to={c.url} className={look}>
+            {c.label}
+          </Link>
+        ) : (
+          <button key={c.label} onClick={() => onChoice(c)} className={look}>
+            {c.label}
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** POSTs a row's choice; says so when the server refuses it. */
+export async function choose(c: ActivityChoice): Promise<void> {
+  if (!c.post) return;
+  const r = await fetch(c.post, { method: "POST" }).catch(() => null);
+  if (!r?.ok) toast.error(((await r?.json().catch(() => null)) as { error?: string } | null)?.error ?? "Could not be saved");
 }

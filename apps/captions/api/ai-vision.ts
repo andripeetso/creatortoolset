@@ -1,3 +1,4 @@
+import { creditBack } from "./credits";
 import {
   AiProviderError,
   aiFor,
@@ -117,7 +118,8 @@ async function completeAnthropic(
     wrapFetchError(e, cancelSignal);
   }
   const body = await readBody(resp);
-  if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic");
+  if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic", apiKey);
+  creditBack("ANTHROPIC_API_KEY", apiKey);
   // tallied like the other API answers: tokens and API-equivalent cost, under its own label
   return contentFromAnthropic(body, (u) => {
     const usage = apiUsage(u, params.model);

@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream, statSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -16,7 +16,8 @@ import { ffmpegTo, withSignal } from "../library/media/run";
 import { soundArgs } from "../library/transcribe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
-import { sizeOf } from "./cache";
+import { proxiesDir, sizeOf } from "./cache";
+import { machineDisks } from "./disks";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
 
@@ -113,6 +114,44 @@ function counter(total: number, report: (p: Progress) => void) {
   });
 }
 
+/** Where library jobs make their files: one folder per job, gone when the job ends. */
+const scratch = () => path.join(env.dataDir, "library-work");
+
+/** Every job folder a stopped worker left (a crash, kill -9): at start no job runs, so none is live. */
+export const sweepScratch = (): Promise<void> => rm(scratch(), { recursive: true, force: true });
+
+/** Whether the scratch disk has CT_LIBRARY_SCRATCH_GB (default 20) free for another job. */
+export async function scratchRoom(): Promise<boolean> {
+  const want = Number(process.env.CT_LIBRARY_SCRATCH_GB ?? 20) * 2 ** 30;
+  await mkdir(env.dataDir, { recursive: true });
+  const s = await statfs(env.dataDir);
+  return s.bavail * s.bsize >= want;
+}
+
+/** What a library job reads: video, sound and pictures, by extension. */
+const MEDIA = /\.(mp4|mov|m4v|mxf|mts|m2ts|avi|mkv|webm|3gp|mpg|mpeg|wav|mp3|m4a|aac|aif|aiff|flac|ogg|opus|jpe?g|png|heic|heif|tiff?|webp)$/i;
+
+const within = (p: string, root: string) => p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+
+/**
+ * On a computer that takes only library work (CT_WORKER_KINDS=library), the file a job reads must be a regular media file
+ * whose real path (links followed) is on a network share it has connected, or in its own proxy cache or job folder. A
+ * link out of the share, a folder or any other file: the job fails. A Mac app reads its own disks as always.
+ */
+export async function mayReadHere(src: string, own: string[], only = process.env.CT_WORKER_KINDS === "library"): Promise<boolean> {
+  if (!only) return true;
+  try {
+    const real = await realpath(src);
+    if (!(await stat(real)).isFile()) return false;
+    const roots = await Promise.all([...machineDisks().map((d) => d.path), ...own].map((r) => realpath(r).catch(() => null)));
+    if (!roots.some((r) => r && within(real, r))) return false;
+    // downloaded copies are named here (job folder, proxy cache); a file on a share must say it is media
+    return MEDIA.test(real) || own.some((r) => within(real, r));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Runs one claimed library job to the end: done or fail sent, or nothing when the server took it back. Each call names
  * the job's claim (x-ct-claim). A server that answers nothing or a 5xx is asked again until GIVE_UP_MS passed since it
@@ -180,11 +219,19 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
   };
   loop();
   // named by the claim: a later claim of the same job never shares it; kept until the result is in or the job is dropped
-  const dir = path.join(env.dataDir, "library-work", claim ? `${lib.job.id}-${claim}` : String(lib.job.id));
+  const dir = path.join(scratch(), claim ? `${lib.job.id}-${claim}` : String(lib.job.id));
   try {
     await mkdir(dir, { recursive: true });
     // where the file is on this computer first; a download only when it is not here
-    let src = await copyHere(lib.file, lib.folders ?? []);
+    // its job folder, and the proxy cache once the server has named the account
+    const own = [dir, ...(() => {
+      try {
+        return [proxiesDir()];
+      } catch {
+        return [];
+      }
+    })()];
+    let src = await copyHere(lib.file, lib.folders ?? [], (p) => mayReadHere(p, own));
     if (!src && lib.original) {
       src = path.join(dir, "original");
       const res = heardFrom(await c.raw(`${base}/original`, { signal: ctl.signal }));
@@ -195,6 +242,7 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
     }
     const light = async (_v: string, init?: RequestInit) => heardFrom(await c.raw(`${base}/light`, init)) ?? new Response(null, { status: 503 });
     src ??= (await resolveFiles({ files: [lib.file] }, { folders: [], get: light, signal: ctl.signal, progress }))[lib.file.id]!;
+    if (!(await mayReadHere(src, own))) throw new Error(`${lib.file.title} is not a media file on a share this computer reads`);
     still();
     const made = await makeDerived(lib, src, dir, async (sound) => {
       // once: a 502 is the key's provider failing, and each try is heard (and paid) again

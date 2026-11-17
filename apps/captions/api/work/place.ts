@@ -14,7 +14,7 @@ import { WORK_MIN, type WorkBeat } from "../../contracts/work";
 import { coreKinds, placeOf, type StepContext } from "../editor/engine";
 import { computers, editOf, either, fileFor, foldersOf, jobFiles, ONLINE_MS, rankOf, type FileRow } from "../editor/reach";
 import { readEdit, readStep } from "../editor/store";
-import { mayClaim, offOf, readBalance, type WorkerSeen } from "../lib/balance";
+import { claimsFresh, mayClaim, offOf, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
@@ -37,7 +37,7 @@ export interface WorkProgress extends WorkBeat {
 export const gates: Partial<Record<string, (ctx: StepContext) => Promise<unknown>>> = {};
 
 /** A computer whose worker reads this server's package. */
-const works = (d: Pick<Device, "work">): boolean => (d.work?.v ?? 0) >= WORK_MIN;
+const works = (d: Pick<Device, "work">): boolean => (d.work?.v ?? 0) >= WORK_MIN && !d.work?.libraryOnly;
 
 const variantOf = (job: Pick<JobRow, "version_id">) => {
   const vid = job.version_id ?? "";
@@ -69,7 +69,8 @@ export async function fitsWork(d: Device, now = Date.now()): Promise<(job: JobRo
   const balance = await readBalance(d.owner);
   // the one asking has a free slot, whatever the list says
   const off = offOf(d.owner);
-  const peers = computers(d.owner).filter((c) => c.x.id === d.id || c.free).map((c) => (c.x.id === d.id ? d : c.x)).filter((x) => works(x) && !off.has(x.id));
+  // a peer that has not asked for work lately (its worker stopped) holds no step back
+  const peers = computers(d.owner).filter((c) => c.x.id === d.id || (c.free && claimsFresh(c.x, now))).map((c) => (c.x.id === d.id ? d : c.x)).filter((x) => works(x) && !off.has(x.id));
   const serverFree = !libraryDb().prepare("SELECT 1 FROM edit_jobs WHERE state = 'running' AND device IS NULL").get();
   return (job) => {
     if (placeOf(job) !== "computer") return false;

@@ -314,7 +314,7 @@ one at most once a minute). A crash of the app itself is macOS's report in
   you sign in to an account (then the Servers list shows the account's other computers). `Connect.swift`.
 - **Settings…** (⌘,, the one Settings item) opens the server's Settings in the window; with no server picked it opens
   This Mac. The Servers menu and the menu bar item (**This Mac…**) open the native **This Mac** window: Servers,
-  **AI on this Mac**, the server here (on or off, port, log, Data location, Network access) and
+  **Take work from this server**, the server here (on or off, port, log, Data location, Network access) and
   the account server; the page's Settings has no entry for it. A page that posts `this-mac` to the `window` message
   handler opens it too. `ThisMac.swift`.
 - The page learns this Mac's device id on the open server as `<html data-mac-device>` (a user script, renewed on
@@ -350,8 +350,8 @@ the dot says how many things wait for you. A click opens a panel (`Activity.swif
   the window. A part shows its label only when it has rows; with neither, one quiet line says so;
 - the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
 - menu rows (`PanelMenuRow`: a title, its key in grey on the right): **Open Creator Toolset**, **Record Screen**
-  (**Stop Recording** while it records) and **Settings & More**, which holds "AI on this Mac: …", "Server on this
-  Mac: …", **AI on this Mac**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings,
+  (**Stop Recording** while it records) and **Settings & More**, which holds "Taking work: …", "Server on this
+  Mac: …", **Take work from this server**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings,
   **Open at login**, **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
 
 `PANEL_SHOTS=<folder> swift test --filter PanelShotsTests` draws the panel with sample rows, light and dark, to PNGs.
@@ -362,7 +362,7 @@ Closing the last window takes the app out of the Dock and the app switcher; it s
 ## Runs your AI
 
 Any signed-in account can use this Mac for its AI. With the server on this Mac it is on by itself (see "First
-run"); for another server, turn **AI on this Mac** on (menu bar or This Mac). The first time, the app
+run"); for another server, turn **Take work from this server** on (menu bar or This Mac). The first time, the app
 pairs this Mac with the account: `POST /api/devices` with the window's cookies, body `{name, version}`.
 The site returns a device token once. The token goes to the Keychain (service
 `com.creatortoolset.mac.device`, account = the site's host); the device id goes to
@@ -402,7 +402,7 @@ written there.
 
 ## Draws an edit's cards
 
-While **AI on this Mac** is on, the same runner also draws the AI Editor's cards for the account's own edits
+While **Take work from this server** is on, the same runner also draws the AI Editor's cards for the account's own edits
 (`CardJobs.swift`, `KitRunner.swift`, `CardClip.swift`). It makes no request of its own to find out whether one
 waits. The long poll it already holds says which editor kinds this Mac would take now (`"editor": ["cards-draw"]`
 beside `blobs` in the body of `relay/wait`), and a server with such a step queued answers that poll with
@@ -535,7 +535,7 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
 between launches; Sign out on the site clears it. The one secret the app keeps is the device token of
-**AI on this Mac**, in the Keychain (see "Runs your AI").
+**Take work from this server**, in the Keychain (see "Runs your AI").
 
 ## Layout
 

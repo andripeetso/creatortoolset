@@ -1,9 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Plus, X } from "lucide-react";
 import { DRIVERS, driverFields, EFFORTS, type Effort, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { effortLabel, modelChoices, modelName } from "@/lib/providers";
 import { fmtAgo } from "./helpers";
 import { cn } from "@/lib/utils";
@@ -32,6 +31,7 @@ export function ProviderDetail({
   onChange,
   onTest,
   onSignIn,
+  install,
   onMove,
   onRemove,
   onDeleteProgram,
@@ -58,6 +58,8 @@ export function ProviderDetail({
   onTest: () => void;
   /** set only where the Mac app shows this page and the AI is on this Mac: opens the CLI's sign-in in Terminal */
   onSignIn?: () => void;
+  /** the Install button, where the app can install this AI (this Mac); absent: the lines that say how */
+  install?: ReactNode;
   onMove?: (deviceId: string) => void;
   onRemove: () => void;
   /** a program the app downloaded for this AI (Antigravity) on this computer: deletes it, the sign-in stays */
@@ -129,10 +131,12 @@ export function ProviderDetail({
             <Button size="sm" variant="outline" onClick={onSignIn}>
               Sign in
             </Button>
+          ) : status.action === "install" ? (
+            install
           ) : undefined
         }
       >
-        {status.action === "install" && <InstallHelp driver={inst.driver} />}
+        {status.action === "install" && !install && <InstallHelp driver={inst.driver} />}
         {status.action === "sign-in" && !onSignIn && <SignInHelp driver={inst.driver} computer="its computer" />}
         {check && !check.ok && check.error && <p className="break-words text-xs text-muted-foreground">{check.error}</p>}
       </Row>
@@ -206,14 +210,18 @@ export function ProviderDetail({
             />
           )}
           {fields.args && (
-            <Row title="Arguments" description="One per line, in order.">
-              <LinesField label="Arguments" value={inst.launchArgs ?? []} onCommit={(list) => onChange({ launchArgs: list.length ? list : undefined })} />
-            </Row>
+            <ListField title="Arguments" description="Passed to the program, in this order." add="Add argument" label="Argument" value={inst.launchArgs ?? []} onCommit={(list) => onChange({ launchArgs: list.length ? list : undefined })} />
           )}
           {fields.env && (
-            <Row title="Variable names" description="Environment variable names, one per line.">
-              <LinesField label="Variable names" value={inst.envNames ?? []} onCommit={(list) => onChange({ envNames: list.length ? list : undefined })} />
-            </Row>
+            <ListField
+              title="Variables"
+              description="Names only: the values come from the computer that runs it."
+              add="Add variable"
+              label="Variable name"
+              placeholder="API_KEY"
+              value={inst.envNames ?? []}
+              onCommit={(list) => onChange({ envNames: list.length ? list : undefined })}
+            />
           )}
         </Rare>
       )}
@@ -223,27 +231,57 @@ export function ProviderDetail({
 
 const Rare = ({ fold, children }: { fold: boolean; children: ReactNode }) => (fold ? <Advanced summary="Advanced">{children}</Advanced> : <>{children}</>);
 
-/** A list of short lines (arguments, variable names): saved when the box loses focus, blank lines dropped. */
-function LinesField({ label, value, onCommit }: { label: string; value: string[]; onCommit: (list: string[]) => void }) {
-  const text = value.join("\n");
-  const [draft, setDraft] = useState(text);
-  const [edited, setEdited] = useState(false);
-  const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+/** A list of short values (arguments, variable names): one field each with its remove button, and Add for one more. Saved as each field is left. */
+function ListField({ title, description, add, label, placeholder, value, onCommit }: {
+  title: string;
+  description: string;
+  add: string;
+  label: string;
+  placeholder?: string;
+  value: string[];
+  onCommit: (list: string[]) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const save = (list: string[]) => onCommit(list.map((x) => x.trim()).filter(Boolean));
   return (
-    <Textarea
-      aria-label={label}
-      rows={2}
-      value={edited ? draft : text}
-      spellCheck={false}
-      className="w-full font-mono text-xs sm:w-72"
-      onChange={(e) => {
-        setEdited(true);
-        setDraft(e.target.value);
-      }}
-      onBlur={() => {
-        if (edited && lines(draft).join("\n") !== text) onCommit(lines(draft));
-        setEdited(false);
-      }}
-    />
+    <Row
+      title={title}
+      description={description}
+      control={
+        <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+          <Plus /> {add}
+        </Button>
+      }
+    >
+      {(value.length > 0 || adding) && (
+        <div className="space-y-1.5">
+          {value.map((v, i) => (
+            <div key={`${i}:${v}`} className="flex items-center gap-1.5">
+              <TextField label={label} value={v} className="font-mono text-xs" onCommit={(next) => save(value.map((x, j) => (j === i ? next : x)))} />
+              <Button size="icon-xs" variant="ghost" aria-label={`Remove ${v}`} onClick={() => save(value.filter((_, j) => j !== i))}>
+                <X />
+              </Button>
+            </div>
+          ))}
+          {adding && (
+            <input
+              autoFocus
+              aria-label={label}
+              placeholder={placeholder}
+              spellCheck={false}
+              className="h-8 w-full rounded-md border border-input bg-transparent px-3 font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-64"
+              onBlur={(e) => {
+                if (e.target.value.trim()) save([...value, e.target.value]);
+                setAdding(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") setAdding(false);
+              }}
+            />
+          )}
+        </div>
+      )}
+    </Row>
   );
 }

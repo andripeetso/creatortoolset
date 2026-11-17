@@ -4,7 +4,7 @@ import path from "node:path";
 import { Hono, type Context } from "hono";
 import type { MadeVoice, Voice, VoicesView } from "../../contracts/editor";
 import type { AuthVars } from "../auth";
-import { isOutOfCredits } from "../credits";
+import { creditBack, creditOut, isOutOfCredits } from "../credits";
 import { ensureLibrary } from "../library/access";
 import { libraryDb } from "../library/db";
 import { saveToLibrary } from "../library/routes";
@@ -45,7 +45,10 @@ async function call(key: string, url: string, init: RequestInit = {}): Promise<R
   } catch (e) {
     throw new VoiceError("Could not reach ElevenLabs: try again later", 502);
   }
-  if (res.ok) return res;
+  if (res.ok) {
+    creditBack("ELEVENLABS_API_KEY", key);
+    return res;
+  }
   const body = (await res.text().catch(() => "")).slice(0, 600);
   // { detail: { status, message } }, or FastAPI's { detail: [{ msg }] }
   const said = (() => {
@@ -57,7 +60,10 @@ async function call(key: string, url: string, init: RequestInit = {}): Promise<R
       return "";
     }
   })();
-  if (isOutOfCredits(res.status, body)) throw new VoiceError("The ElevenLabs account is out of credits: add credits at elevenlabs.io", 402);
+  if (isOutOfCredits(res.status, body)) {
+    creditOut("ELEVENLABS_API_KEY", key, "Voices in the Editor");
+    throw new VoiceError("The ElevenLabs account is out of credits: add credits at elevenlabs.io", 402);
+  }
   if (res.status === 401) throw new VoiceError(`ElevenLabs refused the key${said ? ` (${said})` : ""}: check it in Settings → API keys (a limited key needs Text to Speech and Voices)`);
   if (res.status === 429) throw new VoiceError("ElevenLabs is busy: try again in a minute", 502);
   throw new VoiceError(`ElevenLabs could not make the voice${said ? `: ${said}` : ""}`, 502);

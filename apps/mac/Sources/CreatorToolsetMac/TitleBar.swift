@@ -37,7 +37,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     }
     /// A page that posts `this-mac` (older servers' Settings → This Mac): opens the native panel.
     var onThisMac: (() -> Void)?
-    /// The page's Settings → This Mac (`thismac-<what>`): servers, the AI on this Mac (ThisMacBridge.swift).
+    /// The page's Settings → This Mac (`thismac-<what>`): servers, Take work from this server (ThisMacBridge.swift).
     var onThisMacCommand: ((String) -> Void)?
     /// The page's recorder messages (`record-<what>`, src/lib/mac-record.ts): the native recorder (Recorder.swift).
     var onRecord: ((String) -> Void)?
@@ -307,8 +307,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // recording's files one after another instead. '3': it also serves ctlocal://media/ (an edit's originals from
         // the granted folders, MediaFiles.swift). src/lib/local-files.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '3';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal
-        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal. '2': on a
+        // server elsewhere it needs no granted folder (the page asks for none first)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the Media Library's copy, progress, cancel, scan and print asks ("import:", Import.swift): src/lib/thisMac.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macImport = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // here or away: the places:check and places:connect asks and the mac-places event (Places.swift; contracts/places.ts);
@@ -387,8 +388,9 @@ extension AppWebView {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: MediaFiles.nearestExisting(ask.hasPrefix("/") ? ask : "/"), isDirectory: true)
-        panel.title = "Play original files from this folder?"
-        panel.message = "Play original files from this folder? The edit's original files are here. Creator Toolset only reads video and sound files from the folder you choose."
+        // one panel for every ask (Show in Finder, a clip or an edit playing its original), so it says what Allow does
+        panel.title = "Original files"
+        panel.message = "Choose the folder with your original videos. Asked once for each folder: after Allow, the videos in it play here and Show in Finder opens them. Creator Toolset only reads video and sound files in the folder you choose."
         panel.prompt = "Allow"
         panel.beginSheetModal(for: window) { [weak self] answer in
             self?.mediaPanelOpen = false
@@ -401,7 +403,7 @@ extension AppWebView {
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".
     fileprivate func thisMac(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
-              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask) || isImportAsk(ask) || isPlacesAsk(ask) || isEditorAsk(ask),
+              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || aiInstallAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask) || isImportAsk(ask) || isPlacesAsk(ask) || isEditorAsk(ask),
               let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }

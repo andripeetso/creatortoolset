@@ -81,6 +81,8 @@ export interface PictureRead {
   blur?: Float32Array;
   /** the frames where a new shot starts, when the cut model found them (cuts.ts); else cutsOf finds them */
   cuts?: number[];
+  /** the cut model's odds of each frame (cuts.ts), with `cuts`: what a computer sends as PictureSignal one and many */
+  odds?: { one: number[]; many: number[] };
 }
 
 /** Which CX×CY cells of a FW×FH grey frame are flat (their 4×4 pixels spread under 3 grey levels): 1 = flat. */
@@ -275,15 +277,16 @@ function readFrames(src: string, rate: number, L: number, size: number, model: I
         p.on("close", async (code) => {
           // the model's cuts, or cutsOf's when it failed on this file (the card's memory taken by another program);
           // awaited also when ffmpeg failed, so the model is never released mid-run
-          const cuts = await windows
+          const odds = await windows
             ?.end()
-            .then(({ one, many }) => (one.length === step.length ? cutsFromModel(one, many, rate) : undefined))
+            .then((o) => (o.one.length === step.length ? o : undefined))
             .catch((e: unknown) => void console.warn("[library] cut model:", e instanceof Error ? e.message : e));
+          const cuts = odds && cutsFromModel(odds.one, odds.many, rate);
           if (code !== 0) return reject(new Error(err.trim() || `ffmpeg exited ${code}`));
           const all = new Uint8Array(maps.length * CX * CY);
           maps.forEach((m, i) => all.set(m, i * CX * CY));
           resolve({
-            ...(cuts ? { cuts } : {}),
+            ...(cuts && odds ? { cuts, odds } : {}),
             fps: rate,
             step: Float32Array.from(step),
             cut: Float32Array.from(cut),

@@ -27,7 +27,7 @@ const { blobs, libraryDb } = await import("./db");
 const { tick } = await import("./worker");
 const { searchLibrary, assetDetail } = await import("./search");
 const { queueLook, WATCH_LABEL } = await import("./shots");
-const { freeTierStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
+const { watchStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
 const { clock } = await import("./look");
 watchTiming.backoffMs = 0;
 // the long call goes through the stubbed fetch, so each test sees and answers it
@@ -36,6 +36,7 @@ watchTiming.post = (url, headers, body) => fetch(url, { method: "POST", headers,
 const watched = () => Promise.all([...watching.values()]);
 const { embedChunks } = await import("./embed");
 const { saveMyKey } = await import("../my-keys");
+const { enqueueJob } = await import("./jobs");
 const { completeVisionWithFallback } = await import("../ai-vision");
 const { MacClaudeError, macUsageSince } = await import("../lib/mac-claude");
 const { completeWithFallback } = await import("../ai-complete");
@@ -132,7 +133,7 @@ describe("a timeline's answer", () => {
 
   it("an hour costs cents, more at Detailed, less on Flash-Lite", () => {
     expect(watchUsdPerHour("standard", "gemini-3.5-flash-lite")).toBeCloseTo(0.14, 2);
-    expect(watchUsdPerHour("standard", "gemini-3.8-flash")).toBeCloseTo(0.64, 2);
+    expect(watchUsdPerHour("standard", "gemini-3.8-flash")).toBeCloseTo(0.38, 2);
     for (const m of ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const) {
       expect(watchUsdPerHour("detailed", m)).toBeGreaterThan(watchUsdPerHour("standard", m));
       expect(watchUsdPerHour("light", m)).toBeLessThan(watchUsdPerHour("standard", m));
@@ -263,7 +264,7 @@ describe("a quota", () => {
     // one part at a time here, so "the next part" is a call that would come after the quota answer
     watchTiming.post = async () => (asked++, Response.json({ error: { message: said, details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "14579s" }] } }, { status: 429 }));
     try {
-      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(false);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe(null);
       await watchAfter(libraryDb(), v, async () => file, "local");
       // two parts of ten minutes were asked at once; each was told once, neither asked again
       expect(asked).toBe(2);
@@ -274,15 +275,51 @@ describe("a quota", () => {
       // kept with Gemini's words, tried again later, never failed for good
       expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("Please retry in 4h2m59s");
       expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
-      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(true);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe("free");
       // the wait over, the next watch asks again
       parked.clear();
       gemini();
       watchTiming.post = post;
       await watchVersion(libraryDb(), other, otherFile, "local");
-      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(false);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe(null);
     } finally {
       watchTiming.post = post;
+    }
+  });
+
+  it("an empty prepaid credit parks the key until the next try, tells its owner once, and clears when a call works", async () => {
+    const { creditGone } = await import("../credits");
+    const { v, file } = await seed("credit", 2 * PART_S);
+    const { v: other, file: otherFile } = await seed("credit-2");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini();
+    let asked = 0;
+    const post = watchTiming.post;
+    const said = "Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.";
+    watchTiming.post = async () => (asked++, Response.json({ error: { code: 402, message: said } }, { status: 402 }));
+    try {
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      expect(asked).toBe(2);
+      const uploads = calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length;
+      // another video: nothing uploaded, nothing asked
+      await watchAfter(libraryDb(), other, async () => otherFile, "local");
+      expect(asked).toBe(2);
+      expect(calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length).toBe(uploads);
+      expect(parked.get("gk-test")!.until).toBeGreaterThan(Date.now() + RETRY_MS - 60_000);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe("credit");
+      expect([...creditGone.values()]).toMatchObject([{ name: "GEMINI_API_KEY", stopped: "Media Library timelines", owners: ["local"] }]);
+      // queued, tried again later
+      expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
+      // topped up: the next try works, the warning goes
+      parked.clear();
+      gemini();
+      watchTiming.post = post;
+      await watchVersion(libraryDb(), other, otherFile, "local");
+      expect(creditGone.size).toBe(0);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe(null);
+    } finally {
+      watchTiming.post = post;
+      parked.clear();
     }
   });
 });
@@ -296,9 +333,11 @@ describe("in the look job", () => {
     expect((libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'look'").get(v) as { state: string }).state).toBe("done");
     expect(calls).toHaveLength(0);
     expect(libraryDb().prepare("SELECT 1 FROM timelines WHERE version_id = ?").get(v)).toBeUndefined();
-    // a key added later: the sweep queues its look again, which goes on to the watch
+    // swept while there is no key: passed over, not set aside for RETRY_MS
+    expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+    // a key added later: the next sweep queues its look again, which goes on to the watch
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");
-    expect(sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true))).toBe(true);
+    expect(sweepWatch(libraryDb(), (id, actor) => id === v && queueLook(libraryDb(), id, actor, true))).toBe(true);
     while (await tick(Date.now(), ["look"]));
     await watched();
     expect(timelineOf(libraryDb(), v)).toHaveLength(1);
@@ -331,6 +370,24 @@ describe("in the look job", () => {
     expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("API key not valid");
     expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
     expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
+    // a real failure keeps its wait in the sweep too
+    expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+  });
+
+  it("the sweep watches on the uploader's own key, never another account's", async () => {
+    const { v } = await seed("bobs");
+    libraryDb().prepare("UPDATE asset_versions SET created_by = 'bob' WHERE id = ?").run(v);
+    enqueueJob(libraryDb(), "lib_t", v, "look", "bob");
+    libraryDb().prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = 'look'").run(v);
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    try {
+      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+      // bob saves his own: the next sweep takes the clip
+      saveMyKey("bob", "GEMINI_API_KEY", "gk-bob");
+      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(true);
+    } finally {
+      saveMyKey("bob", "GEMINI_API_KEY", null);
+    }
   });
 
   it("a watch waiting on a busy Gemini holds no look: the job is done, the next look runs, the sweep waits for it", async () => {
@@ -382,6 +439,10 @@ describe("in an edit's plan", () => {
   });
 });
 
+/** A watch stopped by an empty Gemini credit, kept on the version. */
+const storeTimelineError = (v: string) =>
+  libraryDb().prepare("INSERT OR REPLACE INTO timelines (version_id, events, error, at) VALUES (?, '[]', 'The Gemini credit ran out: depleted', ?)").run(v, Date.now());
+
 describe("Antigravity", () => {
   const inst = { id: "agy", driver: "antigravity" as const, name: "Antigravity", enabled: true, device: "mac-1" };
   /** The actor has Antigravity on their Mac; the library watches with it. */
@@ -416,6 +477,74 @@ describe("Antigravity", () => {
     vi.mocked(providers.routeForInstance).mockReset();
     vi.mocked(completeWithFallback).mockReset();
     libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+  });
+
+  it("the Gemini credit out and Antigravity picked on Home's Activity: the waiting videos and the next ones are watched there until the key works again", async () => {
+    const { chooseCredit, creditBack } = await import("../credits");
+    const { creditWaitsChosen } = await import("./timeline");
+    const { v, file } = await seed("agy-credit");
+    const { v: next, file: nextFile } = await seed("agy-credit-2");
+    withAntigravity();
+    libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_t'`).run();
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    gemini();
+    const asked = runs();
+    const post = watchTiming.post;
+    watchTiming.post = async () => Response.json({ error: { code: 402, message: "Your prepayment credits are depleted." } }, { status: 402 });
+    const model = (id: string) => (libraryDb().prepare("SELECT model, error FROM timelines WHERE version_id = ?").get(id) as { model: string | null; error: string | null });
+    try {
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      expect(model(v).error).toMatch(/^The Gemini credit ran out/);
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
+      // picked: the wait ends now, and the watch goes to Antigravity
+      chooseCredit("GEMINI_API_KEY", "local", "antigravity");
+      creditWaitsChosen(libraryDb(), "local", "antigravity");
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      expect(model(v)).toEqual({ model: "antigravity", error: null });
+      // not made again with sound while the credit is out
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
+      // the key's wait over and still empty: the next video tries it once, then goes to Antigravity at once
+      parked.clear();
+      await watchAfter(libraryDb(), next, async () => nextFile, "local");
+      expect(model(next)).toEqual({ model: "antigravity", error: null });
+      expect(asked).toHaveLength(2);
+      // topped up: back to the key, the picture-only ones made again with their sound
+      creditBack("GEMINI_API_KEY", "gk-test");
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+    } finally {
+      watchTiming.post = post;
+      creditBack("GEMINI_API_KEY", "gk-test");
+    }
+  });
+
+  it("a key two people share: one person's pick moves only their own waiting videos", async () => {
+    const { creditWaitsChosen } = await import("./timeline");
+    const { v: mine } = await seed("credit-mine");
+    const { v: theirs } = await seed("credit-theirs");
+    libraryDb().prepare("UPDATE asset_versions SET created_by = 'other' WHERE id = ?").run(theirs);
+    storeTimelineError(mine);
+    storeTimelineError(theirs);
+    const at = (id: string) => (libraryDb().prepare("SELECT at FROM timelines WHERE version_id = ?").get(id) as { at: number }).at;
+    const was = at(theirs);
+    creditWaitsChosen(libraryDb(), "local", "antigravity");
+    expect(at(mine)).toBe(0);
+    expect(at(theirs)).toBe(was);
+  });
+
+  it("Continue without: Timelines go off in the person's libraries with a video waiting on the credit", async () => {
+    const { creditWaitsChosen } = await import("./timeline");
+    const { librarySetting } = await import("./db");
+    const { v } = await seed("credit-without");
+    storeTimelineError(v);
+    try {
+      expect(creditWaitsChosen(libraryDb(), "someone", "without")).toEqual([]);
+      expect(creditWaitsChosen(libraryDb(), "local", "without")).toEqual(["lib_t"]);
+      expect(librarySetting("lib_t", "timeline")).toBe(false);
+      expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(false);
+    } finally {
+      libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timeline') WHERE id = 'lib_t'`).run();
+    }
   });
 
   it("watches a small soundless copy in its run folder: picture only, no sound note kept, no key, no Gemini call", async () => {

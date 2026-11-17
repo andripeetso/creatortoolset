@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Device, MacReport, ProviderSettings } from "../../contracts/providers";
+import type { Device, MacReport, Machine, ProviderSettings } from "../../contracts/providers";
 import { env } from "./env";
 import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
 import { announce } from "./sync";
@@ -308,6 +308,26 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
 }
 
 /**
+ * The machine block of a computer worker's work claim (api/work/machine.ts): its load and memory now, and the shares a
+ * Linux computer has connected. A Mac's own report keeps its name, chip and disks; a claim that sends no disks keeps them.
+ */
+export function noteMachine(id: string, m: Machine): void {
+  const d = find(id);
+  if (!d) return;
+  const old = d.report?.machine;
+  const machine: Machine = {
+    ...m,
+    ...old,
+    cpus: m.cpus,
+    memGb: m.memGb,
+    ...(m.freeGb !== undefined ? { freeGb: m.freeGb } : {}),
+    ...(m.load !== undefined ? { load: m.load } : {}),
+    ...(m.disks ? { disks: m.disks } : {}),
+  };
+  saveReport(id, { ...(d.report ?? { drivers: [], homes: [] }), at: d.report?.at ?? Date.now(), machine });
+}
+
+/**
  * The device as `viewer` may see it: a Mac it does not own shows no disks. The team's AI worker (owner "workspace") keeps
  * its disks: only admins are sent it (devices.ts, providers.ts), and Storage and Network storage need them.
  */
@@ -325,6 +345,15 @@ const shortHost = (h: string) => h.toLowerCase().replace(/\.local$/, "");
 export function isThisMachine(id: string): boolean {
   const host = find(id)?.report?.machine?.host;
   return !!host && shortHost(host) === shortHost(hostname());
+}
+
+/**
+ * `owner`'s computer whose report names host `host` (case and ".local" aside), the most recently seen: the device row
+ * of a computer another worker on it knows only by host name (a plug-in's helper), so both share one weight.
+ */
+export function deviceByHost(owner: string, host: string): Device | undefined {
+  const h = shortHost(host);
+  return listDevices((x) => x.owner === owner && !!x.report?.machine?.host && shortHost(x.report.machine.host) === h).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
 }
 
 /** What the device reported last. */

@@ -74,6 +74,40 @@ export interface DescribeInput {
   shots?: string[];
   /** in place of pictures, for a clip with no shot descriptions: the description it has now ("" when it has none) */
   was?: string;
+  /** the tags the person gave this clip themselves (personTags): true of it */
+  own?: string[];
+  /** the AI's tags the person took off this clip (personTags): never given again */
+  rejected?: string[];
+}
+
+/** The tags the person gave this version's clip, and the AI's they took off it (tag_rejections). */
+export function personTags(db: DatabaseSync, versionId: string): { own: string[]; rejected: string[] } {
+  const at = db.prepare("SELECT asset_id FROM asset_versions WHERE id = ?").get(versionId) as { asset_id: string } | undefined;
+  if (!at) return { own: [], rejected: [] };
+  const own = (db.prepare("SELECT tag FROM asset_tags WHERE asset_id = ? AND source = 'user' ORDER BY tag").all(at.asset_id) as { tag: string }[]).map((r) => r.tag);
+  const rejected = (db.prepare("SELECT tag FROM tag_rejections WHERE asset_id = ? ORDER BY tag").all(at.asset_id) as { tag: string }[]).map((r) => r.tag);
+  return { own, rejected };
+}
+
+/** Most of a library's learned tag lines a call carries, whole lines only. */
+const NOTES_MAX = 2500;
+
+/**
+ * What the AI learned from the person's own tags in a library (learn.ts): a line per tag on how to recognise it, read
+ * with the workspace's context by every description and shot description, so a tag given to a few clips is given to the
+ * others that show it. "" when it has learned none.
+ */
+export function notesBlock(db: DatabaseSync, libraryId: string): string {
+  const rows = db.prepare("SELECT tag, note FROM tag_notes WHERE library_id = ? ORDER BY tag").all(libraryId) as { tag: string; note: string }[];
+  const lines: string[] = [];
+  let used = 0;
+  for (const r of rows) {
+    const line = `- ${r.tag}: ${r.note}`;
+    if (used + line.length + 1 > NOTES_MAX) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.length ? `\n\nThe person's own tags in this library, and how to recognise each (give the tag, spelled the same, to a clip that shows it):\n${lines.join("\n")}` : "";
 }
 
 /** The tags on the library's other clips (not in the trash), most used first, and how many clips it has. */
@@ -116,6 +150,10 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
         ? [`The workspace this clip belongs to. Use it to name what is seen (the product, the game, its places and features) when ${words ? "its words show it; never add what they don't say" : "the frames show it; never add what they don't show"}:\n${input.workspace}`]
         : []),
       `Title: ${input.title}`,
+      ...(input.own?.length
+        ? [`The person tagged this clip themselves: ${input.own.join(", ")}. These are true of it: name what they name in the description where ${words ? "its words" : "the frames"} show it, and leave them out of tags.`]
+        : []),
+      ...(input.rejected?.length ? [`The person took these tags off this clip, so it doesn't show them: ${input.rejected.join(", ")}. Never give them.`] : []),
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       input.shots
         ? `There are no pictures this time. What is seen in the clip, shot by shot, in order:\n${input.shots.join("\n")}`
@@ -174,11 +212,17 @@ export const WORKSPACE_MAX = 6000;
 
 /**
  * The context of the workspace a version's library is in (its instructions and what each of its context files is,
- * lib/workshop/context.ts) in WORKSPACE_MAX, or "" when the library's owner has no workspace. A library from before workspaces is the first brand's.
+ * lib/workshop/context.ts) in WORKSPACE_MAX, then what the AI learned from the person's tags there (notesBlock), or ""
+ * when there is neither. A library from before workspaces is the first brand's. Every description and shot description
+ * is written and stamped with this.
  */
 export async function workspaceOf(db: DatabaseSync, versionId: string): Promise<string> {
   const id = await workspaceIdOf(db, versionId);
-  return id ? workspaceContext(id, WORKSPACE_MAX) : "";
+  const lib = db.prepare("SELECT a.library_id AS id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { id: string } | undefined;
+  const ws = id ? await workspaceContext(id, WORKSPACE_MAX) : "";
+  const notes = lib ? notesBlock(db, lib.id) : "";
+  // with no notes it is the workspace's context exactly: the stamps written before stay the same
+  return ws ? ws + notes : notes.trimStart();
 }
 
 /** The id of the workspace a version's library is in (as workspaceOf reads it), or undefined when its owner has none. */
@@ -221,11 +265,11 @@ export async function describeFromLines(db: DatabaseSync, versionId: string, act
   const onMac = !!route.only?.includes("mac");
   const lines = all.length <= SHOTS_READ ? all : Array.from({ length: SHOTS_READ }, (_, k) => all[Math.floor((k * all.length) / SHOTS_READ)]!);
   const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
-  const wsId = await workspaceIdOf(db, versionId);
-  const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
+  const workspace = await workspaceOf(db, versionId);
   const { system, user } = describePrompt({
     title,
     ...(workspace ? { workspace } : {}),
+    ...personTags(db, versionId),
     frames: 0,
     ...(lines.length ? { shots: lines.map((l) => `${clock(l.a)}–${clock(l.b)} ${l.text}`) } : { was: was?.text ?? "" }),
     ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
@@ -285,7 +329,11 @@ export function saveDescribed(db: DatabaseSync, versionId: string, d: Described,
     );
     db.prepare("DELETE FROM asset_tags WHERE asset_id = ? AND source = 'ai'").run(asset_id);
     const add = db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'ai')");
-    for (const t of d.tags) add.run(asset_id, t);
+    // never one the person took off this clip, nor the person's own in other letters
+    const no = new Set(
+      (db.prepare("SELECT lower(tag) AS t FROM tag_rejections WHERE asset_id = ? UNION SELECT lower(tag) FROM asset_tags WHERE asset_id = ?").all(asset_id, asset_id) as { t: string }[]).map((r) => r.t),
+    );
+    for (const t of d.tags) if (!no.has(t.toLowerCase())) add.run(asset_id, t);
     indexAsset(db, asset_id);
     db.exec("COMMIT");
   } catch (e) {
@@ -343,11 +391,11 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     const filing = toFile(db, versionId);
     const folders = filing ? plainFolders(db, filing.library_id) : undefined;
     const newFolder = !!folders && folders.length < MAX_AI_FOLDERS;
-    const wsId = await workspaceIdOf(db, versionId);
-    const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
+    const workspace = await workspaceOf(db, versionId);
     const { system, user } = describePrompt({
       title,
       ...(workspace ? { workspace } : {}),
+      ...personTags(db, versionId),
       frames: images.length,
       ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
       ...(folders ? { folders, newFolder } : {}),

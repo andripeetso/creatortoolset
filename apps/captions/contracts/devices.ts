@@ -81,8 +81,9 @@ export const FOLDER_LIST_KIND = "folder-list";
 
 /**
  * The kind that writes the Media Library's shot descriptions of a file kept on a Mac with nothing uploaded
- * (api/library/mac-look.ts; the Mac app's LibraryLookJob.swift). Claimed on the road above, only by the Mac the file is
- * on, of the account that added it, one at a time. The claim's options: `path` (on that Mac), `version`, `duration`
+ * (api/library/mac-look.ts; the Mac app's LibraryLookJob.swift, a Linux computer's worker: api/work/look.ts). Claimed on
+ * the road above by a computer of the account that added it that reaches the file (the Mac it is on, or one that connects
+ * its share), the best placed under load balancing, one at a time. The claim's options: `path` (on that computer), `version`, `duration`
  * (seconds), `format` (the sheets', shots.ts SHEET_FORMAT) and `stretches` (JSON [[a, b], …]; "[]": read the picture).
  *   POST job/library-look/:id   { beat: true }                     → {}   keeps the job the Mac's (its lease, 5 min)
  *   POST job/library-look/:id   { signal: PictureSignal }          → { stretches: [{ seg, a, b }] }, found here (cuts from its odds when sent)

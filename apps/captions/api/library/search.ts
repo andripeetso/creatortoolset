@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { turnVersion } from "./turn";
 import { emitEvent } from "../lib/events";
+import { learnSoon } from "./learn";
 import { workspaceOf } from "./describe";
 import { fileSmart } from "./smart";
 import { existsSync } from "node:fs";
@@ -109,18 +110,20 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
  * Where the clip's file is on this computer, for its Copy path and Show in Finder: the admin only. A clip read in place
  * from a footage folder: that file. A clip kept on this server's own disk: the stored copy, only when the server is the
  * Mac app's own on this Mac (CT_LOCAL=1, never hosted), so a path is never given for a disk the viewer can't open.
+ * Else a clip sent from a Mac keeps the place it was sent from (from_path; its upload drops mac_path), which the Mac
+ * app shows only when the file is still there.
  */
 export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined): string | undefined {
   if (user?.role !== "admin") return undefined;
   const v = db()
-    .prepare("SELECT v.source_key, v.source_path, v.mac_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
-    .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; storage_kind: string } | undefined;
+    .prepare("SELECT v.source_key, v.source_path, v.mac_path, v.from_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
+    .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; from_path: string | null; storage_kind: string } | undefined;
   if (!v) return undefined;
   // a file indexed on a Mac: its path there (Show in Finder finds it on that Mac)
   if (v.source_path || v.mac_path) return v.source_path ?? v.mac_path!;
-  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return undefined;
+  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return v.from_path ?? undefined;
   const file = path.join(env.dataDir, "library", "blobs", ...keyParts(v.source_key)); // the local store's layout (storage/local.ts)
-  return existsSync(file) ? file : undefined;
+  return existsSync(file) ? file : (v.from_path ?? undefined);
 }
 
 /** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */
@@ -288,6 +291,8 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     return c.json({ error: "Send a title, tags, a description or a turn", code: "invalid" }, 400);
   const d = db();
   if (turn !== undefined) await turnVersion(d, a.current_version_id, turn);
+  // the tags as they were: what the person took off and gave is what the AI learns from (learn.ts)
+  const was = tags ? (d.prepare("SELECT tag, source FROM asset_tags WHERE asset_id = ?").all(assetId) as { tag: string; source: string }[]) : [];
   d.exec("BEGIN");
   try {
     if (title) d.prepare("UPDATE assets SET title = ? WHERE id = ?").run(title, assetId);
@@ -295,6 +300,11 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
       d.prepare(`DELETE FROM asset_tags WHERE asset_id = ? AND tag NOT IN (SELECT value FROM json_each(?))`).run(assetId, JSON.stringify(tags));
       const add = d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, ?)");
       for (const t of tags) add.run(assetId, t, aiTags.has(t) ? "ai" : "user");
+      // an AI tag taken off is never given to this clip again; one put back (by the person or an undo) may be
+      const reject = d.prepare("INSERT OR IGNORE INTO tag_rejections (asset_id, tag) VALUES (?, ?)");
+      for (const w of was) if (w.source === "ai" && !tags.includes(w.tag)) reject.run(assetId, w.tag);
+      const back = d.prepare("DELETE FROM tag_rejections WHERE asset_id = ? AND lower(tag) = lower(?)");
+      for (const t of tags) back.run(assetId, t);
     }
     if (description) {
       d.prepare("INSERT OR REPLACE INTO descriptions (version_id, source, text, provider, created_at) VALUES (?, 'user', ?, NULL, ?)").run(
@@ -308,6 +318,15 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
   } catch (e) {
     d.exec("ROLLBACK");
     throw e;
+  }
+  // the person's own tags given or taken off: the AI learns those tags again, in the background
+  if (tags) {
+    const mine = (t: string) => !aiTags.has(t);
+    const changed = [
+      ...tags.filter((t) => mine(t) && !was.some((w) => w.tag === t && w.source === "user")),
+      ...was.filter((w) => w.source === "user" && !tags.includes(w.tag)).map((w) => w.tag),
+    ];
+    if (changed.length) learnSoon(libraryId, changed, user.username);
   }
   // what the smart folders judge it by changed: judged again, in the background (smart.ts)
   const version = a.current_version_id;

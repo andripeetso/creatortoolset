@@ -9,7 +9,7 @@ describe("the sidebar per install and role", () => {
     expect(listed(at(false, true))).toEqual([
       "general", "appearance", "tools", "voice", "devices", "own-ai",
       "providers", "usage",
-      "workspace", "connectors", "folders", "library", "automations", "memory",
+      "workspace", "connectors", "folders", "library", "sound-effects", "automations", "memory",
       "storage", "keys",
     ]);
   });
@@ -62,7 +62,7 @@ describe("the sidebar blocks", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
     expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Workspace", "Server"]);
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "devices", "servers", "own-ai"]);
-    expect(blocks[2].items.map((s) => s.id)).toEqual(["workspace", "connectors", "folders", "library", "automations", "memory"]);
+    expect(blocks[2].items.map((s) => s.id)).toEqual(["workspace", "connectors", "folders", "library", "sound-effects", "automations", "memory"]);
     expect(blocks[3].items.map((s) => s.id)).toEqual(["team", "storage", "keys"]);
   });
 

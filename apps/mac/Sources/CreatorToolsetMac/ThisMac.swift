@@ -1,5 +1,5 @@
 // This Mac: the app's own options, reached from the Servers menu, the menu bar
-// and the picker in the window's top bar. Servers, AI on this Mac, the server here (port, log, data, other devices)
+// and the picker in the window's top bar. Servers, Take work from this server, the server here (port, log, data, other devices)
 // and the optional account server. The guide "Run your own server" is the second window here.
 import AppKit
 import SwiftUI
@@ -37,9 +37,9 @@ struct ThisMacView: View {
                 Button("Run your own server…") { openWindow(id: "guide") }
             }
             Section {
-                Toggle("AI on this Mac", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
+                Toggle("Take work from this server", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
                     .disabled(!shell.hasServer)
-                Text("Runs the open server's AI jobs for your account with the Claude CLI on this Mac, signed in as you.")
+                Text("This Mac runs this server's jobs for your account while the app shows it: AI requests, editor steps and media library work.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(shell.aiLine)
                 if let notice = shell.notice {
@@ -305,7 +305,7 @@ struct GuideView: View {
                     checkRow("Signed in", signedIn)
                 }
                 step(5, "Your own keys") {
-                    Text("AI: with your server open, turn on AI on this Mac; Settings → Providers shows the install and sign-in commands. Storage: the server's disk, or your bucket's OBJECT_STORAGE_ values in .env. Research: your Apify key in Settings → Connectors. The Apple or Google sign-in on the first run is optional: leave This Mac → Account server empty to skip it.")
+                    Text("AI: with your server open, turn on “Take work from this server”; Settings → Providers shows the install and sign-in commands. Storage: the server's disk, or your bucket's OBJECT_STORAGE_ values in .env. Research: your Apify key in Settings → Connectors. The Apple or Google sign-in on the first run is optional: leave This Mac → Account server empty to skip it.")
                 }
                 HStack {
                     Button(checking ? "Checking…" : "Check") { Task { await check() } }

@@ -56,7 +56,7 @@ export function TextField({ label, value, onCommit, placeholder, type = "text", 
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
       }}
-      className={cn(field, "aria-invalid:border-destructive sm:w-72", className)}
+      className={cn(field, "aria-invalid:border-destructive sm:w-64", className)}
     />
   );
 }
@@ -104,7 +104,7 @@ export function SettingsSelect({ label, value, onValueChange, options, disabled,
 }) {
   return (
     <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-      <SelectTrigger size="sm" aria-label={label} className={cn("w-full sm:w-auto sm:min-w-44", className)}>
+      <SelectTrigger size="sm" aria-label={label} className={cn("w-full sm:w-64", className)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

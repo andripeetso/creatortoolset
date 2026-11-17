@@ -18,10 +18,11 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { SOUNDS } from "../../contracts/library";
-import type { Device } from "../../contracts/providers";
+import type { Balance, Device } from "../../contracts/providers";
 import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type WorkFile } from "../../contracts/work";
-import { computers, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
-import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
+import { computers, either, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
+import { folderFor } from "../lib/storage";
+import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOriginals, type WorkerSeen } from "../lib/balance";
 import { deviceForToken, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
@@ -42,6 +43,8 @@ const KINDS = ["send", ...LIBRARY_ON_COMPUTER];
 const LEASE_S = 300;
 /** The files each kind may send back. */
 const SENDS: Record<string, DerivedFile[]> = { send: ["original", "proxy", "thumb", "wave", "sprite"], proxy: ["proxy"], wave: ["wave"], sprite: ["sprite"], fingerprint: [], transcribe: [] };
+/** The file each kind must send back; a job without it fails (retried), never finishes empty. */
+const REQUIRED: Record<string, DerivedFile> = { proxy: "proxy", wave: "wave", sprite: "sprite" };
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
@@ -76,23 +79,28 @@ function rowOf(versionId: string | null): LibRow | undefined {
 /** An original uploaded from a computer is still on that computer, where it was sent from. */
 const where = (r: LibRow): FileRow => (r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device });
 
-/** How well computer `d` can take library job `job`: 3 has the file, 2 reads the server's proxy, 1 downloads the original (proxy only), 0 never. */
-export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: LibRow, folders: ReturnType<typeof foldersOf>): number {
-  if (!takesLibrary(d)) return 0;
+/**
+ * How well computer `d` can take library job `job`: 3 has the file (on its disk, or on a share it has connected), 2 reads
+ * the server's proxy, 1 downloads the original (proxy only, where its owner lets it), 0 never: also for a library not on
+ * its list (Settings → Computers).
+ */
+export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: LibRow, folders: ReturnType<typeof foldersOf>, b: Balance): number {
+  if (!takesLibrary(d) || !allowsLibrary(b, d.id, r.library_id)) return 0;
   // only a transcript on the person's key: the speech road takes one on a computer's model, this server one on its own
   if (job.kind === "transcribe" && !keySound(job.actor, r.id)) return 0;
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   if (at && "path" in at) return 3;
   if (job.kind === "send") return 0;
-  if (job.kind === "proxy") return r.source_key.startsWith("mac:") ? 0 : 1;
+  if (job.kind === "proxy") return r.source_key.startsWith("mac:") || !takesOriginals(b, d) ? 0 : 1;
   // a proxy, never the original itself: the one download of an original is the proxy job's
   return r.proxy ? 2 : 0;
 }
 
-/** The computers of `owner` that may take a library job now: `me`, and the others online, free and holding none. */
-function peersOf(owner: string, me: Device): Device[] {
+/** The computers of `owner` that may take a library job now: `me`, and the others online, free, holding none, asking for work lately and not Off. */
+function peersOf(owner: string, me: Device, now: number): Device[] {
+  const off = offOf(owner);
   return computers(owner)
-    .filter((c) => c.x.id === me.id || (c.free && !holding(c.x.id)))
+    .filter((c) => c.x.id === me.id || (c.free && !holding(c.x.id) && claimsFresh(c.x, now) && !off.has(c.x.id)))
     .map((c) => (c.x.id === me.id ? me : c.x))
     .filter(takesLibrary);
 }
@@ -134,19 +142,17 @@ async function heldSeen(id: number, device: string, claim?: string): Promise<Job
 
 /** The library job computer `d` takes now, with its package, or null. The best-placed of its owner's computers, then load balancing, decide. */
 export async function claimLibraryForComputer(d: Device, now = Date.now()): Promise<LibraryPackage | null> {
-  if (!takesLibrary(d)) return null;
-  const db = libraryDb();
-  const queued = db
-    .prepare(`SELECT * FROM jobs WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${KINDS.map(() => "?").join(", ")}) ORDER BY id LIMIT 100`)
-    .all(now, d.owner, ...KINDS) as unknown as JobRow[];
+  if (!takesLibrary(d) || offOf(d.owner).has(d.id)) return null;
+  const balance = readBalanceSync(d.owner);
+  const queued = queuedFor(d, now, balance);
   if (!queued.length) return null;
+  const db = libraryDb();
   const folders = foldersOf(d.owner);
-  const balance = await readBalance(d.owner);
-  const peers = peersOf(d.owner, d);
+  const peers = peersOf(d.owner, d, now);
   for (const job of queued) {
     const r = rowOf(job.version_id);
     if (!r) continue;
-    const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders) }));
+    const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
     const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
     const top = Math.max(0, ...ranked.map((p) => p.r));
     if (!mine || mine < top) continue;
@@ -166,6 +172,19 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
     return packageOf({ ...got, claim_id: claim }, r, d, folders);
   }
   return null;
+}
+
+/** The queued library jobs of `d`'s owner, in the libraries `d` takes. */
+function queuedFor(d: Device, now: number, balance: Balance): JobRow[] {
+  const libs = balance.libraries?.[d.id];
+  if (libs && !libs.length) return [];
+  return libraryDb()
+    .prepare(
+      `SELECT * FROM jobs WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${KINDS.map(() => "?").join(", ")})` +
+        (libs ? ` AND library_id IN (${libs.map(() => "?").join(", ")})` : "") +
+        " ORDER BY id LIMIT 100",
+    )
+    .all(now, d.owner, ...KINDS, ...(libs ?? [])) as unknown as JobRow[];
 }
 
 function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof foldersOf>): LibraryPackage {
@@ -211,29 +230,59 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
 export function computerTakesLibrary(job: JobRow): boolean {
   if (job.kind === "send") return true;
   if (!job.actor || !LIBRARY_ON_COMPUTER.includes(job.kind)) return false;
-  const own = listDevices((x) => x.owner === job.actor && isOnline(x.id) && takesLibrary(x));
+  const off = offOf(job.actor);
+  const own = listDevices((x) => x.owner === job.actor && isOnline(x.id) && takesLibrary(x) && !off.has(x.id));
   const r = own.length ? rowOf(job.version_id) : undefined;
   if (!r) return false;
   const folders = foldersOf(job.actor);
-  if (own.some((x) => libraryRank(x, job, r, folders) > 0)) return true;
+  const balance = readBalanceSync(job.actor);
+  if (own.some((x) => libraryRank(x, job, r, folders, balance) > 0)) return true;
   if (job.kind === "proxy") return false;
   const p = libraryDb().prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running')").get(r.id) as JobRow | undefined;
   return !!p && (p.state === "running" ? !!p.held_by : computerTakesLibrary(p));
 }
 leaveToComputers.kinds = KINDS;
 leaveToComputers.test = computerTakesLibrary;
+leaveToComputers.line = libraryWaitLine;
+
+/**
+ * Why a library job no computer can take now waits, naming its folder: "Only Mac Studio can read Shoots" (that one is
+ * off or away), or "No computer can read Shoots: connect Footage on Linux box" (none has its share connected). Undefined
+ * when no computer takes library work at all, or the file is in no folder: the plain line says it then.
+ */
+export function libraryWaitLine(job: JobRow): string | undefined {
+  const r = job.actor ? rowOf(job.version_id) : undefined;
+  if (!r || !job.actor) return undefined;
+  const w = where(r);
+  const at = w.mac_path ?? w.source_path;
+  const folders = foldersOf(job.actor);
+  const m = at ? (folderFor(at, folders, w.mac_device ?? undefined) ?? folderFor(at, folders)) : null;
+  if (!m) return undefined;
+  const off = offOf(job.actor);
+  const balance = readBalanceSync(job.actor);
+  const takers = listDevices((x) => x.owner === job.actor && takesLibrary(x) && !off.has(x.id) && allowsLibrary(balance, x.id, r.library_id));
+  if (!takers.length) return undefined;
+  const reads = takers.filter((x) => {
+    const f = fileFor(w, x.id, folders, isThisMachine);
+    return !!f && "path" in f;
+  });
+  const name = m.folder.name;
+  if (reads.length) return `Only ${either(reads.map((x) => x.name))} can read ${name}`;
+  const share = m.folder.mount?.share;
+  return share
+    ? `No computer can read ${name}: connect ${share} on ${either(takers.map((x) => x.name))}`
+    : `No computer can read ${name}: add its folder to a computer in Settings → Folders`;
+}
 
 /** Whether a library job waits that computer `d` would be handed now: its device runner's long poll starts the worker. */
 export async function libraryWaits(d: Device, now = Date.now()): Promise<boolean> {
-  if (!takesLibrary(d)) return false;
-  const db = libraryDb();
-  const queued = db
-    .prepare(`SELECT * FROM jobs WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${KINDS.map(() => "?").join(", ")}) ORDER BY id LIMIT 100`)
-    .all(now, d.owner, ...KINDS) as unknown as JobRow[];
+  if (!takesLibrary(d) || offOf(d.owner).has(d.id)) return false;
+  const balance = readBalanceSync(d.owner);
+  const queued = queuedFor(d, now, balance);
   const folders = queued.length ? foldersOf(d.owner) : [];
   return queued.some((j) => {
     const r = rowOf(j.version_id);
-    return !!r && libraryRank(d, j, r, folders) > 0;
+    return !!r && libraryRank(d, j, r, folders, balance) > 0;
   });
 }
 
@@ -270,9 +319,6 @@ export async function acceptLibraryFile(jobId: number, deviceId: string, name: s
   return true;
 }
 
-/** The file each kind must send for its result to count: without it the job fails (retried), never done half. */
-const NEEDS: Record<string, DerivedFile | undefined> = { proxy: "proxy", wave: "wave", sprite: "sprite" };
-
 /**
  * The job's result, filed while `deviceId` still holds it: the files and rows through recordDerived, then the job done.
  * "done", "failed" when the result was missing what its kind makes (or said it failed), "gone" when the job is not held.
@@ -286,7 +332,8 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
     if ("error" in r.outcome) return failed(r.outcome.error);
     const there = new Set(await readdir(incoming(jobId)).catch(() => [] as string[]));
     const files = Object.fromEntries(r.files.filter((f) => there.has(f) && SENDS[job.kind]?.includes(f)).map((f) => [f, path.join(incoming(jobId), f)]));
-    const need = NEEDS[job.kind];
+    // the kind's own file, or the job is not done: a refused upload is a failed try, never a finished job with nothing
+    const need = REQUIRED[job.kind];
     if (need && !files[need]) return failed(`Your computer's ${need} did not arrive`);
     const probe = job.kind === "send" && r.probe && typeof r.probe === "object" ? (r.probe as unknown as ProbeSummary) : undefined;
     const fingerprint = (job.kind === "fingerprint" || job.kind === "send") && typeof r.fingerprint === "string" && r.fingerprint.length < 1_000_000 ? r.fingerprint : undefined;

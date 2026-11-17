@@ -25,4 +25,13 @@ export interface ActivityRow {
   progress?: number;
   /** Why the work waits and when it carries on by itself (an AI plan's limit). A row with a reason is not moving. */
   reason?: string;
+  /** What the person can do about a row that waits on them (Home's list): open a service's page, or answer the app. */
+  choices?: ActivityChoice[];
+}
+
+/** One of a waiting row's buttons: `url` opens a service's own https page in the browser; `post` is an app path it POSTs to. */
+export interface ActivityChoice {
+  label: string;
+  url?: string;
+  post?: string;
 }

@@ -1,4 +1,6 @@
 import {
+  creditBack,
+  creditOut,
   isOutOfCredits,
   outOfCreditsMessage,
 } from "./credits";
@@ -273,12 +275,15 @@ async function streamMac(system: string, user: string, cancel: AbortSignal | und
   }
 }
 
+/** `key`: the Anthropic API key the call ran on; out of credit, its owner is told (credits.ts creditOut), and an answer that worked clears it. */
 export function classifyHttpError(
   status: number,
   body: string,
-  label: string
+  label: string,
+  key = "",
 ): AiProviderError {
   if (isOutOfTokens(status, body)) {
+    creditOut("ANTHROPIC_API_KEY", key, "AI on the Anthropic API key");
     return new AiProviderError(OUT_OF_TOKENS_MSG, OUT_OF_TOKENS_CODE, true);
   }
   if (status === 401 || status === 403) {
@@ -359,7 +364,8 @@ async function completeAnthropic(
     wrapFetchError(e, cancelSignal);
   }
   const body = await readBody(resp);
-  if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic");
+  if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic", opts.apiKey);
+  creditBack("ANTHROPIC_API_KEY", opts.apiKey ?? "");
   return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage, opts.bill));
 }
 
@@ -673,7 +679,8 @@ async function streamAnthropic(system: string, user: string, cancelSignal: Abort
   } catch (e: unknown) {
     wrapFetchError(e, cancelSignal);
   }
-  if (!resp.ok) throw classifyHttpError(resp.status, await readBody(resp), "Anthropic");
+  if (!resp.ok) throw classifyHttpError(resp.status, await readBody(resp), "Anthropic", opts.apiKey);
+  creditBack("ANTHROPIC_API_KEY", opts.apiKey ?? "");
   let text = "";
   const usage: AnthropicUsage = {};
   try {

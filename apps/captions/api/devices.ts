@@ -13,7 +13,7 @@ import { fitsFor, footageFor, heldCopy } from "./editor/reach";
 import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
-import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
+import { mayClaim, offOf, readBalance, writeBalance, type WorkerSeen } from "./lib/balance";
 import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
@@ -313,16 +313,27 @@ devicesApp.put("/balance", async (c) => {
       cur.weights[id] = v;
     }
   }
+  const mine = (id: string) => deviceOf(id)?.owner === u.username;
+  // the libraries a computer takes Media Library work of (null: every library), and whether it may download originals
+  if (b?.libraries && typeof b.libraries === "object") {
+    for (const [id, v] of Object.entries(b.libraries as Record<string, unknown>)) {
+      const ok = v === null || (Array.isArray(v) && v.length <= 500 && v.every((x) => typeof x === "string" && /^[\w-]{1,100}$/.test(x)));
+      if (!mine(id) || !ok) return c.json({ error: `Bad libraries for ${id}` }, 400);
+      cur.libraries ??= {};
+      if (v === null) delete cur.libraries[id];
+      else cur.libraries[id] = [...new Set(v as string[])];
+    }
+  }
+  if (b?.originals && typeof b.originals === "object") {
+    for (const [id, v] of Object.entries(b.originals as Record<string, unknown>)) {
+      if (!mine(id) || typeof v !== "boolean") return c.json({ error: `Bad originals for ${id}` }, 400);
+      (cur.originals ??= {})[id] = v;
+    }
+  }
   await writeBalance(u.username, cur);
   return c.json(cur);
 });
 
-async function writeBalance(user: string, cur: Awaited<ReturnType<typeof readBalance>>): Promise<void> {
-  await mkdir(path.dirname(balanceFile(user)), { recursive: true });
-  const tmp = `${balanceFile(user)}.tmp-${process.pid}`;
-  await writeFile(tmp, JSON.stringify(cur, null, 2));
-  await rename(tmp, balanceFile(user));
-}
 
 /**
  * POST /api/devices/:id/check {test?} → { check?, weight? }: the computer reads its disks again now (a shared drive
@@ -358,7 +369,8 @@ const ONLINE_MS = 40_000;
  */
 async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
   const own = listDevices((x) => x.owner === d.owner);
-  if (own.length < 2) return kinds;
+  // one computer takes all of them, unless it is set to Off (Off is off, even alone)
+  if (own.length < 2 && !offOf(d.owner).has(d.id)) return kinds;
   const now = Date.now();
   const workers: WorkerSeen[] = own
     .filter((x) => x.report?.machine)
@@ -370,7 +382,7 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
     }));
   const balance = await readBalance(d.owner);
   // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
-  // a folder listing and a look at a file on a Mac go to the computer that holds them, a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
+  // a folder listing goes to the computer that holds it, a look is placed per file (library/mac-look.ts placedOn), a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
   // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
   // hold it back from every one that has them
   return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));

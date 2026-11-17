@@ -4,7 +4,7 @@ import type { AssetKind, LibrarySort } from "@contracts/library";
 import { LibraryFacetBar, type FacetChoice } from "@/components/LibraryFacetBar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { listPlaces, listTags, type LibraryFilters } from "@/lib/library";
+import { listAssets, listPlaces, listTags, type LibraryFilters } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacDevice } from "@/lib/providers";
 import { macPlaces } from "@/lib/thisMac";
@@ -87,8 +87,12 @@ const Count = ({ n }: { n: number }) => <span className="tabular-nums text-zinc-
 export function LibrarySidebar(p: SidebarProps) {
   const tags = useCachedLoad(`/api/library/${p.libraryId}/tags`, () => listTags(p.libraryId));
   const places = useCachedLoad(`/api/library/${p.libraryId}/countries`, () => listPlaces(p.libraryId));
-  const [tagQ, setTagQ] = useState("");
   const f = p.filters;
+  // Missing here shows only when this computer found clips gone (or while it is on): up to 100 counted, then "100+"
+  const missing = useCachedLoad(macPlaces() ? `/api/library/${p.libraryId}/assets?missing=1` : null, () =>
+    listAssets(p.libraryId, { missing: true, limit: 100 }),
+  );
+  const [tagQ, setTagQ] = useState("");
   const picked = f.tags ?? [];
   // an emptied pick is no pick: the page's query (and its cached page) stays the one without it
   const set = (patch: Partial<LibraryFilters>) =>
@@ -140,10 +144,13 @@ export function LibrarySidebar(p: SidebarProps) {
         <Section title="Computer">
           <div className="flex flex-wrap gap-1.5">
             <HereFilter value={f} onChange={(here) => set({ here })} />
-            {macPlaces() && (
+            {macPlaces() && (!!missing.data?.items.length || !!f.missing) && (
               <Pill on={!!f.missing} onClick={() => set({ missing: f.missing ? undefined : true })}>
                 <FileX aria-hidden className="h-3.5 w-3.5" />
                 Missing here
+                {!!missing.data?.items.length && (
+                  <span className="tabular-nums text-zinc-500">{missing.data.next ? "100+" : missing.data.items.length.toLocaleString()}</span>
+                )}
               </Pill>
             )}
           </div>

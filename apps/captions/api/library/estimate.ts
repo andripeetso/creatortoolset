@@ -4,7 +4,7 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { antigravityRoute, canWatch, freeTierStopped, libraryWatchModel, watchKey, watchUsdPerHour } from "./timeline";
+import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watching, watchUsdPerHour } from "./timeline";
 import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
@@ -290,7 +290,8 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   }
   out.timelineKey = !!watchKey(username);
   // each model's timeline of an hour at the library's level, so the person picks one with its cost in front of them
-  if (out.timelineKey && freeTierStopped(db, libraryId)) out.timelineFreeTier = true;
+  const stopped = out.timelineKey ? watchStopped(db, libraryId) : null;
+  if (stopped) out.timelineStopped = stopped;
   if (out.timelineKey) out.timelineModels = WATCH_MODELS.filter((m) => m.value !== "antigravity").map((m) => ({ model: m.value, usd: watchUsdPerHour(libraryLookLevel(libraryId), m.value) }));
   if (antigravityRoute(username)) out.timelineAntigravity = true;
   if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);
@@ -316,7 +317,8 @@ const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND (IFNULL
 // a step this server leaves for one of the person's computers while none can take it, or that waits for video work this
 // server does not do (worker.ts leftToComputers): nothing runs it until a computer of theirs is on, so it is waiting, not
 // time left (a library stuck at "about 20 min left" for days, 2026-11-17)
-const AWAY = `(state = 'queued' AND IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}))`;
+// The lines that name the folder (work/library-package.ts libraryWaitLine) wait the same way.
+const AWAY = `(state = 'queued' AND (IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}) OR IFNULL(error, '') LIKE 'Only % can read %' OR IFNULL(error, '') LIKE 'No computer can read %'))`;
 
 /** The whole library's state per step, for "how far is indexing, is anything broken": every clip in it, not one run. */
 export function libraryStatus(libraryId: string): LibraryStatus {
@@ -420,6 +422,15 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     const of = c ? c.done + c.failed + c.open : 0;
     const now = working.find((w) => w.kind === kind)?.title;
     if (of) stages.push({ kind, done: c!.done, of, failed: c!.failed, ...(now ? { now } : {}) });
+    // Timelines are no job of their own: Gemini watches each clip after its shot descriptions (timeline.ts watchAfter)
+    if (kind === "look" && of && librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username)) {
+      const t = db
+        .prepare(`SELECT IFNULL(SUM(error IS NULL), 0) AS done, IFNULL(SUM(error IS NOT NULL), 0) AS failed FROM timelines WHERE version_id IN (SELECT value FROM json_each(?))`)
+        .get(JSON.stringify([...run])) as { done: number; failed: number };
+      const on = [...run].find((v) => watching.has(v));
+      const title = on && (db.prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(on) as { title: string } | undefined)?.title;
+      stages.push({ kind: "timeline", done: t.done, of: Math.max(of, t.done + t.failed), failed: t.failed, ...(title ? { now: title } : {}) });
+    }
   }
   const done = counts.reduce((n, r) => n + r.done, 0);
   // time left: each step's jobs at this server's pace, the steps side by side

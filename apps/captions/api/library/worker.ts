@@ -17,6 +17,7 @@ import { AiProviderError } from "../ai-complete";
 import { MacClaudeError, usageIn, wakeEditorPolls } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
 import { SOUNDS } from "../../contracts/library";
+import { tagSoundType } from "./sfx-type";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
 import { makeSprite } from "./media/sprite";
 import { looksLikeSong, probe, type ProbeSummary } from "./media/probe";
@@ -198,7 +199,7 @@ export const libraryJobsAtRisk = (): number => running.size;
  * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
  * loop leaves them alone while one can. Unset (a server without the work road), the server runs every job as before.
  */
-export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean } = { kinds: [] };
+export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean; line?: (job: JobRow) => string | undefined } = { kinds: [] };
 
 /**
  * The jobs that decode video or sound (design 2.1): this server runs them only where its video work is on
@@ -235,7 +236,8 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
     if (on.includes(j.kind) && test!(j)) out.push(j.id);
     else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor) && !readsNoPicture(j)) {
       out.push(j.id);
-      const line = leaveToComputers.kinds.includes(j.kind) ? WAITS_FOR_COMPUTER : WAITS_FOR_SERVER;
+      // which computers can read its folder, when that says more than "one of your computers" (library-package.ts libraryWaitLine)
+      const line = leaveToComputers.kinds.includes(j.kind) ? (leaveToComputers.line?.(j) ?? WAITS_FOR_COMPUTER) : WAITS_FOR_SERVER;
       if (j.error !== line) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(line, j.id);
     }
   }
@@ -423,6 +425,8 @@ export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<Versi
   const song = !music && v.kind !== "image" && looksLikeSong(v.title, p);
   if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
   music ||= song;
+  // a sound effect gets its type from its name and length (sfx-type.ts): no AI, and nothing when it has one already
+  if (v.kind === "audio") tagSoundType(db, v.id, v.title, p.duration);
   // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
   const video = !!p.vcodec && !p.cover;
   if (p.vcodec) want("thumb");

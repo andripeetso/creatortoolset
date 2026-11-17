@@ -224,8 +224,27 @@ export function atempo(k: number): string[] {
 }
 
 /**
+ * The sound effects on A3 as ffmpeg inputs (from input `first` on) and a filter that mixes them under `bed` (a label)
+ * into [sfxm]: each one trimmed, at its level, delayed to its place. Null when A3 is empty. `files`: source key → file.
+ */
+export function sfxMix(tl: Timeline, files: Record<string, string>, first: number, bed: string): { inputs: string[]; filter: string } | null {
+  const items = tl.tracks.A3.items;
+  if (!items.length) return null;
+  const inputs: string[] = [];
+  const chains: string[] = [];
+  items.forEach((it, k) => {
+    inputs.push("-ss", (it.in / tl.sources[it.src]!.fps).toFixed(6), "-i", files[it.src]!);
+    chains.push(
+      `[${first + k}:a]atrim=0:${(it.len / tl.fps).toFixed(6)},asetpts=PTS-STARTPTS,${it.gainDb ? `volume=${it.gainDb}dB,` : ""}adelay=${Math.round((it.rec / tl.fps) * 1000)}:all=1,aresample=48000,aformat=channel_layouts=stereo[f${k}]`,
+    );
+  });
+  chains.push(`${bed}${items.map((_, k) => `[f${k}]`).join("")}amix=inputs=${items.length + 1}:duration=first:normalize=0[sfxm]`);
+  return { inputs, filter: chains.join(";") };
+}
+
+/**
  * Renders a planned timeline into `out` (.mp4): V1's shots with their effects, the linked A1 sound where a shot plays
- * its own, and the song on A2 at its level under all of it, brought to -14 LUFS as every preview is.
+ * its own, the song on A2 at its level under all of it, and the sound effects on A3, brought to -14 LUFS as every preview is.
  */
 export async function renderPlanPreview(tl: Timeline, files: Record<string, string>, out: string, signal?: AbortSignal, grade?: Cdl): Promise<void> {
   const [num, den] = frameDuration(tl.fps);
@@ -290,13 +309,19 @@ export async function renderPlanPreview(tl: Timeline, files: Record<string, stri
     const song = tl.tracks.A2.items[0];
     const songSrc = song && tl.sources[song.src];
     // nothing heard at all (every shot's sound off, no song): silence stays silence, as levelling it divides by zero
-    const norm = songSrc || tl.tracks.A1.items.length ? "loudnorm=I=-14:TP=-1:LRA=11" : "anull";
-    const mix = songSrc
-      ? `[0:a]aresample=48000[x];[1:a]atrim=0:${total.toFixed(6)},asetpts=PTS-STARTPTS,${song.gainDb ? `volume=${song.gainDb}dB,` : ""}aresample=48000,aformat=channel_layouts=stereo,afade=t=out:st=${Math.max(0, total - 0.6).toFixed(3)}:d=0.6[s];[x][s]amix=inputs=2:duration=first:normalize=0,${norm}[a]`
-      : `[0:a]${norm}[a]`;
+    const norm = songSrc || tl.tracks.A1.items.length || tl.tracks.A3.items.length ? "loudnorm=I=-14:TP=-1:LRA=11" : "anull";
+    const songMix = songSrc
+      ? `[0:a]aresample=48000[x];[1:a]atrim=0:${total.toFixed(6)},asetpts=PTS-STARTPTS,${song.gainDb ? `volume=${song.gainDb}dB,` : ""}aresample=48000,aformat=channel_layouts=stereo,afade=t=out:st=${Math.max(0, total - 0.6).toFixed(3)}:d=0.6[s];[x][s]amix=inputs=2:duration=first:normalize=0`
+      : null;
+    // the sound effects (A3) mix under the bed, after the song (sfxMix)
+    const sfx = sfxMix(tl, files, songSrc ? 2 : 1, songMix ? "[m]" : "[0:a]");
+    const mix = sfx
+      ? `${songMix ? `${songMix}[m];` : ""}${sfx.filter};[sfxm]${norm}[a]`
+      : songMix ? `${songMix},${norm}[a]` : `[0:a]${norm}[a]`;
     await ffmpegTo(out, [
       "-f", "concat", "-safe", "0", "-i", listFile,
       ...(songSrc ? ["-ss", (song.in / songSrc.fps).toFixed(6), "-i", files[song.src]!] : []),
+      ...(sfx?.inputs ?? []),
       "-filter_complex", mix,
       "-map", "0:v", "-map", "[a]",
       "-c:v", "copy",

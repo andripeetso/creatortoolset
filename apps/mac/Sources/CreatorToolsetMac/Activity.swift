@@ -289,7 +289,7 @@ private struct MoreMenu: View {
         if shell.runsHere, let line = shell.serverLine {
             Text(line)
         }
-        Toggle("AI on this Mac", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
+        Toggle("Take work from this server", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
         if Recorder.available { Menu("Screen Recordings") { RecordingMenu(recorder: shell.recorder) } }
         Divider()
         Menu("Servers") { ServersMenu(shell: shell) }

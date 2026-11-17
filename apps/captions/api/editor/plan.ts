@@ -27,6 +27,7 @@ import { editDir, ownerOf, readEdit, readStep, saveDraft, saveEdit, saveStep, so
 import { finishedProfile, styleBlock } from "./styles";
 import { ask, onComputer } from "../work/on-computer";
 import { emptyTracks, sourceOf } from "./timeline";
+import { brollOf, librarySounds, placeSfx, sfxMoments, SFX_DB, type SfxSound } from "./sfx";
 
 /**
  * The AI Editor's plan: an edit that is not cut around what is said. The person's own AI writes the edit as shots on a
@@ -1143,7 +1144,7 @@ export function frameZoom(s: Pick<PlanShot, "frame" | "scale" | "split">, f: { w
  * on A1 when it plays it, the song on A2, a marker per shot (what it is and does, for an editor that can't draw the
  * effects) and per text. `sources` holds every source the plan names, the generated clips by genFile's key.
  */
-export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSource>, name: string): Timeline {
+export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSource>, name: string, sfx?: { sounds: SfxSound[]; broll: ReadonlySet<string> } | null): Timeline {
   const { fps, w: W, h: H } = plan;
   const tl: Timeline = { name, fps, width: W, height: H, sources: {}, tracks: emptyTracks(), markers: [], plan: { kind: plan.kind, ...(plan.texts?.length ? { texts: plan.texts } : {}) } };
   const fr = (s: number) => Math.round(s * fps);
@@ -1194,6 +1195,13 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
     const s = sources[plan.lead.source]!;
     tl.sources[plan.lead.source] = s;
     tl.tracks.A2.items.push({ src: plan.lead.source, in: Math.round(plan.lead.startS * s.fps), len: end, rec: 0, ...(plan.lead.gainDb ? { gainDb: plan.lead.gainDb } : {}) });
+  }
+  // sound effects (A3) only when the edit's sound set is the library's; `sfx` null places none
+  if (sfx && end) {
+    for (const p of placeSfx(sfxMoments(plan, sfx.broll, end / fps), sfx.sounds, fps, end)) {
+      tl.sources[p.sound.versionId] = p.sound;
+      tl.tracks.A3.items.push({ src: p.sound.versionId, in: 0, len: p.len, rec: p.rec, gainDb: SFX_DB });
+    }
   }
   return tl;
 }
@@ -1480,7 +1488,10 @@ export async function draftPlan(edit: EditMeta, variant: string, saved: PlannedV
     sources[key] = { versionId: key, name: `Generated ${s.src.generate.style}`, fps, tc: 0, dur: Math.round(s.src.generate.seconds * fps), w: plan.w, h: plan.h, file };
   }
   if (signal.aborted) return;
-  const timeline = planTimeline(plan, sources, `${edit.name} ${variant}`);
+  // the library's sound effects when the edit's sound set is the library's; a pack's set is not placed yet
+  const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(edit.sources[0] ?? "") as { library_id: string } | undefined)?.library_id;
+  const sfx = edit.bundle?.sfxSet === "library" && lib ? { sounds: librarySounds(lib), broll: brollOf(plan.shots.flatMap((s) => ("source" in s.src ? [s.src.source] : []))) } : null;
+  const timeline = planTimeline(plan, sources, `${edit.name} ${variant}`, sfx);
   if (!timeline.tracks.V1.items.length) throw new Error(`Nothing in ${variant}'s plan can be shown`);
   // the AI's cut waits for its look before Review (critique.ts); a plan whose cut was looked at already carries the look
   await saveDraft(edit.id, variant, { timeline, notes: saved.notes, ...(saved.critique ? { critique: saved.critique } : { due: saved.fix ? 2 : 1 }) });

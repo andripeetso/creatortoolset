@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 import { WORK_V, type LibraryPackage } from "../../contracts/work";
+import type { JobRow } from "../library/jobs";
 
 // two sides in one process: the server's routes, and a computer's worker that calls them through `fetch`
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-library-"));
@@ -17,9 +18,12 @@ const { libraryDb } = await import("../library/db");
 const { libraryApp } = await import("../library/routes");
 const { tick } = await import("../library/worker");
 const { sha256File } = await import("../lib/uploads");
-const { devicesSaved, pairDevice } = await import("../lib/devices");
+const { deviceOf, devicesSaved, listDevices, pairDevice } = await import("../lib/devices");
+const { writeBalance } = await import("../lib/balance");
 const { CLAIM_POLL, workApp } = await import("./routes");
-const { computerTakesLibrary } = await import("./library-package");
+const { computerTakesLibrary, libraryWaitLine } = await import("./library-package");
+const { foldersOf } = await import("../editor/reach");
+const { unreachedShares } = await import("../../contracts/storage");
 const { runLibraryJob } = await import("./library");
 const { quickPrint } = await import("./files");
 const { proxyPath, setCacheAccount } = await import("./cache");
@@ -55,15 +59,17 @@ const camera = (name: string, size = "1920x1080") => {
 let mac: ReturnType<typeof pairDevice>;
 const post = (url: string, body: unknown, headers: Record<string, string> = {}) =>
   app.request(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-const claim = async () =>
-  (await (await post("/api/devices/relay/work/claim", { v: WORK_V, steps: [], library: true }, { authorization: `Bearer ${mac.token}` })).json()) as { pkg: null; lib?: LibraryPackage };
+const MAC = { os: "mac", cpus: 12, memGb: 32, freeGb: 16, load: 0.1 };
+const claimAs = async (token: string, more: Record<string, unknown> = {}) =>
+  (await (await post("/api/devices/relay/work/claim", { v: WORK_V, steps: [], library: true, ...more }, { authorization: `Bearer ${token}` })).json()) as { pkg: null; lib?: LibraryPackage };
+const claim = () => claimAs(mac.token, { machine: MAC });
 
 /** What the computer sent and fetched, by call. */
 let puts: { name: string; bytes: number }[] = [];
 let gets: string[] = [];
-const o = () => ({
+const o = (token = mac.token) => ({
   server: "http://server.test",
-  token: mac.token,
+  token,
   beatMs: 50,
   fetch: (u: string, i?: RequestInit) => {
     const url = new URL(u);
@@ -213,5 +219,86 @@ describe("library work on the computer that has the file", () => {
     expect(Object.keys(derived(versionId)).sort()).toEqual([...MADE].sort());
     expect(version(versionId).state).toBe("ready");
     expect(readdirSync(path.join(dir, "library-work"))).toEqual([]);
+  }, 60_000);
+
+  it("a Linux computer that takes only library work: its machine block, the libraries it takes, originals only where allowed, Off is off", async () => {
+    const linux = pairDevice("tiny", "Linux box");
+    const LINUX = { os: "linux", cpus: 32, memGb: 64, freeGb: 60, load: 0, disks: [{ path: "/mnt/tiny", name: "tiny", freeGb: 900, network: true, server: "tiny-nas", fs: "smb", share: "TINY FOOTAGE" }] };
+    const asLinux = () => claimAs(linux.token, { libraryOnly: true, machine: LINUX });
+    expect(await asLinux()).toEqual({ pkg: null, account: "tiny" });
+    const seen = deviceOf(linux.device.id)!;
+    expect(seen.work).toMatchObject({ library: true, libraryOnly: true, steps: [] });
+    expect(seen.report?.machine).toMatchObject({ os: "linux", cpus: 32, disks: [{ path: "/mnt/tiny", share: "TINY FOOTAGE" }] });
+
+    const file = camera("tiny-phone-2.mp4", "1600x1280");
+    const size = statSync(file).size;
+    const start = (await (await post("/api/library/lib_phone/uploads", { filename: "tiny-phone-2.mp4", size })).json()) as { id: string };
+    await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
+    const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
+    expect(await tick(Date.now(), ["probe"])).toBe(true);
+    const mine = { on: true, weights: { [mac.device.id]: 0 } };
+    await writeBalance("tiny", mine);
+    // the Mac is Off: it takes nothing, even with no other computer that could
+    expect((await claim()).lib).toBeUndefined();
+    // the proxy needs the original downloaded: not on a computer whose originals are off (the default off a Mac)
+    expect((await asLinux()).lib).toBeUndefined();
+    // a library not on its list: never
+    await writeBalance("tiny", { ...mine, originals: { [linux.device.id]: true }, libraries: { [linux.device.id]: ["lib_p"] } });
+    expect((await asLinux()).lib).toBeUndefined();
+    await writeBalance("tiny", { ...mine, originals: { [linux.device.id]: true }, libraries: { [linux.device.id]: ["lib_phone"] } });
+    // another account's computer is never handed this account's job, whatever it says it is
+    const stranger = pairDevice("stranger", "Stranger's box");
+    await writeBalance("stranger", { on: true, weights: {}, originals: { [stranger.device.id]: true } });
+    expect((await claimAs(stranger.token, { libraryOnly: true, machine: LINUX })).lib).toBeUndefined();
+    const got = (await asLinux()).lib!;
+    expect(got.job).toMatchObject({ kind: "proxy", versionId });
+    expect(await runLibraryJob(got, o(linux.token))).toBe("done");
+    expect(derived(versionId).proxy).toBeGreaterThan(0);
+    await writeBalance("tiny", { on: true, weights: {} });
+  }, 60_000);
+
+  it("a computer without the share is told which folder it can't read; once it reports the share it reads the clip there, not a copy", async () => {
+    const box = pairDevice("tiny", "Tiny box");
+    const SHARE = { name: "TINY FOOTAGE", freeGb: 900, network: true, server: "tiny-nas", fs: "smb", share: "TINY FOOTAGE" };
+    const mnt = path.join(dir, "mnt", "tiny"); // its own mount path, not the Mac's
+    const BOX = { os: "linux", cpus: 32, memGb: 64, freeGb: 60, load: 0 };
+    // the Mac added SHOOTS on its share, and sent a clip from it; then it went Off
+    await claimAs(mac.token, { machine: { ...MAC, disks: [{ ...SHARE, path: "/Volumes/TINY FOOTAGE" }] } });
+    mkdirSync(path.join(dir, "storage"), { recursive: true });
+    writeFileSync(path.join(dir, "storage", "tiny.json"), JSON.stringify({ folders: [{ id: "shoots", role: "footage", name: "SHOOTS", origin: { host: mac.device.id, path: "/Volumes/TINY FOOTAGE/SHOOTS" }, make: false, createdAt: 0, reach: {} }] }));
+    const file = camera("tiny-share.mp4", "1280x720");
+    const onShare = path.join(mnt, "SHOOTS", "day 1", "tiny-share.mp4");
+    mkdirSync(path.dirname(onShare), { recursive: true });
+    copyFileSync(file, onShare);
+    const size = statSync(file).size;
+    const start = (await (await post("/api/library/lib_p/uploads", { filename: "tiny-share.mp4", size, fromPath: "/Volumes/TINY FOOTAGE/SHOOTS/day 1/tiny-share.mp4", fromDevice: mac.device.id, quick: await quickPrint(file) })).json()) as { id: string };
+    await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
+    const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
+    expect(await tick(Date.now(), ["probe"])).toBe(true);
+    const others = Object.fromEntries(listDevices((x) => x.owner === "tiny" && x.id !== box.device.id).map((x) => [x.id, 0]));
+    await writeBalance("tiny", { on: true, weights: others, libraries: { [box.device.id]: ["lib_p"] } });
+    const wave = () => d.prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'wave'").get(versionId) as unknown as JobRow;
+
+    // no share on it: nothing it can take, and the wait line names the folder and the share to connect
+    expect((await claimAs(box.token, { libraryOnly: true, machine: { ...BOX, disks: [] } })).lib).toBeUndefined();
+    expect(libraryWaitLine(wave())).toBe("No computer can read SHOOTS: connect TINY FOOTAGE on Tiny box");
+    expect(unreachedShares(foldersOf("tiny"), box.device.id)).toEqual(["TINY FOOTAGE"]);
+
+    // its next claim reports the share: the line is gone, and it reads the clip where it is on the share (rank 3)
+    const withShare = () => claimAs(box.token, { libraryOnly: true, machine: { ...BOX, disks: [{ ...SHARE, path: mnt }] } });
+    gets = [];
+    let lib = (await withShare()).lib;
+    expect(unreachedShares(foldersOf("tiny"), box.device.id)).toEqual([]);
+    let got: LibraryPackage | undefined;
+    for (; lib; lib = (await withShare()).lib) {
+      if (lib.job.versionId === versionId && lib.job.kind === "wave") got = lib;
+      expect(lib.file.path).toBe(onShare);
+      expect(await runLibraryJob(lib, o(box.token))).toBe("done");
+    }
+    expect(got).toBeDefined();
+    expect(gets.filter((g) => g === "light" || g === "original")).toEqual([]); // nothing downloaded
+    expect(derived(versionId).wave).toBeGreaterThan(0);
+    await writeBalance("tiny", { on: true, weights: {} });
+    rmSync(path.join(dir, "storage", "tiny.json"));
   }, 60_000);
 });

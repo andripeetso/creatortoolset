@@ -1,4 +1,4 @@
-import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Puzzle, Server, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users } from "lucide-react";
+import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Puzzle, Server, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users, Volume2 } from "lucide-react";
 import { PLUGINS_GROUP, settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "folders", "storage", "library", "providers", "voice", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "folders", "storage", "library", "sound-effects", "providers", "voice", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
   "servers", "team", "admin", "account", "plugin", "workspace",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -56,6 +56,7 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Workspace" },
   { id: "folders", title: "Folders", icon: FolderOpen, group: "Workspace" },
   { id: "library", title: "Media Library", icon: Clapperboard, group: "Workspace" },
+  { id: "sound-effects", title: "Sound effects", icon: Volume2, group: "Workspace" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "Workspace" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "Workspace" },
   { id: "team", title: "Team", icon: Users, group: "Server", hostedOnly: true },

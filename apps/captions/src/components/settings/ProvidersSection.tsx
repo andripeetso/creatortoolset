@@ -18,6 +18,7 @@ import {
 } from "@contracts/providers";
 import type { CliId } from "@contracts/local-ai";
 import { useAuth } from "@/lib/auth";
+import { aiInstallProgressOnMac, installAiOnMac } from "@/lib/thisMac";
 import { autoTestDue, checkProvider, deviceOf, effectiveSelection, effortLabel, modelChoices, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice, useProviders } from "@/lib/providers";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -81,6 +82,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const [installing, setInstalling] = useState<string | null>(null);
   /** Antigravity's download so far, in percent, while its Install runs */
   const [installPct, setInstallPct] = useState<number | null>(null);
+  // the Mac app installs an AI on this Mac for a window on any server (a Mac app from before it could, or a browser: no)
+  const [macInstall, setMacInstall] = useState(false);
+  useEffect(() => {
+    void aiInstallProgressOnMac().then((p) => setMacInstall(!!p));
+  }, []);
+  // an install can take an hour: what it switches on afterwards goes through the page's latest set, not the one it started with
+  const patchLatest = useRef<(inst: ProviderInstance, p: Partial<ProviderInstance>) => void>(() => {});
   // the report each AI was last tested for (the page tests an AI once per report)
   const tried = useRef(new Map<string, number>());
 
@@ -246,6 +254,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     }
     void save(next);
   };
+  patchLatest.current = patch;
 
   const remove = (inst: ProviderInstance) => {
     if (!editing) return;
@@ -269,15 +278,20 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     setSigningIn(inst.driver);
     void localSignIn(inst.driver as CliId | "antigravity").then((r) => !r.ok && saveFailed(r.message ?? "Could not start the sign-in."), (e) => saveFailed(msg(e)));
   };
-  const installHere = async (inst: ProviderInstance) => {
-    setInstalling(inst.id);
+  // The app installs an AI where it can: on an own-computer install through its local routes, else through the Mac app
+  // when the AI is on this Mac. Anywhere else the detail says how.
+  const canInstall = (driver: Driver, device: string | undefined) => isLocalCli(driver) && (localHere || (macInstall && !!device && device === thisMacDevice()));
+  /** Runs one install (`key` marks its button busy); true, or the sentence that says why not. */
+  const runInstall = async (driver: Driver, key: string): Promise<true | string> => {
+    const id = driver as CliId | "antigravity";
+    setInstalling(key);
     // Antigravity downloads about 100 MB from Google: the button counts it
-    const poll = inst.driver === "antigravity" ? window.setInterval(() => void localInstallProgress().then((p) => setInstallPct(p.total ? Math.floor((p.done / p.total) * 100) : null), () => {}), 1000) : 0;
+    const progress = localHere ? localInstallProgress : aiInstallProgressOnMac;
+    const poll = driver === "antigravity" ? window.setInterval(() => void progress().then((p) => setInstallPct(p?.total ? Math.floor((p.done / p.total) * 100) : null), () => {}), 1000) : 0;
     try {
-      const r = await localInstall(inst.driver as CliId | "antigravity");
-      if (!r.ok) saveFailed(r.message ?? "Could not install it.");
+      return localHere ? await localInstall(id).then((r) => r.ok || (r.message ?? "Could not install it.")) : await installAiOnMac(id);
     } catch (e) {
-      saveFailed(msg(e));
+      return msg(e);
     } finally {
       window.clearInterval(poll);
       setInstallPct(null);
@@ -285,6 +299,18 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       refreshAll();
     }
   };
+  // installed = switched on: it could not be switched on before
+  const installHere = async (inst: ProviderInstance) => {
+    const r = await runInstall(inst.driver, inst.id);
+    if (r !== true) saveFailed(r);
+    else if (!inst.enabled) patchLatest.current(inst, { enabled: true });
+  };
+  const installLabel = (key: string) => (installing === key ? (installPct !== null ? `Downloading ${installPct}%` : "Installing…") : undefined);
+  const installButton = (inst: ProviderInstance) => (
+    <Button size="sm" variant="outline" disabled={installing !== null} onClick={() => void installHere(inst)}>
+      {installLabel(inst.id) ?? "Install"}
+    </Button>
+  );
   const deleteProgram = async () => {
     try {
       await localRemoveProgram();
@@ -313,15 +339,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       if (canSignIn(inst)) return <Button size="sm" variant="outline" onClick={() => signIn(inst)}>Sign in</Button>;
       return undefined; // the detail beside the list says how
     }
-    if (st.action === "install") {
-      if (localHere && isLocalCli(inst.driver))
-        return (
-          <Button size="sm" variant="outline" disabled={installing === inst.id} onClick={() => void installHere(inst)}>
-            {installing === inst.id ? (installPct !== null ? `Downloading ${installPct}%` : "Installing…") : "Install"}
-          </Button>
-        );
-      return undefined; // the detail beside the list says how
-    }
+    if (st.action === "install") return canInstall(inst.driver, deviceOf(inst)) ? installButton(inst) : undefined; // else the detail says how
     if (st.action === "test") return <Button size="sm" variant="outline" disabled={checking !== null} onClick={() => void runCheck(inst)}>Test</Button>;
     return undefined;
   };
@@ -438,6 +456,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                     {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
                   </>
                 }
+                // the same empty status line as an added provider's row, so every name in the list sits at one height
+                status={<span className="block min-h-4" />}
                 actions={
                   <Button size="sm" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
                     Add
@@ -466,6 +486,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   onChange={(p) => patch(detailInst, p)}
                   onTest={() => void runCheck(detailInst)}
                   onSignIn={statusOf(detailInst).action === "sign-in" && localHere && isLocalCli(detailInst.driver) ? () => signInHere(detailInst) : statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
+                  install={statusOf(detailInst).action === "install" && canInstall(detailInst.driver, deviceOf(detailInst)) ? installButton(detailInst) : undefined}
                   onMove={onDevice(detailInst) ? undefined : (id) => patch(detailInst, { device: id })}
                   onRemove={() => remove(detailInst)}
                   onDeleteProgram={localHere && detailInst.driver === "antigravity" && reportOf(detailInst)?.drivers.find((d) => d.driver === "antigravity")?.installed ? () => void deleteProgram() : undefined}
@@ -530,6 +551,10 @@ export function ProvidersSection({ sub }: { sub?: string }) {
           initialDriver={adding.driver}
           onClose={() => setAdding(null)}
           onAdd={addAi}
+          // the tab is this Mac when one of its records is (a Mac paired twice is one tab)
+          canInstall={(d) => canInstall(d, tabGroup?.records.some((r) => r.id === thisMacDevice()) ? thisMacDevice() : tabDevice.id)}
+          onInstall={(d) => runInstall(d, `add:${d}`)}
+          installing={installing?.startsWith("add:") ? installLabel(installing) : undefined}
         />
       )}
     </>

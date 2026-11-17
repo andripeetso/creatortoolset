@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
-import { isOutOfCredits, outOfCreditsMessage } from "./credits";
+import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
 import { availableEngines, readVoicePrefs, speechFor } from "./lib/speech";
@@ -219,6 +219,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
     const detail = await resp.text().catch(() => "");
     if (isOutOfCredits(resp.status, detail)) {
       console.warn(`[deepgram] out of credits (${resp.status}): ${detail.slice(0, 200)}`);
+      creditOut("DEEPGRAM_API_KEY", key, "Captions and transcripts");
       return {
         error: outOfCreditsMessage("Transcription"),
         status: 502,
@@ -242,6 +243,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
     const detail = `${data.err_code} ${data.err_msg || ""}`;
     if (isOutOfCredits(200, detail)) {
       console.warn(`[deepgram] out of credits: ${detail.slice(0, 200)}`);
+      creditOut("DEEPGRAM_API_KEY", key, "Captions and transcripts");
       return {
         error: outOfCreditsMessage("Transcription"),
         status: 502,
@@ -249,6 +251,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
     }
     return { error: `Deepgram: ${data.err_msg || data.err_code}`, status: 502 };
   }
+  creditBack("DEEPGRAM_API_KEY", key);
   return {
     words: alignDeepgramWords(
       data.results?.channels?.[0]?.alternatives?.[0]?.words ?? [],

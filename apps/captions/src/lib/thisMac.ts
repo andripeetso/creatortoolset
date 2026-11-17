@@ -35,7 +35,7 @@ const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).cod
 /**
  * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
  * theirs, it is done on this Mac: `onHere` is told so first ("Ana's Mac Studio is unreachable. Doing it on this Mac.",
- * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, AI on this Mac, which adds
+ * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, Take work from this server, which adds
  * it to this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
  * for any other answer, the call's own error.
  */
@@ -52,7 +52,7 @@ export async function onThisMac<T>(run: () => Promise<T>, opts: { onHere?: (why:
     const other = e.device && here?.device && e.device.id !== here.device;
     opts.onHere?.(other ? `${e.device!.name} is unreachable. Doing it on this Mac.` : "This Mac isn't connected to this server. Connecting it and doing it here.");
     const s = await startThisMac();
-    if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not be switched on for it: ${s.problem}` : e.message);
+    if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not start taking work from this server: ${s.problem}` : e.message);
     // the server sees the Mac at its first call, a moment after it is switched on
     for (let n = 1; ; n++) {
       await new Promise((r) => setTimeout(r, wait));
@@ -133,6 +133,36 @@ export async function installInMacAi(app: "claude" | "codex", key: string): Prom
     return r.ok === true ? true : r.ok === false ? r.problem || "It didn't work. Try again." : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Settings → Providers → Install for an AI on this Mac while the window shows a server that is not this Mac: the Mac app
+ * runs the installer itself (ThisMacBridge.swift AiInstall). true = installed; a sentence = why not.
+ */
+export async function installAiOnMac(id: "claude" | "codex" | "gemini" | "antigravity"): Promise<true | string> {
+  const bridge = thisMacBridge();
+  if (!bridge) return "Open this page in the Mac app to install it.";
+  try {
+    const r = ((await bridge.postMessage(`ai-install:${id}`)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+    return r.ok === true ? true : r.problem || "Could not install it. Try again.";
+  } catch {
+    return "Could not install it. Try again.";
+  }
+}
+
+/**
+ * The install's download so far ({ done, total }; 0 of 0 when none runs), or null when the Mac app can't install AIs for
+ * the page: a browser, or a Mac app from before it could (it answers an ask it doesn't know as switched off).
+ */
+export async function aiInstallProgressOnMac(): Promise<{ done: number; total: number } | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return null;
+  try {
+    const r = ((await bridge.postMessage("ai-install-progress")) ?? {}) as unknown as { done?: unknown; total?: unknown };
+    return typeof r.done === "number" && typeof r.total === "number" ? { done: r.done, total: r.total } : null;
+  } catch {
+    return null;
   }
 }
 

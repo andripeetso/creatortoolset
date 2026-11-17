@@ -33,7 +33,7 @@ function ServerField({ value, save }: { value: string; save: (v: string) => void
     <Input
       aria-label="Speech server"
       placeholder="https://…/api/transcribe"
-      className="sm:w-72"
+      className="sm:w-64"
       value={text}
       onChange={(e) => setText(e.target.value)}
       onBlur={done}

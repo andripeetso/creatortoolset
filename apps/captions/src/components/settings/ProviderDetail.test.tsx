@@ -1,9 +1,10 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { MacReport, ProviderInstance } from "@contracts/providers";
 import { ProviderDetail } from "./ProviderDetail";
-import { hasCustomEndpoint, providerStatus } from "./ProviderInstanceCard";
+import { hasCustomEndpoint, ProviderInstanceCard, providerStatus } from "./ProviderInstanceCard";
 
 const signedIn = { driver: "claude" as const, installed: true, version: "2.1.319", signedIn: true, plan: "max" };
 const base = { enabled: true, runs: true, online: true, report: true };
@@ -14,6 +15,8 @@ describe("providerStatus", () => {
     expect(providerStatus({ ...base, runs: false }).text).toBe("Not supported by the Mac app");
     expect(providerStatus({ ...base, online: false, found: signedIn }).text).toBe("Computer offline");
     expect(providerStatus({ ...base, found: { driver: "codex", installed: false } })).toEqual({ tone: "attention", text: "Not installed", action: "install" });
+    // switched off and not installed: still says so (it can't be switched on before it is installed)
+    expect(providerStatus({ ...base, enabled: false, found: { driver: "codex", installed: false } }).action).toBe("install");
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Timed out", at: 1 } })).toEqual({ tone: "broken", text: "Test failed", action: "test" });
     // a computer that did not pick the request up is not the AI failing
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Sam's Mac did not pick up the request", at: 1 } }).text).toBe("Computer offline");
@@ -86,7 +89,15 @@ describe("ProviderDetail", () => {
     const html = detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" });
     expect(html).toContain('aria-label="Account folder"');
     expect(html).not.toContain('aria-label="Program"');
-    expect(html).not.toContain('aria-label="Variable names"');
+    expect(html).not.toContain('aria-label="Variable name"');
+  });
+
+  it("lists each variable name in a field of its own with a remove button, and an Add variable button, no text box", () => {
+    const html = detail({ id: "claude", driver: "claude", name: "Claude", enabled: true, device: "mac1", envNames: ["API_KEY", "BASE_URL"] });
+    expect(html.match(/aria-label="Variable name"/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Remove BASE_URL"');
+    expect(html).toContain("Add variable");
+    expect(html).not.toContain("<textarea");
   });
 
   it("folds the rare fields under Advanced only when there are three or more: one or two are drawn open", () => {
@@ -127,5 +138,36 @@ describe("ProviderDetail", () => {
     const status = { tone: "attention" as const, text: "Not signed in", action: "sign-in" as const };
     expect(detail(inst, { status, onSignIn: () => {} })).toContain(">Sign in<");
     expect(detail(inst, { status })).not.toContain(">Sign in<");
+  });
+});
+
+describe("a provider that is not installed", () => {
+  const inst: ProviderInstance = { id: "gemini", driver: "gemini", name: "Gemini (default)", enabled: true, device: "mac1" };
+  const notInstalled = { tone: "attention" as const, text: "Not installed", action: "install" as const };
+  const row = (status: Parameters<typeof ProviderInstanceCard>[0]["status"], action?: ReactNode) =>
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderInstanceCard inst={inst} status={status} action={action} onToggle={() => {}} />
+      </MemoryRouter>,
+    );
+
+  it("has no on/off switch: its Install button takes the switch's place", () => {
+    const html = row(notInstalled, <button>Install</button>);
+    expect(html).not.toContain('aria-label="Use Gemini (default)"');
+    expect(html).toContain(">Install<");
+    expect(row({ tone: "neutral", text: "" })).toContain('aria-label="Use Gemini (default)"');
+  });
+
+  it("keeps the switch of one that is on where the app can't install it, so it can be turned off", () => {
+    expect(row(notInstalled)).toContain('aria-label="Use Gemini (default)"');
+  });
+
+  it("gets the Install button in its Status row where the app can install it, else the lines that say how", () => {
+    const withButton = detail(inst, { status: notInstalled, install: <button>Install</button> });
+    expect(withButton).toContain(">Install<");
+    expect(withButton).not.toContain("npm install -g");
+    expect(detail(inst, { status: notInstalled })).toContain("npm install -g @google/gemini-cli");
+    // Antigravity elsewhere: never "Install it on This Mac"
+    expect(detail({ ...inst, driver: "antigravity" }, { status: notInstalled })).toContain("Install it from the Mac app on its computer");
   });
 });

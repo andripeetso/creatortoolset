@@ -1,0 +1,1007 @@
+{
+ "about": "The renderer's shot-list shots, case by case: the clip, the frame into it (k), its sources' sizes, and what the renderer draws: `ops` onto a black frame (a part of a source, x y w h in source px, drawn at a rect of the frame; `bg`: drawn w x h, blurred by sigma, darkened by dim and scaled up; `edge`: a white edge that wide round it), then the frame's `view` rect stretched over the whole frame (the zoom). `paths`: whether the renderer draws a clip as such a shot or placed as a person placed it. `times`: seconds into the file the clip shows k frames in. The renderer's check holds each case against its own frames.",
+ "cases": [
+  {
+   "name": "cover, fit_x 0.2, zoomed and moved",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.1,
+    "pan": 20.0,
+    "tilt": -10.0,
+    "fit_x": 0.2
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       262.5,
+       0.0,
+       607.5,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ]
+     }
+    ],
+    "view": [
+     30.909090909090935,
+     78.18181818181824,
+     981.8181818181818,
+     1745.4545454545453
+    ]
+   }
+  },
+  {
+   "name": "cover, pan past the window's edge is kept inside",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.2,
+    "pan": 400.0,
+    "tilt": 0.0,
+    "fit_x": 0.9
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       1181.25,
+       0.0,
+       607.5,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ]
+     }
+    ],
+    "view": [
+     0,
+     160.0,
+     900.0,
+     1600.0
+    ]
+   }
+  },
+  {
+   "name": "smooth zoom, eased, middle piece",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 40,
+    "zoom": 1.0,
+    "zoom_to": 1.12,
+    "pan": 0.0,
+    "pan_to": 0.0,
+    "tilt": 0.0,
+    "tilt_to": 0.0,
+    "move": [
+     0.25,
+     0.75
+    ],
+    "fit_x": 0.6
+   },
+   "k": 20,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       787.4999999999999,
+       0.0,
+       607.5,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ]
+     }
+    ],
+    "view": [
+     30.56603773584908,
+     54.339622641509436,
+     1018.8679245283018,
+     1811.3207547169811
+    ]
+   }
+  },
+  {
+   "name": "smooth zoom, linear, last frame",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 40,
+    "zoom": 1.0,
+    "zoom_to": 1.12,
+    "pan": 0.0,
+    "pan_to": 0.0,
+    "tilt": 0.0,
+    "tilt_to": 30.0,
+    "ease": "linear"
+   },
+   "k": 39,
+   "sizes": {
+    "main": [
+     2160,
+     3840
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       0.0,
+       0.0,
+       2160.0,
+       3840.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ]
+     }
+    ],
+    "view": [
+     56.56222023276632,
+     126.74127126230974,
+     966.8755595344674,
+     1718.8898836168307
+    ]
+   }
+  },
+  {
+   "name": "portrait source, fit_y 0.3",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.05,
+    "pan": 0.0,
+    "tilt": 0.0,
+    "fit_y": 0.3
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     2160,
+     3840
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       0.0,
+       0.0,
+       2160.0,
+       3840.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ]
+     }
+    ],
+    "view": [
+     25.71428571428578,
+     45.71428571428578,
+     1028.5714285714284,
+     1828.5714285714284
+    ]
+   }
+  },
+  {
+   "name": "fit",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.0,
+    "frame": "fit"
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       0,
+       0,
+       1920,
+       1080
+      ],
+      "dst": [
+       0.0,
+       656.25,
+       1080.0,
+       607.5
+      ]
+     }
+    ],
+    "view": [
+     0.0,
+     0.0,
+     1080.0,
+     1920.0
+    ]
+   }
+  },
+  {
+   "name": "fit, zoomed in",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.3,
+    "pan": 50.0,
+    "tilt": 40.0,
+    "frame": "fit"
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       0,
+       0,
+       1920,
+       1080
+      ],
+      "dst": [
+       0.0,
+       656.25,
+       1080.0,
+       607.5
+      ]
+     }
+    ],
+    "view": [
+     86.15384615384619,
+     252.30769230769238,
+     830.7692307692307,
+     1476.923076923077
+    ]
+   }
+  },
+  {
+   "name": "blur",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.0,
+    "frame": "blur"
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       654.0,
+       0.0,
+       612.0,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ],
+      "bg": {
+       "w": 136,
+       "h": 240,
+       "sigma": 3,
+       "dim": 0.15
+      }
+     },
+     {
+      "pic": "main",
+      "src": [
+       0,
+       0,
+       1920,
+       1080
+      ],
+      "dst": [
+       0.0,
+       656.25,
+       1080.0,
+       607.5
+      ]
+     }
+    ],
+    "view": [
+     0.0,
+     0.0,
+     1080.0,
+     1920.0
+    ]
+   }
+  },
+  {
+   "name": "blur, smooth zoom",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 40,
+    "zoom": 1.0,
+    "zoom_to": 1.25,
+    "pan": 0.0,
+    "pan_to": 0.0,
+    "tilt": 0.0,
+    "tilt_to": 0.0,
+    "frame": "blur"
+   },
+   "k": 30,
+   "sizes": {
+    "main": [
+     1280,
+     720
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       435.99999999999994,
+       0.0,
+       408.0,
+       720.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ],
+      "bg": {
+       "w": 136,
+       "h": 240,
+       "sigma": 3,
+       "dim": 0.15
+      }
+     },
+     {
+      "pic": "main",
+      "src": [
+       0,
+       0,
+       1280,
+       720
+      ],
+      "dst": [
+       0.0,
+       656.25,
+       1080.0,
+       607.5
+      ]
+     }
+    ],
+    "view": [
+     106.64576802507838,
+     189.59247648902817,
+     866.7084639498432,
+     1540.8150470219437
+    ]
+   }
+  },
+  {
+   "name": "letterbox, fit_x 0.7",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.0,
+    "frame": "letterbox",
+    "fit_x": 0.7
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       0.0,
+       60.0,
+       1920.0,
+       960.0
+      ],
+      "dst": [
+       0.0,
+       690.0,
+       1080.0,
+       540.0
+      ]
+     }
+    ],
+    "view": [
+     0.0,
+     0.0,
+     1080.0,
+     1920.0
+    ]
+   }
+  },
+  {
+   "name": "inset over the shot before",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.0,
+    "frame": "inset",
+    "scale": 0.62,
+    "under": {
+     "src": "u",
+     "in": 0
+    }
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ],
+    "under": [
+     2160,
+     3840
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "under",
+      "src": [
+       0.0,
+       14.117647058823255,
+       2160.0,
+       3811.764705882353
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ],
+      "bg": {
+       "w": 136,
+       "h": 240,
+       "sigma": 2,
+       "dim": 0.18
+      }
+     },
+     {
+      "pic": "main",
+      "src": [
+       0,
+       0,
+       1920,
+       1080
+      ],
+      "dst": [
+       205.0,
+       772.0,
+       670.0,
+       376.0
+      ],
+      "edge": 6.0
+     }
+    ],
+    "view": [
+     0.0,
+     0.0,
+     1080.0,
+     1920.0
+    ]
+   }
+  },
+  {
+   "name": "inset with nothing under: blur",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.0,
+    "frame": "inset",
+    "scale": 0.62
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       654.0,
+       0.0,
+       612.0,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       1920.0
+      ],
+      "bg": {
+       "w": 136,
+       "h": 240,
+       "sigma": 3,
+       "dim": 0.15
+      }
+     },
+     {
+      "pic": "main",
+      "src": [
+       0,
+       0,
+       1920,
+       1080
+      ],
+      "dst": [
+       0.0,
+       656.25,
+       1080.0,
+       607.5
+      ]
+     }
+    ],
+    "view": [
+     0.0,
+     0.0,
+     1080.0,
+     1920.0
+    ]
+   }
+  },
+  {
+   "name": "split in two",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 30,
+    "zoom": 1.0,
+    "fit_x": 0.3,
+    "split": [
+     {
+      "src": "s1",
+      "in": 0,
+      "fit_x": 0.8
+     }
+    ]
+   },
+   "k": 0,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ],
+    "1": [
+     2160,
+     3840
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       211.49999999999994,
+       0.0,
+       1215.0,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       960.0
+      ]
+     },
+     {
+      "pic": 1,
+      "src": [
+       0.0,
+       960.0,
+       2160.0,
+       1920.0
+      ],
+      "dst": [
+       0.0,
+       960.0,
+       1080.0,
+       960.0
+      ]
+     }
+    ],
+    "view": [
+     0.0,
+     0.0,
+     1080.0,
+     1920.0
+    ]
+   }
+  },
+  {
+   "name": "split in three, zoom",
+   "timeline": [
+    1080,
+    1920
+   ],
+   "item": {
+    "src": "m",
+    "rec": 0,
+    "in": 0,
+    "len": 40,
+    "zoom": 1.0,
+    "zoom_to": 1.12,
+    "pan": 0.0,
+    "pan_to": 0.0,
+    "tilt": 0.0,
+    "tilt_to": 0.0,
+    "split": [
+     {
+      "src": "s1",
+      "in": 0
+     },
+     {
+      "src": "s2",
+      "in": 0
+     }
+    ]
+   },
+   "k": 39,
+   "sizes": {
+    "main": [
+     1920,
+     1080
+    ],
+    "1": [
+     2160,
+     3840
+    ],
+    "2": [
+     1280,
+     720
+    ]
+   },
+   "plan": {
+    "ops": [
+     {
+      "pic": "main",
+      "src": [
+       48.75000000000004,
+       0.0,
+       1822.5,
+       1080.0
+      ],
+      "dst": [
+       0.0,
+       0.0,
+       1080.0,
+       640.0
+      ]
+     },
+     {
+      "pic": 1,
+      "src": [
+       0.0,
+       1280.0,
+       2160.0,
+       1280.0
+      ],
+      "dst": [
+       0.0,
+       640.0,
+       1080.0,
+       640.0
+      ]
+     },
+     {
+      "pic": 2,
+      "src": [
+       32.50000000000003,
+       0.0,
+       1215.0,
+       720.0
+      ],
+      "dst": [
+       0.0,
+       1280.0,
+       1080.0,
+       640.0
+      ]
+     }
+    ],
+    "view": [
+     57.85713478555476,
+     102.85712850765287,
+     964.2857304288905,
+     1714.2857429846943
+    ]
+   }
+  }
+ ],
+ "paths": [
+  {
+   "name": "untouched",
+   "track": "V1",
+   "item": {},
+   "shot": true
+  },
+  {
+   "name": "zoomed, inside the frame",
+   "track": "V1",
+   "item": {
+    "zoom": 1.2,
+    "pan": 50
+   },
+   "shot": true
+  },
+  {
+   "name": "smaller than the frame",
+   "track": "V1",
+   "item": {
+    "zoom": 0.8
+   },
+   "shot": false
+  },
+  {
+   "name": "smaller, with a smooth zoom",
+   "track": "V1",
+   "item": {
+    "zoom": 0.8,
+    "zoom_to": 1.0
+   },
+   "shot": true
+  },
+  {
+   "name": "moved past the edge",
+   "track": "V1",
+   "item": {
+    "zoom": 1.0,
+    "pan": 30
+   },
+   "shot": false
+  },
+  {
+   "name": "moved past the edge, fit_x",
+   "track": "V1",
+   "item": {
+    "pan": 30,
+    "fit_x": 0.4
+   },
+   "shot": true
+  },
+  {
+   "name": "turned",
+   "track": "V1",
+   "item": {
+    "rot": 10
+   },
+   "shot": false
+  },
+  {
+   "name": "a frame size, turned",
+   "track": "V1",
+   "item": {
+    "rot": 10,
+    "frame": "fit"
+   },
+   "shot": true
+  },
+  {
+   "name": "on V2",
+   "track": "V2",
+   "item": {
+    "frame": "blur",
+    "zoom_to": 1.1
+   },
+   "shot": false
+  },
+  {
+   "name": "see-through",
+   "track": "V1",
+   "item": {
+    "opacity": 0.5
+   },
+   "shot": false
+  }
+ ],
+ "times": [
+  {
+   "name": "forward",
+   "fps": 25,
+   "item": {
+    "in": 50,
+    "len": 20
+   },
+   "k": 10,
+   "t": 2.4
+  },
+  {
+   "name": "faster",
+   "fps": 25,
+   "item": {
+    "in": 50,
+    "len": 20,
+    "speed": 2.0
+   },
+   "k": 10,
+   "t": 2.8
+  },
+  {
+   "name": "backwards",
+   "fps": 25,
+   "item": {
+    "in": 50,
+    "len": 20,
+    "rev": true
+   },
+   "k": 0,
+   "t": 2.76
+  },
+  {
+   "name": "backwards, faster",
+   "fps": 25,
+   "item": {
+    "in": 50,
+    "len": 20,
+    "rev": true,
+    "speed": 1.5
+   },
+   "k": 5,
+   "t": 2.84
+  },
+  {
+   "name": "held",
+   "fps": 25,
+   "item": {
+    "in": 50,
+    "len": 20,
+    "freeze": true
+   },
+   "k": 15,
+   "t": 2.0
+  }
+ ]
+}

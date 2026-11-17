@@ -14,8 +14,8 @@ import { UploadRow } from "./library/UploadSelect";
  * whole from one account key (the server makes the zones). Saved keys are never shown again. `onThisComputer`: the
  * server runs on the person's own computer, so its disk is called this Mac (or this computer). A library that holds
  * files keeps where they are: then there is no choice to make (an own bucket's keys and region can still change).
- * `children`: the card's rows that say what the library's own files take (LibrarySettings SpaceRows), first, given
- * what is saved and whether the Upload row is drawn.
+ * `children`: drawn after the Uploads section (LibrarySettings SpaceRows, its Storage section), given what is saved and
+ * whether the Upload row is drawn. The Uploads section is drawn only when it has a row.
  *
  * Upload to the server is the one control of ./library/UploadSelect.tsx. With the server elsewhere it is the library's
  * upload setting (`upload`: that row). On this computer it is the cloud copy: off, proxies only (one for every video,
@@ -64,9 +64,9 @@ export function LibraryStorageSettings({
   libraryId: string;
   onSaved: (kind: LibraryStorage["kind"]) => void;
   onThisComputer?: boolean;
-  /** The library's Upload to the server row, with the server elsewhere (on this computer the row is the cloud copy). */
-  upload?: (description: string | undefined) => ReactNode;
-  /** What the Upload row says of the video files in place of its own sentence; nothing = its own sentence. */
+  /** The library's Footage and Finals upload rows, with the server elsewhere (on this computer the row is the cloud copy). */
+  upload?: (facts: string | undefined) => ReactNode;
+  /** What the Footage row says of the video files under its own sentence; nothing = only its sentence. */
   videos?: (saved: LibraryStorage) => string | undefined;
   /** `uploadRow`: the Upload row is drawn, so where the video files are is said there. */
   children?: ReactNode | ((saved: LibraryStorage | null, uploadRow: boolean) => ReactNode);
@@ -191,12 +191,13 @@ export function LibraryStorageSettings({
   // nothing until it is known what can change, so no choice shows and then goes
   const uploadRow = onThisComputer ? changeable && (keepsHere || !s?.locked) : !!upload;
   const detail = s ? videos?.(s) : undefined;
+  const location = changeable && !fixed && inCloud;
   // the form: an own bucket's fields (its keys and region can always change), or Bunny's key until Bunny is set up
   const fields = changeable && inCloud ? (choice === "own" ? "own" : choice === "bunny" && bucket?.kind !== "bunny" ? "bunny" : null) : null;
   const text = (key: "endpoint" | "region" | "bucket" | "accessKey", label: string, placeholder = "", locked = false, needs = "") => (
     <Row
       title={titled(label, key, needs)}
-      control={<Input aria-label={label} aria-invalid={lacking.includes(key) || undefined} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} placeholder={placeholder} disabled={locked} autoComplete="off" className="h-8 sm:w-72" />}
+      control={<Input aria-label={label} aria-invalid={lacking.includes(key) || undefined} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} placeholder={placeholder} disabled={locked} autoComplete="off" className="h-8 sm:w-64" />}
     />
   );
   const service = (id: string) => {
@@ -212,96 +213,104 @@ export function LibraryStorageSettings({
     </a>
   );
 
+  const rows = !!loadError || (!onThisComputer && !!upload) || (uploadRow && onThisComputer) || location;
+
   return (
-    <Section title="Storage">
-      <Card>
-        {typeof children === "function" ? children(s, uploadRow) : children}
-        {loadError && <ErrorRow title={loadError} />}
-        {!onThisComputer && upload?.(detail)}
-        {uploadRow && onThisComputer && (
-          <UploadRow
-            value={cloud}
-            off={off}
-            disabled={!!busy}
-            description={detail}
-            onChange={(value) => pick({ cloud: value, choice: value !== "none" && choice === "local" ? (s?.serverBucket ? "server" : "bunny") : choice })}
-          />
-        )}
-        {changeable && !fixed && inCloud && (
-          <Row
-            title="Location"
-            control={
-              <SettingsSelect
-                label="Location"
-                value={choice}
-                disabled={!!busy}
-                onValueChange={(v) => pick({ cloud, choice: v as Choice })}
-                options={[
-                  ...(!onThisComputer ? [{ value: "local", label: disk }] : []),
-                  ...(s?.serverBucket || choice === "server" ? [{ value: "server", label: "The server's bucket" }] : []),
-                  { value: "bunny", label: "Bunny Storage" },
-                  { value: "own", label: "Amazon S3 or Cloudflare R2" },
-                ]}
-              />
-            }
-          />
-        )}
-      </Card>
-      {fields && (
-        <>
-          <Card>
-            {fields === "bunny" ? (
-              <>
+    <>
+      {(rows || fields) && (
+        <Section title="Uploads">
+          {rows && (
+            <Card>
+              {loadError && <ErrorRow title={loadError} />}
+              {!onThisComputer && upload?.(detail)}
+              {uploadRow && onThisComputer && (
+                <UploadRow
+                  value={cloud}
+                  off={off}
+                  disabled={!!busy}
+                  facts={detail}
+                  onChange={(value) => pick({ cloud: value, choice: value !== "none" && choice === "local" ? (s?.serverBucket ? "server" : "bunny") : choice })}
+                />
+              )}
+              {location && (
                 <Row
-                  title={titled("Bunny API key", "bunnyKey", "Needs a Bunny API key")}
-                  description={link("https://dash.bunny.net/account/api-key", "Get a key")}
+                  title="Location"
                   control={
-                    <div className="w-full sm:w-72">
-                      <SecretField label="Bunny API key" value={bunny.apiKey} onChange={(apiKey) => setBunny({ ...bunny, apiKey })} />
-                    </div>
+                    <SettingsSelect
+                      label="Location"
+                      value={choice}
+                      disabled={!!busy}
+                      onValueChange={(v) => pick({ cloud, choice: v as Choice })}
+                      options={[
+                        ...(!onThisComputer ? [{ value: "local", label: disk }] : []),
+                        ...(s?.serverBucket || choice === "server" ? [{ value: "server", label: "The server's bucket" }] : []),
+                        { value: "bunny", label: "Bunny Storage" },
+                        { value: "own", label: "Amazon S3 or Cloudflare R2" },
+                      ]}
+                    />
                   }
                 />
-                <Row
-                  title="Region"
-                  control={<SettingsSelect label="Bunny region" value={bunny.region} onValueChange={(region) => setBunny({ ...bunny, region: region as BunnyRegion })} options={BUNNY_REGIONS.map((r) => ({ value: r.id, label: r.name }))} />}
-                />
-              </>
-            ) : (
-              <>
-                <Row
-                  title="Service"
-                  description={keysUrl ? link(keysUrl, "Get keys") : undefined}
-                  control={<SettingsSelect label="Service" value={preset} disabled={ownLocked} onValueChange={service} options={[{ value: OTHER, label: "Other" }, ...S3_PRESETS.map((p) => ({ value: p.id, label: p.name }))]} />}
-                />
-                {text("endpoint", "Endpoint", endpointHint || "Empty for Amazon", ownLocked)}
-                {text("bucket", "Bucket", "", ownLocked, "Needs a bucket")}
-                {text("region", "Region")}
-                <Row title="Path-style URLs" control={<Checkbox aria-label="Path-style URLs" checked={form.pathStyle} onCheckedChange={(on) => setForm({ ...form, pathStyle: on === true })} />} />
-                {text("accessKey", "Access key", keysSaved ? "Saved" : "", false, "Needs an access key")}
-                <Row
-                  title={titled("Secret key", "secretKey", "Needs a secret key")}
-                  control={
-                    <div className="w-full sm:w-72">
-                      <SecretField label="Secret key" value={form.secretKey} onChange={(secretKey) => setForm({ ...form, secretKey })} placeholder={keysSaved ? "Saved" : ""} />
-                    </div>
-                  }
-                />
-              </>
-            )}
-          </Card>
-          {/* Save is never off or hidden while the form shows; a failed save is said beside it, and it stays where it is */}
-          <div className="flex items-start justify-end gap-4">
-            {error && (
-              <p role="alert" className="min-w-0 flex-1 px-0.5 pt-2 text-xs text-red-600 dark:text-red-400">
-                {error}
-              </p>
-            )}
-            <Button size="sm" aria-busy={busy === "form"} onClick={saveForm}>
-              {busy === "form" ? (fields === "bunny" ? "Setting up Bunny…" : "Checking the bucket…") : "Save"}
-            </Button>
-          </div>
-        </>
+              )}
+            </Card>
+          )}
+          {fields && (
+            <>
+              <Card>
+                {fields === "bunny" ? (
+                  <>
+                    <Row
+                      title={titled("Bunny API key", "bunnyKey", "Needs a Bunny API key")}
+                      description={link("https://dash.bunny.net/account/api-key", "Get a key")}
+                      control={
+                        <div className="w-full sm:w-64">
+                          <SecretField label="Bunny API key" value={bunny.apiKey} onChange={(apiKey) => setBunny({ ...bunny, apiKey })} />
+                        </div>
+                      }
+                    />
+                    <Row
+                      title="Region"
+                      control={<SettingsSelect label="Bunny region" value={bunny.region} onValueChange={(region) => setBunny({ ...bunny, region: region as BunnyRegion })} options={BUNNY_REGIONS.map((r) => ({ value: r.id, label: r.name }))} />}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Row
+                      title="Service"
+                      description={keysUrl ? link(keysUrl, "Get keys") : undefined}
+                      control={<SettingsSelect label="Service" value={preset} disabled={ownLocked} onValueChange={service} options={[{ value: OTHER, label: "Other" }, ...S3_PRESETS.map((p) => ({ value: p.id, label: p.name }))]} />}
+                    />
+                    {text("endpoint", "Endpoint", endpointHint || "Empty for Amazon", ownLocked)}
+                    {text("bucket", "Bucket", "", ownLocked, "Needs a bucket")}
+                    {text("region", "Region")}
+                    <Row title="Path-style URLs" control={<Checkbox aria-label="Path-style URLs" checked={form.pathStyle} onCheckedChange={(on) => setForm({ ...form, pathStyle: on === true })} />} />
+                    {text("accessKey", "Access key", keysSaved ? "Saved" : "", false, "Needs an access key")}
+                    <Row
+                      title={titled("Secret key", "secretKey", "Needs a secret key")}
+                      control={
+                        <div className="w-full sm:w-64">
+                          <SecretField label="Secret key" value={form.secretKey} onChange={(secretKey) => setForm({ ...form, secretKey })} placeholder={keysSaved ? "Saved" : ""} />
+                        </div>
+                      }
+                    />
+                  </>
+                )}
+              </Card>
+              {/* Save is never off or hidden while the form shows; a failed save is said beside it, and it stays where it is */}
+              <div className="flex items-start justify-end gap-4">
+                {error && (
+                  <p role="alert" className="min-w-0 flex-1 px-0.5 pt-2 text-xs text-red-600 dark:text-red-400">
+                    {error}
+                  </p>
+                )}
+                <Button size="sm" aria-busy={busy === "form"} onClick={saveForm}>
+                  {busy === "form" ? (fields === "bunny" ? "Setting up Bunny…" : "Checking the bucket…") : "Save"}
+                </Button>
+              </div>
+            </>
+          )}
+        </Section>
       )}
-    </Section>
+      {typeof children === "function" ? children(s, uploadRow) : children}
+    </>
   );
 }

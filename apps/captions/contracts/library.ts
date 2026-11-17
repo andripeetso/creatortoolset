@@ -37,7 +37,7 @@ export interface AssetCard {
   roll?: "a" | "b";
   /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
   finished?: true;
-  /** its file is read in place from a folder on a computer (never copied in): Show in Finder can find it there */
+  /** its file is on a computer: read in place from a folder there, or sent from there (Show in Finder can find it) */
   onComputer?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
@@ -56,7 +56,7 @@ export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];
   transcript?: { provider: string; segments: { start: number; end: number; text: string }[] };
   collections: { id: string; name: string }[];
-  /** the file on this computer (read in place, or kept on the Mac app's own server on this Mac): the admin only (search.ts sourcePathFor) */
+  /** the file on this computer (read in place, kept on the Mac app's own server on this Mac, or where it was sent from): the admin only (search.ts sourcePathFor) */
   sourcePath?: string;
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
@@ -317,14 +317,14 @@ export interface LibraryEstimate {
   timelineModels?: { model: WatchModel; usd: number }[];
   /** the asker has Antigravity among their AI providers, so Timelines can watch on it */
   timelineAntigravity?: boolean;
-  /** the library's last watch met the Gemini key's free-tier daily quota (api/library/timeline.ts freeTierStopped) */
-  timelineFreeTier?: true;
+  /** what stopped the library's last watch: the Gemini key's free-tier daily quota, or its prepaid credit running out (api/library/timeline.ts watchStopped) */
+  timelineStopped?: "free" | "credit";
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
 export interface LibraryStage {
-  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, embed = search by meaning */
-  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "look" | "embed";
+  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, timeline = Gemini's timelines (progress only, no job of their own), embed = search by meaning */
+  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "look" | "timeline" | "embed";
   done: number;
   /** done, failed and still to do since this run of the queue began: neither number goes down while it runs */
   of: number;
