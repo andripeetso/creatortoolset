@@ -307,8 +307,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // recording's files one after another instead. '3': it also serves ctlocal://media/ (an edit's originals from
         // the granted folders, MediaFiles.swift). src/lib/local-files.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '3';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal
-        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal. '2': on a
+        // server elsewhere it needs no granted folder (the page asks for none first)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the Media Library's copy, progress, cancel, scan and print asks ("import:", Import.swift): src/lib/thisMac.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macImport = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // here or away: the places:check and places:connect asks and the mac-places event (Places.swift; contracts/places.ts);
