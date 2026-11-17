@@ -56,7 +56,7 @@ async function upload(lib: string, name: string, placed = true): Promise<string>
   ).json()) as { id: string };
   await app.request(`/api/library/uploads/${init.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(body.length) }, body });
   const id = ((await (await post(`/api/library/uploads/${init.id}/finish`)).json()) as { versionId: string }).versionId;
-  if (placed) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, 'mac-1', ?, ?)").run(id, `/Users/tiny/Movies/${name}`, Date.now());
+  if (placed && id) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, 'mac-1', ?, ?)").run(id, `/Users/tiny/Movies/${name}`, Date.now());
   return id;
 }
 
