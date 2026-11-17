@@ -1,6 +1,4 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
 import type { AuthVars } from "../auth";
@@ -11,21 +9,23 @@ import { walkOnMac } from "../lib/folder-list";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import { pluginCopySources, type DeviceJobSlot } from "../lib/plugin";
 import { accountOf, libraryChanged, libraryRole } from "./access";
-import { blobs, libraryDb, versionUpload } from "./db";
+import { blobs, libraryDb } from "./db";
 import { triesOn } from "./places";
 import { downloadName } from "./routes";
 
 /**
  * Copies of a Media Library in folders on its owner's computers (Settings → Media Library → Copies;
- * tasks/library-copies). Every version of every clip goes to every copy, from the server's stored original or from a
- * path on the copy's own computer; a newer version moves the older one into the folder's .versions/; nothing is ever
- * deleted from a copy. There is no queue: what a copy lacks is the clips' versions minus copy_files, so a new file, a
- * new version and a new copy all show up on the next claim. The copy's computer claims it on the device job road
- * (contracts/devices.ts COPY_KIND), one file at a time, and checks the folder's files once a day. A version only another
- * computer holds is sent here by that computer first (op "send", copy_sends) and kept until every copy has it, only where
- * the library's Upload to the server is "Video files and proxies" (all); with Off or Proxies only the server never keeps
- * an original for a copy: that copy waits ("Needs Upload to the server") and a Mac upload's original goes as before
- * (worker.ts dropOriginal). The trash purge leaves what the server has that a copy still lacks (assetsCopiesLack).
+ * tasks/library-copies). Every version of every clip goes to every copy; a newer version moves the older one into the
+ * folder's .versions/; nothing is ever deleted from a copy. There is no queue: what a copy lacks is the clips' versions
+ * minus copy_files, so a new file, a new version and a new copy all show up on the next claim. The copy's computer pulls
+ * it on the device job road (contracts/devices.ts COPY_KIND), one file at a time, and checks the folder's files once a
+ * day; the server never connects in to a computer. A version comes from a path on the copy's own computer, else from the
+ * server's store (a browser or phone upload, or Upload all), else live from another of the owner's computers that holds
+ * it: the copy's GET of the job's file asks that computer (op "send", on its own job road) to stream the file, and the
+ * server pipes those bytes straight into the waiting GET, in memory, nothing written (relayOpen, copyRelayIn). That
+ * stores nothing, so it works under every Upload setting; while that computer is offline the copy waits for it. Stored
+ * sends from before (copy_sends) are still served until every copy has them, then freed (dropSent). The trash purge
+ * leaves what the server has that a copy still lacks (assetsCopiesLack).
  */
 
 /** How long a computer holds a job without a word (it beats every 30 s while it copies). */
@@ -39,10 +39,16 @@ const STATE_RETRY_MS = 600_000;
 const CHECK_MS = 86_400_000;
 /** A copy that has taken nothing this long while the server keeps files for it: its owner is told once. */
 const NOTICE_MS = 14 * 86_400_000;
+/** How long a copy's GET waits for the holding computer to start sending (under the helper's 60 s read timeout). */
+const RELAY_WAIT_MS = 45_000;
 
 type CopyRow = { id: string; library_id: string; device: string; path: string; state: LibraryCopy["state"]; last_seen: number | null; checked_at: number | null; retry_at: number | null; created_at: number };
-type Held = { id: number; device: string; copy: string; key: string | null; at: number; item?: CopyItem; send?: true };
+// from: the computer a copy job's file streams from; relay: a send's copy job; got: the sha256 of the bytes relayed
+type Held = { id: number; device: string; copy: string; key: string | null; at: number; item?: CopyItem; send?: true; from?: string; relay?: number; got?: string };
 const held = new Map<number, Held>();
+/** A copy job's GET waiting for its holder's bytes (by the copy job's id): `send` once the holder took the send job. */
+type Relay = { holder: string; key: string; size: number; send?: number; answer: (r: Response) => void };
+const relays = new Map<number, Relay>();
 
 const db = () => libraryDb();
 
@@ -87,38 +93,27 @@ function firstOf<R extends VersionRow, T>(sql: string, params: (string | number)
   }
 }
 
-/** The next version copy `c` lacks that its computer can get (from here, or a path on it): not tried in the last hour. */
-function nextCopy(c: CopyRow, now: number) {
-  return firstOf(
+/** The computers other than `but` with a place for v's original. */
+const holdersOf = (v: { id: string; mac_device: string | null }, but: string) =>
+  [v.mac_device, ...(db().prepare("SELECT device FROM version_places WHERE version_id = ? AND kind = 'original' AND state <> 'gone'").all(v.id) as { device: string }[]).map((p) => p.device)].filter(
+    (h, i, all): h is string => !!h && h !== but && all.indexOf(h) === i,
+  );
+
+/**
+ * The next version copy `c` (on a computer of `owner`) lacks that its computer can get, not tried in the last hour: from
+ * here, a path on it, or (`from`) another of the owner's computers that is online, holds it and is free to send it.
+ */
+function nextCopy(c: CopyRow, owner: string, now: number) {
+  return firstOf<VersionRow, { v: VersionRow; paths: string[]; from?: string }>(
     `SELECT ${VERSION}, ${HERE} AS here ${WANTED}
        AND NOT EXISTS (SELECT 1 FROM copy_files f WHERE f.copy_id = ? AND f.version_id = v.id AND (f.copied_at IS NOT NULL OR f.tried_at > ?))
-       AND (${HERE} OR ${MAY_REACH})`,
+       AND (${HERE} OR ${MAY_REACH} OR v.mac_device IS NOT NULL OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.kind = 'original' AND p.state <> 'gone'))`,
     [c.library_id, c.id, now - RETRY_MS, c.device, c.device],
     (v) => {
       const paths = triesOn(v, c.device, []);
-      return v.here || paths.length ? { v, paths } : null;
-    },
-  );
-}
-
-/**
- * The next version that computer `d` holds and a copy on another computer lacks and cannot reach: `d` sends it here
- * first. Only while that copy's computer is online, so the server keeps no file for a computer that is away.
- */
-function nextSend(d: string, now: number) {
-  return firstOf<VersionRow & { target: string; copy: string }, { v: VersionRow & { copy: string }; paths: string[] }>(
-    `SELECT ${VERSION}, 0 AS here, c.id AS copy, c.device AS target
-       FROM library_copies c JOIN assets a ON a.library_id = c.library_id JOIN asset_versions v ON v.asset_id = a.id
-       WHERE c.device != ? AND ${WANTS} AND NOT ${HERE} AND NOT ${has("c.id")}
-         AND (v.mac_device = ? OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.kind = 'original' AND p.state <> 'gone'))
-         AND NOT (v.mac_device = c.device OR EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = c.device AND p.kind = 'original' AND p.state <> 'gone'))
-         AND NOT EXISTS (SELECT 1 FROM copy_sends s WHERE s.version_id = v.id AND s.tried_at > ?)`,
-    [d, d, d, now - RETRY_MS],
-    (v) => {
-      // an original goes through the server only where its library uploads them (owner, 11-17: originals stay on his computers)
-      if (!isOnline(v.target) || versionUpload(v.id) !== "all" || triesOn(v, v.target, []).length || [...held.values()].some((h) => h.send && h.key === v.id && now - h.at <= LEASE_MS)) return null;
-      const paths = triesOn(v, d, []);
-      return paths.length ? { v, paths } : null;
+      if (v.here || paths.length) return { v, paths };
+      const from = holdersOf(v, c.device).find((h) => deviceOf(h)?.owner === owner && isOnline(h) && !busy(h, now) && triesOn(v, h, []).length);
+      return from ? { v, paths, from } : null;
     },
   );
 }
@@ -215,23 +210,29 @@ const copiesOn = (device: string, now: number) =>
 
 type Next = Omit<Held, "id" | "at"> & { options: Record<string, string> };
 
-/** The next job for computer `d`, without taking it: its own copies' first, then a file another computer's copy needs from it. */
+/** The next job for computer `d`, without taking it: a file another computer's copy waits on now first, then its own copies'. */
 function nextFor(d: { id: string; owner: string }, now = Date.now()): Next | null {
   if (busy(d.id, now)) return null;
+  for (const [copyJob, r] of relays) {
+    const c = held.get(copyJob);
+    const v = r.send === undefined && r.holder === d.id && c ? (db().prepare("SELECT id, mac_path, mac_device FROM asset_versions WHERE id = ?").get(r.key) as VersionRow | undefined) : undefined;
+    if (c && v) return { device: d.id, copy: c.copy, key: r.key, send: true, relay: copyJob, options: { op: "send", device: d.id, key: r.key, size: String(r.size), paths: JSON.stringify(triesOn(v, d.id, [])), url: "" } };
+  }
   for (const c of copiesOn(d.id, now)) {
     if (libraryRole(d.owner, c.library_id) !== "owner") continue;
     const base = { device: d.id, copy: c.id, library: c.library_id, root: c.path, ...(c.state === "new" ? { init: "1" } : {}) };
     // a new copy writes its marker first; then once a day each file is checked to be there still
     if (c.state === "new" || (c.checked_at ?? 0) < now - CHECK_MS) return { device: d.id, copy: c.id, key: null, options: { op: "check", ...base } };
-    const got = nextCopy(c, now);
+    const got = nextCopy(c, d.owner, now);
     if (got) {
-      const { v, paths } = got;
+      const { v, paths, from } = got;
       const at = placeIn(c.id, v);
       const sha = shaOf(v);
       return {
         device: d.id,
         copy: c.id,
         key: v.id,
+        ...(from ? { from } : {}),
         options: {
           op: "copy",
           ...base,
@@ -243,7 +244,7 @@ function nextFor(d: { id: string; owner: string }, now = Date.now()): Next | nul
           size: String(v.bytes),
           ...(sha ? { sha256: sha } : {}),
           paths: JSON.stringify(paths),
-          ...(v.here ? { url: "" } : {}),
+          ...(v.here || from ? { url: "" } : {}),
         },
       };
     }
@@ -257,8 +258,6 @@ function nextFor(d: { id: string; owner: string }, now = Date.now()): Next | nul
         options: { op: "copy", ...base, key: item.key, asset: item.asset, n: "1", rel: item.rel, size: String(item.size), ...(item.sha256 ? { sha256: item.sha256 } : {}), paths: "[]", url: "" },
       };
   }
-  const s = nextSend(d.id, now);
-  if (s) return { device: d.id, copy: s.v.copy, key: s.v.id, send: true, options: { op: "send", device: d.id, key: s.v.id, size: String(s.v.bytes), paths: JSON.stringify(s.paths), url: "" } };
   return null;
 }
 
@@ -297,15 +296,6 @@ function end(h: Held, set: { state?: LibraryCopy["state"]; free?: unknown; retry
 const isRel = (p: unknown): p is string =>
   typeof p === "string" && p.length > 0 && p.length <= 1000 && !/[\0\n\r\\]/.test(p) && !p.startsWith("/") && !p.split("/").some((s) => !s || s === "." || s === "..");
 
-const sha256Of = (file: string) =>
-  new Promise<string>((resolve, reject) => {
-    const h = createHash("sha256");
-    createReadStream(file)
-      .on("data", (b) => h.update(b))
-      .on("end", () => resolve(h.digest("hex")))
-      .on("error", reject);
-  });
-
 /** The device job road's side of it (api/devices.ts lists it with the app's own). */
 export const copyJob: DeviceJobSlot = {
   kind: COPY_KIND,
@@ -318,6 +308,7 @@ export const copyJob: DeviceJobSlot = {
     while (held.has(id));
     const { options, ...h } = next;
     held.set(id, { ...h, id, at: Date.now() });
+    if (h.relay !== undefined) relays.get(h.relay)!.send = id;
     if ("url" in options) options.url = `/api/devices/relay/job/${COPY_KIND}/${id}/file`;
     return { id, kind: COPY_KIND, editId: "", variant: "", options };
   },
@@ -356,9 +347,12 @@ export const copyJob: DeviceJobSlot = {
       return { error: "Not found", status: 404 };
     }
     const row = h.item ? undefined : (db().prepare("SELECT id, bytes, sha256 FROM asset_versions WHERE id = ?").get(h.key) as { id: string; bytes: number; sha256: string } | undefined);
-    const v = h.item ? { bytes: h.item.size, sha256: h.item.sha256 } : row && { bytes: row.bytes, sha256: shaOf(row) };
+    // a relayed file is checked against the bytes that passed through (a version indexed on a Mac has only a quick hash)
+    const v = h.item ? { bytes: h.item.size, sha256: h.item.sha256 } : row && { bytes: row.bytes, sha256: shaOf(row) ?? h.got };
     if (!v) return { error: "Not found", status: 404 };
-    const sha = typeof done.sha256 === "string" ? done.sha256.toLowerCase() : "";
+    // a relayed file only counts once its whole bytes passed through
+    if (h.from && !v.sha256) return { error: "This is not the same file: copy it again.", status: 409 };
+    const sha =typeof done.sha256 === "string" ? done.sha256.toLowerCase() : "";
     // never a proxy or a part in place of the original: its size, and its hash where one is known
     if (done.size !== v.bytes || (v.sha256 && sha !== v.sha256)) return { error: "This is not the same file: copy it again.", status: 409 };
     const now = Date.now();
@@ -381,51 +375,25 @@ export const copyJob: DeviceJobSlot = {
         // a copy the computer hashed as it wrote it is verified there; without its sha256 it is only found (whereis.ts)
         .run(h.key, device, path.posix.join(c.path, done.rel), v.bytes, sha || null, now, now, sha ? "verified" : "found");
     end(h, { state: "ok", free: b.free });
-    // an original a computer sent that every copy has now goes
+    // an original a computer sent before (copy_sends) that every copy has now goes
     if (!h.item) void dropSent(h.key).catch((e: unknown) => console.error("[library] copies:", e));
     void wakeEditorPolls();
     return { reply: {} };
   },
-  // a send's answer: the original's bytes, checked against the version and kept until every copy has it
-  file: async (device, id, file) => {
-    const h = heldBy(device, id);
-    if (!h?.send || !h.key) return { error: "Not found", status: 404 };
-    const v = db().prepare("SELECT v.id, v.bytes, v.sha256, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(h.key) as
-      | { id: string; bytes: number; sha256: string; library_id: string }
-      | undefined;
-    if (!v) {
-      held.delete(h.id);
-      return { error: "Not found", status: 404 };
-    }
-    const size = (await stat(file)).size;
-    const sha = await sha256Of(file);
-    const want = shaOf(v);
-    if (size !== v.bytes || (want && sha !== want)) return { error: "This is not the same file: send it again.", status: 409 };
-    const key = `libraries/${v.library_id}/v/${v.id}/copy-source`;
-    await blobs.put(key, file);
-    const now = Date.now();
-    db()
-      .prepare(
-        `INSERT INTO copy_sends (version_id, storage_key, bytes, sha256, error, tried_at, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)
-         ON CONFLICT (version_id) DO UPDATE SET storage_key = excluded.storage_key, bytes = excluded.bytes, sha256 = excluded.sha256, error = NULL, tried_at = excluded.tried_at`,
-      )
-      .run(v.id, key, size, sha, now, now);
-    end(h, {});
-    void wakeEditorPolls();
-    return { reply: {} };
-  },
+  // a send's bytes go to copyRelayIn (devices.ts routes them there), never onto the server's disk
+  file: async () => ({ error: "Not found", status: 404 }),
   fail: (device, id, why) => {
     const h = heldBy(device, id);
     if (!h) return false;
     const now = Date.now();
-    if (h.send)
-      db()
-        .prepare(
-          `INSERT INTO copy_sends (version_id, error, tried_at, created_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT (version_id) DO UPDATE SET error = excluded.error, tried_at = excluded.tried_at`,
-        )
-        .run(h.key, why.slice(0, 300), now, now);
-    else if (h.key !== null)
+    if (h.send) {
+      // the copy waiting on it hears why at once; its item is tried again later
+      const r = h.relay !== undefined ? relays.get(h.relay) : undefined;
+      if (r?.send === id) {
+        relays.delete(h.relay!);
+        r.answer(Response.json({ error: why.slice(0, 300) }, { status: 503 }));
+      }
+    } else if (h.key !== null)
       db()
         .prepare(
           `INSERT INTO copy_files (copy_id, version_id, error, tried_at) VALUES (?, ?, ?, ?)
@@ -438,9 +406,79 @@ export const copyJob: DeviceJobSlot = {
 };
 
 /**
+ * The copy job `h`'s file, live from the computer that holds it: that computer is asked to send it (op "send") and its
+ * bytes come through copyRelayIn, never stored. A Range is not kept: the whole file comes (200), and the copiers start
+ * their partial over. 503 with why while that computer is away, does not start in time, or cannot send it.
+ */
+function relayOpen(h: Held, req: Request): Promise<Response> {
+  const busyLine = (why: string) => Response.json({ error: why }, { status: 503 });
+  const size = (db().prepare("SELECT bytes FROM asset_versions WHERE id = ?").get(h.key) as { bytes: number } | undefined)?.bytes;
+  if (size === undefined) return Promise.resolve(Response.json({ error: "Not found" }, { status: 404 }));
+  if (!isOnline(h.from!)) return Promise.resolve(busyLine(`Waits for ${deviceOf(h.from!)?.name ?? "another computer"}`));
+  return new Promise((resolve) => {
+    const old = relays.get(h.id);
+    if (old) old.answer(busyLine("Asked again"));
+    const r: Relay = {
+      holder: h.from!,
+      key: h.key!,
+      size,
+      answer: (res) => {
+        clearTimeout(timer);
+        if (relays.get(h.id) === r) relays.delete(h.id);
+        resolve(res);
+      },
+    };
+    const timer = setTimeout(() => r.answer(busyLine(`${deviceOf(r.holder)?.name ?? "The computer that has it"} did not send the file in time.`)), RELAY_WAIT_MS);
+    relays.set(h.id, r);
+    // a copier that hangs up before the bytes start frees the holder's turn
+    req.signal?.addEventListener("abort", () => r.answer(busyLine("Stopped")));
+    void wakeEditorPolls();
+  });
+}
+
+/**
+ * POST /api/devices/relay/job/copy/:id/file from the computer that holds a send job: its bytes piped into the copy's
+ * waiting GET as they come, with backpressure, counted and hashed on the way (the copy's done is checked against that
+ * hash). Nothing is written to disk. Either side hanging up ends both; the copy's item is tried again later.
+ */
+export async function copyRelayIn(device: string, id: number, body: ReadableStream<Uint8Array>): Promise<{ reply: unknown } | { error: string; status: number }> {
+  const h = heldBy(device, id);
+  const r = h?.send && h.relay !== undefined ? relays.get(h.relay) : undefined;
+  if (!h || !r || r.send !== id) {
+    await body.cancel().catch(() => undefined);
+    return { error: "Not found", status: 404 };
+  }
+  const copy = held.get(h.relay!);
+  const hash = createHash("sha256");
+  let n = 0;
+  const pass = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, out) {
+      n += chunk.byteLength;
+      if (n > r.size) throw new Error("More bytes than the original has");
+      hash.update(chunk);
+      out.enqueue(chunk);
+    },
+    // a short file ends the copy's GET with an error, never as a clean end
+    flush() {
+      if (n !== r.size) throw new Error("The file stopped short");
+      if (copy) copy.got = hash.digest("hex");
+    },
+  });
+  r.answer(new Response(pass.readable, { headers: { "content-type": "application/octet-stream", "content-length": String(r.size) } }));
+  try {
+    await body.pipeTo(pass.writable);
+  } catch {
+    end(h, {});
+    return { error: "The copy stopped. It is tried again later.", status: 409 };
+  }
+  end(h, {});
+  return { reply: {} };
+}
+
+/**
  * The file of job `id` for the computer that holds it (GET /api/devices/relay/job/copy/:id/file): the version's stored
- * original or the one another computer sent, or a plug-in's file opened for the library's owner. Null when the computer
- * holds no such job.
+ * original or one another computer sent before, live from the computer that holds it (relayOpen), or a plug-in's file
+ * opened for the library's owner. Null when the computer holds no such job.
  */
 export async function copyFile(device: string, id: number): Promise<{ key: string } | { open: (req: Request) => Promise<Response | null> } | null> {
   const h = heldBy(device, id);
@@ -452,6 +490,7 @@ export async function copyFile(device: string, id: number): Promise<{ key: strin
     if (!c || !owner || !src || libraryRole(owner, c.library_id) !== "owner") return null;
     return { open: (req) => src.open(owner, h.key!, req) };
   }
+  if (h.from) return { open: (req) => relayOpen(h, req) };
   const v = db()
     .prepare(`SELECT CASE WHEN ${STORED} THEN v.source_key ELSE (SELECT s.storage_key FROM copy_sends s WHERE s.version_id = v.id) END AS k FROM asset_versions v WHERE v.id = ?`)
     .get(h.key) as { k: string | null } | undefined;
@@ -499,7 +538,6 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
     const lacks = `${WANTED} AND NOT ${has("?")}`;
     const pending = (db().prepare(`SELECT count(*) AS n ${lacks}`).get(libraryId, c.id) as { n: number }).n + lackingItems(c, Number.MAX_SAFE_INTEGER).length;
     let waitsFor: string | undefined;
-    let needsUpload = false;
     let noOriginal = 0;
     if (pending) {
       // files whose original is nowhere: not here, on no computer, on no disk
@@ -508,8 +546,7 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
           .prepare(`SELECT count(*) AS n ${lacks} AND NOT ${HERE} AND v.mac_path IS NULL AND v.root IS NULL AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.kind = 'original' AND p.state <> 'gone')`)
           .get(libraryId, c.id) as { n: number }
       ).n;
-      // files only another computer holds: while it is offline the first one is named; online, it sends them, where the
-      // library uploads originals (else the copy needs Upload to the server)
+      // files only another computer holds: while it is offline the first one is named; online, it streams them through
       const holders = db()
         .prepare(
           `SELECT DISTINCT id, h FROM (SELECT v.id, v.mac_device AS h ${lacks} AND NOT ${HERE} AND v.mac_device IS NOT NULL
@@ -518,7 +555,6 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
         .all(libraryId, c.id, libraryId, c.id, c.device) as { id: string; h: string }[];
       const away = holders.find((x) => !isOnline(x.h));
       if (away) waitsFor = nameFor(away.h, viewer);
-      needsUpload = holders.some((x) => isOnline(x.h) && versionUpload(x.id) !== "all");
     }
     const online = isOnline(c.device);
     return {
@@ -531,7 +567,6 @@ async function listCopies(libraryId: string, viewer: string): Promise<LibraryCop
       state: c.state,
       ...(!online ? { offlineSince: d?.lastSeen ?? c.last_seen ?? c.created_at } : {}),
       ...(waitsFor ? { waitsFor } : {}),
-      ...(needsUpload ? { needsUpload: true as const } : {}),
       ...(noOriginal ? { noOriginal } : {}),
     } as LibraryCopy;
   });
