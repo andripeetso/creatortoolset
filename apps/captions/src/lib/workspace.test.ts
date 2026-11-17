@@ -68,3 +68,29 @@ describe("projects from the server", () => {
     expect(useWorkspace.getState().currentProjectId).toBe("tiny-homes");
   });
 });
+
+describe("a window opened for one workspace (?ws=)", () => {
+  it("works in it without moving the account's current workspace, until it picks another itself", async () => {
+    vi.resetModules();
+    vi.stubGlobal("location", { search: "?ws=tiny-homes" });
+    const { applyWorkspace: apply, useWorkspace: store } = await import("./workspace");
+    const fetches = vi.fn(() => held().response);
+    vi.stubGlobal("fetch", fetches);
+    apply({ currentProjectId: "tiny-acrobatics", projects }, false);
+    expect(store.getState().currentProjectId).toBe("tiny-homes");
+    expect(fetches).not.toHaveBeenCalled(); // the server's current one is not changed
+    void store.getState().select("tiny-acrobatics");
+    apply({ currentProjectId: "tiny-acrobatics", projects }, false);
+    expect(store.getState().currentProjectId).toBe("tiny-acrobatics");
+    vi.unstubAllGlobals();
+  });
+
+  it("an id the account does not have is ignored", async () => {
+    vi.resetModules();
+    vi.stubGlobal("location", { search: "?ws=someone-elses" });
+    const { applyWorkspace: apply, useWorkspace: store } = await import("./workspace");
+    apply({ currentProjectId: "tiny-acrobatics", projects }, false);
+    expect(store.getState().currentProjectId).toBe("tiny-acrobatics");
+    vi.unstubAllGlobals();
+  });
+});

@@ -116,7 +116,7 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
   const workshop = { stage: "Plan", tool: "Content Workshop", to: "/workshop" } as const;
   const analyzer = { stage: "Plan", tool: "Content Analyzer", to: "/instagram" } as const;
   const captions = { stage: "Make", tool: "Caption Studio", to: "/captions" } as const;
-  const editor = { stage: "Make", tool: "AI Editor", to: "/editor" } as const;
+  const editor = { stage: "Make", tool: "Editor", to: "/editor" } as const;
   if (c.frameworks)
     out.push({ ...workshop, spot: "A piece's Shape menu",
       does: "Up to one framework per role (Shape, Persuasion, Argument) can be picked for a piece, which is then written along its steps." });

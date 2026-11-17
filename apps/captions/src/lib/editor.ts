@@ -86,7 +86,7 @@ export const makeCut = (id: string, name: string, body: { asset: string; n: numb
 export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
 export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");
 export const makeCardsAgain = (id: string, variant: string) => send<Edit>(`${base(id)}/cards/${variant}/again`, "POST");
-export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
+export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "xml" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
 
 /** The PUT lines body that gives line `index` of `version` the take `take`, the rest of its lines as they are. */
 export function swapTake(plan: VersionPlan, index: number, take: Pick<Take, "first" | "last">): PlansPatch {

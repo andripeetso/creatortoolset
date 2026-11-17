@@ -16,8 +16,9 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
+import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
@@ -180,6 +181,9 @@ export function recordVersion(
   }
   const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
   if (roll) fileRoll(d, assetId, roll);
+  // uploaded into Finals (a project's final, AddFinalDialog): finished from the start, never footage in the Media Library
+  else if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(o.collectionId))
+    fileRoll(d, assetId, "none");
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;
@@ -482,7 +486,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
-    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename)
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
@@ -735,14 +739,18 @@ const settingsOf = (json: string): LibrarySettings => {
   return {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
     look: s.look ?? SETTING_DEFAULTS.look,
+    timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
     upload: uploadOf(s.upload),
+    finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
     ...(typeof s.copyTo === "string" && s.copyTo ? { copyTo: s.copyTo } : {}),
     ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
+    lookLevel: lookLevelOf(s.lookLevel),
+    lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
   };
 };
 
@@ -772,7 +780,7 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
 // (a video is filed by its description) and files what is in no folder yet
@@ -786,12 +794,21 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "embed", "proxy"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "proxy"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
   if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
+  // (All clips → Shot descriptions), or an edit asks for its files
+  if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
+  if (s.lookBudget === null || (typeof s.lookBudget === "number" && Number.isFinite(s.lookBudget) && s.lookBudget >= 0 && s.lookBudget <= 1_000_000)) {
+    put("lookBudget", s.lookBudget === null ? null : Math.round(s.lookBudget * 100) / 100);
+    releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
+    libraryChanged(libraryId);
+  }
+  if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
   if (Array.isArray(s.places)) {
@@ -837,7 +854,7 @@ libraryApp.post("/", async (c) => {
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
     .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS, upload: "none" } };
+  const created: LibrarySummary = { id, name, storage: "local", settings: settingsOf("{}") };
   return c.json(created, 201);
 });
 

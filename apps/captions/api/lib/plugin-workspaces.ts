@@ -69,7 +69,7 @@ export function serverWideWhy(p: ServerPlugin): string {
   const answered: Record<string, string> = { "/api/instagram": "Content Analyzer", "/api/media": "Media Library", "/api/enhance": "Enhancer", "/api/review": "Review" };
   const tools = p.tools as { replaces?: string[] } | undefined;
   const parts = [
-    ...(p.replaces || p.editor?.footageTarget ? ["AI Editor"] : []),
+    ...(p.replaces || p.editor?.footageTarget ? ["Editor"] : []),
     ...(p.answers ?? []).map((a) => answered[a.path] ?? "pages"),
     ...(p.library || p.libraryRoutes ? ["Media Library"] : []),
     ...(p.finals ? ["Finals"] : []),

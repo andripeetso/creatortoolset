@@ -386,3 +386,21 @@ export const macSearch = () => typeof document !== "undefined" && Number(documen
 export const placesSearch = (library: string) => importAsk<PlacesSearchState>(`places:search:${JSON.stringify({ library } satisfies PlacesSearchAsk)}`, macSearch());
 /** How far this Mac's Find missing files is. */
 export const placesSearchState = () => importAsk<PlacesSearchState>("places:search:state", macSearch());
+
+/** A video editor on this Mac (apps/mac Editors.swift): work-prefs' editor id, the app's name and version. */
+export type MacEditor = { id: string; name: string; version: string | null };
+
+/** The video editors this Mac has, for a draft's Open in <editor>: none in a browser or an older Mac app. */
+export async function editorsOnMac(): Promise<MacEditor[]> {
+  const r = (await thisMacBridge()?.postMessage("editors").catch(() => null)) as unknown as { editors?: MacEditor[] } | null;
+  return Array.isArray(r?.editors) ? r.editors : [];
+}
+
+/** Opens an AI Editor draft in that editor on this Mac, starting the editor when it is closed. The Mac app fetches the
+ *  draft from this server itself. `note`: what the person does next in the editor (an editor that takes no scripts). */
+export async function openInEditor(ask: { edit: string; draft: string; editor: string; name: string; project: string; fps: number; width: number; height: number }): Promise<{ ok?: boolean; note?: string; problem?: string }> {
+  const bridge = thisMacBridge();
+  if (!bridge) return { problem: "Needs the Mac app" };
+  const r = (await bridge.postMessage(`open-editor:${JSON.stringify(ask)}`).catch(() => null)) as unknown as { ok?: boolean; note?: string; problem?: string } | null;
+  return r ?? { problem: "Could not open the draft" };
+}

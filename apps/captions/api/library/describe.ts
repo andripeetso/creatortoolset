@@ -183,11 +183,15 @@ export async function workspaceOf(db: DatabaseSync, versionId: string): Promise<
 
 /** The id of the workspace a version's library is in (as workspaceOf reads it), or undefined when its owner has none. */
 export async function workspaceIdOf(db: DatabaseSync, versionId: string): Promise<string | undefined> {
-  const row = db
-    .prepare(
-      "SELECT l.workspace_id AS home, json_extract(l.settings, '$.projectId') AS ws FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?",
-    )
-    .get(versionId) as { home: string; ws: string | null } | undefined;
+  const lib = db.prepare("SELECT a.library_id AS id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { id: string } | undefined;
+  return lib ? libraryWorkspaceId(db, lib.id) : undefined;
+}
+
+/** The workspace a library belongs to (its projectId, else its owner's first), as workspaceIdOf reads it for a version. */
+export async function libraryWorkspaceId(db: DatabaseSync, libraryId: string): Promise<string | undefined> {
+  const row = db.prepare("SELECT workspace_id AS home, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as
+    | { home: string; ws: string | null }
+    | undefined;
   if (!row) return undefined;
   const owner = [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === row.home) ?? row.home;
   const of = await projectOf({ username: owner } as SessionUser);
@@ -212,7 +216,7 @@ export async function describeFromLines(db: DatabaseSync, versionId: string, act
   if (!all.length && !segments.length && !was?.text) return false;
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
   // their own Anthropic key first, as the description from frames goes (describeVersion)
-  const route = onApiKey(actor, "analyzer", DESCRIBE_LABEL) || aiFor(whoFor(actor), "analyzer", DESCRIBE_LABEL);
+  const route = onApiKey(actor, "library", DESCRIBE_LABEL) || aiFor(whoFor(actor), "library", DESCRIBE_LABEL);
   if (route.off) throw new NeedsKey(route.off);
   const onMac = !!route.only?.includes("mac");
   const lines = all.length <= SHOTS_READ ? all : Array.from({ length: SHOTS_READ }, (_, k) => all[Math.floor((k * all.length) / SHOTS_READ)]!);
@@ -300,7 +304,7 @@ let onProvider = 0;
  */
 export function describeSlot(actor: string | null): (() => void) | null {
   const free = () => {};
-  if (!actor || onApiKey(actor, "analyzer", DESCRIBE_LABEL) || !aiFor(whoFor(actor), "analyzer", DESCRIBE_LABEL).only?.includes("mac")) return free;
+  if (!actor || onApiKey(actor, "library", DESCRIBE_LABEL) || !aiFor(whoFor(actor), "library", DESCRIBE_LABEL).only?.includes("mac")) return free;
   if (onProvider >= BACKGROUND_SLOTS) return null;
   onProvider++;
   let back = false;
@@ -319,7 +323,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
   // a job with no actor runs as nobody: never on the server's own providers
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
   const who = whoFor(actor);
-  const route = aiFor(who, "analyzer", DESCRIBE_LABEL);
+  const route = aiFor(who, "library", DESCRIBE_LABEL);
   if (route.off) throw new NeedsKey(route.off);
   const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
   const segments = segmentsOf(db, versionId);
@@ -349,7 +353,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       ...(folders ? { folders, newFolder } : {}),
       tags: tagsOf(db, versionId),
     });
-    const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
+    const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true, job: "library" });
     // the stamp of the text this call sent: the workspace may have changed while the AI answered
     saveDescribed(db, versionId, value, provider, stampOf(workspace, DESCRIBE_VERSION));
     if (value.turn) await turnVersion(db, versionId, base + value.turn);

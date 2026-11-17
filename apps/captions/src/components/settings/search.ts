@@ -61,13 +61,17 @@ const STATIC_ROWS = [
   { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
   // Folders: where each workspace's footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
+  { section: "folders", id: "finals-folder", title: "Finals", keywords: ["folder", "final video", "finished", "project", "workshop"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
   { section: "library", id: "library-adding", title: "Import", keywords: ["media library", "import", "copy", "in place", "keep in place", "places", "adding files"] },
   { section: "library", id: "library-look", title: "New files", keywords: ["media library", "look for new files", "rescan", "scan", "places", "network drive"] },
   { section: "library", id: "library-sorting", title: "Folders", keywords: ["media library", "organize", "sort", "sorting", "by type", "by content", "ai"] },
   { section: "library", id: "library-upload", title: "Upload to the server", keywords: ["media library", "upload", "proxies", "cloud", "server", "bucket", "storage"] },
+  { section: "library", id: "finals-upload", title: "Finals upload", keywords: ["media library", "finals", "upload", "phone", "final video"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
   { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "ai"] },
+  { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
+  { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
@@ -87,6 +91,7 @@ const STATIC_ROWS = [
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Memory: the rules the assistant keeps from one chat to the next
+  { section: "memory", id: "memory-workspaces", title: "Workspaces", keywords: ["memory", "remember", "workspace", "shared", "each", "separate", "apart", "client"] },
   { section: "memory", id: "memory-rules", title: "Rules", keywords: ["memory", "remember", "rule", "chat", "assistant", "forget", "workspace"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },

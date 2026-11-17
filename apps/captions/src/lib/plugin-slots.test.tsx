@@ -26,7 +26,7 @@ describe("Home tiles", () => {
     const { workflow, other } = withPluginTiles([]);
     expect(workflow.map((s) => [s.stage, s.tools.map((t) => t.name)])).toEqual([
       ["Plan", ["Content Analyzer", "Content Workshop"]],
-      ["Make", ["AI Editor", "Review"]],
+      ["Make", ["Editor", "Review"]],
       ["Distribute", ["Story Splitter", "Finals"]],
     ]);
     expect(other.map((t) => t.name)).toEqual([
@@ -36,17 +36,17 @@ describe("Home tiles", () => {
 
   it("puts a plug-in tile at the end of the stage it names, or in the Tools row", () => {
     const { workflow, other } = withPluginTiles([tiny]);
-    expect(workflow[1].tools.map((t) => t.name)).toEqual(["AI Editor", "Review", "Tiny Make"]);
+    expect(workflow[1].tools.map((t) => t.name)).toEqual(["Editor", "Review", "Tiny Make"]);
     expect(other.map((t) => t.name).at(-1)).toBe("Tiny Tools");
   });
 
   it("hides a plug-in tile whose gate is off for the account, and keeps built-in tiles", () => {
     const { workflow } = withPluginTiles([tiny]);
     const make = workflow[1].tools;
-    expect(shownTools(make, member()).map((t) => t.name)).toEqual(["AI Editor", "Review", "Tiny Make"]);
-    expect(shownTools(make, member(["tiny-gate"])).map((t) => t.name)).toEqual(["AI Editor", "Review"]);
+    expect(shownTools(make, member()).map((t) => t.name)).toEqual(["Editor", "Review", "Tiny Make"]);
+    expect(shownTools(make, member(["tiny-gate"])).map((t) => t.name)).toEqual(["Editor", "Review"]);
     expect(shownTools(make, admin(["tiny-gate"])).map((t) => t.name)).toContain("Tiny Make");
-    expect(shownTools(make, null).map((t) => t.name)).toEqual(["AI Editor", "Review"]);
+    expect(shownTools(make, null).map((t) => t.name)).toEqual(["Editor", "Review"]);
   });
 
   it("hides the example plug-in's Hello tile when its gate is switched off", () => {

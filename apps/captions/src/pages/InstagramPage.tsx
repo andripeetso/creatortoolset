@@ -1463,7 +1463,7 @@ export default function InstagramPage() {
               }}
             />
             {/* an open post belongs to the project being left: the other project opens on its own list */}
-            <ProjectSwitcher onSelect={() => (postId ? navigate(base) : undefined)} />
+            <ProjectSwitcher />
           </>
         ) : required ? (
           <Link to={home} className="rounded-md px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-200">

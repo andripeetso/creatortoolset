@@ -495,4 +495,23 @@ export const MIGRATIONS: string[] = [
     UNIQUE (library_id, kind, device, root_key, from_prefix, to_prefix)
   );
   `,
+  // 28: the level (contracts LOOK_LEVELS) a version's stretches were found at: stretches of another level than the
+  // library's are found again when its shots are described (shots.ts), never matched to that level's lines. NULL: standard
+  `ALTER TABLE asset_versions ADD COLUMN look_level TEXT;`,
+  // 29: a video's timeline (timeline.ts): what happens when, from Gemini watching it with its sound. `events` JSON
+  // (contracts TimelineEvent[]), the level and model it was made at; `error` when the watch failed (tried again a day
+  // later). search_timeline holds each event's words with its start, so a search finds the moment
+  `
+  CREATE TABLE timelines (
+    version_id TEXT PRIMARY KEY REFERENCES asset_versions(id),
+    events TEXT NOT NULL DEFAULT '[]',
+    level TEXT,
+    model TEXT,
+    error TEXT,
+    at INTEGER NOT NULL
+  );
+  CREATE VIRTUAL TABLE search_timeline USING fts5(
+    version_id UNINDEXED, a UNINDEXED, text, tokenize = 'unicode61 remove_diacritics 2'
+  );
+  `,
 ];

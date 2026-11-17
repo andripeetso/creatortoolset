@@ -724,9 +724,12 @@ function askedBy(e: EditMeta): Pick<Edit, "askedBy"> {
 /** Deletes edits trashed before `before`, with their steps. Returns how many went. */
 export async function purgeEdits(before: number): Promise<number> {
   const gone = allEdits().filter((e) => e.trashedAt && e.trashedAt < before);
-  for (const e of gone) {
-    libraryDb().prepare("DELETE FROM edit_jobs WHERE edit_id = ?").run(e.id);
-    await rm(path.dirname(fileOf(e.id)), { recursive: true, force: true });
-  }
+  for (const e of gone) await purgeEdit(e.id);
   return gone.length;
+}
+
+/** Deletes one edit for good, with its steps and files (stop its work first: worker.ts stopEdit). */
+export async function purgeEdit(id: string): Promise<void> {
+  libraryDb().prepare("DELETE FROM edit_jobs WHERE edit_id = ?").run(id);
+  await rm(path.dirname(fileOf(id)), { recursive: true, force: true });
 }

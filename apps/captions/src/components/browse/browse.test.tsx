@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowseBar } from "./Bar";
-import { FolderCard, FolderRow, type FolderDrop } from "./Folder";
+import { FolderCard, FolderRow, FolderSidebar, type FolderDrop } from "./Folder";
 import { BrowseList, ListRow, type ListSection } from "./List";
 import { folderOptions, folderPath, shownItems } from "./browse";
 
@@ -114,6 +114,40 @@ describe("FolderRow", () => {
     expect(row.textContent).toContain("Bath time");
     act(() => void row.dispatchEvent(dragEvent("drop", { [ITEM]: "9" })));
     expect(d.onItems).toHaveBeenCalledWith(["9"]);
+  });
+});
+
+describe("FolderSidebar", () => {
+  it("the top first, then each folder under its parent with its count; the open one lit; a drop on a line goes into that folder", () => {
+    const into = drop();
+    const el = render(
+      <FolderSidebar
+        top={{ name: "All edits", to: "/editor", on: false }}
+        folders={[
+          { id: "f1", name: "Tiny Acrobatics Hard Edit", to: "/editor?f=f1", depth: 0, on: true, meta: 3, drop: into },
+          { id: "f2", name: "Cuts", to: "/editor?f=f2", depth: 1, on: false, meta: 1 },
+        ]}
+      />,
+    );
+    const links = [...el.querySelectorAll("a")];
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["All edits", "/editor"],
+      ["Tiny Acrobatics Hard Edit3", "/editor?f=f1"],
+      ["Cuts1", "/editor?f=f2"],
+    ]);
+    expect(links.map((a) => a.getAttribute("aria-current"))).toEqual([null, "page", null]);
+    expect(links[2].style.paddingLeft).not.toBe(links[1].style.paddingLeft);
+    act(() => void links[1].dispatchEvent(dragEvent("drop", { [ITEM]: "e1,e2" })));
+    expect(into.onItems).toHaveBeenCalledWith(["e1", "e2"]);
+  });
+
+  it("right-click on a folder line opens its menu: Rename…, Delete", async () => {
+    const el = render(
+      <FolderSidebar top={{ name: "All edits", to: "/editor", on: true }} folders={[{ id: "f1", name: "Tiny Flip", to: "/editor?f=f1", depth: 0, on: false, onRename: vi.fn(), onDelete: vi.fn() }]} />,
+    );
+    await act(async () => void el.querySelectorAll("a")[1].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 5, clientY: 5 })));
+    expect(document.body.textContent).toContain("Rename…");
+    expect(document.body.textContent).toContain("Delete folder");
   });
 });
 

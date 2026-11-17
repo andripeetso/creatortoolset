@@ -904,7 +904,8 @@ function enqueue(meta: Meta, user: SessionUser): void {
   void processClip(meta.id, user);
 }
 
-function cancel(id: string): void {
+/** Stops a clip's work; a workspace being deleted stops its clips' too (lib/workspace-delete.ts). */
+export function cancel(id: string): void {
   active.delete(id);
   children.get(id)?.kill("SIGKILL");
   children.delete(id);

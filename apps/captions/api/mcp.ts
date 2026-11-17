@@ -135,7 +135,7 @@ media_update changes its title, tags or description, media_add_to_folder files c
 makes a folder sort itself by what the user says goes in it, media_share makes a link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
 B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
-AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
+Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
 one per version, and the run files each draft's preview in Review by itself. editor_create makes a new one from the takes' version ids and starts it:
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
 the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop project
@@ -219,8 +219,8 @@ export const TOOLS = [
   { name: "workshop_wait", description: "Keep waiting for a workshop_chat reply.", inputSchema: { type: "object", properties: { session: str, reply: str, wait_s: { type: "integer" } }, required: ["session", "reply"] } },
   {
     name: "finals_link_session",
-    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
-    inputSchema: { type: "object", properties: { piece: str, session: str, workshop_piece: str }, required: ["piece", "session"] },
+    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there. Or put a video in Finals as the project's final: version = a version_id use_file (to: library) gave, instead of piece.",
+    inputSchema: { type: "object", properties: { piece: str, version: str, session: str, workshop_piece: str }, required: ["session"] },
   },
   { name: "list_reviews", description: "His videos in Review: approval, versions, latest file, comment counts, link.", inputSchema: { type: "object", properties: {} } },
   {
@@ -659,7 +659,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         body.posted = { remove: code };
       } else if (a.post_url) body.posted = a.post_url;
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
-      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
+      const out = pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
+      // ready to post or published with no final video: the chat asks for the finished file
+      if (out.status === "toPost" || out.status === "published") {
+        const finals = await ws(`/sessions/${a.session}/finals`).catch(() => null);
+        if (finals && !finals.linked && finals.libraryId)
+          out.final = isJob(auth)
+            ? "No final video is in Finals for this project. Ask the user for the finished file; when they drop it in the chat, use_file to: library, then finals_link_session with its version_id."
+            : // an outside app (ChatGPT, Claude) keeps a dropped file to itself: the app's own page takes it
+              "No final video is in Finals for this project. Ask the user for the finished file: they add it with Add final video on the project's page in Creator Toolset.";
+      }
+      return out;
     },
     workshop_new_piece: async (a) => {
       // words that aren't the user's: the piece is made empty, and workshop_chat is next
@@ -702,8 +712,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
-    finals_link_session: async (a) =>
-      ws(`/sessions/${a.session}/finals`, "POST", { pieceId: a.piece, ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) }),
+    finals_link_session: async (a) => {
+      if (!a.piece && !a.version) throw new ToolError("Give piece (a Finals piece's id) or version (a library video's version_id).");
+      const body = { ...(a.version ? { versionId: a.version } : { pieceId: a.piece }), ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) };
+      // a video just added: the library reads its size first (202 meanwhile)
+      for (let i = 0; i < 30; i++) {
+        const r = await ws(`/sessions/${a.session}/finals`, "POST", body);
+        if (!r.waiting) return r;
+        await sleep(2000);
+      }
+      throw new ToolError("The library is still reading this video: call finals_link_session again in a minute.");
+    },
     list_reviews: async () => {
       const folders = new Map((await json<Args[]>("/api/review/projects")).map((p) => [p.id, p.name]));
       return { reviews: (await json<Args[]>("/api/review")).map((r) => {
@@ -1243,13 +1262,13 @@ const STEPS: Record<string, string> = {
   resolve_comment: "Resolving a comment",
   review_set_approval: "Setting the approval",
   review_share: "Getting the share link",
-  editor_list: "Looking at the AI Editor's edits",
+  editor_list: "Looking at the Editor's edits",
   list_scheduled_tasks: "Looking at your scheduled tasks",
   schedule_task: "Saving the scheduled task",
   run_scheduled_task_now: "Running the scheduled task",
   delete_scheduled_task: "Deleting the scheduled task",
   editor_get: "Opening the edit",
-  editor_run: "Starting an AI Editor job",
+  editor_run: "Starting an Editor job",
   editor_go: "Carrying on the edit",
   instagram_posts: "Reading your Instagram posts",
   instagram_refresh: "Refreshing Instagram",
@@ -1260,7 +1279,7 @@ const STEPS: Record<string, string> = {
   instagram_add_account: "Adding the Instagram account",
   instagram_comments: "Reading the comments",
 };
-const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
+const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
 export const stepFor = (name: string, args: Args, plugged: Record<string, string> = {}): string =>
   name === "navigate"
     ? `Opening ${PAGES[String(args.path ?? "").split(/[/?]/)[1] ?? ""] ?? "the page"}`
@@ -1302,13 +1321,13 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
       return {
         card: {
           id: `edit:${a.edit}:${toReview ? `review:${a.draft}` : a.kind}`, kind: "edit", title: toReview ? `${a.draft} to Review` : kindTitle(a.kind), href: `/editor/${edit}`,
-          status: "running", detail: toReview ? "Going into Review" : "The AI Editor is working on it",
+          status: "running", detail: toReview ? "Going into Review" : "The Editor is working on it",
         },
       };
     }
     case "editor_create":
       return r.id
-        ? { card: { id: `edit:${r.id}:new`, kind: "edit", title: String(r.name ?? "New edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: r.status === "started" ? "running" : "done", detail: r.status === "started" ? "The AI Editor is working on it" : "Made, not started" } }
+        ? { card: { id: `edit:${r.id}:new`, kind: "edit", title: String(r.name ?? "New edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: r.status === "started" ? "running" : "done", detail: r.status === "started" ? "The Editor is working on it" : "Made, not started" } }
         : null;
     case "use_file": {
       if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;

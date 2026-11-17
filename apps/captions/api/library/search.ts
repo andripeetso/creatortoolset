@@ -23,6 +23,7 @@ import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 import { ratedLine } from "./look";
+import { timelineOf } from "./timeline";
 import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
 
 /**
@@ -51,7 +52,7 @@ export function searchClauses(query: SearchQuery): Clause[] {
   ];
 }
 
-/** Asset hits first (title weighs most), then the lines said in clips, then the shots seen in them, each with the second it starts at. */
+/** Asset hits first (title weighs most), then the lines said in clips, then the moments of their timelines, then the shots seen in them, each with the second it starts at. */
 export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: Clause[] = []): SearchHit[] {
   const fts = ftsQuery(q);
   if (!fts) return [];
@@ -86,9 +87,19 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
        ORDER BY bm25(search_stretches) LIMIT ?`,
     )
     .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
+  // the timelines' events (timeline.ts): what happens and what is heard, each with its start
+  const timed = db()
+    .prepare(
+      `SELECT ${CARD}, s.a AS at, snippet(search_timeline, 2, '', '', '…', 16) AS snippet
+       FROM search_timeline s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
+       WHERE search_timeline MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       ORDER BY bm25(search_timeline) LIMIT ?`,
+    )
+    .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
   return [
     ...assets.map((r) => ({ asset: toCard(r) })),
     ...said.map((r) => ({ asset: toCard(r), seconds: startOf(r.version_id, r.seg), snippet: r.snippet })),
+    ...timed.map((r) => ({ asset: toCard(r), seconds: Number(r.at) || 0, snippet: r.snippet })),
     ...seen.map((r) => ({ asset: toCard(r), seconds: r.at ?? 0, snippet: r.snippet })),
   ];
 }
@@ -139,6 +150,7 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
   const shots = stretchesOf(db(), row.version_id)
     .filter((s) => s.text)
     .map((s) => ({ seg: s.seg, a: s.a, b: s.b, text: s.text, source: s.source }));
+  const timeline = timelineOf(db(), row.version_id);
   return {
     ...toCard(row),
     versions,
@@ -146,6 +158,7 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     jobs,
     ...(t ? { transcript: { provider: t.provider, segments: segmentsOf(db(), row.version_id) } } : {}),
     ...(shots.length ? { shots } : {}),
+    ...(timeline.length ? { timeline } : {}),
     ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user)),
   };
 }

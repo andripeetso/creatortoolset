@@ -295,7 +295,7 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
     if (tag && "log" in tag) profile = tag.log;
     else if (!tag && (await looksFlat(file, p.duration || 1))) {
       if (choice === "auto") {
-        note(`${name} looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → AI Editor`);
+        note(`${name} looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → Editor`);
         continue;
       }
       profile = choice;

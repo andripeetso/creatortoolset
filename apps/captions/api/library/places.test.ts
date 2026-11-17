@@ -306,7 +306,7 @@ describe("reconnecting", () => {
 it("migration 27 keeps where each clip was indexed as that computer's place", () => {
   const file = path.join(dir, "before.db");
   const old = new DatabaseSync(file);
-  const at = MIGRATIONS.length - 1;
+  const at = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE version_places")); // migration 27, whatever came after it
   for (const m of MIGRATIONS.slice(0, at)) old.exec(m);
   old.exec(`PRAGMA user_version = ${at};
     INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('l', 'w', 'L', 'local', 0);

@@ -4900,10 +4900,45 @@ instagramApp.patch("/:id/research", async (c) => {
 instagramApp.delete("/:id", async (c) => {
   const meta = await ownedMeta(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
-  cancel(meta.id);
-  findIndex.delete(meta.id);
-  await rm(postDir(meta.id), { recursive: true, force: true });
+  await dropPost(meta.id);
   return c.json({ ok: true });
 });
+
+async function dropPost(id: string): Promise<void> {
+  cancel(id);
+  findIndex.delete(id);
+  await rm(postDir(id), { recursive: true, force: true });
+}
+
+/**
+ * The account's Content Analyzer records in workspace `id`, being deleted (lib/workspace-delete.ts), by kind: the accounts
+ * it links or keeps, the posts kept to it or of those accounts, its topics, its idea board. One kept to no workspace is in
+ * every one (projectScope, inProject) and stays.
+ */
+export async function workspaceAnalyzer(username: string, id: string): Promise<Record<"accounts" | "posts" | "topics" | "board", { n: number; drop: () => Promise<void> }>> {
+  const links = await accountProjects(username);
+  const accounts = (await allAccounts()).filter((a) => a.owner === username && (links.get(a.id) ?? a.projectId) === id);
+  const posts = (await allMetas()).filter((m) => m.owner === username && (m.projectId === id || accounts.some((a) => accountOwnsPost(a, m))));
+  const topics = (await allStacks()).filter((s) => s.owner === username && s.projectId === id);
+  const board = ideaBoardPath(username, id);
+  const gone = new Set(posts.map((m) => m.id));
+  return {
+    accounts: { n: accounts.length, drop: async () => void (await Promise.all(accounts.map((a) => rm(accountDir(a.id), { recursive: true, force: true })))) },
+    posts: { n: posts.length, drop: async () => void (await Promise.all(posts.map((m) => dropPost(m.id)))) },
+    topics: {
+      n: topics.length,
+      drop: async () => {
+        const ids = new Set(topics.map((s) => s.id));
+        for (const m of await allMetas()) {
+          if (!m.stackId || !ids.has(m.stackId) || gone.has(m.id)) continue;
+          delete m.stackId;
+          await persist(m);
+        }
+        for (const s of topics) await rm(stackPath(s.id), { force: true });
+      },
+    },
+    board: { n: existsSync(board) ? 1 : 0, drop: () => rm(board, { force: true }) },
+  };
+}
 
 export { okId as okInstagramId, DownloadError as InstagramDownloadError };

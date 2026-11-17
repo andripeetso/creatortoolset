@@ -352,7 +352,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
           <>
             <QueueMenu base={base} onChange={load} readOnly={!canChange(me, "instagram")} />
             {/* this account belongs to the project being left: the other project opens on its own list */}
-            <ProjectSwitcher onSelect={() => navigate(base)} />
+            <ProjectSwitcher />
           </>
         ) : null}
       </AppBar>}

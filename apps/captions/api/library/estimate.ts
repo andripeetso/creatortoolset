@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { LibraryEstimate, LibraryProgress, LibraryStage, LibraryStatus, LibraryStep, LibraryStepEstimate, LibraryStepRoute } from "../../contracts/library";
+import { LOOK_LEVELS, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
-import { libraryDb, librarySetting } from "./db";
+import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
+import { watchKey, watchUsdPerHour } from "./timeline";
+import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
@@ -102,12 +103,12 @@ type Route = { route: LibraryStepRoute; missing?: string };
 export function routesOf(libraryId: string, username: string): Record<LibraryStep, Route> {
   let describe: Route = { route: "off" };
   if (librarySetting(libraryId, "describe")) {
-    const r = onApiKey(username, "analyzer", DESCRIBE_LABEL) ?? aiFor(whoFor(username), "analyzer", DESCRIBE_LABEL);
+    const r = onApiKey(username, "library", DESCRIBE_LABEL) ?? aiFor(whoFor(username), "library", DESCRIBE_LABEL);
     describe = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
   let look: Route = { route: "off" };
   if (librarySetting(libraryId, "look")) {
-    const r = onApiKey(username, "analyzer", LOOK_LABEL) ?? aiFor(whoFor(username), "analyzer", LOOK_LABEL);
+    const r = onApiKey(username, "library", LOOK_LABEL) ?? aiFor(whoFor(username), "library", LOOK_LABEL);
     look = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
   let transcript: Route;
@@ -170,21 +171,34 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
       at: api ? laneSize("ai") : BACKGROUND_SLOTS,
     };
   }
-  if (step === "look") {
-    const api = route !== "provider";
-    // a call carries up to SHEETS_PER_CALL × SHEET_STRETCHES stretches; a part-full one costs its share
-    const calls = Math.max(1 / (SHEETS_PER_CALL * SHEET_STRETCHES), ((clipSeconds / 60) * STRETCHES_PER_MIN) / (SHEETS_PER_CALL * SHEET_STRETCHES));
-    const pace = lookPace(db);
-    const cost = await describeCost(api, LOOK_LABEL);
-    return {
-      seconds: pace !== null ? pace * clipSeconds : (clipSeconds / 60) * READ_S_PER_MIN + calls * GUESS_CALL_S,
-      usd: calls * (cost ?? GUESS_CALL_USD),
-      measured: pace !== null && cost !== null,
-      at: laneSize("looks"),
-    };
-  }
+  if (step === "look") return lookPerClip(db, route, clipSeconds);
   const pace = paceOf(db, "embed");
   return { seconds: pace ?? GUESS_S.embed!, usd: 0, measured: pace !== null, at: route === "device" ? 1 : laneSize("ai") };
+}
+
+/** About how many lines a level writes against Standard's (contracts LOOK_LEVELS: a long take is cut every `long` seconds at most). */
+const levelShare = (level: string) => 8 / (LOOK_LEVELS.find((l) => l.value === level)?.long ?? 8);
+
+/**
+ * A look of `clipSeconds` of footage at `share` of Standard's lines (levelShare): its calls at the tally's average cost,
+ * its time at this server's measured pace, else the picture read plus its calls spread over the calls that run at once
+ * (two on an AI provider, six on a key: shots.ts callsAtOnce).
+ * ponytail: the measured pace is of every level run here, scaled by `share` against the library's own level
+ */
+async function lookPerClip(db: DatabaseSync, route: LibraryStepRoute, clipSeconds: number, share = 1, paceShare = 1) {
+  const api = route !== "provider";
+  const atOnce = api ? LOOK_KEY_CALLS : BACKGROUND_SLOTS;
+  // a call carries up to SHEETS_PER_CALL × SHEET_STRETCHES stretches; a part-full one costs its share
+  const calls = Math.max(1 / (SHEETS_PER_CALL * SHEET_STRETCHES), ((clipSeconds / 60) * STRETCHES_PER_MIN * share) / (SHEETS_PER_CALL * SHEET_STRETCHES));
+  const pace = lookPace(db);
+  const cost = await describeCost(api, LOOK_LABEL);
+  return {
+    seconds: pace !== null ? (pace * clipSeconds * share) / paceShare : (clipSeconds / 60) * READ_S_PER_MIN + calls * GUESS_CALL_S,
+    usd: calls * (cost ?? GUESS_CALL_USD),
+    measured: pace !== null && cost !== null,
+    // a measured pace already counts a file's calls side by side; the guess spreads every call over the ones at once
+    at: pace !== null ? Math.min(atOnce, laneSize("looks")) : atOnce,
+  };
 }
 
 /** Seconds a finished look took here per second of its footage (the last 200), or null under MIN_RUNS. */
@@ -261,6 +275,20 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   }
   const seconds = total(steps);
   const out: LibraryEstimate = { clips, minutes: footage / 60, steps, seconds, proxies };
+  const look = routes.look.route;
+  if (look !== "off" && look !== "none") {
+    // an hour of footage at each level, so the person picks with the time and cost in front of them
+    const mine = levelShare(libraryLookLevel(libraryId));
+    out.lookLevels = [];
+    // with a Gemini key and Timelines on, each level's hour also pays for its timeline (timeline.ts, from measured tokens)
+    const watching = librarySetting(libraryId, "timeline") && !!watchKey(username);
+    for (const l of LOOK_LEVELS) {
+      const p = await lookPerClip(db, look, 3600, levelShare(l.value), mine);
+      out.lookLevels.push({ level: l.value, seconds: p.seconds / p.at, usd: p.usd + (watching ? watchUsdPerHour(l.value) : 0) });
+    }
+  }
+  out.timelineKey = !!watchKey(username);
+  if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);
   if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);
     const faster = total(steps.map((s) => (s.step === "describe" ? { ...s, seconds: (api.seconds * count.describe) / api.at } : s)));
@@ -277,8 +305,9 @@ const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transc
 // ponytail: in memory; a restart counts from the clips with work left then
 const runs = new Map<string, Set<string>>();
 
-// a description held back by the plan's limit (worker.ts holdForLimit): it waits, and takes no time, until one gets through
-const HELD = "(kind IN ('describe', 'look') AND state != 'needs_key' AND IFNULL(error, '') LIKE ?)";
+// a description held back by the plan's limit (worker.ts holdForLimit), or a look by its library's monthly budget (BUDGET_WAITS):
+// it waits, and takes no time, until one gets through or the budget is raised
+const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND (IFNULL(error, '') LIKE ? OR IFNULL(error, '') = '${BUDGET_WAITS.replace(/'/g, "''")}'))`;
 
 /** The whole library's state per step, for "how far is indexing, is anything broken": every clip in it, not one run. */
 export function libraryStatus(libraryId: string): LibraryStatus {
@@ -307,10 +336,10 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const db = libraryDb();
   const rows = db
     .prepare(
-      `SELECT kind, state, ${HELD} AS held, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, mac`,
+      `SELECT kind, state, ${HELD} AS held, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, mac, budget`,
     )
-    .all(LIMIT_LIKE, MAC_WAITS, libraryId) as { kind: string; state: string; held: number; mac: number; n: number; error: string | null }[];
+    .all(LIMIT_LIKE, MAC_WAITS, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; mac: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => r.state !== "needs_key" && !r.held);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
@@ -322,7 +351,11 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   for (const step of ["look", "describe"] as const) {
     const held = rows.filter((r) => r.held && STEP_OF[r.kind] === step);
     const heldN = held.reduce((n, r) => n + r.n, 0);
-    if (heldN) waiting.unshift({ step, count: heldN, missing: `${held[0]!.error} They continue then.`, limit: true });
+    const budget = held.filter((r) => r.error === BUDGET_WAITS).reduce((n, r) => n + r.n, 0);
+    if (budget) waiting.unshift({ step, count: budget, missing: BUDGET_WAITS, limit: true });
+    const limited = held.filter((r) => r.error !== BUDGET_WAITS);
+    const limitedN = heldN - budget;
+    if (limitedN) waiting.unshift({ step, count: limitedN, missing: `${limited[0]!.error} They continue then.`, limit: true });
   }
   if (!left) {
     runs.delete(libraryId);

@@ -20,14 +20,14 @@ import { collectionApp } from "./library/collections";
 import { searchApp } from "./library/search";
 import { relatedApp } from "./library/related";
 import { publicShareApp, shareApp } from "./library/shares";
-import { releaseRunningJobs, startLibraryWorker } from "./library/worker";
+import { libraryJobsAtRisk, releaseRunningJobs, startLibraryWorker } from "./library/worker";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
 import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
-import { releaseRunningSteps, startEditorWorker } from "./editor/worker";
+import { editorStepsAtRisk, releaseRunningSteps, startEditorWorker } from "./editor/worker";
 import { serverWorkApp } from "./work/server-work-routes";
 import { serverUpdateApp } from "./server-update";
 import { settleServerWork } from "./work/server-work";
@@ -273,9 +273,10 @@ app.get("/api/health", (c) =>
     environment: environmentOf(),
     uptimeSec: Math.round(process.uptime()),
     // what a restart now would end, for a deploy to wait on: AI answers that stream straight to an open page (the
-    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances and caption jobs
+    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances, caption jobs, and the
+    // library's and the AI Editor's jobs running here (a restart would start them again from the beginning)
     answering: answersAtRisk(),
-    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk(),
+    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk() + libraryJobsAtRisk() + editorStepsAtRisk(),
     rssMb: Math.round(process.memoryUsage().rss / 1048576),
   }),
 );

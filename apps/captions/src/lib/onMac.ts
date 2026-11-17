@@ -163,6 +163,27 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
 }
 
 /**
+ * A file on this Mac into `libraryId` as the upload setting `upload` says: read in place with nothing sent ("none"), or
+ * this Mac sends its proxy, and the file too for "all" (the server's send job). { assetId } or { duplicateOf }.
+ */
+export async function addFromMac(libraryId: string, file: MacFile, path: string, collectionId: string | undefined, upload: "none" | "proxies" | "all"): Promise<{ assetId?: string; duplicateOf?: string }> {
+  const fromDevice = upload === "none" ? undefined : await deviceHere();
+  if (fromDevice) {
+    const r = await fetch(`/api/library/${libraryId}/uploads`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: file.name, size: file.size, collectionId, fromPath: path, fromDevice, quick: file.quick, send: true }),
+    });
+    const body = (await r.json().catch(() => ({}))) as { id?: string; sent?: true; assetId?: string; duplicateOf?: string; error?: string };
+    if (!r.ok) throw new Error(body.error ?? "Could not add the file");
+    if (body.sent || body.duplicateOf) return body;
+    // ponytail: this Mac can't send it (an older Mac app): read in place, nothing sent; the byte upload needs the File
+    if (body.id) void fetch(`/api/library/uploads/${body.id}`, { method: "DELETE" }).catch(() => {});
+  }
+  return indexOnMac(libraryId, file, path, collectionId);
+}
+
+/**
  * Where each file of a Finder drop is on this Mac. `items` are the drop's own paths (the Mac app's, droppedOnMac); a file
  * read from inside a dropped folder has its place in the drop ("FOOTAGE/a.mp4"), joined to that folder's parent. A
  * loose file is the one dropped item of its name. A name dropped twice is left out (no guess). `known`: paths known already.

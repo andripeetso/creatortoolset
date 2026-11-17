@@ -73,13 +73,13 @@ You act in the app only through its tools (the creator-toolset MCP server):
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.
 - media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_smart_folder makes a folder sort itself by what the user says goes in it, and media_share makes a share link for a clip or a folder.
 - design_get, design_make and design_update: the Designer's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers the user edits by hand. You design them yourself, and you are shown each frame as it is drawn. On /design/<id> that id is the design, and the line "Picked:" on screen names the frame and layers the user has picked, by id.
-- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the footage's version ids (talking takes with the script and a B-roll folder, or any clips and a song, cut to the brief) and starts it. Another version of an edit the user has (\"v3\", \"again\", the same footage) is editor_feedback on that edit, never a new edit: it keeps that edit's footage, notes and Review video. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking. The user's notes on a cut go to editor_feedback in their own words, never into the brief: the next version is made from the last one. A kind of edit (a hard edit, a recap, a trailer…) uses its saved style (editor_style_use) or a new one named for it (editor_style_save); a style with no playbook gets one researched and saved first, if you can. An edit waits while the Media Library still describes its footage; when the user says to cut it now, editor_run with now=true. When editor_get lists left_out, say that first.
+- editor_list, editor_get and editor_run: the Editor's edits, their drafts and jobs. editor_create makes a new edit from the footage's version ids (talking takes with the script and a B-roll folder, or any clips and a song, cut to the brief) and starts it. Another version of an edit the user has (\"v3\", \"again\", the same footage) is editor_feedback on that edit, never a new edit: it keeps that edit's footage, notes and Review video. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking. The user's notes on a cut go to editor_feedback in their own words, never into the brief: the next version is made from the last one. A kind of edit (a hard edit, a recap, a trailer…) uses its saved style (editor_style_use) or a new one named for it (editor_style_save); a style with no playbook gets one researched and saved first, if you can. An edit waits while the Media Library still describes its footage; when the user says to cut it now, editor_run with now=true. When editor_get lists left_out, say that first.
 - A cut or video in Review that the user turns down in the chat (it is wrong, bad, not what they asked for), set it to rejected with review_set_approval before anything else, and to changes when they ask for fixes to it instead; approved when they say it is good. Their answer is the review: never leave it waiting for their review.
 - Where the install has them: finals_pieces lists the user's Finals (finished pieces, each with versions and a winner) and gives the ids finals_piece_update, finals_piece_trash and finals_link_session take.
 - schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
 - navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /?setup=helper (in the app on the computer that should help: set it up to help with heavy work, its shared drives and a test run), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new workspace), /settings/team?add=1 (invite someone, on a team's server).
 - A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>), and a piece in a session [its title](/workshop/sessions/<id>?doc=<piece id>), so the session opens on that piece. When you list reviews, edits, Workshop projects or pieces the user can open, link each that way (a tool's link or href ends in that path).
-- show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
+- show_video plays a Review video (or an Editor draft's preview) inside the chat, with a link to its page.
 - use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet. After use_file to captions the captions are made in the background and the chat says when they are ready; the project (/captions?project=<id>) can be opened meanwhile. Read them with captions_get, find projects with captions_list. captions_export renders the video with its captions burned in by itself, and the chat says when the file is ready.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message. When they write something else instead (a question, "what happened"), answer that in words first; offer buttons again only if a choice is still open, never as the whole reply.
 - When they say something is there (a file, a song, a folder), look with your tools before asking what it is called or saying you can't see it. When a tool can't make what they asked, say plainly what it can't do yet; never offer doing the job by hand (record something, cut it yourself, a shot list) as the way out unless they ask.
@@ -89,7 +89,7 @@ You act in the app only through its tools (the creator-toolset MCP server):
 
 A folder the user dropped comes as its path on their computer. Asked to edit it, keep it to a tap or two:
 1. Find what it is: a script file in the folder (look in the folder yourself when you run on their computer; media_import_folder returns the script files' text where the server is on that computer, and refuses elsewhere: then go by the other clues), a Workshop project or piece whose title or script fits the folder's name, or an edit already made from it (editor_list). Nothing fits by name and the editor can sort footage first: start it sorting, say you are reading the clips, and match what is said in them (the editor tool says how). If one fits, say which in one line and offer_choices "Yes, that's it" / "No, it's a new video".
-2. Then offer_choices "Start with my usual setup" / "Change the setup". The usual setup is how their newest edit was set up. Change the setup = navigate to the AI Editor's New edit with the footage chosen (/editor?new=1&folder=<Media Library folder id>&name=<name>, unless the editor tool says another link).
+2. Then offer_choices "Start with my usual setup" / "Change the setup". The usual setup is how their newest edit was set up. Change the setup = navigate to the Editor's New edit with the footage chosen (/editor?new=1&folder=<Media Library folder id>&name=<name>, unless the editor tool says another link).
 After the go, start the edit at once and say where to follow it.
 
 The keys the app takes, and what each one is for:
@@ -2288,14 +2288,40 @@ assistantApp.delete("/past/:id", (c) => {
   const conv = load(u.username);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
   if (!found) return c.json({ error: "Chat not found" }, 404);
-  conv.past = conv.past!.filter((p) => p !== found);
-  dropImages(u.username, found.messages);
-  // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
-  for (const m of found.messages) runsOf(u.username).get(m.id)?.abort();
-  save(u.username);
-  void pump(u.username);
+  dropChats(u.username, new Set([found.id]));
   return c.json(view(u.username, u.role === "admin"));
 });
+
+/** Deletes these chats for good, with their pictures; the open one among them is emptied and a new one starts. */
+function dropChats(username: string, ids: ReadonlySet<string>): void {
+  const conv = load(username);
+  const gone = [{ id: conv.id!, messages: conv.messages }, ...(conv.past ?? [])].filter((c) => ids.has(c.id));
+  conv.past = conv.past?.filter((p) => !ids.has(p.id));
+  if (ids.has(conv.id!)) {
+    conv.messages = [];
+    archive(username, conv); // with no messages it only starts a new chat
+  }
+  for (const c of gone) {
+    dropImages(username, c.messages);
+    // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
+    for (const m of c.messages) runsOf(username).get(m.id)?.abort();
+  }
+  save(username);
+  void pump(username);
+}
+
+/** The account's chats in a workspace being deleted (lib/workspace-delete.ts). A chat with none is the first brand's (chatsOf). */
+export function workspaceChats(username: string, has: (ws?: string) => boolean): { n: number; drop: () => Promise<void> } {
+  const conv = load(username);
+  const ids = new Set([{ ...conv, id: conv.id! }, ...(conv.past ?? [])].filter((c) => c.messages.length && has(c.workspace)).map((c) => c.id));
+  return {
+    n: ids.size,
+    drop: async () => {
+      dropChats(username, ids);
+      tell(username);
+    },
+  };
+}
 
 /** Allow or deny something the reply asked to do on the Mac (only the caller's own replies; anyone else's is not found). */
 assistantApp.post("/approvals/:id", async (c) => {

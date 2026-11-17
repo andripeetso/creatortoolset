@@ -25,7 +25,7 @@ export const EDITOR_COMPUTER_MODEL = "parakeet-tdt-0.6b-v3";
 export const SPEECH_USE_NAMES: Record<SpeechUse, string> = {
   captions: "Captions",
   transcripts: "Media Library transcripts",
-  editor: "AI Editor",
+  editor: "Editor",
   mic: "Assistant voice input",
 };
 

@@ -14,7 +14,9 @@ import { PublishButton } from "@/components/community/PublishDialog";
 import { FrameworkForm, type FrameworkDraft } from "@/components/workshop/FrameworkForm";
 import { KnowledgePanel } from "@/components/workshop/KnowledgePanel";
 import { RuleRow } from "@/components/workshop/RuleRow";
+import { ScopeTags } from "@/components/workshop/RuleWorkspaces";
 import { SessionPosted, SessionStatusSelect } from "@/components/workshop/SessionStatusSelect";
+import { useAskFinal } from "@/components/workshop/AddFinalDialog";
 import { SessionMenu } from "@/components/workshop/SessionMenu";
 import { SharePopover } from "@/components/workshop/SharePopover";
 import { saveObsidianMany } from "@/components/workshop/ExportMarkdown";
@@ -34,7 +36,9 @@ import {
   createRule,
   createSession,
   deleteFramework,
+  deleteFrameworkHere,
   deleteRule,
+  deleteRuleHere,
   AVAILABILITY_LIVE,
   getWorkshopAvailability,
   listFrameworks,
@@ -48,6 +52,7 @@ import {
   shareSession,
   workshopShareUrl,
   type RuleFields,
+  type ScopeInput,
   type PieceKind,
   type SessionPatch,
   type SessionRow,
@@ -213,9 +218,13 @@ export default function WorkshopPage() {
       navigate(sessionPath(s.id));
     });
 
+  const [askFinal, finalDialog] = useAskFinal();
   const setPosted = (id: string, posted: SessionPatch["posted"]) =>
     patchSession(id, { posted })
-      .then((m) => setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s))))
+      .then((m) => {
+        setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s)));
+        askFinal(id, m.title, m.status);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const setStatus = (id: string, status: SessionStatus) => {
@@ -231,12 +240,13 @@ export default function WorkshopPage() {
       });
     };
     put(status).then(
-      () =>
-        was &&
-        was !== status &&
-        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
-          for (const s of statusSteps(status, was)) await put(s);
-        }),
+      () => {
+        if (was !== status) askFinal(id, row?.title ?? "", status);
+        if (was && was !== status)
+          undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+            for (const s of statusSteps(status, was)) await put(s);
+          });
+      },
       (e) => setError(e instanceof Error ? e.message : String(e)),
     );
   };
@@ -277,11 +287,11 @@ export default function WorkshopPage() {
     });
   };
 
-  const saveFramework = (id: string | "new", f: FrameworkDraft) =>
+  const saveFramework = (id: string | "new", f: FrameworkDraft, scope: ScopeInput) =>
     run("framework", () =>
       id === "new"
-        ? createFramework({ ...f, steps: f.steps })
-        : patchFramework(id, { ...f, steps: f.steps }),
+        ? createFramework({ ...f, steps: f.steps, ...scope })
+        : patchFramework(id, { ...f, steps: f.steps, ...scope }),
     );
 
   return (
@@ -414,6 +424,7 @@ export default function WorkshopPage() {
                 New project
               </button>}
             </BrowseBar>
+            {finalDialog}
             {!sessionsKnown ? (
               <div aria-hidden className="flex flex-col gap-1.5">
                 {Array.from({ length: 5 }, (_, i) => (
@@ -528,8 +539,9 @@ export default function WorkshopPage() {
                   rule={r}
                   busy={busy !== null}
                   readOnly={!editable}
-                  onSave={(fields: Partial<RuleFields>) => void run(`rule:${r.id}`, () => patchRule(r.id, fields))}
+                  onSave={(fields: Partial<RuleFields> & ScopeInput) => void run(`rule:${r.id}`, () => patchRule(r.id, fields))}
                   onDelete={() => void run(`delr:${r.id}`, () => deleteRule(r.id))}
+                  onUseShared={() => void run(`rule:${r.id}`, () => deleteRuleHere(r.id))}
                 />
               ))}
             </div>
@@ -548,11 +560,18 @@ export default function WorkshopPage() {
             </div>
             <div className="flex flex-col gap-2">
               {editing === "new" && (
-                <FrameworkForm busy={busy === "framework"} onSave={(f) => void saveFramework("new", f)} onCancel={() => setEditing(null)} />
+                <FrameworkForm busy={busy === "framework"} onSave={(f, scope) => void saveFramework("new", f, scope)} onCancel={() => setEditing(null)} />
               )}
               {frameworks.map((fw) =>
                 editing === fw.id ? (
-                  <FrameworkForm key={fw.id} initial={fw} busy={busy === "framework"} onSave={(f) => void saveFramework(fw.id, f)} onCancel={() => setEditing(null)} />
+                  <FrameworkForm
+                    key={fw.id}
+                    initial={fw}
+                    busy={busy === "framework"}
+                    onSave={(f, scope) => void saveFramework(fw.id, f, scope)}
+                    onCancel={() => setEditing(null)}
+                    onUseShared={() => void run("framework", () => deleteFrameworkHere(fw.id))}
+                  />
                 ) : (
                   <div key={fw.id} className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
@@ -562,6 +581,7 @@ export default function WorkshopPage() {
                           {FRAMEWORK_ROLES.find((r) => r.id === (fw.role ?? "narrative"))?.label ?? fw.role}
                         </span>
                         {fw.seedKey ? <span className="ml-2 text-[10px] text-zinc-600">starter</span> : null}
+                        <ScopeTags item={fw} />
                       </p>
                       {fw.summary ? <p className="mt-0.5 text-[11px] text-zinc-500">{fw.summary}</p> : null}
                       <ol className="mt-1 list-decimal pl-4 text-[11px] text-zinc-400">

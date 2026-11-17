@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { jobTurn, type AuthVars } from "./auth";
 import { saidInChat } from "./assistant";
 import { aiFor, completeWithFallback } from "./ai-complete";
-import { currentProject, factOf, keep, listMemory, remove, setProject, setRule } from "./lib/memory";
+import { currentProject, factOf, keep, listMemory, perWorkspace, remove, setPerWorkspace, setProject, setRule } from "./lib/memory";
 import { inProjectOf } from "./lib/project-of";
 import { MEMORY_QUOTE_MIN, MEMORY_RULE_MAX, tidy } from "../contracts/memory";
 
@@ -11,7 +11,8 @@ import { MEMORY_QUOTE_MIN, MEMORY_RULE_MAX, tidy } from "../contracts/memory";
  *
  *   GET    /api/memory        the account's kept facts, newest first (Settings → Memory): the ones for every workspace
  *                             and the request's workspace's; ?all=1 = every workspace's; ?here=1 = only the ones a
- *                             chat gets now: about the person, and the current project's
+ *                             chat gets now: about the person, and the current project's. `perWorkspace`: the setting below
+ *   PUT    /api/memory/workspaces  { perWorkspace } each workspace keeps its own new facts, or they are shared by all
  *   POST   /api/memory        { quote, rule?, project? } keep what the person said: only from a reply the assistant is writing
  *   PATCH  /api/memory/:id    { text } the rule in the person's own wording (Settings → Memory: Edit)
  *   PUT    /api/memory/:id/workspace  { workspace } the workspace a rule is for; null = every workspace (Settings → Memory: Move to …)
@@ -24,7 +25,10 @@ import { MEMORY_QUOTE_MIN, MEMORY_RULE_MAX, tidy } from "../contracts/memory";
  */
 export const memoryApp = new Hono<{ Variables: AuthVars }>();
 
-memoryApp.get("/", async (c) => c.json({ facts: await listMemory(c.get("user"), c.req.query("here") === "1" ? "here" : c.req.query("all") === "1" ? "all" : undefined) }));
+memoryApp.get("/", async (c) => {
+  const u = c.get("user");
+  return c.json({ facts: await listMemory(u, c.req.query("here") === "1" ? "here" : c.req.query("all") === "1" ? "all" : undefined), perWorkspace: perWorkspace(u.username) });
+});
 
 memoryApp.post("/", async (c) => {
   const u = c.get("user");
@@ -32,8 +36,9 @@ memoryApp.post("/", async (c) => {
   const turn = jobTurn(c.req.header("authorization"));
   const said = turn ? saidInChat(u.username, turn) : null;
   if (!said) return c.json({ error: "Only the assistant keeps things, from what the person says to it in a chat." }, 403);
-  // "only for this project" with no project to file it under: it is about the person
-  const project = b.project === true ? await currentProject(u) : undefined;
+  // "only for this project", or each workspace keeps its own: filed to the chat's workspace. With none to file it under,
+  // it is about the person
+  const project = b.project === true || perWorkspace(u.username) ? await currentProject(u) : undefined;
   const out = keep(u.username, b.quote, said, project?.id, b.rule);
   if ("error" in out) return c.json({ error: out.error }, 409);
   return c.json({ id: out.fact.id, text: out.fact.text, ...(out.fact.said ? { said: out.fact.said } : {}), at: out.fact.at, ...(project && out.fact.project ? { project: { id: project.id, name: project.name } } : {}) }, out.added ? 201 : 200);
@@ -49,6 +54,14 @@ memoryApp.patch("/:id", async (c) => {
   if (!out) return c.json({ error: "Not found" }, 404);
   if ("error" in out) return c.json(out, 400);
   return c.json({ id: out.id, text: out.text, said: out.said });
+});
+
+memoryApp.put("/workspaces", async (c) => {
+  if (!fromPage(c)) return c.json({ error: "Memory is set in Settings, Memory" }, 403);
+  const b = ((await c.req.json().catch(() => null)) ?? {}) as { perWorkspace?: unknown };
+  if (typeof b.perWorkspace !== "boolean") return c.json({ error: "Send { perWorkspace: true or false }" }, 400);
+  setPerWorkspace(c.get("user").username, b.perWorkspace);
+  return c.json({ perWorkspace: b.perWorkspace });
 });
 
 memoryApp.put("/:id/workspace", async (c) => {

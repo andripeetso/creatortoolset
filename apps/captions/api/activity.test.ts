@@ -123,7 +123,7 @@ describe("appRows", () => {
       ],
     });
     expect(rows.map((r) => [r.title, r.detail, r.href])).toEqual([
-      ["Tiny vlog", "AI Editor", "/editor/e1"],
+      ["Tiny vlog", "Editor", "/editor/e1"],
       ["tiny.mp4", "Exporting · 40%", "/captions?project=p%201"],
       ["next.mp4", "Export · queued", "/captions"],
     ]);
@@ -245,7 +245,7 @@ describe("pluginMenu and GET /api/activity/menu", () => {
 
 describe("appTools", () => {
   it("lists the app's tools by name in menu order, Finals and the AI Editor included", () => {
-    expect(appTools(admin).map((t) => t.title)).toEqual(["Home", "Content Workshop", "AI Editor", "Finals", "Content Analyzer"]);
+    expect(appTools(admin).map((t) => t.title)).toEqual(["Home", "Content Workshop", "Editor", "Finals", "Content Analyzer"]);
   });
 
   it("leaves out a tool whose gate the account has switched off, admins excepted", () => {

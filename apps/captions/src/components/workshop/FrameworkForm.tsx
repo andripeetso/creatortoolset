@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { FRAMEWORK_ROLES, type FrameworkRole, type WorkshopFramework } from "@/lib/workshop";
+import { FRAMEWORK_ROLES, type FrameworkRole, type ScopeInput, type WorkshopFramework } from "@/lib/workshop";
+import { WorkspacesField, useScope } from "./RuleWorkspaces";
 
 export interface FrameworkDraft {
   name: string;
@@ -17,18 +18,25 @@ const EMPTY: FrameworkDraft = { name: "", role: "narrative", summary: "", steps:
 const input =
   "w-full rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500";
 
-/** A storytelling framework: its role in a piece, the beats it walks through, when it fits, what it pairs with. */
+/**
+ * A storytelling framework: its role in a piece, the beats it walks through, when it fits, what it pairs with, and the
+ * workspaces it applies in. "Save for <workspace>" keeps the change to the workspace the window is in.
+ */
 export function FrameworkForm({
   initial,
   busy,
   onSave,
   onCancel,
+  onUseShared,
 }: {
   initial?: WorkshopFramework;
   busy: boolean;
-  onSave: (fields: FrameworkDraft) => void;
+  onSave: (fields: FrameworkDraft, scope: ScopeInput) => void;
   onCancel: () => void;
+  /** Deletes this workspace's own version: the shared framework is used here again. */
+  onUseShared?: () => void;
 }) {
+  const scope = useScope(initial);
   const [f, setF] = useState<FrameworkDraft>(
     initial
       ? {
@@ -50,7 +58,7 @@ export function FrameworkForm({
       className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave(f);
+        onSave(f, scope.saved());
       }}
     >
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
@@ -89,10 +97,27 @@ export function FrameworkForm({
         Example (optional)
         <textarea value={f.example} onChange={set("example")} rows={2} className={`${input} mt-1`} />
       </label>
-      <div className="flex justify-end gap-2">
+      {/* this workspace's version applies here only: where the shared one applies is changed from it */}
+      {!initial?.changedHere && <WorkspacesField only={scope.only} onChange={scope.setOnly} />}
+      <div className="flex flex-wrap justify-end gap-2">
+        {initial?.changedHere && onUseShared && (
+          <button type="button" disabled={busy} onClick={onUseShared} className="mr-auto rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
+            Use shared version
+          </button>
+        )}
         <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
           Cancel
         </button>
+        {scope.versionFor && (
+          <button
+            type="button"
+            disabled={busy || f.name.trim().length === 0 || stepCount < 2}
+            onClick={() => onSave(f, { here: true })}
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+          >
+            Save for {scope.versionFor.name}
+          </button>
+        )}
         <button
           type="submit"
           disabled={busy || f.name.trim().length === 0 || stepCount < 2}
