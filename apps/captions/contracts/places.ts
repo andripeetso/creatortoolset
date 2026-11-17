@@ -209,4 +209,7 @@ export interface PlacesSearchState {
   found: number;
   /** gone versions not found yet */
   left: number;
+  /** folders holding files that may be gone ones, outside the folders the page may play from: none of them was read,
+   *  and the server heard nothing of them. Allow access (askMediaFolder), then search again. */
+  access: string[];
 }

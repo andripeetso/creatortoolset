@@ -3,12 +3,15 @@ import { FolderSearch } from "lucide-react";
 import type { PlaceMove, PlacesSearchState } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { placeMoves } from "@/lib/library";
+import { askMediaFolder } from "@/lib/local-files";
 import { macSearch, placesSearch, placesSearchState } from "@/lib/thisMac";
 
 /**
  * Under the Missing here filter in the Media Library's sidebar: Find missing files on this Mac (apps/mac
  * PlacesSearch.swift) with how far it is, and what moved or was found elsewhere lately, one line per folder change
  * (api/library/places.ts). This Mac also starts a search by itself after it finds files gone; this shows that one too.
+ * Files that may be gone ones in a folder the page may not play from are not read: each such folder gets Allow access,
+ * which opens the folder panel (only when pressed) and searches again.
  */
 
 const files = (n: number) => `${n.toLocaleString()} ${n === 1 ? "file" : "files"}`;
@@ -81,6 +84,13 @@ export function Missing({ libraryId }: { libraryId: string }) {
     );
   };
 
+  const allow = (folder: string) =>
+    void askMediaFolder(folder).then(
+      (granted) => granted.length > 0 && find(),
+      () => undefined,
+    );
+  const access = !running && state?.library === libraryId ? (state.access ?? []) : [];
+
   const line = failed ? "Could not look for missing files" : state?.library === libraryId ? searchLine(state) : running ? "Looking in another library" : null;
   if (!can && !moves.length) return null;
   return (
@@ -96,6 +106,11 @@ export function Missing({ libraryId }: { libraryId: string }) {
           {line}
         </p>
       )}
+      {access.map((folder) => (
+        <Button key={folder} size="sm" variant="secondary" className="h-7 w-fit max-w-full gap-1.5 px-2.5 text-[12px]" onClick={() => allow(folder)}>
+          <span className="truncate">Allow access to {last(folder)}</span>
+        </Button>
+      ))}
       {moves.length > 0 && (
         <ul aria-label="Moved and found" className="flex flex-col gap-1 text-[12px] text-zinc-400">
           {moves.slice(0, 10).map((m) => (

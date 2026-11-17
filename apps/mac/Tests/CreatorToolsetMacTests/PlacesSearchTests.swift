@@ -9,8 +9,10 @@ final class PlacesSearchTests: XCTestCase {
 
     override func setUpWithError() throws {
         let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"] ?? NSTemporaryDirectory()
-        top = (base as NSString).appendingPathComponent("places-search-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(atPath: top, withIntermediateDirectories: true)
+        let made = (base as NSString).appendingPathComponent("places-search-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: made, withIntermediateDirectories: true)
+        // the real path: what the gate reads, and what the search answers
+        top = MediaFiles.realPath(made) ?? made
         prints = []
     }
 
@@ -36,9 +38,10 @@ final class PlacesSearchTests: XCTestCase {
         return GoneFile(versionId: id, bytes: Int64(bytes), quick: Imports.quickPrint(probe)!, root: "vol:TEST", rootRel: rel, path: "/elsewhere/\(rel)", name: (rel as NSString).lastPathComponent)
     }
 
-    private func search(_ list: [GoneFile], budget: Int = 300_000, home: String? = nil) -> MissingSearch {
+    private func search(_ list: [GoneFile], budget: Int = 300_000, home: String? = nil, granted: [String]? = nil) -> MissingSearch {
         let disks = [PlaceDisk(path: top, key: "vol:TEST")]
         var s = MissingSearch(gone: list, disks: disks)
+        s.granted = granted ?? [top]
         s.places = Places(diskList: { disks }, lookup: { _ in true })
         s.budget = budget
         s.home = home ?? "/nobody-home"
@@ -106,12 +109,26 @@ final class PlacesSearchTests: XCTestCase {
         try file("above.mov", 100)
         let quick = gone("x", "a.mov", 100).quick
         let at = { (rel: String) in GoneFile(versionId: rel, bytes: 100, quick: quick, root: nil, rootRel: nil, path: (self.top as NSString).appendingPathComponent(rel), name: "a.mov") }
-        var s = search([at("home/Movies/2025/a.mov")], home: (top as NSString).appendingPathComponent("home"))
+        let home = (top as NSString).appendingPathComponent("home")
+        var s = search([at("home/Movies/2025/a.mov")], home: home, granted: [home])
         XCTAssertEqual(s.run(), [])
         XCTAssertEqual(prints, [])
         // a file that was in Documents is looked for there
-        var t = search([at("home/Documents/2025/a.mov")], home: (top as NSString).appendingPathComponent("home"))
+        var t = search([at("home/Documents/2025/a.mov")], home: home, granted: [home])
         XCTAssertEqual(t.run().map(\.path), [(top as NSString).appendingPathComponent("home/Documents/a.mov")])
+    }
+
+    func testAFileOutsideTheGrantedFoldersIsNeverReadAndItsDiskIsOneToGrant() throws {
+        try file("Granted/other.mov", 50)
+        try file("Archive/2025/a.mov", 100)
+        var s = search([gone("a", "2025/a.mov", 100)], granted: [(top as NSString).appendingPathComponent("Granted")])
+        XCTAssertEqual(s.run(), [])
+        XCTAssertEqual(prints, [])
+        XCTAssertEqual(s.access, [top])
+        // granted: read and found
+        var t = search([gone("a", "2025/a.mov", 100)])
+        XCTAssertEqual(t.run().map(\.versionId), ["a"])
+        XCTAssertEqual(t.access, [])
     }
 
     func testTheSearchAsksParse() {

@@ -15,7 +15,7 @@ describe("Missing here", () => {
   });
 
   it("says how far the search is, and nothing before the first", () => {
-    const s = { library: "lib", running: true, looked: 0, found: 0, left: 0 };
+    const s = { library: "lib", running: true, looked: 0, found: 0, left: 0, access: [] };
     expect(searchLine(null)).toBeNull();
     expect(searchLine({ ...s, running: false })).toBeNull();
     expect(searchLine(s)).toBe("Looking");

@@ -63,12 +63,12 @@ export async function backfillQuick(): Promise<boolean> {
 
 /**
  * The versions in `libraryId` that Locate may reconnect: the asked one, gone ones on this server's disk (state missing),
- * ones `device` (the caller's own computer) last found gone, and ones indexed on that computer or on no known one (a
- * computer's file elsewhere is that computer's). The caller's own, and any other with a place on that computer (the
+ * ones indexed on `device` or on no known computer (a computer's file elsewhere is that computer's), and ones `placesOf`
+ * (the caller's own computer, checked) last found gone. The caller's own, and any other with a place on `placesOf` (the
  * route keeps the ones the caller may see). Each with a fingerprint, its path there (else where the library has it), and
  * its size.
  */
-export function locatable(libraryId: string, by: string, o: { versionId?: string; device?: string; only?: boolean }) {
+export function locatable(libraryId: string, by: string, o: { versionId?: string; device?: string; placesOf?: string; only?: boolean }) {
   return libraryDb()
     .prepare(
       `SELECT v.id, v.asset_id, v.created_by, COALESCE(p.path, v.mac_path, v.source_path) AS path, v.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
@@ -77,7 +77,7 @@ export function locatable(libraryId: string, by: string, o: { versionId?: string
          AND COALESCE(p.path, v.mac_path, v.source_path) IS NOT NULL
          AND (v.id = ? OR (? = 0 AND (v.state = 'missing' OR p.gone_at IS NOT NULL OR (v.mac_path IS NOT NULL AND (v.mac_device IS NULL OR v.mac_device = ?)))))`,
     )
-    .all(o.device ?? "", libraryId, by, o.versionId ?? "", o.only ? 1 : 0, o.device ?? "") as { id: string; asset_id: string; created_by: string; path: string; bytes: number }[];
+    .all(o.placesOf ?? "", libraryId, by, o.versionId ?? "", o.only ? 1 : 0, o.device ?? "") as { id: string; asset_id: string; created_by: string; path: string; bytes: number }[];
 }
 
 /**
@@ -161,17 +161,18 @@ export function parseLocate(body: unknown): { asked: string; gone: string[]; fil
 
 /**
  * GET /api/library/:id/locate?versionId&device[&only=1] → { files: [{ id, path, bytes }] }: what the Mac checks
- * (locatable; only=1: the asked clip alone, to tell whether its file is gone). `device` counts only when it is the caller's.
+ * (locatable; only=1: the asked clip alone, to tell whether its file is gone). A place is listed only for the caller's own `device`.
  */
 locateApp.get("/:id/locate", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const q = c.req.query();
-  const device = q.device && deviceOf(q.device)?.owner === user.username ? q.device : undefined;
+  // a place is named only for the caller's own computer: it can be on a teammate's clip
+  const placesOf = q.device && deviceOf(q.device)?.owner === user.username ? q.device : undefined;
   const viewer = await readerOf(user.username, libraryId);
   const files: { id: string; path: string; bytes: number }[] = [];
-  for (const r of locatable(libraryId, user.username, { versionId: q.versionId, device, only: q.only === "1" })) {
+  for (const r of locatable(libraryId, user.username, { versionId: q.versionId, device: q.device, placesOf, only: q.only === "1" })) {
     if (r.created_by === user.username || (viewer && (await canSee(viewer, assetRef(libraryId, r.asset_id, r.id))))) files.push({ id: r.id, path: r.path, bytes: r.bytes });
   }
   return c.json({ files });

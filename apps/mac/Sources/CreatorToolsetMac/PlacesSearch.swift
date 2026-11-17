@@ -13,8 +13,12 @@ import Foundation
 //   in the home folder is looked for up to the home folder, never above, and never in Desktop, Documents, Downloads or
 //   Library unless a gone file was in there (macOS asks the person before an app reads those; nothing here may make it
 //   ask by itself).
-// - Only files of a gone file's size are read (2 MiB each, Imports.quickPrint). The first match gives the rest: the
-//   folder change it shows (derivedMove) is tried on every other gone file before walking on.
+// - Only video and sound files of a gone file's size that MediaFiles' gate lets the page play are read (2 MiB each,
+//   Imports.quickPrint) or told to the server. One the gate refuses is never read and the server hears nothing of it:
+//   its folder (the disk, for a share or another disk) goes to the page as one to grant (`access`), and a search after
+//   the grant reads it. The first match gives the rest: the folder change it shows (derivedMove) is tried on every
+//   other gone file before walking on.
+// - Nothing is mounted or connected: only disks mounted now are walked, never an automount folder (/net, /Network).
 // - Every file call goes through Places.guarded, so a share that stops answering costs at most one wait. At most
 //   300,000 entries are listed a run; the next run starts over (listing is cheap, reading is what costs).
 // - What was found goes back as confirmed with its fingerprint (POST …/places): the server moves a file that moved on
@@ -42,12 +46,14 @@ struct SearchFound: Equatable {
     let quick: String
 }
 
-/// One walk for gone files. `run()` answers what it found; `looked` is how many entries it listed.
+/// One walk for gone files. `run()` answers what it found; `looked` is how many entries it listed, `access` the folders
+/// holding files that may be gone ones and that the page may not play from.
 struct MissingSearch {
     var gone: [GoneFile]
     var disks: [PlaceDisk]
-    /// the folders the page may play from (real paths)
+    /// the folders the page may play from (as granted), and the same kept by root (MediaFiles)
     var granted: [String] = []
+    var roots: [MediaFiles.RootGrant] = []
     /// pressed: also every other disk connected (a disk this app never read may make macOS ask the person first)
     var everywhere = false
     var places: Places = .shared
@@ -59,11 +65,15 @@ struct MissingSearch {
 
     private(set) var found: [SearchFound] = []
     private(set) var looked = 0
+    private(set) var access = Set<String>()
     private var left: [String: GoneFile] = [:]
     private var old: [String: String] = [:]
     private var moves: [PathMove] = []
     private var walked = Set<String>()
     private var skip = Set<String>()
+
+    /// Folders macOS mounts something on when they are read (automount): never entered, so nothing is connected here.
+    private static let automount = ["/net", "/Network", "/home", "/automount"]
 
     init(gone: [GoneFile], disks: [PlaceDisk]) {
         self.gone = gone
@@ -79,7 +89,7 @@ struct MissingSearch {
         }
         // back where it was (a disk reconnected since, or a copy this Mac has after all): confirmed as it is
         for g in left.values.sorted(by: { $0.versionId < $1.versionId }) {
-            if let p = old[g.versionId], !p.isEmpty, matches(p, g) { take(g, at: p) }
+            if let p = old[g.versionId], !p.isEmpty, let real = matches(p, g) { take(g, at: real) }
         }
         let starts = startFolders()
         for dir in starts {
@@ -110,7 +120,7 @@ struct MissingSearch {
         let olds = left.keys.compactMap { old[$0] }.filter { !$0.isEmpty }.map(nfc)
         // folders macOS guards with a question to the person: kept out of unless a gone file was in one
         let guarded = ["Desktop", "Documents", "Downloads", "Library"].map { home + "/" + $0 }
-        skip = Set(guarded.filter { g in !olds.contains { Self.inside($0, g) } } + ["/Volumes"])
+        skip = Set(guarded.filter { g in !olds.contains { Self.inside($0, g) } } + ["/Volumes"] + Self.automount)
         skip.formUnion(disks.map { nfc($0.path) }.filter { $0 != "/" })
 
         var out: [String] = []
@@ -132,7 +142,8 @@ struct MissingSearch {
         out += disks.filter(\.network).map { nfc($0.path) }
         if everywhere { out += disks.filter { !$0.network && $0.path != "/" }.map { nfc($0.path) } }
         out += granted.map(nfc)
-        return out
+        // only folders on a disk mounted now, and never an automount
+        return out.filter { d in Places.disk(of: d, in: disks) != nil && !Self.automount.contains { Self.inside(d, $0) } }
     }
 
     private static let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
@@ -169,34 +180,49 @@ struct MissingSearch {
         }
     }
 
-    /// A file of a gone file's size: read, and taken for each gone file with its fingerprint.
+    /// A file of a gone file's size: read when the page may play it, and taken for each gone file with its fingerprint;
+    /// else none of it is read and its folder is one to grant.
     private mutating func consider(_ path: String, _ bytes: Int64) {
         let same = left.values.filter { $0.bytes == bytes }.sorted { $0.versionId < $1.versionId }
-        guard !same.isEmpty, let quick = fingerprint(path) else { return }
-        for g in same where g.quick == quick { take(g, at: path, quick: quick) }
+        guard !same.isEmpty, let real = readable(path), let quick = fingerprint(real) else { return }
+        for g in same where g.quick == quick { take(g, at: real, quick: quick) }
     }
 
-    /// `g` is at `path`; the folder change from where it was is tried on every other gone file.
+    /// `g` is at `path` (granted, real); the folder change from where it was is tried on every other gone file.
     private mutating func take(_ g: GoneFile, at path: String, quick: String? = nil) {
         guard left.removeValue(forKey: g.versionId) != nil else { return }
         found.append(SearchFound(versionId: g.versionId, path: path, quick: quick ?? g.quick))
         guard let was = old[g.versionId], !was.isEmpty, let m = derivedMove(was, path), !moves.contains(m) else { return }
         moves.append(m)
         for other in left.values.sorted(by: { $0.versionId < $1.versionId }) {
-            guard left[other.versionId] != nil, let p = old[other.versionId], let q = applyMove(p, m), matches(q, other) else { continue }
-            take(other, at: q)
+            guard left[other.versionId] != nil, let p = old[other.versionId], let q = applyMove(p, m), let real = matches(q, other) else { continue }
+            take(other, at: real)
         }
     }
 
-    /// Whether the file at `path` is `g`: its size, not changed in the last minute, and its fingerprint.
-    private func matches(_ path: String, _ g: GoneFile) -> Bool {
+    /// The real path of the file at `path` when it is `g` (its size, not changed in the last minute, and, when the page
+    /// may play it, its fingerprint); nil else. One the page may not play is not read: its folder is one to grant.
+    private mutating func matches(_ path: String, _ g: GoneFile) -> String? {
         let at = places.guarded(path) { () -> (Int64, Date)? in
             guard let a = try? FileManager.default.attributesOfItem(atPath: path), a[.type] as? FileAttributeType == .typeRegular,
                   let size = (a[.size] as? NSNumber)?.int64Value else { return nil }
             return (size, a[.modificationDate] as? Date ?? .distantPast)
         } ?? nil
-        guard let at, at.0 == g.bytes, at.1 < now.addingTimeInterval(-60) else { return false }
-        return fingerprint(path) == g.quick
+        guard let at, at.0 == g.bytes, at.1 < now.addingTimeInterval(-60), let real = readable(path) else { return nil }
+        return fingerprint(real) == g.quick ? real : nil
+    }
+
+    /// The real path to read when MediaFiles' gate lets the page play `path`; nil else, and a file it refuses for its folder
+    /// (not granted) gives that folder to grant: the disk for a share or another disk, else the file's own folder.
+    private mutating func readable(_ path: String) -> String? {
+        switch MediaFiles.gate(path, granted: granted, roots: roots, places: places) {
+        case .file(let real, _): return real
+        case .status(403):
+            let disk = Places.disk(of: path, in: disks)
+            access.insert(disk.map { $0.path != "/" } == true ? disk!.path : Self.parent(path))
+            return nil
+        case .status: return nil
+        }
     }
 
     private func fingerprint(_ path: String) -> String? {
@@ -213,12 +239,13 @@ final class PlacesSearch: @unchecked Sendable {
     private var running = false
     private var library = ""
     private var looked = 0, found = 0, left = 0
+    private var access: [String] = []
     private var soonItem: DispatchWorkItem?
     private let queue = DispatchQueue(label: "creatortoolset.places.search", qos: .utility)
 
     /// `places:search:state` (and every start's answer).
     var state: [String: Any] {
-        lock.withLock { ["library": library, "running": running, "looked": looked, "found": found, "left": left] }
+        lock.withLock { ["library": library, "running": running, "looked": looked, "found": found, "left": left, "access": access] }
     }
 
     /// A check found files gone: a search 30 s later (another one in the meantime moves it on), unless one runs then.
@@ -236,7 +263,7 @@ final class PlacesSearch: @unchecked Sendable {
         guard let device, let encoded = device.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return state }
         let begin = lock.withLock { () -> Bool in
             guard !running else { return false }
-            (running, looked, found, left) = (true, 0, 0, 0)
+            (running, looked, found, left, access) = (true, 0, 0, 0, [])
             self.library = library
             return true
         }
@@ -249,10 +276,13 @@ final class PlacesSearch: @unchecked Sendable {
                 queue.async { [self] in
                     let disks = Places.shared.diskList()
                     var search = MissingSearch(gone: list, disks: disks)
-                    search.granted = MediaFiles.realFolders(MediaFiles.granted, disks: disks)
+                    search.granted = MediaFiles.granted
+                    search.roots = MediaFiles.rootGrants
                     search.everywhere = pressed
                     search.progress = { [self] l, f, n in lock.withLock { (looked, found, left) = (l, f, n) } }
-                    c.resume(returning: search.run())
+                    let hits = search.run()
+                    lock.withLock { access = search.access.sorted() }
+                    c.resume(returning: hits)
                 }
             }
             // ponytail: one POST per 200 found, one after another; a search that finds thousands waits on each
