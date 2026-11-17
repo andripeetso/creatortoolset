@@ -120,11 +120,17 @@ struct PlaceDisk: Equatable {
 }
 
 /// A share's address to connect it again, from its mount source ("//me@office-nas.local/footage" on smbfs →
-/// "smb://me@office-nas.local/footage"); nil for a disk that isn't a share.
+/// "smb://me@office-nas.local/footage"); nil for a disk that isn't a share. The user name stays, a password never
+/// ("//me:pw@…" → "smb://me@…"): macOS takes the password from its keychain.
 func shareURL(source: String, fstype: String) -> String? {
+    let withoutPassword = { (rest: Substring) -> String in
+        let authority = rest.prefix { $0 != "/" }
+        guard let at = authority.lastIndex(of: "@") else { return String(rest) }
+        return String(authority[..<at].prefix { $0 != ":" } + rest[at...])
+    }
     switch fstype {
-    case "smbfs", "cifs", "smb3": return source.hasPrefix("//") ? "smb:" + source : nil
-    case "afpfs": return source.hasPrefix("//") ? "afp:" + source : nil
+    case "smbfs", "cifs", "smb3": return source.hasPrefix("//") ? "smb://" + withoutPassword(source.dropFirst(2)) : nil
+    case "afpfs": return source.hasPrefix("//") ? "afp://" + withoutPassword(source.dropFirst(2)) : nil
     case "nfs", "nfs4":
         guard let colon = source.firstIndex(of: ":") else { return nil }
         let path = source[source.index(after: colon)...]
@@ -222,6 +228,8 @@ final class Places: @unchecked Sendable {
     var diskList: () -> [PlaceDisk]
     /// Whether the network disk mounted at the path answers (blocks while its server is silent); the tests give their own.
     var lookup: (String) -> Bool
+    /// Mounts a share (Places.mount); the tests give their own.
+    var mountShare: (_ url: String, _ ui: Bool, _ done: @escaping (Int32) -> Void) -> Void = Places.mount
     /// Called on the main thread when a disk came, went, went away or came back: the report now, and the page's event.
     var onChange: (() -> Void)?
 
@@ -366,38 +374,57 @@ final class Places: @unchecked Sendable {
     }
 
     struct Checked {
-        /// per version, a PlaceCheck (contracts/places.ts) as JSON
+        /// per version, a PlaceCheck (contracts/places.ts) as JSON, for the page
         var answer: [String: [String: Any]] = [:]
-        /// read here: version → path
-        var here: [String: String] = [:]
-        /// the disks answered and no try had it
+        /// for the server: version → path of a file read here inside the granted folders (none other is told, read or
+        /// fingerprinted)
+        var confirmed: [String: String] = [:]
+        /// for the server: versions whose every try is inside the granted folders, answered, and has no such file
         var gone: [String] = []
     }
 
-    /// What this Mac finds at each version's tries, best first: the first try whose file has the version's size is
-    /// `here`; a try whose disk isn't mounted or doesn't answer makes it `away` (unless another try is here); `gone` when
-    /// every try's disk answered and none had it. A version with no tries is away on its root, when the server named one.
+    /// What this Mac finds at each version's tries, best first. Only plain paths to the video and sound files this app
+    /// serves are looked at (MediaFiles.isPlainMedia); any other try gets no file call, and a version with none left gets
+    /// no answer. Granted is the gate's own answer (the real path inside a granted folder or root): such a file of the
+    /// version's size is here with a `url`, and goes back to the server. A file of that size outside them is here and
+    /// needs access (path and folder, so the person can grant it); only its size is read. A try whose disk isn't mounted
+    /// or doesn't answer makes it `away` (unless another try is here); `gone` when every try's disk answered and none had
+    /// it. A version with no tries is away on its root, when the server named one.
     func check(_ versions: [String: VersionPlaces], granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants,
                size: @escaping (String) -> Int64? = Places.size) -> Checked {
         let disks = diskList()
-        let folders = MediaFiles.realFolders(granted, disks: disks)
         let known = shares
         var out = Checked()
         for (id, v) in versions {
-            var found: (path: String, disk: PlaceDisk)?
+            let tries = v.tries.filter(MediaFiles.isPlainMedia)
+            if tries.isEmpty && !v.tries.isEmpty { continue }
+            var found: (path: String, disk: PlaceDisk, granted: Bool)?
             var sawAway = false
-            for path in v.tries {
+            var allGranted = true
+            for path in tries {
                 // a volume not mounted here is away; a path elsewhere is on the system disk
                 let disk = Self.disk(of: path, in: disks)
                 if disk == nil && path.hasPrefix("/Volumes/") { sawAway = true; continue }
                 if let disk, disk.network && !answers(disk.path) { sawAway = true; continue }
-                guard let bytes = guarded(path, { size(path) }) else { sawAway = true; continue }
-                if bytes == v.bytes { found = (path, disk ?? PlaceDisk(path: "/", key: nil, name: "System disk")); break }
+                let place = disk ?? PlaceDisk(path: "/", key: nil, name: "System disk")
+                switch MediaFiles.gate(path, granted: granted, roots: roots, places: self) {
+                case .file(let real, _):
+                    guard let bytes = guarded(real, { size(real) }) else { sawAway = true; continue }
+                    if bytes == v.bytes { found = (path, place, true) }
+                case .status(503): sawAway = true
+                case .status(404): break   // inside the granted folders, not there
+                case .status(403):
+                    allGranted = false
+                    guard let bytes = guarded(path, { size(path) }) else { sawAway = true; continue }
+                    if bytes == v.bytes { found = (path, place, false) }
+                case .status: break   // 415: a media name for another kind of file
+                }
+                if found != nil { break }
             }
             if let found {
-                let (path, disk) = found
-                out.here[id] = path
-                if MediaFiles.isGranted(path, folders: folders, roots: roots, disks: disks) {
+                let (path, disk, granted) = found
+                if granted {
+                    out.confirmed[id] = path
                     out.answer[id] = ["state": "here", "path": path, "url": MediaFiles.url(path: path).absoluteString]
                 } else {
                     // the access panel opens at the disk (one grant covers the share), or the file's folder on the system disk
@@ -412,8 +439,8 @@ final class Places: @unchecked Sendable {
                     if needsConnect(root.key, disks: disks, shares: known) { away["needs"] = "connect" }
                 }
                 out.answer[id] = away
-            } else if !v.tries.isEmpty {
-                out.gone.append(id)
+            } else if !tries.isEmpty {
+                if allGranted { out.gone.append(id) }
                 out.answer[id] = ["state": "gone"]
             }
         }
@@ -433,7 +460,8 @@ final class Places: @unchecked Sendable {
     /// `places:check`: the tries from the window's server (a server without the route lists none, so the page plays as
     /// before), checked off the main thread; each answer kept 10 s. What was read here and what is gone goes back to the
     /// server afterwards (POST …/places), each once per run, with the quick fingerprint when the server has none.
-    func answerCheck(library: String, versions: [String], site: Site, device: String?) async -> [String: Any] {
+    func answerCheck(library: String, versions: [String], site: Site, device: String?,
+                     granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants) async -> [String: Any] {
         guard let device, let encoded = device.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return ["versions": [String: Any]()] }
         let server = site.base.absoluteString
         var out: [String: Any] = [:]
@@ -446,7 +474,7 @@ final class Places: @unchecked Sendable {
         guard !ask.isEmpty else { return ["versions": out] }
         let list: PlacesList? = try? await site.get("/api/library/\(library)/places?device=\(encoded)&versions=\(ask.joined(separator: ","))")
         let tries = list?.versions ?? [:]
-        let checked = await withCheckedContinuation { c in calls.async { c.resume(returning: self.check(tries)) } }
+        let checked = await withCheckedContinuation { c in calls.async { c.resume(returning: self.check(tries, granted: granted, roots: roots)) } }
         lock.withLock {
             for (v, check) in checked.answer {
                 kept["\(server)|\(library)|\(v)"] = (Date(), check)
@@ -457,14 +485,15 @@ final class Places: @unchecked Sendable {
         return ["versions": out]
     }
 
-    /// POST …/places with what this check learnt that the server wasn't told this run. ponytail: at most 20 quick
+    /// POST …/places with what this check learnt that the server wasn't told this run: granted files only (`check`).
+    /// ponytail: at most 20 quick
     /// fingerprints per check (2 MiB read each); the rest are filled by later checks.
     private func tell(_ checked: Checked, tries: [String: VersionPlaces], library: String, device: String, site: Site) {
         let server = site.base.absoluteString
         var confirmed: [[String: Any]] = []
         var gone: [String] = []
         var prints = 20
-        for (v, path) in checked.here {
+        for (v, path) in checked.confirmed {
             lock.lock()
             let fresh = told.insert("\(server)|\(library)|\(v)|\(path)").inserted
             lock.unlock()
@@ -517,19 +546,36 @@ final class Places: @unchecked Sendable {
         if err != 0 { done(err) }
     }
 
-    /// `places:connect:{root}` (the person pressed Connect): the share mounted, the login panel allowed. { ok } or { problem }.
-    func connect(root key: String) async -> [String: Any] {
+    /// `places:connect:{root}` (the person pressed Connect on a page of `server`): the share mounted, the login panel
+    /// allowed. { ok } or { problem }. A share this Mac never had is connected only after this app's own confirm, which
+    /// names the server asking and the share's address: a page can't make this Mac reach a server of its choosing.
+    func connect(root key: String, server: String,
+                 confirm: @escaping @MainActor (_ server: String, _ address: String) -> Bool = Places.askToConnect) async -> [String: Any] {
         guard let parts = Self.shareParts(key) else { return ["problem": "Could not connect that drive"] }
+        let name = (parts.share as NSString).lastPathComponent
         // the address it was mounted with; else from the key (a name without a dot is a Bonjour one: name.local)
-        let url = shares.first { $0.key == key }?.url
+        let had = shares.first { $0.key == key }?.url
+        let url = had
             ?? "\(parts.fs)://\(parts.host.contains(".") ? parts.host : parts.host + ".local")/\(parts.share.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? parts.share)"
-        let status = await withCheckedContinuation { c in Self.mount(url, ui: true) { c.resume(returning: $0) } }
+        if had == nil {
+            guard await MainActor.run(body: { confirm(server, url) }) else { return ["problem": "Not connected"] }
+        }
+        let status = await withCheckedContinuation { c in mountShare(url, true) { c.resume(returning: $0) } }
         if status == 0 {
             events.poke()
             return ["ok": true]
         }
-        let name = (parts.share as NSString).lastPathComponent
         return ["problem": status == ECANCELED || status == -128 ? "Not connected" : "Could not connect \(name)"]
+    }
+
+    /// This app's confirm before connecting a share this Mac never had.
+    @MainActor static func askToConnect(server: String, address: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Connect \(address)?"
+        alert.informativeText = "Asked by the server \(server). This Mac hasn't connected this shared drive before."
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     /// Notes the shares mounted now (and that an ejected one was connected again), then connects the missing ones
@@ -556,7 +602,7 @@ final class Places: @unchecked Sendable {
             if !wait { connecting.insert(share.key) }
             lock.unlock()
             if wait { continue }
-            Self.mount(share.url, ui: false) { [self] status in
+            mountShare(share.url, false) { [self] status in
                 lock.lock()
                 connecting.remove(share.key)
                 let failed = (nextTry[share.key]?.failed ?? 0) + 1

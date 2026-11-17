@@ -152,7 +152,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(checked.answer["v1"]?["state"] as? String, "here")
         XCTAssertEqual(checked.answer["v1"]?["path"] as? String, right)
         XCTAssertEqual(checked.answer["v1"]?["url"] as? String, MediaFiles.url(path: right).absoluteString)
-        XCTAssertEqual(checked.here, ["v1": right])
+        XCTAssertEqual(checked.confirmed, ["v1": right])
         // a file of another size is not it, and every try's disk answered: gone
         XCTAssertEqual(checked.answer["v2"]?["state"] as? String, "gone")
         XCTAssertEqual(checked.gone, ["v2"])
@@ -163,10 +163,10 @@ final class PlacesTests: XCTestCase {
         XCTAssertNil(checked.answer["v4"])
 
         // a file on the system disk is here even when no disk is listed for it (the sealed system volume is read-only)
-        let hosts = try XCTUnwrap(Places.size("/etc/hosts"))
-        let system = Places(diskList: { [] }).check(["v1": VersionPlaces(tries: ["/etc/hosts"], bytes: hosts)], granted: [], roots: [])
+        let ping = "/System/Library/Sounds/Ping.aiff"
+        let system = Places(diskList: { [] }).check(["v1": VersionPlaces(tries: [ping], bytes: try XCTUnwrap(Places.size(ping)))], granted: [], roots: [])
         XCTAssertEqual(system.answer["v1"]?["state"] as? String, "here")
-        XCTAssertEqual(system.answer["v1"]?["folder"] as? String, "/etc")
+        XCTAssertEqual(system.answer["v1"]?["folder"] as? String, "/System/Library/Sounds")
 
         // outside the folders the page may play from: here, and the access button opens at the disk
         let outside = places.check(["v1": VersionPlaces(tries: [right], bytes: 10)], granted: [], roots: [])
@@ -190,7 +190,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual((unpaired["versions"] as? [String: Any])?.count, 0)
 
         site.answer = { r in r.method == "GET" ? (200, #"{"versions":{"v1":{"tries":["\#(file.path)"],"bytes":3000,"quick":null,"proxy":null}}}"#) : (200, "{}") }
-        let found = await places.answerCheck(library: "lib1", versions: ["v1"], site: mac, device: "dev1")
+        let found = await places.answerCheck(library: "lib1", versions: ["v1"], site: mac, device: "dev1", granted: [root.path], roots: [])
         XCTAssertEqual(((found["versions"] as? [String: Any])?["v1"] as? [String: Any])?["state"] as? String, "here")
         XCTAssertEqual(site.requests.last { $0.method == "GET" }?.path, "/api/library/lib1/places?device=dev1&versions=v1")
         for _ in 0..<50 where !site.requests.contains(where: { $0.method == "POST" }) { try await Task.sleep(nanoseconds: 50_000_000) }
@@ -204,8 +204,103 @@ final class PlacesTests: XCTestCase {
 
         // asked again within 10 s: the kept answer, no new request
         let before = site.requests.count
-        _ = await places.answerCheck(library: "lib1", versions: ["v1"], site: mac, device: "dev1")
+        _ = await places.answerCheck(library: "lib1", versions: ["v1"], site: mac, device: "dev1", granted: [root.path], roots: [])
         XCTAssertEqual(site.requests.count, before)
+    }
+
+    // review fix 1: a server elsewhere names the tries; only video and sound files by a plain path are looked at
+    func testOnlyMediaFilesAreLookedAt() throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".ssh"), withIntermediateDirectories: true)
+        let key = root.appendingPathComponent(".ssh/id_ed25519")
+        try Data(repeating: 3, count: 411).write(to: key)
+        let clip = root.appendingPathComponent("a.mov")
+        try Data(repeating: 3, count: 411).write(to: clip)
+        var asked: [String] = []
+        let places = Places(diskList: { [PlaceDisk(path: "/", key: "vol:A"), PlaceDisk(path: self.root.path, key: "vol:T")] })
+        let checked = places.check([
+            "key": VersionPlaces(tries: [key.path, "/Users/tiny/.ssh/known_hosts"], bytes: 411),
+            "dots": VersionPlaces(tries: [root.path + "/x/../a.mov", root.path + "/./a.mov", "a.mov"], bytes: 411),
+            "clip": VersionPlaces(tries: [key.path, clip.path], bytes: 411),
+        ], granted: [root.path], roots: []) { path in asked.append(path); return Places.size(path) }
+        XCTAssertNil(checked.answer["key"])    // no answer at all: not here, not gone
+        XCTAssertNil(checked.answer["dots"])
+        XCTAssertEqual(checked.answer["clip"]?["path"] as? String, clip.path)
+        XCTAssertEqual(asked, [clip.path])
+        XCTAssertEqual(checked.confirmed, ["clip": clip.path])
+        XCTAssertEqual(checked.gone, [])
+    }
+
+    // review fix 2: granted is the gate's answer on the real path; an ungranted file is here + needs access, never
+    // read and never told to the server
+    func testOnlyAFileTheGateServesIsToldToTheServer() async throws {
+        let fm = FileManager.default
+        let grantedDir = root.appendingPathComponent("granted"), other = root.appendingPathComponent("other")
+        try fm.createDirectory(at: grantedDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 2000).write(to: grantedDir.appendingPathComponent("a.mov"))
+        try Data(repeating: 2, count: 3000).write(to: other.appendingPathComponent("secret.mov"))
+        try fm.createSymbolicLink(at: grantedDir.appendingPathComponent("link"), withDestinationURL: other)   // a folder link out
+        let g = grantedDir.appendingPathComponent("a.mov").path
+        let viaLink = grantedDir.appendingPathComponent("link/secret.mov").path
+        let tries: [String: (tries: [String], bytes: Int)] = [
+            "g": ([g], 2000),
+            "u": ([viaLink], 3000),                                                   // real path outside the grant
+            "d": ([grantedDir.path + "/../other/secret.mov"], 3000),                   // a prefix match only
+            "x": ([other.appendingPathComponent("missing.mov").path], 10),             // outside, not there
+            "y": ([grantedDir.appendingPathComponent("missing.mov").path], 10),        // inside, not there
+        ]
+        let json = tries.map { id, t in "\"\(id)\":{\"tries\":[\(t.tries.map { "\"\($0)\"" }.joined(separator: ","))],\"bytes\":\(t.bytes),\"quick\":null,\"proxy\":null}" }
+        let site = FakeSite()
+        site.answer = { r in r.method == "GET" ? (200, "{\"versions\":{\(json.joined(separator: ","))}}") : (200, "{}") }
+        let places = Places(diskList: { [PlaceDisk(path: "/", key: "vol:A"), PlaceDisk(path: self.root.path, key: "vol:T")] })
+        let out = await places.answerCheck(library: "lib1", versions: ["g", "u", "d", "x", "y"], site: Site(base: site.url, cookies: []),
+                                           device: "dev1", granted: [grantedDir.path], roots: [])
+        let versions = try XCTUnwrap(out["versions"] as? [String: [String: Any]])
+        XCTAssertNotNil(versions["g"]?["url"])
+        XCTAssertEqual(versions["u"]?["state"] as? String, "here")
+        XCTAssertEqual(versions["u"]?["needs"] as? String, "access")
+        XCTAssertEqual(versions["u"]?["path"] as? String, viaLink)
+        XCTAssertNil(versions["u"]?["url"])
+        XCTAssertNil(versions["d"])
+        XCTAssertEqual(versions["x"]?["state"] as? String, "gone")
+        XCTAssertEqual(versions["y"]?["state"] as? String, "gone")
+
+        for _ in 0..<50 where !site.requests.contains(where: { $0.method == "POST" }) { try await Task.sleep(nanoseconds: 50_000_000) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let posts = site.requests.filter { $0.method == "POST" }
+        XCTAssertEqual(posts.count, 1)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(posts.first).body) as? [String: Any])
+        let confirmed = try XCTUnwrap(body["confirmed"] as? [[String: Any]])
+        XCTAssertEqual(confirmed.map { $0["versionId"] as? String }, ["g"])
+        XCTAssertEqual(confirmed.first?["quick"] as? String, Imports.quickPrint(g))
+        XCTAssertEqual(body["gone"] as? [String], ["y"])
+    }
+
+    // review fix 3: Connect on a share this Mac never had asks in this app's own confirm first
+    func testConnectAsksFirstForAShareThisMacNeverHad() async {
+        defer { UserDefaults.standard.removeObject(forKey: "sharedDrives") }
+        UserDefaults.standard.removeObject(forKey: "sharedDrives")
+        var mounted: [(String, Bool)] = []
+        var asked: [(String, String)] = []
+        let places = Places(diskList: { [] })
+        places.mountShare = { url, ui, done in mounted.append((url, ui)); done(0) }
+
+        let declined = await places.connect(root: share, server: "studio.example.com") { server, address in asked.append((server, address)); return false }
+        XCTAssertEqual(declined["problem"] as? String, "Not connected")
+        XCTAssertTrue(mounted.isEmpty)
+        XCTAssertEqual(asked.first?.0, "studio.example.com")
+        XCTAssertEqual(asked.first?.1, "smb://office-nas.local/footage")
+
+        let accepted = await places.connect(root: share, server: "studio.example.com") { _, _ in true }
+        XCTAssertEqual(accepted["ok"] as? Bool, true)
+        XCTAssertEqual(mounted.map { $0.0 }, ["smb://office-nas.local/footage"])
+        XCTAssertEqual(mounted.map { $0.1 }, [true])
+
+        // a share this Mac had connects as before, with no confirm
+        places.shares = [Places.Share(key: share, url: "smb://tiny@office-nas.local/footage")]
+        mounted = []
+        _ = await places.connect(root: share, server: "studio.example.com") { _, _ in XCTFail("asked for a share this Mac had"); return false }
+        XCTAssertEqual(mounted.map { $0.0 }, ["smb://tiny@office-nas.local/footage"])
     }
 
     func testFiveEventsMakeOneLook() {
@@ -233,6 +328,12 @@ final class PlacesTests: XCTestCase {
 
     func testAShareIsConnectedAgainByTheAddressItWasMountedWith() {
         XCTAssertEqual(shareURL(source: "//tiny@office-nas.local/footage", fstype: "smbfs"), "smb://tiny@office-nas.local/footage")
+        // review fix 4: never a password in the address kept
+        XCTAssertEqual(shareURL(source: "//tiny:secret@office-nas.local/footage", fstype: "smbfs"), "smb://tiny@office-nas.local/footage")
+        XCTAssertEqual(shareURL(source: "//guest:@office-nas.local/footage", fstype: "smbfs"), "smb://guest@office-nas.local/footage")
+        XCTAssertEqual(shareURL(source: "//STUDIO;tiny:p%40ss@office-nas/footage", fstype: "smbfs"), "smb://STUDIO;tiny@office-nas/footage")
+        XCTAssertEqual(shareURL(source: "//tiny:secret@office-nas/Footage", fstype: "afpfs"), "afp://tiny@office-nas/Footage")
+        XCTAssertEqual(shareURL(source: "//office-nas/footage", fstype: "smbfs"), "smb://office-nas/footage")
         XCTAssertEqual(shareURL(source: "office-nas:/volume1/footage", fstype: "nfs"), "nfs://office-nas/volume1/footage")
         XCTAssertNil(shareURL(source: "/dev/disk3s1", fstype: "apfs"))
         XCTAssertEqual(Places.shareParts("smb://office-nas/footage")?.host, "office-nas")
