@@ -45,6 +45,8 @@ export interface EnhanceSession {
   status: EnhanceStatus;
   engine?: string;
 
+  /** "Waits for one of your computers…" while no computer can take the run */
+  line?: string;
   /** a plug-in engine's run waiting for, or claimed by, its outside worker */
   remote?: { state: "waiting" | "claimed"; at: number };
   /** the passes in order (admins: a second one); step = the one running */

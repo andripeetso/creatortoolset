@@ -137,6 +137,13 @@ export async function fitJpeg(src: string, out: string, side: number, bytes: num
 }
 
 /**
+ * Tiles the numbered pictures in `dir` (001.png, …) into one sheet at `out`, each 540 wide and `h` high, `cols` × `rows`:
+ * the cards' stills a Mac drew, for the look call (cards/step.ts lookSheet). Pictures only, no footage (decision 14).
+ */
+export const tilePictures = (dir: string, out: string, h: number, cols: number, rows: number): Promise<void> =>
+  ffmpeg(["-framerate", "1", "-i", path.join(dir, "%03d.png"), "-vf", `scale=540:${h},tile=${cols}x${rows}`, "-frames:v", "1", out]);
+
+/**
  * Adds the picture at `src` to a style, made small (PICTURE_MAX_SIDE, PICTURE_MAX_BYTES). An inspiration over
  * MAX_INSPIRATIONS is refused; a made one over MAX_MADE takes the place of the oldest made one. Null: no such style.
  * A string is why it was refused. `chat`: the assistant chat's picture it comes from; one the style already has from

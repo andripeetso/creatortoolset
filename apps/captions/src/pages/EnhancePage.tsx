@@ -221,6 +221,7 @@ function EnginePicker({ avail, value, onChange, then, onThen, compact = false }:
 
 /** What the progress card says while an engine works. */
 function workingNote(s: EnhanceSession, avail: EnhanceAvailability | null): string {
+  if (s.line) return s.line;
   const now = s.chain?.[s.step ?? 0] ?? s.engine;
   const pass = (s.chain?.length ?? 1) > 1 ? `Pass ${(s.step ?? 0) + 1} of ${s.chain!.length}, ${engineLabel(now)}. ` : "";
   const working = ENGINES.find((e) => e.key === now)?.working;

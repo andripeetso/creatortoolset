@@ -11,11 +11,12 @@ import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./cr
 import type { EnhanceStatus } from "../contracts/enhance";
 import { env } from "./lib/env";
 import { keyFor, type Actor } from "./my-keys";
-import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/nvidia-voice";
+import { enhancePiece, NvidiaRefused, SR as NV_SR } from "./lib/nvidia-voice";
 import { type SessionUser, bumpUsage } from "./users";
 import { type Moves, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -47,13 +48,13 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
  *   pass-<n>.wav     a pass's output, the next pass's input
  *   blend-<pct>.m4a  a download at that strength (+ blend-<pct>-video.*)
  *
- * One job per session, queued like exports. A server-side job killed by a
- * restart resurfaces as an error on the next read.
+ * One run per session. The built-in engines' passes, the loudness and the video remux are a computer task
+ * (api/work/tasks/enhance.ts, the one road of work/tasks.ts): a computer cuts the sound and makes the files, the server
+ * makes the paid engine call on the owner's key (decision 12). A plug-in engine's pass runs as that plug-in says.
  */
 export const enhanceApp = new Hono<{ Variables: AuthVars }>();
 
 const ENHANCE_DIR = path.join(env.dataDir, "enhance");
-const MAX_CONCURRENT = Math.max(1, Number(process.env.ENHANCE_CONCURRENCY || 2));
 /** 0 = keep sessions until the user deletes them. */
 const KEEP_DAYS = Number(process.env.ENHANCE_KEEP_DAYS || 0);
 /** The engines, the default first. */
@@ -89,21 +90,22 @@ const allEngines = (): string[] => [...ENGINES, ...engines.keys()];
 
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const sesDir = (id: string) => path.join(ENHANCE_DIR, id);
-const originalPath = (id: string) => path.join(sesDir(id), "original");
 const sourceAudio = (id: string) => path.join(sesDir(id), "source.m4a");
 const enhancedAudio = (id: string) => path.join(sesDir(id), "enhanced.m4a");
+export const ENHANCE_TASK = "enhance";
+export const originalPath = (id: string) => path.join(sesDir(id), "original");
 const enhancedVideo = (id: string, ext: string) =>
   path.join(sesDir(id), `enhanced-video.${ext}`);
-const passOut = (id: string, step: number) => path.join(sesDir(id), `pass-${step}.wav`);
+export const passOut = (id: string, step: number) => path.join(sesDir(id), `pass-${step}.wav`);
 const blendAudio = (id: string, pct: number) => path.join(sesDir(id), `blend-${pct}.m4a`);
 const blendVideo = (id: string, pct: number, ext: string) => path.join(sesDir(id), `blend-${pct}-video.${ext}`);
 /** Every result, and the original it's compared and blended with, at one loudness. */
-const LOUDNESS = "loudnorm=I=-15:TP=-1.5:LRA=9";
+export const LOUDNESS = "loudnorm=I=-15:TP=-1.5:LRA=9";
 
 /** A session's status moves. A run is queued, then running (here or on the Mac), then done or error; a cancel gives back ready or done. */
 export const ENHANCE_MOVES: Moves<EnhanceStatus> = {
   ready: ["queued", "needs_key"],
-  queued: ["running", "ready", "done", "error"],
+  queued: ["running", "ready", "done", "error", "needs_key"],
   running: ["queued", "ready", "done", "error", "needs_key"],
   done: ["queued", "needs_key"],
   error: ["queued", "needs_key"],
@@ -143,22 +145,23 @@ export interface Meta {
   error?: string;
   /** Container of enhanced-video.* when one was produced. */
   videoOutExt?: "mp4" | "mkv";
+  /** The computer task now under way: a result or a progress note from an older one (a cancel, a new run) is left alone. */
+  run?: string;
   createdAt: number;
   updatedAt: number;
 }
 
-/** Sessions with a live server-side job; anything on disk claiming to run
- *  but absent here (and not waiting on the Mac) was killed by a restart. */
+/** Sessions with a run under way (a computer task, or a plug-in engine's step here); anything on disk claiming to run
+ *  but absent here, with no task and not waiting on the Mac, was killed by a restart. */
 const active = new Map<string, Meta>();
 const children = new Map<string, ChildProcess>();
 /** In-flight engine requests (ElevenLabs, NVIDIA), so cancel() can abort them. */
 const apiCalls = new Map<string, AbortController>();
 /** Sessions cancelled while no job of theirs was in memory: a plug-in engine's answer that raced the cancel is refused. */
 export const cancelled = new Set<string>();
-const queue: string[] = [];
-let running = 0;
-/** Runs a restart of the server would end (reconcileInterrupted fails them): a deploy waits for 0 (/api/health). */
-export const enhancesAtRisk = (): number => running + queue.length;
+/** Runs a restart of the server would end (reconcileInterrupted fails them): a deploy waits for 0 (/api/health). A computer
+ *  task outlives a restart, so only a plug-in engine's step here counts. */
+export const enhancesAtRisk = (): number => [...active.values()].filter((m) => m.status === "running" && !m.run).length;
 /** A plug-in engine's passes waiting for or on its own worker (out of `active`), as their saves say. ponytail: a restart forgets them until they next save. */
 const away = new Map<string, Meta>();
 /** This account's files being enhanced, here or by a plug-in engine's worker, for Home (api/activity.ts); `keep`: only this workspace's. */
@@ -204,6 +207,11 @@ async function reconcileInterrupted(): Promise<void> {
     const meta = await readMeta(id);
     if (!meta || (meta.status !== "queued" && meta.status !== "running")) continue;
     if (meta.remote) continue; // a plug-in engine's run: its own sweep decides
+    const t = taskFor(ENHANCE_TASK, id)?.state;
+    if (meta.run && (t === "queued" || t === "running")) {
+      active.set(id, meta); // its task waits or runs on: Home lists it, and its result is filed when it comes
+      continue;
+    }
     setStatus(meta, "error");
     meta.error = "Stopped when the server restarted";
     await persist(meta);
@@ -219,11 +227,12 @@ async function ownedMeta(id: string, user: SessionUser): Promise<Meta | null> {
   return meta && canSee(meta, user) ? meta : null;
 }
 
-/** Everything the client needs beyond meta: does a result exist? */
-const publicMeta = (m: Meta) => ({
-  ...m,
-  hasEnhanced: existsSync(enhancedAudio(m.id)),
-});
+/** Everything the client needs beyond meta: does a result exist, and the wait line while no computer can take the run. */
+const publicMeta = (m: Meta) => {
+  const t = m.status === "queued" && m.run ? taskFor(ENHANCE_TASK, m.id) : undefined;
+  const line = t && taskWaitLine(t);
+  return { ...m, hasEnhanced: existsSync(enhancedAudio(m.id)), ...(line ? { line } : {}) };
+};
 
 const sessionIds = async () =>
   (await readdir(ENHANCE_DIR, { withFileTypes: true }).catch(() => []))
@@ -256,28 +265,8 @@ if (env.isProduction) {
 
 /* ---- probes & process helpers ---- */
 
-function probe(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve) => {
-    const p = spawn("ffprobe", ["-v", "error", ...args, file]);
-    let out = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => resolve(out.trim()));
-    p.on("error", () => resolve(""));
-  });
-}
-
-const probeDuration = async (f: string) =>
-  Number(await probe(f, ["-show_entries", "format=duration", "-of", "csv=p=0"])) || 0;
-const probeHasAudio = async (f: string) =>
-  (await probe(f, ["-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"])).length > 0;
-const probeHasVideo = async (f: string) => {
-  // attached cover art is a video stream too — require a real codec
-  const codec = await probe(f, ["-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
-  return codec.length > 0 && !["mjpeg", "png", "bmp"].includes(codec.toLowerCase());
-};
-
 /** Spawn a command for session `id` (tracked so cancel can kill it),
- *  mapping ffmpeg -progress output onto the [lo, hi] progress slice. */
+ *  mapping ffmpeg -progress output onto the [lo, hi] progress slice: a plug-in engine's steps, and the download's blend. */
 function runStep(
   id: string,
   meta: Meta,
@@ -347,19 +336,12 @@ function refusal(engine: Engine, user: SessionUser): string | null {
   return keyFor(user, KEY[engine as BuiltinEngine]).missing ?? null;
 }
 
-/** NVIDIA Studio Voice on the extracted 48 kHz WAV -> enhance-nv.wav, lined up with it. */
-async function runNvidia(id: string, meta: Meta, wavPath: string, outDir: string, [lo, hi]: [number, number]): Promise<string> {
+/** One NVIDIA Studio Voice piece (a 48 kHz WAV a computer cut) on the owner's key: the cleaned piece back. */
+export async function voicePiece(id: string, owner: string | undefined, wav: Buffer): Promise<Buffer> {
   const controller = new AbortController();
   apiCalls.set(id, controller);
   try {
-    const { x } = readWav(await readFile(wavPath));
-    const y = await studioVoice(engineKey("nvidia", meta.owner), x, controller.signal, (done, total) => {
-      meta.progress = Math.max(meta.progress, lo + (done / total) * (hi - lo));
-      void jobPersist(meta);
-    });
-    const out = path.join(outDir, "enhance-nv.wav");
-    await writeFile(out, wav16(y));
-    return out;
+    return await enhancePiece(engineKey("nvidia", owner), wav, controller.signal);
   } catch (e) {
     if (controller.signal.aborted) throw new Error("Cancelled");
     if (e instanceof NvidiaRefused) console.warn(`[nvidia] ${e.message}`);
@@ -384,14 +366,11 @@ const EL_EXT: Record<string, string> = {
 };
 
 /**
- * One call to the Voice Isolator: send the extracted WAV, receive the
- * cleaned audio. The API reports no progress, so the caller wraps this
- * in a crawl. Registered in `apiCalls` so cancel() aborts the fetch
- * exactly like killing an ffmpeg step.
+ * One call to the Voice Isolator on the owner's key: the WAV a computer cut goes up, the cleaned audio comes back
+ * with its extension. Registered in `apiCalls` so cancel() aborts the fetch.
  */
-async function runElevenLabs(id: string, owner: string | undefined, wavPath: string, outDir: string): Promise<string> {
+export async function isolate(id: string, owner: string | undefined, audio: Buffer): Promise<{ ext: string; audio: Buffer }> {
   const key = engineKey("elevenlabs", owner);
-  const audio = await readFile(wavPath);
   const form = new FormData();
   form.append("audio", new Blob([audio], { type: "audio/wav" }), "audio.wav");
 
@@ -406,13 +385,11 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60 * 1000)]),
     });
   } catch (e) {
-    apiCalls.delete(id);
-    if (active.get(id) !== undefined && controller.signal.aborted) {
-      throw new Error("Cancelled");
-    }
+    if (controller.signal.aborted) throw new Error("Cancelled");
     throw e instanceof Error ? e : new Error(String(e));
+  } finally {
+    apiCalls.delete(id);
   }
-  apiCalls.delete(id);
 
   if (!res.ok) {
     const detail = (await res.text().catch(() => "")).slice(0, 300);
@@ -430,28 +407,16 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
     throw new Error(`ElevenLabs error ${res.status}: ${detail || "no details"}`);
   }
   creditBack("ELEVENLABS_API_KEY", key);
-  const ext = EL_EXT[(res.headers.get("content-type") || "").split(";")[0].trim()] || "mp3";
-  const out = path.join(outDir, `enhance-el.${ext}`);
-  await writeFile(out, Buffer.from(await res.arrayBuffer()));
-  return out;
-}
-
-/** A LAME-style MP3 opens with 1105 samples of encoder delay that a decoder without the LAME tag plays, so the track runs past the input (~37 ms here). Decode it to WAV without the delay, at the input's length. */
-const MP3_ENCODER_DELAY = 1105;
-async function trimEncoderDelay(id: string, meta: Meta, mp3: string, inputSeconds: number): Promise<string> {
-  if (!mp3.endsWith(".mp3") || (await probeDuration(mp3)) <= inputSeconds + 0.01) return mp3;
-  const wav = mp3.replace(/\.mp3$/, ".wav");
-  await runStep(id, meta, "ffmpeg", [
-    "-i", mp3,
-    "-af", `atrim=start_sample=${MP3_ENCODER_DELAY},asetpts=PTS-STARTPTS`,
-    "-t", String(inputSeconds),
-    "-c:a", "pcm_s16le", wav,
-  ]);
-  await rm(mp3, { force: true });
-  return wav;
+  return { ext: EL_EXT[(res.headers.get("content-type") || "").split(";")[0].trim()] || "mp3", audio: Buffer.from(await res.arrayBuffer()) };
 }
 
 /* ---- pipeline ---- */
+
+/** The computer task's ask: from pass `step` on, through the built-in engines; `source`: make the levelled original too. */
+export type EnhanceInput = { run: string; chain: Engine[]; step: number; source: boolean };
+/** What it found and made; `next`: a plug-in engine's pass comes next (its input is pass.wav, or the upload). */
+export type EnhanceMade = { duration: number; hasVideo: boolean; next?: number; videoOutExt?: "mp4" | "mkv" };
+export const builtinEngine = (e: string): boolean => (ENGINES as readonly string[]).includes(e);
 
 /** Queues the run; true when it is queued, false when it parked as needs_key. */
 function enqueue(meta: Meta, user: SessionUser): boolean {
@@ -473,7 +438,7 @@ function enqueue(meta: Meta, user: SessionUser): boolean {
   return true;
 }
 
-/** The current pass: a plug-in engine's (it hands the result back itself), or the server's queue. */
+/** The current pass: a plug-in engine's (it hands the result back itself), or the computer task from this pass on. */
 function startStep(meta: Meta): void {
   const plugged = engines.get(meta.chain![meta.step ?? 0]);
   if (plugged) {
@@ -486,21 +451,79 @@ function startStep(meta: Meta): void {
     });
     return;
   }
+  const run = randomUUID();
+  meta.run = run;
   active.set(meta.id, meta);
-  queue.push(meta.id);
-  pump();
+  void persist(meta);
+  const input: EnhanceInput = { run, chain: meta.chain!, step: meta.step ?? 0, source: !existsSync(sourceAudio(meta.id)) };
+  void startTask<EnhanceInput, EnhanceMade>(ENHANCE_TASK, meta.id, meta.owner ?? "", meta.projectId ?? null, input).then(
+    (got) => got.state === "queued" && announceSoon(meta.owner, "enhance"), // the page hears the wait line
+    (e) => enhanceFailed(meta.id, run, e instanceof Error ? e.message : String(e)), // a failed run already said so
+  );
+}
+
+/** The session while run `run` is its run under way, else null (deleted, cancelled, or a newer run started). */
+async function under(id: string, run: string): Promise<Meta | null> {
+  const meta = await readMeta(id);
+  return meta && meta.run === run && (meta.status === "queued" || meta.status === "running") ? meta : null;
+}
+
+/** A progress note from the task; the first moves the session to running. */
+export async function enhanceProgress(id: string, run: string, p: number): Promise<void> {
+  const meta = await under(id, run);
+  if (!meta || !(p >= 0 && p <= 1)) return;
+  setStatus(meta, "running");
+  meta.progress = Math.max(meta.progress, Math.min(p, 0.99));
+  active.set(id, meta);
+  await jobPersist(meta);
+}
+
+/** The task's result, on the server: its files moved in and the session done, or the plug-in engine's pass started. */
+export async function enhanceFiled(id: string, run: string, made: EnhanceMade, files: Record<string, string>): Promise<void> {
+  const meta = await under(id, run);
+  if (!meta) return;
+  if (made.duration) meta.duration = made.duration;
+  meta.hasVideo = made.hasVideo;
+  if (files["source.m4a"]) await keep(files["source.m4a"], sourceAudio(id));
+  meta.run = undefined;
+  active.delete(id);
+  if (made.next !== undefined) {
+    if (files["pass.wav"]) await keep(files["pass.wav"], passOut(id, made.next - 1));
+    meta.step = made.next;
+    await persist(meta);
+    startStep(meta);
+    return;
+  }
+  await keep(files["enhanced.m4a"]!, enhancedAudio(id));
+  if (made.videoOutExt) await keep(files[`enhanced-video.${made.videoOutExt}`]!, enhancedVideo(id, made.videoOutExt));
+  meta.videoOutExt = made.videoOutExt;
+  setStatus(meta, "done");
+  meta.progress = 1;
+  await jobPersist(meta);
+}
+
+/** The task failed for good: the session shows why, or waits for a key that went missing meanwhile. */
+export async function enhanceFailed(id: string, run: string, error: string): Promise<void> {
+  const meta = await under(id, run);
+  if (!meta) return;
+  const missing = (meta.chain ?? []).filter(builtinEngine).map((e) => keyFor(meta.owner, KEY[e as BuiltinEngine]).missing).find(Boolean);
+  setStatus(meta, missing ? "needs_key" : "error");
+  meta.error = missing ?? error;
+  meta.run = undefined;
+  active.delete(id);
+  await jobPersist(meta);
 }
 
 /** What the current pass works on: the upload, or the pass before's output. */
 const stepInput = (meta: Meta) => (meta.step ? passOut(meta.id, meta.step - 1) : originalPath(meta.id));
 
 /** The progress range of pass `step` of `n` (the last 16 % are loudness and the remux). */
-const band = (step: number, n: number): [number, number] => [0.08 + (step * 0.74) / n, 0.08 + ((step + 1) * 0.74) / n];
+export const band = (step: number, n: number): [number, number] => [0.08 + (step * 0.74) / n, 0.08 + ((step + 1) * 0.74) / n];
 
 /**
- * The last steps, whatever the engine: loudness to -15 LUFS and AAC (every
+ * The last steps of a plug-in engine's run, whatever the engine: loudness to -15 LUFS and AAC (every
  * engine's voice at one level), then the video remux. `alive` = the run
- * wasn't cancelled meanwhile.
+ * wasn't cancelled meanwhile. The built-in engines' runs do the same in their task (work/tasks/enhance.ts).
  */
 async function finish(id: string, meta: Meta, clean: string, duration: number, alive: () => boolean): Promise<void> {
   const outAudio = enhancedAudio(id) + ".part";
@@ -560,102 +583,12 @@ async function finish(id: string, meta: Meta, clean: string, duration: number, a
   }
 }
 
-async function runJob(id: string): Promise<void> {
-  const meta = active.get(id);
-  if (!meta) return; // cancelled while queued
-  setStatus(meta, "running");
-  await jobPersist(meta);
-
-  const dir = sesDir(id);
-  const wav = path.join(dir, "enhance-tmp.wav");
-  const chain = meta.chain?.length ? meta.chain : (["elevenlabs"] as Engine[]);
-  let clean: string | null = null;
-  let crawl: ReturnType<typeof setInterval> | null = null;
-
-  try {
-    const duration = meta.duration || (await probeDuration(originalPath(id)));
-    for (let step = meta.step ?? 0; step < chain.length; step++) {
-      meta.step = step;
-      const engine = chain[step];
-      const plugged = engines.get(engine);
-      if (plugged) {  // a plug-in engine's pass: it takes this input and answers later
-        active.delete(id);
-        await plugged.start(enhanceHost, meta);
-        return;
-      }
-      const [lo, hi] = band(step, chain.length);
-      // 1) mono PCM WAV for the engine: 48 kHz for NVIDIA, 44.1 kHz for ElevenLabs
-      await runStep(id, meta, "ffmpeg", [
-        "-i", stepInput(meta),
-        "-vn", "-ac", "1", "-ar", engine === "nvidia" ? String(NV_SR) : "44100",
-        "-c:a", "pcm_s16le",
-        wav,
-      ], step === 0 ? { duration, lo: 0, hi: 0.08 } : undefined);
-
-      // 2) the engine. NVIDIA moves the bar per 5-min piece; ElevenLabs
-      // reports nothing, so crawl across its band on a curve (it answers in seconds)
-      if (engine === "nvidia") {
-        clean = await runNvidia(id, meta, wav, dir, [lo, hi]);
-      } else {
-        const started = Date.now();
-        const tau = Math.max(6, duration / 3) * 1000;
-        crawl = setInterval(() => {
-          const frac = 1 - Math.exp(-(Date.now() - started) / tau);
-          meta.progress = Math.max(meta.progress, lo + frac * (hi - lo));
-          void jobPersist(meta);
-        }, 1000);
-        clean = await runElevenLabs(id, meta.owner, wav, dir);
-        clearInterval(crawl);
-        crawl = null;
-        clean = await trimEncoderDelay(id, meta, clean, await probeDuration(wav));
-      }
-      if (active.get(id) !== meta) return; // cancelled mid-run
-      if (step + 1 < chain.length) {       // the next pass starts from this one
-        await runStep(id, meta, "ffmpeg", ["-i", clean, "-ac", "1", "-ar", String(NV_SR), "-c:a", "pcm_s16le", "-f", "wav", passOut(id, step)]);
-        await rm(clean, { force: true });
-        clean = null;
-      }
-    }
-
-    // 3) loudness, AAC, the video remux
-    await finish(id, meta, clean!, duration, () => active.get(id) === meta);
-  } catch (e) {
-    if (active.get(id) !== meta) return; // cancelled — don't resurrect
-    setStatus(meta, e instanceof NeedsKey ? "needs_key" : "error");
-    meta.error = e instanceof Error ? e.message : String(e);
-    await jobPersist(meta);
-  } finally {
-    if (crawl) clearInterval(crawl);
-    active.delete(id);
-    await Promise.all([
-      rm(wav, { force: true }),
-      clean ? rm(clean, { force: true }) : Promise.resolve(),
-      ...chain.map((_, k) => rm(passOut(id, k), { force: true })),
-    ]).catch(() => {});
-  }
-}
-
-function pump(): void {
-  while (running < MAX_CONCURRENT && queue.length > 0) {
-    const id = queue.shift()!;
-    if (!active.has(id)) continue;
-    running++;
-    void runJob(id)
-      .catch(() => {})
-      .finally(() => {
-        running--;
-        pump();
-      });
-  }
-}
-
 /** Kill a queued/running job, the Mac's included (files stay). */
 export function cancel(id: string): void {
-  active.delete(id); // runJob checks this before writing results
+  active.delete(id); // a late result checks the run before it is filed
   away.delete(id);
   cancelled.add(id);
-  const qi = queue.indexOf(id);
-  if (qi >= 0) queue.splice(qi, 1);
+  dropTask(ENHANCE_TASK, id); // a computer that holds it lets go at its next beat
   children.get(id)?.kill("SIGKILL");
   children.delete(id);
   apiCalls.get(id)?.abort();
@@ -770,23 +703,16 @@ enhanceApp.post("/", async (c) => {
   try {
     await mkdir(dir, { recursive: true });
     await pipeline(Readable.fromWeb(body as never), createWriteStream(originalPath(id)));
-    if (!(await probeHasAudio(originalPath(id)))) {
-      throw new Error("This file has no audio track");
-    }
-    const [duration, hasVideo, st] = await Promise.all([
-      probeDuration(originalPath(id)),
-      probeHasVideo(originalPath(id)),
-      stat(originalPath(id)),
-    ]);
-    // A/B source at the result's loudness: the comparison and the strength slider move the sound, not the volume
-    const audioArgs = ["-af", LOUDNESS, "-ar", "48000", "-c:a", "aac", "-b:a", "160k"];
+    const st = await stat(originalPath(id));
+    if (!st.size) throw new Error("Empty file");
+    // its length, whether it has a picture and the levelled original for the A/B come with the run (work/tasks/enhance.ts)
     const meta: Meta = {
       id,
       name,
       owner: user.username,
       ...(projectId ? { projectId } : {}),
-      hasVideo,
-      duration,
+      hasVideo: false,
+      duration: 0,
       bytes: st.size,
       status: "ready",
       engine: chain[0],
@@ -795,22 +721,12 @@ enhanceApp.post("/", async (c) => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    active.set(id, meta); // guards against a concurrent sweep mid-extract
-    await runStep(id, meta, "ffmpeg", [
-      "-i", originalPath(id),
-      "-vn", ...audioArgs,
-      "-movflags", "+faststart",
-      "-f", "mp4",
-      sourceAudio(id),
-    ]);
-    active.delete(id);
     // enhanced in the same go — no separate "run" click
     const queued = enqueue(meta, user);
     await persist(meta);
     if (queued) bumpUsage(user.username, { enhanceRuns: 1 });
     return c.json(publicMeta(meta));
   } catch (e) {
-    active.delete(id);
     await rm(dir, { recursive: true, force: true }).catch(() => {});
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

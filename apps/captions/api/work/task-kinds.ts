@@ -3,7 +3,9 @@
  * One import per module in api/work/tasks/; only this file and tasks.ts import them (prevention.test.ts).
  */
 import "./tasks/caption-studio";
+import "./tasks/clips";
 import "./tasks/design-pages";
+import "./tasks/enhance";
 import "./tasks/export";
 import "./tasks/frames";
 import "./tasks/review";
