@@ -27,9 +27,11 @@ const R = "/api/devices/relay";
 let calls: { at: string; body?: unknown }[] = [];
 let beatOk = true;
 let claims: unknown[] = [];
+let claimed: Record<string, unknown>[] = [];
 const uploads: Record<string, Buffer> = {};
 const fake = new Hono()
-  .post(`${R}/work/claim`, (c) => c.json(claims.shift() ?? { pkg: null }))
+  .post(`${R}/work/claim`, async (c) => (claimed.push(await c.req.json()), c.json(claims.shift() ?? { pkg: null })))
+  .post(`${R}/work/lib/:id/fail`, async (c) => (calls.push({ at: `lib fail ${c.req.param("id")}`, body: await c.req.json() }), c.json({ ok: true })))
   .post(`${R}/work/:id/beat`, async (c) => (calls.push({ at: `beat ${c.req.param("id")}`, body: await c.req.json() }), c.json({ ok: beatOk })))
   .post(`${R}/work/:id/:what`, async (c) => (calls.push({ at: `${c.req.param("what")} ${c.req.param("id")}`, body: await c.req.json() }), c.json({ ok: true })))
   .put(`${R}/work/:id/file`, async (c) => ((uploads[c.req.query("path")!] = Buffer.from(await c.req.arrayBuffer())), c.json({ ok: true })))
@@ -134,6 +136,25 @@ describe("the computer worker", () => {
   it("stops claiming when the server needs a newer app", async () => {
     claims = [{ pkg: null }, { pkg: null, update: true }];
     expect(await startComputerWorker(o)).toBe("update");
+  });
+
+  it("CT_WORKER_KINDS=library: sweeps its scratch, asks for library work only with its machine, and stops for a newer package", async () => {
+    process.env.CT_WORKER_KINDS = "library";
+    process.env.CT_LIBRARY_SCRATCH_GB = "0";
+    try {
+      mkdirSync(path.join(dir, "library-work", "99"), { recursive: true });
+      claimed = [];
+      claims = [{ pkg: null }, { pkg: null, lib: { v: 99, job: { id: 5, kind: "proxy" } } }];
+      expect(await startComputerWorker(o)).toBe("update");
+      expect(existsSync(path.join(dir, "library-work"))).toBe(false);
+      expect(claimed[0]).toMatchObject({ steps: [], library: true, libraryOnly: true });
+      expect(claimed[0]!.pictures).toBeUndefined();
+      expect((claimed[0]!.machine as { cpus: number }).cpus).toBeGreaterThan(0);
+      expect(calls).toContainEqual({ at: "lib fail 5", body: { error: "This computer needs a newer Creator Toolset" } });
+    } finally {
+      delete process.env.CT_WORKER_KINDS;
+      delete process.env.CT_LIBRARY_SCRATCH_GB;
+    }
   });
 
   it("files a throw as the server's loop does", () => {

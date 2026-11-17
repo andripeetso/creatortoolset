@@ -198,7 +198,7 @@ export const libraryJobsAtRisk = (): number => running.size;
  * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
  * loop leaves them alone while one can. Unset (a server without the work road), the server runs every job as before.
  */
-export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean } = { kinds: [] };
+export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean; line?: (job: JobRow) => string | undefined } = { kinds: [] };
 
 /**
  * The jobs that decode video or sound (design 2.1): this server runs them only where its video work is on
@@ -235,7 +235,8 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
     if (on.includes(j.kind) && test!(j)) out.push(j.id);
     else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor) && !readsNoPicture(j)) {
       out.push(j.id);
-      const line = leaveToComputers.kinds.includes(j.kind) ? WAITS_FOR_COMPUTER : WAITS_FOR_SERVER;
+      // which computers can read its folder, when that says more than "one of your computers" (library-package.ts libraryWaitLine)
+      const line = leaveToComputers.kinds.includes(j.kind) ? (leaveToComputers.line?.(j) ?? WAITS_FOR_COMPUTER) : WAITS_FOR_SERVER;
       if (j.error !== line) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(line, j.id);
     }
   }

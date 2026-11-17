@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Device, MacReport, ProviderSettings } from "../../contracts/providers";
+import type { Device, MacReport, Machine, ProviderSettings } from "../../contracts/providers";
 import { env } from "./env";
 import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
 import { announce } from "./sync";
@@ -305,6 +305,26 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   d.report = r;
   if (version) d.version = version;
   persist();
+}
+
+/**
+ * The machine block of a computer worker's work claim (api/work/machine.ts): its load and memory now, and the shares a
+ * Linux computer has connected. A Mac's own report keeps its name, chip and disks; a claim that sends no disks keeps them.
+ */
+export function noteMachine(id: string, m: Machine): void {
+  const d = find(id);
+  if (!d) return;
+  const old = d.report?.machine;
+  const machine: Machine = {
+    ...m,
+    ...old,
+    cpus: m.cpus,
+    memGb: m.memGb,
+    ...(m.freeGb !== undefined ? { freeGb: m.freeGb } : {}),
+    ...(m.load !== undefined ? { load: m.load } : {}),
+    ...(m.disks ? { disks: m.disks } : {}),
+  };
+  saveReport(id, { ...(d.report ?? { drivers: [], homes: [] }), at: d.report?.at ?? Date.now(), machine });
 }
 
 /**

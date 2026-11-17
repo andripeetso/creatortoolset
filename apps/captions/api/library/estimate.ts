@@ -316,7 +316,8 @@ const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND (IFNULL
 // a step this server leaves for one of the person's computers while none can take it, or that waits for video work this
 // server does not do (worker.ts leftToComputers): nothing runs it until a computer of theirs is on, so it is waiting, not
 // time left (a library stuck at "about 20 min left" for days, 2026-11-17)
-const AWAY = `(state = 'queued' AND IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}))`;
+// The lines that name the folder (work/library-package.ts libraryWaitLine) wait the same way.
+const AWAY = `(state = 'queued' AND (IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}) OR error LIKE 'Only % can read %' OR error LIKE 'No computer can read %'))`;
 
 /** The whole library's state per step, for "how far is indexing, is anything broken": every clip in it, not one run. */
 export function libraryStatus(libraryId: string): LibraryStatus {
