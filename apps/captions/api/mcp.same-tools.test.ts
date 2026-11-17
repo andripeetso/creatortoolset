@@ -106,9 +106,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // description, edit and text); editor_style_save's playbook adds 242 (what the AI researched about a kind of edit, kept
     // apart from the notes: 55 bytes of description, text and sources). In main's own list review_set_approval grew by 101
     // (words: the person's own message approving a video, which a style learns from), in the golden
-    // find_sound_effects adds 644 (its tool text, with the type list)
-    expect(bytes(dock) - bytes(main(dock))).toBe(9405);
+    // find_sound_effects adds 635 (its tool text, with the type list)
+    expect(bytes(dock) - bytes(main(dock))).toBe(9396);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(9341);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(9332);
   });
 });

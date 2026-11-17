@@ -79,7 +79,7 @@ export const libraryTools: ToolModule = {
     {
       name: "find_sound_effects",
       description:
-        "Add free sound effects (CC0, with their source and licence) to the Media Library's Sound effects folder. type: whoosh, swipe, pop, click, hit, riser, ding, glitch, typing, camera, paper, notification or transition. words: what it should sound like. count: how many (5 by default, 10 at most). Answers the sounds added and the matches already there.",
+        "Add free sound effects (CC0, with their source and licence) to the Media Library's Sound effects folder. type: whoosh, swipe, pop, click, hit, riser, ding, glitch, typing, camera, paper, notification or transition. words: what it should sound like. count: how many (5 by default, 10 at most). Answers the sounds added and how many matched.",
       inputSchema: {
         type: "object",
         properties: { type: { type: "string", enum: [...SFX_TYPES] }, words: str, count: { type: "integer" } },
