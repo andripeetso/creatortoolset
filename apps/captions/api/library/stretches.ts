@@ -85,11 +85,11 @@ export interface StretchLine {
  * before go (stretches are found again only when the picture is read again); the person's own lines stay. The
  * shots' picture vectors go with them (pictures.ts makes them again from the new sheets).
  */
-export function storeStretches(db: DatabaseSync, versionId: string, found: FoundStretch[], level: LookLevel = "standard"): void {
+export function storeStretches(db: DatabaseSync, versionId: string, found: FoundStretch[], level: LookLevel = "standard", cutsBy: string | null = null): void {
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM stretches WHERE version_id = ? AND source = 'ai'").run(versionId);
-    db.prepare("UPDATE asset_versions SET look_level = ? WHERE id = ?").run(level === "standard" ? null : level, versionId);
+    db.prepare("UPDATE asset_versions SET look_level = ?, cuts_by = ? WHERE id = ?").run(level === "standard" ? null : level, cutsBy, versionId);
     db.prepare("DELETE FROM pictures WHERE version_id = ? AND seg >= 0").run(versionId);
     const add = db.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, ph, quality, flaws, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ai', ?)");
     const now = Date.now();

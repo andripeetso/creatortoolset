@@ -13,6 +13,7 @@ import { contextStamp, stampOf, workspaceContext } from "../lib/workshop/context
 import { blobs, libraryLookBudget, libraryLookLevel, librarySetting } from "./db";
 import { libraryWorkspaceId, WORKSPACE_MAX, whoFor, workspaceIdOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
+import { CUTS_BY_MODEL } from "./cuts";
 import { clock, FRAME_H, FRAME_W, lookPrompt, parseRated, pictureHash, readPicture, SHEET_STRETCHES, shotsOf, STRETCH_COLS, STRETCH_FRAMES, stretchSheet, type RatedLine } from "./look";
 import { ffmpegSlot } from "./media/run";
 import type { ProbeSummary } from "./media/probe";
@@ -267,7 +268,8 @@ export async function redoLook(db: DatabaseSync, versionId: string, actor: strin
 
 async function readAndKeep(db: DatabaseSync, versionId: string, file: string, p: ProbeSummary, scratch: string): Promise<KeptSheets> {
   const level = levelOfVersion(db, versionId);
-  const found = shotsOf(await readPicture(file, p.fps), p.duration, level);
+  const read = await readPicture(file, p.fps);
+  const found = shotsOf(read, p.duration, level);
   const turned = p.rotation === 90 || p.rotation === 270;
   const landscape = (turned ? p.height : p.width) >= (turned ? p.width : p.height);
   const dir = path.join(scratch, `look-${randomUUID()}`);
@@ -284,7 +286,7 @@ async function readAndKeep(db: DatabaseSync, versionId: string, file: string, p:
       ph.push(...(await sheetHashes(out, these.length, landscape)));
       kept.sheets.push({ segs: these.map((_, k) => i + k), jpeg: (await readFile(out)).toString("base64") });
     }
-    storeStretches(db, versionId, found.map((s, i) => ({ ...s, ph: ph[i] })), level);
+    storeStretches(db, versionId, found.map((s, i) => ({ ...s, ph: ph[i] })), level, read.cuts ? CUTS_BY_MODEL : null);
     const json = path.join(dir, "sheets.json");
     await writeFile(json, JSON.stringify(kept));
     const { library_id } = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string };
