@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Creator Toolset helper: a Linux computer (with or without an NVIDIA graphics card) that turns speech into text for
-its owner's Creator Toolset server, with models it downloads itself.
+its owner's Creator Toolset server, with models it downloads itself, and keeps copies of its Media Library in folders here.
 
   helper.py pair <server> <code>   swap the one-time code from Settings → Devices → Add a computer for this computer's token
   helper.py run                    take transcripts until stopped (the systemd --user unit runs this)
 
 Its folder is $CT_HELPER_HOME, else ~/.local/share/creator-toolset-helper: config.json (the server and the token, mode
 0600), models/<id>/ (one folder per model; a model is ready once its .done file is there) and hf/ (the download
-library's own cache). Nothing else is written.
-The road it speaks is the server's contracts/devices.ts (TRANSCRIBE_KIND).
+library's own cache). Nothing else is written there; a copy's files go in the folder its owner picked for it.
+The road it speaks is the server's contracts/devices.ts (TRANSCRIBE_KIND, COPY_KIND, FOLDER_LIST_KIND). Copies and folder
+lists need the standard library only: without the speech libraries the helper keeps copies and nothing else.
 """
+import errno
+import hashlib
+import importlib.util
 import json
 import os
+import re
 import queue
 import shutil
 import socket
@@ -20,7 +25,9 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 import wave
 
 VERSION = "1"
@@ -35,6 +42,12 @@ KIND = "transcribe"
 CHECK = "helper-check"
 MEDIA = {".mov", ".mp4", ".m4v", ".mxf", ".mkv", ".avi", ".mts", ".wav", ".mp3", ".aif", ".aiff", ".m4a", ".flac", ".jpg", ".png"}
 ENCODE_S = 4
+# a copy of a Media Library in a folder here (copy_run), and a folder listed for Add copy's folder browser (folder_walk)
+COPY = "copy"
+FOLDER_LIST = "folder-list"
+# the speech libraries are there (install.sh puts them in the venv; the Docker image has none)
+SPEECH = any(importlib.util.find_spec(m) for m in ("faster_whisper", "onnx_asr"))
+KINDS = ([KIND] if SPEECH else []) + [CHECK, COPY, FOLDER_LIST]
 # exit status when the server no longer knows this computer (removed in Devices): the unit does not restart on it
 REMOVED = 3
 
@@ -286,6 +299,7 @@ class Helper:
         self.failed = {}  # id → when to try again
         self.busy = None  # the model a transcript is using now (never deleted under it)
         self.jobs = queue.Queue()
+        self.copies = queue.Queue()
         self.runner = Runner()
         self.stop = None  # the reason to stop (Removed)
 
@@ -298,16 +312,18 @@ class Helper:
         did = False
         with self.lock:
             for _ in range(3):
-                r = self.call("POST", "/api/devices/relay/editor/claim", {"kinds": [KIND, CHECK], "models": held(), "getting": sorted(self.getting)})
+                r = self.call("POST", "/api/devices/relay/editor/claim", {"kinds": KINDS, "models": held(), "getting": sorted(self.getting)})
                 job = r.get("job")
-                if job and job.get("kind") == CHECK:
-                    # never behind a transcript: someone waits on this screen
-                    threading.Thread(target=self.safe, args=(self.check, job), daemon=True).start()
-                    did = True
+                kind = job and job.get("kind")
+                if kind in (CHECK, FOLDER_LIST):
+                    # never behind a transcript or a copy: someone waits on this screen
+                    threading.Thread(target=self.safe, args=(self.check if kind == CHECK else self.folder_list, job), daemon=True).start()
+                elif kind == COPY:
+                    self.copies.put(job)  # the server hands a computer one copy job at a time
                 elif job:
                     self.jobs.put(job)
-                    did = True
-                if not self.sync(r.get("models") or []):
+                did = did or bool(job)
+                if not SPEECH or not self.sync(r.get("models") or []):
                     return did
                 did = True
         return did
@@ -407,12 +423,76 @@ class Helper:
         if r and r.get("editor"):
             self.claim()
 
+    def folder_list(self, job):
+        """A folder listed (FOLDER_LIST_KIND), as the server's walkFolder does, or why not."""
+        base = f"/api/devices/relay/job/{FOLDER_LIST}/{job['id']}"
+        o = job.get("options") or {}
+        try:
+            depth = min(6, max(1, int(o.get("depth") or 6)))
+        except ValueError:
+            depth = 6
+        try:
+            r = self.call("POST", base, folder_walk(os.path.expanduser(o.get("path") or ""), depth, o.get("disk") == "1"))
+        except Removed:
+            raise
+        except Exception as e:
+            r = self.call("POST", base + "/fail", {"error": str(e)[:500] or type(e).__name__})
+        if r and r.get("editor"):
+            self.claim()
+
+    def copy_work(self):
+        """One copy job at a time, beside the transcripts."""
+        while True:
+            self.safe(self.copy, self.copies.get())
+
+    def copy(self, job):
+        """A copy job (COPY_KIND): its beat every 30 s while it runs, then its answer, or why it failed."""
+        o = job.get("options") or {}
+        root = o.get("root") or ""
+        base = f"/api/devices/relay/job/{COPY}/{job['id']}"
+        lease, ended = Lease(root), threading.Event()
+
+        def beat():
+            while not ended.wait(BEAT_S):
+                lease.beat()
+                self.safe(self.call, "POST", base, {"beat": True, **free_of(root)})
+        threading.Thread(target=beat, daemon=True).start()
+        try:
+            body = copy_run(o, self.fetch, lease)
+        except Removed:
+            raise
+        except Exception as e:
+            log(f"copy {job['id']} failed:", str(e)[:300])
+            body = None
+            r = self.call("POST", base + "/fail", {"error": str(e)[:300] or type(e).__name__})
+        finally:
+            ended.set()
+        if body is not None:
+            if "done" in body:
+                log("copied", body["done"]["rel"], "to", root)
+            r = self.call("POST", base, {**body, **free_of(root)}, timeout=120)
+        if r and r.get("editor"):
+            self.claim()
+
+    def fetch(self, url, offset):
+        """GET `url` (on the server) from byte `offset`; the token never goes to another host a redirect leads to."""
+        headers = {"authorization": f"Bearer {self.token}", "user-agent": f"creator-toolset-helper/{VERSION}"}
+        if offset:
+            headers["range"] = f"bytes={offset}-"
+        try:
+            return OPENER.open(urllib.request.Request(self.server + url, headers=headers), timeout=60)
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise Removed() from e
+            raise RuntimeError(f"The server did not send the file ({e.code})") from e
+
     def report(self):
         self.call("POST", "/api/devices/relay/report", {"drivers": [], "homes": [], "machine": machine(), "version": VERSION})
 
     def run(self):
         os.makedirs(MODELS, exist_ok=True)
         threading.Thread(target=self.work, daemon=True).start()
+        threading.Thread(target=self.copy_work, daemon=True).start()
         log(f"Creator Toolset helper {VERSION} for {self.server}, models in {MODELS},", "graphics card:", (gpu() or ["none"])[0])
         reported, failures = 0.0, 0
         while not self.stop:
@@ -423,7 +503,7 @@ class Helper:
                     self.claim()
                 self.retry_downloads()
                 # the server holds this for up to 25 s: as long as it runs the computer is online, also while it downloads or transcribes
-                r = self.call("POST", "/api/devices/relay/wait", {"blobs": False, "editor": [KIND, CHECK]})
+                r = self.call("POST", "/api/devices/relay/wait", {"blobs": False, "editor": KINDS})
                 failures = 0
                 if r and r.get("editor"):
                     # the server hints again while a wish stays open: wait a little instead of asking at once
@@ -431,7 +511,7 @@ class Helper:
                         time.sleep(5)
                 elif r and r.get("id"):
                     # an AI request: this computer runs no AI tools, so it says so at once instead of letting it wait
-                    self.call("POST", f"/api/devices/relay/{r['id']}/fail", {"error": "This computer runs speech models only"})
+                    self.call("POST", f"/api/devices/relay/{r['id']}/fail", {"error": "This computer runs no AI tools"})
             except Removed:
                 break
             except Exception as e:
@@ -475,6 +555,378 @@ def encode_speed():
                         "-t", str(ENCODE_S), "-c:v", "libx264", "-preset", "veryfast", "-f", "null", "-"], capture_output=True, timeout=120)
     took = time.time() - t0
     return round(ENCODE_S / took, 2) if r.returncode == 0 and took > 0 else None
+
+
+# ---- a folder listed for the server (FOLDER_LIST_KIND; the server's lib/folder-list.ts walkFolder) ----
+
+WALK_MOST, WALK_S = 20_000, 10
+PACKAGE = re.compile(r"\.(app|bundle|framework|photoslibrary|fcpbundle|fcpxbundle|imovielibrary|lrlibrary|tvlibrary|musiclibrary|aplibrary|logicx|band|rtfd|pages|numbers|key)$", re.I)
+
+
+def folder_walk(given, depth, disk):
+    """What is in `given`, `depth` levels down, level by level, never into hidden entries, links or packages: the body
+    the server takes ({entries, deeper, unreadable?, stopped?}). Raises with a sentence when it is not walked.
+    `disk`: any folder may be listed, a disk's own top folder too (Add copy's folder browser starts at /)."""
+    if not given.startswith("/"):
+        raise RuntimeError(f"Not a full path: {given}")
+    root = os.path.realpath(given)
+    if not os.path.isdir(root):
+        raise RuntimeError(f"No such folder on this computer: {given}")
+    try:
+        os.listdir(root)
+    except OSError:
+        raise RuntimeError(f"{given} could not be read on this computer (no permission to read it).") from None
+    home = os.path.realpath(os.path.expanduser("~"))
+    if not disk and (root in ("/", home) or os.path.dirname(root) == "/" or os.path.ismount(root)):
+        raise RuntimeError(f"{root} is a whole disk or home folder: name the folder the files are in.")
+    by, entries, deeper, unreadable = time.time() + WALK_S, [], 0, 0
+
+    def done(stopped):
+        return {"entries": entries, "deeper": deeper, **({"unreadable": unreadable} if unreadable else {}), **({"stopped": True} if stopped else {})}
+    level = [""]
+    for d in range(1, depth + 1):
+        nxt = []
+        for rel in level:
+            if len(entries) >= WALK_MOST or time.time() > by:
+                return done(True)
+            try:
+                with os.scandir(os.path.join(root, rel)) as it:
+                    found = sorted(it, key=lambda e: (e.name.lower(), e.name))
+            except OSError:
+                unreadable += 1
+                continue
+            for e in found:
+                if e.name.startswith(".") or e.is_symlink():
+                    continue
+                p = f"{rel}/{e.name}" if rel else e.name
+                if e.is_dir(follow_symlinks=False):
+                    entries.append({"path": p, "dir": True})
+                    if PACKAGE.search(e.name):
+                        continue
+                    if d < depth:
+                        nxt.append(p)
+                    else:
+                        deeper += 1
+                elif e.is_file(follow_symlinks=False):
+                    try:
+                        size = e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        size = 0
+                    entries.append({"path": p, "size": size})
+        level = nxt
+    return done(False)
+
+
+# ---- copies of a Media Library (COPY_KIND) ----
+# The folder holds MARKER (contracts/library.ts CopyMarker): which copy it is and each file copied, by key. A file is
+# written as .<name>.partial, synced, checked and renamed; an older version moves to .versions/<dir>/<stem> v<n><ext>;
+# a file in the way that is not this one stays, the new one goes beside it as "<stem> 2<ext>". Nothing is deleted but
+# its own partials and its own lease file.
+
+MARKER = ".creatortoolset-copy.json"
+LOCK = ".creatortoolset-copy.lock"
+BEAT_S = 30
+# a lease not beaten for this long was left by a writer that stopped
+LOCK_STALE_S = 120
+# a partial left this long is not resumed any more: the daily check deletes it
+PARTIAL_KEEP_S = 86_400
+CHUNK = 1 << 20
+
+
+class Reconnect(Exception):
+    """The folder, or this copy's marker in it, is not there."""
+
+
+class Full(Exception):
+    """The disk is full."""
+
+
+class _NoTokenElsewhere(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect (a stored original may be on another host), with the token only on the server's own host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.remove_header("Authorization")
+        return new
+
+
+OPENER = urllib.request.build_opener(_NoTokenElsewhere)
+
+
+def free_of(root):
+    """{"free": bytes free where `root` is}, or {} when it can't be read (a share that went away)."""
+    st = soon(lambda: os.statvfs(root))
+    return {"free": st.f_bavail * st.f_frsize} if st else {}
+
+
+def size_of(p):
+    try:
+        return os.stat(p).st_size if os.path.isfile(p) else None
+    except OSError:
+        return None
+
+
+def sha_of(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(CHUNK), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def rel_ok(rel):
+    """A path inside the folder, as the server's isRel takes it."""
+    return isinstance(rel, str) and 0 < len(rel) <= 1000 and not re.search(r"[\0\n\r\\]", rel) and not rel.startswith("/") and all(s not in ("", ".", "..") for s in rel.split("/"))
+
+
+def sync_dir(d):
+    try:
+        fd = os.open(d, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass  # some network file systems can't sync a folder
+    finally:
+        os.close(fd)
+
+
+def write_marker(root, m):
+    tmp = os.path.join(root, MARKER + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(m, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, os.path.join(root, MARKER))
+    sync_dir(root)
+
+
+def marker_for(root, o):
+    """This copy's marker, written on its first job (`init`). Reconnect when the folder is not there or holds no marker
+    of this copy. A folder that held a copy of the same library before (stopped, then added again) is taken over with
+    the files it lists; one of another library's is never mixed in."""
+    try:
+        with open(os.path.join(root, MARKER)) as f:
+            m = json.load(f)
+    except FileNotFoundError:
+        m = None
+    if m and m.get("copy") == o.get("copy") and m.get("library") == o.get("library"):
+        m.setdefault("files", {})
+        return m
+    if o.get("init") == "1" and (m is None or m.get("library") == o.get("library")):
+        m = {"library": o["library"], "copy": o["copy"], "files": (m or {}).get("files") or {}}
+        write_marker(root, m)
+        return m
+    raise Reconnect()
+
+
+class Lease:
+    """One writer per folder: LOCK holds who writes, its time the writer's heartbeat."""
+
+    def __init__(self, root):
+        self.path, self.me, self.held = os.path.join(root, LOCK), f"{socket.gethostname()} {os.getpid()} {uuid.uuid4().hex}", False
+
+    def take(self):
+        try:
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            with os.fdopen(fd, "w") as f:
+                f.write(self.me)
+        except FileExistsError:
+            try:
+                fresh = time.time() - os.stat(self.path).st_mtime < LOCK_STALE_S
+            except FileNotFoundError:
+                fresh = False
+            if fresh:
+                raise RuntimeError("Another computer is writing to this folder now")
+            # ponytail: two writers that find the same stale lease at once may both take it; a real lock server if that shows
+            tmp = f"{self.path}.{uuid.uuid4().hex}"
+            with open(tmp, "w") as f:
+                f.write(self.me)
+            os.replace(tmp, self.path)
+            with open(self.path) as f:
+                if f.read() != self.me:
+                    raise RuntimeError("Another computer is writing to this folder now")
+        self.held = True
+
+    def beat(self):
+        if self.held:
+            try:
+                os.utime(self.path)
+            except OSError:
+                pass
+
+    def drop(self):
+        if not self.held:
+            return
+        self.held = False
+        try:
+            with open(self.path) as f:
+                if f.read() == self.me:
+                    os.unlink(self.path)
+        except OSError:
+            pass
+
+
+def sweep(root):
+    """Deletes its own partials (.<name>.partial) left PARTIAL_KEEP_S or more: a newer one may still be resumed."""
+    old = time.time() - PARTIAL_KEEP_S
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if not x.startswith(".")]
+        for f in files:
+            p = os.path.join(d, f)
+            if f.startswith(".") and f.endswith(".partial") and len(f) > 9:
+                try:
+                    if os.lstat(p).st_mtime < old:
+                        os.unlink(p)
+                except OSError:
+                    pass
+
+
+def copy_check(root, m):
+    """op "check": each file the marker `m` lists still there at its size; the gone ones leave the marker and are reported."""
+    sweep(root)
+    gone = [k for k, f in m["files"].items() if size_of(os.path.join(root, f["rel"])) != f["size"]]
+    if gone:
+        for k in gone:
+            del m["files"][k]
+        write_marker(root, m)
+    return gone
+
+
+def beside(rel, i):
+    """`rel` with " <i>" after its stem: "a/b 2.mov"."""
+    d, name = os.path.split(rel)
+    stem, ext = os.path.splitext(name)
+    return os.path.join(d, f"{stem} {i}{ext}") if i > 1 else rel
+
+
+def free_rel(root, rel):
+    """`rel`, else the first "<stem> <i><ext>" not taken: nothing is overwritten."""
+    i = 1
+    while os.path.lexists(os.path.join(root, beside(rel, i))):
+        i += 1
+    return beside(rel, i)
+
+
+def copy_file(root, o, fetch, m):
+    """op "copy": the file put in the folder at `rel` (or beside a file in the way); its done answer {rel, size, sha256}."""
+    key, size, want, rel, prev = o["key"], int(o["size"]), (o.get("sha256") or "").lower(), o.get("rel"), o.get("prev")
+    if not rel_ok(rel) or (prev and not rel_ok(prev)):
+        raise RuntimeError("The server sent a path outside the folder")
+    files = m["files"]
+
+    def record(at, sha):
+        files[key] = {"asset": o.get("asset", ""), "n": int(o.get("n") or 1), "rel": at, "size": size, "sha256": sha}
+        write_marker(root, m)
+        return {"rel": at, "size": size, "sha256": sha}
+
+    # copied before, and the server did not hear it (or forgot it): the same file is there
+    had = files.get(key)
+    if had and size_of(os.path.join(root, had["rel"])) == size and (not want or had.get("sha256") == want):
+        return {"rel": had["rel"], "size": size, "sha256": had["sha256"]}
+    # the older version of this clip moves into .versions/ first, never overwritten
+    old = next((f for k, f in files.items() if prev and f["rel"] == prev and k != key), None)
+    if old and size_of(os.path.join(root, prev)) == old["size"]:
+        d, name = os.path.split(prev)
+        stem, ext = os.path.splitext(name)
+        to = free_rel(root, os.path.join(".versions", d, f"{stem} v{old['n']}{ext}"))
+        os.makedirs(os.path.dirname(os.path.join(root, to)), exist_ok=True)
+        os.rename(os.path.join(root, prev), os.path.join(root, to))
+        old["rel"] = to
+        write_marker(root, m)
+    # a file in the way: this very file counts as copied, another stays and the new one goes beside it
+    i = 1
+    while os.path.lexists(os.path.join(root, beside(rel, i))):
+        at = os.path.join(root, beside(rel, i))
+        if size_of(at) == size:
+            sha = sha_of(at)
+            if not want or sha == want:
+                return record(beside(rel, i), sha)
+        i += 1
+    rel = beside(rel, i)
+    final = os.path.join(root, rel)
+    part = os.path.join(os.path.dirname(final), f".{os.path.basename(final)}.partial")
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    try:
+        sha = write_part(part, size, o, fetch)
+        if size_of(part) != size or (want and sha != want):
+            os.unlink(part)
+            raise RuntimeError("The file read is not the library's file (its size or checksum differs)")
+        if os.path.lexists(final):
+            raise RuntimeError(f"{rel} appeared while it was copied")
+        os.rename(part, final)
+        sync_dir(os.path.dirname(final))
+        return record(rel, sha)
+    except OSError as e:
+        if e.errno in (errno.ENOSPC, errno.EDQUOT):
+            try:
+                os.unlink(part)  # its own partial: the space is the person's
+            except OSError:
+                pass
+            raise Full() from e
+        raise
+
+
+def write_part(part, size, o, fetch):
+    """Writes the file to `part`, from a path on this computer at the right size, else the server's `url` (resuming a
+    partial with Range); synced. Its sha256."""
+    src = next((p for p in json.loads(o.get("paths") or "[]") if isinstance(p, str) and size_of(p) == size), None)
+    h = hashlib.sha256()
+    if src:
+        with open(src, "rb") as i, open(part, "wb") as out:
+            for b in iter(lambda: i.read(CHUNK), b""):
+                h.update(b)
+                out.write(b)
+            out.flush()
+            os.fsync(out.fileno())
+        return h.hexdigest()
+    if "url" not in o:
+        raise RuntimeError("No copy of this file on this computer, and the server keeps none")
+    have = size_of(part) or 0
+    if have > size:
+        have = 0
+    if have:
+        with open(part, "rb") as f:
+            for b in iter(lambda: f.read(CHUNK), b""):
+                h.update(b)
+    if have < size:
+        with fetch(o["url"], have) as r:
+            if have and not (r.status == 206 and (r.headers.get("content-range") or "").startswith(f"bytes {have}-")):
+                have, h = 0, hashlib.sha256()  # the whole file came: start again
+            with open(part, "ab" if have else "wb") as out:
+                for b in iter(lambda: r.read(CHUNK), b""):
+                    h.update(b)
+                    out.write(b)
+                out.flush()
+                os.fsync(out.fileno())
+    return h.hexdigest()
+
+
+def copy_run(o, fetch, lease):
+    """One copy job (contracts/devices.ts COPY_KIND) without the server: its answer's body, less `free`."""
+    root = o.get("root") or ""
+    if not root.startswith("/") or not os.path.isdir(root):
+        return {"state": "reconnect"}
+    try:
+        lease.take()
+        m = marker_for(root, o)
+        if o.get("op") == "check":
+            return {"gone": copy_check(root, m)}
+        if o.get("op") != "copy":
+            raise RuntimeError(f"This helper does not know op {o.get('op')}: update it")
+        return {"done": copy_file(root, o, fetch, m)}
+    except Reconnect:
+        return {"state": "reconnect"}
+    except Full:
+        return {"state": "full"}
+    except OSError as e:
+        if e.errno in (errno.ENOSPC, errno.EDQUOT):
+            return {"state": "full"}
+        raise
+    finally:
+        lease.drop()
 
 
 def main():
