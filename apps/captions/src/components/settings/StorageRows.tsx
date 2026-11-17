@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, connectFor, finalsFolderOf, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LIBRARY_NAME, THIS_COMPUTER, connectFor, finalsFolderOf, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -176,12 +176,11 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
   );
 }
 
-const roleLabel = (role: SourceRole) => STORAGE_ROLES.find((r) => r.value === role)?.label ?? role;
 /** The workspaces a folder is in, as its tag and its Workspaces name them: null for one every workspace uses. */
 const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
- * Where finished videos, footage and music are kept: Finished videos is one folder per workspace, footage and music any
+ * Where finished videos, footage and music are kept: Exports is one folder per workspace, the Media folders any
  * number, each folder a row with its menu. Used by Settings → Folders and the setup's Folders step.
  * `w`: the workspace Settings shows (workspace-pick.tsx). With all of them shown each row carries its workspace and
  * Finished videos has a row per workspace; left out (setup), the rows are the window's workspace's.
@@ -201,9 +200,7 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
       {each.map((r, i) => (
         <FinalsRow key={r.id ?? "own"} first={i === 0} workspace={r.id} w={w} here={storage.here} folders={w?.all ? storage.folders.filter((f) => f.workspace === r.id) : storage.folders} {...shared} />
       ))}
-      {STORAGE_ROLES.map((r) => (
-        <SourceRows key={r.value} role={r.value} storage={storage} w={w} {...shared} />
-      ))}
+      <SourceRows storage={storage} w={w} {...shared} />
     </Card>
   );
 }
@@ -224,8 +221,8 @@ function LibraryRow({ library, workspace, tagged, first, devices, serverDisks, o
     <>
       <Row
         id={first ? "finished-videos" : undefined}
-        title="Finished videos"
-        description={where || undefined}
+        title="Exports"
+        description={where || "Where finished edits are saved. A Creator Toolset folder is made in the folder you pick."}
         status={
           tagged || library?.error ? (
             <span className="flex flex-col gap-0.5">
@@ -273,7 +270,7 @@ function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, works
     <FormDialog
       open={open}
       onOpenChange={(o) => { onOpenChange(o); setErr(null); }}
-      title="Finished videos"
+      title="Exports"
       submitLabel={change ? "Change folder" : "Add folder"}
       onSubmit={submit}
       busy={busy}
@@ -321,17 +318,22 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
   );
 }
 
-/** Footage or music: the kind's own row with Add folder, then a row per folder. */
-function SourceRows({ role, storage, devices, serverDisks, w, onChanged }: {
-  role: SourceRole; storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
+/**
+ * The folders the Media Library takes in (footage, music, sound effects: the Library sorts them), under one row with
+ * Add folder, each folder indented under it. A music folder from before is listed with them and keeps its role (no AI
+ * is spent on its files, lib/storage.ts musicFolders); a new one is footage.
+ */
+function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
+  storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const mine = sourcesOf(storage.folders).filter((f) => f.role === role);
+  const mine = sourcesOf(storage.folders);
   return (
     <>
       <Row
-        id={role === "footage" ? "footage-folder" : "music-folder"}
-        title={roleLabel(role)}
+        id="footage-folder"
+        title="Media"
+        description="Footage, music and sound effects. The Media Library takes in everything in these folders."
         control={
           <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
             Add folder
@@ -341,7 +343,7 @@ function SourceRows({ role, storage, devices, serverDisks, w, onChanged }: {
       {mine.map((f) => (
         <FolderRow key={f.id} folder={f} storage={storage} devices={devices} w={w} onChanged={onChanged} />
       ))}
-      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role="footage" devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
     </>
   );
 }
@@ -360,6 +362,7 @@ function FolderRow({ folder: f, storage, devices, w, onChanged }: { folder: Stor
   return (
     <>
     <ListRow
+      className="pl-8 sm:pl-10"
       title={f.name}
       subtitle={<span title={f.origin.path}>{whereOf(f, devices)}</span>}
       status={
