@@ -18,7 +18,10 @@ const h264 = (out: string) =>
   ]);
 const inode = (p: string) => statSync(p).ino;
 
-const { reviewApp, addVersion, browserPlayable, cleanDrawing, paintStrokes, parseProbe, readMeta } = await import("./review");
+const { reviewApp, addVersion, browserPlayable, cleanDrawing, parseProbe, readMeta } = await import("./review");
+const { paintStrokes } = await import("./work/tasks/review");
+// frames and reference looks are computer tasks: here the server's video work is on, so the server makes them
+(await import("./work/server-work")).writeServerWork({ on: true });
 
 // the owner is logged in (x-as: someone else, as admin); share links see an
 // anonymous reviewer, like boot.ts
