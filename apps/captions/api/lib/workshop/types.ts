@@ -201,6 +201,8 @@ export interface SessionMeta {
   note?: { path: string; mtime: number };
   /** When the status last changed (the note sync compares it with the note's mtime). */
   statusAt?: number;
+  /** Its folder in the workspace's Finals folder (contracts/storage.ts finalsDirName of its title then), kept so a rename keeps it. */
+  finalsDir?: string;
   createdAt: number;
   updatedAt: number;
 }

@@ -25,7 +25,12 @@ import { finished, keptByWeek, keptShare } from "./lib/workshop/kept";
 import { closestPairs, closestPosts } from "./lib/workshop/closest";
 import { PLAIN_VOICE } from "./lib/workshop/plain-voice";
 import { providerSettings, routeFor } from "./lib/providers";
-import { isOnline } from "./lib/devices";
+import { isOnline, isThisMachine } from "./lib/devices";
+import { finalsProjectOf, watchAllowed, watchFinals } from "./library/watch";
+import { kindOf } from "./library/routes";
+import { parseStorageFile, pathOn, storageFilePath } from "./lib/storage";
+import { THIS_COMPUTER, finalsDirName, finalsFolderOf, folderIn, type StorageFolder } from "../contracts/storage";
+import type { LibraryUpload } from "../contracts/library";
 import type { AccountContext, Comment } from "./lib/instagram/types";
 import { annotateComments } from "./lib/instagram/comment-judge";
 import { buildAnswerPrompt, listComments, type AnswerMessage, type AnswersFile } from "./lib/workshop/answers";
@@ -92,7 +97,7 @@ import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
 import { addToFinals, finalsCollectionId, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
 import { probe as probeMedia } from "./library/media/probe";
-import { libraryDb } from "./library/db";
+import { finalsUpload, libraryDb } from "./library/db";
 import { ensureLibrary, libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
@@ -3259,20 +3264,110 @@ export async function describeVersion(
   return true;
 }
 
-/** Whether a final video is in Finals for this session yet (a library piece, or one a plug-in keeps), and the library a
- *  final the user drops goes to (null: no Media Library for this account). The Workshop asks for the final at Ready to post. */
-export async function sessionFinals(meta: SessionMeta): Promise<{ linked: boolean; libraryId: string | null; finalsId: string | null }> {
+/** The workspace's Finals folder for a session (Settings → Folders, else its Library's Finished/), and the session's
+ *  folder in it: its title made a file name the first time, then kept on the session (a second project of that title gets " 2"). */
+async function finalsPlace(meta: SessionMeta): Promise<{ root: StorageFolder; dir: string } | null> {
+  const u = findUser(meta.owner);
+  if (!u) return null;
+  const inWs = await inProjectOf(sessionOf(u), meta.projectId);
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, meta.owner), "utf-8").catch(() => "{}"));
+  const root = finalsFolderOf(st.folders.filter((f) => folderIn(f, inWs)));
+  if (!root) return null;
+  if (meta.finalsDir) return { root, dir: meta.finalsDir };
+  const taken = new Set((await ownSessions(meta.owner)).filter((s) => s.id !== meta.id && s.projectId === meta.projectId).map((s) => s.finalsDir));
+  const base = finalsDirName(meta.title || "Untitled");
+  let dir = base;
+  for (let n = 2; taken.has(dir); n++) dir = `${base} ${n}`;
+  const kept = await updateSession(meta.id, (m) => void (m.finalsDir ??= dir), { touch: false });
+  return { root, dir: kept?.finalsDir ?? dir };
+}
+
+/** What GET /sessions/:id/finals answers: whether the project has its final, where a dropped one goes, and its folder. */
+export interface SessionFinals {
+  linked: boolean;
+  /** the library a final the user drops goes to (null: no Media Library for this account) */
+  libraryId: string | null;
+  finalsId: string | null;
+  /** what a final from a computer sends (the library's finalsUpload) */
+  upload: LibraryUpload;
+  /** the project's folder on the computer that asked (`device`), when that computer has the Finals folder */
+  folder?: string;
+  /** the server reads that folder itself (it is on its own disk): a file put there comes in with nothing more to do */
+  reads?: boolean;
+}
+
+/**
+ * Whether a final video is in Finals for this session yet (a library piece, or one a plug-in keeps, or a video in its
+ * folder in the Finals folder), and where a final goes. The Workshop asks for the final at Ready to post. On a server
+ * that reads the person's folders the project's folder is made and read from now on (library/watch.ts watchFinals), and
+ * what the library took from it is linked here (a file it had already, or one read before a restart).
+ * `device`: the computer asking, for the folder's place there.
+ */
+export async function sessionFinals(meta: SessionMeta, device?: string): Promise<SessionFinals> {
   const mainId = (await mainPiece(meta.id))?.id;
   const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
-  const linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
+  let linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
   const libraryId = await ensureLibrary(meta.owner, meta.projectId ?? "");
   // the upload goes straight into Finals, so the Media Library never lists it as footage
-  return { linked, libraryId, finalsId: libraryId ? finalsCollectionId(libraryId) : null };
+  const finalsId = libraryId ? finalsCollectionId(libraryId) : null;
+  const out: SessionFinals = { linked, libraryId, finalsId, upload: libraryId ? finalsUpload(libraryId) : "all" };
+  const place = libraryId && finalsId ? await finalsPlace(meta) : null;
+  if (!place) return out;
+  const { root, dir } = place;
+  const local = root.origin.host === THIS_COMPUTER || isThisMachine(root.origin.host);
+  const sub = local && watchAllowed(meta.owner) ? await watchFinals(meta.owner, libraryId!, root.origin.path, dir, meta.id, finalsId!) : null;
+  if (sub) {
+    linked ||= (await readdir(sub, { recursive: true }).catch(() => [] as string[])).some((f) => kindOf(f) === "video" && !f.split(path.sep).some((s) => s.startsWith(".")));
+    const taken = libraryDb()
+      .prepare(
+        `SELECT s.version_id AS v FROM watch_seen s WHERE s.library_id = ? AND substr(s.path, 1, ?) = ? AND s.version_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM piece_items i WHERE i.version_id = s.version_id)`,
+      )
+      .all(libraryId, sub.length + 1, sub + path.sep) as { v: string }[];
+    for (const { v } of taken) await finalFromVersion(meta, meta.owner, v);
+  }
+  const at = device ? (pathOn(root, device) ?? (local && isThisMachine(device) ? root.origin.path : undefined)) : undefined;
+  return { ...out, linked, ...(at ? { folder: `${at.replace(/\/+$/, "")}/${dir}`, reads: !!sub } : {}) };
 }
+
+/**
+ * A library video (an asset's current version, or one version) into Finals as this session's final: the piece named as
+ * the project, linked to it (`docId`: one of its pieces). `who` must own the library. 202 while the library still reads it.
+ */
+async function finalFromVersion(meta: SessionMeta, who: string, video: string, docId?: string): Promise<{ code: 200 | 202 | 404 | 409; body: Record<string, unknown> }> {
+  const row = libraryDb()
+    .prepare(
+      `SELECT a.library_id AS lib, a.title, v.id AS version, v.state, json_extract(v.probe, '$.width') AS w, json_extract(v.probe, '$.height') AS h
+         FROM assets a JOIN asset_versions v ON v.asset_id = a.id
+        WHERE a.trashed_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
+    )
+    .get(video, video) as { lib: string; title: string | null; version: string; state: string; w: number | null; h: number | null } | undefined;
+  if (!row || libraryRole(who, row.lib) !== "owner") return { code: 404, body: { error: "No such video of yours" } };
+  if (row.state === "failed" || row.state === "missing") return { code: 409, body: { error: "The library could not read this video" } };
+  if (!row.w || !row.h) return { code: 202, body: { waiting: true } };
+  const out = await addToFinals(
+    { owner: who, libraryId: row.lib, label: meta.title || "Untitled", item: row.title, kind: "export", width: row.w, height: row.h },
+    { versionId: row.version },
+  );
+  if (!out.ok) return { code: out.code === "no_access" || out.code === "not_found" ? 404 : 409, body: { error: out.error } };
+  linkFinalsPiece(out.pieceId, meta.id, docId, who);
+  return { code: 200, body: { linked: true, pieceId: out.pieceId } };
+}
+
+// a file read from a project's folder in the Finals folder: into Finals, linked to that project, once the library read its
+// size; once only (a file read again keeps its piece, whatever the project is called now)
+onEvent("library.version.probed", async ({ libraryId, versionId }) => {
+  const v = libraryDb()
+    .prepare("SELECT source_path FROM asset_versions v WHERE id = ? AND NOT EXISTS (SELECT 1 FROM piece_items i WHERE i.version_id = v.id)")
+    .get(versionId) as { source_path: string | null } | undefined;
+  const session = v?.source_path ? finalsProjectOf(libraryId, v.source_path) : null;
+  const meta = session ? await readSession(session) : null;
+  if (meta) await finalFromVersion(meta, meta.owner, versionId);
+});
 
 workshopApp.get("/sessions/:id/finals", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
-  return meta ? c.json(await sessionFinals(meta)) : c.json({ error: "Not found" }, 404);
+  return meta ? c.json(await sessionFinals(meta, c.req.query("device") || undefined)) : c.json({ error: "Not found" }, 404);
 });
 
 /** Link a Media Library Finals piece to this session (Finals' "Workshop session" link), or put a library video in Finals
@@ -3288,23 +3383,8 @@ workshopApp.post("/sessions/:id/finals", async (c) => {
   const video = [body?.assetId, body?.versionId].find((x): x is string => typeof x === "string" && !!x);
   if (video) {
     // a library video (its current version) or one version of it (what the chat's use_file gave)
-    const row = libraryDb()
-      .prepare(
-        `SELECT a.library_id AS lib, a.title, v.id AS version, v.state, json_extract(v.probe, '$.width') AS w, json_extract(v.probe, '$.height') AS h
-           FROM assets a JOIN asset_versions v ON v.asset_id = a.id
-          WHERE a.trashed_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
-      )
-      .get(video, video) as { lib: string; title: string | null; version: string; state: string; w: number | null; h: number | null } | undefined;
-    if (!row || libraryRole(user.username, row.lib) !== "owner") return c.json({ error: "No such video of yours" }, 404);
-    if (row.state === "failed" || row.state === "missing") return c.json({ error: "The library could not read this video" }, 409);
-    if (!row.w || !row.h) return c.json({ waiting: true }, 202);
-    const out = await addToFinals(
-      { owner: user.username, libraryId: row.lib, label: meta.title || "Untitled", item: row.title, kind: "export", width: row.w, height: row.h },
-      { versionId: row.version },
-    );
-    if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
-    linkFinalsPiece(out.pieceId, meta.id, docId, user.username);
-    return c.json({ linked: true, pieceId: out.pieceId });
+    const r = await finalFromVersion(meta, user.username, video, docId);
+    return c.json(r.body, r.code);
   }
   if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
   return linkFinalsPiece(body.pieceId, meta.id, docId, user.username) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);

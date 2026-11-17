@@ -15,7 +15,7 @@ const page = (folders: StorageFolder[]) => renderToStaticMarkup(<Storage devices
 describe("Storage rows", () => {
   it("with nothing set, each kind's row only offers its button", () => {
     const html = page([]);
-    expect(html.match(/>Add folder</g)).toHaveLength(3);
+    expect(html.match(/>Add folder</g)).toHaveLength(4);
     expect(html).not.toContain("Not set");
     expect(html).not.toContain("No folders");
   });
@@ -24,6 +24,8 @@ describe("Storage rows", () => {
     const html = page([library]);
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset");
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset/Footage");
+    // Finals: the Library's Finished/ until another folder is chosen
+    expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset/Finished");
     expect(html).toContain(">Change<");
     expect(html).not.toContain("Library/Footage");
   });
@@ -41,8 +43,8 @@ describe("every workspace's folders (Settings on All workspaces)", () => {
   it("Finished videos has a row per workspace: Change where it has a folder, Add folder where it has none", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
     expect(html.match(/>Finished videos</g)).toHaveLength(2);
-    expect(html.match(/>Change</g)).toHaveLength(1);
-    expect(html.match(/>Add folder</g)).toHaveLength(3); // the other workspace's Finished videos, Footage, Music
+    expect(html.match(/>Change</g)).toHaveLength(2); // its Finished videos and its Finals
+    expect(html.match(/>Add folder</g)).toHaveLength(4); // the other workspace's Finished videos and Finals, Footage, Music
     expect(html).toContain("/Volumes/Footage SSD/Songs");
   });
 

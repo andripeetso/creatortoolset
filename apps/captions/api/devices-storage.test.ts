@@ -163,6 +163,15 @@ describe("a folder added in Settings for the computer this server runs on", () =
     expect(await watchedPaths()).not.toContain(mine);
   });
 
+  it("a Finals folder takes the place of the one before and is not read as footage", async () => {
+    const finals = (await view()).folders.filter((f) => (f as { role?: string }).role === "finals");
+    expect(finals).toEqual([]);
+    expect((await add(mac, path.join(dir, "Finals A"), "finals")).status).toBe(200);
+    expect((await add(mac, path.join(dir, "Finals B"), "finals")).status).toBe(200);
+    expect((await view()).folders.filter((f) => (f as { role?: string }).role === "finals").map((f) => f.origin.path)).toEqual([path.join(dir, "Finals B")]);
+    expect(await watchedPaths()).not.toContain(path.join(dir, "Finals B"));
+  });
+
   it("a folder that is not there is refused with the reason, as in setup", async () => {
     const r = await add(mac, path.join(dir, "no-such-folder"));
     expect(r.status).toBe(400);
