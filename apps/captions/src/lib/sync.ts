@@ -85,8 +85,24 @@ function onHello(h: Hello) {
   for (const [t, n] of Object.entries(h.topics)) latest.set(t, Math.max(latest.get(t) ?? 0, n));
   firstHello?.();
   firstHello = null;
+  setUp(true);
   // a (re)connect: every topic on screen checks itself against the hello
   for (const t of subs.keys()) tell(t);
+}
+
+// ---- whether the stream reaches the server: false from its first error until the next hello (ConnectionPill)
+let up = true;
+const upSubs = new Set<() => void>();
+function setUp(v: boolean) {
+  if (v === up) return;
+  up = v;
+  for (const fn of upSubs) fn();
+}
+export const connected = () => up;
+/** Calls `fn` when the stream drops or comes back (read it with `connected`). Returns the unsubscribe. */
+export function onConnection(fn: () => void): () => void {
+  upSubs.add(fn);
+  return () => void upSubs.delete(fn);
 }
 function onChange(n: Change) {
   seq = Math.max(seq, n.seq);
@@ -102,19 +118,37 @@ let channel: BroadcastChannel | null = null;
 let stopLeading: (() => void) | null = null;
 
 function openStream(): () => void {
-  const source = new EventSource("/api/sync/events", { withCredentials: true });
-  source.addEventListener("hello", (e) => {
-    const h = JSON.parse((e as MessageEvent).data) as Hello;
-    onHello(h);
-    channel?.postMessage({ hello: h });
-  });
-  source.addEventListener("change", (e) => {
-    const n = JSON.parse((e as MessageEvent).data) as Change;
-    onChange(n);
-    channel?.postMessage({ change: n });
-  });
-  // EventSource reconnects by itself; the next hello catches up
-  return () => source.close();
+  let source: EventSource;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let wait = 3000;
+  const open = () => {
+    source = new EventSource("/api/sync/events", { withCredentials: true });
+    source.addEventListener("hello", (e) => {
+      wait = 3000;
+      const h = JSON.parse((e as MessageEvent).data) as Hello;
+      onHello(h);
+      channel?.postMessage({ hello: h });
+    });
+    source.addEventListener("change", (e) => {
+      const n = JSON.parse((e as MessageEvent).data) as Change;
+      onChange(n);
+      channel?.postMessage({ change: n });
+    });
+    // a dropped connection reconnects by itself and the next hello catches up; an error answer (a 502 while the server
+    // restarts) closes it for good, so it opens again here, waiting longer each time up to 30 s
+    source.onerror = () => {
+      setUp(false);
+      channel?.postMessage({ up: false });
+      if (source.readyState !== EventSource.CLOSED) return;
+      retry = setTimeout(open, wait);
+      wait = Math.min(wait * 2, 30_000);
+    };
+  };
+  open();
+  return () => {
+    clearTimeout(retry);
+    source.close();
+  };
 }
 
 /** Opens the stream for the signed-in account (main.tsx, after sign-in). Safe to call again: one per tab at most. */
@@ -131,8 +165,9 @@ export function startSync() {
   }
   channel = new BroadcastChannel("ct-sync");
   let leading = false;
-  channel.onmessage = (e: MessageEvent<{ hello?: Hello; change?: Change; ask?: true }>) => {
-    if (e.data.ask && leading && bootId) channel?.postMessage({ hello: helloNow() });
+  channel.onmessage = (e: MessageEvent<{ hello?: Hello; change?: Change; ask?: true; up?: false }>) => {
+    if (e.data.ask && leading) channel?.postMessage(!up ? { up: false } : bootId ? { hello: helloNow() } : {});
+    else if (e.data.up === false) setUp(false);
     else if (e.data.hello) onHello(e.data.hello);
     else if (e.data.change) onChange(e.data.change);
   };
@@ -164,6 +199,7 @@ export function stopSync() {
   bootId = "";
   latest.clear();
   hello = Promise.resolve();
+  setUp(true);
 }
 
 /**
