@@ -271,6 +271,37 @@ describe("the Media Library's work", () => {
     expect(job("transcribe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_COMPUTER });
   });
 
+  it("switched off: a look goes to the Mac the file came from, a description is written again from its words, and what waits is no time left", async () => {
+    const db = libraryDb();
+    const { progress } = await import("../library/estimate");
+    const { macLookJob } = await import("../library/mac-look");
+    const { MAC_WAITS } = await import("../library/shots");
+    const mac = pairDevice("lib", "Lib Mac"); // paired, not online
+    db.prepare("UPDATE asset_versions SET from_path = '/Volumes/Card/clip.mov', from_device = ? WHERE id = 'ver_l'").run(mac.device.id);
+    enqueueJob(db, "lib_ver_l", "ver_l", "look", "lib");
+    enqueueJob(db, "lib_ver_l", "ver_l", "describe", "lib");
+    // the look is not left for video work this server doesn't do: it parks for that Mac (or for an AI first)
+    expect(await library.tick(Date.now(), ["look"])).toBe(true);
+    expect(job("look").state).toBe("needs_key");
+    // never described: a description needs the picture, so it waits for a computer
+    expect(await library.tick(Date.now(), ["describe"])).toBe(false);
+    expect(job("describe")).toMatchObject({ state: "queued", error: library.WAITS_FOR_SERVER });
+    // waiting, said as such: no "Preparing … left" for work nothing here will run
+    const p = await progress("lib_ver_l", "lib");
+    expect(p.left).toBe(0);
+    expect(p.waiting).toContainEqual(expect.objectContaining({ step: "describe", count: 1, away: true }));
+    expect(p.waiting).toContainEqual(expect.objectContaining({ step: "files", away: true }));
+    // described before (Describe again, a workspace's new words): written from its words, no picture read here
+    db.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('ver_l', 'ai', 'A boss fight', 'x', 1)").run();
+    expect(await library.tick(Date.now(), ["describe"])).toBe(true);
+    expect(job("describe").error).not.toBe(library.WAITS_FOR_SERVER);
+    // that Mac is handed the look with the path the file was sent from
+    db.prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE version_id = 'ver_l' AND kind = 'look'").run(MAC_WAITS);
+    expect(macLookJob.claim({ ...mac.device, owner: "lib" })?.options.path).toBe("/Volumes/Card/clip.mov");
+    db.exec("DELETE FROM jobs WHERE version_id = 'ver_l' AND kind IN ('look', 'describe'); DELETE FROM descriptions WHERE version_id = 'ver_l'");
+    db.exec("UPDATE asset_versions SET from_path = NULL, from_device = NULL WHERE id = 'ver_l'");
+  });
+
   it("switched on, the server makes them", async () => {
     sw.writeServerWork({ on: true });
     ffmpegRuns.n = 0;

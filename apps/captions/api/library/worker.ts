@@ -26,7 +26,7 @@ import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
-import { macSheetsWaiting, takeMacSheets, takeWatchCopy } from "./mac-look";
+import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { picturesHere } from "../lib/device-picture";
@@ -210,6 +210,13 @@ export const DECODES: readonly string[] = ["wave", "proxy", "sprite", "fingerpri
 export const WAITS_FOR_COMPUTER = "Waits for one of your computers. Open Creator Toolset on your Mac";
 export const WAITS_FOR_SERVER = "Video work is off on this server";
 
+/**
+ * A step that decodes nothing here even where video work is off (run): a look a Mac of theirs reads (it waits for that
+ * Mac, saying so), or a description written again from the words a clip has.
+ */
+const readsNoPicture = (j: JobRow): boolean =>
+  (j.kind === "look" && onTheirMac(j.version_id ?? "", j.actor)) || (j.kind === "describe" && described(j.version_id ?? ""));
+
 /** The queued jobs of `kinds` this server leaves to a computer now, or leaves waiting while its video work is off. */
 function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number[] {
   const test = leaveToComputers.test;
@@ -227,7 +234,7 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
   const out: number[] = [];
   for (const j of queued) {
     if (on.includes(j.kind) && test!(j)) out.push(j.id);
-    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor)) {
+    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !readsNoPicture(j) && !serverWorks(libraryWorkspace(j.library_id), j.actor)) {
       out.push(j.id);
       const line = leaveToComputers.kinds.includes(j.kind) ? WAITS_FOR_COMPUTER : WAITS_FOR_SERVER;
       if (j.error !== line) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(line, j.id);
@@ -458,26 +465,7 @@ async function run(job: JobRow): Promise<void> {
     if (job.kind === "embed") return embedVersion(db, v.id, job.actor);
     // its picture is read on that Mac (mac-look.ts): the sheets it sent are looked at here once and dropped; until it
     // sends them the look waits for it, never fails. No AI to ask: it waits for that, and the Mac reads nothing
-    if (job.kind === "look") {
-      needLookRoute(job.actor);
-      // the sheets a Mac sent are asked about whatever the budget says: they are read, and held only in memory
-      if (!macSheetsWaiting(v.id)) await budgetCheck(db, v.id);
-      const sheets = takeMacSheets(v.id);
-      if (sheets) {
-        // search by picture reads the same sheets now: they are not kept here (a model that fails leaves them without)
-        if (picturesHere() && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
-        await lookFromSheets(db, v.id, job.actor, sheets);
-        // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
-        const copy = takeWatchCopy(v.id);
-        // the watch runs beside the look lane (timeline.ts watchAfter): the copy goes when it ends
-        if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
-        // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
-        else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
-        return;
-      }
-      void wakeEditorPolls(); // the Mac's long poll hears of it at once
-      throw new NeedsKey(MAC_WAITS);
-    }
+    if (job.kind === "look") return lookOnMac(db, v, job);
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const frames = await macFrames(v.id);
@@ -493,6 +481,17 @@ async function run(job: JobRow): Promise<void> {
     }
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     return;
+  }
+  // a server that does no video work (hosted, or its owner's choice: work/server-work.ts) decodes nothing for a file it
+  // holds either: its look is read on a Mac of theirs that has the file, as for one kept there (leftToComputers lets only
+  // those through), and a description written before is written again from its words, which reads no picture
+  if (!serverWorks(libraryWorkspace(v.library_id), job.actor)) {
+    if (job.kind === "look") return lookOnMac(db, v, job);
+    if (job.kind === "describe" && described(v.id)) {
+      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("This clip has no words to describe it from: turn on video work on this server or one of your computers");
+      if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+      return;
+    }
   }
   // the original, fetched only by a step that reads it (from a bucket it is a download; a step with a lighter copy reads that)
   let original: Promise<string> | undefined;
@@ -583,6 +582,30 @@ async function run(job: JobRow): Promise<void> {
   }
 
   markReady(db, v.id, p);
+}
+
+/**
+ * A look whose picture is read on the Mac the file is on (mac-look.ts): the sheets it sent are looked at here once and
+ * dropped; until it sends them the look waits for it, never fails. No AI to ask: it waits for that, and the Mac reads nothing.
+ */
+async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: JobRow): Promise<void> {
+  needLookRoute(job.actor);
+  // the sheets a Mac sent are asked about whatever the budget says: they are read, and held only in memory
+  if (!macSheetsWaiting(v.id)) await budgetCheck(db, v.id);
+  const sheets = takeMacSheets(v.id);
+  if (!sheets) {
+    void wakeEditorPolls(); // the Mac's long poll hears of it at once
+    throw new NeedsKey(MAC_WAITS);
+  }
+  // search by picture reads the same sheets now: they are not kept here (a model that fails leaves them without)
+  if (picturesHere() && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
+  await lookFromSheets(db, v.id, job.actor, sheets);
+  // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
+  const copy = takeWatchCopy(v.id);
+  // the watch runs beside the look lane (timeline.ts watchAfter): the copy goes when it ends
+  if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
+  // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
+  else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
 }
 
 /** Holds a look whose library spent its monthly budget (BudgetSpent), before its picture is read or its AI asked. */

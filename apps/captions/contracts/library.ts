@@ -253,8 +253,15 @@ export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
 };
 
 /** "5 descriptions need an AI provider", and where to add it. */
-export function waitingLine(w: { step: LibraryStep; count: number }): { text: string; href: string } {
+export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean }): { text: string; href: string } {
   const one = w.count === 1;
+  if (w.away)
+    return { text: `${stepCount(w)} ${one ? "waits" : "wait"} for one of your computers`, href: "/settings/devices" };
+  return { text: `${stepCount(w)} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
+}
+
+/** "6 descriptions", "1 file". */
+function stepCount(w: { step: LibraryStep; count: number }): string {
   const [thing, things] = {
     files: ["file", "files"],
     transcript: ["transcript", "transcripts"],
@@ -262,7 +269,7 @@ export function waitingLine(w: { step: LibraryStep; count: number }): { text: st
     look: ["shot description", "shot descriptions"],
     embed: ["search entry", "search entries"],
   }[w.step];
-  return { text: `${w.count.toLocaleString()} ${one ? thing : things} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
+  return `${w.count.toLocaleString()} ${w.count === 1 ? thing : things}`;
 }
 
 /** One of the caller's libraries. */
@@ -346,6 +353,8 @@ export interface LibraryProgress {
     limit?: boolean;
     /** waits for the computer the files are on (shot descriptions of files kept on a Mac): `missing` says which */
     computer?: boolean;
+    /** waits for one of the person's computers to be on: this server does not do that video work (worker.ts leftToComputers) */
+    away?: boolean;
   }[];
   /** each step's count, in the order they run; only the steps this run has */
   stages?: LibraryStage[];
