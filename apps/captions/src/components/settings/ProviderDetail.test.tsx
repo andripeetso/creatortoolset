@@ -86,7 +86,15 @@ describe("ProviderDetail", () => {
     const html = detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" });
     expect(html).toContain('aria-label="Account folder"');
     expect(html).not.toContain('aria-label="Program"');
-    expect(html).not.toContain('aria-label="Variable names"');
+    expect(html).not.toContain('aria-label="Variable name"');
+  });
+
+  it("lists each variable name in a field of its own with a remove button, and an Add variable button, no text box", () => {
+    const html = detail({ id: "claude", driver: "claude", name: "Claude", enabled: true, device: "mac1", envNames: ["API_KEY", "BASE_URL"] });
+    expect(html.match(/aria-label="Variable name"/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Remove BASE_URL"');
+    expect(html).toContain("Add variable");
+    expect(html).not.toContain("<textarea");
   });
 
   it("folds the rare fields under Advanced only when there are three or more: one or two are drawn open", () => {
