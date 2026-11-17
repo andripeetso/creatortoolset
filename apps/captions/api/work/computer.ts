@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+// the bundle's banner declares createRequire itself (package.json build), so not a named import
+import nodeModule from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { WORK_V, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
@@ -89,7 +90,7 @@ export async function reportLeftover(o: WorkerOptions): Promise<void> {
 /** Whether this computer can run search by picture's model: the model runtime came with this app (onnxruntime-node). */
 const runsPictureModel = (): boolean => {
   try {
-    createRequire(import.meta.url).resolve("onnxruntime-node");
+    nodeModule.createRequire(import.meta.url).resolve("onnxruntime-node");
     return true;
   } catch {
     return false;
