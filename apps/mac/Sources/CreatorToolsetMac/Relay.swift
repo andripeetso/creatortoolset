@@ -370,7 +370,7 @@ final class RelayRunner {
     /// script in, a transcript with a speech model when it has the link to them.
     /// Shot descriptions of this Mac's own files need the app's ffmpeg (a build with its server).
     private var takes: [String] {
-        (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind, helperCheckKind] + (speech == nil ? [] : [transcribeKind])
+        (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind, helperCheckKind, libraryCopyKind] + (speech == nil ? [] : [transcribeKind])
             + (HelperCheckJob.ffmpeg == nil ? [] : [libraryLookKind])
     }
 
@@ -490,6 +490,9 @@ final class RelayRunner {
             } else if step.kind == libraryLookKind {
                 startLook(step)
                 (end, more) = (.done, false)
+            } else if step.kind == libraryCopyKind {
+                startCopy(step)
+                (end, more) = (.done, false)
             } else {
                 if !shown { shown = true; publish { $0.drawing = true } }
                 (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
@@ -518,6 +521,18 @@ final class RelayRunner {
         let thread = Thread { [self] in
             let job = LibraryLookJob(api: api, step: step, folder: looksFolder, stopped: { [weak self] in self?.isStopped ?? true })
             if case .failed(let why) = job.run().end { AppLog.write("shot descriptions: step \(step.id) failed: \(why)") }
+        }
+        thread.qualityOfService = .utility
+        thread.start()
+    }
+
+    /// A file into a copy of the library (LibraryCopyJob.swift) on a thread of its own, as a look: a big file takes a while.
+    /// The server hands this Mac one at a time and wakes its long poll for the next (api/library/copies.ts).
+    private func startCopy(_ step: EditorJob) {
+        let thread = Thread { [self] in
+            if case .failed(let why) = LibraryCopyJob(api: api, step: step, stopped: { [weak self] in self?.isStopped ?? true }).run() {
+                AppLog.write("library copy: step \(step.id) failed: \(why)")
+            }
         }
         thread.qualityOfService = .utility
         thread.start()
