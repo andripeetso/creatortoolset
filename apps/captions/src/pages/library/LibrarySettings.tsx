@@ -279,8 +279,10 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
                     </Status>
                   )
                 ) : est.timelineKey ? (
-                  est.timelineFreeTier ? (
+                  est.timelineStopped === "free" ? (
                     <Status tone="attention">The Gemini key is on Google's free tier, about 20 calls a day; billing in Google AI Studio lifts the limit</Status>
+                  ) : est.timelineStopped === "credit" ? (
+                    <Status tone="attention">The Gemini credit ran out; timelines wait until it is topped up in Google AI Studio</Status>
                   ) : (
                     <Status>Uses the Gemini API key</Status>
                   )

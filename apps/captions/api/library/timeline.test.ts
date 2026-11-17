@@ -27,7 +27,7 @@ const { blobs, libraryDb } = await import("./db");
 const { tick } = await import("./worker");
 const { searchLibrary, assetDetail } = await import("./search");
 const { queueLook, WATCH_LABEL } = await import("./shots");
-const { freeTierStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
+const { watchStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
 const { clock } = await import("./look");
 watchTiming.backoffMs = 0;
 // the long call goes through the stubbed fetch, so each test sees and answers it
@@ -263,7 +263,7 @@ describe("a quota", () => {
     // one part at a time here, so "the next part" is a call that would come after the quota answer
     watchTiming.post = async () => (asked++, Response.json({ error: { message: said, details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "14579s" }] } }, { status: 429 }));
     try {
-      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(false);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe(null);
       await watchAfter(libraryDb(), v, async () => file, "local");
       // two parts of ten minutes were asked at once; each was told once, neither asked again
       expect(asked).toBe(2);
@@ -274,15 +274,51 @@ describe("a quota", () => {
       // kept with Gemini's words, tried again later, never failed for good
       expect((libraryDb().prepare("SELECT error FROM timelines WHERE version_id = ?").get(v) as { error: string }).error).toContain("Please retry in 4h2m59s");
       expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
-      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(true);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe("free");
       // the wait over, the next watch asks again
       parked.clear();
       gemini();
       watchTiming.post = post;
       await watchVersion(libraryDb(), other, otherFile, "local");
-      expect(freeTierStopped(libraryDb(), "lib_t")).toBe(false);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe(null);
     } finally {
       watchTiming.post = post;
+    }
+  });
+
+  it("an empty prepaid credit parks the key until the next try, tells its owner once, and clears when a call works", async () => {
+    const { creditGone } = await import("../credits");
+    const { v, file } = await seed("credit", 2 * PART_S);
+    const { v: other, file: otherFile } = await seed("credit-2");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const calls = gemini();
+    let asked = 0;
+    const post = watchTiming.post;
+    const said = "Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.";
+    watchTiming.post = async () => (asked++, Response.json({ error: { code: 402, message: said } }, { status: 402 }));
+    try {
+      await watchAfter(libraryDb(), v, async () => file, "local");
+      expect(asked).toBe(2);
+      const uploads = calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length;
+      // another video: nothing uploaded, nothing asked
+      await watchAfter(libraryDb(), other, async () => otherFile, "local");
+      expect(asked).toBe(2);
+      expect(calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length).toBe(uploads);
+      expect(parked.get("gk-test")!.until).toBeGreaterThan(Date.now() + RETRY_MS - 60_000);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe("credit");
+      expect([...creditGone.values()]).toMatchObject([{ name: "GEMINI_API_KEY", stopped: "Media Library timelines", owners: ["local"] }]);
+      // queued, tried again later
+      expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
+      // topped up: the next try works, the warning goes
+      parked.clear();
+      gemini();
+      watchTiming.post = post;
+      await watchVersion(libraryDb(), other, otherFile, "local");
+      expect(creditGone.size).toBe(0);
+      expect(watchStopped(libraryDb(), "lib_t")).toBe(null);
+    } finally {
+      watchTiming.post = post;
+      parked.clear();
     }
   });
 });

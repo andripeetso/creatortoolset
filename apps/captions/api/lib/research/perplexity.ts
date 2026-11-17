@@ -4,6 +4,7 @@
  * model, deep research on the slow one that reads dozens of sources. The caller passes the key that serves the asker
  * (my-keys.ts keyFor).
  */
+import { creditBack, creditOut, isOutOfCredits } from "../../credits";
 
 const API_URL = process.env.PERPLEXITY_BASE_URL || "https://api.perplexity.ai/chat/completions";
 
@@ -64,8 +65,10 @@ export async function perplexityComplete(
   const raw = (await resp.json().catch(() => null)) as Record<string, unknown> | null;
   if (!resp.ok) {
     const detail = raw && typeof raw.error === "object" && raw.error ? (raw.error as { message?: string }).message : (raw as { error?: string } | null)?.error;
+    if (isOutOfCredits(resp.status, String(detail ?? ""))) creditOut("PERPLEXITY_API_KEY", key, "Research in the Content Workshop");
     throw new Error(`Perplexity ${resp.status}: ${detail || "request failed"}`);
   }
+  creditBack("PERPLEXITY_API_KEY", key);
   const choice = Array.isArray(raw?.choices) ? (raw!.choices as Array<{ message?: { content?: string } }>)[0] : undefined;
   const content = (choice?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   const citations = Array.isArray(raw?.citations) ? (raw!.citations as unknown[]).filter((c): c is string => typeof c === "string") : [];

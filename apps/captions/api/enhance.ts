@@ -7,7 +7,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { AuthVars } from "./auth";
-import { isOutOfCredits, outOfCreditsMessage } from "./credits";
+import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./credits";
 import type { EnhanceStatus } from "../contracts/enhance";
 import { env } from "./lib/env";
 import { keyFor, type Actor } from "./my-keys";
@@ -418,6 +418,7 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
     const detail = (await res.text().catch(() => "")).slice(0, 300);
     if (isOutOfCredits(res.status, detail)) {
       console.warn(`[elevenlabs] out of credits (${res.status}): ${detail}`);
+      creditOut("ELEVENLABS_API_KEY", key, "Voice isolation");
       throw new Error(outOfCreditsMessage("Audio enhancement"));
     }
     if (res.status === 401) {
@@ -428,6 +429,7 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
     }
     throw new Error(`ElevenLabs error ${res.status}: ${detail || "no details"}`);
   }
+  creditBack("ELEVENLABS_API_KEY", key);
   const ext = EL_EXT[(res.headers.get("content-type") || "").split(";")[0].trim()] || "mp3";
   const out = path.join(outDir, `enhance-el.${ext}`);
   await writeFile(out, Buffer.from(await res.arrayBuffer()));

@@ -310,8 +310,8 @@ export interface LibraryEstimate {
   timelineModels?: { model: WatchModel; usd: number }[];
   /** the asker has Antigravity among their AI providers, so Timelines can watch on it */
   timelineAntigravity?: boolean;
-  /** the library's last watch met the Gemini key's free-tier daily quota (api/library/timeline.ts freeTierStopped) */
-  timelineFreeTier?: true;
+  /** what stopped the library's last watch: the Gemini key's free-tier daily quota, or its prepaid credit running out (api/library/timeline.ts watchStopped) */
+  timelineStopped?: "free" | "credit";
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
