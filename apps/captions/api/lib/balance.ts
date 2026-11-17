@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_WEIGHT, type Balance, type Machine } from "../../contracts/providers";
@@ -5,6 +6,19 @@ import { env } from "./env";
 
 /** Load balancing (Settings → Devices): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. */
 export const balanceFile = (user: string) => path.join(env.dataDir, "balance", `${user}.json`);
+
+/**
+ * The owner's computers set to Off in Load balancing (weight 0 while it is on): they take no step and no picture work (work/pictures.ts), so
+ * none of them counts as the one that could, and the step goes to another computer (or, in phase 4, the server).
+ */
+export function offOf(owner: string): Set<string> {
+  try {
+    const b = JSON.parse(readFileSync(balanceFile(owner), "utf8")) as Partial<Balance>;
+    return b.on === false ? new Set() : new Set(Object.entries(b.weights ?? {}).flatMap(([id, w]) => (w === 0 ? [id] : [])));
+  } catch {
+    return new Set();
+  }
+}
 export async function readBalance(user: string): Promise<Balance> {
   try {
     const b = JSON.parse(await readFile(balanceFile(user), "utf-8")) as Partial<Balance>;

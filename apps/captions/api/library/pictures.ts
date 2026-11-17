@@ -4,7 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit } from "../../contracts/library";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { aiFor, completeWithFallback } from "../ai-complete";
-import { embedPictureQuery, embedPictures, PICTURE_MODEL, PICTURE_PX, pictureModelKept, picturesHere, readsAsEnglish } from "../lib/device-picture";
+import { embedPictureQuery, embedPictures, PICTURE_MODEL, PICTURE_PX, pictureText, pictureTextKept, picturesHere, readsAsEnglish } from "../lib/device-picture";
+import { wakeEditorPolls } from "../lib/mac-claude";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { whoFor } from "./describe";
 import { cosineTop } from "./embed";
@@ -20,7 +21,8 @@ import { stretchesOf } from "./stretches";
  * picture (seg -1, the whole clip), and a video the look read gets one per stretch from the middle frame of its tile on
  * the look's sheets (seg as in stretches): no second read of the video. A file kept on a Mac has its sheets read here
  * as they arrive, before the look's AI call (worker.ts); the server's own looks keep their sheets, which the catch-up
- * reads. Library setting `pictures`, only where this server makes them (picturesHere).
+ * reads. Where this server makes none (picturesHere), the person's own computers make them from the same pictures and
+ * send only the vectors (work/pictures.ts). Library setting `pictures`.
  */
 
 export const CARD_SEG = -1;
@@ -80,7 +82,7 @@ export function picturesOf(jpeg: Buffer, crops: string[]): Promise<Uint8Array[]>
 }
 
 /** Replaces `versionId`'s vectors of these segs; null: no picture could be read (an empty row, so it is not tried again). */
-function store(db: DatabaseSync, versionId: string, rows: { seg: number; start: number; vec: Float32Array | null }[], dropShots: boolean): void {
+export function storePictures(db: DatabaseSync, versionId: string, rows: { seg: number; start: number; vec: Float32Array | null }[], dropShots: boolean): void {
   db.exec("BEGIN");
   try {
     if (dropShots) db.prepare("DELETE FROM pictures WHERE version_id = ? AND seg >= 0").run(versionId);
@@ -94,11 +96,10 @@ function store(db: DatabaseSync, versionId: string, rows: { seg: number; start: 
 }
 
 /**
- * A vector for each stretch on `sheets` (the look's, kept here or sent by a Mac), from its tile's middle frame. A sheet
- * that can't be read gets empty rows. Returns the shots it made vectors for. Throws only when the model fails.
+ * A vector for each stretch on `sheets`, from its tile's middle frame, by seg; null for each on a sheet that can't be
+ * read. Throws only when the model fails. `withText`: as embedPictures.
  */
-export async function sheetPictures(db: DatabaseSync, versionId: string, sheets: LookSheet[]): Promise<number> {
-  const start = new Map(stretchesOf(db, versionId).map((s) => [s.seg, s.a]));
+export async function sheetVectors(sheets: LookSheet[], withText = true): Promise<{ seg: number; vec: Float32Array | null }[]> {
   const read: { segs: number[]; pics: Uint8Array[] | null }[] = [];
   for (const sh of sheets) {
     const jpeg = Buffer.from(sh.jpeg, "base64");
@@ -107,22 +108,39 @@ export async function sheetPictures(db: DatabaseSync, versionId: string, sheets:
     read.push({ segs: sh.segs, pics });
   }
   const pics = read.flatMap((r) => r.pics ?? []);
-  const vecs = pics.length ? await embedPictures(pics) : [];
-  const rows = read.flatMap((r) => r.segs.map((seg) => ({ seg, start: start.get(seg) ?? 0, vec: r.pics ? vecs.shift()! : null })));
-  // no sheet at all: one empty row says the version was looked at
-  store(db, versionId, rows.length ? rows : [{ seg: 0, start: 0, vec: null }], true);
+  const vecs = pics.length ? await embedPictures(pics, withText) : [];
+  return read.flatMap((r) => r.segs.map((seg) => ({ seg, vec: r.pics ? vecs.shift()! : null })));
+}
+
+/** Stores the shots' vectors with their stretches' starts; none at all: one empty row says the version was looked at. */
+export function storeShots(db: DatabaseSync, versionId: string, rows: { seg: number; vec: Float32Array | null }[]): void {
+  const start = new Map(stretchesOf(db, versionId).map((s) => [s.seg, s.a]));
+  storePictures(db, versionId, rows.length ? rows.map((r) => ({ ...r, start: start.get(r.seg) ?? 0 })) : [{ seg: 0, start: 0, vec: null }], true);
+}
+
+/**
+ * A vector for each stretch on `sheets` (the look's, kept here or sent by a Mac), stored. A sheet that can't be read gets
+ * empty rows. Returns the shots it made vectors for. Throws only when the model fails.
+ */
+export async function sheetPictures(db: DatabaseSync, versionId: string, sheets: LookSheet[]): Promise<number> {
+  const rows = await sheetVectors(sheets);
+  storeShots(db, versionId, rows);
   return rows.filter((r) => r.vec).length;
+}
+
+/** The vector of a card picture (a JPEG); null when it can't be read. Throws only when the model fails. */
+export async function cardVector(jpeg: Buffer, withText = true): Promise<Float32Array | null> {
+  const pics = await picturesOf(jpeg, ["null"]).catch(() => null);
+  return pics ? ((await embedPictures(pics, withText))[0] ?? null) : null;
 }
 
 /** The vector of a version's card picture (seg -1, the whole clip). Throws only when the model fails. */
 export async function cardPicture(db: DatabaseSync, versionId: string, key: string): Promise<void> {
-  const pics = await blobs
+  const jpeg = await blobs
     .localCopy(key)
     .then((f) => readFile(f))
-    .then((jpeg) => picturesOf(jpeg, ["null"]))
     .catch(() => null);
-  const [vec] = pics ? await embedPictures(pics) : [null];
-  store(db, versionId, [{ seg: CARD_SEG, start: 0, vec: vec ?? null }], false);
+  storePictures(db, versionId, [{ seg: CARD_SEG, start: 0, vec: jpeg ? await cardVector(jpeg) : null }], false);
 }
 
 let running = false;
@@ -172,8 +190,11 @@ export async function catchUpPictures(db = libraryDb()): Promise<number> {
   }
 }
 
-/** Runs the catch-up now (a card picture or a look is done); a run in progress goes round once more. */
-export const wakePictures = (): void => void catchUpPictures();
+/**
+ * Runs the catch-up now (a card picture or a look is done); a run in progress goes round once more. Where the computers
+ * make the vectors, their long polls hear of it instead.
+ */
+export const wakePictures = (): void => void (picturesHere() ? catchUpPictures() : wakeEditorPolls());
 
 /** catchUpPictures now and every minute; the returned function stops it. */
 export function startPictureCatchUp(): () => void {
@@ -219,8 +240,8 @@ function hitsOf(rows: Omit<Row, "vec">[]): SearchHit[] {
   });
 }
 
-/** Whether a search can match pictures in this library now (never waiting for a model download). */
-const searchable = (libraryId: string) => picturesHere() && librarySetting(libraryId, "pictures") && pictureModelKept();
+/** Whether search by picture is on in this library (its vectors made here or on its people's computers). */
+const searchable = (libraryId: string) => librarySetting(libraryId, "pictures");
 
 /** What the usage tally counts a search's English line as. */
 export const ENGLISH_LABEL = "Media Library search in English";
@@ -289,6 +310,9 @@ export async function pictureHits(
   if (!searchable(libraryId)) return { hits: null };
   const rows = libraryRows(libraryId, where);
   if (!rows.length) return { hits: null };
+  // the text side not in memory: loaded now, and the page asks again (it never waits for a load or a download)
+  const text = pictureText();
+  if (text !== "ready") return text === "loading" ? { hits: null, pending: true } : { hits: null };
   const words = await pictureWords(q, username).catch(() => null);
   if (words === "pending") return { hits: null, pending: true };
   const [qv] = words ? await embedPictureQuery([words]).catch(() => [undefined]) : [undefined];
@@ -301,7 +325,7 @@ export async function pictureHits(
  * card picture when `at` is not given or it has no shots. The shot itself is left out. Empty when it has no vector yet.
  */
 export function alikeHits(libraryId: string, versionId: string, at?: number): SearchHit[] {
-  if (!picturesHere() || !librarySetting(libraryId, "pictures")) return [];
+  if (!librarySetting(libraryId, "pictures")) return [];
   const rows = libraryRows(libraryId);
   const own = rows.filter((r) => r.version_id === versionId);
   const shot = at === undefined ? undefined : own.filter((r) => r.seg >= 0 && r.start_s <= at).sort((x, y) => y.start_s - x.start_s)[0];
@@ -319,7 +343,12 @@ export function alikeHits(libraryId: string, versionId: string, at?: number): Se
  */
 export async function pictureScores(versionIds: string[], text: string, actor: string): Promise<Map<string, { start: number; score: number }[]>> {
   const out = new Map<string, { start: number; score: number }[]>();
-  if (!versionIds.length || !text.trim() || !picturesHere() || !pictureModelKept()) return out;
+  if (!versionIds.length || !text.trim()) return out;
+  // fetched now when it isn't here, for the next edit: this one goes without
+  if (!pictureTextKept()) {
+    pictureText();
+    return out;
+  }
   const rows = (
     libraryDb()
       .prepare(`SELECT version_id, seg, start_s, vec FROM pictures WHERE model = ? AND seg >= 0 AND length(vec) > 0 AND version_id IN (${versionIds.map(() => "?").join(",")})`)

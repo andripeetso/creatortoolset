@@ -40,7 +40,6 @@ import { indexOnMac, parseOnMac } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceOf } from "../lib/devices";
 import { WORK_MIN } from "../../contracts/work";
-import { picturesHere } from "../lib/device-picture";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -758,7 +757,7 @@ const settingsOf = (json: string): LibrarySettings => {
     timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
-    ...(picturesHere() ? { pictures: s.pictures ?? SETTING_DEFAULTS.pictures } : {}),
+    pictures: s.pictures ?? SETTING_DEFAULTS.pictures,
     upload: uploadOf(s.upload),
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),

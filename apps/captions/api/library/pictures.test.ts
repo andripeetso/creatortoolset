@@ -24,6 +24,8 @@ vi.mock("../lib/device-picture", async (real) => ({
   ...(await real<typeof import("../lib/device-picture")>()),
   picturesHere: () => true,
   pictureModelKept: () => true,
+  pictureTextKept: () => true,
+  pictureText: () => "ready",
   embedPictures: async (pics: Uint8Array[]) => pics.map(mean),
   embedPictureQuery: async (texts: string[]) => texts.map((t) => Float32Array.from(WORDS[t.toLowerCase()] ?? [0, 0, 0])),
   readsAsEnglish: async (t: string) => t in WORDS,
