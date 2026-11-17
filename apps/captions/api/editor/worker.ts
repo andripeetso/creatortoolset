@@ -19,6 +19,7 @@ import { jobFiles } from "./reach";
 import { fitsWork, gates, serverMayTake } from "../work/place";
 import type { Device } from "../../contracts/providers";
 import { passesDone } from "./passes";
+import { draining } from "../server-update";
 import { editRole, ownerOf, purgeEdits, queueVersion, readDraft, readEdit, saveStep, sourcesWorkspace, unreadNote, type EditMeta, seesEdit } from "./store";
 
 export type { StepContext } from "./engine";
@@ -42,6 +43,8 @@ export const STEPS: Record<string, StepRun> = coreSteps();
 export const NEXT: Record<string, string[]> = nextKinds();
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
+/** Steps this server is running: an update waits for them (/api/health, server-update.ts draining). */
+export const editorStepsAtRisk = (): number => running.size;
 
 /** A step moved (claimed, done, failed, parked): the account's open AI Editor pages and Home's to-do refetch (api/lib/sync.ts), and a run that ended is said in the chat that started it (ended.ts). */
 const moved = (job: JobRow) => void (job.actor && (announce(job.actor, "editor"), runEnded(job)));
@@ -294,7 +297,8 @@ export function startEditorWorker(): () => void {
   const loop = async () => {
     let busy = false;
     try {
-      busy = await tick();
+      // an update waits for the steps running here: no new one starts until it is done (server-update.ts)
+      busy = draining() ? false : await tick();
     } catch (e) {
       console.error("[editor] worker:", e);
     }

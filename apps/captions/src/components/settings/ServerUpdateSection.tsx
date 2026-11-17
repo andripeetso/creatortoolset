@@ -54,7 +54,7 @@ export function useServerUpdate(enabled = true) {
 
 /** Under a server's name (Settings → Servers) and in its Update row: the update's state, or nothing when it is up to date. */
 export function UpdateStatus({ view, busy }: { view: Extract<ServerUpdateView, { available: true }>; busy: boolean }) {
-  if (busy) return <Status>Updating</Status>;
+  if (busy) return <Status>{view.waiting ? "Waiting for running work" : "Updating"}</Status>;
   if (view.behind === 0 && !view.failed) return null;
   return <Status tone={view.failed ? "broken" : undefined}>{updateLine(view)}</Status>;
 }
@@ -67,7 +67,7 @@ export function ServerUpdateSection() {
       <Card>
         <Row
           title="This server"
-          status={<Status tone={view.failed && !busy ? "broken" : undefined}>{busy ? "Updating" : updateLine(view)}</Status>}
+          status={busy ? <UpdateStatus view={view} busy /> : <Status tone={view.failed ? "broken" : undefined}>{updateLine(view)}</Status>}
           control={
             view.behind > 0 && (
               // the same button in the same place while it runs: it only goes once the server is up to date

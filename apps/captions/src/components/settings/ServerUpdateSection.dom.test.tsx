@@ -38,7 +38,7 @@ it("shows nothing on a server with no updater", async () => {
 });
 
 it("shows what is waiting, and Update now asks once and holds the button while it runs", async () => {
-  const s = await show({ available: true, behind: 14, nightly: 1_800_000_000, requested: false, failed: false });
+  const s = await show({ available: true, behind: 14, nightly: 1_800_000_000, requested: false, waiting: false, failed: false });
   expect(s.host.textContent).toContain("14 changes waiting");
   expect(s.host.textContent).toContain("Every night at");
   expect(s.button()?.textContent).toBe("Update now");
@@ -49,8 +49,14 @@ it("shows what is waiting, and Update now asks once and holds the button while i
 });
 
 it("up to date has no button, and a failed update offers Retry", async () => {
-  expect((await show({ available: true, behind: 0, nightly: null, requested: false, failed: false })).button()).toBeNull();
-  const failed = await show({ available: true, behind: 2, nightly: null, requested: false, failed: true });
+  expect((await show({ available: true, behind: 0, nightly: null, requested: false, waiting: false, failed: false })).button()).toBeNull();
+  const failed = await show({ available: true, behind: 2, nightly: null, requested: false, waiting: false, failed: true });
   expect(failed.host.textContent).toContain("Update failed");
   expect(failed.button()?.textContent).toBe("Retry");
+});
+
+it("says it waits for running work while it does", async () => {
+  const s = await show({ available: true, behind: 3, nightly: null, requested: true, waiting: true, failed: false });
+  expect(s.host.textContent).toContain("Waiting for running work");
+  expect(s.button()?.disabled).toBe(true);
 });

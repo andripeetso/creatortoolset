@@ -30,6 +30,7 @@ import { takeMacSheets } from "./mac-look";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
+import { draining } from "../server-update";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -178,6 +179,8 @@ const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
 };
 
 const running = new Set<number>();
+/** Jobs this server is running: an update waits for them (/api/health, server-update.ts draining). */
+export const libraryJobsAtRisk = (): number => running.size;
 
 /**
  * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
@@ -298,8 +301,11 @@ export function startLibraryWorker(): () => void {
       const loop = async () => {
         let busy = false;
         try {
-          busy = await tick(Date.now(), lane.kinds);
-          if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
+          // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
+          if (!draining()) {
+            busy = await tick(Date.now(), lane.kinds);
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick());
+          }
         } catch (e) {
           console.error("[library] worker:", e);
         }
