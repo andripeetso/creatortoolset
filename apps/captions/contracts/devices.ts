@@ -110,21 +110,44 @@ export const HELPER_CHECK_KIND = "helper-check";
 /**
  * The kind that keeps a copy of a Media Library in a folder on the person's own computer (Settings → Media Library →
  * Copies; api/library/copies.ts; the Mac app's LibraryCopyJob.swift, the Linux helper's helper.py). Claimed on the road
- * above, only by the computer the copy is on, of the library owner's account, one file at a time. The claim's options:
+ * above, only by the computer the copy is on (or, for "send", the computer that holds the original), one job at a time.
+ * Every claim's options carry `device` (the claiming computer's own id: its lease and its partials are named by it).
  *   `op` "copy": `copy` (its id), `library`, `root` (the folder), `init` ("1": its first job: write the marker if the
  *        folder has none), `key` (the file's id), `asset`, `n` (its version), `rel` (its path in the folder, fixed at
- *        first copy), `prev` (the path of the older version there, moved into .versions/ first), `size`, `sha256` (absent:
- *        check the size only), `paths` (JSON list of paths on this computer to read it from, best first) and `url`
- *        (relative to the server: GET it with the same token, Range allowed, when no path holds it)
+ *        first copy; an older version that comes after a newer one is sent straight to its `.versions/…` path), `prev`
+ *        (the path of the older version there, moved into .versions/ first), `size`, `sha256` (absent: no hash is known,
+ *        so nothing already in the folder is ever taken as this file), `paths` (JSON list of paths on this computer to
+ *        read it from, best first) and `url` (relative to the server: GET it with the same token, Range allowed, when no
+ *        path holds it)
  *   `op` "check": `copy`, `library`, `root`: each file the marker lists is still there at its size; report the gone ones
+ *   `op` "send": `key`, `size`, `paths`, `url`: this computer holds the original another computer's copy needs; read it
+ *        from the first path at `size` and POST its bytes to `url` (…/job/copy/:id/file); the server hashes and keeps it
+ *        until every copy has it
  *   POST job/copy/:id   { beat: true, free? }                           → {}   keeps the job the computer's (3 min)
  *   POST job/copy/:id   { done: { rel, size, sha256 }, free? }          → DeviceEnded   the file is in the folder at `rel`
+ *                                                                        (taken even after the job's 3 min ran out)
  *   POST job/copy/:id   { gone: [keys], free? }                         → DeviceEnded   a check's answer
  *   POST job/copy/:id   { state: "reconnect" | "full", free? }          → DeviceEnded   no marker of this copy there, or the disk is full
+ *   POST job/copy/:id/file   the original's bytes                       → DeviceEnded   a send's answer
  *   POST job/copy/:id/fail   { error }                                  → DeviceEnded   this file could not be copied (tried again in an hour)
- * The folder holds COPY_MARKER (contracts/library.ts CopyMarker) at its top. A file is written as `.<name>.partial`,
- * synced, checked and renamed; an older version moves to `.versions/<dir>/<stem> v<n><ext>`; a file at `rel` that is not
- * this clip's older version and not this very file stays, and the new one goes beside it as "<stem> 2<ext>".
+ * The folder, the same on every computer (Mac and helper write and read one format):
+ *   - COPY_MARKER (contracts/library.ts CopyMarker) at its top. Each write reads the marker on disk again, applies this
+ *     job's changes to its `files` (set or delete by key) and writes it whole (temp file + rename), under the lease.
+ *   - `.creatortoolset-copy.lock`: JSON { "device": <device id>, "at": <unix seconds> }. Taken when absent, or when its
+ *     file mtime on the share is 600 s old or more (a lock that is not this JSON counts as another writer's), written as
+ *     a temp file renamed over it and read back: ours only if `device` is ours. Every beat (30 s) reads it first and
+ *     rewrites it only when it is still ours; when it is not, the job stops at once. Dropped (deleted) only if ours.
+ *   - A file is written as `.<name>.<device>.partial` beside its final path, synced, its size and SHA-256 checked on the
+ *     file on disk, then renamed. A computer sweeps only its own partials (`.*.<its device>.partial`), at the start of
+ *     every job; another computer's partial is never touched.
+ *   - The folder's identity is its marker: before each file is written and again before its rename, the folder must
+ *     still be the one the job opened (same st_dev) and its marker still there; otherwise the job answers
+ *     state "reconnect". The folder itself is never created (an unmounted disk's path stays empty); folders inside it are.
+ *   - A file is taken as copied without writing only when its SHA-256 equals `sha256`, or when it is the very file the
+ *     job would read from (a path in `paths`). An older version moves to `.versions/<dir>/<stem> v<n><ext>`; a file at
+ *     `rel` that is not this clip's older version and not this very file stays, and the new one goes beside it as
+ *     "<stem> 2<ext>".
+ *   - Names: compared in Unicode NFC; a "\" in a name becomes "_"; a stem is trimmed so the partial's name fits 255 bytes.
  */
 export const COPY_KIND = "copy";
 
