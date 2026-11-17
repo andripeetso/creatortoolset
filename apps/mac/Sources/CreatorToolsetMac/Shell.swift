@@ -178,6 +178,13 @@ final class Shell: NSObject, ObservableObject {
                 }
                 return
             }
+            // Open in <editor> on an AI Editor draft (Editors.swift): the editors this Mac has, and opening one there
+            if ask == "editors" { return done(["editors": Editors.installed().map(\.reply)]) }
+            if isEditorAsk(ask) {
+                guard let open = openEditorAsk(ask) else { return done(["problem": "Could not open the draft"]) }
+                Task { done(await Editors.open(open, site: await self.client())) }
+                return
+            }
             // the Media Library's imports (Import.swift): a copy reads only from this window's recent drops and picks
             if isImportAsk(ask) {
                 return Imports.shared.answer(ask, sources: (self.pickedFiles + (view?.droppedPlaces ?? [])).map(\.path), done: done)
@@ -1186,6 +1193,11 @@ struct Site {
 
     func post(_ path: String, _ body: [String: Any]) async throws {
         _ = try await send("POST", path, body: body)
+    }
+
+    /// A GET's raw answer (a timeline file).
+    func data(_ path: String) async throws -> Data {
+        try await send("GET", path, body: nil).0
     }
 
     func postData(_ path: String, _ body: [String: Any]) async throws -> Data {

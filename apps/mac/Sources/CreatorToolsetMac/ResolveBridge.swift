@@ -1,5 +1,6 @@
 // The Resolve bridge: opens an edit's OTIO draft in DaVinci Resolve as a new timeline, through Resolve's own script
-// runner (fuscript, Lua: no Python). It is off until Resolve is installed (Logic.swift resolveScriptRunner), and the
+// runner (fuscript, Lua: no Python). Open in Resolve on a draft (Editors.swift) starts a closed Resolve and waits for it
+// (untilOpen). The device step is off until Resolve is installed (Logic.swift resolveScriptRunner), and the
 // server hands it the resolve step only while the account has a Resolve pack (api/devices.ts). Protocol: the request
 // goes to the script as environment variables; the script prints one line on stdout, "ok<TAB>timeline" or
 // "error<TAB>why". A run that does not answer in time is stopped (Resolve hangs when no project is open).
@@ -32,6 +33,9 @@ enum ResolveReply: Equatable {
     case opened(timeline: String)
     case failed(String)
 
+    /// How the script's answer starts when Resolve has not loaded (or takes no scripts).
+    static let notOpen = "Resolve isn't open"
+
     /// The script's last answer line; nil when it printed none (Resolve crashed or never answered).
     static func parse(_ output: String) -> ResolveReply? {
         for line in output.split(whereSeparator: \.isNewline).reversed() {
@@ -61,6 +65,18 @@ enum ResolveBridge {
     static func open(_ request: ResolveRequest, timeout: TimeInterval = defaultTimeout) async throws -> ResolveReply {
         guard let runner else { throw ResolveBridgeError.notInstalled }
         return try await run(request, runner: runner, timeout: timeout)
+    }
+
+    /// The first answer that is not "Resolve isn't open", trying again every `pause` seconds for up to `waiting` seconds:
+    /// a Resolve just started takes scripts only once it has loaded. Its last answer when the time is up.
+    static func untilOpen(waiting: TimeInterval, pause: TimeInterval = 3,
+                          _ attempt: () async throws -> ResolveReply) async throws -> ResolveReply {
+        let deadline = Date().addingTimeInterval(waiting)
+        while true {
+            let reply = try await attempt()
+            guard case .failed(let why) = reply, why.hasPrefix(ResolveReply.notOpen), Date() < deadline else { return reply }
+            try await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
+        }
     }
 
     /// Runs the script with `runner` (Resolve's fuscript, or a fake in the tests) and reads its answer.
