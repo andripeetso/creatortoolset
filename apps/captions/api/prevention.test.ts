@@ -51,7 +51,7 @@ const DECODERS: Record<string, string> = {
   "api/caption-frames.ts": "the frame browser, used only by the export and design-pages tasks (work/tasks.ts mayRunHere)",
   "api/review.ts": "serving (decision 5): the Review upload transcode",
   "api/work/tasks/review.ts": "computer task (work/tasks.ts mayRunHere)",
-  "api/enhance.ts": "OPEN: a plug-in engine's host (runStep, finish) and the download's blend at a strength",
+  "api/enhance.ts": "runStep only: the spawn a plug-in engine runs its own pass's commands with (enhanceHost); the host's own steps (finish, the blend) are computer tasks",
   "api/lib/device-transcribe.ts": "the speech model: deviceTranscribes = This Mac only (work/place.ts mayRunHere rule 1)",
   "api/lib/device-embed.ts": "the search model: only where deviceTranscribes (This Mac)",
   "api/lib/device-picture.ts": "the picture model: library/pictures.ts picturesHere (mayRunHere)",

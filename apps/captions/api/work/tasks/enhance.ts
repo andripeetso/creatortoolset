@@ -1,6 +1,6 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { EnhanceInput, EnhanceMade } from "../../enhance";
+import type { BlendInput, EnhanceInput, EnhanceMade } from "../../enhance";
 import { env } from "../../lib/env";
 import { readWav, SR, studioVoice, wav16 } from "../../lib/nvidia-voice";
 import { probe } from "../../library/media/probe";
@@ -32,12 +32,18 @@ async function trimEncoderDelay(mp3: string, inputSeconds: number): Promise<stri
 }
 
 taskKind<EnhanceInput, EnhanceMade>("enhance", {
-  // the upload, and a plug-in engine's pass before this one (enhance.ts originalPath, passOut)
-  serve: (t, name) => (name === "original" ? session(t.ref, "original") : name === "pass" ? session(t.ref, `pass-${(t.input as EnhanceInput).step - 1}.wav`) : undefined),
+  // the upload, a plug-in engine's pass before this one, and the sound its last pass left (enhance.ts originalPath,
+  // passOut, finishInput)
+  serve: (t, name) =>
+    name === "original" ? session(t.ref, "original")
+    : name === "pass" ? session(t.ref, `pass-${(t.input as EnhanceInput).step - 1}.wav`)
+    : name === "clean" ? session(t.ref, "finish-in")
+    : undefined,
   async run(input, ctx) {
     const { band, builtinEngine, LOUDNESS } = await tool();
     const original = await ctx.file("original");
-    let clean = input.step ? await ctx.file("pass") : original;
+    // finish: only the last steps, on what a plug-in engine's run left
+    let clean = input.finish ? await ctx.file("clean") : input.step ? await ctx.file("pass") : original;
     return withSignal(ctx.signal, async () => {
       const out = (n: string) => path.join(ctx.dir, n);
       const progress = (p: number) => ctx.call("progress", { run: input.run, p }).catch(() => {});
@@ -52,7 +58,7 @@ taskKind<EnhanceInput, EnhanceMade>("enhance", {
         files.push("source.m4a");
       }
       const n = input.chain.length;
-      let k = input.step;
+      let k = input.finish ? n : input.step;
       for (; k < n && builtinEngine(input.chain[k]!); k++) {
         const engine = input.chain[k]!;
         const [lo, hi] = band(k, n);
@@ -116,4 +122,27 @@ taskKind<EnhanceInput, EnhanceMade>("enhance", {
   },
   apply: async (t, made, files) => (await tool()).enhanceFiled(t.ref, t.input.run, made, files),
   failed: (t, error) => void tool().then((e) => e.enhanceFailed(t.ref, t.input.run, error)),
+});
+
+/** The download at a strength under 100 % (enhance.ts startBlend): the levelled original and the result mixed, and with `ext` the video remuxed with it. */
+taskKind<BlendInput, null>("enhance-blend", {
+  serve: (t, name) => {
+    const id = (t.input as BlendInput).id;
+    return name === "source" ? session(id, "source.m4a") : name === "enhanced" ? session(id, "enhanced.m4a") : name === "original" ? session(id, "original") : undefined;
+  },
+  async run(input, ctx) {
+    const { LOUDNESS } = await tool();
+    const [source, enhanced] = [await ctx.file("source"), await ctx.file("enhanced")];
+    const original = input.ext ? await ctx.file("original") : "";
+    return withSignal(ctx.signal, async () => {
+      const blend = path.join(ctx.dir, "blend.m4a");
+      const mix = `[0:a]volume=${(100 - input.pct) / 100}[o];[1:a]volume=${input.pct / 100}[e];[o][e]amix=inputs=2:normalize=0:duration=longest,${LOUDNESS}`;
+      await ffmpegTo(blend, ["-i", source, "-i", enhanced, "-filter_complex", mix, "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"]);
+      if (!input.ext) return { result: null, files: ["blend.m4a"] };
+      const video = `blend-video.${input.ext}`;
+      await ffmpegTo(path.join(ctx.dir, video), ["-i", original, "-i", blend, "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-shortest", ...(input.ext === "mp4" ? ["-movflags", "+faststart", "-f", "mp4"] : ["-f", "matroska"])]);
+      return { result: null, files: ["blend.m4a", video] };
+    });
+  },
+  apply: async (t, _r, files) => (await tool()).enhanceBlended(t.input, files),
 });

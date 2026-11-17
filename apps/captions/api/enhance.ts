@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -266,7 +266,8 @@ if (env.isProduction) {
 /* ---- probes & process helpers ---- */
 
 /** Spawn a command for session `id` (tracked so cancel can kill it),
- *  mapping ffmpeg -progress output onto the [lo, hi] progress slice: a plug-in engine's steps, and the download's blend. */
+ *  mapping ffmpeg -progress output onto the [lo, hi] progress slice. Only a plug-in engine calls it (enhanceHost), with
+ *  its own commands for its own pass; nothing in this file runs one. */
 function runStep(
   id: string,
   meta: Meta,
@@ -412,8 +413,11 @@ export async function isolate(id: string, owner: string | undefined, audio: Buff
 
 /* ---- pipeline ---- */
 
-/** The computer task's ask: from pass `step` on, through the built-in engines; `source`: make the levelled original too. */
-export type EnhanceInput = { run: string; chain: Engine[]; step: number; source: boolean };
+/**
+ * The computer task's ask: from pass `step` on, through the built-in engines; `source`: make the levelled original too;
+ * `finish`: only the last steps, on the sound a plug-in engine's run left (finishInput).
+ */
+export type EnhanceInput = { run: string; chain: Engine[]; step: number; source: boolean; finish?: true };
 /** What it found and made; `next`: a plug-in engine's pass comes next (its input is pass.wav, or the upload). */
 export type EnhanceMade = { duration: number; hasVideo: boolean; next?: number; videoOutExt?: "mp4" | "mkv" };
 export const builtinEngine = (e: string): boolean => (ENGINES as readonly string[]).includes(e);
@@ -438,10 +442,14 @@ function enqueue(meta: Meta, user: SessionUser): boolean {
   return true;
 }
 
-/** The current pass: a plug-in engine's (it hands the result back itself), or the computer task from this pass on. */
+/**
+ * The current pass: a plug-in engine's (it hands the result back itself), or the computer task from this pass on. A
+ * plug-in engine's first pass waits for the task's first steps (the length, the picture check, the levelled original),
+ * which hands it on (enhanceFiled, `next`).
+ */
 function startStep(meta: Meta): void {
   const plugged = engines.get(meta.chain![meta.step ?? 0]);
-  if (plugged) {
+  if (plugged && (meta.step || existsSync(sourceAudio(meta.id)))) {
     void plugged.start(enhanceHost, meta).catch(async (e) => {
       if (active.get(meta.id) !== meta) return;
       setStatus(meta, "error");
@@ -451,13 +459,21 @@ function startStep(meta: Meta): void {
     });
     return;
   }
+  startRun(meta, { chain: meta.chain!, step: meta.step ?? 0, source: !existsSync(sourceAudio(meta.id)) });
+}
+
+/** Starts the session's computer task; while it waits the session is queued, its page showing the wait line. */
+function startRun(meta: Meta, ask: Omit<EnhanceInput, "run">): void {
   const run = randomUUID();
   meta.run = run;
   active.set(meta.id, meta);
   void persist(meta);
-  const input: EnhanceInput = { run, chain: meta.chain!, step: meta.step ?? 0, source: !existsSync(sourceAudio(meta.id)) };
-  void startTask<EnhanceInput, EnhanceMade>(ENHANCE_TASK, meta.id, meta.owner ?? "", meta.projectId ?? null, input).then(
-    (got) => got.state === "queued" && announceSoon(meta.owner, "enhance"), // the page hears the wait line
+  void startTask<EnhanceInput, EnhanceMade>(ENHANCE_TASK, meta.id, meta.owner ?? "", meta.projectId ?? null, { run, ...ask }).then(
+    async (got) => {
+      if (got.state !== "queued" || meta.run !== run) return;
+      setStatus(meta, "queued"); // a plug-in engine's run comes here running
+      await jobPersist(meta); // the page hears the wait line
+    },
     (e) => enhanceFailed(meta.id, run, e instanceof Error ? e.message : String(e)), // a failed run already said so
   );
 }
@@ -491,7 +507,8 @@ export async function enhanceFiled(id: string, run: string, made: EnhanceMade, f
     if (files["pass.wav"]) await keep(files["pass.wav"], passOut(id, made.next - 1));
     meta.step = made.next;
     await persist(meta);
-    startStep(meta);
+    // after this task is marked done: a start of the session's next task while this one is held would be ignored
+    setImmediate(() => startStep(meta));
     return;
   }
   await keep(files["enhanced.m4a"]!, enhancedAudio(id));
@@ -499,6 +516,7 @@ export async function enhanceFiled(id: string, run: string, made: EnhanceMade, f
   meta.videoOutExt = made.videoOutExt;
   setStatus(meta, "done");
   meta.progress = 1;
+  await rm(finishInput(id), { force: true });
   await jobPersist(meta);
 }
 
@@ -511,6 +529,7 @@ export async function enhanceFailed(id: string, run: string, error: string): Pro
   meta.error = missing ?? error;
   meta.run = undefined;
   active.delete(id);
+  await rm(finishInput(id), { force: true });
   await jobPersist(meta);
 }
 
@@ -520,67 +539,19 @@ const stepInput = (meta: Meta) => (meta.step ? passOut(meta.id, meta.step - 1) :
 /** The progress range of pass `step` of `n` (the last 16 % are loudness and the remux). */
 export const band = (step: number, n: number): [number, number] => [0.08 + (step * 0.74) / n, 0.08 + ((step + 1) * 0.74) / n];
 
-/**
- * The last steps of a plug-in engine's run, whatever the engine: loudness to -15 LUFS and AAC (every
- * engine's voice at one level), then the video remux. `alive` = the run
- * wasn't cancelled meanwhile. The built-in engines' runs do the same in their task (work/tasks/enhance.ts).
- */
-async function finish(id: string, meta: Meta, clean: string, duration: number, alive: () => boolean): Promise<void> {
-  const outAudio = enhancedAudio(id) + ".part";
-  try {
-    await runStep(id, meta, "ffmpeg", [
-      "-i", clean,
-      "-af", LOUDNESS, "-ar", "48000",
-      "-c:a", "aac", "-b:a", "192k",
-      "-movflags", "+faststart",
-      "-f", "mp4", // .part suffix hides the extension from ffmpeg
-      outAudio,
-    ], { duration, lo: 0.84, hi: 0.88 });
-    if (!alive()) return;
-    await rename(outAudio, enhancedAudio(id));
+/** The clean sound a plug-in engine's run left, kept here for the task's last steps. */
+export const finishInput = (id: string) => path.join(sesDir(id), "finish-in");
 
-    // video inputs: remux the untouched video stream with the clean
-    // track — stream copy, so it's fast and full quality. mp4 first;
-    // mkv as fallback (it holds any codec). Failure here doesn't fail
-    // the job — the enhanced audio is the primary result.
-    if (meta.hasVideo) {
-      meta.progress = 0.92;
-      await jobPersist(meta);
-      const mux = (ext: "mp4" | "mkv") =>
-        runStep(id, meta, "ffmpeg", [
-          "-i", originalPath(id),
-          "-i", enhancedAudio(id),
-          "-map", "0:v:0", "-map", "1:a:0",
-          "-c", "copy", "-shortest",
-          ...(ext === "mp4" ? ["-movflags", "+faststart"] : []),
-          "-f", ext === "mp4" ? "mp4" : "matroska",
-          enhancedVideo(id, ext) + ".part",
-        ], { duration, lo: 0.92, hi: 0.99 });
-      try {
-        await mux("mp4");
-        await rename(enhancedVideo(id, "mp4") + ".part", enhancedVideo(id, "mp4"));
-        meta.videoOutExt = "mp4";
-      } catch {
-        try {
-          await mux("mkv");
-          await rename(enhancedVideo(id, "mkv") + ".part", enhancedVideo(id, "mkv"));
-          meta.videoOutExt = "mkv";
-        } catch {
-          meta.videoOutExt = undefined;
-        }
-      }
-    }
-    if (!alive()) return;
-    setStatus(meta, "done");
-    meta.progress = 1;
-    await jobPersist(meta);
-  } finally {
-    await Promise.all([
-      rm(outAudio, { force: true }),
-      rm(enhancedVideo(id, "mp4") + ".part", { force: true }),
-      rm(enhancedVideo(id, "mkv") + ".part", { force: true }),
-    ]).catch(() => {});
-  }
+/**
+ * The last steps of a plug-in engine's run: loudness to -15 LUFS and AAC (every engine's voice at one level), then the
+ * video remux, made by the enhance task (work/tasks/enhance.ts, its finish mode) like a built-in run's; its result is
+ * filed by enhanceFiled. `clean` is taken over at once (the engine may remove its own files when this returns). `alive`
+ * = the run wasn't cancelled meanwhile.
+ */
+async function finish(id: string, meta: Meta, clean: string, _duration: number, alive: () => boolean): Promise<void> {
+  if (!alive()) return;
+  await rename(clean, finishInput(id));
+  startRun(meta, { chain: meta.chain ?? [], step: meta.chain?.length ?? 0, source: false, finish: true });
 }
 
 /** Kill a queued/running job, the Mac's included (files stay). */
@@ -775,21 +746,43 @@ enhanceApp.put("/:id/mix", async (c) => {
   if (!(mix >= 0 && mix <= 1)) return c.json({ error: "mix is 0..1" }, 400);
   meta.mix = Math.round(mix * 20) / 20;
   await persist(meta);
+  // made now, so the download at this strength is usually ready by the time it is pressed
+  const pct = Math.round(meta.mix * 100);
+  if (pct < 100 && meta.status === "done" && existsSync(enhancedAudio(meta.id)) && !fresh(meta.id, blendAudio(meta.id, pct))) {
+    void startBlend(meta, pct).catch((e) => console.warn(`[enhance] blend ${meta.id}:`, e instanceof Error ? e.message : e));
+  }
   return c.json(publicMeta(meta));
 });
 
-/** The original and the result blended at `pct` % result, levelled (made once per result). */
-async function blend(id: string, meta: Meta, pct: number): Promise<string> {
-  const out = blendAudio(id, pct);
-  const made = await stat(out).catch(() => null);
-  if (made && made.mtimeMs >= (await stat(enhancedAudio(id))).mtimeMs) return out;
-  await runStep(id, meta, "ffmpeg", [
-    "-i", sourceAudio(id), "-i", enhancedAudio(id),
-    "-filter_complex", `[0:a]volume=${(100 - pct) / 100}[o];[1:a]volume=${pct / 100}[e];[o][e]amix=inputs=2:normalize=0:duration=longest,${LOUDNESS}`,
-    "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", out + ".part",
-  ]);
-  await rename(out + ".part", out);
-  return out;
+/** The blend task (work/tasks/enhance.ts): the original and the result at `pct` % result, levelled; with `ext`, the video too. */
+export const BLEND_TASK = "enhance-blend";
+/** `made`: the result's time, so a blend of a result a newer run replaced is not filed. */
+export type BlendInput = { id: string; pct: number; ext?: "mp4" | "mkv"; made: number };
+
+/** A blend made after the result it blends (made once per result). */
+function fresh(id: string, p: string): boolean {
+  const made = statSync(p, { throwIfNoEntry: false });
+  return !!made && made.mtimeMs >= statSync(enhancedAudio(id)).mtimeMs;
+}
+
+/** Starts the blend at `pct` (and its video in `ext`) on a computer, or here where the server may make it. */
+async function startBlend(meta: Meta, pct: number, ext?: "mp4" | "mkv") {
+  // shortcut: each strength picked while no computer is online waits as its own task; drop the older ones if that piles up
+  const input: BlendInput = { id: meta.id, pct, ...(ext ? { ext } : {}), made: statSync(enhancedAudio(meta.id)).mtimeMs };
+  const ref = `${meta.id}:${pct}:${ext ?? "m4a"}`;
+  const got = await startTask<BlendInput, null>(BLEND_TASK, ref, meta.owner ?? "", meta.projectId ?? null, input);
+  // the same blend being made here already (the strength was just picked): its end is this one's
+  for (let n = 0; got.state === "queued" && taskFor(BLEND_TASK, ref)?.held_by === "server" && taskFor(BLEND_TASK, ref)?.state === "running" && n < 600; n++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return got.state === "queued" && taskFor(BLEND_TASK, ref)?.state === "done" ? { state: "done" as const, result: null } : got;
+}
+
+/** The blend task's files, on the server: kept as the download at that strength, unless the result changed meanwhile. */
+export async function enhanceBlended(input: BlendInput, files: Record<string, string>): Promise<void> {
+  if (statSync(enhancedAudio(input.id), { throwIfNoEntry: false })?.mtimeMs !== input.made) return;
+  await keep(files["blend.m4a"]!, blendAudio(input.id, input.pct));
+  if (input.ext) await keep(files[`blend-video.${input.ext}`]!, blendVideo(input.id, input.pct, input.ext));
 }
 
 /* download the result, at the strength picked (?mix=, else the kept one) */
@@ -803,26 +796,24 @@ enhanceApp.get("/:id/download", async (c) => {
   const mix = q === undefined ? (meta.mix ?? 1) : Number(q);
   if (!(mix >= 0 && mix <= 1)) return c.json({ error: "mix is 0..1" }, 400);
   const pct = Math.round(mix * 20) * 5;
+  // ?ready=1: the page asks first, and gets 202 with the wait line while the blend is being made (the file is not sent)
+  const ready = c.req.query("ready") === "1";
   if (pct < 100) {
     if (meta.status !== "done" || !existsSync(enhancedAudio(id))) return c.json({ error: "Not ready" }, 409);
-    let p = await blend(id, meta, pct);
-    let type = "audio/mp4";
-    let ext = "m4a";
-    if (wantVideo) {
-      if (!meta.hasVideo) return c.json({ error: "This file has no video" }, 409);
-      ext = meta.videoOutExt ?? "mp4";
-      const v = blendVideo(id, pct, ext);
-      const made = await stat(v).catch(() => null);
-      if (!made || made.mtimeMs < (await stat(p)).mtimeMs) {
-        await runStep(id, meta, "ffmpeg", [
-          "-i", originalPath(id), "-i", p, "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-shortest",
-          ...(ext === "mp4" ? ["-movflags", "+faststart"] : []), "-f", ext === "mp4" ? "mp4" : "matroska", v + ".part",
-        ]);
-        await rename(v + ".part", v);
+    if (wantVideo && !meta.hasVideo) return c.json({ error: "This file has no video" }, 409);
+    const video = wantVideo ? (meta.videoOutExt ?? "mp4") : undefined;
+    const p = video ? blendVideo(id, pct, video) : blendAudio(id, pct);
+    if (!fresh(id, p)) {
+      try {
+        const got = await startBlend(meta, pct, video);
+        if (got.state === "queued") return c.json({ ready: false, ...(got.line ? { line: got.line } : {}) }, 202);
+      } catch (e) {
+        return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
       }
-      p = v;
-      type = ext === "mp4" ? "video/mp4" : "video/x-matroska";
     }
+    if (ready) return c.json({ ready: true });
+    const ext = video ?? "m4a";
+    const type = !video ? "audio/mp4" : video === "mp4" ? "video/mp4" : "video/x-matroska";
     const st = await stat(p);
     return new Response(Readable.toWeb(createReadStream(p)) as unknown as ReadableStream, {
       headers: {
@@ -836,6 +827,7 @@ enhanceApp.get("/:id/download", async (c) => {
     if (!meta.videoOutExt || !existsSync(enhancedVideo(id, meta.videoOutExt))) {
       return c.json({ error: "No enhanced video for this file" }, 409);
     }
+    if (ready) return c.json({ ready: true });
     const p = enhancedVideo(id, meta.videoOutExt);
     const st = await stat(p);
     return new Response(
@@ -851,6 +843,7 @@ enhanceApp.get("/:id/download", async (c) => {
   }
   const p = enhancedAudio(id);
   if (!existsSync(p)) return c.json({ error: "Not ready" }, 409);
+  if (ready) return c.json({ ready: true });
   const st = await stat(p);
   return new Response(
     Readable.toWeb(createReadStream(p)) as unknown as ReadableStream,
