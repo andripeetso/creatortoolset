@@ -77,7 +77,7 @@ enum EditState: Equatable {
             if item?.state == .done || item?.uploadId.map(landed.contains) == true {
                 done += 1
             } else if remote != nil && (item == nil || item?.state == .failed) {
-                return .failed("A clip didn't upload")
+                return .failed(item?.note ?? "A clip didn't upload")
             }
         }
         return .uploading(done: done, of: edit.clips.count)
