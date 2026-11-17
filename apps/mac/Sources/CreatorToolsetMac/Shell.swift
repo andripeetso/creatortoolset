@@ -169,6 +169,11 @@ final class Shell: NSObject, ObservableObject {
             // Show in Finder for a library clip or a Review version's own file (Reveal.swift): the path comes from the
             // window's server; one elsewhere only a video, sound or picture file
             if isRevealAsk(ask) {
+                // a copy of the library: the page names the folder, its marker must be that copy's
+                if let c = copyRevealAsk(ask) {
+                    Task { done(await Reveal.answerCopy(c.path, library: c.library, copy: c.copy)) }
+                    return
+                }
                 let clip = revealAsk(ask), review = reviewRevealAsk(ask)
                 guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
                 let here = self.runsHere && self.server != nil
