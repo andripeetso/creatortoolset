@@ -313,7 +313,7 @@ describe("media_add_to_folder", () => {
     const finals = finalsCollectionId(LIB);
     const smart = await (await app.request(`/api/library/${LIB}/collections`, { method: "POST", ...json({ name: "A-roll", kind: "smart", query: { roll: "a" } }, { authorization: key }) })).json() as { id: string };
     const before = (await folders()).length;
-    const notFinals = "Finals is not a Media Library folder: a finished video goes there from Review or the AI Editor.";
+    const notFinals = "Finals is not a Media Library folder: a finished video goes there from Review or the Editor.";
     expect(await tool(key, "media_add_to_folder", { folder: finals, clips: ["clip-broll"] })).toMatchObject({ error: true, text: notFinals });
     expect(await tool(key, "media_add_to_folder", { name: "finals", clips: ["clip-broll"] })).toMatchObject({ error: true, text: notFinals });
     // the A-roll folder would file the clip as A-roll: the app sorts that, nobody switches it by hand

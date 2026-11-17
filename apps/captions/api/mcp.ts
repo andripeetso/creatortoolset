@@ -79,7 +79,7 @@ sets the winner, orders its versions and writes a version's name or post descrip
 the trash or back. A version's id is the one finals_pieces gives.`;
 
 /** The built-in AI Editor's recipes, said only where its tools are (voice_make, editor_create's moments and plan): not on an install whose plug-in answers /api/editor. */
-const EDITOR_GUIDE = `Any kind of edit: the AI Editor cuts footage where nobody speaks (gameplay, B-roll, a trip, a performance) to a song
+const EDITOR_GUIDE = `Any kind of edit: the Editor cuts footage where nobody speaks (gameplay, B-roll, a trip, a performance) to a song
 or to the brief, and with plan=true it does the same with footage where people talk. Put what the user wants in brief, in
 their words (the kind of edit, its pace, effects, words on screen: "an overdone hard edit cut on the beat", "a calm
 recap"), and the length in target_s; the workspace's setup and the editing style are read with it. The song: the one
@@ -347,7 +347,7 @@ const ASSISTANT_DEFS = [
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
   {
     name: "show_video",
-    description: "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an AI Editor draft's preview (edit and draft, as editor_get lists them).",
+    description: "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an Editor draft's preview (edit and draft, as editor_get lists them).",
     inputSchema: { type: "object", properties: { link: str, version: { type: "integer" }, edit: str, draft: str } },
   },
   {
@@ -1198,7 +1198,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       let version = a.version;
       if (a.edit || a.draft) {
         // this editor files each draft's preview in Review: the draft plays from there
-        if (!a.edit || !a.draft) throw new ToolError("An AI Editor preview needs edit and draft (editor_get lists them).");
+        if (!a.edit || !a.draft) throw new ToolError("An Editor preview needs edit and draft (editor_get lists them).");
         const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
         const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
         // an editor plug-in answering this path has no previews map: a draft it filed in Review carries review { asset, n }
