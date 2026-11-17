@@ -29,6 +29,8 @@ export interface IndexShot {
   junk?: string;
   /** where its picture changes, across (16 columns) and down (9 rows), as shares of the whole, the HUD left out */
   moves?: { cols: number[]; rows: number[] };
+  /** how well its picture matches the brief, 0…1 (1: the best match in this footage), when the library has its picture vectors (search by picture) */
+  pic?: number;
 }
 
 export interface IndexSource {

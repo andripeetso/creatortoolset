@@ -40,6 +40,7 @@ import { indexOnMac, parseOnMac } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceOf } from "../lib/devices";
 import { WORK_MIN } from "../../contracts/work";
+import { picturesHere } from "../lib/device-picture";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -757,6 +758,7 @@ const settingsOf = (json: string): LibrarySettings => {
     timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
+    ...(picturesHere() ? { pictures: s.pictures ?? SETTING_DEFAULTS.pictures } : {}),
     upload: uploadOf(s.upload),
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
@@ -795,7 +797,7 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
 // (a video is filed by its description) and files what is in no folder yet
@@ -809,7 +811,7 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "timeline", "embed", "proxy"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }

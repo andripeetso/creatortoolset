@@ -48,14 +48,14 @@ let current: { key: string; text: string } | null = null;
 /** What the transcript `key` names (a library version, a clip) is doing right now, in words for its owner; undefined when it is not running here. */
 export const deviceStatus = (key: string): string | undefined => (current?.key === key ? current.text : undefined);
 
-// the speech model and search by meaning's (device-embed.ts) never sit in memory side by side: together they took
-// 2.9 GB against 2.1 GB for the speech model alone (measured), so the other one is given back before a transcript
+// the speech model and the search models (device-embed.ts, device-picture.ts) never sit in memory side by side: with
+// search by meaning's it took 2.9 GB against 2.1 GB for the speech model alone (measured), so they are given back first
 let speaking = false;
-let freeOther: () => Promise<void> = async () => {};
+const others: (() => Promise<void>)[] = [];
 /** Whether the speech model is in memory now. */
 export const speechModelInUse = (): boolean => speaking;
-/** `free` gives the other model back (and waits for a run of it to end): called before the speech model loads. */
-export const beforeSpeechModel = (free: () => Promise<void>): void => void (freeOther = free);
+/** `free` gives another model back (and waits for a run of it to end): each is called before the speech model loads. */
+export const beforeSpeechModel = (free: () => Promise<void>): void => void others.push(free);
 
 const half = (c: Chunk) => Math.floor(c.timestamp[0] / 30);
 const noLength = (c: Chunk) => (c.timestamp[1] ?? c.timestamp[0]) - c.timestamp[0] <= 0.05;
@@ -221,7 +221,7 @@ export function transcribeOnDevice(pcmFile: string, key: string, load = loadMode
   return ffmpegSlot(async () => {
     const say = (text: string) => void (current = { key, text });
     speaking = true;
-    await freeOther();
+    await Promise.all(others.map((free) => free()));
     try {
       const model = await load(say).catch((e) => {
         // its files are left as they are, as the search model's are (device-embed.ts): the library is still writing the

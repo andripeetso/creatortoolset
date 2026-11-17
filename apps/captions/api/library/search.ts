@@ -16,6 +16,7 @@ import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { refreshDescription } from "./describe";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
+import { pictureHits } from "./pictures";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, FINISHED, ftsQuery, indexAsset, markHere, parseSearch, toCard, type CardRow } from "./query";
 import { filterClauses } from "./query";
@@ -164,8 +165,10 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
 }
 
 // GET /api/library/:id/search?q&collectionId&kind&f.<key> → SearchHit[], best first: full text, fused with the chunks
-// close in meaning when semantic search is on. Hits the viewer may not see are left out. While search by meaning is
-// still getting ready (its model fetched the first time), the hits are by words and X-Search-Meaning says getting-ready.
+// close in meaning when semantic search is on, and the shots whose picture matches when search by picture is (pictures.ts,
+// each opening at its shot; a search not in English matches pictures by its English line). Hits the viewer may not see
+// are left out. While search by meaning is still getting ready (its model fetched the first time), the hits are by words
+// and X-Search-Meaning says getting-ready; X-Search-Pictures says pending while the English line is being written.
 searchApp.get("/:id/search", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -178,9 +181,15 @@ searchApp.get("/:id/search", async (c) => {
   // footage only, by text and by meaning (query.ts FINISHED)
   const where = [...searchClauses(query), { sql: `NOT ${FINISHED}`, params: [] }];
   const text = searchLibrary(libraryId, q, LIMIT, where);
-  const meaning = await semanticHits(libraryId, q, user.username, where).catch(() => null);
-  const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
+  const [meaning, pictured] = await Promise.all([
+    semanticHits(libraryId, q, user.username, where).catch(() => null),
+    pictureHits(libraryId, q, user.username, where).catch(() => ({ hits: null, pending: undefined })),
+  ]);
+  const more = [meaning, pictured.hits].filter((h): h is SearchHit[] => !!h);
+  const hits = more.length ? rrf([text, ...more], hitKey).slice(0, 2 * LIMIT) : text;
   if (!meaning && meaningGettingReady(libraryId, user.username)) c.header("X-Search-Meaning", "getting-ready");
+  // a search not in English: its English line for the pictures is being written, so the page asks again soon
+  if (pictured.pending) c.header("X-Search-Pictures", "pending");
   const seen = markHere(db(), await visibleCards(viewer, libraryId, hits.map((h) => h.asset)), query.device);
   const shown = new Map(seen.map((a) => [a.id, a]));
   return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll)).map((h) => ({ ...h, asset: shown.get(h.asset.id)! }))); // ponytail: narrowed after the top hits

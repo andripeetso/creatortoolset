@@ -69,7 +69,7 @@ const STATIC_ROWS = [
   { section: "library", id: "library-upload", title: "Upload to the server", keywords: ["media library", "upload", "proxies", "cloud", "server", "bucket", "storage"] },
   { section: "library", id: "finals-upload", title: "Finals upload", keywords: ["media library", "finals", "upload", "phone", "final video"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
-  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "ai"] },
+  { section: "library", id: "library-ai", title: "Search", keywords: ["media library", "descriptions", "describe", "shot", "shots", "meaning", "picture", "ai"] },
   { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
   { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },

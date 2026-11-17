@@ -28,6 +28,8 @@ import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
 import { macSheetsWaiting, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
+import { sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
+import { picturesHere } from "../lib/device-picture";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
@@ -304,6 +306,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
 export function startLibraryWorker(): () => void {
   let stopped = false;
   const stopCatchUp = startEmbedCatchUp();
+  const stopPictures = startPictureCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
   void placeUnplaced(); // clips from before the country was kept, from their location tag
   for (const lane of LANES)
@@ -329,6 +332,7 @@ export function startLibraryWorker(): () => void {
   return () => {
     stopped = true;
     stopCatchUp();
+    stopPictures();
   };
 }
 
@@ -460,6 +464,8 @@ async function run(job: JobRow): Promise<void> {
       if (!macSheetsWaiting(v.id)) await budgetCheck(db, v.id);
       const sheets = takeMacSheets(v.id);
       if (sheets) {
+        // search by picture reads the same sheets now: they are not kept here (a model that fails leaves them without)
+        if (picturesHere() && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
         await lookFromSheets(db, v.id, job.actor, sheets);
         // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
         const copy = takeWatchCopy(v.id);
@@ -526,6 +532,7 @@ async function run(job: JobRow): Promise<void> {
     const file = out("jpg");
     await makeThumb(await src(), file, p.duration, !!p.cover, p.turn);
     await keep("thumb", file, `${base}/thumb.jpg`);
+    wakePictures();
   } else if (job.kind === "wave") {
     const file = out("json");
     await makeWave(await src(), file, !!p.acodec);
@@ -566,6 +573,7 @@ async function run(job: JobRow): Promise<void> {
     await budgetCheck(db, v.id);
     // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
     await lookVersion(db, v.id, lighter, p, job.actor, dir);
+    wakePictures(); // its kept sheets give its shots their picture vectors
     // with a Gemini key: the timeline, from the same file (timeline.ts); without one nothing more happens
     await watchAfter(db, v.id, lighter, job.actor);
   } else {

@@ -144,6 +144,12 @@ export const relatedAssets = (libraryId: string, assetId: string) =>
     .then((r) => json<{ related: AssetCard[] }>(r))
     .then((d) => d.related);
 
+/** More like this: the shots that look most like this clip's shot at `at` seconds, or like the clip (api/library/related.ts); none without picture vectors. */
+export const alikeShots = (libraryId: string, assetId: string, at?: number) =>
+  fetch(`/api/library/${libraryId}/assets/${assetId}/alike${at === undefined ? "" : `?at=${at}`}`)
+    .then((r) => json<{ hits: SearchHit[] }>(r))
+    .then((d) => d.hits);
+
 /** The plug-in sources this account may browse in the library (the built-in library is not one of them). */
 export function listSources(libraryId: string): Promise<{ id: string; label: string }[]> {
   return fetch(`/api/library/${libraryId}/sources`)
@@ -184,13 +190,14 @@ export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =
 /**
  * Titles, tags, descriptions, what is said in the clips and, when it is on, what they mean, best first: a hit with
  * `seconds` is a line said at that second. `meaningGettingReady`: search by meaning is not ready yet (its model is
- * fetched the first time), so these hits are by words.
+ * fetched the first time), so these hits are by words. `picturesPending`: the search's English line for matching
+ * pictures is being written, so asked again soon it finds them too.
  */
 export const searchLibrary = async (
   libraryId: string,
   q: string,
   narrow: { facets?: Record<string, string[]>; kind?: AssetKind; collectionId?: string; roll?: "a" | "b" } & LibraryFilters = {},
-): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean }> => {
+): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean; picturesPending?: boolean }> => {
   const p = new URLSearchParams({ q });
   if (narrow.kind) p.set("kind", narrow.kind);
   if (narrow.collectionId) p.set("collectionId", narrow.collectionId);
@@ -198,7 +205,11 @@ export const searchLibrary = async (
   setFacets(p, narrow.facets);
   setFilters(p, narrow);
   const r = await fetch(`/api/library/${libraryId}/search?${p}`);
-  return { hits: await json<SearchHit[]>(r), meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready" };
+  return {
+    hits: await json<SearchHit[]>(r),
+    meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready",
+    ...(r.headers.get("x-search-pictures") === "pending" ? { picturesPending: true } : {}),
+  };
 };
 
 /** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where, on this computer. */
