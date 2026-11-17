@@ -233,7 +233,7 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
   const out: number[] = [];
   for (const j of queued) {
     if (on.includes(j.kind) && test!(j)) out.push(j.id);
-    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !readsNoPicture(j) && !serverWorks(libraryWorkspace(j.library_id), j.actor)) {
+    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor) && !readsNoPicture(j)) {
       out.push(j.id);
       const line = leaveToComputers.kinds.includes(j.kind) ? WAITS_FOR_COMPUTER : WAITS_FOR_SERVER;
       if (j.error !== line) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(line, j.id);
