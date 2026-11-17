@@ -84,7 +84,7 @@ const Count = ({ n }: { n: number }) => <span className="tabular-nums text-zinc-
 
 export function LibrarySidebar(p: SidebarProps) {
   const tags = useCachedLoad(`/api/library/${p.libraryId}/tags`, () => listTags(p.libraryId));
-  const places = useCachedLoad(`/api/library/${p.libraryId}/places`, () => listPlaces(p.libraryId));
+  const places = useCachedLoad(`/api/library/${p.libraryId}/countries`, () => listPlaces(p.libraryId));
   const [tagQ, setTagQ] = useState("");
   const f = p.filters;
   const picked = f.tags ?? [];

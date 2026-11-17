@@ -132,7 +132,7 @@ export function listTags(libraryId: string): Promise<TagCount[]> {
 
 /** The countries the library's clips were filmed in (ISO 3166-1 alpha-2) with how many each, most first. */
 export function listPlaces(libraryId: string): Promise<{ place: string; count: number }[]> {
-  return fetch(`/api/library/${libraryId}/places`)
+  return fetch(`/api/library/${libraryId}/countries`)
     .then((r) => json<{ places: { place: string; count: number }[] }>(r))
     .then((d) => d.places);
 }
