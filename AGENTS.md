@@ -242,6 +242,10 @@ and answers:
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
     in both `plugin.ts` and `web.tsx` (`plugin-examples/hello` shows it). `GET /api/plugins` and Community read these.
   - Settings groups and the sidebar: `src/components/settings/nav.ts`; kit: `src/components/settings/ui.tsx`.
+  - One setting, one section. Before adding a section, look at the whole page it lands on: when a section for that
+    thing is there already, add rows to its card, under no heading of their own. A switch that turns the rows on or
+    off is the first row of their card, never a section of its own. `section-titles.test.ts` fails when two files
+    make a section of the same name.
   - **Settings wording** (owner, 2026-11-16: "standard", not "whimsical"). `settings-wording.test.ts` holds the
     banned forms.
     - A title (page, section, row) is a noun of one to three words. Never a sentence, a question, "How …", "Who …"
