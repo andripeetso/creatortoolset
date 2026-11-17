@@ -145,7 +145,7 @@ export async function startTask<I, R>(kind: string, ref: string, actor: string, 
   const def = kinds.get(kind);
   if (!def) throw new Error(`No task kind ${kind}`);
   const d = db();
-  const place = placeTask({ kind, actor, workspace });
+  const place = placeTask({ kind, actor, workspace, input });
   const now = Date.now();
   // a new start replaces what the ref had, unless a computer holds it now (its result would be filed half over the new one)
   const row = d
