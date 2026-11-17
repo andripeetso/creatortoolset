@@ -8,7 +8,7 @@ import { recordUsage } from "../lib/mac-claude";
 import { librarySetting, libraryDb } from "./db";
 import { workspaceIdOf } from "./describe";
 import { looksLikeSong, type ProbeSummary } from "./media/probe";
-import { ffmpeg } from "./media/run";
+import { soundMiddle } from "./media/wave";
 import { SHORT_SOUND_S } from "./organize";
 import { indexAsset } from "./query";
 import { nameWords } from "./sfx-type";
@@ -126,7 +126,7 @@ export async function listen(d: DatabaseSync, versionId: string, libraryId: stri
   if (await lookBudgetWaits(d, versionId)) return null;
   const clip = path.join(process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch"), `listen-${randomUUID()}.mp3`);
   try {
-    await ffmpeg(["-ss", String(Math.max(0, seconds / 2 - LISTEN_S / 2)), "-i", file, "-t", String(LISTEN_S), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", clip]);
+    await soundMiddle(file, seconds, LISTEN_S, clip);
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${LISTEN_MODEL}:generateContent`, {
       method: "POST",
       headers: { "x-goog-api-key": key, "Content-Type": "application/json" },

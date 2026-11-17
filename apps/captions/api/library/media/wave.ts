@@ -1,5 +1,5 @@
 import { ffmpegCommand } from "../../ffmpeg-runtime";
-import { spawnKillable, writeJsonAtomic } from "./run";
+import { ffmpeg, spawnKillable, writeJsonAtomic } from "./run";
 
 export const WAVE_PER_SECOND = 10;
 const RATE = 8000; // samples per second read from ffmpeg
@@ -49,3 +49,7 @@ export function makeWave(src: string, out: string, hasAudio: boolean): Promise<v
     });
   });
 }
+
+/** `len` seconds from the middle of `file`'s sound as a small mono mp3 at `out`: what sound-kind.ts lets Gemini hear. */
+export const soundMiddle = (file: string, seconds: number, len: number, out: string): Promise<void> =>
+  ffmpeg(["-ss", String(Math.max(0, seconds / 2 - len / 2)), "-i", file, "-t", String(len), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", out]);

@@ -19,7 +19,7 @@ const DECODERS: Record<string, string> = {
   "api/library/media/run.ts": "the runner of the library's ffmpeg calls",
   "api/library/media/sprite.ts": "serverWorks (DECODES sprite)",
   "api/library/media/thumb.ts": "serverWorks (DECODES thumb)",
-  "api/library/media/wave.ts": "serverWorks (DECODES wave)",
+  "api/library/media/wave.ts": "serverWorks (DECODES wave; the middle of a sound sound-kind.ts lets Gemini hear, in a probe here)",
   "api/library/fingerprint.ts": "serverWorks (DECODES fingerprint)",
   "api/library/transcribe.ts": "serverWorks (DECODES transcribe)",
   "api/library/describe.ts": "serverWorks (DECODES describe)",
