@@ -278,11 +278,19 @@ export default function LibraryPage() {
     };
   }, [libId, words, open, smart, facets, kind, roll, searching, filters]);
 
+  const opened = useRef("");
   const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
     if (a.id.startsWith("ext_")) return;
     setStartAt(at);
     setPreview(a);
+    opened.current = a.id;
+    // picked by a tag: a video opens where its shot or a line said names the tag (a search's hit for it), when one does
+    const tags = filters.tags ?? [];
+    if (!at && tags.length && a.kind === "video" && libId)
+      void searchLibrary(libId, tags.join(" "))
+        .then((r) => r.hits.find((h) => h.asset.id === a.id && h.seconds !== undefined)?.seconds)
+        .then((s) => s && opened.current === a.id && setStartAt(s), () => {});
     const p = new URLSearchParams(linked);
     p.delete("asset");
     p.delete("at");

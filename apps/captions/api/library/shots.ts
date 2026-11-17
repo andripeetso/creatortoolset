@@ -9,9 +9,9 @@ import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { mayRead } from "../work/offline";
-import { contextStamp, stampOf, workspaceContext } from "../lib/workshop/context";
+import { stampOf } from "../lib/workshop/context";
 import { blobs, libraryLookBudget, libraryLookLevel, librarySetting } from "./db";
-import { libraryWorkspaceId, WORKSPACE_MAX, whoFor, workspaceIdOf } from "./describe";
+import { libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CUTS_BY_MODEL } from "./cuts";
 import { clock, FRAME_H, FRAME_W, lookPrompt, parseRated, pictureHash, readPicture, SHEET_STRETCHES, shotsOf, STRETCH_COLS, STRETCH_FRAMES, stretchSheet, type RatedLine } from "./look";
@@ -218,7 +218,7 @@ async function callTurn(actor: string, max: number): Promise<() => void> {
  * prompt's version with its library's level (levelVersion). A line with another stamp is written again (writeLines); the AI Editor's gate compares with this.
  */
 export async function lookStamp(db: DatabaseSync, versionId: string): Promise<string> {
-  return contextStamp(await workspaceIdOf(db, versionId), WORKSPACE_MAX, levelVersion(levelOfVersion(db, versionId)));
+  return stampOf(await workspaceOf(db, versionId), levelVersion(levelOfVersion(db, versionId)));
 }
 
 /**
@@ -324,8 +324,7 @@ async function writeLines(db: DatabaseSync, versionId: string, actor: string, ke
   const who = whoFor(actor);
   const route = aiFor(who, "library", LOOK_LABEL);
   if (route.off) throw new NeedsKey(route.off);
-  const wsId = await workspaceIdOf(db, versionId);
-  const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
+  const workspace = await workspaceOf(db, versionId);
   // the stamp of the text these calls send (lookStamp's, read once)
   const stamp = stampOf(workspace, levelVersion(levelOfVersion(db, versionId)));
   const rows = new Map(

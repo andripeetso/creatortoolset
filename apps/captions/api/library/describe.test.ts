@@ -356,3 +356,64 @@ describe("a human description", () => {
     expect((await call("stranger", "/api/library/lib_a/assets/ast-local-01", "PATCH", { description: "x" })).status).toBe(404);
   });
 });
+
+describe("learning from the person's tags (learn.ts)", () => {
+  const tagsOn = (id: string) =>
+    libraryDb().prepare("SELECT tag, source FROM asset_tags WHERE asset_id = ? ORDER BY tag").all(id) as { tag: string; source: string }[];
+
+  it("an AI tag taken off is never given to that clip again; put back, it may be", async () => {
+    const v = await seed("ast-reject-1", "local", "x");
+    saveDescribed(libraryDb(), v, { description: "A town square.", tags: ["lorencia", "fountain"] }, "test");
+    await call("local", "/api/library/lib_a/assets/ast-reject-1", "PATCH", { tags: ["fountain"], aiTags: ["fountain"] });
+    saveDescribed(libraryDb(), v, { description: "A town square.", tags: ["lorencia", "fountain"] }, "test");
+    expect(tagsOn("ast-reject-1")).toEqual([{ tag: "fountain", source: "ai" }]);
+    expect(describePrompt({ title: "x", frames: 4, rejected: ["lorencia"] }).user).toContain("took these tags off this clip, so it doesn't show them: lorencia");
+    await call("local", "/api/library/lib_a/assets/ast-reject-1", "PATCH", { tags: ["fountain", "lorencia"], aiTags: ["fountain", "lorencia"] });
+    saveDescribed(libraryDb(), v, { description: "A town square.", tags: ["lorencia", "fountain"] }, "test");
+    expect(tagsOn("ast-reject-1").map((t) => t.tag)).toEqual(["fountain", "lorencia"]);
+  });
+
+  it("the clip's own tags are told as true, and the AI never gives one again in other letters", async () => {
+    const v = await seed("ast-own-tag1", "local", "x");
+    await call("local", "/api/library/lib_a/assets/ast-own-tag1", "PATCH", { tags: ["Noria"] });
+    saveDescribed(libraryDb(), v, { description: "Plants.", tags: ["noria", "plants"] }, "test");
+    expect(tagsOn("ast-own-tag1")).toEqual([{ tag: "Noria", source: "user" }, { tag: "plants", source: "ai" }]);
+    expect(describePrompt({ title: "x", frames: 4, own: ["Noria"] }).user).toContain("The person tagged this clip themselves: Noria. These are true of it");
+  });
+
+  it("learns how to recognise a tag from the person's clips, puts it in every description's context and gives the tag to the clips that show it", async () => {
+    const { learnTag } = await import("./learn");
+    const d = libraryDb();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_l', 'local', 'L', 'local', 0)").run();
+    const put = (id: string, text: string) => {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_l', 'video', ?, ?, 'local', 1)").run(id, id, `ver-${id}`);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, ?, 1, 'k', 1, ?, '{}', 'ready', 'local', 1)").run(`ver-${id}`, id, `sha-${id}`);
+      saveDescribed(d, `ver-${id}`, { description: text, tags: [] }, "test");
+    };
+    put("l-tagged", "An elf on a cobblestone path lined with huge curling yellow-green plants.");
+    put("l-alike", "Two characters on cobblestones between glowing curved yellow plants.");
+    put("l-snow", "An archer fights yetis in the snow.");
+    d.prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES ('l-tagged', 'noria', 'user')").run();
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
+    vi.mocked(completeWithFallback)
+      .mockImplementationOnce(async (_s, user, _c, parse) => {
+        expect(user).toMatch(/tagged this clip "noria"[\s\S]*\[1\] l-tagged: An elf on a cobblestone path/);
+        return parse('{"note": "cobblestone paths among huge curling yellow-green plants", "seen": true}') as never;
+      })
+      .mockImplementationOnce(async (_s, user, _c, parse) => {
+        expect(user).toMatch(/The tag "noria": cobblestone paths[\s\S]*l-alike[\s\S]*l-snow/);
+        expect(user).not.toContain("l-tagged");
+        return parse('{"yes": [1, 99]}') as never; // a number no clip has is dropped
+      });
+    expect(await learnTag(d, "lib_l", "noria", "local")).toBe(true);
+    expect(tagsOn("l-alike")).toEqual([{ tag: "noria", source: "ai" }]);
+    expect(tagsOn("l-snow")).toEqual([]);
+    expect(await workspaceOf(d, "ver-l-snow")).toContain("- noria: cobblestone paths among huge curling yellow-green plants");
+    // the same clips again: nothing to learn, no call
+    expect(await learnTag(d, "lib_l", "noria", "local")).toBe(false);
+    // the person's tag gone from every clip: the line goes too
+    d.prepare("DELETE FROM asset_tags WHERE asset_id = 'l-tagged'").run();
+    expect(await learnTag(d, "lib_l", "noria", "local")).toBe(false);
+    expect(await workspaceOf(d, "ver-l-snow")).toBe("");
+  });
+});
