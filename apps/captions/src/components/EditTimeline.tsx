@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, X } from "lucide-react";
-import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
+import { Crop, Eye, EyeOff, Lock, LockOpen, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, Volume2, VolumeX, X } from "lucide-react";
+import { SNAP_PX, settle, snapDelta } from "@/lib/clip-drag";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
@@ -26,8 +26,13 @@ import {
  * extends and removes items, adds and removes layers and draws placeholders;
  * the page keeps the edits (with undo) and sends them as a comment.
  * `rules` say what whoever makes the next version can make of an edit: an edit nobody would make isn't offered.
+ * `nle` makes it a whole editor (the editor's timeline page): always editing, no comments, a lock on each lane and
+ * hide / mute on the overlay lanes (their clips switched off), and Overwrite or Ripple: a clip dragged or trimmed on an
+ * overlay lane cuts back what it now lies over, or moves what follows it by what its end moved.
+ * `onDropMedia`: something dragged in from outside (a media bin) and dropped, with the lane and frame under the pointer.
  */
 const LABEL_W = 72;
+const NLE_LABEL_W = 112;
 const RIGHT = 8;
 const TRACK_COLOR: Record<string, string> = {
   V1: "bg-violet-600/70 border-violet-400/60",
@@ -98,7 +103,7 @@ type Drag =
   | { kind: "hole"; ph: Placeholder; mode: Mode | "draw"; x0: number; f0: number; df: number; moved: boolean };
 
 export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true,
-  edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin, rules }: {
+  edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin, rules, nle, onDropMedia }: {
   view: TimelineView;
   /** seconds */
   time: number;
@@ -143,7 +148,12 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   history?: { back: number; ahead: number; undo: () => void; redo: () => void };
   /** an edge or a slip while it's dragged (null when let go): the page plays it live */
   onLive?: (changes: [TimelineItem, Partial<ItemEdit>][] | null) => void;
+  /** a whole editor (see above) */
+  nle?: boolean;
+  /** a drop from outside the timeline: what was dropped and where (the lane under the pointer, the frame) */
+  onDropMedia?: (data: DataTransfer, at: { lane?: string; frame: number }) => void;
 }) {
+  const LW = nle ? NLE_LABEL_W : LABEL_W;
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
@@ -174,14 +184,28 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     setDragState(d);
   };
   const { fps } = view;
-  const seconds = Math.max(view.duration / fps, 0.1);
+  // an edit can run past the render's end (a shot or the song made longer): the timeline reaches to where it ends
+  const endF = useMemo(() => Math.max(view.duration, ...view.tracks.flatMap((t) => t.items)
+    .map((i) => { const s = editedSpan(i, edits?.find((e) => e.key === i.key)); return s.rec + s.len; })), [view, edits]);
+  // and in the NLE a little past that, so the last clip's end can be dragged out
+  // (an empty one shows ten seconds to drop onto)
+  const seconds = Math.max(endF / fps + (nle ? Math.max(2, endF / fps / 8) : 0), nle ? 10 : 0.1);
   // the time axis the app's timelines share (lib/use-time-axis.ts): zoom about the playhead, the wheel and the pinch;
   // a frame gets 16 px at most
   const timeNow = useRef(time);
   timeNow.current = time;
-  const { zoom, maxZoom, pps, zoomTo, zoomBy, follow } = useTimeAxis({ scroller, seconds, left: LABEL_W, right: RIGHT, maxPps: fps * 16, now: () => timeNow.current });
+  const { zoom, maxZoom, pps, zoomTo, zoomBy, follow } = useTimeAxis({ scroller, seconds, left: LW, right: RIGHT, maxPps: fps * 16, now: () => timeNow.current });
   const x = (frames: number) => (frames / fps) * pps;
-  const edit = editing && !!onEdit;
+  const edit = (editing || !!nle) && !!onEdit;
+  // the NLE's lanes no edit reaches, and how a clip's new span treats the rest of its lane
+  const [locked, setLocked] = useState<string[]>([]);
+  const [ripple, setRipple] = useState(false);
+  // the lane a drag from outside is over, and where it would land
+  const [dropAt, setDropAt] = useState<{ lane?: string; frame: number } | null>(null);
+  const dropOf = (e: React.DragEvent) => ({
+    lane: (e.target as HTMLElement).closest<HTMLElement>("[data-lane]")?.dataset.lane,
+    frame: Math.max(0, frameAt(e.clientX)),
+  });
   const editOf = Object.fromEntries((edits ?? []).map((e) => [e.key, e]));
   const items = view.tracks.flatMap((t) => t.items);
   const sel = items.find((i) => i.key === selected);
@@ -212,8 +236,10 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     // eslint-disable-next-line react-hooks/exhaustive-deps -- follow reads the axis as it is now
   }, [time, pps, zoom, drag]);
 
+  const unlocked = (i: TimelineItem) => !locked.includes(editOf[i.key]?.track ?? i.track);
   const removeToggle = (list: TimelineItem[]) => {
-    const on = list; // the voice too: a piece out = silence there
+    const on = list.filter(unlocked); // the voice too: a piece out = silence there
+    if (!on.length) return;
     const out = !on.every((i) => editOf[i.key]?.remove);
     onEdit?.(on.map((i) => [i, i.copyOf
       ? { copyOf: undefined, move: undefined, head: undefined, tail: undefined, track: undefined, split: undefined }
@@ -236,11 +262,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   }, [menu, layerMenu]);
 
   const frameAt = (clientX: number) =>
-    Math.round(((clientX - inner.current!.getBoundingClientRect().left - LABEL_W) / pps) * fps);
+    Math.round(((clientX - inner.current!.getBoundingClientRect().left - LW) / pps) * fps);
   const seekFrame = (f: number) => onSeek(Math.max(0, Math.min(seconds, f / fps)));
   const editable = (it: TimelineItem, mode: Mode) =>
     // the talent never moves; the voice moves sideways, never slips
-    edit && !editOf[it.key]?.remove && !(it.track === "V1" && (mode === "move" || mode === "slip")) && !(it.track === "A1" && mode === "slip") &&
+    edit && !editOf[it.key]?.remove && unlocked(it) && !(it.track === "V1" && (mode === "move" || mode === "slip")) && !(it.track === "A1" && mode === "slip") &&
     (rules?.can?.(it, mode) ?? true);
   const layered = rules?.layers !== false;
   /** A clip's own sound: its own, or that of the clip it was cut or copied from (a piece's `before` counts from the same first second). */
@@ -275,13 +301,31 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   };
 
   // ---- editing moves (split and the rest) ----
+  /** One clip's new place, with the rest of its overlay lane settled around it in the NLE (Overwrite or Ripple). */
+  const commit = (changes: [TimelineItem, Partial<ItemEdit>][]) => {
+    if (!nle || changes.length !== 1) return onEdit?.(changes);
+    const [it, patch] = changes[0];
+    const e = { ...editOf[it.key], ...patch };
+    const lane = e.track ?? it.track;
+    if (lane === "V1" || lane === "A1") return onEdit?.(changes);
+    const others = items.filter((i) => i.key !== it.key && (editOf[i.key]?.track ?? i.track) === lane && !editOf[i.key]?.remove);
+    const moved = settle(others.map((i) => ({ key: i.key, ...spanOf(i) })), it.key, spanOf(it), editedSpan(it, e), ripple ? "ripple" : "overwrite");
+    onEdit?.([...changes, ...moved.map(({ key, rec, end, gone }): [TimelineItem, Partial<ItemEdit>] => {
+      const o = others.find((i) => i.key === key)!;
+      const oe = editOf[key];
+      const s = spanOf(o);
+      if (gone) return [o, o.copyOf ? { copyOf: undefined, move: undefined, head: undefined, tail: undefined, track: undefined, split: undefined } : { remove: true }];
+      const [d0, d1] = [rec - s.rec, end - s.rec - s.len];
+      return [o, d0 === d1 ? { move: (oe?.move ?? 0) + d0 } : { head: (oe?.head ?? 0) - d0, tail: (oe?.tail ?? 0) + d1 }];
+    })]);
+  };
   const playF = Math.round(time * fps);
   const spanOf = (i: TimelineItem) => editedSpan(i, editOf[i.key]);
   /** Cut these at frame f; a piece's cuts are kept on the item it came from (splitView). */
   const splitAt = (list: TimelineItem[], f: number) => {
     const changes: [TimelineItem, Partial<ItemEdit>][] = [];
     for (const it of list) {
-      if (editOf[it.key]?.remove) continue;
+      if (editOf[it.key]?.remove || !unlocked(it)) continue;
       const at = f - (editOf[it.key]?.move ?? 0); // cuts are made before moves: where f is in it as rendered
       const min = it.track === "V1" ? 6 : 1; // the worker leaves no talent piece under 6 frames
       if (at - it.rec < min || it.rec + it.len - at < min) continue;
@@ -301,12 +345,12 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     for (const it of list) {
       const e = editOf[it.key];
       const s = spanOf(it);
-      if (e?.remove) continue;
+      if (e?.remove || !unlocked(it)) continue;
       const room = mediaRoom(it, e);
       if (end === "head" && playF < s.rec + s.len - 1) changes.push([it, { head: Math.min(room.head, (e?.head ?? 0) + s.rec - playF) }]);
       if (end === "tail" && playF > s.rec) changes.push([it, { tail: Math.min(room.tail, (e?.tail ?? 0) + playF - (s.rec + s.len)) }]);
     }
-    if (changes.length) onEdit?.(changes);
+    if (changes.length) commit(changes);
   };
   const nudgeBy = (list: TimelineItem[], n: number) => {
     const on = list.filter((i) => editable(i, "move"));
@@ -570,7 +614,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
         onEdit!(d.group.map((k) => items.find((i) => i.key === k)!).map((i) => [i, { move: (editOf[i.key]?.move ?? 0) + d.df }]));
       } else if (d.mode) {
         onSelect?.(d.it, edit);
-        onEdit!([[d.it, shape(d.it, d)]]);
+        commit([[d.it, shape(d.it, d)]]);
       }
       return;
     }
@@ -718,6 +762,17 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                   </button>
                 </div>
               )}
+              {edit && nle && (
+                <div className="flex rounded border border-zinc-800 p-px">
+                  {([["Overwrite", false, "Overwrite: a clip dragged or trimmed onto another cuts back what it lies over"],
+                    ["Ripple", true, "Ripple: a clip made longer or shorter moves what follows it on its lane"]] as const).map(([label, on, tip]) => (
+                    <button key={label} onClick={() => setRipple(on)} title={tip}
+                      className={`rounded px-1.5 py-0.5 ${ripple === on ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:text-zinc-200"}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {edit && (
                 <button onClick={() => setSnapOn((v) => !v)} title={`Snapping ${snapOn ? "on" : "off"} (N)`}
                   className={`rounded p-1 ${snapOn ? "text-violet-300" : "text-zinc-600"} hover:bg-zinc-900`}>
@@ -733,11 +788,13 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                   <SquareDashed className="h-3 w-3" /> Placeholder
                 </button>
               )}
-              <button onClick={() => { setEditing(!editing); setTool("select"); setHolePicked(false); }}
-                title="Edit mode: drag items to move them (up or down for another layer), their edges to trim or extend; ⌘Z undoes"
-                className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${editing ? "bg-violet-600 text-white" : "text-zinc-300 hover:bg-zinc-900"}`}>
-                <Pencil className="h-3 w-3" /> Edit
-              </button>
+              {!nle && (
+                <button onClick={() => { setEditing(!editing); setTool("select"); setHolePicked(false); }}
+                  title="Edit mode: drag items to move them (up or down for another layer), their edges to trim or extend; ⌘Z undoes"
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${editing ? "bg-violet-600 text-white" : "text-zinc-300 hover:bg-zinc-900"}`}>
+                  <Pencil className="h-3 w-3" /> Edit
+                </button>
+              )}
               <span className="mx-1 h-3 w-px bg-zinc-800" />
             </>
           )}
@@ -761,10 +818,24 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
       </div>
       {/* the frame the app's timelines share: the scroller, the content at the axis's width, the ruler's marks.
           On the ruler here: the Layer button, line markers, QA flags */}
-      <TimelineFrame scroller={scroller} inner={inner} seconds={seconds} pps={pps} labelWidth={LABEL_W} right={RIGHT} rulerHeight={28} className="[contain:inline-size]"
+      <TimelineFrame scroller={scroller} inner={inner} seconds={seconds} pps={pps} labelWidth={LW} right={RIGHT} rulerHeight={28} className="[contain:inline-size]"
         content={{
           className: tool === "placeholder" && edit ? "cursor-crosshair" : drag?.kind === "pan" ? "cursor-grabbing" : "",
           onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: () => setDrag(null), onContextMenu: onContext,
+          ...(onDropMedia ? {
+            onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              const at = dropOf(e);
+              if (at.lane !== dropAt?.lane || at.frame !== dropAt?.frame) setDropAt(at);
+            },
+            onDragLeave: (e: React.DragEvent<HTMLDivElement>) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropAt(null),
+            onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+              e.preventDefault();
+              setDropAt(null);
+              onDropMedia(e.dataTransfer, dropOf(e));
+            },
+          } : {}),
         }}
         ruler={{ className: "cursor-ew-resize" }}
         rulerLabel={(
@@ -805,7 +876,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
           {lanes.map((t) => (
             <div key={t.id} className="group/lane flex border-t border-zinc-900/80" style={{ height: heights[t.id] ?? 28 }}>
               <div className="sticky left-0 z-20 flex shrink-0 items-center gap-1 bg-zinc-950 px-1.5 text-zinc-500"
-                style={{ width: LABEL_W }} title={t.name}>
+                style={{ width: LW }} title={t.name}>
                 {t.id[0] === "A" && (
                   <span title="Drag to make this audio layer taller or shorter"
                     onPointerDown={(e) => {
@@ -822,6 +893,34 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 )}
                 <span className="font-mono text-zinc-400">{t.id}</span>
                 <span className="truncate text-[9px]">{t.name}</span>
+                {nle && edit && (() => {
+                  const lock = locked.includes(t.id);
+                  const on = items.filter((i) => (editOf[i.key]?.track ?? i.track) === t.id && !editOf[i.key]?.remove);
+                  const offNow = (i: TimelineItem) => i.off || !!editOf[i.key]?.off;
+                  const hidden = on.length > 0 && on.every(offNow);
+                  const sound = t.id[0] === "A";
+                  const Off = sound ? (hidden ? VolumeX : Volume2) : (hidden ? EyeOff : Eye);
+                  const lb = "rounded p-0.5 hover:bg-zinc-800 disabled:opacity-30";
+                  return (
+                    <span className="ml-auto flex shrink-0 items-center" onPointerDown={(e) => e.stopPropagation()}>
+                      {/^[VA][2-9]$/.test(t.id) && (
+                        // switched off in the draft itself: only an edit made here can be undone
+                        <button aria-label={`${sound ? "Mute" : "Hide"} ${t.id}`} disabled={!on.length || lock || (hidden && on.some((i) => i.off))}
+                          title={sound ? (hidden ? "Muted: its clips are left out of the render" : "Mute: leave this lane's clips out of the render")
+                            : (hidden ? "Hidden: its clips are left out of the render" : "Hide: leave this lane's clips out of the render")}
+                          onClick={() => onEdit?.(on.filter((i) => !i.off).map((i) => [i, { off: !hidden || undefined }]))}
+                          className={`${lb} ${hidden ? "text-amber-300" : ""}`}>
+                          <Off className="h-3 w-3" />
+                        </button>
+                      )}
+                      <button aria-label={`${lock ? "Unlock" : "Lock"} ${t.id}`} title={lock ? "Locked: nothing on this lane can be edited" : "Lock this lane"}
+                        onClick={() => setLocked((l) => (lock ? l.filter((x) => x !== t.id) : [...l, t.id]))}
+                        className={`${lb} ${lock ? "text-amber-300" : ""}`}>
+                        {lock ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />}
+                      </button>
+                    </span>
+                  );
+                })()}
                 {edit && layered && t.id !== "V1" && t.id !== "A1" && (
                   <button aria-label={`Remove layer ${t.id}`} title="Remove this layer and what is on it"
                     onPointerDown={(e) => e.stopPropagation()} onClick={() => dropLayer(t.id)}
@@ -831,7 +930,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 )}
               </div>
               <div data-lane={t.id} className={`relative flex-1 ${
-                (drag?.kind === "item" && drag.lane === t.id && drag.lane !== drag.it.track) || badge?.lane === t.id ? "bg-violet-500/10" : ""}`}>
+                (drag?.kind === "item" && drag.lane === t.id && drag.lane !== drag.it.track) || badge?.lane === t.id || dropAt?.lane === t.id ? "bg-violet-500/10" : ""}`}>
+                {dropAt?.lane === t.id && <span className="pointer-events-none absolute inset-y-0 z-20 w-0.5 bg-violet-400" style={{ left: x(dropAt.frame) }} />}
                 {drag?.kind === "item" && drag.mode && drag.mode !== "move" && drag.moved && laneOf(drag.it) === t.id && (() => {
                   // all of its media while an edge or a slip is dragged: how far it can go
                   const v = shape(drag.it);
@@ -870,6 +970,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                       } ${selected === it.key || picked.includes(it.key) || marked?.includes(it.key) ? "z-10 ring-2 ring-white" : e || changed ? "ring-1 ring-amber-300" : ""} ${
                         edit && it.track !== "V1" && it.track !== "A1" && !e?.remove ? "cursor-grab" : ""}`}
                       style={{ left: x(span.rec), width: Math.max(2, x(span.len) - 1), ...(e?.remove ? { background: REMOVED } : {}),
+                        ...(it.off || e?.off ? { opacity: 0.35 } : {}),
                         ...(blade ? { cursor: RAZOR } : slipping ? { cursor: "ew-resize" } : {}) }}
                       onPointerLeave={() => blade && setBladeAt(null)}>
                       {blade && bladeAt?.key === it.key && (
@@ -947,18 +1048,22 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
               </div>
             </div>
           ))}
+          {endF > view.duration && (
+            <div title="Not rendered yet: made when the edits are" className="pointer-events-none absolute bottom-0 top-7 z-[4] border-l border-dashed border-amber-300/70"
+              style={{ left: LW + x(view.duration), width: x(endF - view.duration), background: "repeating-linear-gradient(45deg, rgba(251,191,36,.10) 0 4px, transparent 4px 8px)" }} />
+          )}
           {(() => {
             const band = drag?.kind === "range" && drag.moved ? [drag.f0 / fps, drag.f1 / fps] : range;
             if (!band) return null;
             const [a, b] = [Math.min(...band), Math.max(...band)];
             return (
               <div className="pointer-events-none absolute bottom-0 top-7 z-[5] border-x border-violet-400 bg-violet-500/15"
-                style={{ left: LABEL_W + a * pps, width: Math.max(1, (b - a) * pps) }} />
+                style={{ left: LW + a * pps, width: Math.max(1, (b - a) * pps) }} />
             );
           })()}
           {pps >= 30 && view.words.length > 0 && (
             <div className="flex h-4 border-t border-zinc-900/80">
-              <div className="sticky left-0 z-20 shrink-0 bg-zinc-950 px-1.5 text-[9px] text-zinc-600" style={{ width: LABEL_W }}>Words</div>
+              <div className="sticky left-0 z-20 shrink-0 bg-zinc-950 px-1.5 text-[9px] text-zinc-600" style={{ width: LW }}>Words</div>
               <div className="relative flex-1">
                 {view.words.map((w) => (
                   <span key={`${w.rs}-${w.t}`} className="absolute truncate text-[9px] leading-4 text-zinc-500"
@@ -968,7 +1073,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
             </div>
           )}
           <div className="pointer-events-none absolute inset-y-0 z-30 w-px bg-red-400"
-            style={{ left: LABEL_W + time * pps }}>
+            style={{ left: LW + time * pps }}>
             <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-red-400" />
           </div>
       </TimelineFrame>
@@ -988,7 +1093,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
             {it && (
               <>
                 <div className="truncate px-3 pb-1 pt-0.5 text-[10px] text-zinc-500">{it.track} · {it.label}</div>
-                <button className={row} onClick={act(() => onSelect?.(it, false))}>Comment on this</button>
+                {!nle && <button className={row} onClick={act(() => onSelect?.(it, false))}>Comment on this</button>}
                 {may && <button className={row} onClick={act(() => { setEditing(true); removeToggle(group.some((g) => g.key === it.key) ? group : [it]); })}>
                   {editOf[it.key]?.remove ? "Restore" : group.length > 1 && group.some((g) => g.key === it.key) ? `Remove ${group.length}` : "Remove"}</button>}
                 {may && it.track !== "V1" && it.track !== "A1" && (
@@ -1044,8 +1149,12 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 <button className={row} disabled={!history.ahead} onClick={act(history.redo)}>Redo{history.ahead ? ` (${history.ahead})` : ""}</button>
               </>
             )}
-            <div className="my-1 border-t border-zinc-800" />
-            <button className={row} onClick={act(() => { setEditing(!editing); setTool("select"); })}>{editing ? "Turn off Edit mode" : "Edit mode"}</button>
+            {!nle && (
+              <>
+                <div className="my-1 border-t border-zinc-800" />
+                <button className={row} onClick={act(() => { setEditing(!editing); setTool("select"); })}>{editing ? "Turn off Edit mode" : "Edit mode"}</button>
+              </>
+            )}
           </div>
         );
       })()}

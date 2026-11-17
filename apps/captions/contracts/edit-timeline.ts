@@ -71,7 +71,10 @@ export interface TimelineView {
 // keeps the key, every other one is "<track>:<frame>" with edits of its own;
 // copyOf = this key is a new item, a copy of that one (paste, Option-drag),
 // with the rest of its edit on the copy; slip = an overlay's span plays that
-// many frames later in its clip (< 0 earlier), where it is (the slip tool).
+// many frames later in its clip (< 0 earlier), where it is (the slip tool);
+// gain = a sound clip that many dB louder (< 0 quieter) than it is; off = an
+// overlay switched off (its lane hidden or muted): it stays on the timeline
+// and neither shows nor sounds.
 
 export interface ItemEdit {
   key: string;
@@ -92,9 +95,13 @@ export interface ItemEdit {
   grade?: Grade;
   /** V1, a reframed shot (TimelineItem.window): its window held at x, or following a speaker (0 = whoever talks) */
   crop?: WindowCrop;
+  /** a sound clip: dB more (< 0 less) than it has */
+  gain?: number;
+  /** an overlay switched off */
+  off?: boolean;
 }
 
-const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade && !e.crop;
+const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade && !e.crop && !e.gain && !e.off;
 /** Layers an overlay may go to: the same kind, never the talent or its voice. */
 export const layerFor = (from: string, to: string) => to !== from && to[0] === from[0] && /^[VA][2-9]$/.test(to);
 const whole = (v: unknown) => (Number.isInteger(v) && v !== 0 && Math.abs(v as number) <= 100_000 ? (v as number) : undefined);
@@ -126,6 +133,9 @@ export function cleanEdits(v: unknown): ItemEdit[] {
       const cx = c ? real(c.x, 0, 1, 10_000) : undefined;
       if (cx !== undefined) x.crop = { x: cx };
       else if (c && Number.isInteger(c.speaker) && (c.speaker as number) >= 0 && (c.speaker as number) <= 50) x.crop = { speaker: c.speaker as number };
+      const gain = e.key[0] === "A" ? real(e.gain, -30, 30) : undefined;
+      if (gain) x.gain = gain;
+      if (e.off === true && /^[VA][2-9]:/.test(e.key)) x.off = true;
     }
     // cuts stand whatever else the first piece gets (a removed first piece leaves the others)
     const split = Array.isArray(e.split)
@@ -207,6 +217,8 @@ export function describeEdit(e: ItemEdit, fps: number): string {
     e.zoom !== undefined && `reframed to ${e.zoom.toFixed(2)}×`,
     e.grade && `graded: ${describeGrade(e.grade)}`,
     e.crop && ("x" in e.crop ? `held at ${Math.round(e.crop.x * 100)}% across` : e.crop.speaker ? `following Speaker ${e.crop.speaker}` : "following who talks"),
+    e.gain && `${e.gain > 0 ? "+" : ""}${e.gain} dB`,
+    e.off && "switched off",
   ].filter(Boolean).join(", ");
 }
 
@@ -355,7 +367,7 @@ export function playPlan(view: TimelineView, edits: ItemEdit[], holes: PlanHole[
       card("added", e.track ?? it.track)(is);
       continue;
     }
-    if (e.remove) {
+    if (e.remove || e.off) {
       card("gone", it.track)(was);
       continue;
     }
