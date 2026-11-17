@@ -93,5 +93,4 @@ describe("location agents: the computers report, the server records", () => {
     expect(now.device.id).toBe(old.device.id);
     expect(libraryDb().prepare("SELECT device FROM version_places WHERE version_id = 'v-old'").get()).toEqual({ device: old.device.id });
   });
-  });
 });
