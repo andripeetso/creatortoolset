@@ -26,6 +26,7 @@ afterEach(() => {
   delete document.documentElement.dataset.macImport;
   delete document.documentElement.dataset.macDevice;
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
 });
 
 const places = [{ path: "/Volumes/Tiny/Footage", mode: "in-place" as const }];
