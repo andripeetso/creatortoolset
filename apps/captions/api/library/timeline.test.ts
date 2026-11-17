@@ -131,7 +131,8 @@ describe("a timeline's answer", () => {
   });
 
   it("an hour costs cents, more at Detailed, less on Flash-Lite", () => {
-    expect(watchUsdPerHour("standard", "gemini-3.5-flash-lite")).toBeCloseTo(0.16, 2);
+    expect(watchUsdPerHour("standard", "gemini-3.5-flash-lite")).toBeCloseTo(0.14, 2);
+    expect(watchUsdPerHour("standard", "gemini-3.8-flash")).toBeCloseTo(0.64, 2);
     for (const m of ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const) {
       expect(watchUsdPerHour("detailed", m)).toBeGreaterThan(watchUsdPerHour("standard", m));
       expect(watchUsdPerHour("light", m)).toBeLessThan(watchUsdPerHour("standard", m));
