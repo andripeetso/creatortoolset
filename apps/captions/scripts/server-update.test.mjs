@@ -30,29 +30,45 @@ beforeAll(() => {
   git(root, "clone", "-q", origin, site);
   mkdirSync(path.dirname(script), { recursive: true });
   cpSync(path.join(APP, "scripts", "server-update.sh"), script);
+  // `node` is the app's health check: busy while $FAKE/busy exists
   writeFileSync(
     path.join(root, "bin", "docker"),
-    `#!/bin/sh\ncase "$2" in\n  build) echo "compose build" >> "$FAKE/docker.log"; [ ! -e "$FAKE/build-fails" ] ;;\n  up) echo "compose up" >> "$FAKE/docker.log" ;;\n  exec) shift 4; case "$1" in node) exit 0 ;; *) exec "$@" ;; esac ;;\nesac\n`,
+    `#!/bin/sh\ncase "$2" in\n  build) echo "compose build" >> "$FAKE/docker.log"; [ ! -e "$FAKE/build-fails" ] ;;\n  up) echo "compose up" >> "$FAKE/docker.log" ;;\n  exec) shift 4; case "$1" in node) [ ! -e "$FAKE/busy" ] ;; *) exec "$@" ;; esac ;;\nesac\n`,
   );
   chmodSync(path.join(root, "bin", "docker"), 0o755);
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-it("says what is waiting, updates on the button and at the night hour, and leaves a failed build alone", () => {
+const drain = path.join(data, "server-update", "drain");
+const busy = path.join(root, "busy");
+
+it("says what is waiting, updates on the button and at night, waits for running work, and leaves a failed build alone", () => {
   run();
-  expect(status()).toEqual({ behind: 0, nightly: null, failed: false });
+  expect(status()).toEqual({ behind: 0, nightly: null, failed: false, waiting: false });
 
   const b = change("b");
   run();
-  expect(status()).toEqual({ behind: 1, nightly: null, failed: false });
+  expect(status()).toEqual({ behind: 1, nightly: null, failed: false, waiting: false });
   expect(built()).toBe(0); // nobody asked, and no night hour is set
+  expect(existsSync(drain)).toBe(false);
 
+  // asked while the server is working: no new job starts, nothing is built or restarted, and the request stays
   writeFileSync(request, "ada");
+  writeFileSync(busy, "");
+  expect(run().status).toBe(0);
+  expect(status()).toEqual({ behind: 1, nightly: null, failed: false, waiting: true });
+  expect(existsSync(drain)).toBe(true);
+  expect(existsSync(request)).toBe(true);
+  expect(built()).toBe(0);
+
+  // the work is done: the next run updates
+  rmSync(busy);
   expect(run().status).toBe(0);
   expect(built()).toBe(1);
   expect(readFileSync(log, "utf8")).toContain("compose up");
   expect(existsSync(request)).toBe(false);
-  expect(status()).toEqual({ behind: 0, nightly: null, failed: false });
+  expect(existsSync(drain)).toBe(false);
+  expect(status()).toEqual({ behind: 0, nightly: null, failed: false, waiting: false });
   expect(git(site, "config", "--get", "creatortoolset.running")).toBe(b);
 
   change("c");
@@ -60,10 +76,11 @@ it("says what is waiting, updates on the button and at the night hour, and leave
   writeFileSync(request, "ada");
   expect(run().status).toBe(1);
   expect(existsSync(request)).toBe(false);
-  expect(status()).toEqual({ behind: 1, nightly: null, failed: true });
+  expect(existsSync(drain)).toBe(false);
+  expect(status()).toMatchObject({ behind: 1, failed: true });
   run({ CT_UPDATE_HOUR: hourNow }); // the night does not try the build that failed
   expect(built()).toBe(2);
-  expect(status()).toMatchObject({ behind: 1, failed: true });
+  expect(existsSync(request)).toBe(false);
   const due = status().nightly - Date.now() / 1000; // the next start of this hour: tomorrow
   expect(due).toBeGreaterThan(22 * 3600);
   expect(due).toBeLessThanOrEqual(24 * 3600);
@@ -72,8 +89,14 @@ it("says what is waiting, updates on the button and at the night hour, and leave
   const d = change("d");
   run({ CT_UPDATE_HOUR: String((Number(hourNow) + 1) % 24) }); // not the hour yet
   expect(built()).toBe(2);
+  // the night's update waits for running work like the button's, and still happens once it is done
+  writeFileSync(busy, "");
   run({ CT_UPDATE_HOUR: hourNow.padStart(2, "0") });
+  expect(built()).toBe(2);
+  expect(status()).toMatchObject({ waiting: true });
+  rmSync(busy);
+  run({ CT_UPDATE_HOUR: String((Number(hourNow) + 1) % 24) }); // past the hour: the night's request is kept
   expect(built()).toBe(3);
-  expect(status()).toMatchObject({ behind: 0, failed: false });
+  expect(status()).toMatchObject({ behind: 0, failed: false, waiting: false });
   expect(git(site, "config", "--get", "creatortoolset.running")).toBe(d);
 });
