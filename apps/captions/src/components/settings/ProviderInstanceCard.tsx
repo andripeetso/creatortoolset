@@ -138,7 +138,8 @@ export function ProviderInstanceCard({
         <div className="relative z-10 flex items-center gap-2">
           {/* the chosen AI's button is in its settings beside the list (from `lg`, where both are on screen) */}
           {action && <span className={cn("flex items-center", selected && "lg:hidden")}>{action}</span>}
-          {onToggle && status.action !== "install" && <Switch checked={inst.enabled} onCheckedChange={onToggle} aria-label={`Use ${inst.name}`} />}
+          {/* not installed: no switch, Install in its place. One that is on with no Install here keeps its switch, so it can be turned off */}
+          {onToggle && (status.action !== "install" || (inst.enabled && !action)) && <Switch checked={inst.enabled} onCheckedChange={onToggle} aria-label={`Use ${inst.name}`} />}
         </div>
       }
     />

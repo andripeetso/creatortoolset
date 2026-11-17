@@ -150,6 +150,10 @@ describe("a provider that is not installed", () => {
     expect(row({ tone: "neutral", text: "" })).toContain('aria-label="Use Gemini (default)"');
   });
 
+  it("keeps the switch of one that is on where the app can't install it, so it can be turned off", () => {
+    expect(row(notInstalled)).toContain('aria-label="Use Gemini (default)"');
+  });
+
   it("gets the Install button in its Status row where the app can install it, else the lines that say how", () => {
     const withButton = detail(inst, { status: notInstalled, install: <button>Install</button> });
     expect(withButton).toContain(">Install<");

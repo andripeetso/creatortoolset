@@ -234,6 +234,16 @@ final class AiInstall: @unchecked Sendable {
     private let lock = NSLock()
     private var output = ""
     private var running = false
+    private var process: Process?
+
+    private init() {
+        // an installer is never left running once the app quits (a relaunch would start a second one beside it)
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            self.lock.lock(); defer { self.lock.unlock() }
+            if self.process?.isRunning == true { self.process?.terminate() }
+        }
+    }
 
     /// { done, total } of the install running now (Antigravity's download); 0 of 0 when none runs.
     var progress: [String: Any] {
@@ -260,30 +270,28 @@ final class AiInstall: @unchecked Sendable {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
+        // the output is read here only, and the answer is its last line: read once the installer closes its output,
+        // so no second reader can take that line first
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard let self, !data.isEmpty else {
-                handle.readabilityHandler = nil
-                return
+            guard let self else { handle.readabilityHandler = nil; return }
+            self.lock.lock()
+            guard data.isEmpty else {
+                self.output += String(decoding: data, as: UTF8.self)
+                return self.lock.unlock()
             }
-            self.lock.lock()
-            self.output += String(decoding: data, as: UTF8.self)
-            self.lock.unlock()
-        }
-        p.terminationHandler = { [weak self] _ in
-            guard let self else { return }
-            // what is still in the pipe comes in before the answer is read
-            let rest = pipe.fileHandleForReading.readDataToEndOfFile()
-            pipe.fileHandleForReading.readabilityHandler = nil
-            self.lock.lock()
-            self.output += String(decoding: rest, as: UTF8.self)
+            handle.readabilityHandler = nil
             let reply = aiInstallOutput(self.output).reply ?? ["ok": false, "problem": "Could not install it. Try again."]
             self.running = false
+            self.process = nil
             self.lock.unlock()
             DispatchQueue.main.async { done(reply) }
         }
         do {
             try p.run()
+            lock.lock(); process = p; lock.unlock()
+            // as the page waits for it: an install that hangs is stopped after an hour, and its answer is then a failure
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60 * 60) { if p.isRunning { p.terminate() } }
         } catch {
             pipe.fileHandleForReading.readabilityHandler = nil
             lock.lock(); running = false; lock.unlock()
