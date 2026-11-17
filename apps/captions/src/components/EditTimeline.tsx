@@ -63,13 +63,20 @@ export interface TimelineRules {
   can?: (item: TimelineItem, mode: Mode) => boolean;
   /** false = the layers stay as they are: none added or removed, and no clip changes layer */
   layers?: boolean;
+  /** false = this talent shot has no Reframe */
+  reframe?: (item: TimelineItem) => boolean;
 }
 /**
  * What the app's own AI Editor cuts into a version by hand (api/editor/edits.ts): a voice stays with its picture (cut,
  * pulled in or taken out), the layers stay as they are. For every page that makes such a cut, so none offers an edit the
  * maker refuses.
  */
-export const OWN_CUT_RULES: TimelineRules = { can: (it, mode) => it.track !== "A1" || mode === "head" || mode === "tail", layers: false };
+export const OWN_CUT_RULES: TimelineRules = {
+  can: (it, mode) => it.track !== "A1" || mode === "head" || mode === "tail",
+  layers: false,
+  // a moment reframed to 9:16 (its window can be moved or set to follow someone); nothing else is reframed by hand
+  reframe: (it) => !!it.window,
+};
 // the loudest peak of a clip's own sound, found once per array
 const peakCache = new WeakMap<Float32Array, number>();
 function peakOf(data: Float32Array): number {
@@ -673,7 +680,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
               )}
               {edit && !holePicked && sel && (
                 <>
-                  {sel.track === "V1" && onReframe && (
+                  {sel.track === "V1" && onReframe && (rules?.reframe?.(sel) ?? true) && (
                     <button onClick={() => onReframe(sel)} title="Reframe: zoom and move the picture of this shot (or every shot framed like it)" className={tbtn}>
                       <Crop className="h-3 w-3" /> Reframe
                     </button>
@@ -1000,7 +1007,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                     })}>Duplicate after it</button>
                   </>
                 )}
-                {it.track === "V1" && onReframe && <button className={row} onClick={act(() => { setEditing(true); onReframe(it); })}>Reframe…</button>}
+                {it.track === "V1" && onReframe && (rules?.reframe?.(it) ?? true) && <button className={row} onClick={act(() => { setEditing(true); onReframe(it); })}>Reframe…</button>}
                 {it.track === "V1" && onColor && <button className={row} onClick={act(() => { setEditing(true); onColor(it); })}>Colour…</button>}
                 {it.track === "V1" && onFace && <button className={row} onClick={act(() => { setEditing(true); onFace(it); })}>Face…</button>}
               </>

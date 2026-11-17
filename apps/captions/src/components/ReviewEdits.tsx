@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewEditRef, ReviewPlayCard, ReviewPlayPlan, ReviewSlotContext, ReviewTimelineSlot } from "@/lib/plugin";
-import { CameraView, RecropBox } from "@/components/RecropBox";
+import { CameraView, RecropBox, WindowBox } from "@/components/RecropBox";
 import { toast } from "sonner";
 import { EditTimeline, OWN_CUT_RULES, type Placeholder } from "@/components/EditTimeline";
 import { getEdit, makeCut, retryJob } from "@/lib/editor";
@@ -51,6 +51,8 @@ import {
 // Everyone who can watch the version sees it and can pin a comment to a clip (`pin`, from the page); the edit tools
 // are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
+// On a moment the app's own AI Editor reframed to 9:16 (TimelineItem.window), Reframe opens the whole picture with the
+// frame over it: drag it to hold it, or pick who it follows; Make the next version cuts that in.
 // A plug-in's AI edit gets the same button where the plug-in can make such a cut (`hooks.next`): the panel hands it the
 // edits, says what its maker is doing, and takes the next version in when it is filed.
 // On a cut the app's own AI Editor made (`version.draft`), Make the next version cuts the edits into it as they are,
@@ -109,6 +111,8 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
+  // the reframed shot whose frame is being moved (an own moment's window), by key: the shown item is read fresh each render
+  const [win, setWin] = useState<string | null>(null);
   // the edit being dragged (an edge or a slip plays as it goes), and the preview: the planned edits play over the old cut
   const [live, setLive] = useState<[TimelineItem, Partial<ItemEdit>][] | null>(null);
   const [previewOn, setPreviewOn] = useState(true);
@@ -231,6 +235,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   useEffect(() => slots.current.composer.onSent(() => {
     setHist(freshHist(EMPTY_PENDING));
     setCrop(null);
+    setWin(null);
   }), []);
   useEffect(() => history.register({ undo, redo }), []);
   useEffect(() => () => {
@@ -269,6 +274,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
         ownEdit.set(e);
         setHist(freshHist(EMPTY_PENDING));
         setCrop(null);
+        setWin(null);
       }, (e: Error) => toast.error(e.message || "Could not make the next version"))
       .finally(() => setMaking(false));
   };
@@ -394,6 +400,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     slots.current.player.pause();
     setCrop(null);
     setColour(null);
+    setWin(null);
     const f = time * fps;
     if (f < item.rec || f >= item.rec + item.len) slots.current.player.seek((item.rec + Math.floor(item.len / 2)) / fps);
     setFace(item);
@@ -405,6 +412,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       ? framingToCrop(f0, { zoom: e.zoom, pan: e.pan ?? 0, tilt: e.tilt ?? 0 }, w, h)
       : { x: 0, y: 0, k: 1 };
     setFace(null);
+    setWin(null);
     setCrop({ item, box: clampCrop(f0, box, w, h) });
     askCamera();
   };
@@ -420,6 +428,14 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     setCrop(null);
   };
   const looks = PLACEHOLDER_LOOKS;
+  // an own moment's shot: its frame over the whole picture (WindowBox), where the playhead is in it or at its start
+  const winItem = win ? shown.tracks.find((t) => t.id === "V1")?.items.find((i) => i.key === win && i.window) : undefined;
+  const openWindow = (item: TimelineItem) => {
+    setCrop(null);
+    setColour(null);
+    setFace(null);
+    setWin(item.key);
+  };
 
   return (
     <div className="space-y-2 px-3 pb-2">
@@ -500,6 +516,17 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           />
         </div>
       )}
+      {winItem?.window && winItem.src && (
+        <WindowBox
+          item={winItem as TimelineItem & { window: NonNullable<TimelineItem["window"]> }}
+          aspect={w / h}
+          src={`/api/library/media/${encodeURIComponent(winItem.src)}/play`}
+          mediaAt={(winItem.ins ?? 0) + Math.min(winItem.len - 1, Math.max(0, time * fps - winItem.rec)) / fps}
+          crop={planEdits.find((e) => e.key === winItem.key)?.crop}
+          onCrop={(c) => applyEdits([[winItem, { crop: c }]])}
+          onClose={() => setWin(null)}
+        />
+      )}
       {crop && !cam.url && (
         <div className={cam.error ? "text-[11px] text-rose-400" : "text-[11px] text-zinc-500"}>
           {cam.error ?? "Getting the whole camera frame…"}
@@ -562,7 +589,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
             setHole(p);
             slots.current.player.pause();
           },
-          onReframe: edit && hooks.camera && w && h ? reframe : undefined,
+          onReframe: own ? openWindow : edit && hooks.camera && w && h ? reframe : undefined,
           // a per-shot grade is not something the app's own AI Editor cuts in: not offered on its cuts
           onColor: own ? undefined : (item: TimelineItem) => {
             slots.current.player.pause();
@@ -570,6 +597,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
             const f = time * fps;
             if (f < item.rec || f >= item.rec + item.len) slots.current.player.seek((item.rec + Math.min(item.len - 1, Math.floor(item.len / 2))) / fps);
             setFace(null);
+            setWin(null);
             setColour(item);
           },
           onFace: edit && hooks.face ? (item: TimelineItem) => openFace(item) : undefined,

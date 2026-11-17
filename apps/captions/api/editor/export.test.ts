@@ -104,6 +104,33 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
     matchGolden("two-cuts.fcpxml", toFcpxml(twoCuts(), files));
   });
 
+  it("a reframed shot's moving window is keyed: Pan in the OTIO by frame from the clip's start, position in the FCPXML in the clip's time", () => {
+    // a 16:9 take in a 9:16 frame, filled: the window held left for 1 s, eased right over 1 s, then cut back to the middle
+    const tl: Timeline = {
+      name: "m1", fps: 25, width: 1080, height: 1920, markers: [], tracks: emptyTracks(),
+      sources: { s: { versionId: "s", name: "Talk", fps: 25, tc: 0, dur: 2500, w: 1920, h: 1080 } },
+    };
+    const path = [{ t: 0, x: 0 }, { t: 1, x: 0 }, { t: 2, x: 1 }, { t: 3, x: 1 }, { t: 3, x: 0.5 }];
+    tl.tracks.V1.items.push({ src: "s", in: 250, len: 100, rec: 0, zoom: 3.1605, path });
+    const room = 1080 * 3.1605 - 1080; // how far the picture can move, in timeline px
+    const text = otioText(toOtio(tl, { s: "/footage/talk.mov" }));
+    const pan = (JSON.parse(text).tracks.children[0].children[0].effects[0].metadata.Resolve_OTIO.Parameters as { "Parameter ID": string; "Key Frames": Record<string, { Value: number }> }[])
+      .find((p) => p["Parameter ID"] === "transformationPan")!["Key Frames"];
+    const at = (f: number) => pan[String(f)]?.Value;
+    expect(at(0)).toBeCloseTo(room / 2 / 1080, 4); // the picture's left edge on the frame's: moved right by half the room
+    expect(at(25)).toBeCloseTo(room / 2 / 1080, 4);
+    expect(at(50)).toBeCloseTo(-room / 2 / 1080, 4);
+    // the cut: the frame before at the right, the frame of it in the middle
+    expect([at(74), at(75)].map((v) => Math.round(v! * 1e3) / 1e3)).toEqual([Math.round((-room / 2 / 1080) * 1e3) / 1e3, 0]);
+    expect(Object.keys(pan).length).toBeLessThan(40); // the hold is two keys, the ease a key a frame at most
+    expect(text).toMatch(/"Value": 0\.0[,\n]/); // a whole Value written as Resolve needs it
+    const xml = toFcpxml(tl, { s: "/footage/talk.mov" });
+    // the clip's own time starts at its in point (10 s): keys from there, linear, x in hundredths of the frame's height
+    expect(xml).toContain(`<keyframe time="10s" value="${Math.round((room / 2 / 1920) * 1e5) / 1e3} 0" interp="linear" curve="linear"/>`);
+    expect(xml).toContain(`<keyframe time="13s" value="0 0" interp="linear" curve="linear"/>`);
+    expect(xml).not.toMatch(/<adjust-transform position=/);
+  });
+
   it("a take with no picture (a voice recording) is a gap on the video track and a clip on the voice track; its B-roll stays", () => {
     const tl = twoCuts();
     tl.sources.ver_a = { ...tl.sources.ver_a!, w: 0, h: 0 };

@@ -5,7 +5,7 @@ import { ffmpegCommand } from "../ffmpeg-runtime";
 import { env } from "../lib/env";
 import type { TimedWord } from "../library/transcribe";
 import { ffmpegSlot } from "../library/media/run";
-import { faceModel, facesOf, SIZE, YUNET } from "./eyeline";
+import { faceModel, facesOf, idModel, SFACE, SIZE, YUNET } from "./eyeline";
 
 /**
  * Who talks when in a stretch of footage with several people in it: the faces in it (YuNet, eyeline.ts) looked at
@@ -14,7 +14,10 @@ import { faceModel, facesOf, SIZE, YUNET } from "./eyeline";
  * transcript, the face whose mouth moves most while they are said, or nobody on screen when no mouth moves clearly
  * (someone off camera; a microphone held over the mouth reads the same). Turns change only where the words pause, and only when the next face moves its mouth clearly more
  * (SWITCH): no flicker between two people on a word or a nod. The people are Speaker 1, 2, … in the order they first
- * talk; a name is only ever the person's own (the AI never names anyone).
+ * talk; a name is only ever the person's own (the AI never names anyone). One person keeps one number across camera
+ * cuts and faces lost for a while: each track's face is read by a second model (SFace) when it is near, sharp and turned
+ * to the camera, and tracks that read alike are one person (samePeople); a face seen only small or in profile keeps a
+ * number of its own.
  *
  * Runs where the footage is read: the edit's draft step (engine.ts places it on a computer first). Looked at once per
  * stretch and kept (editor/cache), so a turn found again with other words reads no video.
@@ -32,7 +35,23 @@ export const SWITCH = 0.3;
 export const RUN_GAP = 0.35;
 const PATCH_W = 24;
 const PATCH_H = 16;
-const KEPT_V = 1;
+const KEPT_V = 2;
+/**
+ * Two tracks are one person when their faces are this alike (SFace's cosine; OpenCV gives 0.363 as its line for one
+ * person). Set above it: two people taken for one would swap the picture between them, one person kept as two only
+ * numbers them twice, as before. Measured on a three-person talk show cut between close-ups and a wide shot: one
+ * person's tracks 0.60-0.80, two people's at most 0.45 (both in profile; profiles are not read, frontal()).
+ */
+export const SAME = 0.55;
+/**
+ * A face is told apart only with its eyes this far apart, in px of the picture read, and found this surely: a smaller or
+ * less sure one (a face across a wide shot, a microphone taken for a face) reads alike for anything.
+ */
+const MIN_EYES = 28;
+const MIN_SURE = 0.8;
+/** Each track is told apart from its face this often (s), at most ID_LOOKS times, the looks averaged. */
+const ID_EVERY = 2;
+const ID_LOOKS = 5;
 
 /** A face in one frame: box as fractions of the picture, and its mouth's movement since the frame before (none: first seen). */
 export interface SeenFace {
@@ -42,6 +61,8 @@ export interface SeenFace {
   h: number;
   /** the track it belongs to: one person while the camera holds */
   id: number;
+  /** the person, when an earlier track is theirs too (a camera cut, a face lost for a while): that track's id */
+  who?: number;
   mouth?: number;
 }
 
@@ -136,8 +157,15 @@ export function runsOf(words: Pick<TimedWord, "s" | "e">[]): [number, number][] 
  */
 export function turnsOf(frames: SeenFrame[], words: Pick<TimedWord, "s" | "e">[]): Speakers {
   const runs = runsOf(words);
+  // one person's tracks as one (SeenFace.who), and the tracks each person has
   const byTrack = new Map<number, { t: number; m: number }[]>();
-  for (const fr of frames) for (const f of fr.faces) if (f.mouth !== undefined) (byTrack.get(f.id) ?? byTrack.set(f.id, []).get(f.id)!).push({ t: fr.t, m: f.mouth });
+  const theirs = new Map<number, Set<number>>();
+  for (const fr of frames)
+    for (const f of fr.faces) {
+      const p = f.who ?? f.id;
+      (theirs.get(p) ?? theirs.set(p, new Set()).get(p)!).add(f.id);
+      if (f.mouth !== undefined) (byTrack.get(p) ?? byTrack.set(p, []).get(p)!).push({ t: fr.t, m: f.mouth });
+    }
   // the footage's own floor: how much a still mouth seems to move in it (the detector's jitter, the compression)
   const floor = quantile([...byTrack.values()].flat().map((x) => x.m), 0.1);
   // per run: state → score (0 = nobody on screen)
@@ -185,7 +213,7 @@ export function turnsOf(frames: SeenFrame[], words: Pick<TimedWord, "s" | "e">[]
     else turns.push({ s, e, speaker });
   });
   const tracks: Record<number, number[]> = {};
-  for (const [id, n] of number) (tracks[n] ??= []).push(id);
+  for (const [id, n] of number) (tracks[n] ??= []).push(...[...(theirs.get(id) ?? [id])].sort((a, b) => a - b));
   return { turns, tracks };
 }
 
@@ -221,6 +249,81 @@ export function mouthPatch(px: Uint8Array, w: number, h: number, kps: number[]):
   return out;
 }
 
+/** Where a face's five points sit in the 112 × 112 picture SFace reads (its alignment template). */
+const TEMPLATE = [38.2946, 51.6963, 73.5318, 51.5014, 56.0252, 71.7366, 41.5493, 92.3655, 70.7299, 92.2041];
+
+/**
+ * A face turned, scaled and moved so its five points land on SFace's template (the closest fit that keeps its shape),
+ * as SFace's input: 112 × 112, RGB planes, 0..255. `px`: BGR, w × h; `kps`: its points in px.
+ */
+export function alignFace(px: Uint8Array, w: number, h: number, kps: number[]): Float32Array {
+  // the similarity from the template to the face: x_face = a·u − b·v + tx, y_face = b·u + a·v + ty
+  let [mu, mv, mx, my] = [0, 0, 0, 0];
+  for (let k = 0; k < 5; k++) (mu += TEMPLATE[2 * k]! / 5), (mv += TEMPLATE[2 * k + 1]! / 5), (mx += kps[2 * k]! / 5), (my += kps[2 * k + 1]! / 5);
+  let [sa, sb, n] = [0, 0, 0];
+  for (let k = 0; k < 5; k++) {
+    const [u, v, x, y] = [TEMPLATE[2 * k]! - mu, TEMPLATE[2 * k + 1]! - mv, kps[2 * k]! - mx, kps[2 * k + 1]! - my];
+    sa += u * x + v * y;
+    sb += u * y - v * x;
+    n += u * u + v * v;
+  }
+  const [a, b] = [sa / n, sb / n];
+  const out = new Float32Array(3 * 112 * 112);
+  for (let v = 0; v < 112; v++)
+    for (let u = 0; u < 112; u++) {
+      const x = a * (u - mu) - b * (v - mv) + mx;
+      const y = b * (u - mu) + a * (v - mv) + my;
+      const [x0, y0] = [Math.floor(x), Math.floor(y)];
+      const [fx, fy] = [x - x0, y - y0];
+      for (let c = 0; c < 3; c++) {
+        const at = (xx: number, yy: number) => (xx < 0 || yy < 0 || xx >= w || yy >= h ? 0 : px[(yy * w + xx) * 3 + c]!);
+        const val = (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
+        out[(2 - c) * 112 * 112 + v * 112 + u] = val; // BGR in, RGB planes out
+      }
+    }
+  return out;
+}
+
+const unit = (x: Float32Array) => {
+  const n = Math.hypot(...x) || 1;
+  return x.map((v) => v / n);
+};
+/** A face turned to the camera: its nose between its eyes, along the line through them (a profile reads alike for anyone). */
+export const frontal = (kps: number[]) => {
+  const [ex, ey] = [kps[2]! - kps[0]!, kps[3]! - kps[1]!];
+  const r = ((kps[4]! - kps[0]!) * ex + (kps[5]! - kps[1]!) * ey) / (ex * ex + ey * ey || 1);
+  return r > 0.25 && r < 0.75;
+};
+const cosine = (a: Float32Array, b: Float32Array) => a.reduce((n, v, i) => n + v * b[i]!, 0);
+
+/**
+ * Which tracks are one person: the most alike pair first, joined while they are at least SAME alike, never two that are
+ * on screen together (`apart`: "a-b", the smaller id first) and never their people. Answers each track's person: the
+ * first track of theirs (the smallest id).
+ */
+export function samePeople(looks: Map<number, Float32Array>, apart: Set<string>, same = SAME): Map<number, number> {
+  const ids = [...looks.keys()].sort((a, b) => a - b);
+  const group = new Map(ids.map((id) => [id, [id]]));
+  const of = new Map(ids.map((id) => [id, id]));
+  const pairs: [number, number, number][] = [];
+  for (let i = 0; i < ids.length; i++)
+    for (let j = i + 1; j < ids.length; j++) {
+      const c = cosine(looks.get(ids[i]!)!, looks.get(ids[j]!)!);
+      if (c >= same) pairs.push([c, ids[i]!, ids[j]!]);
+    }
+  for (const [, x, y] of pairs.sort((p, q) => q[0] - p[0])) {
+    const [gx, gy] = [of.get(x)!, of.get(y)!];
+    if (gx === gy) continue;
+    const [keep, gone] = gx < gy ? [gx, gy] : [gy, gx];
+    const [A, B] = [group.get(keep)!, group.get(gone)!];
+    if (A.some((p) => B.some((q) => apart.has(p < q ? `${p}-${q}` : `${q}-${p}`)))) continue;
+    A.push(...B);
+    for (const q of B) of.set(q, keep);
+    group.delete(gone);
+  }
+  return of;
+}
+
 /**
  * The faces in `src` from `a` to `b` seconds, LOOK_FPS frames a second: decoded at twice the model's picture (the
  * mouths are read there), halved into its 640 × 640 canvas. `dims`: the picture as shown.
@@ -244,6 +347,9 @@ export function watchFaces(src: string, a: number, b: number, dims: { w: number;
     const next = { id: 1 };
     const frames: SeenFrame[] = [];
     const px = new Uint8Array(size);
+    const looks = new Map<number, { t: number; n: number; sum: Float32Array }>();
+    const apart = new Set<string>();
+    let ids: Awaited<ReturnType<typeof idModel>> | undefined;
     let have = 0;
     for await (const chunk of p.stdout as AsyncIterable<Buffer>) {
       for (let at = 0; at < chunk.length; ) {
@@ -261,29 +367,44 @@ export function watchFaces(src: string, a: number, b: number, dims: { w: number;
         const found = facesOf(await model.run({ input: new ort.Tensor("float32", canvas, [1, 3, SIZE, SIZE]) }));
         const t = a + frames.length / LOOK_FPS;
         const faces = found.map((f) => ({ x: f.x / pw, y: f.y / ph, w: f.w / pw, h: f.h / ph, kps: f.kps.map((v) => v * 2) }));
-        frames.push({ t: Math.round(t * 1000) / 1000, faces: follow(t, faces, tracks, next, (kps) => mouthPatch(px, W, H, kps)) });
+        const seen = follow(t, faces, tracks, next, (kps) => mouthPatch(px, W, H, kps));
+        frames.push({ t: Math.round(t * 1000) / 1000, faces: seen });
+        // who each track is: its face read every ID_EVERY s while it is big enough; tracks on screen together are two people
+        for (let i = 0; i < seen.length; i++) {
+          for (let j = i + 1; j < seen.length; j++) apart.add(seen[i]!.id < seen[j]!.id ? `${seen[i]!.id}-${seen[j]!.id}` : `${seen[j]!.id}-${seen[i]!.id}`);
+          const k = faces[i]!.kps;
+          const look = looks.get(seen[i]!.id);
+          if (found[i]!.score < MIN_SURE || Math.hypot(k[2]! - k[0]!, k[3]! - k[1]!) < MIN_EYES || !frontal(k) || (look && (look.n >= ID_LOOKS || t - look.t < ID_EVERY))) continue;
+          ids ??= await idModel();
+          const got = await ids.run({ [ids.inputNames[0]!]: new ort.Tensor("float32", alignFace(px, W, H, k), [1, 3, 112, 112]) });
+          const f = unit(got[ids.outputNames[0]!]!.data as Float32Array);
+          looks.set(seen[i]!.id, { t, n: (look?.n ?? 0) + 1, sum: look ? look.sum.map((v, d) => v + f[d]!) : f });
+        }
       }
     }
     const code = await done;
     if (code !== 0) throw new Error(err.trim() || `ffmpeg exited ${code}`);
-    return frames;
+    const person = samePeople(new Map([...looks].map(([id, l]) => [id, unit(l.sum)])), apart);
+    return frames.map((fr) => ({ ...fr, faces: fr.faces.map((f) => (person.get(f.id) ?? f.id) !== f.id ? { ...f, who: person.get(f.id)! } : f) }));
   });
 }
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
-export const speakersFile = (versionId: string, a: number, b: number) => path.join(env.dataDir, "editor", "cache", `${versionId}.faces.${a.toFixed(2)}-${b.toFixed(2)}.json`);
+/** What a kept file was read with: read again when a model changes. */
+const models = () => `${YUNET.sha256.slice(0, 16)}+${SFACE.sha256.slice(0, 16)}`;
+export const speakersFile = (versionId: string, a: number, b: number) => path.join(env.dataDir, "editor", "cache", `${versionId}.faces${KEPT_V}.${a.toFixed(2)}-${b.toFixed(2)}.json`);
 
 /** The faces of a source's stretch a..b s, from the cache or looked at once and kept. */
 export async function facesIn(versionId: string, src: () => Promise<string>, a: number, b: number, dims: { w: number; h: number }, signal?: AbortSignal, watch = watchFaces): Promise<SeenFrame[]> {
   const file = speakersFile(versionId, a, b);
   const kept = JSON.parse(await readFile(file, "utf8").catch(() => "null")) as { v: number; model: string; frames: SeenFrame[] } | null;
-  if (kept?.v === KEPT_V && kept.model === YUNET.sha256) return kept.frames;
+  if (kept?.v === KEPT_V && kept.model === models()) return kept.frames;
   const frames = (await watch(await src(), a, b, dims, signal)).map((fr) => ({
     t: fr.t,
-    faces: fr.faces.map((f) => ({ x: r3(f.x), y: r3(f.y), w: r3(f.w), h: r3(f.h), id: f.id, ...(f.mouth !== undefined ? { mouth: r3(f.mouth) } : {}) })),
+    faces: fr.faces.map((f) => ({ x: r3(f.x), y: r3(f.y), w: r3(f.w), h: r3(f.h), id: f.id, ...(f.who ? { who: f.who } : {}), ...(f.mouth !== undefined ? { mouth: r3(f.mouth) } : {}) })),
   }));
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(`${file}.part`, JSON.stringify({ v: KEPT_V, model: YUNET.sha256, frames }));
+  await writeFile(`${file}.part`, JSON.stringify({ v: KEPT_V, model: models(), frames }));
   await rename(`${file}.part`, file);
   return frames;
 }

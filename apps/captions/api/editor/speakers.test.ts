@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { follow, mouthPatch, runsOf, turnsOf, type SeenFrame } from "./speakers";
+import { alignFace, follow, frontal, mouthPatch, runsOf, samePeople, turnsOf, type SeenFrame } from "./speakers";
 
 /** Frames 10 a second with two faces; in each run of words [start, end, face] that face's mouth moves (0: neither's). */
 function scene(to: number, runs: [number, number, number][]): SeenFrame[] {
@@ -67,5 +67,48 @@ describe("who talks when", () => {
     const q = mouthPatch(bright, w, h, kps);
     expect(Math.max(...p.map((v, i) => Math.abs(v - q[i]!)))).toBeLessThan(0.05);
     expect(p.reduce((n, v) => n + v, 0) / p.length).toBeCloseTo(0, 5);
+  });
+});
+
+describe("one person across camera cuts", () => {
+  const look = (...v: number[]) => {
+    const x = new Float32Array(v);
+    const n = Math.hypot(...x);
+    return x.map((y) => y / n);
+  };
+
+  it("joins tracks that read alike, never two on screen together, each to its first track", () => {
+    const looks = new Map([[1, look(1, 0, 0)], [2, look(0, 1, 0)], [5, look(0.95, 0.1, 0)], [7, look(0.1, 0.97, 0)], [9, look(0, 0, 1)]]);
+    const person = samePeople(looks, new Set(["2-5"]));
+    expect([...person]).toEqual([[1, 1], [2, 2], [5, 1], [7, 2], [9, 9]]);
+    // 5 is on screen with 1: they stay two people, and 7 (like both) joins only one of them
+    const apart = samePeople(new Map([[1, look(1, 0, 0)], [5, look(0.95, 0.1, 0)], [7, look(0.97, 0.05, 0)]]), new Set(["1-5"]));
+    expect(apart.get(5)).not.toBe(apart.get(1));
+    expect([apart.get(5), apart.get(1)]).toContain(apart.get(7));
+  });
+
+  it("numbers one person's tracks as one speaker, the turns found by person", () => {
+    const runs: [number, number, number][] = [[0, 3.8, 1], [4.3, 8.2, 2], [8.8, 12, 1]];
+    // after a cut at 6 s face 1 is seen again as track 3, the same person
+    const frames = scene(12, runs).map((f) => (f.t >= 6 ? { ...f, faces: f.faces.map((x) => (x.id === 1 ? { ...x, id: 3, who: 1 } : x)) } : f));
+    const { turns, tracks } = turnsOf(frames, said(runs));
+    expect(turns.map((x) => x.speaker)).toEqual([1, 2, 1]);
+    expect(tracks).toEqual({ 1: [1, 3], 2: [2] });
+  });
+
+  it("lays a face's five points on the model's template", () => {
+    // a 200 × 200 picture, black but for bright dots where the points are, the face turned 30° and twice the template's size
+    const [w, h] = [200, 200];
+    const px = new Uint8Array(w * h * 3);
+    const T = [38.2946, 51.6963, 73.5318, 51.5014, 56.0252, 71.7366, 41.5493, 92.3655, 70.7299, 92.2041];
+    const [c, s] = [Math.cos(Math.PI / 6) * 2, Math.sin(Math.PI / 6) * 2];
+    const kps = Array.from({ length: 5 }, (_, k) => [c * (T[2 * k]! - 56) - s * (T[2 * k + 1]! - 72) + 100, s * (T[2 * k]! - 56) + c * (T[2 * k + 1]! - 72) + 100]).flat();
+    for (let k = 0; k < 5; k++)
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) px.fill(255, ((Math.round(kps[2 * k + 1]!) + dy) * w + Math.round(kps[2 * k]!) + dx) * 3, ((Math.round(kps[2 * k + 1]!) + dy) * w + Math.round(kps[2 * k]!) + dx) * 3 + 3);
+    const out = alignFace(px, w, h, kps);
+    for (let k = 0; k < 5; k++) expect(out[Math.round(T[2 * k + 1]!) * 112 + Math.round(T[2 * k]!)]).toBeGreaterThan(200);
+    expect(out[10 * 112 + 10]).toBe(0);
+    expect(frontal(kps)).toBe(true);
+    expect(frontal([0, 0, 10, 0, 12, 5, 0, 10, 10, 10])).toBe(false); // the nose past an eye: a profile
   });
 });
