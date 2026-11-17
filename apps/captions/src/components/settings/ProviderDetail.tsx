@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowLeft, Plus, X } from "lucide-react";
-import { DRIVERS, driverFields, EFFORTS, type Effort, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
+import { DRIVERS, driverFields, ENV_NAME_RE, EFFORTS, type Effort, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { effortLabel, modelChoices, modelName } from "@/lib/providers";
 import { fmtAgo } from "./helpers";
 import { cn } from "@/lib/utils";
 import { DriverMark, PROVIDER_ROW, type ProviderStatus } from "./ProviderInstanceCard";
 import { InstallHelp, SignInHelp } from "./AiSetup";
-import { Advanced, RowMenu, Row, SettingsSelect, Status, TextField, type RowMenuItem } from "./ui";
+import { Advanced, RowMenu, Row, SettingsSelect, Status, TextField, saveFailed, type RowMenuItem } from "./ui";
 
 /**
  * One AI provider's settings: the right half of the Providers panel from `lg`, its own page below it. Rows with a line
@@ -219,6 +219,8 @@ export function ProviderDetail({
               add="Add variable"
               label="Variable name"
               placeholder="API_KEY"
+              valid={ENV_NAME_RE}
+              invalid="A variable name is letters, digits and _, not starting with a digit."
               value={inst.envNames ?? []}
               onCommit={(list) => onChange({ envNames: list.length ? list : undefined })}
             />
@@ -232,23 +234,28 @@ export function ProviderDetail({
 const Rare = ({ fold, children }: { fold: boolean; children: ReactNode }) => (fold ? <Advanced summary="Advanced">{children}</Advanced> : <>{children}</>);
 
 /** A list of short values (arguments, variable names): one field each with its remove button, and Add for one more. Saved as each field is left. */
-function ListField({ title, description, add, label, placeholder, value, onCommit }: {
+function ListField({ title, description, add, label, placeholder, valid, invalid, value, onCommit }: {
   title: string;
   description: string;
   add: string;
   label: string;
   placeholder?: string;
+  /** what an item must match; a field that does not keeps its text, marked, and nothing is saved */
+  valid?: RegExp;
+  invalid?: string;
   value: string[];
   onCommit: (list: string[]) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const wrong = (v: string) => !!valid && !!v.trim() && !valid.test(v.trim());
   const save = (list: string[]) => onCommit(list.map((x) => x.trim()).filter(Boolean));
   return (
     <Row
       title={title}
       description={description}
       control={
-        <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+        // the server keeps 32 at most
+        <Button size="sm" variant="outline" disabled={value.length >= 32} onClick={() => setAdding(true)}>
           <Plus /> {add}
         </Button>
       }
@@ -256,9 +263,19 @@ function ListField({ title, description, add, label, placeholder, value, onCommi
       {(value.length > 0 || adding) && (
         <div className="space-y-1.5">
           {value.map((v, i) => (
-            <div key={`${i}:${v}`} className="flex items-center gap-1.5">
-              <TextField label={label} value={v} className="font-mono text-xs" onCommit={(next) => save(value.map((x, j) => (j === i ? next : x)))} />
-              <Button size="icon-xs" variant="ghost" aria-label={`Remove ${v}`} onClick={() => save(value.filter((_, j) => j !== i))}>
+            // keyed by place: a save never remounts a row, so a remove clicked right after an edit still lands
+            <div key={i} className="flex items-center gap-1.5">
+              <TextField
+                label={label}
+                value={v}
+                className="font-mono text-xs"
+                onCommit={(next) => {
+                  if (wrong(next)) throw new Error(invalid);
+                  save(value.map((x, j) => (j === i ? next : x)));
+                }}
+              />
+              {/* the field keeps focus, so its blur doesn't save and re-render the list under the click */}
+              <Button size="icon-xs" variant="ghost" aria-label={`Remove ${v}`} onMouseDown={(e) => e.preventDefault()} onClick={() => save(value.filter((_, j) => j !== i))}>
                 <X />
               </Button>
             </div>
@@ -269,14 +286,22 @@ function ListField({ title, description, add, label, placeholder, value, onCommi
               aria-label={label}
               placeholder={placeholder}
               spellCheck={false}
-              className="h-8 w-full rounded-md border border-input bg-transparent px-3 font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-64"
+              className="h-8 w-full rounded-md border border-input bg-transparent px-3 font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring aria-invalid:border-destructive sm:w-64"
               onBlur={(e) => {
+                // a wrong name stays in the box, marked, until it is fixed or Escape drops it
+                if (wrong(e.target.value)) {
+                  e.target.setAttribute("aria-invalid", "true");
+                  return saveFailed(invalid ?? "That can't be saved.");
+                }
                 if (e.target.value.trim()) save([...value, e.target.value]);
                 setAdding(false);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") e.currentTarget.blur();
-                if (e.key === "Escape") setAdding(false);
+                if (e.key === "Escape") {
+                  e.currentTarget.value = ""; // a blur as the box goes away then saves nothing
+                  setAdding(false);
+                }
               }}
             />
           )}

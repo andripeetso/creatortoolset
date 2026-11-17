@@ -80,6 +80,9 @@ export const launchArgsAllowed = (driver: Driver): boolean => isAcpDriver(driver
  * The Advanced fields a driver's settings page shows: each only where the Mac reads it (apps/mac ClaudeRequest.swift).
  * The server keeps only these for the driver (parseSettings), so a row with no reader is never saved.
  */
+/** an environment variable name the Mac passes on: letters, digits and _, not starting with a digit */
+export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
 export const driverFields = (driver: Driver): { home: boolean; program: boolean; args: boolean; env: boolean } => ({
   /** the config folder: CLAUDE_CONFIG_DIR, CODEX_HOME, GEMINI_CLI_HOME */
   home: !!DRIVERS.find((d) => d.id === driver)?.homeEnv,
