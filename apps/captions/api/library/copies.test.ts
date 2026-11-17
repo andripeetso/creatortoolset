@@ -84,6 +84,8 @@ describe("copies of a Media Library", () => {
 
   it("copies a stored original into its plain folder, its hash checked, and keeps the original on the server until then", async () => {
     const { v, body } = await seed("ast-a");
+    // a phone's upload goes before its own work has run on any computer
+    d.prepare("UPDATE asset_versions SET state = 'processing' WHERE id = ?").run(v);
     expect((await copies())[0]!.pending).toBe(1);
     expect(await dropOriginal(v)).toBe(false); // the copy lacks it
     expect(assetsCopiesLack(["ast-a"]).has("ast-a")).toBe(true);

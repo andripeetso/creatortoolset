@@ -40,8 +40,8 @@ const db = () => libraryDb();
 
 /** The original is on the server's store (not a computer's, not a proxy standing in for it). */
 const STORED = `(v.source_key NOT LIKE 'mac:%' AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key = v.source_key))`;
-/** What goes to a copy: each clip's current version, once it is ready (trashed ones too, until the trash is emptied). */
-const WANTED = `FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND v.state = 'ready'`;
+/** What goes to a copy: each clip's current version once it is stored, before its own work runs (trashed ones too, until the trash is emptied). */
+const WANTED = `FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND v.state IN ('processing', 'ready')`;
 
 type VersionRow = { id: string; asset_id: string; n: number; bytes: number; sha256: string; mac_path: string | null; mac_device: string | null; stored: number };
 
@@ -71,7 +71,7 @@ export function copiesLack(versionId: string): boolean {
   return !!db()
     .prepare(
       `SELECT 1 FROM library_copies c JOIN assets a ON a.library_id = c.library_id JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE v.id = ? AND v.state = 'ready' AND ${STORED}
+       WHERE v.id = ? AND v.state IN ('processing', 'ready') AND ${STORED}
          AND NOT EXISTS (SELECT 1 FROM copy_files f WHERE f.copy_id = c.id AND f.version_id = v.id AND f.copied_at IS NOT NULL) LIMIT 1`,
     )
     .get(versionId);
@@ -83,7 +83,7 @@ export function assetsCopiesLack(ids: string[]): Set<string> {
   const rows = db()
     .prepare(
       `SELECT DISTINCT a.id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN library_copies c ON c.library_id = a.library_id
-       WHERE a.id IN (SELECT value FROM json_each(?)) AND v.state = 'ready' AND ${STORED}
+       WHERE a.id IN (SELECT value FROM json_each(?)) AND v.state IN ('processing', 'ready') AND ${STORED}
          AND NOT EXISTS (SELECT 1 FROM copy_files f WHERE f.copy_id = c.id AND f.version_id = v.id AND f.copied_at IS NOT NULL)`,
     )
     .all(JSON.stringify(ids)) as { id: string }[];
@@ -169,7 +169,7 @@ function nextFor(d: { id: string; owner: string }, now = Date.now()): Omit<Held,
   return null;
 }
 
-/** Tells the computers of the copies of a version's library that it waits (it is ready now). */
+/** Tells the computers of the copies of a version's library that it waits (it came in, or is ready now). */
 export function copiesWake(versionId: string): void {
   const any = db()
     .prepare("SELECT 1 FROM library_copies c JOIN assets a ON a.library_id = c.library_id JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ? LIMIT 1")
