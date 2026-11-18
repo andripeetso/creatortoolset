@@ -20,7 +20,6 @@ import { Input } from "@/components/ui/input";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { Card, Row, Section } from "@/components/settings/ui";
 import { cn } from "@/lib/utils";
-import { WorkspaceServerWork } from "@/components/settings/ServerWorkSection";
 import { LanguageSelect } from "../LanguageSelect";
 import { CtMark } from "../CtMark";
 import { droppedFiles } from "../assistant/draft";
@@ -447,8 +446,6 @@ export function ProjectForm({
   );
   // the <form> holds no rows of its own (see `fid`)
   const form = <form id={fid} className="contents" onSubmit={submit} />;
-  // saves when picked, so it is a card of its own, never a row among the ones that wait for Save
-  const work = !setup && initial && <WorkspaceServerWork projectId={initial.id} />;
   // its own section (title, Add, the list), the same one the Workshop's Knowledge tab draws
   const files = !setup && initial && <KnowledgePanel projectId={initial.id} />;
 
@@ -460,7 +457,6 @@ export function ProjectForm({
           {rows}
           {failed}
           <div className="flex justify-end">{save}</div>
-          {work}
         </Section>
         {files}
       </>
@@ -472,7 +468,6 @@ export function ProjectForm({
       <div className="flex flex-col gap-2.5">
         {rows}
         {failed}
-        {work}
       </div>
       {!setup && initial && (
         // a new workspace adds its accounts in step 2, once it exists (ProjectList's AccountsStep)

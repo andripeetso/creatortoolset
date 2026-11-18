@@ -10,8 +10,6 @@
  * - Any other server: Settings → Server, the admin: `$DATA_DIR/server-work.json { on, projectIds? }` (no list = every
  *   workspace). No file = off: the work runs on each person's own computers unless the admin turns it on. The first start
  *   of this version writes it off once on every server (settleServerWork), saying so in Settings → Server where it was on.
- * - Each workspace's owner picks whether it uses the server where it is allowed (the Workshop project's `serverWork`,
- *   missing = yes).
  * - Each person's Load balancing has a row for the server (balance weight SERVER_PLACE): Prefer sends work there first,
  *   Off never; Normal and Less often leave it to their computers first, as before.
  */
@@ -47,7 +45,6 @@ export const serverKind = (): ServerKind => (hostedMode() ? "hosted" : process.e
 
 const file = () => path.join(env.dataDir, "server-work.json");
 const ID = /^[\w-]{1,100}$/;
-const projectFile = (id: string) => path.join(env.dataDir, "workshop", "projects", `${id}.json`);
 
 // read per queued job on every idle tick of both loops: parsed again only when the file changed
 const memo = new Map<string, { stamp: string; v: unknown }>();
@@ -109,13 +106,8 @@ export function serverAllows(workspace: string | null | undefined, account: stri
   return s.on && (!s.projectIds || (!!workspace && s.projectIds.includes(workspace)));
 }
 
-/** The workspace owner's choice: also this server where it allows (missing, the default), or its computers only. */
-export const workspaceUsesServer = (workspace: string | null | undefined): boolean =>
-  !workspace || !ID.test(workspace) || readJson<{ serverWork?: boolean }>(projectFile(workspace))?.serverWork !== false;
-
-/** Whether this server's loops may run video work for `workspace`, asked by `account`. */
-export const serverWorks = (workspace: string | null | undefined, account: string | null): boolean =>
-  serverAllows(workspace, account) && (serverKind() === "local" || workspaceUsesServer(workspace));
+/** Whether this server's loops may run video work for `workspace`, asked by `account`. The admin's Workspace policies is the only switch. */
+export const serverWorks = (workspace: string | null | undefined, account: string | null): boolean => serverAllows(workspace, account);
 
 /** The person's Load balancing weight for this server (DEFAULT_WEIGHT unless set; balancing off = Normal). This Mac has no row. */
 export function serverWeight(account: string | null): number {

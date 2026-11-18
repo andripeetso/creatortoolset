@@ -1,11 +1,10 @@
 /**
  * Item 7B: the routes behind Settings for where video work runs (work/server-work.ts), at /api/work/server-work.
  *
- *   GET  /                 → ServerWorkView: this server's kind, the person's server row in Load balancing, and for
- *                            an admin of a server by address the switch with its workspaces
+ *   GET  /                 → ServerWorkView: this server's kind, the name members see, the person's server row in Load
+ *                            balancing, the current workspace's rendering, and for an admin of a server by address the
+ *                            switch with its workspaces
  *   PUT  /                 { on?: boolean, all?: true, only?: [workspace ids] } (admin, a server by address)
- *   GET  /workspace/:id    → { allowed, server } (the workspace's owner)
- *   PUT  /workspace/:id    { server: boolean } (the workspace's owner)
  *
  * The server row's preference itself saves with the computers' (PUT /api/devices/balance, key "server").
  */
@@ -15,10 +14,11 @@ import path from "node:path";
 import type { ServerWorkView } from "../../contracts/work";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { ownedProject, ownedProjects, sharedProjects } from "../lib/workshop/workspace";
+import { currentWorkspaceId } from "../lib/workspace-scope";
+import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import type { Project } from "../lib/workshop/types";
-import { writeJsonAtomic } from "../library/media/run";
-import { readServerWork, serverAllows, serverKind, serverWeight, serverWorks, writeServerWork } from "./server-work";
+import { listUsers } from "../users";
+import { readServerWork, serverKind, serverWeight, serverWorks, writeServerWork, type ServerKind } from "./server-work";
 
 export const serverWorkApp = new Hono<{ Variables: AuthVars }>();
 
@@ -45,15 +45,26 @@ async function adminView(): Promise<NonNullable<ServerWorkView["admin"]>> {
   };
 }
 
+/** The name members see (M18): Creator Toolset Cloud, else the first admin's name and "'s server"; none on This Mac. */
+function serverNameOf(kind: ServerKind): string | undefined {
+  if (kind === "hosted") return "Creator Toolset Cloud";
+  if (kind === "local") return undefined;
+  const admin = listUsers().filter((x) => x.role === "admin").sort((a, b) => a.createdAt - b.createdAt)[0];
+  return admin && `${admin.displayName || admin.username}'s server`;
+}
+
 serverWorkApp.get("/", async (c) => {
   const u = c.get("user");
   if (u.role === "visitor") return c.json({ error: "Not for guests" }, 403);
   const kind = serverKind();
   const mine = [...(await ownedProjects(u.username)), ...(await sharedProjects(u.username))].map((p) => p.id);
+  const ws = await currentWorkspaceId(u);
   const view: ServerWorkView = {
     kind,
     // This Mac has no server row: the server is this computer
     place: kind === "local" ? null : { allowed: [null, ...mine].some((w) => serverWorks(w, u.username)), weight: serverWeight(u.username) },
+    serverName: serverNameOf(kind),
+    ...(ws ? { workspace: { id: ws, rendering: serverWorks(ws, u.username) } } : {}),
   };
   if (kind === "server" && u.role === "admin") view.admin = await adminView();
   return c.json(view);
@@ -76,23 +87,4 @@ serverWorkApp.put("/", async (c) => {
   } else if (typeof b?.on !== "boolean") return c.json({ error: "Send { on }, { all: true } or { only: [workspace ids] }." }, 400);
   writeServerWork(next);
   return c.json(await adminView());
-});
-
-serverWorkApp.get("/workspace/:id", async (c) => {
-  const u = c.get("user");
-  const p = await ownedProject(c.req.param("id"), u);
-  if (!p) return c.json({ error: "Not found" }, 404);
-  // on This Mac there is nothing to choose: the server is this computer
-  return c.json({ allowed: serverKind() !== "local" && serverAllows(p.id, u.username), server: p.serverWork !== false });
-});
-
-serverWorkApp.put("/workspace/:id", async (c) => {
-  const u = c.get("user");
-  const p = await ownedProject(c.req.param("id"), u);
-  if (!p) return c.json({ error: "Not found" }, 404);
-  const b = (await c.req.json().catch(() => null)) as { server?: unknown } | null;
-  if (typeof b?.server !== "boolean") return c.json({ error: "Send { server: true or false }" }, 400);
-  const { serverWork: _, ...rest } = p;
-  await writeJsonAtomic(path.join(PROJECTS(), `${p.id}.json`), { ...rest, ...(b.server ? {} : { serverWork: false }), updatedAt: Date.now() });
-  return c.json({ allowed: serverKind() !== "local" && serverAllows(p.id, u.username), server: b.server });
 });
