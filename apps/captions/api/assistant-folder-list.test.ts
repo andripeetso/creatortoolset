@@ -14,7 +14,6 @@ delete process.env.APP_SECRET;
 const { assistantApp } = await import("./assistant");
 const { devicesApp } = await import("./devices");
 const { isOnline, pairDevice, touchDevice } = await import("./lib/devices");
-const { mountPlugins } = await import("./lib/plugin");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => delete process.env.CT_MODE);
 
@@ -123,12 +122,12 @@ describe("folder_list on a hosted server", () => {
   });
 });
 
-describe("folder_list with a plug-in's own folders", () => {
-  it("counts a folder a plug-in keeps as the workspace's, and any Mac of theirs walks it when its computer is named in the plug-in's own words", async () => {
+describe("folder_list with a studio's folder (one list, the computer's id)", () => {
+  it("looks in a folder the person added on their Mac, and that Mac walks it when it is asked", async () => {
     process.env.CT_MODE = "hosted";
     keep([]);
-    mountPlugins(new Hono(), [{ id: "tiny-storage", routes: new Hono(), storageFolders: async (u: string) => (u === "ana" ? [{ id: "p1", role: "footage", name: "SHOOT", origin: { host: "tiny-mac.local", path: "/Volumes/Tiny/SHOOT" }, make: false, createdAt: 1, reach: {} }] : []) } as never]);
     const mac = pairDevice("ana", "Ana's Studio Mac");
+    keep([{ host: mac.device.id, path: "/Volumes/Tiny/SHOOT" }]);
     const as = { authorization: `Bearer ${mac.token}` };
     const claim = async () => ((await (await post("/api/devices/relay/editor/claim", { kinds: ["folder-list"] }, as)).json()) as { job: DeviceJob | null }).job;
     expect(await claim()).toBeNull();
@@ -141,6 +140,5 @@ describe("folder_list with a plug-in's own folders", () => {
     expect(job).toMatchObject({ kind: "folder-list", options: { path: "/Volumes/Tiny/SHOOT" } });
     await post(`/api/devices/relay/job/folder-list/${job!.id}`, { entries: [{ path: "MUSIC", dir: true }, { path: "MUSIC/theme.m4a", size: 3 }], deeper: 0 }, as);
     expect(((await (await asked).json()) as { entries: unknown[] }).entries).toEqual([{ path: "MUSIC/theme.m4a", type: "file", kind: "audio", size: 3 }]);
-    mountPlugins(new Hono(), []);
   });
 });

@@ -1,7 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "relay-report-"));
@@ -12,7 +11,7 @@ const app = (await import("../boot")).default;
 const { libraryDb } = await import("./db");
 const { whereIs } = await import("./whereis");
 const { placeWordOf } = await import("../../contracts/places");
-const { mountPlugins } = await import("../lib/plugin");
+const { importStudioFile } = await import("../devices-storage");
 const { noteMachine } = await import("../lib/devices");
 
 createUser("ana", "password1");
@@ -119,32 +118,30 @@ describe("location agents: the computers report, the server records", () => {
     expect(libraryDb().prepare("SELECT device FROM version_places WHERE version_id = 'v-old'").get()).toEqual({ device: old.device.id });
   });
 
-  it("lists a folder a plug-in keeps by computer name (a studio's Settings → Folders) to that computer, once", async () => {
+  it("lists a studio's Settings → Folders row (imported from its storage.json by hostname) to that computer, once", async () => {
     const SHOOT = "/Volumes/Tiny Drive/SHOOT";
-    const theirs = (path: string, workspace?: string) => ({ id: `p-${path}`, role: "footage", name: "SHOOT", origin: { host: "Tiny-Studio.local", path }, make: false, createdAt: 1, reach: {}, ...(workspace ? { workspace } : {}) });
+    const theirs = (p: string, workspace?: string) => ({ id: `p-${p}`, role: "footage", name: "SHOOT", origin: { host: "Tiny-Mac.local", path: p }, make: false, createdAt: 1, reach: {}, ...(workspace ? { workspace } : {}) });
     // two workspaces: a folder with no workspace must be every workspace's, not the first one's alone
     const projects = path.join(process.env.DATA_DIR!, "workshop", "projects");
     mkdirSync(projects, { recursive: true });
     for (const [id, at] of [["ws-0", 1], ["ws-1", 2]] as const) writeFileSync(path.join(projects, `${id}.json`), JSON.stringify({ id, owner: "ana", name: id, createdAt: at, updatedAt: at }));
-    mountPlugins(new Hono(), [{ id: "tiny-storage", routes: new Hono(), storageFolders: async (u: string, every?: boolean) => (u === "ana" && every ? [theirs(SHOOT), theirs(DIR, "ws-1")] : []) } as never]);
-    try {
-      const { device, token } = await pair("machine-dddd-4444");
-      const auth = { ...json, authorization: `Bearer ${token}` };
-      const listed = async () => ((await (await app.request("/api/devices/relay/folders", { headers: auth })).json()) as { folders: { id: string; path: string; workspaces: string[] | "*" }[] }).folders;
-      // no report yet: its name is not known, so nothing is its
-      expect(await listed()).toEqual([]);
-      noteMachine(device.id, { host: "tiny-studio.local", cpus: 1, memGb: 1 });
-      // the one with no workspace is every workspace's
-      expect((await listed()).map((f) => [f.path, f.workspaces]).sort()).toEqual([[DIR, ["ws-1"]], [SHOOT, "*"]].sort());
-      // also in the account's own list: listed once
-      await app.request("/api/devices/storage/folders", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ role: "footage", host: device.id, path: SHOOT }) });
-      expect((await listed()).filter((f) => f.path === SHOOT)).toHaveLength(1);
-      // its files index in place, as the account's own folder's do
-      const folder = (await listed()).find((f) => f.path === DIR)!.id;
-      const ix = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "p.mp4", path: `${DIR}/p.mp4`, size: 10, quick: quick(20), frames: [] }) });
-      expect(ix.status).toBe(200);
-    } finally {
-      mountPlugins(new Hono(), []);
-    }
+    const studioFile = path.join(process.env.DATA_DIR!, "studio-storage.json");
+    writeFileSync(studioFile, JSON.stringify({ schemaVersion: 3, folders: [theirs(SHOOT), theirs(DIR, "ws-1")] }));
+    const { device, token } = await pair("machine-dddd-4444");
+    const auth = { ...json, authorization: `Bearer ${token}` };
+    const listed = async () => ((await (await app.request("/api/devices/relay/folders", { headers: auth })).json()) as { folders: { id: string; path: string; workspaces: string[] | "*" }[] }).folders;
+    // not imported yet: nothing is listed
+    expect(await listed()).toEqual([]);
+    noteMachine(device.id, { host: "tiny-mac.local", cpus: 1, memGb: 1 });
+    expect(await importStudioFile(studioFile, "ana", (x) => x)).toBe(2);
+    // the one with no workspace is every workspace's
+    expect((await listed()).map((f) => [f.path, f.workspaces]).sort()).toEqual([[DIR, ["ws-1"]], [SHOOT, "*"]].sort());
+    // one list: a second import of the same file changes nothing (the file is renamed, so it is not read again)
+    expect(await importStudioFile(studioFile, "ana", (x) => x)).toBe(0);
+    expect((await listed()).filter((f) => f.path === SHOOT)).toHaveLength(1);
+    // its files index in place, as the account's own folder's do
+    const folder = (await listed()).find((f) => f.path === DIR)!.id;
+    const ix = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "p.mp4", path: `${DIR}/p.mp4`, size: 10, quick: quick(20), frames: [] }) });
+    expect(ix.status).toBe(200);
   });
 });
