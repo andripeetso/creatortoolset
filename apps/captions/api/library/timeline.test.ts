@@ -27,7 +27,7 @@ const { blobs, libraryDb } = await import("./db");
 const { tick } = await import("./worker");
 const { searchLibrary, assetDetail } = await import("./search");
 const { queueLook, WATCH_LABEL } = await import("./shots");
-const { watchStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
+const { askedWatch, watchStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
 const { clock } = await import("./look");
 watchTiming.backoffMs = 0;
 // the long call goes through the stubbed fetch, so each test sees and answers it
@@ -354,6 +354,14 @@ describe("in the look job", () => {
       queueLook(libraryDb(), v, "local");
       while (await tick(Date.now(), ["look"]));
       expect(calls).toHaveLength(0);
+      // Make timeline on the clip: watched anyway, once, and the ask goes when its watch ends
+      askedWatch.add(v);
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+      queueLook(libraryDb(), v, "local", true);
+      while (await tick(Date.now(), ["look"]));
+      await watched();
+      expect(timelineOf(libraryDb(), v)).toHaveLength(1);
+      expect(askedWatch.has(v)).toBe(false);
     } finally {
       libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timeline') WHERE id = 'lib_t'`).run();
     }

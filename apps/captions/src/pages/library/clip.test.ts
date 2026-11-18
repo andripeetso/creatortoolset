@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AssetCard, AssetDetail, ShareRow } from "@contracts/library";
-import { clipHref, copyReady, daysLeft, factsOf, linksOf, original, playerNote, tagSuggestions } from "./clip";
+import { clipHref, copyReady, daysLeft, factsOf, linksOf, original, playerNote, shotsByMoment, tagSuggestions } from "./clip";
 
 const card: AssetCard = { id: "a1", libraryId: "l1", kind: "video", title: "Tiny Acrobatics jump", versionId: "v1", versionN: 1, tags: [], aiTags: [], state: "ready" };
 const detail = (jobs: AssetDetail["jobs"], more: Partial<AssetDetail> = {}): AssetDetail => ({ ...card, versions: [], collections: [], jobs, ...more });
@@ -80,5 +80,22 @@ describe("the clip's tags and link", () => {
   it("links to the clip in the app, naming its library unless it is the first", () => {
     expect(clipHref("lib 2", "a1")).toBe("/library?clip=a1&library=lib%202");
     expect(clipHref(null, "a1")).toBe("/library?clip=a1");
+  });
+});
+
+describe("what happens on a clip", () => {
+  const shot = (seg: number, a: number) => ({ seg, a, b: a + 1, text: `shot ${seg}`, source: "ai" as const });
+  it("puts each shot under the moment it starts in, the ones before the first moment first", () => {
+    const events = [{ a: 2, b: 6, what: "buys the staff" }, { a: 6, b: 9, what: "tries to buy own listing" }];
+    const g = shotsByMoment(events, [shot(0, 0), shot(1, 2), shot(2, 4.5), shot(3, 6.02), shot(4, 8)]);
+    expect(g.map((x) => [x.event?.what, x.shots.map((s) => s.seg)])).toEqual([
+      [undefined, [0]],
+      ["buys the staff", [1, 2]],
+      ["tries to buy own listing", [3, 4]],
+    ]);
+  });
+  it("keeps a moment with no shot, and every shot in one group without a timeline", () => {
+    expect(shotsByMoment([{ a: 0, b: 1, what: "x" }], []).map((x) => x.shots.length)).toEqual([0]);
+    expect(shotsByMoment([], [shot(0, 0), shot(1, 3)]).map((x) => [x.event, x.shots.length])).toEqual([[undefined, 2]]);
   });
 });

@@ -216,13 +216,21 @@ interface Row {
 }
 const rowOf = (db: DatabaseSync, versionId: string) => db.prepare("SELECT events, level, model, error, at FROM timelines WHERE version_id = ?").get(versionId) as Row | undefined;
 
-/** Whether `versionId` should be watched now as `actor`: Timelines on, what watches (canWatch), and no timeline at the library's level (one that failed: RETRY_MS later). */
+/**
+ * Clips someone asked a timeline for by name (Make timeline on the clip): watched with the library's Timelines off too,
+ * a failed one at once, and past WATCHES_AT_ONCE. Taken off when its watch ends.
+ * shortcut: kept in memory, so a restart before the look job runs forgets the ask; store it if that is ever seen
+ */
+export const askedWatch = new Set<string>();
+
+/** Whether `versionId` should be watched now as `actor`: Timelines on (or asked for, askedWatch), what watches (canWatch), and no timeline at the library's level (one that failed: RETRY_MS later). */
 export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | null, now = Date.now()): boolean {
   const r = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined;
-  if (!r || !librarySetting(r.library_id, "timeline") || !canWatch(db, r.library_id, actor)) return false;
+  const asked = askedWatch.has(versionId);
+  if (!r || !(asked || librarySetting(r.library_id, "timeline")) || !canWatch(db, r.library_id, actor)) return false;
   const t = rowOf(db, versionId);
   if (!t) return true;
-  if (t.error) return now - t.at >= RETRY_MS;
+  if (t.error) return asked || now - t.at >= RETRY_MS;
   // a picture-only timeline is made again with its sound once the library watches on a Gemini key that has credit
   return (
     t.level !== libraryLookLevel(r.library_id) ||
@@ -661,7 +669,7 @@ export async function watchVersion(
  * ponytail: a watch in flight when the server restarts is lost and asked again by the sweep, paid twice
  */
 export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promise<string>, actor: string | null, sent = false): Promise<void> {
-  if (!actor || watching.has(versionId) || (!sent && watching.size >= WATCHES_AT_ONCE) || !wantsWatch(db, versionId, actor)) return Promise.resolve();
+  if (!actor || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watching.size >= WATCHES_AT_ONCE) || !wantsWatch(db, versionId, actor)) return Promise.resolve();
   const run = (async () => {
     try {
       const file = await src();
@@ -677,7 +685,10 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
     }
     const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
     if (lib && librarySetting(lib, "embed") && canEmbed(actor)) enqueueJob(db, lib, versionId, "embed", actor, true);
-  })().finally(() => watching.delete(versionId));
+  })().finally(() => {
+    watching.delete(versionId);
+    askedWatch.delete(versionId);
+  });
   watching.set(versionId, run);
   return run;
 }

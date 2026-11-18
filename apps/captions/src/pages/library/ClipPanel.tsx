@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -13,7 +13,7 @@ import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { placeLine } from "@/lib/wording";
 import type { PlaceWord } from "@contracts/places";
-import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
+import { canReveal, clock, day, factsOf, original, revealClip, shotsByMoment, tagSuggestions, useClipView } from "./clip";
 import { ClipImage, ClipPlayer } from "./ClipPlayer";
 import { ClipShare } from "./ClipShare";
 import { Locate } from "./Locate";
@@ -247,7 +247,7 @@ function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, 
         <div className="flex items-start gap-2">{title}</div>
       )}
       <DescriptionBox key={a.versionId} libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
-      <ShotLines
+      <WhatHappens
         key={`shots-${a.versionId}`}
         libraryId={libraryId}
         detail={detail}
@@ -258,7 +258,6 @@ function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, 
         onSaved={saved}
         onError={onError}
       />
-      <Timeline detail={detail} now={now} onSeek={seek} />
       {(facts.length > 0 || inFolders.length > 0) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -645,11 +644,14 @@ function TagEditor({
 }
 
 /**
- * The clip's shot descriptions, under its description: one line a shot with its time, a click plays from there, the
- * shot playing now is marked. The person can rewrite a line; theirs wins over the AI's (shown quieter, as the AI's
- * description is), and saving it empty brings the AI's back. Nothing while the clip has none.
+ * What happens in the clip, under its description: its timeline's moments (api/library/timeline.ts, from its picture and
+ * sound), each a button that plays from there, what the sound adds and what changed quieter under it; its shot
+ * descriptions under the moment each starts in, shown with Shots. Without a timeline, the shots alone, and Make timeline
+ * asks for one (its look runs again, lines kept, and Gemini watches it). Each line marks itself while it plays. The
+ * person can rewrite a shot's line; theirs wins over the AI's (shown quieter, as the AI's description is), and saving it
+ * empty brings the AI's back. Nothing while the clip has neither.
  */
-function ShotLines({
+function WhatHappens({
   libraryId,
   detail,
   now,
@@ -670,8 +672,11 @@ function ShotLines({
   onError: (e: string) => void;
 }) {
   const [editing, setEditing] = useState<{ seg: number; text: string; was: string } | null>(null);
-  const shots = detail?.shots;
-  if (!detail || !shots?.length) return null;
+  const [withShots, setWithShots] = useState(false);
+  const [asked, setAsked] = useState(false);
+  const shots = detail?.shots ?? [];
+  const events = detail?.timeline ?? [];
+  if (!detail || (!shots.length && !events.length)) return null;
   const save = () =>
     editing &&
     updateShot(libraryId, detail.id, editing.seg, editing.text.trim())
@@ -680,115 +685,128 @@ function ShotLines({
         onSaved(x);
       })
       .catch((e) => onError(message(e)));
-  return (
-    <section aria-label="Shot descriptions" className="flex flex-col gap-1">
-      <span className="text-xs text-zinc-500">Shot descriptions</span>
-      <div className="-mx-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
-        {shots.map((s) =>
-          editing?.seg === s.seg ? (
-            <form
-              key={s.seg}
-              className="flex flex-col gap-1.5 px-1 py-0.5"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void save();
-              }}
-            >
-              <input
-                autoFocus
-                value={editing.text}
-                maxLength={200}
-                aria-label={`Shot at ${clock(s.a)}`}
-                onChange={(e) => setEditing({ ...editing, text: e.target.value })}
-                className="w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
-              />
-              <div className="flex items-center gap-2">
-                <Button size="sm" type="submit" disabled={editing.text.trim() === editing.was}>
-                  Save
-                </Button>
-                <Button size="sm" type="button" variant="ghost" onClick={() => setEditing(null)}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <div key={s.seg} className={cn("group flex items-start rounded hover:bg-zinc-500/10", now >= s.a && now < s.b && "bg-zinc-500/15")}>
-              <button
-                type="button"
-                onClick={() => onSeek(s.a)}
-                aria-current={now >= s.a && now < s.b ? "true" : undefined}
-                className={cn("flex min-w-0 flex-1 gap-2 px-1 py-0.5 text-left text-sm", s.source === "ai" && "text-zinc-400")}
-              >
-                <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(s.a)}</span>
-                <span>
-                  {s.text}
-                  {s.flaws?.map((f) => (
-                    <span key={f} className="ml-1.5 whitespace-nowrap rounded bg-zinc-500/15 px-1 text-xs text-zinc-500">
-                      {f}
-                    </span>
-                  ))}
-                </span>
-              </button>
-              {onAlike && (
-                <button
-                  type="button"
-                  aria-label={`More like the shot at ${clock(s.a)}`}
-                  title="More like this"
-                  onClick={() => onAlike(s.a)}
-                  className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
-                >
-                  <Images className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {!readOnly && (
-                <button
-                  type="button"
-                  aria-label={`Edit the shot at ${clock(s.a)}`}
-                  title="Edit"
-                  onClick={() => setEditing({ seg: s.seg, text: s.text, was: s.text })}
-                  className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          ),
+  const makeTimeline = () =>
+    rerunJobs(libraryId, detail.id, ["timeline"])
+      .then(() => setAsked(true))
+      .catch((e) => onError(message(e)));
+  const shotsShown = !events.length || withShots;
+  const shot = (s: (typeof shots)[number]) =>
+    editing?.seg === s.seg ? (
+      <form
+        key={s.seg}
+        className="flex flex-col gap-1.5 px-1 py-0.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <input
+          autoFocus
+          value={editing.text}
+          maxLength={200}
+          aria-label={`Shot at ${clock(s.a)}`}
+          onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+          className="w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
+        />
+        <div className="flex items-center gap-2">
+          <Button size="sm" type="submit" disabled={editing.text.trim() === editing.was}>
+            Save
+          </Button>
+          <Button size="sm" type="button" variant="ghost" onClick={() => setEditing(null)}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    ) : (
+      <div key={s.seg} className={cn("group flex items-start rounded hover:bg-zinc-500/10", now >= s.a && now < s.b && "bg-zinc-500/15")}>
+        <button
+          type="button"
+          onClick={() => onSeek(s.a)}
+          aria-current={now >= s.a && now < s.b ? "true" : undefined}
+          className={cn("flex min-w-0 flex-1 gap-2 px-1 py-0.5 text-left text-sm", s.source === "ai" && "text-zinc-400")}
+        >
+          <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(s.a)}</span>
+          <span>
+            {s.text}
+            {s.flaws?.map((f) => (
+              <span key={f} className="ml-1.5 whitespace-nowrap rounded bg-zinc-500/15 px-1 text-xs text-zinc-500">
+                {f}
+              </span>
+            ))}
+          </span>
+        </button>
+        {onAlike && (
+          <button
+            type="button"
+            aria-label={`More like the shot at ${clock(s.a)}`}
+            title="More like this"
+            onClick={() => onAlike(s.a)}
+            className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Images className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {!readOnly && (
+          <button
+            type="button"
+            aria-label={`Edit the shot at ${clock(s.a)}`}
+            title="Edit"
+            onClick={() => setEditing({ seg: s.seg, text: s.text, was: s.text })}
+            className="shrink-0 rounded p-1 text-zinc-500 opacity-0 hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
-    </section>
-  );
-}
-
-/**
- * The clip's timeline (api/library/timeline.ts): what happens when, from its picture and sound, each moment a button that
- * plays from there, the one playing now marked; what the sound adds and what changed, quieter under it. Nothing without one.
- */
-function Timeline({ detail, now, onSeek }: { detail: AssetDetail | null; now: number; onSeek: (s: number) => void }) {
-  const events = detail?.timeline;
-  if (!events?.length) return null;
+    );
+  const moment = (e: (typeof events)[number]) => {
+    const on = now >= e.a && now < Math.max(e.b, e.a + 0.5);
+    return (
+      <button
+        type="button"
+        onClick={() => onSeek(e.a)}
+        aria-current={on ? "true" : undefined}
+        className={cn("flex gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-zinc-500/10", on && "bg-zinc-500/15")}
+      >
+        <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(e.a)}</span>
+        <span className="flex min-w-0 flex-col">
+          <span>{e.what}</span>
+          {(e.sound || e.change) && <span className="text-xs text-zinc-500">{[e.sound, e.change].filter(Boolean).join(" · ")}</span>}
+        </span>
+      </button>
+    );
+  };
   return (
-    <section aria-label="Timeline" className="flex flex-col gap-1">
-      <span className="text-xs text-zinc-500">Timeline</span>
-      <div className="-mx-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
-        {events.map((e, i) => {
-          const on = now >= e.a && now < Math.max(e.b, e.a + 0.5);
-          return (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onSeek(e.a)}
-              aria-current={on ? "true" : undefined}
-              className={cn("flex gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-zinc-500/10", on && "bg-zinc-500/15")}
-            >
-              <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(e.a)}</span>
-              <span className="flex min-w-0 flex-col">
-                <span>{e.what}</span>
-                {(e.sound || e.change) && <span className="text-xs text-zinc-500">{[e.sound, e.change].filter(Boolean).join(" · ")}</span>}
-              </span>
-            </button>
-          );
-        })}
+    <section aria-label="What happens" className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-zinc-500">What happens</span>
+        {events.length > 0 && shots.length > 0 && (
+          <button
+            type="button"
+            aria-pressed={withShots}
+            onClick={() => setWithShots(!withShots)}
+            className={cn("rounded px-1.5 text-xs text-zinc-500 hover:text-zinc-300", withShots && "bg-zinc-500/15 text-zinc-300")}
+          >
+            Shots
+          </button>
+        )}
       </div>
+      <div className="-mx-1 flex max-h-96 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
+        {shotsByMoment(events, shots).map((g, i) => (
+          <div key={g.event ? `m${g.event.a}` : `lead${i}`} className="flex flex-col gap-0.5">
+            {g.event && moment(g.event)}
+            {shotsShown && g.shots.length > 0 && <div className={cn("flex flex-col gap-0.5", g.event && "pl-4")}>{g.shots.map(shot)}</div>}
+          </div>
+        ))}
+      </div>
+      {!events.length && !readOnly && (
+        <div className="-ml-2 flex">
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" disabled={asked} onClick={() => void makeTimeline()}>
+            <Clock className="h-3.5 w-3.5" />
+            {asked ? "Queued" : "Make timeline"}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

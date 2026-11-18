@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, MoreHorizontal, Music, Quote, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, MoreHorizontal, Music, Play, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -85,7 +85,7 @@ import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./lib
  * views (./library/views.tsx): Folders (the folder cards, components/browse/, then the clips in none), Gallery (only the
  * clips, ./library/Gallery.tsx) and List. `?f=` opens a folder, `?trash=1` the Trash. Search looks in the whole library
  * from the top, in the folder when one is open: titles and tags (FTS5, api/library/query.ts) and what is said in the
- * clips (api/library/search.ts), where a line said opens the preview at its second. A card opens its preview; dragged
+ * clips (api/library/search.ts), where a moment found (a line said, a shot, a timeline moment) opens the preview at its second. A card opens its preview; dragged
  * onto a folder or a tab it moves there, at once on screen (./library/moves.ts), with Undo. Right-click on the empty
  * space: New folder, Upload. Uploads go in one at a time, from the tray. A card being prepared updates when the server
  * finishes it (the change stream), without polling. Finals has its own tool (/finals): its folder is not shown here.
@@ -284,6 +284,8 @@ export default function LibraryPage() {
   const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
     if (a.id.startsWith("ext_")) return;
+    // opened from a search: a video plays from its best moment (hits come best first), what is said, a shot or a timeline moment
+    if (!at && searching) at = found?.hits.find((h) => h.asset.id === a.id && h.seconds !== undefined)?.seconds ?? 0;
     setStartAt(at);
     setPreview(a);
     opened.current = a.id;
@@ -1068,8 +1070,8 @@ export default function LibraryPage() {
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Preparing search by meaning</p>}
 
                 {said.length > 0 && (
-                  <section aria-label="Transcripts" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
-                    <span className="text-sm font-medium">Transcripts</span>
+                  <section aria-label="Moments" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
+                    <span className="text-sm font-medium">Moments</span>
                     {said.slice(0, 12).map((h, i) => (
                       <button
                         key={`${h.asset.versionId}-${i}`}
@@ -1077,7 +1079,7 @@ export default function LibraryPage() {
                         onClick={() => openClip(h.asset, h.seconds)}
                         className="flex items-baseline gap-2 rounded px-1 py-1 text-left text-sm hover:bg-zinc-500/10"
                       >
-                        <Quote className="h-3.5 w-3.5 shrink-0 self-center text-zinc-500" />
+                        <Play className="h-3.5 w-3.5 shrink-0 self-center text-zinc-500" />
                         <span className="shrink-0 font-mono text-xs text-zinc-500">{clock(h.seconds ?? 0)}</span>
                         <span className="min-w-0 flex-1 truncate">{h.snippet}</span>
                         <span className="max-w-[35%] shrink-0 truncate text-xs text-zinc-500">{h.asset.title}</span>
