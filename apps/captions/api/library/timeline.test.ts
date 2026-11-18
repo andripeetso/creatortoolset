@@ -36,6 +36,7 @@ watchTiming.post = (url, headers, body) => fetch(url, { method: "POST", headers,
 const watched = () => Promise.all([...watching.values()]);
 const { embedChunks } = await import("./embed");
 const { saveMyKey } = await import("../my-keys");
+const { currentSeq } = await import("../lib/sync");
 const { enqueueJob } = await import("./jobs");
 const { completeVisionWithFallback } = await import("../ai-vision");
 const { MacClaudeError, macUsageSince } = await import("../lib/mac-claude");
@@ -365,6 +366,30 @@ describe("in the look job", () => {
     } finally {
       libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timeline') WHERE id = 'lib_t'`).run();
     }
+  });
+
+  it("a watch that stores a timeline tells the open pages", async () => {
+    const { v, file } = await seed("tells");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    gemini();
+    askedWatch.add(v);
+    const before = currentSeq();
+    await watchAfter(libraryDb(), v, async () => file, "local");
+    expect(timelineOf(libraryDb(), v)).toHaveLength(1);
+    expect(currentSeq()).toBeGreaterThan(before);
+  });
+
+  it("an asked look that fails for good drops the ask; one tried again keeps it", async () => {
+    const { v } = await seed("lookfails");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    vi.mocked(completeVisionWithFallback).mockRejectedValue(new Error("the model broke"));
+    askedWatch.add(v);
+    queueLook(libraryDb(), v, "local", true);
+    await tick(Date.now(), ["look"]);
+    expect(askedWatch.has(v)).toBe(true);
+    for (let i = 1; i < 5; i++) await tick(Date.now() + i * 600_000, ["look"]);
+    expect((libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'look'").get(v) as { state: string }).state).toBe("failed");
+    expect(askedWatch.has(v)).toBe(false);
   });
 
   it("a watch that fails leaves the look done, keeps why, and is tried again later", async () => {

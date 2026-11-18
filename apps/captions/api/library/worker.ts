@@ -26,7 +26,7 @@ import { keySound, NeedsKey, transcribeVersion, versionRoute } from "./transcrib
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
 import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
-import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
+import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
@@ -339,6 +339,8 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   } catch (e) {
     if (e instanceof NeedsKey) {
       parkJob(db, job.id, e.message);
+      // a timeline asked for goes with a look that parks (the person asks again), not one waiting for its Mac to read it
+      if (job.kind === "look" && e.message !== MAC_WAITS) askedWatch.delete(job.version_id ?? "");
       return true;
     }
     // a description that met the plan's usage limit, a rate limit or a Mac that is off waits for it, never fails: a
@@ -357,6 +359,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
     if (after?.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+    if (job.kind === "look" && after?.state !== "queued") askedWatch.delete(job.version_id ?? ""); // tried again: the ask waits for that try
   } finally {
     running.delete(job.id);
     if (device) onDevice--;
@@ -684,7 +687,10 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
   // the watch runs beside the look lane (timeline.ts watchAfter): the copy goes when it ends
   if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
   // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
-  else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+  else {
+    if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+    askedWatch.delete(v.id);
+  }
 }
 
 /**
