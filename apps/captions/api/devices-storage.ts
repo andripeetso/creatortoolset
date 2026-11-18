@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, EXPORTS_NAME, PROJECTS_NAME, STORAGE_ROLES, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, EXPORTS_NAME, PROJECTS_NAME, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
@@ -55,7 +55,8 @@ function chained<T>(user: string, fn: () => Promise<T>): Promise<T> {
 async function readStorage(user: string): Promise<StorageState> {
   const raw = await readFile(file(user), "utf-8").catch(() => "{}");
   const parsed = parseStorageFile(raw);
-  if (!parsed.folders.length) return parsed;
+  // nothing to migrate: the first folder saved onto it is written as the current schema, so no read rewrites it later
+  if (!parsed.folders.length) return { ...parsed, schemaVersion: STORAGE_SCHEMA };
   const here = listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id;
   const { st, changed } = migrateStorage(parsed, here, resolveDevice);
   if (changed) void chained(user, async () => {

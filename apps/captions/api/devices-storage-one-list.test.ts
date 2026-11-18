@@ -51,6 +51,8 @@ describe("one folder list (A1, A2)", () => {
     const relay = await relayFolders(computer);
     expect(relay.map((x) => x.id)).toContain(added.id);
     expect((await storageOf(USER)).folders.map((f) => f.id)).toContain(added.id);
+    // the first folder of an empty list is saved as the current schema: no read starts a rewrite behind the next change
+    expect(JSON.parse(readFileSync(path.join(dir, "data", "storage", `${USER}.json`), "utf-8")).schemaVersion).toBe(3);
   });
 
   it("a folder whose computer is none of the account's is listed, marked missing, and never dropped", async () => {
