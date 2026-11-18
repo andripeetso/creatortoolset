@@ -158,6 +158,8 @@ export function recordVersion(
     /** where an uploaded file is on the computer it came from (uploads.from_path, from_device) */
     fromPath?: string | null;
     fromDevice?: string | null;
+    /** the upload's origin (uploads.origin): "phone" for the iPhone app's own file */
+    origin?: string | null;
   },
 ): string {
   const now = Date.now();
@@ -174,9 +176,9 @@ export function recordVersion(
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
   d.prepare(
-    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?)`,
-  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null);
+    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device, origin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?)`,
+  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null, o.origin ?? null);
   d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(o.versionId, assetId);
   if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(o.collectionId, o.libraryId)) {
     d.prepare(
@@ -442,6 +444,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       collectionId: row.collection_id,
       fromPath: row.from_path,
       fromDevice: row.from_device,
+      origin: row.origin,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -761,6 +764,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         collectionId: row.collection_id, // the folder it was dropped in
         fromPath: row.from_path,
         fromDevice: row.from_device,
+        origin: row.origin,
       });
       if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);

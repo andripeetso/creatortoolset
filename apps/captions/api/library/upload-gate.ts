@@ -119,7 +119,8 @@ export async function mayServe(
   if (what === "original" ? upload === "all" : upload !== "none") return { ok: true };
   if (what === "proxy" && (await hasMembers(version.id))) return { ok: true };
   // held until a computer has it (PLAN-final decision 1): the server hands it to a computer of the owner, and only until then
-  if (what === "original" && opts.toComputer && !libraryDb().prepare("SELECT 1 FROM version_places WHERE version_id = ? AND kind = 'original' AND state = 'verified'").get(version.versionId)) {
+  // only the iPhone app's own file (asset_versions.origin): any other original under none is refused, held or not
+  if (what === "original" && opts.toComputer && libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ? AND origin = 'phone'").get(version.versionId) && !libraryDb().prepare("SELECT 1 FROM version_places WHERE version_id = ? AND kind = 'original' AND state = 'verified'").get(version.versionId)) {
     return { ok: true };
   }
   return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);

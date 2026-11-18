@@ -179,6 +179,27 @@ describe("the library upload routes ask it", () => {
   });
 });
 
+describe("mayServe under none: a computer takes only the iPhone's own original, until a computer holds it", () => {
+  const version = (id: string, origin: string | null) => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, 'lib_none', 'video', 'V', 'tinyacrobatics', 0)").run(`a_${id}`);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, origin) VALUES (?, ?, 1, 'k', 4, 'h', 'ready', 'tinyacrobatics', 0, ?)").run(id, `a_${id}`, origin);
+    return { id: `a_${id}`, versionId: id };
+  };
+
+  it("a phone's held original goes to the owner's computer; any other original is refused, and so is a served one", async () => {
+    const phone = version("v_phone_held", "phone");
+    const browser = version("v_browser", null);
+    expect((await mayServe(phone, "original", { toComputer: true })).ok).toBe(true);
+    expect((await mayServe(browser, "original", { toComputer: true })).ok).toBe(false);
+    expect((await mayServe(browser, "original")).ok).toBe(false);
+    expect((await mayServe(version("v_phone_plain", "phone"), "original")).ok).toBe(false);
+    // a computer holds the phone's file: the server stops handing it out
+    const held = version("v_phone_got", "phone");
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-1', '/Users/tiny/Movies/IMG 0001.MOV', 0, 'verified')").run(held.versionId);
+    expect((await mayServe(held, "original", { toComputer: true })).ok).toBe(false);
+  });
+});
+
 const hex = (s: string) => createHash("sha256").update(s).digest("hex");
 const proving = { work: { v: 1, steps: [], library: true as const, proof: true as const } };
 const older = { work: { v: 1, steps: [], library: true as const } };
@@ -350,6 +371,9 @@ describe("A11: nothing streams an original under none (decision 5, R2)", () => {
   // the play route itself needs a registered source policy (canSee); usage.test.ts covers the route end to end
   it("an original held on the server (no computer has it yet) goes to the owner's computer under none, and to no viewer; once a computer holds it, to nobody", async () => {
     const v = { id: "lib_none", versionId: "ver_held" };
+    // the phone's own file: the only original a computer may take while no computer holds it
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_held', 'lib_none', 'video', 'V', 'tinyacrobatics', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, origin) VALUES ('ver_held', 'a_held', 1, 'k', 4, 'h', 'ready', 'tinyacrobatics', 0, 'phone')").run();
     expect(await mayServe(v, "original")).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused" } });
     expect(await mayServe(v, "original", { toComputer: true })).toEqual({ ok: true });
     expect(await mayServe(v, "proxy", { toComputer: true })).toMatchObject({ ok: false });
