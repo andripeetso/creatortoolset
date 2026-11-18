@@ -612,6 +612,7 @@ final class Dictation: ObservableObject {
             context: { [weak self] in TranscriptionContext(spokenLanguages: self?.prefs.languages ?? self?.spoken ?? []) }
         )
         made.remote = prefs.engine == .thisMac ? speechServer : nil
+        pill.current = { [weak made] in made?.state ?? .idle }
         controllerStore = made
         return made
     }

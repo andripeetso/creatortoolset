@@ -324,6 +324,23 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(c.state, .recording, "the new recording keeps going")
     }
 
+    func testAnEarlierTranscriptionEndingLeavesThePillOnTheNewRecording() async {
+        struct Plain: Error {}
+        let pill = DictationPill()
+        var now = DictationController.State.recording
+        pill.current = { now }
+        pill.show(.recording)
+        await waitFor { pill.state == .recording }
+        pill.dictationFailed(Plain())
+        XCTAssertEqual(pill.state, .recording)
+        now = .transcribing
+        pill.showCurrent()
+        XCTAssertEqual(pill.state, .transcribing)
+        now = .idle
+        pill.dictationFailed(Plain())
+        XCTAssertEqual(pill.state, .hidden)
+    }
+
     func testHistoryKeepsTheNewestOnly() {
         let recordings = DictationRecordings(directory: dir)
         recordings.keep = 2

@@ -42,6 +42,19 @@ final class DictationPill {
     private let model = OverlayModel()
     /// Bumped by every `show`, so a message timer only hides its own message.
     private var generation = 0
+    /// What the dictation loop is doing now. A transcription that ends while a newer recording or transcription
+    /// runs leaves the pill on that one instead of hiding it.
+    var current: () -> DictationController.State = { .idle }
+    var state: State { model.state }
+
+    /// Shows what the dictation loop is doing now, or hides the pill when it is idle.
+    func showCurrent() {
+        switch current() {
+        case .idle: hide()
+        case .recording: if model.state != .recording { show(.recording) }
+        case .transcribing: if model.state != .transcribing { show(.transcribing) }
+        }
+    }
 
     func show(_ state: State) {
         generation += 1
@@ -95,7 +108,7 @@ final class DictationPill {
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.generation == shown else { return }
-                self.hide()
+                self.showCurrent()
             }
         }
     }
@@ -169,14 +182,14 @@ extension DictationPill: DictationObserver {
     }
 
     func dictationFinished(_ result: DictationResult) {
-        hide()
+        showCurrent()
     }
 
     func dictationFailed(_ error: Error) {
         if let text = Self.message(for: error) {
             showMessage(text)
         } else {
-            hide()
+            showCurrent()
         }
     }
 }
