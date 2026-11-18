@@ -93,12 +93,19 @@ enum MediaFiles {
     @discardableResult
     static func setServerFolders(_ list: [ServerFolder], server: String) -> [ServerFolder] {
         guard !list.isEmpty else { return serverFolders(server) }
+        let before = serverFolders(server)
         var all: [String: [ServerFolder]] = decoded(serversKey)
         all[server] = list
         encode(all, serversKey)
         var ok: [String: [String]] = decoded(allowedKey)
-        // OKs are keyed by folder id; one saved by path (before) becomes the id of the listed folder at that path, once
-        if let was = ok[server] { ok[server] = Array(Set(was.compactMap { x in list.first { $0.id == x || $0.path == x }?.id })) }
+        // OKs are keyed by folder id: one saved by path (before) becomes the id of the listed folder at that path, and one
+        // whose id changed for the same path (a server collapsing duplicate rows) follows its path to the new id
+        if let was = ok[server] {
+            ok[server] = Array(Set(was.compactMap { x in
+                list.first { $0.id == x || $0.path == x }?.id
+                    ?? before.first { $0.id == x }.flatMap { old in list.first { $0.path == old.path }?.id }
+            }))
+        }
         encode(ok, allowedKey)
         return list
     }

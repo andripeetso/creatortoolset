@@ -57,8 +57,20 @@ describe("Show in Finder on a server elsewhere", () => {
     expect(await menuFor({ id: "a1", placeWord: { word: "here" } })).not.toContain("Show in Finder");
   });
 
-  it("is offered for a clip read in place", async () => {
-    expect(await menuFor({ id: "a1", onComputer: true })).toContain("Show in Finder");
+  it("is offered for a clip read in place on this computer", async () => {
+    expect(await menuFor({ id: "a1", onComputer: true, placeWord: { word: "here" } })).toContain("Show in Finder");
+  });
+
+  it("is not offered for a clip in place on another computer (onComputer alone says some computer has it)", async () => {
+    const menu = await menuFor({ id: "a1", onComputer: true, placeWord: { word: "on", computer: "Studio PC" } });
+    expect(menu).toContain("Open");
+    expect(menu).not.toContain("Show in Finder");
+  });
+
+  it("is not offered for onComputer with no place row saying this computer has it", async () => {
+    const menu = await menuFor({ id: "a1", onComputer: true });
+    expect(menu).toContain("Open");
+    expect(menu).not.toContain("Show in Finder");
   });
 
   it("is not offered for an upload only another computer has", async () => {

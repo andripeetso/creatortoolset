@@ -152,4 +152,15 @@ final class MediaFilesGateTests: XCTestCase {
         XCTAssertEqual(MediaFiles.defaults.data(forKey: "allowedFolders"), once)
         XCTAssertEqual(try JSONDecoder().decode([String: [String]].self, from: XCTUnwrap(once)), [s: ["f1"]])
     }
+
+    /// The server collapses two rows of one path into one with a new id: the OK follows the path to the id that stays.
+    func testOKFollowsItsPathWhenTheIdChanges() throws {
+        let s = "s"
+        MediaFiles.setServerFolders([.init(id: "44919794", path: footage, workspaces: ["*"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.allow(footage, server: s))
+        MediaFiles.setServerFolders([.init(id: "cd303bbd", path: footage, workspaces: ["*"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        XCTAssertEqual(MediaFiles.granted(server: s, workspace: nil), [footage])
+        XCTAssertEqual(try JSONDecoder().decode([String: [String]].self, from: XCTUnwrap(MediaFiles.defaults.data(forKey: "allowedFolders"))), [s: ["cd303bbd"]])
+    }
 }
