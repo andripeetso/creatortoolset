@@ -32,6 +32,7 @@ writeFileSync(
   }),
 );
 
+const { sessionCookieFor } = await import("../auth");
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { hasMembers, mayReceive, mayServe, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
@@ -134,23 +135,35 @@ describe("the library upload routes ask it", () => {
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
   });
 
-  it("the iPhone app's own file (x-ct-origin: phone) is taken under none at its start, each part and the finish; a Mac's file or a browser's is not", async () => {
-    const phone = (lib: string, from?: string) =>
+  it("the iPhone app's own file is taken under none at its start, each part and the finish; a browser's or a Mac's is not, header or no header", async () => {
+    const appCookie = sessionCookieFor("tinyacrobatics", true)!;
+    const browserCookie = sessionCookieFor("tinyacrobatics", false)!;
+    const phone = (lib: string, cookie: string | null, from?: string) =>
       app.request(`/api/library/${lib}/uploads`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ct-origin": "phone" },
+        headers: { "content-type": "application/json", "x-ct-origin": "phone", ...(cookie ? { cookie } : {}) },
         body: JSON.stringify({ filename: "IMG 0001.MOV", size: 4, ...(from ? { fromPath: from, fromDevice: "mac-1" } : {}) }),
       });
-    const r = await phone("lib_none");
+    const r = await phone("lib_none", appCookie);
     expect(r.status).toBe(201);
     const { id } = (await r.json()) as { id: string };
     expect(d.prepare("SELECT origin FROM uploads WHERE id = ?").get(id)).toEqual({ origin: "phone" });
     expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": "4" }, body: "abcd" })).status).toBe(204);
     expect((await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" })).status).toBe(200);
     // a phone's header on a file a Mac names is that Mac's file: refused under none like any computer's
-    expect((await phone("lib_none", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(409);
+    expect((await phone("lib_none", appCookie, "/Users/tiny/Movies/Handstand.mp4")).status).toBe(409);
     // no header, the browser: refused under none
     expect((await start("lib_none")).status).toBe(409);
+    // a browser (or a member) that sends the phone's header is refused: the header alone is not the phone
+    const before = (d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_none' AND origin = 'phone'").get() as { n: number }).n;
+    const forged = await phone("lib_none", browserCookie);
+    expect(forged.status).toBe(409);
+    expect(await forged.json()).toMatchObject({ code: "upload_refused" });
+    expect((await phone("lib_none", null)).status).toBe(409);
+    expect((d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_none' AND origin = 'phone'").get() as { n: number }).n).toBe(before);
+    // the marker is the server's: a cookie with the app's shape and another signature is a browser's
+    const forgedMarker = `${browserCookie}.${"0".repeat(64)}`;
+    expect((await phone("lib_none", forgedMarker)).status).toBe(409);
   });
 
   it("a part and the finish ask again: switched to none mid-upload, they are refused and what arrived stays", async () => {

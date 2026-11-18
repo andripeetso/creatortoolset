@@ -17,6 +17,7 @@ process.env.ACCOUNT_SIGNIN_SERVICE = "https://signin.test";
 for (const k of ["APPLE_SIGNIN_KEY", "GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET", "SIGN_UPS", "PUBLIC_ORIGIN"]) delete process.env[k];
 
 const { createUser, findUser, linkIdentity, setPassword } = await import("./users");
+const { isAppSession } = await import("./auth");
 const app = (await import("./boot")).default;
 
 createUser("cy", "cypass123", { role: "user" });
@@ -93,8 +94,14 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
     // the cookie is the very one a browser's sign-in gets, and it is a working session
     const browser = await github("for=site");
     expect(browser.headers.get("location")).toBe("/");
-    expect(res.headers.get("set-cookie")).toBe(browser.headers.get("set-cookie"));
+    // the same cookie plus the iPhone app's signed marker (auth.ts isAppSession): a browser's login never carries it
+    const appValue = res.headers.get("set-cookie")!.split(";")[0]!.slice("cap_auth=".length);
+    const browserValue = browser.headers.get("set-cookie")!.split(";")[0]!.slice("cap_auth=".length);
+    expect(appValue).toMatch(/^[A-Za-z0-9_-]+\.[a-f0-9]{64}\.[a-f0-9]{64}$/);
+    expect(appValue.split(".").slice(0, 2).join(".")).toBe(browserValue);
     expect(res.headers.get("set-cookie")).toMatch(/^cap_auth=[^;]+; HttpOnly; Path=\/; Max-Age=\d+; SameSite=Lax$/);
+    expect(isAppSession(`cap_auth=${appValue}`, "cy")).toBe(true);
+    expect(isAppSession(`cap_auth=${browserValue}`, "cy")).toBe(false);
     const check = (await (await app.request("/api/auth/check", { headers: { cookie: cookieOf(res) } })).json()) as { authed: boolean; user: { username: string } };
     expect(check.authed).toBe(true);
     expect(check.user.username).toBe("cy");
