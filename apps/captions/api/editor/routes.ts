@@ -605,6 +605,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
   const asker = c.req.query("device");
   const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip", asker && deviceOf(asker)?.owner === r.user ? asker : undefined);
+  if (m.refused && !m.refused.ok) return c.json(m.refused.body, m.refused.status);
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => otioText(toOtio(tl, m.files, await gradeOf(ownerOf(r.e), r.e.bundle)));

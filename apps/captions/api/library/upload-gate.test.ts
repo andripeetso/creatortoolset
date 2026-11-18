@@ -32,9 +32,11 @@ writeFileSync(
   }),
 );
 
+const { sessionCookieFor } = await import("../auth");
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
-const { hasMembers, mayReceive, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
+const { hasMembers, mayReceive, mayServe, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
+const { mediaFile, serveGate } = await import("./routes");
 const { acceptLibraryFile } = await import("../work/library-package");
 const { pairDevice, setDeviceWork } = await import("../lib/devices");
 const { createUser } = await import("../users");
@@ -76,8 +78,30 @@ const start = (lib: string, from?: string) =>
   });
 
 describe("mayReceive: original bytes only where somebody chose to send them", () => {
-  it("takes a person's upload under every setting", () => {
-    for (const id of ["lib_none", "lib_unset", "lib_p", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+  // local-first 11-18 decision 6: under none no original reaches the server, a browser or a phone's included
+  it("takes a person's original under proxies and all, and refuses it under none (unset reads as none)", () => {
+    for (const id of ["lib_p", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+    for (const id of ["lib_none", "lib_unset"]) {
+      expect(mayReceive("original", { id }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
+    }
+  });
+
+  it("an upload started under all is asked again at each part and at the finish: once the library says none, nothing more is taken", async () => {
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_flip', 'tinyacrobatics', 'F', 'local', '{\"upload\":\"all\"}', 0)").run();
+    const { id } = (await (await start("lib_flip")).json()) as { id: string };
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'none') WHERE id = 'lib_flip'`).run();
+    const part = await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": "4" }, body: "wxyz" });
+    expect(part.status).toBe(409);
+    expect(await part.json()).toMatchObject({ code: "upload_refused", message: REFUSED_NONE });
+    const fin = await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" });
+    expect(fin.status).toBe(409);
+  });
+
+  it("a person's browser upload into a none library is refused at its start (a row of the route table, A6)", async () => {
+    const r = await start("lib_none");
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: "upload_refused", message: REFUSED_NONE });
+    expect((await start("lib_all")).status).toBe(201);
   });
 
   it("refuses a computer's own original under none (unset reads as none), takes it under proxies and all", () => {
@@ -103,12 +127,43 @@ describe("mayReceive: original bytes only where somebody chose to send them", ()
 });
 
 describe("the library upload routes ask it", () => {
-  it("start: a Mac's own file under none is refused with the line; a browser upload is taken", async () => {
+  it("start: a Mac's own file under none is refused with the line, and so is a browser upload", async () => {
     const r = await start("lib_none", "/Users/tiny/Movies/Handstand.mp4");
     expect(r.status).toBe(409);
     expect(await r.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
-    expect((await start("lib_none")).status).toBe(201);
+    expect((await start("lib_none")).status).toBe(409);
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
+  });
+
+  it("the iPhone app's own file is taken under none at its start, each part and the finish; a browser's or a Mac's is not, header or no header", async () => {
+    const appCookie = sessionCookieFor("tinyacrobatics", true)!;
+    const browserCookie = sessionCookieFor("tinyacrobatics", false)!;
+    const phone = (lib: string, cookie: string | null, from?: string) =>
+      app.request(`/api/library/${lib}/uploads`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-ct-origin": "phone", ...(cookie ? { cookie } : {}) },
+        body: JSON.stringify({ filename: "IMG 0001.MOV", size: 4, ...(from ? { fromPath: from, fromDevice: "mac-1" } : {}) }),
+      });
+    const r = await phone("lib_none", appCookie);
+    expect(r.status).toBe(201);
+    const { id } = (await r.json()) as { id: string };
+    expect(d.prepare("SELECT origin FROM uploads WHERE id = ?").get(id)).toEqual({ origin: "phone" });
+    expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": "4" }, body: "abcd" })).status).toBe(204);
+    expect((await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" })).status).toBe(200);
+    // a phone's header on a file a Mac names is that Mac's file: refused under none like any computer's
+    expect((await phone("lib_none", appCookie, "/Users/tiny/Movies/Handstand.mp4")).status).toBe(409);
+    // no header, the browser: refused under none
+    expect((await start("lib_none")).status).toBe(409);
+    // a browser (or a member) that sends the phone's header is refused: the header alone is not the phone
+    const before = (d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_none' AND origin = 'phone'").get() as { n: number }).n;
+    const forged = await phone("lib_none", browserCookie);
+    expect(forged.status).toBe(409);
+    expect(await forged.json()).toMatchObject({ code: "upload_refused" });
+    expect((await phone("lib_none", null)).status).toBe(409);
+    expect((d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_none' AND origin = 'phone'").get() as { n: number }).n).toBe(before);
+    // the marker is the server's: a cookie with the app's shape and another signature is a browser's
+    const forgedMarker = `${browserCookie}.${"0".repeat(64)}`;
+    expect((await phone("lib_none", forgedMarker)).status).toBe(409);
   });
 
   it("a part and the finish ask again: switched to none mid-upload, they are refused and what arrived stays", async () => {
@@ -121,6 +176,27 @@ describe("the library upload routes ask it", () => {
     expect((await part("cd", 2)).status).toBe(409);
     expect((await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" })).status).toBe(409);
     expect((d.prepare("SELECT state, received FROM uploads WHERE id = ?").get(id) as { state: string; received: number })).toEqual({ state: "open", received: 2 });
+  });
+});
+
+describe("mayServe under none: a computer takes only the iPhone's own original, until a computer holds it", () => {
+  const version = (id: string, origin: string | null) => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, 'lib_none', 'video', 'V', 'tinyacrobatics', 0)").run(`a_${id}`);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, origin) VALUES (?, ?, 1, 'k', 4, 'h', 'ready', 'tinyacrobatics', 0, ?)").run(id, `a_${id}`, origin);
+    return { id: `a_${id}`, versionId: id };
+  };
+
+  it("a phone's held original goes to the owner's computer; any other original is refused, and so is a served one", async () => {
+    const phone = version("v_phone_held", "phone");
+    const browser = version("v_browser", null);
+    expect((await mayServe(phone, "original", { toComputer: true })).ok).toBe(true);
+    expect((await mayServe(browser, "original", { toComputer: true })).ok).toBe(false);
+    expect((await mayServe(browser, "original")).ok).toBe(false);
+    expect((await mayServe(version("v_phone_plain", "phone"), "original")).ok).toBe(false);
+    // a computer holds the phone's file: the server stops handing it out
+    const held = version("v_phone_got", "phone");
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-1', '/Users/tiny/Movies/IMG 0001.MOV', 0, 'verified')").run(held.versionId);
+    expect((await mayServe(held, "original", { toComputer: true })).ok).toBe(false);
   });
 });
 
@@ -229,7 +305,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/library/derived.ts": "P2: the send branch reads the gate's setting (uploadFor); a phone's made proxy (parseMade) carries its SHA-256, checked by mayReceive in routes.ts",
   "apps/captions/api/lib/uploads.ts": "PASS: the helpers (appendBody, writeBody, receivePart); gated by their callers",
   "apps/captions/api/lib/incoming.ts": "PASS: requestBodyStream, a helper; gated by its callers",
-  "apps/captions/api/review.ts": "PASS: a person's own upload into a review (decision 1); Review is serving (decision 5)",
+  "apps/captions/api/review.ts": "PASS: Review uploads are the server's to take under every Upload setting (R2: reviews are served); not gated by mayReceive",
   "apps/captions/api/projects.ts": "P3a: POST /, POST /:id/clips and every /:id/clips/:clipId/original route call mayReceive (takesOriginal): a person's upload is taken, a computer's own file (?fromPath=) by the clip's library, none off This Mac without one",
   "apps/captions/api/clips.ts": "OPEN P3d: Video Notes recordings stay on the recorder's computer (decision 19)",
   "apps/captions/api/transcribe.ts": "OPEN P3f: speech for transcription",
@@ -266,3 +342,107 @@ describe("the route table", () => {
     for (const [f, why] of Object.entries(ROUTES)) if (/^P[02]/.test(why)) expect(readFileSync(path.join(repo, f), "utf8"), f).toMatch(/mayReceive\(|uploadFor\(/);
   });
 });
+
+describe("A11: nothing streams an original under none (decision 5, R2)", () => {
+  // one version per library: uploadFor reads the setting from the version's own library
+  const addVersion = (id: string, lib: string) => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, ?, 'video', 'Srv', 'tinyacrobatics', 0)").run(`a_${id}`, lib);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, 'k', 900, 'x', 'tinyacrobatics', 0, 'ready')").run(id, `a_${id}`);
+  };
+  it("mayServe: an original only under all; a proxy under proxies and all, and under none only in a team library", async () => {
+    addVersion("vs_none", "lib_none");
+    addVersion("vs_team", "lib_team");
+    addVersion("vs_p", "lib_p");
+    addVersion("vs_all", "lib_all");
+    const serve = (lib: string, versionId: string, what: "original" | "proxy") => mayServe({ id: lib, versionId }, what);
+    expect((await serve("lib_none", "vs_none", "original")).ok).toBe(false);
+    expect((await serve("lib_none", "vs_none", "proxy")).ok).toBe(false);
+    expect((await serve("lib_team", "vs_team", "proxy")).ok).toBe(true);
+    expect((await serve("lib_team", "vs_team", "original")).ok).toBe(false);
+    expect((await serve("lib_p", "vs_p", "original")).ok).toBe(false);
+    expect((await serve("lib_p", "vs_p", "proxy")).ok).toBe(true);
+    expect((await serve("lib_all", "vs_all", "original")).ok).toBe(true);
+    // a final in a none library is served: the Finals setting (all when unset)
+    addVersion("vs_fin", "lib_none");
+    d.prepare("INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_fin', 'a_vs_fin', 0, 'local')").run();
+    expect((await serve("lib_none", "vs_fin", "original")).ok).toBe(true);
+  });
+
+  // the play route itself needs a registered source policy (canSee); usage.test.ts covers the route end to end
+  it("an original held on the server (no computer has it yet) goes to the owner's computer under none, and to no viewer; once a computer holds it, to nobody", async () => {
+    const v = { id: "lib_none", versionId: "ver_held" };
+    // the phone's own file: the only original a computer may take while no computer holds it
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_held', 'lib_none', 'video', 'V', 'tinyacrobatics', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, origin) VALUES ('ver_held', 'a_held', 1, 'k', 4, 'h', 'ready', 'tinyacrobatics', 0, 'phone')").run();
+    expect(await mayServe(v, "original")).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused" } });
+    expect(await mayServe(v, "original", { toComputer: true })).toEqual({ ok: true });
+    expect(await mayServe(v, "proxy", { toComputer: true })).toMatchObject({ ok: false });
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state, kind) VALUES ('ver_held', 'mac-held', '/Users/tiny/Movies/held.mov', ?, 'verified', 'original')").run(Date.now());
+    expect(await mayServe(v, "original", { toComputer: true })).toMatchObject({ ok: false });
+  });
+
+  it("the serve gate: under none the original is refused, pictures pass; On This Mac serves its own", async () => {
+    expect(await serveGate("vs_none", "play", { key: "k", what: "original" })).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused", message: REFUSED_NONE } });
+    expect(await serveGate("vs_none", "source", { key: "k", what: "original" })).toMatchObject({ ok: false, status: 409 });
+    expect((await serveGate("vs_none", "thumb", { key: "thumb-key" })).ok).toBe(true);
+    process.env.CT_LOCAL = "1";
+    try {
+      expect((await mayServe({ id: "lib_none", versionId: "vs_none" }, "original")).ok).toBe(true);
+    } finally {
+      delete process.env.CT_LOCAL;
+    }
+  });
+
+  // a proxy whose key is the source's (a proxies library that dropped its original) is the proxy, not the original
+  it("a proxy under the source's key is served as the proxy: by its library's setting, not refused as an original", async () => {
+    const sharedVersion = (id: string, lib: string) => {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, ?, 'video', 'Shared', 'tinyacrobatics', 0)").run(`a_${id}`, lib);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, 'pk', 900, 'x', 'tinyacrobatics', 0, 'ready')").run(id, `a_${id}`);
+      d.prepare("INSERT INTO derivatives (version_id, kind, storage_key) VALUES (?, 'proxy', 'pk')").run(id);
+    };
+    sharedVersion("vs_shared_p", "lib_p");
+    sharedVersion("vs_shared_none", "lib_none");
+    const play = mediaFile("vs_shared_p", "play");
+    expect(play).toMatchObject({ key: "pk", what: "proxy" });
+    expect((await serveGate("vs_shared_p", "play", play!)).ok).toBe(true);
+    expect((await serveGate("vs_shared_none", "play", mediaFile("vs_shared_none", "play")!)).ok).toBe(false);
+    expect((await serveGate("vs_shared_p", "source", { key: "pk", what: "original" })).ok).toBe(false);
+  });
+
+  // the prevention test: a route that reads a clip's file from the server must ask mayServe, or be named here with its reason
+  it("every file that streams or reads a server copy of a clip asks mayServe, or is named with its reason (PASS, OPEN)", () => {
+    const streams = filesMatching("apps/captions/api", /mediaFile\(|serveBlob\(|localCopy\(|blobs\.locate\(/, /\.ts$/);
+    expect(streams).toEqual(Object.keys(STREAMS).sort());
+    for (const [f, why] of Object.entries(STREAMS)) if (why.startsWith("mayServe")) expect(readFileSync(path.join(repo, f), "utf8"), f).toMatch(/mayServe\(|serveGate\(/);
+  });
+});
+
+// every file that touches a server copy: mayServe-gated (a viewer's route), PASS (not a viewer's stream: a picture,
+// an adapter, a computer's own job, an upload being taken), or OPEN (a server job on a held copy: P3 gates it)
+const STREAMS: Record<string, string> = {
+  "apps/captions/api/library/routes.ts": "mayServe: GET /media/:versionId/:kind (serveGate); finishDirect hashes an upload just taken; serveBlob is asked by its callers",
+  "apps/captions/api/library/shares.ts": "mayServe: a shared link's media route (serveGate)",
+  "apps/captions/api/library/bulk.ts": "mayServe: the library's zip of originals (skips any the Upload refuses)",
+  "apps/captions/api/library/collections.ts": "mayServe: pieces zip (Save all). PASS: the cover frame and cover picture are pictures",
+  "apps/captions/api/editor/media.ts": "mayServe: an export's originals (mediaPaths refuses them, 409)",
+  "apps/captions/api/devices.ts": "PASS: a computer's own job reads (its footage copy, its transcript proxy, its copy file), not a viewer",
+  "apps/captions/api/work/library-package.ts": "PASS: a computer's own job reads (the light proxy, the original for its proxy), not a viewer",
+  "apps/captions/api/review.ts": "PASS: Review's own videos are served under every Upload setting (R2); its uploads are assembled, not served",
+  "apps/captions/api/library/pictures.ts": "PASS: a card's picture (a derivative; pictures pass under none)",
+  "apps/captions/api/library/attach.ts": "PASS: a thumbnail (a derivative)",
+  "apps/captions/api/library/smart.ts": "PASS: a picture the AI reads (pictures pass under none)",
+  "apps/captions/api/library/shots.ts": "PASS: kept sheets (derivatives)",
+  "apps/captions/api/work/pictures.ts": "PASS: a picture's thumbnail for a computer's work",
+  "apps/captions/api/library/db.ts": "PASS: the blob adapter wiring, no route",
+  "apps/captions/api/library/storage/types.ts": "PASS: the adapter interface",
+  "apps/captions/api/library/storage/local.ts": "PASS: the local adapter",
+  "apps/captions/api/library/storage/s3.ts": "PASS: the bucket adapter",
+  "apps/captions/api/library/storage/bunny.ts": "PASS: the bunny adapter",
+  "apps/captions/api/library/storage/blob-contract.ts": "PASS: the adapter contract test helper",
+  "apps/captions/api/library/access.ts": "OPEN P3a: versionSource hands a held copy to Caption Studio's open (search.ts) and its clip cache: server processing",
+  "apps/captions/api/library/locate.ts": "OPEN P3: the server's own backfill of a copy it holds (processing, not a viewer's stream)",
+  "apps/captions/api/library/worker.ts": "OPEN P3: the server's derivative workers read a held original (processing)",
+  "apps/captions/api/library/media/probe.ts": "OPEN P3: the server probes a held file (processing)",
+  "apps/captions/api/designs.ts": "OPEN P3: a design's video frame cut on the server (processing)",
+  "apps/captions/api/editor/preview.ts": "OPEN P3d: the editor's preview and measure read a held copy on the server (processing)",
+};

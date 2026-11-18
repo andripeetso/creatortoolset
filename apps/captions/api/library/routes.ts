@@ -4,10 +4,10 @@ import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { AuthVars } from "../auth";
+import { isAppSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { mayReceive } from "./upload-gate";
+import { hasMembers, mayReceive, mayServe, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -158,6 +158,8 @@ export function recordVersion(
     /** where an uploaded file is on the computer it came from (uploads.from_path, from_device) */
     fromPath?: string | null;
     fromDevice?: string | null;
+    /** the upload's origin (uploads.origin): "phone" for the iPhone app's own file */
+    origin?: string | null;
   },
 ): string {
   const now = Date.now();
@@ -174,9 +176,9 @@ export function recordVersion(
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
   d.prepare(
-    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?)`,
-  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null);
+    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device, origin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?)`,
+  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null, o.origin ?? null);
   d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(o.versionId, assetId);
   if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(o.collectionId, o.libraryId)) {
     d.prepare(
@@ -286,6 +288,8 @@ interface UploadRow {
   from_device: string | null;
   /** what the phone made of the file itself (derived.ts Made), JSON; cleared once filed */
   made: string | null;
+  /** "phone" when the iPhone app sent it to the person's computers (x-ct-origin); null otherwise */
+  origin: string | null;
 }
 
 const db = () => libraryDb();
@@ -339,7 +343,7 @@ const receives = (row: UploadRow, got?: string) => {
   const made = madeOf(row)?.proxy;
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
   const into = { id: row.library_id, collectionId: row.collection_id };
-  const origin = row.from_path ? "computer" : "person";
+  const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
   if (!made) return mayReceive("original", into, origin, { sender });
   return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got, bytes: row.size, original: made.size } : {}) } });
 };
@@ -440,6 +444,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       collectionId: row.collection_id,
       fromPath: row.from_path,
       fromDevice: row.from_device,
+      origin: row.origin,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -537,7 +542,10 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
   const into = { id: libraryId, collectionId: collection };
-  const origin = from ? "computer" : "person";
+  // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
+  // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isAppSession), never a browser's
+  const phone = !from && c.req.header("x-ct-origin") === "phone" && isAppSession(c.req.header("cookie"), user.username);
+  const origin = from ? "computer" : phone ? "phone" : "person";
   const gate = made?.proxy
     ? mayReceive("proxy", into, origin, { sender, proof: { ...(made.proxy.sha256 ? { sha256: made.proxy.sha256 } : {}), bytes: size, original: made.proxy.size } })
     : mayReceive("original", into, origin, { sender });
@@ -558,8 +566,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -575,6 +583,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
       from,
       fromDevice,
       made ? JSON.stringify(made) : null,
+      phone ? "phone" : null,
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -755,6 +764,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         collectionId: row.collection_id, // the folder it was dropped in
         fromPath: row.from_path,
         fromDevice: row.from_device,
+        origin: row.origin,
       });
       if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -782,13 +792,16 @@ libraryApp.get("/", async (c) => {
   const given = await sharedHere(user);
   if (!given) await ensureLibrary(user.username);
   const rows = await librariesHere(user.username);
-  const libraries: LibrarySummary[] = rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    storage: r.storage_kind as LibrarySummary["storage"],
-    settings: settingsOf(r.settings),
-    ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
-  }));
+  const libraries: LibrarySummary[] = await Promise.all(
+    rows.map(async (r) => ({
+      id: r.id,
+      name: r.name,
+      storage: r.storage_kind as LibrarySummary["storage"],
+      settings: settingsOf(r.settings),
+      ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
+      ...((await hasMembers(r.id)) ? { shared: true as const } : {}),
+    })),
+  );
   // uploadTakes: an upload start here takes what a phone made of a video itself (derived.ts Made)
   return c.json({ libraries, uploadTakes: UPLOAD_TAKES });
 });
@@ -1006,7 +1019,7 @@ libraryApp.get("/:id/where", async (c) => {
  * card's link, api/mcp-cards.ts) or source. A clip that plays as it is plays from this disk, not from its proxy in the
  * cloud. Null: no such kind.
  */
-export function mediaFile(versionId: string, kind: string): { key?: string; type: string; onMac?: string } | null {
+export function mediaFile(versionId: string, kind: string): { key?: string; type: string; onMac?: string; what?: "original" | "proxy" } | null {
   const v = db()
     .prepare("SELECT v.source_key, v.mime, v.probe, v.mac_path, v.mac_device, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
     .get(versionId) as { source_key: string; mime: string | null; probe: string | null; mac_path: string | null; mac_device: string | null; library_id: string } | undefined;
@@ -1017,19 +1030,33 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
       | undefined)?.storage_key ?? undefined;
   const original = v.mime ?? "application/octet-stream";
   if (kind === "thumb") return { key: derived("thumb"), type: "image/jpeg" };
-  if (kind === "proxy") return { key: derived("proxy"), type: "video/mp4" };
+  if (kind === "proxy") return { key: derived("proxy"), type: "video/mp4", what: "proxy" };
   if (kind === "sprite") return { key: derived("sprite"), type: "image/jpeg" };
   // the original is on a Mac (indexed there, or uploaded to a library that keeps only proxies): it plays from its proxy
   // when it has one, and a download says where the original is
   if (v.mac_path && kind === "source") return { type: original, onMac: macPlace(v.mac_path, v.mac_device) };
-  if (v.mac_path && kind === "play") return { key: derived("proxy"), type: "video/mp4" };
+  if (v.mac_path && kind === "play") return { key: derived("proxy"), type: "video/mp4", what: "proxy" };
   if (kind === "play") {
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const proxy = p && proxiesInCloud(v.library_id) && !needsProxy(p) ? undefined : derived("proxy");
-    return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original };
+    return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original, what: proxy ? "proxy" : "original" };
   }
-  if (kind === "source") return { key: v.source_key, type: original };
+  if (kind === "source") return { key: v.source_key, type: original, what: "original" };
   return null;
+}
+
+/**
+ * What the server may stream of a version to a viewer (local-first decision 5): the file mediaFile picked, asked of
+ * mayServe as its original or its proxy (`what`, never a key comparison: a proxies library's proxy can share its key
+ * with the source). Pictures pass. Review, Finals and team proxies are mayServe's own exceptions.
+ */
+export async function serveGate(versionId: string, kind: string, file: { key?: string; what?: "original" | "proxy" }): Promise<Received> {
+  if (!["play", "proxy", "source"].includes(kind) || !file.key) return { ok: true };
+  const v = db().prepare("SELECT a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
+    | { asset_id: string; library_id: string }
+    | undefined;
+  if (!v || inReview(v.asset_id)) return { ok: true }; // a Review video is Review's, served by it (R2)
+  return mayServe({ id: v.library_id, versionId }, file.what ?? (kind === "proxy" ? "proxy" : "original"));
 }
 
 /** Whether the library made a playable copy of this version (its proxy). A card's video link is signed only for that copy, never for the original (api/mcp-cards.ts). */
@@ -1079,6 +1106,8 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (file.onMac) return c.json({ error: `The original is on ${file.onMac}, not on this server`, code: "on_mac" }, 409);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
+  const gate = await serveGate(versionId, kind, file);
+  if (!gate.ok) return c.json(gate.body, gate.status);
   // a clip whose proxy was cleared (Library settings → Storage) gets it again when it is opened
   if (kind === "play" && unproxied(v.library_id, versionId).length) {
     enqueueJob(db(), v.library_id, versionId, "proxy", username, true);

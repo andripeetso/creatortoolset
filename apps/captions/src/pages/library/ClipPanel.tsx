@@ -32,6 +32,8 @@ type Props = {
   asset: AssetCard;
   /** the second the player opens at (a line said in the clip) */
   startAt: number;
+  /** the server plays this clip (its library's Upload is not none, shared with members, or a finished video); see ClipPlayer */
+  serverPlays?: boolean;
   inTrash: boolean;
   /** someone else's library to look at: nothing to edit, move, turn or delete (only the owner changes or deletes footage) */
   readOnly?: boolean;
@@ -52,7 +54,7 @@ export function ClipPanel(props: Props) {
   return <Panel key={props.asset.id} {...props} />;
 }
 
-function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
+function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
   const media = useRef<(HTMLVideoElement & HTMLAudioElement) | null>(null);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [reread, setReread] = useState(0);
@@ -453,7 +455,7 @@ function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, 
     ));
 
   const picture = playable ? (
-    <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} />
+    <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={serverPlays} />
   ) : a.kind === "image" ? (
     <ClipImage asset={a} fill={win} />
   ) : (

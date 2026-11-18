@@ -11,16 +11,19 @@ export type Here = Record<string, PlaceCheck>;
 
 export type Source = { src: string; badge: "Original" | "Proxy" };
 
-/** What plays a version, from this computer's answer (none: nothing found here, the server's proxy). */
-export function pickSource(check: PlaceCheck | undefined, versionId: string): Source {
+/**
+ * What plays a version, from this computer's answer (none: nothing found here, the server's proxy). `serverPlays` false
+ * (the library's Upload is none and no team shares it): the server plays nothing, so a version this computer lacks has no src.
+ */
+export function pickSource(check: PlaceCheck | undefined, versionId: string, serverPlays = true): Source {
   if (check?.state === "here" && check.url) return { src: check.url, badge: "Original" };
-  return proxySource(check, versionId);
+  return proxySource(check, versionId, serverPlays);
 }
 
 /** The proxy that plays a version: this computer's cached one (Available offline, plays without internet), else the server's. */
-export function proxySource(check: PlaceCheck | undefined, versionId: string): Source {
+export function proxySource(check: PlaceCheck | undefined, versionId: string, serverPlays = true): Source {
   const cached = check?.state === "cached" ? check.url : check?.cached;
-  return { src: cached ?? `/api/library/media/${versionId}/play`, badge: "Proxy" };
+  return { src: cached ?? (serverPlays ? `/api/library/media/${versionId}/play` : ""), badge: "Proxy" };
 }
 
 /** "footage (office-nas)": a root as the lines under a player name it. */

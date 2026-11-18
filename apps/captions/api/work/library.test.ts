@@ -43,7 +43,7 @@ app.route("/api/library", libraryApp);
 app.route("/api/devices/relay/work", workApp);
 
 const d = libraryDb();
-for (const [id, upload, proxy] of [["lib_p", "proxies", false], ["lib_all", "all", true], ["lib_phone", "none", true]] as const) {
+for (const [id, upload, proxy] of [["lib_p", "proxies", false], ["lib_all", "all", true], ["lib_phone", "proxies", true], ["lib_none", "none", true]] as const) {
   d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'tiny', 'Tiny Acrobatics', 'local', ?, 0)").run(
     id,
     JSON.stringify({ upload, proxy, describe: false, embed: false }),
@@ -407,7 +407,7 @@ describe("a computer's add before its first library claim", () => {
     expect(version(r.versionId)).toMatchObject({ source_key: `mac:${r.versionId}`, mac_path: file, mac_device: fresh.device.id });
     expect(jobs(r.versionId)).toEqual(["send:queued"]);
     // Upload none: nothing is sent and the original is refused (the Mac app indexes it in place)
-    const none = await add("lib_phone", file, fresh.device.id);
+    const none = await add("lib_none", file, fresh.device.id);
     expect(none.status).toBe(409);
     expect(((await none.json()) as { code: string }).code).toBe("upload_refused");
   });
@@ -417,7 +417,7 @@ describe("a computer's add before its first library claim", () => {
     const r = await add("lib_p", file, "not-a-device");
     expect(r.status).toBe(201);
     expect(((await r.json()) as { sent?: true; id: string }).sent).toBeUndefined();
-    expect((await add("lib_phone", file, "not-a-device")).status).toBe(409);
+    expect((await add("lib_none", file, "not-a-device")).status).toBe(409);
   });
 });
 

@@ -8,7 +8,7 @@ import type { AssetCard, ShareCreated, ShareInput, ShareRow, SharedItem, SharedV
 import { libraryRole } from "./access";
 import { libraryDb } from "./db";
 import { savedQuery } from "./collections";
-import { mediaFile, serveBlob, viewerOf, visibleCards } from "./routes";
+import { mediaFile, serveBlob, serveGate, viewerOf, visibleCards } from "./routes";
 import { buildAssetQuery, CARD, MAX_LIMIT, pageOf, toCard, type CardRow } from "./query";
 
 /**
@@ -312,6 +312,9 @@ publicShareApp.get("/s/:token/media/:versionId/:kind", async (c) => {
   const file = mediaFile(versionId, kind);
   if (!file) return notFound(c);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
+  // a shared link streams what the library's Upload lets the server hold (decision 5): never an original under none
+  const gate = await serveGate(versionId, kind, file);
+  if (!gate.ok) return c.json(gate.body, gate.status);
   const name = kind === "source" ? `${shareName(s).replace(/[^\w .-]/g, "_").slice(0, 120) || "download"}` : undefined;
   return serveBlob(c, file.key, file.type, name);
 });

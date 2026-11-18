@@ -121,6 +121,8 @@ describe("a card's media links", () => {
     await ensureLibrary("cardowner");
     const d = libraryDb();
     const lib = (d.prepare("SELECT id FROM libraries WHERE workspace_id = ?").get(homeOf("cardowner")) as { id: string }).id;
+    // a proxy is served where the library keeps proxies (decision 5); a card's picture and proxy are the ones it plays
+    d.prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'proxies') WHERE id = ?`).run(lib);
     d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, 'video', ?, ?, 'cardowner', 1)").run(`a_${v}`, lib, v, v);
     d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES (?, ?, 1, ?, 9, ?, 'video/quicktime', '{}', 'ready', 'cardowner', 1)").run(v, `a_${v}`, `libraries/${lib}/v/${v}/source`, v);
     const put = async (name: string, body: string) => {

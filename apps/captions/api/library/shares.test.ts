@@ -62,6 +62,8 @@ async function putSource(versionId: string, library = "lib_a") {
 
 beforeAll(async () => {
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0), ('lib_b', 'owner-b', 'B', 'local', 0)").run();
+  // a download link streams the original only where the library's Upload keeps originals (decision 5)
+  libraryDb().prepare(`UPDATE libraries SET settings = '{"upload":"all"}' WHERE id = 'lib_a'`).run();
 });
 
 describe("library share links", () => {

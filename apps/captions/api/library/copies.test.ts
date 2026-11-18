@@ -147,6 +147,17 @@ describe("copies of a Media Library", () => {
     expect(await dropOriginal(v)).toBe(true);
   });
 
+  it("under Upload none a verified computer copy removes nothing from the server (R-A3: nothing deletes an original this release)", async () => {
+    d.prepare("DELETE FROM copy_files").run();
+    const { v } = await seed("ast-c");
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', 'none') WHERE id = 'lib_c'").run();
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-elsewhere', '/Users/tiny/Movies/Clip c.mov', ?, 'verified')").run(v, Date.now());
+    const before = d.prepare("SELECT source_key, mac_path FROM asset_versions WHERE id = ?").get(v);
+    expect(await dropOriginal(v)).toBe(false);
+    expect(d.prepare("SELECT source_key, mac_path FROM asset_versions WHERE id = ?").get(v)).toEqual(before);
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', 'proxies') WHERE id = 'lib_c'").run();
+  });
+
   it("stops copying without touching the folder", async () => {
     const id = (await copies())[0]!.id;
     expect((await app.request(`/api/library/lib_c/copies/${id}`, { method: "DELETE" })).status).toBe(200);

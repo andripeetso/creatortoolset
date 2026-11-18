@@ -31,7 +31,7 @@ const read = async (r: Response | Promise<Response>): Promise<any> => (await r).
 const clip = (n: number, salt = 0) => Buffer.from(Array.from({ length: n }, (_, i) => (i * 7 + salt) % 251));
 
 beforeAll(() => {
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', '{\"upload\":\"all\"}', 0)").run();
 });
 
 const create = (user: string, size: number, extra: Record<string, unknown> = {}) =>

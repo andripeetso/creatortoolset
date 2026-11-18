@@ -1,12 +1,11 @@
 /**
  * Whether this server takes a file's bytes into a library: the one rule, asked by every upload route (the route table is
- * upload-gate.test.ts). A library's Upload setting (none / proxies / all) says what its computers send. Bytes a person
- * chose to send (a browser upload, the phone's Upload) are taken under any setting: the upload is the choice. Bytes a
- * computer would send of a file it holds (an upload naming where the file is on that computer) are taken only where the
- * setting sends originals; under none the file is indexed where it is and nothing is sent. A proxy a computer made of
- * a file it holds is taken under proxies and all, and under none in a library its owner shares with members (team
- * proxies); its bytes must hash to the SHA-256 the computer declared before sending, and must not be the original's
- * size. On This Mac the server and the computer are one, so its own files are always taken.
+ * upload-gate.test.ts). A library's Upload setting (none / proxies / all) says what its computers send. An original is
+ * taken only under all (proxies: the P0 rule still takes it from an older computer), and under none no original is taken
+ * from anyone, a browser or phone included (local-first 11-18, decision 6): the file stays on the person's computers.
+ * A proxy a computer made of a file it holds is taken under proxies and all, and under none in a library its owner
+ * shares with members (team proxies); its bytes must hash to the SHA-256 the computer declared before sending, and must
+ * not be the original's size. On This Mac the server and the computer are one, so its own files are always taken.
  */
 import { finalsUpload, isFinalsCollection, libraryDb, libraryUpload, versionUpload } from "./db";
 import type { LibraryUpload } from "../../contracts/library";
@@ -19,8 +18,12 @@ import { serverKind } from "../work/server-work";
 
 /** original: the file itself; proxy: a smaller copy made of it; derivative: a picture, sheet or text the Library shows; serving: bytes the server made. */
 export type ReceiveKind = "original" | "proxy" | "derivative" | "serving";
-/** person: someone chose to send it; computer: a computer sends a file it holds, nobody sent it by hand. */
-export type ReceiveOrigin = "person" | "computer";
+/**
+ * person: someone chose to send it from a browser; computer: a computer sends a file it holds, nobody sent it by hand;
+ * phone: the iPhone app sends the person's own file to their computers (`x-ct-origin: phone`, stored on the upload). A
+ * phone's original is taken under none too and held until a computer has it (local-first PLAN-final decision 1).
+ */
+export type ReceiveOrigin = "person" | "computer" | "phone";
 
 export const REFUSED_NONE = "This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them.";
 export const REFUSED_PROXIES = "This library takes proxies only. Your computer makes the proxy and sends that.";
@@ -85,9 +88,9 @@ export function mayReceive(
   if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
   const upload = uploadFor(library);
   if (kind === "original") {
-    if (origin === "person" || upload === "all") return { ok: true };
+    if (upload === "all") return { ok: true };
     if (upload === "proxies") return provesProxies(opts.sender) ? refuse(REFUSED_PROXIES) : { ok: true };
-    return refuse(REFUSED_NONE);
+    return origin === "phone" ? { ok: true } : refuse(REFUSED_NONE);
   }
   // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs the setting
   if (origin === "computer" && upload === "none" && !opts.team) return refuse(REFUSED_NONE);
@@ -98,4 +101,27 @@ export function mayReceive(
   // the original under a proxy's name: the same size as the file it was made from
   if (p.bytes !== undefined && p.original !== undefined && p.bytes === p.original) return refuse(REFUSED_PROOF);
   return { ok: true };
+}
+
+/**
+ * What the server hands a viewer of one version (local-first decision 5, R2): its original only where the library's
+ * Upload is all; its proxy where that is proxies or all, and under none only where the library is shared with members
+ * (team proxies). Finals follow the Finals setting. On This Mac the server is the computer, so it serves its own.
+ */
+export async function mayServe(
+  version: { id: string; versionId: string },
+  what: "original" | "proxy",
+  /** the owner's computer asks (its edit's media, the worker's files): an original no computer holds yet is its to take */
+  opts: { toComputer?: boolean } = {},
+): Promise<Received> {
+  if (serverKind() === "local") return { ok: true };
+  const upload = uploadFor(version);
+  if (what === "original" ? upload === "all" : upload !== "none") return { ok: true };
+  if (what === "proxy" && (await hasMembers(version.id))) return { ok: true };
+  // held until a computer has it (PLAN-final decision 1): the server hands it to a computer of the owner, and only until then
+  // only the iPhone app's own file (asset_versions.origin): any other original under none is refused, held or not
+  if (what === "original" && opts.toComputer && libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ? AND origin = 'phone'").get(version.versionId) && !libraryDb().prepare("SELECT 1 FROM version_places WHERE version_id = ? AND kind = 'original' AND state = 'verified'").get(version.versionId)) {
+    return { ok: true };
+  }
+  return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
 }

@@ -229,7 +229,7 @@ beforeAll(async () => {
   const d = libraryDb();
   for (const u of ["maker", "nomac"]) {
     const ids = u === "maker" ? ["a", "b"] : ["n"];
-    d.exec(`INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_${u}', '${u}', 'A', 'local', 0);`);
+    d.exec(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_${u}', '${u}', 'A', 'local', '{"upload":"all"}', 0);`);
     for (const k of ids) {
       d.exec(`
         INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_${k}', 'lib_${u}', 'video', 'Take ${k}', '${u}', 0);
