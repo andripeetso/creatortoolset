@@ -12,6 +12,7 @@ const { createUser } = await import("../users");
 const app = (await import("../boot")).default;
 const { libraryDb } = await import("./db");
 const { quickPrint } = await import("../work/files");
+const { markHere } = await import("./query");
 
 createUser("ana", "password1");
 const login = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "ana", password: "password1" }) });
@@ -107,5 +108,7 @@ describe("Relink: moved files are found again by themselves", () => {
     const onMac = { path: `${archive}/upload.mp4`, bytes: body.length, mtime: 1_700_000_900_000, quick: q };
     expect((await list(B, [{ path: `${archive}/handstand.mp4`, bytes: 4000, mtime: 1_700_000_500_000, quick: quick(1) }, onMac])).index).toEqual([]);
     expect(await where(lib, fin.versionId)).toEqual({ word: { word: "here" }, path: onMac.path });
+    // its card plays from this Mac (ClipPlayer asks the Mac for a card that is here)
+    expect((await markHere(libraryDb(), [{ id: "a", versionId: fin.versionId } as never], mac))[0]).toMatchObject({ here: true });
   });
 });

@@ -7,7 +7,7 @@ import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports, pairThisMac, thisMacState, type ThisMacState } from "@/lib/thisMac";
-import { folderGrant } from "@/lib/local-files";
+import { folderGrant, foldersChanged } from "@/lib/local-files";
 import { thisMacDevice } from "@/lib/providers";
 import { timeAgo } from "@/lib/exports";
 import { WORDS, diskAway, onComputer, uncheckedOn } from "@/lib/wording";
@@ -571,6 +571,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
         const on = host === NEW_MAC ? (await pairThisMac())?.device : host;
         if (!on) throw new Error("This Mac could not be added to this server");
         await addStorageFolder({ role, host: on, path: p }, workspace);
+        foldersChanged();
         onOpenChange(false);
         onChanged();
       } catch (x) {
@@ -598,8 +599,8 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={hosts.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
           <DriveSelect disks={host === NEW_MAC ? [] : disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "finals" ? "/Volumes/Drive/Finals" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
-          {/* chosen in the Mac app's picker, the Mac app may copy a dropped final into it */}
-          {role === "finals" && macImports() && (
+          {/* chosen in the Mac app's picker: the Mac app may read it (and copy a dropped final into it) with no Allow after */}
+          {macImports() && (role === "finals" || host === NEW_MAC || host === thisMacDevice()) && (
             <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => void chooseFolderOnMac().then((p) => p && setPath(p))}>
               Choose folder
             </Button>

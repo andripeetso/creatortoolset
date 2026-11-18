@@ -376,7 +376,8 @@ extension AppWebView {
     /// "mediaAccess": only the open server's own main frame may ask. The page's folder is only where the panel starts:
     /// what is kept is the folder chosen in the panel, which may be a higher one. Cancelled, or a panel already open:
     /// { granted: [] }. No ask ({list: true}): this server's grants. {folderGrant: {path}} → {granted} (Settings →
-    /// Folders' Allow on this Mac); {placesState: {paths}} → {states, disks} (MediaFiles.placeState).
+    /// Folders' Allow on this Mac); {placesState: {paths}} → {states, disks} (MediaFiles.placeState); {look: true} → the
+    /// location agents pass again (a folder added in Settings → Folders).
     fileprivate func mediaAccess(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
               let body = message.body as? [String: Any] else {
@@ -389,6 +390,11 @@ extension AppWebView {
             let granted = MediaFiles.allow(path, server: server)
             if granted { LocationAgents.shared.poke() }
             return replyHandler(["granted": granted], nil)
+        }
+        // a Settings → Folders folder just added on this page: the location agent reads the list again now, not at the next wake
+        if body["look"] as? Bool == true {
+            LocationAgents.shared.poke()
+            return replyHandler(["ok": true], nil)
         }
         if let ask = body["placesState"] as? [String: Any], let paths = ask["paths"] as? [String] {
             let list = Array(paths.prefix(500))

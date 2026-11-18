@@ -89,6 +89,9 @@ export async function folderGrant(path: string, folder: string): Promise<boolean
   return (await askMac({ folderGrant: { path, folder } }))?.granted === true;
 }
 
+/** A Settings → Folders folder was added: the Mac app's location agent reads the folder list again now (nothing outside the app). */
+export const foldersChanged = () => void askMac({ look: true });
+
 /** The line for a file this Mac said doesn't play here: "<drive> isn't connected", "Needs your OK"; none for not there. */
 export function pathLine(a: { state: PathState; disk?: string } | null | undefined): string | undefined {
   if (a?.state === "disk_away") return diskAway(a.disk ?? "The drive");

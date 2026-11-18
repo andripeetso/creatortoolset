@@ -10,13 +10,14 @@ import type { Organize } from "@contracts/library";
 import { aboutTime, aboutUsd, CopyTo, folderName } from "@/components/LibraryProcessing";
 import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
+import { askMediaFolder } from "@/lib/local-files";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
 import { thisMacDevice } from "@/lib/providers";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
-import { addFrom, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
+import { addFrom, CantRead, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 import { LibraryCopies } from "./Copies";
 
@@ -128,6 +129,7 @@ export function LibrarySettingsBody({ library, watch, folders, onChange, onError
 function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<BodyProps, "library" | "watch" | "onChange" | "onError"> & { inSettings?: boolean }) {
   const [line, setLine] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string[]>([]);
   const from = addFrom(watch.allowed);
   if (from === "browser") return null;
   const mode = library.settings.importMode ?? "in-place";
@@ -150,8 +152,9 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
         if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Could not look for new files (${r.status})`);
         setLine("Looking for new files…");
       } else {
-        const { added, reconnected } = await lookForNew(library, setLine);
-        setLine(lookedLine(added, reconnected));
+        const r = await lookForNew(library, setLine);
+        setLine(lookedLine(r.added, r.reconnected));
+        setRefused(r.refused);
       }
     } catch (e) {
       setLine(null);
@@ -159,6 +162,10 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
     } finally {
       setBusy(false);
     }
+  };
+  // Allow, pressed: the Mac app's own panel at the first folder it may not read; once one is allowed, look again
+  const allow = async () => {
+    if ((await askMediaFolder(refused[0]!)).length) await look();
   };
   const change = async () => {
     const picked = await chooseFolderOnMac();
@@ -207,7 +214,12 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
         <Row
           id="library-look"
           title="New files"
-          status={line && <Status>{line}</Status>}
+          status={(line || refused.length > 0) && (
+            <span className="flex flex-col gap-0.5">
+              {line && <Status>{line}</Status>}
+              <CantRead folders={refused} onAllow={() => void allow()} busy={busy} />
+            </span>
+          )}
           control={
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void look()}>
               Look for new files

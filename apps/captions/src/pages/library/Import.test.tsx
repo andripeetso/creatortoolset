@@ -4,11 +4,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
-import { copyAvailable, copyPath, ImportCards, importAsk, lookedLine, lookForNew, NEEDS_MAC, placeOfFile } from "./Import";
+import { copyAvailable, copyPath, FoldersToAllow, ImportCards, importAsk, lookedLine, lookForNew, NEEDS_MAC, placeOfFile, waitingFolders } from "./Import";
 
-const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn() }));
+const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn() }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint }));
 vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces }));
+vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant }));
 vi.mock("@/lib/onMac", async (orig) => ({ ...(await orig<typeof import("@/lib/onMac")>()), indexOnMac: m.indexOnMac }));
 
 // The import question: asked on the first add, not from a place the library knows, in short from a new place; a browser
@@ -108,9 +109,37 @@ describe("Look for new files", () => {
     m.reportPlaces.mockImplementation(async (_lib: string, r: PlacesReport) => ({ confirmed: r.confirmed.map((c) => c.versionId), refused: [] }));
     m.indexOnMac.mockResolvedValue({ assetId: "a_new" });
     const library = { id: "lib", name: "Tiny Acrobatics", settings: { places } } as unknown as LibrarySummary;
-    expect(await lookForNew(library, () => undefined)).toEqual({ added: 1, reconnected: 1 });
+    expect(await lookForNew(library, () => undefined)).toEqual({ added: 1, reconnected: 1, refused: [] });
     expect(m.reportPlaces).toHaveBeenCalledTimes(1);
     expect(m.reportPlaces).toHaveBeenCalledWith("lib", { device: "mac_1", confirmed: [{ versionId: "v_moved", path: at("moved.mov"), quick: "q-moved.mov" }], gone: [] });
+  });
+
+  it("reads a place it may not read through its granted folders inside, reconnects an upload found there, and names the place", async () => {
+    document.documentElement.dataset.macDevice = "mac_1";
+    vi.clearAllMocks();
+    const inside = "/Volumes/Tiny/Footage/Day 1";
+    m.importScan.mockImplementation(async (p: string) => {
+      if (p !== inside) throw new Error("This app may not read that folder. Drop it on the window first.");
+      return [{ path: `${inside}/flip.mov`, size: 5, mtime: 0 }];
+    });
+    m.listMediaFolders.mockResolvedValue([inside, "/Volumes/Tiny/Other"]);
+    m.importPrint.mockResolvedValue({ [`${inside}/flip.mov`]: "q-flip" });
+    m.checkUpload.mockResolvedValue({ duplicateOf: "a_flip", versionId: "v_flip" });
+    // uploaded: the server has no path for it anywhere
+    m.versionPlaces.mockResolvedValue({ versions: { v_flip: { tries: [], bytes: 5, quick: "q-flip", proxy: null } } });
+    m.reportPlaces.mockImplementation(async (_lib: string, r: PlacesReport) => ({ confirmed: r.confirmed.map((c) => c.versionId), refused: [] }));
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: { places } } as unknown as LibrarySummary;
+    expect(await lookForNew(library, () => undefined)).toEqual({ added: 0, reconnected: 1, refused: ["/Volumes/Tiny/Footage"] });
+    expect(m.importScan).toHaveBeenCalledTimes(2); // the place, then only the granted folder inside it
+    expect(m.reportPlaces).toHaveBeenCalledWith("lib", { device: "mac_1", confirmed: [{ versionId: "v_flip", path: `${inside}/flip.mov`, quick: "q-flip" }], gone: [] });
+  });
+
+  it("a granted place that can't be read says why, as before", async () => {
+    vi.clearAllMocks();
+    m.importScan.mockRejectedValue(new Error("That folder's disk isn't connected."));
+    m.listMediaFolders.mockResolvedValue(["/Volumes/Tiny"]);
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: { places } } as unknown as LibrarySummary;
+    await expect(lookForNew(library, () => undefined)).rejects.toThrow("disk isn't connected");
   });
 
   it("says what it did in one line", () => {
@@ -118,5 +147,31 @@ describe("Look for new files", () => {
     expect(lookedLine(0, 2)).toBe("Reconnected 2");
     expect(lookedLine(1, 0)).toBe("Added 1");
     expect(lookedLine(0, 0)).toBe("No new files");
+  });
+});
+
+describe("Folders this Mac may not read yet", () => {
+  const folder = (id: string, host: string, folderState?: string) => ({ id, origin: { host, path: `/Volumes/Tiny/${id}` }, folderState }) as never;
+
+  it("are this Mac's Settings → Folders folders waiting for its OK", () => {
+    const view = { folders: [folder("Media", "mac_1", "needs_ok"), folder("Done", "mac_1", "ok"), folder("Other", "pc_2", "needs_ok"), folder("New", "mac_1")] };
+    expect(waitingFolders(view, "mac_1").map((f) => f.id)).toEqual(["Media"]);
+    expect(waitingFolders(view, undefined)).toEqual([]);
+  });
+
+  it("show one line on the Library page and are allowed only on the press", async () => {
+    vi.clearAllMocks();
+    document.documentElement.dataset.macDevice = "mac_1";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ folders: [folder("Media", "mac_1", "needs_ok")] }))));
+    m.folderGrant.mockResolvedValue(true);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<FoldersToAllow />));
+    expect(host.textContent).toContain("Creator Toolset can't read Media");
+    expect(m.folderGrant).not.toHaveBeenCalled();
+    await act(async () => host!.querySelector("button")!.click());
+    expect(m.folderGrant).toHaveBeenCalledWith("/Volumes/Tiny/Media", "Media");
+    expect(host.textContent).toBe("");
   });
 });

@@ -60,7 +60,7 @@ import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./librar
 import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
-import { useImportQuestion, type ImportLook } from "./library/Import";
+import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
@@ -1055,6 +1055,7 @@ export default function LibraryPage() {
                 {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
 
                 <LibraryProgressBar libraryId={library.id} />
+                <FoldersToAllow />
                 {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
 
                 <UploadTray

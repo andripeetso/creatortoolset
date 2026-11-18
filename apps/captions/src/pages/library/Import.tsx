@@ -1,12 +1,16 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { placeOf, type ImportMode, type LibrarySettings, type LibrarySummary, type LibraryUpload } from "@contracts/library";
 import { CopyTo, folderName } from "@/components/LibraryProcessing";
 import { SettingsSelect } from "@/components/settings/ui";
 import { PLACES_MAX } from "@contracts/places";
+import type { StorageFolder, StorageView } from "@contracts/storage";
+import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, updateLibrary, versionPlaces } from "@/lib/library";
+import { allGranted, folderGrant, listMediaFolders } from "@/lib/local-files";
 import { indexOnMac } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
 import { chooseFolderOnMac, importPrint, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { WORDS } from "@/lib/wording";
 import { UPLOAD_LABEL, UPLOAD_OPTIONS } from "./UploadSelect";
 
 /**
@@ -118,16 +122,27 @@ export async function reconnectKnown(libraryId: string, known: Known[], seen: Se
  * Look for new files, from the Mac app with the server elsewhere: each place used where it is is read again on this
  * Mac, the files the library has already (by their fingerprint) are left out, and each new one is indexed where it is,
  * read by its address. One the library has at a path this computer doesn't know is reconnected (reconnectKnown). `onStep`
- * hears how far it is. Resolves to the numbers added and reconnected.
+ * hears how far it is. A place the Mac app may not read (no drop or pick granted it) is read through its granted folders
+ * inside it, and named in `refused` for an Allow press. Resolves to the numbers added and reconnected, and those places.
  * ponytail: one check per file found; a batch check on the server when places hold many thousands of files.
  */
-export async function lookForNew(library: LibrarySummary, onStep: (line: string) => void, signal?: AbortSignal): Promise<{ added: number; reconnected: number }> {
+export async function lookForNew(library: LibrarySummary, onStep: (line: string) => void, signal?: AbortSignal): Promise<{ added: number; reconnected: number; refused: string[] }> {
   let added = 0;
   const known: Known[] = [];
   const seen = new Set<string>();
+  const refused: string[] = [];
   for (const place of (library.settings.places ?? []).filter((p) => p.mode === "in-place")) {
     onStep(`Looking in ${folderName(place.path)}`);
-    const files = await importScan(place.path);
+    let files: Awaited<ReturnType<typeof importScan>>;
+    try {
+      files = await importScan(place.path);
+    } catch (e) {
+      const granted = await listMediaFolders();
+      if (allGranted([place.path], granted)) throw e; // granted: its disk away or the like, said as before
+      refused.push(place.path);
+      const inside = granted.filter((g) => allGranted([g], [place.path]));
+      files = (await Promise.all(inside.map((g) => importScan(g).catch(() => [])))).flat();
+    }
     for (const f of files) seen.add(f.path.normalize("NFC"));
     const prints: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 500) Object.assign(prints, await importPrint(files.slice(i, i + 500).map((f) => f.path)));
@@ -149,7 +164,51 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
   }
   signal?.throwIfAborted();
   const reconnected = await reconnectKnown(library.id, known, seen).catch(() => 0);
-  return { added, reconnected };
+  return { added, reconnected, refused };
+}
+
+/** "Creator Toolset can't read MOO" with its Allow button: folders this Mac may not read yet. Opens nothing by itself. */
+export function CantRead({ folders, onAllow, busy }: { folders: string[]; onAllow: () => void; busy?: boolean }) {
+  if (!folders.length) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+      <span>Creator Toolset can't read {folders.map(folderName).join(", ")}</span>
+      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} onClick={onAllow}>
+        {WORDS.allowOnThisMac}
+      </Button>
+    </p>
+  );
+}
+
+/** This Mac's Settings → Folders folders (the window's workspace's) that wait for its OK: their location agent reads nothing there yet. */
+export const waitingFolders = (view: Pick<StorageView, "folders"> | null, me: string | undefined) =>
+  me ? (view?.folders ?? []).filter((f) => f.origin.host === me && f.folderState === "needs_ok") : [];
+
+/**
+ * On the Library page in the Mac app: the folders of this Mac that wait for an OK, one quiet line. Allow is the same
+ * press as Settings → Folders' (folderGrant); the Mac's location agent then reads the folder and connects the clips
+ * uploaded from it to their files here.
+ */
+export function FoldersToAllow() {
+  const [waiting, setWaiting] = useState<StorageFolder[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const me = thisMacDevice();
+    if (!me) return;
+    let live = true;
+    void fetch("/api/devices/storage")
+      .then((r) => (r.ok ? (r.json() as Promise<StorageView>) : null))
+      .then((v) => live && setWaiting(waitingFolders(v, me)), () => undefined);
+    return () => void (live = false);
+  }, []);
+  const allow = async () => {
+    setBusy(true);
+    const left: StorageFolder[] = [];
+    for (const f of waiting) if (!(await folderGrant(f.origin.path, f.id))) left.push(f);
+    setWaiting(left);
+    setBusy(false);
+  };
+  return <CantRead folders={waiting.map((f) => f.origin.path)} onAllow={() => void allow()} busy={busy} />;
 }
 
 /** What Look for new files did, in one line: "Added 3 · reconnected 12", or "No new files". */
