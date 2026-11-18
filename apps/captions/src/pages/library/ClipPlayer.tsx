@@ -7,6 +7,7 @@ import { awayLine, pickSource, proxySource, useHere, type Source } from "@/lib/h
 import { listLibraries } from "@/lib/library";
 import { askMediaFolder } from "@/lib/local-files";
 import { macPlaces, placesConnect } from "@/lib/thisMac";
+import { placeLine } from "@/lib/wording";
 import { cn } from "@/lib/utils";
 import { across, clock, frameAt, frameStyle } from "./ClipCards";
 import { copyReady, original, playerNote, type PlayerNote } from "./clip";
@@ -57,7 +58,8 @@ export function ClipPlayer({
   const [plainFailed, setPlainFailed] = useState(false);
   const retry = plainFailed && copyReady(detail);
   const server = `/api/library/media/${a.versionId}/play${retry ? "?r=1" : ""}`;
-  const places = macPlaces() && (!!a.onMac || !!a.here);
+  // every clip asks this computer, not only the ones the server's card flags: a folder or place row here may hold it (decision 5)
+  const places = macPlaces();
   const [here, again] = useHere(places ? a.libraryId : null, [a.versionId]);
   const check = here?.[a.versionId];
   // what plays, once this computer has answered; `at` the second it starts at when it took over from another
@@ -115,7 +117,8 @@ export function ClipPlayer({
   // a missing original is explained under the title, once; the player keeps its picture
   const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
   // nothing plays here: the original isn't on this computer and the server has no proxy of it
-  const away = phase === "failed" && places && onServer ? awayLine(check) : null;
+  // nothing plays here: say where the clip is (this computer's answer, else the server's place row); the server refused its copy
+  const away = phase === "failed" && places && onServer ? (awayLine(check) ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
   const note = said === "missing" || away ? null : said;
   // the library's owner, with proxies not uploaded: told why it plays only where the originals are
   const [noUpload, setNoUpload] = useState(false);

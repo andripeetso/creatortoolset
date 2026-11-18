@@ -34,7 +34,8 @@ writeFileSync(
 
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
-const { hasMembers, mayReceive, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
+const { hasMembers, mayReceive, mayServe, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
+const { serveGate } = await import("./routes");
 const { acceptLibraryFile } = await import("../work/library-package");
 const { pairDevice, setDeviceWork } = await import("../lib/devices");
 const { createUser } = await import("../users");
@@ -76,8 +77,30 @@ const start = (lib: string, from?: string) =>
   });
 
 describe("mayReceive: original bytes only where somebody chose to send them", () => {
-  it("takes a person's upload under every setting", () => {
-    for (const id of ["lib_none", "lib_unset", "lib_p", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+  // local-first 11-18 decision 6: under none no original reaches the server, a browser or a phone's included
+  it("takes a person's original under proxies and all, and refuses it under none (unset reads as none)", () => {
+    for (const id of ["lib_p", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+    for (const id of ["lib_none", "lib_unset"]) {
+      expect(mayReceive("original", { id }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
+    }
+  });
+
+  it("an upload started under all is asked again at each part and at the finish: once the library says none, nothing more is taken", async () => {
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_flip', 'tinyacrobatics', 'F', 'local', '{\"upload\":\"all\"}', 0)").run();
+    const { id } = (await (await start("lib_flip")).json()) as { id: string };
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'none') WHERE id = 'lib_flip'`).run();
+    const part = await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": "4" }, body: "wxyz" });
+    expect(part.status).toBe(409);
+    expect(await part.json()).toMatchObject({ code: "upload_refused", message: REFUSED_NONE });
+    const fin = await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" });
+    expect(fin.status).toBe(409);
+  });
+
+  it("a person's browser upload into a none library is refused at its start (a row of the route table, A6)", async () => {
+    const r = await start("lib_none");
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: "upload_refused", message: REFUSED_NONE });
+    expect((await start("lib_all")).status).toBe(201);
   });
 
   it("refuses a computer's own original under none (unset reads as none), takes it under proxies and all", () => {
@@ -103,11 +126,11 @@ describe("mayReceive: original bytes only where somebody chose to send them", ()
 });
 
 describe("the library upload routes ask it", () => {
-  it("start: a Mac's own file under none is refused with the line; a browser upload is taken", async () => {
+  it("start: a Mac's own file under none is refused with the line, and so is a browser upload", async () => {
     const r = await start("lib_none", "/Users/tiny/Movies/Handstand.mp4");
     expect(r.status).toBe(409);
     expect(await r.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
-    expect((await start("lib_none")).status).toBe(201);
+    expect((await start("lib_none")).status).toBe(409);
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
   });
 
@@ -266,3 +289,56 @@ describe("the route table", () => {
     for (const [f, why] of Object.entries(ROUTES)) if (/^P[02]/.test(why)) expect(readFileSync(path.join(repo, f), "utf8"), f).toMatch(/mayReceive\(|uploadFor\(/);
   });
 });
+
+describe("A11: nothing streams an original under none (decision 5, R2)", () => {
+  // one version per library: uploadFor reads the setting from the version's own library
+  const addVersion = (id: string, lib: string) => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, ?, 'video', 'Srv', 'tinyacrobatics', 0)").run(`a_${id}`, lib);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, 'k', 900, 'x', 'tinyacrobatics', 0, 'ready')").run(id, `a_${id}`);
+  };
+  it("mayServe: an original only under all; a proxy under proxies and all, and under none only in a team library", async () => {
+    addVersion("vs_none", "lib_none");
+    addVersion("vs_team", "lib_team");
+    addVersion("vs_p", "lib_p");
+    addVersion("vs_all", "lib_all");
+    const serve = (lib: string, versionId: string, what: "original" | "proxy") => mayServe({ id: lib, versionId }, what);
+    expect((await serve("lib_none", "vs_none", "original")).ok).toBe(false);
+    expect((await serve("lib_none", "vs_none", "proxy")).ok).toBe(false);
+    expect((await serve("lib_team", "vs_team", "proxy")).ok).toBe(true);
+    expect((await serve("lib_team", "vs_team", "original")).ok).toBe(false);
+    expect((await serve("lib_p", "vs_p", "original")).ok).toBe(false);
+    expect((await serve("lib_p", "vs_p", "proxy")).ok).toBe(true);
+    expect((await serve("lib_all", "vs_all", "original")).ok).toBe(true);
+    // a final in a none library is served: the Finals setting (all when unset)
+    addVersion("vs_fin", "lib_none");
+    d.prepare("INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_fin', 'a_vs_fin', 0, 'local')").run();
+    expect((await serve("lib_none", "vs_fin", "original")).ok).toBe(true);
+  });
+
+  // the play route itself needs a registered source policy (canSee); usage.test.ts covers the route end to end
+  it("the serve gate: under none the original is refused, pictures pass; On This Mac serves its own", async () => {
+    expect(await serveGate("vs_none", "play", "k")).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused", message: REFUSED_NONE } });
+    expect(await serveGate("vs_none", "source", "k")).toMatchObject({ ok: false, status: 409 });
+    expect((await serveGate("vs_none", "thumb", "thumb-key")).ok).toBe(true);
+    process.env.CT_LOCAL = "1";
+    try {
+      expect((await mayServe({ id: "lib_none", versionId: "vs_none" }, "original")).ok).toBe(true);
+    } finally {
+      delete process.env.CT_LOCAL;
+    }
+  });
+
+  // the prevention test: a new route that streams a clip's file must ask mayServe, or be a computer's own job read named here
+  it("every file that streams a clip's file asks mayServe, or is a computer's own job read (PASS, named)", () => {
+    const streams = filesMatching("apps/captions/api", /mediaFile\(|serveBlob\(/, /\.ts$/);
+    expect(streams).toEqual(Object.keys(STREAMS).sort());
+    for (const [f, why] of Object.entries(STREAMS)) if (why.startsWith("mayServe")) expect(readFileSync(path.join(repo, f), "utf8"), f).toMatch(/mayServe\(|serveGate\(/);
+  });
+});
+
+const STREAMS: Record<string, string> = {
+  "apps/captions/api/library/routes.ts": "mayServe: GET /media/:versionId/:kind (play, proxy, source)",
+  "apps/captions/api/library/shares.ts": "mayServe: a shared link's media route (serveGate)",
+  "apps/captions/api/devices.ts": "PASS: a computer's own job reads (its footage copy, its transcript proxy, its copy file), not a viewer",
+  "apps/captions/api/work/library-package.ts": "PASS: a computer's own job reads (the light proxy, the original for its proxy), not a viewer",
+};

@@ -61,8 +61,15 @@ const target = async (user: string, ws?: string) => {
 };
 const uploads = () => (libraryDb().prepare("SELECT COUNT(*) AS n FROM uploads").get() as { n: number }).n;
 
+/** A workspace's libraries keep originals (Upload all): a phone's original is refused under none (decision 6). */
+async function allowOriginals(user: string, ws: string) {
+  const r = (await (await call(user, "/api/library", ws)).json().catch(() => ({}))) as { libraries?: { id: string }[] };
+  for (const l of r.libraries ?? []) libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all') WHERE id = ?`).run(l.id);
+}
+
 /** The phone's upload: start with no library id, send the bytes, finish. */
 async function send(user: string, ws: string, filename: string, bytes: string) {
+  await allowOriginals(user, ws);
   const start = await post(user, "/api/library/here/uploads", ws, { filename, size: bytes.length });
   expect(start.status).toBe(201);
   const { id } = (await start.json()) as { id: string };
@@ -132,6 +139,7 @@ it("refuses another workspace's library by id when the request names a workspace
   expect((await post("ana", `/api/library/${climbers}/uploads/check`, TINY, { size: 4 })).status).toBe(404);
   expect((await post("ana", `/api/library/${climbers}/in-place`, TINY, { path: "/x.mov", size: 4 })).status).toBe(404);
   expect((await post("ana", `/api/library/${climbers}/on-mac`, TINY, {})).status).toBe(404);
+  await allowOriginals("ana", CLIMBERS);
   expect((await post("ana", `/api/library/${climbers}/uploads`, CLIMBERS, { filename: "x.mov", size: 4 })).status).toBe(201);
   // an older app names no workspace: as before
   expect((await post("ana", `/api/library/${climbers}/uploads`, undefined, { filename: "x.mov", size: 4 })).status).toBe(201);

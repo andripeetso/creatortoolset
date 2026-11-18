@@ -64,10 +64,29 @@ describe("with it", () => {
     expect(badge()).toBe("Original");
   });
 
-  it("a clip not on a computer plays the server's address, asking nothing", async () => {
+  // local-first decision 5: the card's flags are not the test; a folder or place row on this computer may hold the clip
+  it("asks this computer for a clip the card does not flag, and plays its file, never the server's", async () => {
     await open({ ...card, onMac: undefined });
-    expect(post).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalled();
+    expect(video().getAttribute("src")).toBe("ctlocal://media/a");
+    expect(badge()).toBe("Original");
+  });
+
+  it("a clip on no computer plays the server's address only after this computer said so", async () => {
+    answer = undefined;
+    await open({ ...card, onMac: undefined });
+    expect(post).toHaveBeenCalled();
     expect(video().getAttribute("src")).toBe("/api/library/media/v1/play");
+  });
+
+  it("when the server refuses the clip, the panel says where it is: the place line, else not checked yet", async () => {
+    answer = undefined;
+    await open({ ...card, onMac: undefined, placeWord: { word: "on", computer: "Studio" } });
+    await fire("error");
+    expect(host.textContent).toContain("On Studio");
+    await open({ ...card, onMac: undefined, placeWord: undefined });
+    await fire("error");
+    expect(host.textContent).toContain("Not checked yet");
   });
 
   it("the original failing takes the proxy at the same second and keeps playing; the original comes back only after a pause", async () => {

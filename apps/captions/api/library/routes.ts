@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { mayReceive } from "./upload-gate";
+import { mayReceive, mayServe, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -1032,6 +1032,20 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
   return null;
 }
 
+/**
+ * What the server may stream of a version to a viewer (local-first decision 5): a video's file, asked of mayServe as its
+ * original (the source, or a play that falls back to it) or its proxy. Pictures pass. Review, Finals and team proxies are
+ * mayServe's own exceptions.
+ */
+export async function serveGate(versionId: string, kind: string, key: string | undefined): Promise<Received> {
+  if (!["play", "proxy", "source"].includes(kind) || !key) return { ok: true };
+  const v = db().prepare("SELECT v.source_key, a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
+    | { source_key: string; asset_id: string; library_id: string }
+    | undefined;
+  if (!v || inReview(v.asset_id)) return { ok: true }; // a Review video is Review's, served by it (R2)
+  return mayServe({ id: v.library_id, versionId }, kind === "source" || key === v.source_key ? "original" : "proxy");
+}
+
 /** Whether the library made a playable copy of this version (its proxy). A card's video link is signed only for that copy, never for the original (api/mcp-cards.ts). */
 export const hasProxy = (versionId: string): boolean =>
   !!(db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as { storage_key: string | null } | undefined)?.storage_key;
@@ -1079,6 +1093,8 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (file.onMac) return c.json({ error: `The original is on ${file.onMac}, not on this server`, code: "on_mac" }, 409);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
+  const gate = await serveGate(versionId, kind, file.key);
+  if (!gate.ok) return c.json(gate.body, gate.status);
   // a clip whose proxy was cleared (Library settings → Storage) gets it again when it is opened
   if (kind === "play" && unproxied(v.library_id, versionId).length) {
     enqueueJob(db(), v.library_id, versionId, "proxy", username, true);

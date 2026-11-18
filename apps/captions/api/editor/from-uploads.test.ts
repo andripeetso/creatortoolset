@@ -40,6 +40,8 @@ const clip = (salt: number) => Buffer.from(Array.from({ length: 2000 }, (_, i) =
 
 async function start(user: string, salt: number): Promise<{ id: string; data: Buffer }> {
   const { libraries } = await json<{ libraries: { id: string }[] }>(call(user, "GET", "/api/library"));
+  // a person's original is taken where the library keeps originals (Upload all, decision 6)
+  libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all') WHERE id = ?`).run(libraries[0]!.id);
   const data = clip(salt);
   const { id } = await json<{ id: string }>(call(user, "POST", `/api/library/${libraries[0]!.id}/uploads`, { filename: `Clip ${salt}.mp4`, size: data.length }));
   return { id, data };
