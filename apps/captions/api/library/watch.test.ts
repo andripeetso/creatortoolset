@@ -152,6 +152,11 @@ describe("watch folder scan", () => {
     trash(null);
     await scanWatchFolders(t + 1000);
     expect(versions()[0]!.state).toBe("missing");
+    const missing = async () => ((await (await app.request("/api/library/lib_w/watch", { headers: { "x-user": "owner-w" } })).json()) as { missing: number }).missing;
+    expect(await missing()).toBe(1);
+    trash(t + 1500); // gone first, trashed after: the status counts it no more
+    expect(await missing()).toBe(0);
+    trash(null);
     writeFileSync(clip, "frame data one");
     await scanWatchFolders(t + 2000);
   });

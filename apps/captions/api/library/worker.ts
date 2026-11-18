@@ -8,7 +8,7 @@ import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from 
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, graceHeld, parkJob, requeueExpired, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, graceHeld, parkJob, requeueExpired, NOT_TRASHED, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
 import { ModelNotReady } from "../lib/device-transcribe";
 import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
@@ -138,9 +138,6 @@ export function holdForLimit(db: ReturnType<typeof libraryDb>, actor: string | n
 }
 
 const marks = (a: readonly unknown[]) => a.map(() => "?").join(",");
-
-/** A job's clip is out of the trash. A trashed clip's jobs wait queued (no AI spent on it) and run again if it is restored. */
-const NOT_TRASHED = "NOT EXISTS (SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = j.version_id AND a.trashed_at IS NOT NULL)";
 
 /**
  * The job a lane of `kinds` runs next (the order above). A picture that waits for its retry holds nothing back. A

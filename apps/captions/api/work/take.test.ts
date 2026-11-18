@@ -255,6 +255,19 @@ describe("G1 taker gap and reach (tests 1–9, 9b)", () => {
     expect(deviceOf(mac.device.id)?.work?.libraryAt).toBe(Date.now());
   });
 
+  it("a trashed clip's job is not handed to a computer, and is again once the clip is restored", async () => {
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-trash");
+    await report(mac.token, MAC_MACHINE);
+    const v = addVersion({});
+    const job = enqueue("lib_tiny", v, "thumb");
+    const offered = () => queuedFor(deviceOf(mac.device.id)!).some((j) => j.id === job.id);
+    expect(offered()).toBe(true);
+    libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = ?").run(`ast_${v}`);
+    expect(offered()).toBe(false);
+    libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = ?").run(`ast_${v}`);
+    expect(offered()).toBe(true);
+  });
+
   it("3. a re-paired older app (new id, no machine id) is told again", async () => {
     const first = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-3");
     await report(first.token, MAC_MACHINE);
