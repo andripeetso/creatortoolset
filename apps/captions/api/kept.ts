@@ -266,7 +266,6 @@ export async function workspaceStorage(): Promise<WorkspaceStorage[]> {
 
 /** Storage › Workspaces is never listed on Creator Toolset Cloud: it would show every customer's workspaces. */
 export const workspaceStorageAllowed = (user: SessionUser): boolean => user.role === "admin" && !hostedMode();
-}
 
 /** Empty one kind: exactly the items its row counts go, each the way its own tool deletes it. */
 export async function emptyKept(kind: KeptKind, u: Who, device?: string): Promise<void> {
