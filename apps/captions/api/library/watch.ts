@@ -329,7 +329,7 @@ watchApp.post("/import-folder", async (c) => {
     .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(f.path, p)));
   const keep = await keepOutOf(user.username);
-  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => inside(p, k)));
+  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => k !== f.path && inside(p, k)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
     const s = await stat(file).catch(() => null);
@@ -509,7 +509,8 @@ export async function filesIn(root: string, keepOut: string[] = []): Promise<str
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => inside(p, k)));
+  // a watched folder that is itself an Exports folder (Finals reads its project folders) is not kept out: only one nested in it
+  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => k !== root && inside(p, k)));
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -637,7 +638,8 @@ async function scanFolders(libraryId: string, now: number): Promise<number> {
     let files: string[];
     const folderKey = `${libraryId}\0${f.path}`;
     try {
-      files = await filesIn(f.path, await keepOutOf(f.addedBy));
+      // a Finals folder (f.projects) is read in its projects' subfolders, which may sit in an Exports folder: nothing is kept out there
+      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy));
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {

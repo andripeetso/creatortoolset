@@ -40,6 +40,10 @@ describe("the watcher keeps Projects and Exports folders out (Amendment b)", () 
     expect(files).toEqual([path.join(media, "Day 1", "a.mp4")]);
   });
 
+  it("a watched folder that is itself an Exports folder is still read (Finals reads its project folders)", async () => {
+    expect(await filesIn(exports, await keepOutOf(USER))).toEqual([path.join(exports, "final.mp4")]);
+  });
+
   it("with no list, the same folder reads everything (the keep-out is the only thing that drops them)", async () => {
     expect((await filesIn(media)).length).toBeGreaterThan(1);
   });
