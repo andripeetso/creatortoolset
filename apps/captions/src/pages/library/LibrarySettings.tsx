@@ -527,7 +527,6 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
         {videos && <Row title="Video files" description={videos} />}
         {offline.list && (
           <Row
-            id="library-keep-offline"
             title="Keep on this computer"
             description={
               noServerProxy
