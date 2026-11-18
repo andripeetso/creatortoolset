@@ -8,12 +8,7 @@ import Foundation
 ///
 /// Per press the unit is bound to the default input, set to deliver Float32
 /// at the device's own rate, and started; `AudioCapture` converts to 16 kHz.
-/// On release it is stopped and, unless `keepsPrepared`, disposed.
-///
-/// With `keepsPrepared` the unit stays built and initialized between presses
-/// but never started: the device is not running, no callback fires, and the
-/// microphone indicator is off. A press only starts it. The unit is rebuilt
-/// on the next press if the default input or its format changed meanwhile.
+/// On release it is stopped and disposed.
 ///
 /// The capture guarantees hold without an Objective-C exception to guard
 /// against: every Core Audio call returns a status, and 0 Hz, 0 channel and
@@ -27,7 +22,7 @@ import Foundation
 ///
 /// `start`, `stop` and every reaction to a device change run on one private
 /// queue, so a change arriving during a release cannot race it.
-final class HALInput: CaptureInput {
+final class HALInput {
     /// What a device notification means for a unit built for one input.
     enum Change: Equatable {
         /// Nothing the unit depends on changed.
@@ -39,8 +34,6 @@ final class HALInput: CaptureInput {
         case route
     }
 
-    let keepsPrepared: Bool
-
     private let control = DispatchQueue(label: "dictation.capture.hal")
     // Everything below is touched only on `control`.
     private var unit: AudioUnit?
@@ -50,12 +43,6 @@ final class HALInput: CaptureInput {
     private var delivering: InputDevice?
     private var context: RenderContext?
     private var watcher: DeviceWatcher?
-    /// The input changed while idle; rebuild before the next start.
-    private var stale = false
-
-    init(keepsPrepared: Bool) {
-        self.keepsPrepared = keepsPrepared
-    }
 
     deinit {
         // Nothing else holds this now, so nothing runs on `control` for it;
@@ -63,28 +50,12 @@ final class HALInput: CaptureInput {
         teardown()
     }
 
-    /// Builds and initializes the unit for the current default input without
-    /// starting it. Does nothing if it is already built for that device.
-    func prepare() throws {
-        let device = try InputDevice.current()
-        try control.sync { try prepare(device: device) }
-    }
-
-    /// With `keepsPrepared`, builds the unit ahead of the first press so a
-    /// press only has to start it. Never starts the device. Skipped until
-    /// microphone access is granted.
-    func prepareIdle() {
-        guard keepsPrepared, MicrophoneAccess.status == .authorized else { return }
-        do {
-            try prepare()
-        } catch {
-            DictationLog.info("capture: input not prepared ahead of the press: \(error)")
-        }
-    }
-
+    /// Starts the input on `device` (already validated). Throws
+    /// `CaptureError`; on a throw nothing is left running. Returns the
+    /// format the input delivers. Called in pairs with `stop` on one thread.
     func start(device: InputDevice, sink: InputSink) throws -> InputDevice {
         try control.sync {
-            try prepare(device: device)
+            try build(device: device)
             guard let unit, let context, let delivering else { throw CaptureError.noInputDevice }
 
             context.begin(sink)
@@ -98,24 +69,13 @@ final class HALInput: CaptureInput {
         }
     }
 
+    /// Stops the input: no callback after it returns. Safe when not started.
     func stop() {
-        control.sync {
-            guard let unit, let context else { return }
-            if context.isRecording {
-                // Returns once the device's IO has stopped: no callback after it.
-                AudioOutputUnitStop(unit)
-                context.end()
-            }
-            if !keepsPrepared { teardown() }
-        }
+        control.sync { teardown() }
     }
 
-    /// Builds the unit for `device` unless it is already built for it and
-    /// nothing has changed since. On `control`.
-    private func prepare(device: InputDevice) throws {
-        if unit != nil, !stale, built.map({ Self.sameInput($0, device) }) == true {
-            return
-        }
+    /// Builds and initializes a new unit for `device`. On `control`.
+    private func build(device: InputDevice) throws {
         teardown()
 
         var description = AudioComponentDescription(
@@ -149,7 +109,6 @@ final class HALInput: CaptureInput {
             self.context = context
             self.built = device
             self.delivering = InputDevice(sampleRate: format.sampleRate, channels: format.channelCount, id: device.id)
-            self.stale = false
             let control = self.control
             self.watcher = DeviceWatcher(device: device.id) { [weak self] in
                 control.async { self?.inputChanged() }
@@ -168,14 +127,9 @@ final class HALInput: CaptureInput {
         case .none:
             return
         case .route:
-            stale = true
             if recording { context?.routeChanged() }
         case .format(let now):
-            if recording {
-                reformat(to: now)
-            } else {
-                stale = true
-            }
+            if recording { reformat(to: now) }
         }
     }
 
@@ -199,7 +153,6 @@ final class HALInput: CaptureInput {
             ))
         } catch {
             DictationLog.error("capture: could not follow the input's new format: \(error)")
-            stale = true
             context.routeChanged()
         }
     }

@@ -608,10 +608,12 @@ final class KeycodeSet: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// A key-down: whether it is bound (and is now down).
-    func press(_ keycode: Int64, modifiers: UInt32) -> Bool {
+    /// A key-down: whether it is bound (and is now down). A repeat never starts a press: it is swallowed only if its
+    /// first key-down was, so tapping a modifier while a key repeats can't strand that key's key-up.
+    func press(_ keycode: Int64, modifiers: UInt32, autorepeat: Bool = false) -> Bool {
         lock.lock()
         defer { lock.unlock() }
+        if autorepeat { return down.contains(keycode) }
         guard combos.contains(keyCombo(UInt32(keycode), modifiers)) else { return false }
         down.insert(keycode)
         return true
@@ -645,10 +647,11 @@ private func functionKeyCallback(
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
     let modifiers = carbonModifiers(event.flags)
     let keyDown = type == .keyDown
+    let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
     let verdict = functionKeyVerdict(
-        bound: keyDown ? keys.keycodes.press(keycode, modifiers: modifiers) : keys.keycodes.release(keycode),
+        bound: keyDown ? keys.keycodes.press(keycode, modifiers: modifiers, autorepeat: autorepeat) : keys.keycodes.release(keycode),
         keyDown: keyDown,
-        autorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        autorepeat: autorepeat
     )
     if verdict.fire {
         let combo = keyCombo(UInt32(keycode), modifiers)
