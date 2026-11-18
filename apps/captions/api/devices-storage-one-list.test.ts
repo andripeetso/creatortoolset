@@ -116,6 +116,12 @@ describe("Projects and Exports are made beside the workspace's first Media folde
     expect((await storageOf(USER)).folders.filter((f) => f.role === "projects")).toHaveLength(1);
   });
 
+  it("a second computer in the same workspace gets its own Projects folder, never the first computer's path", async () => {
+    listFile([folder("m1", "dev-a", "/Volumes/Tiny/Shoots"), folder("m5", "dev-b", "/mnt/tiny/Shoots")]);
+    expect(await ensureUseFolder(USER, undefined, "projects", "dev-a")).toMatchObject({ origin: { host: "dev-a", path: "/Volumes/Tiny/Projects" } });
+    expect(await ensureUseFolder(USER, undefined, "projects", "dev-b")).toMatchObject({ origin: { host: "dev-b", path: "/mnt/tiny/Projects" } });
+  });
+
   it("never makes one on the internal disk: with only a home-folder Media folder it says what to choose", async () => {
     const dev = "dev-studio-2";
     listFile([folder("m2", dev, "~/Movies/Shoots")]);

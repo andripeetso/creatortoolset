@@ -98,6 +98,38 @@ export function parseReportFolders(v: unknown): ReportFolder[] {
 /** When each running listing started on this server, by computer, folder and scan id: a listing's last page marks the
  *  rows it did not name gone only when its first page was seen here (a restart in between marks nothing). */
 const scans = new Map<string, number>();
+/** The AI Editor folders each listing (its key in `scans`) has named so far, over all its pages; dropped when it completes. */
+const editorSeen = new Map<string, Set<string>>();
+
+/** The listing's AI Editor folders with this page's: `fresh` are the ones this page names first. */
+export function editorDirsSeen(key: string, scan: string | undefined, rels: string[]): { dirs: Set<string>; fresh: string[] } {
+  const dirs = scan ? (editorSeen.get(key) ?? new Set<string>()) : new Set<string>();
+  const here = editorDirsOf(rels);
+  const fresh = [...here].filter((x) => !dirs.has(x));
+  for (const x of here) dirs.add(x);
+  if (scan) editorSeen.set(key, dirs);
+  return { dirs, fresh };
+}
+
+/** Moves the clips made from the files `where` (a condition on version_places p) matches out of the library, unless held. */
+function leaveLibrary(dev: Device, folderId: string, inLibs: string, libs: string[], touched: Set<string>, now: number, where: string, args: string[], what: string): void {
+  const made = db()
+    .prepare(
+      `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND ${where} AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
+         AND a.library_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(dev.id, folderId, ...args, inLibs) as { id: string }[];
+  for (const a of made) {
+    const held = trashHeld(a.id, now);
+    if (held) {
+      console.log(`[library] ${dev.name}: ${what} stays in the library (${held}), not moved to the trash`);
+      continue;
+    }
+    setTrashedAt(a.id, now);
+    libs.forEach((l) => touched.add(l));
+  }
+}
 
 type Hit = { version_id: string; library_id: string; vbytes: number; vquick: string | null; state: string; bytes: number | null; mtime: number | null; folder_id: string };
 
@@ -136,28 +168,19 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
       const rel = inside(f.path, folder.origin.path) ?? (folder.mountPath ? inside(f.path, folder.mountPath) : null);
       return rel === null ? [] : [{ f, rel }];
     });
-    const editorDirs = editorDirsOf(placed.map((x) => x.rel));
+    const { dirs: editorDirs, fresh } = editorDirsSeen(key, r.scan, placed.map((x) => x.rel));
+    // an AI Editor folder this page names that earlier pages of the listing indexed as footage: its clips leave now
+    for (const dir of fresh) {
+      const hit = placed.find((x) => x.rel.startsWith(`${dir}/`))!;
+      const full = hit.f.path.slice(0, hit.f.path.length - hit.rel.length) + dir;
+      leaveLibrary(dev, folder.id, inLibs, libs, touched, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], full);
+    }
     for (const { f, rel } of placed) {
       // not footage: an AI Editor folder, a half-written file, or anything inside a Projects or Exports folder
       if (notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
         // indexed here before this rule: the clip leaves the library through the trash (never while in Review or shared);
         // the file on the computer stays
-        const made = d
-          .prepare(
-            `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-             WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
-               AND a.library_id IN (SELECT value FROM json_each(?))`,
-          )
-          .all(device, folder.id, f.path, inLibs) as { id: string }[];
-        for (const a of made) {
-          const held = trashHeld(a.id, now);
-          if (held) {
-            console.log(`[library] ${dev.name}: ${f.path} stays in the library (${held}), not moved to the trash`);
-            continue;
-          }
-          setTrashedAt(a.id, now);
-          libs.forEach((l) => touched.add(l));
-        }
+        leaveLibrary(dev, folder.id, inLibs, libs, touched, now, "p.path = ?", [f.path], f.path);
         continue;
       }
       const hits = d
@@ -204,6 +227,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
         .run(now, device, folder.id, dir, dir, dir);
     }
     const start = scans.get(key);
+    if (r.complete) editorSeen.delete(key);
     if (r.complete && start !== undefined) {
       const gone = d
         // only in the libraries the folder fills now: a row of a library it no longer fills was not looked for, not gone
