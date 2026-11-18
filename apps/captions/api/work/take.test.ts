@@ -45,6 +45,9 @@ const { deviceOf, devicesSaved, listDevices, pairDevice, revokeDevice, setDevice
 const { storageFilePath } = await import("../lib/storage");
 const { writeServerWork } = await import("./server-work");
 const { CLAIM_POLL } = await import("./routes");
+const { progress } = await import("../library/estimate");
+const { appRows } = await import("../activity");
+const { checkWaits, resetWaitsForTest } = await import("./waits");
 const {
   asks,
   called,
@@ -803,5 +806,157 @@ describe("G1 taker gap and reach (tests 1–9, 9b)", () => {
     const stepClaim = await claimWork(mac.token, { v: WORK_V, steps: ["preview"], library: true });
     expect(stepClaim.lib).toBeUndefined();
     expect(stepClaim.pkg?.job).toMatchObject({ id: editJob.id, kind: "preview" });
+  });
+});
+
+describe("end to end (tests 37, 38)", () => {
+  const LANE = ["probe", "thumb", "proxy", "wave", "sprite", "fingerprint", "look"];
+  const libPost = (token: string, id: number, claim: string, what: string, body: unknown) =>
+    app.request(`/api/devices/relay/work/lib/${id}/${what}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-ct-claim": claim },
+      body: JSON.stringify(body),
+    });
+  /** What the computer's worker sends back for each kind (work/library.ts), with small stand-in files. */
+  async function finish(token: string, lib: { job: { id: number; kind: string; claim?: string } }) {
+    const { id, kind, claim = "" } = lib.job;
+    const files = ({ proxy: ["proxy"], wave: ["wave"], sprite: ["sprite"], thumb: ["thumb"] } as Record<string, string[]>)[kind] ?? [];
+    for (const name of files) {
+      const r = await app.request(`/api/devices/relay/work/lib/${id}/file?name=${name}`, {
+        method: "PUT",
+        headers: { authorization: `Bearer ${token}`, "x-ct-claim": claim },
+        body: new Uint8Array(64).fill(7),
+      });
+      expect(r.status).toBe(200);
+    }
+    const probe = { duration: 10, format: "mov,mp4,m4a,3gp,3g2,mj2", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac", width: 1920, height: 1080, fps: 30, rotation: 0 };
+    const extra = kind === "fingerprint" ? { fingerprint: "fp" } : kind === "probe" ? { probe } : kind === "send" ? { probe, sha256: String(id).padStart(64, "a"), quick: String(id).padStart(64, "b") } : {};
+    const answer = await json(libPost(token, id, claim, "done", { outcome: { ok: true }, files, ...extra }));
+    expect([answer, libraryDb().prepare("SELECT error FROM jobs WHERE id = ?").get(id)]).toEqual([{ ok: true }, { error: null }]);
+  }
+  /** Activity's rows of the library for tiny. */
+  async function rows() {
+    const p = await progress("lib_tiny", "tiny");
+    return { p, rows: appRows({ libraries: [{ id: "lib_tiny", uploading: null, progress: p }], edits: [], exports: [] }) };
+  }
+  const states = () => libraryDb().prepare("SELECT kind, state, held_by FROM jobs ORDER BY id").all() as { kind: string; state: string; held_by: string | null }[];
+
+  async function setup(tag: string) {
+    resetWaitsForTest(Date.now() - 10 * 60_000);
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", `hw-mac-${tag}`);
+    const linux = pairDevice("tiny", "Linux box", undefined, `hw-linux-${tag}`);
+    await report(mac.token, MAC_MACHINE);
+    await report(linux.token, LINUX_MACHINE, "node");
+    await claimWork(linux.token, { libraryOnly: true });
+    await writeBalance("tiny", { on: true, weights: { [linux.device.id]: 100 }, libraries: {}, originals: { [linux.device.id]: false } });
+    return { mac, linux };
+  }
+  /** One round of everything that runs: the server's lane, the runner's poll, both workers' claims, the self-check. */
+  async function round(mac: { token: string; device: { id: string } }, linux: { token: string }, opts: { macWorks?: boolean; looks?: boolean } = {}) {
+    while (await runLibraryLane(Date.now(), LANE));
+    await pollWait(mac.token, { blobs: true, editor: ["library-look"], work: 1 });
+    expect((await claimWork(linux.token, { libraryOnly: true })).lib).toBeUndefined();
+    checkWaits(Date.now());
+    const seen = await rows();
+    expect(seen.rows.filter((r) => r.state === "ready")).toEqual([]);
+    if (opts.macWorks === false) return { seen, did: 0 };
+    let did = 0;
+    for (let got = await claimWork(mac.token); got.lib; got = await claimWork(mac.token)) {
+      await finish(mac.token, got.lib);
+      did++;
+    }
+    if (opts.looks !== false) {
+      for (;;) {
+        const { job } = await json<{ job: DeviceJob | null }>(post(mac.token, "/api/devices/relay/editor/claim", { kinds: ["library-look"] }));
+        if (!job) break;
+        expect(job.kind).toBe("library-look");
+        // the look's AI half runs here from the Mac's sheets (mac-look.test.ts): done as that lane finishes it
+        expect(lookHeldOn(mac.device.id)).toBe(true);
+        libraryDb().prepare("UPDATE jobs SET state = 'done', held_by = ?, done_at = ? WHERE id = ?").run(mac.device.id, Date.now(), job.id);
+        did++;
+      }
+    }
+    vi.advanceTimersByTime(30_000);
+    return { seen, did };
+  }
+
+  it("37. six files added from the Mac: no ready row ever, 'Preparing 6 clips' first, the Mac takes the proxies and the looks, every job ends done on the Mac", async () => {
+    const { mac, linux } = await setup("37");
+    const vs = Array.from({ length: 6 }, (_, i) => addVersion({ fromPath: `/Users/tiny/Movies/clip${i}.mov`, fromDevice: mac.device.id }));
+    for (const v of vs) for (const k of ["proxy", "wave", "sprite", "fingerprint", "look"]) enqueue("lib_tiny", v, k);
+
+    // before any result: the Mac polls, and everything is work left
+    while (await runLibraryLane(Date.now(), LANE));
+    await pollWait(mac.token, { blobs: true, editor: ["library-look"], work: 1 });
+    expect((await pollWait(mac.token, { blobs: true, editor: ["library-look"], work: 1 })).body).toMatchObject({ work: true });
+    const first = await rows();
+    expect(first.rows.map((r) => [r.detail, r.state])).toEqual([["Preparing 6 clips · 0%", "working"]]);
+    expect(first.p.waiting).toEqual([]);
+
+    const firstClaim = await claimWork(mac.token);
+    expect(firstClaim.lib?.job.kind).toBe("proxy");
+    expect(firstClaim.lib?.file?.path).toBe("/Users/tiny/Movies/clip0.mov"); // rank 3: read where it is
+    await finish(mac.token, firstClaim.lib!);
+
+    for (let i = 0; i < 10 && states().some((j) => j.state !== "done"); i++) await round(mac, linux);
+    expect(states().filter((j) => j.state !== "done")).toEqual([]);
+    // nothing ran on the server: every job was held by the Mac
+    expect(new Set(states().map((j) => j.held_by))).toEqual(new Set([mac.device.id]));
+    expect(states().filter((j) => j.kind === "look")).toHaveLength(6);
+  });
+
+  it("37. variants: browser uploads go to the Mac (rank 1), their looks read one grey 'Not made on computers yet'; files sent from the Mac (mac:) go to the Mac", async () => {
+    const { mac, linux } = await setup("37b");
+    const b1 = addVersion({});
+    const b2 = addVersion({});
+    for (const v of [b1, b2]) for (const k of ["proxy", "look"]) enqueue("lib_tiny", v, k);
+    const { seen } = await round(mac, linux, { macWorks: false });
+    expect(seen.rows.find((r) => r.detail.includes("shot description"))).toMatchObject({ detail: "2 shot descriptions · Not made on computers yet", state: "working" });
+    const got = await claimWork(mac.token);
+    expect(got.lib?.job.kind).toBe("proxy");
+    expect(got.lib?.file?.path).toBeUndefined(); // rank 1: the original is downloaded
+    await finish(mac.token, got.lib!);
+
+    resetState();
+    const sends = Array.from({ length: 3 }, (_, i) =>
+      addVersion({ sourceKey: `mac:s${i}`, macPath: `/Users/tiny/Movies/s${i}.mov`, macDevice: mac.device.id }),
+    );
+    for (const v of sends) enqueue("lib_tiny", v, "send");
+    await round(mac, linux, { looks: false });
+    expect(states().filter((j) => j.kind === "send").map((j) => [j.state, j.held_by])).toEqual(sends.map(() => ["done", mac.device.id]));
+  });
+
+  it("37. variant: mac: files before the Mac's first claim, the Mac polling: the lane leaves their waves, the Mac is told and takes them", async () => {
+    const { mac, linux } = await setup("37c");
+    const vs = Array.from({ length: 2 }, (_, i) =>
+      addVersion({ sourceKey: `mac:w${i}`, macPath: `/Users/tiny/Movies/w${i}.mov`, macDevice: mac.device.id }),
+    );
+    for (const v of vs) enqueue("lib_tiny", v, "wave");
+    expect((await pollWait(mac.token, { blobs: true, work: 1 })).body).toMatchObject({ work: true });
+    for (let i = 0; i < 3 && states().some((j) => j.state !== "done"); i++) await round(mac, linux, { looks: false });
+    expect(states().map((j) => [j.kind, j.state, j.held_by])).toEqual(vs.map(() => ["wave", "done", mac.device.id]));
+  });
+
+  it("38. a Mac holding a long job (beating, as while it waits for the Mac-wide turn): its other job stays queued, never stuck, for 40 min, and is taken when the first ends", async () => {
+    const { mac, linux } = await setup("38");
+    const a = addVersion({ fromPath: "/Users/tiny/Movies/a.mov", fromDevice: mac.device.id });
+    const b = addVersion({ fromPath: "/Users/tiny/Movies/b.mov", fromDevice: mac.device.id });
+    const ja = enqueue("lib_tiny", a, "proxy");
+    const jb = enqueue("lib_tiny", b, "proxy");
+    await pollWait(mac.token, { blobs: true, work: 1 });
+    const held = await claimWork(mac.token);
+    expect(held.lib?.job.id).toBe(ja.id);
+    for (let m = 1; m <= 40; m++) {
+      vi.advanceTimersByTime(60_000);
+      expect(await json(libPost(mac.token, ja.id, held.lib!.job.claim!, "beat", { line: "Making the proxy" }))).toEqual({ ok: true });
+      await pollWait(mac.token, { blobs: true, work: 1 });
+      checkWaits(Date.now());
+      const { p, rows: r } = await rows();
+      expect(p.waiting).toEqual([]);
+      expect(r.filter((x) => x.state === "ready")).toEqual([]);
+    }
+    expect((await claimWork(linux.token, { libraryOnly: true })).lib).toBeUndefined();
+    await finish(mac.token, held.lib!);
+    expect((await claimWork(mac.token)).lib?.job.id).toBe(jb.id);
   });
 });

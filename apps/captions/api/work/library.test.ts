@@ -324,7 +324,8 @@ describe("library work on the computer that has the file", () => {
     // the Mac is online (its claim is fresh): the server leaves the job to it and clears the old line
     await tick(Date.now(), ["wave"]);
     expect(job()).toMatchObject({ state: "queued", error: null });
-    expect(await awayCount()).toBe(before - 1);
+    // the computers' status (work/waits.ts) counted it as work left already, the Mac's claim being fresh, whatever its old line
+    expect(await awayCount()).toBe(before);
     // and the Mac's next claim takes it
     let got: LibraryPackage | undefined;
     for (let i = 0; i < 30 && !got; i++) {

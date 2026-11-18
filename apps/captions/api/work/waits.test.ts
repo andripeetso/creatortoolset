@@ -1374,4 +1374,253 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     expect(snapDone.byJob.has(jSend.id)).toBe(false);
     expect(snapDone.waitingIds).toEqual([]);
   });
+
+  // ---- CT-3c: progress() reads the status, and the devices list carries each computer's line ----
+
+  /** progress() for `user` and the Activity rows it makes. */
+  async function shown(user = "tiny") {
+    const p = await progress("lib_tiny", user);
+    const rows = appRows({ libraries: [{ id: "lib_tiny", uploading: null, progress: p }], edits: [], exports: [] });
+    return { p, rows, ready: rows.filter((r) => r.state === "ready") };
+  }
+  /** A Linux box that claimed with its share as a footage folder, and a proxy of a file on that share. */
+  async function linuxTaker(tag: string) {
+    const linux = pairDevice("tiny", "Linux box", undefined, `hw-linux-${tag}`);
+    await report(linux.token, LINUX_MACHINE, "node");
+    await claimWork(linux.token, { libraryOnly: true });
+    writeFolders("tiny", [{ id: `fld_${tag}`, name: `Share${tag}`, role: "footage", origin: { host: linux.device.id, path: `/mnt/footage/Share${tag}` }, reach: {} }]);
+    return linux;
+  }
+
+  it("progress: a job a computer will take is work left whatever its line; the hook unset keeps today's rule; a taken job is not waiting", async () => {
+    const { WAITS_FOR_COMPUTER } = await import("../library/jobs");
+    await linuxTaker("p1");
+    const v = addVersion({ sourcePath: "/mnt/footage/Sharep1/clip.mov" });
+    const job = enqueue("lib_tiny", v, "proxy");
+    // the lane wrote today's line before the box claimed
+    libraryDb().prepare("UPDATE jobs SET error = ? WHERE id = ?").run(WAITS_FOR_COMPUTER, job.id);
+
+    const a = await shown();
+    expect(a.p.waiting).toEqual([]);
+    expect(a.p.left).toBe(1);
+    expect(a.rows.map((r) => [r.detail, r.state])).toEqual([["Preparing 1 clip · 0%", "working"]]);
+
+    // no status (a server without the work road): the error text decides, as before
+    const hook = leaveToComputers.status;
+    leaveToComputers.status = undefined;
+    try {
+      const b = await shown();
+      expect(b.p.left).toBe(0);
+      expect(b.p.waiting).toEqual([{ step: "files", count: 1, missing: WAITS_FOR_COMPUTER, away: true }]);
+      expect(b.rows.map((r) => [r.detail, r.state])).toEqual([["1 file waits for one of your computers", "working"]]);
+    } finally {
+      leaveToComputers.status = hook;
+    }
+
+    // a status that throws keeps today's rule too
+    leaveToComputers.status = () => {
+      throw new Error("broken");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect((await shown()).p.waiting).toEqual([{ step: "files", count: 1, missing: WAITS_FOR_COMPUTER, away: true }]);
+    } finally {
+      leaveToComputers.status = hook;
+      warn.mockRestore();
+    }
+
+    // classified waiting, then taken before the next snapshot: not counted as waiting
+    libraryDb().prepare("UPDATE jobs SET error = NULL WHERE id = ?").run(job.id);
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-p1");
+    const vMac = addVersion({ fromPath: "/Users/tiny/p1.mov", fromDevice: mac.device.id });
+    const jMac = enqueue("lib_tiny", vMac, "proxy");
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    expect(status("lib_tiny").byJob.get(jMac.id)?.wait).toBe("offline");
+    libraryDb().prepare("UPDATE jobs SET state = 'running', held_by = ? WHERE id = ?").run(mac.device.id, jMac.id);
+    const c = await shown();
+    expect(c.p.waiting).toEqual([]);
+    expect(c.p.left).toBe(2);
+  });
+
+  it("progress: offline, stuck and set groups carry the class and reason; MAC_WAITS looks are work left, never 'need an AI provider'", async () => {
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-p2");
+    await report(mac.token, MAC_MACHINE);
+    const v1 = addVersion({ fromPath: "/Users/tiny/a.mov", fromDevice: mac.device.id });
+    const v2 = addVersion({ fromPath: "/Users/tiny/b.mov", fromDevice: mac.device.id });
+    enqueue("lib_tiny", v1, "proxy");
+    enqueue("lib_tiny", v2, "proxy");
+    const vl = addVersion({ sourceKey: "mac:p2", macPath: "/Users/tiny/l.mov", macDevice: mac.device.id });
+    const look = enqueue("lib_tiny", vl, "look");
+    libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE id = ?").run(MAC_WAITS, look.id);
+
+    // the Mac silent: one grey working row per step, never Waiting on you, nothing left
+    const off = await shown();
+    expect(off.p.left).toBe(0);
+    expect(off.p.waiting).toEqual([
+      { step: "files", count: 2, missing: "Mac Studio is offline", away: true, wait: "offline", reason: "Mac Studio is offline", mine: true, device: mac.device.id, devices: [mac.device.id] },
+      { step: "look", count: 1, missing: "Mac Studio is offline", away: true, wait: "offline", reason: "Mac Studio is offline", mine: true, device: mac.device.id, devices: [mac.device.id] },
+    ]);
+    expect(off.rows.map((r) => [r.detail, r.state])).toEqual([
+      ["2 files · Mac Studio is offline", "working"],
+      ["1 shot description · Mac Studio is offline", "working"],
+    ]);
+    expect(off.ready).toEqual([]);
+
+    // the Mac polls: everything is work left, the look counted as not through
+    await pollWait(mac.token, { blobs: true, editor: [LIBRARY_LOOK_KIND], work: 1 });
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    notePoll(mac.device.id, Date.now());
+    const on = await shown();
+    expect(on.p.waiting).toEqual([]);
+    expect(on.p.left).toBe(3);
+    expect(on.p.clips).toBe(3);
+    expect(on.p.share).toBeLessThan(1);
+    expect(on.rows.map((r) => r.detail)).toEqual(["Preparing 3 clips · 0%"]);
+
+    // still polling, never taking, for 10 min: a red working line naming the Mac, never Waiting on you
+    for (let m = 1; m <= 11; m++) {
+      vi.advanceTimersByTime(60_000);
+      notePoll(mac.device.id, Date.now());
+      checkWaits(Date.now());
+    }
+    const stuck = await shown();
+    const files = stuck.p.waiting.find((w) => w.step === "files");
+    expect(files).toMatchObject({ count: 2, away: true, wait: "stuck", reason: "Mac Studio hasn't started on these", mine: true, device: mac.device.id });
+    expect(stuck.rows.find((r) => r.detail.startsWith("2 files"))?.detail).toBe("2 files · Mac Studio hasn't started on these");
+    expect(stuck.ready).toEqual([]);
+
+    // an old app: a grey "Update" line, still not Waiting on you
+    setDeviceWork(mac.device.id, { ...deviceOf(mac.device.id)!.work!, v: 0 });
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    const set = await shown();
+    expect(set.p.waiting.find((w) => w.step === "files")).toMatchObject({ count: 2, wait: "set", reason: "Update Creator Toolset on Mac Studio" });
+    expect(set.ready).toEqual([]);
+  });
+
+  it("progress: another person's waits read 'Your owner keeps…' and name a computer only when it is offline", async () => {
+    const annaMac = pairDevice("anna", "Anna Mac", "0.17.6", "hw-anna-p3");
+    await report(annaMac.token, MAC_MACHINE);
+    const v = addVersion({ user: "anna", lib: "lib_tiny", macPath: "/Users/anna/c.mov", macDevice: annaMac.device.id });
+    const job = enqueue("lib_tiny", v, "look", "tiny");
+    libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE id = ?").run(MAC_WAITS, job.id);
+
+    const forTiny = await shown("tiny");
+    expect(forTiny.p.waiting).toEqual([
+      {
+        step: "look",
+        count: 1,
+        missing: "Your owner keeps its files on their computers · Anna Mac is offline",
+        away: true,
+        wait: "offline",
+        reason: "Your owner keeps its files on their computers · Anna Mac is offline",
+        mine: false,
+      },
+    ]);
+    expect(forTiny.ready).toEqual([]);
+    expect((await shown("anna")).p.waiting[0]).toMatchObject({ reason: "Anna Mac is offline", mine: true, device: annaMac.device.id });
+
+    // stuck for anna's computer: tiny sees no computer name
+    await pollWait(annaMac.token, { blobs: true, editor: [LIBRARY_LOOK_KIND], work: 1 });
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    for (let m = 1; m <= 11; m++) {
+      vi.advanceTimersByTime(60_000);
+      notePoll(annaMac.device.id, Date.now());
+      checkWaits(Date.now());
+    }
+    const w = (await shown("tiny")).p.waiting;
+    expect(w).toEqual([expect.objectContaining({ wait: "stuck", reason: ownerKeeps(), mine: false })]);
+    expect(JSON.stringify(w)).not.toContain("Anna Mac");
+  });
+
+  it("20. invariant: no ready row while an able computer is allowed (queued, busy, stuck, offline, send, looks)", async () => {
+    const noReady = async () => expect((await shown()).ready).toEqual([]);
+    const linux = await linuxTaker("20");
+    const vq = addVersion({ sourcePath: "/mnt/footage/Share20/q.mov" });
+    enqueue("lib_tiny", vq, "proxy");
+    await noReady(); // queued
+    const vb = addVersion({ sourcePath: "/mnt/footage/Share20/b.mov" });
+    enqueue("lib_tiny", vb, "proxy");
+    expect((await claimWork(linux.token, { libraryOnly: true })).lib).toBeTruthy();
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    await noReady(); // busy
+
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-20");
+    await report(mac.token, MAC_MACHINE);
+    const vs = addVersion({ sourceKey: "mac:20", macPath: "/Users/tiny/s.mov", macDevice: mac.device.id, described: false });
+    enqueue("lib_tiny", vs, "send");
+    const vl = addVersion({ sourceKey: "mac:20l", macPath: "/Users/tiny/l.mov", macDevice: mac.device.id });
+    const look = enqueue("lib_tiny", vl, "look");
+    libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE id = ?").run(MAC_WAITS, look.id);
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    await noReady(); // send and look of an offline Mac
+
+    await pollWait(mac.token, { blobs: true, editor: [LIBRARY_LOOK_KIND], work: 1 });
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    notePoll(mac.device.id, Date.now());
+    await noReady(); // the Mac asks
+    for (let m = 1; m <= 11; m++) {
+      vi.advanceTimersByTime(60_000);
+      notePoll(mac.device.id, Date.now());
+      await claimWork(linux.token, { libraryOnly: true }).catch(() => null);
+      checkWaits(Date.now());
+    }
+    await noReady(); // stuck
+    expect((await shown()).p.waiting.some((w) => w.wait === "stuck")).toBe(true);
+  });
+
+  it("21. Computers row: a refused box online through another caller says 'Add … again', Activity says the same; a newer row, a powered-off box, a busy box, low disk and Off say nothing", async () => {
+    const res = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "tiny", password: "password1" }) });
+    const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+    const devicesList = async () =>
+      json<{ id: string; name: string; waits?: { line: string; tone: string } }[]>(app.request("/api/devices", { headers: { cookie } }));
+    const waitsOf = async (id: string) => (await devicesList()).find((d) => d.id === id)?.waits;
+
+    const linux = await linuxTaker("21");
+    const v = addVersion({ sourcePath: "/mnt/footage/Share21/c.mov" });
+    enqueue("lib_tiny", v, "proxy");
+    // 16 min on, the adopting helper's polls (no `work`) keep the row online
+    vi.advanceTimersByTime(16 * 60_000);
+    await pollWait(linux.token, { blobs: false, editor: [] }, "python-requests/2.31");
+    resetWaitsForTest(Date.now() - 30 * 60_000);
+    expect(await waitsOf(linux.device.id)).toEqual({ line: "Add Linux box again in Settings → Computers", tone: "needs" });
+    const a = await shown();
+    expect(a.p.waiting).toEqual([expect.objectContaining({ wait: "offline", reason: "Add Linux box again in Settings → Computers" })]);
+    expect(a.rows.map((r) => r.detail)).toEqual(["1 file · Add Linux box again in Settings → Computers"]);
+
+    // low disk: claims with lowDisk keep it from reading refused
+    setDeviceWork(linux.device.id, { ...deviceOf(linux.device.id)!.work!, lowDisk: true, lowDiskAt: Date.now() });
+    resetWaitsForTest(Date.now() - 30 * 60_000);
+    expect(await waitsOf(linux.device.id)).toBeUndefined();
+    expect((await shown()).p.waiting[0]).toMatchObject({ reason: "Linux box is short of disk space" });
+    const { lowDisk: _l, lowDiskAt: _a, ...work } = deviceOf(linux.device.id)!.work!;
+    setDeviceWork(linux.device.id, work);
+
+    // Off in Load balancing: nothing on the row
+    await writeBalance("tiny", { on: true, weights: { [linux.device.id]: 0 }, libraries: {}, originals: {} });
+    resetWaitsForTest(Date.now() - 30 * 60_000);
+    expect(await waitsOf(linux.device.id)).toBeUndefined();
+    await writeBalance("tiny", { on: true, weights: {}, libraries: {}, originals: {} });
+
+    // a second row of the same box claiming fresh has taken over: nothing
+    const again = pairDevice("tiny", "Linux box", undefined, "hw-linux-21-new");
+    await claimWork(again.token, { libraryOnly: true });
+    expect(await waitsOf(linux.device.id)).toBeUndefined();
+    await revokeDevice(again.device.id);
+
+    // 30 min into a job: busy, nothing
+    libraryDb().prepare("UPDATE jobs SET state = 'running', held_by = ? WHERE version_id = ?").run(linux.device.id, v);
+    expect(await waitsOf(linux.device.id)).toBeUndefined();
+    libraryDb().prepare("UPDATE jobs SET state = 'queued', held_by = NULL WHERE version_id = ?").run(v);
+
+    // powered off: no calls for 16 min -> offline, no line on the row
+    vi.advanceTimersByTime(16 * 60_000);
+    resetWaitsForTest(Date.now() - 30 * 60_000);
+    expect(await waitsOf(linux.device.id)).toBeUndefined();
+    expect((await shown()).p.waiting[0]).toMatchObject({ wait: "offline", reason: "Linux box is offline" });
+
+    // a stuck line on the Computers row (tone stuck)
+    stuckOn.set(linux.device.id, "Linux box hasn't taken these yet");
+    expect(await waitsOf(linux.device.id)).toEqual({ line: "Linux box hasn't taken these yet", tone: "stuck" });
+    stuckOn.clear();
+  });
 });

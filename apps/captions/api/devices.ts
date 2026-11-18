@@ -5,7 +5,8 @@ import { pipeline } from "node:stream/promises";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
-import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
+import { LOAD_PREFERENCES, type Device, type DeviceWaits } from "../contracts/providers";
+import { addAgain } from "../src/lib/wording";
 import { COPY_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
@@ -34,6 +35,7 @@ import { env } from "./lib/env";
 import { workWaits } from "./work/place";
 import { SERVER_PLACE } from "./work/server-work";
 import { notePoll, noteRunnerCall } from "./work/library-package";
+import { refused, stuckOn } from "./work/waits";
 import { workApp } from "./work/routes";
 
 /**
@@ -489,8 +491,20 @@ devicesApp.get("/", (c) => {
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
   const admin = u.role === "admin";
   const list = listDevices((d) => d.owner === u.username || (admin && (d.owner === "workspace" || isAdminOwner(d.owner))));
-  return c.json(list.map((d) => online(forViewer(u.username, d))));
+  return c.json(
+    list.map((d) => {
+      const waits = waitsOf(d);
+      return { ...online(forViewer(u.username, d)), ...(waits ? { waits } : {}) };
+    }),
+  );
 });
+
+/** What the computer's row says about the library work it holds up (work/waits.ts): stuck work, else that it must be added again. */
+function waitsOf(d: Device): DeviceWaits | undefined {
+  const line = stuckOn.get(d.id);
+  if (line) return { line, tone: "stuck" };
+  return refused(d) ? { line: addAgain(d.name), tone: "needs" } : undefined;
+}
 
 /** The device an account may change: its own, or any for an admin. */
 function manageable(u: AuthVars["user"], id: string): Device | null {

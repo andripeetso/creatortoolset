@@ -22,7 +22,7 @@ import {
 } from "../../src/lib/wording";
 import { computers, either, foldersOf, lightKey, ONLINE_MS, type FileAt, type FileRow } from "../editor/reach";
 import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOriginals, type WorkerSeen } from "../lib/balance";
-import { deviceOf, isOnline, isThisMachine, listDevices } from "../lib/devices";
+import { deviceOf, isOnline, isThisMachine, listDevices, seenLately } from "../lib/devices";
 import { folderFor, hostPath } from "../lib/storage";
 import { libraryChanged } from "../library/access";
 import { libraryDb } from "../library/db";
@@ -106,6 +106,8 @@ export function refused(x: Device, now = Date.now(), off = offOf(x.owner), heldS
   if (!x.work?.libraryOnly || off.has(x.id) || !isOnline(x.id)) return false;
   if (heldSet ? heldSet.has(x.id) || lookHeldOn(x.id, now) : holding(x.id) || lookHeldOn(x.id, now)) return false;
   if (now - (x.work.at ?? 0) <= REFUSED_IDLE_MS) return false;
+  // a box short of disk keeps claiming with lowDisk, which stamps no `at`: it is not refused
+  if (x.work.lowDisk && x.work.lowDiskAt !== undefined && now - x.work.lowDiskAt < LOW_DISK_FRESH_MS) return false;
   return !listDevices((y) => y.owner === x.owner && y.id !== x.id && y.name === x.name && claimsFresh(y, now)).length;
 }
 
@@ -297,7 +299,8 @@ class Ctx {
   }
 
   asks(x: Device): boolean {
-    if (this.now - BOOT < POLL_FRESH_MS) return true;
+    // after a restart the polls are forgotten: a computer seen lately (lastSeen is kept on disk) counts as asking, one never seen does not
+    if (this.now - BOOT < POLL_FRESH_MS && seenLately(x)) return true;
     return (
       claimsFresh(x, this.now) ||
       polls(x, this.now) ||

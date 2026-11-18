@@ -404,11 +404,17 @@ export type Scope = "workspace" | string;
  *   POST /api/providers/:scope/:id/check → ProviderCheck (a one-line prompt on the instance's device; admins any scope, others their own)
  * Devices (cookie):
  *   POST /api/devices body { name, version? } → { device: Device, token: "ctd_…" } (the token is shown once; the Mac app keeps it)
- *   GET /api/devices → Array<Device & { online: boolean }>; PATCH /api/devices/:id { name }; DELETE /api/devices/:id (revoke)
+ *   GET /api/devices → Array<Device & { online: boolean; waits?: DeviceWaits }>; PATCH /api/devices/:id { name }; DELETE /api/devices/:id (revoke)
  * A device's jobs (Authorization: Bearer ctd_…):
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
  *   A device is handed only requests whose provider runs on it (provider.device === its id).
  */
+/** A computer's line on Settings → Computers about the library work it holds up: stuck work (red), or that it must be added again. */
+export interface DeviceWaits {
+  line: string;
+  tone: "stuck" | "needs";
+}
+
 export interface ProvidersView {
   /** admins: editable; other accounts: shown (read-only) while an admin shares them with it, else null */
   workspace: { settings: ProviderSettings; editable: boolean } | null;
