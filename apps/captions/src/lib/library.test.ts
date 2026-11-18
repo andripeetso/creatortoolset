@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearPieceCover, getPiece, libraryNews, patchPieceItem, reorderedPositions, setPieceCover, uploadFile } from "./library";
+import { clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -107,6 +107,20 @@ describe("uploadFile from the Mac app on its own server", () => {
       { path: "/Volumes/Card/C0001.MP4", size: 5000, collectionId: "col_1", again: true },
     ]);
     expect(told).toEqual([[0, true]]);
+  });
+
+  it("a drop in the Mac app with Upload none is indexed in place (macIndexOnly); a browser or Upload all is not", async () => {
+    const libs = (upload: string) => vi.fn(async () => new Response(JSON.stringify({ libraries: [{ id: "lib_1", settings: { upload } }] })));
+    mac(picked);
+    vi.stubGlobal("fetch", libs("none"));
+    expect(await macIndexOnly("lib_1")).toBe(true);
+    vi.stubGlobal("fetch", libs("all"));
+    expect(await macIndexOnly("lib_1")).toBe(false);
+    vi.stubGlobal("window", {});
+    const browser = libs("none");
+    vi.stubGlobal("fetch", browser);
+    expect(await macIndexOnly("lib_1")).toBe(false);
+    expect(browser).not.toHaveBeenCalled();
   });
 
   it("uploads as before in an older Mac app, which answers the question with its state, and when the server says to", async () => {

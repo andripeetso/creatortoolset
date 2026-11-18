@@ -26,7 +26,7 @@ import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
-import { pathOnMac } from "@/lib/thisMac";
+import { pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { deviceHere, indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
 
@@ -43,6 +43,16 @@ export const listLibraries = () =>
   fetch("/api/library")
     .then((r) => json<{ libraries: LibrarySummary[] }>(r))
     .then((x) => x.libraries);
+
+/**
+ * The Mac app on a server elsewhere, and the library's Upload is none: a file dropped or picked here is indexed where it is,
+ * never sent to the server (local-first R-A1). The Mac app's bridge is the marker; a browser is never this case.
+ */
+export async function macIndexOnly(libraryId: string): Promise<boolean> {
+  if (!thisMacBridge()) return false;
+  const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
+  return libs.find((l) => l.id === libraryId)?.settings.upload === "none";
+}
 
 /**
  * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
