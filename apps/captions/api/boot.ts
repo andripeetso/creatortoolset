@@ -617,7 +617,8 @@ if (workerFor) {
   if ("requestTimeout" in server) disableRequestTimeouts(server);
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
-  // The computers' polls end at once and they ask the new process (lib/mac-claude.ts leave).
+  // The requests held open (the change stream, the computers' and workers' long polls) end at once and their callers
+  // ask the new process (lib/sync.ts leave), so the old one exits well inside the kill_timeout.
   if (process.env.pm_id !== undefined)
     process.once("SIGINT", () => {
       leave();
