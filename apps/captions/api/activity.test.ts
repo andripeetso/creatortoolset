@@ -113,6 +113,42 @@ describe("appRows", () => {
     expect(rows[0].progress).toBe(0.25);
   });
 
+  it("says library work held for a computer in the running list, and only what the person alone can change under Waiting on you", () => {
+    const rows = appRows({
+      libraries: [{
+        id: "l",
+        uploading: null,
+        progress: {
+          ...progress,
+          waiting: [
+            { step: "files", count: 6, missing: "", away: true, wait: "stuck", reason: "Mac Studio hasn't started on these", href: "/settings/devices", mine: true, device: "mac" },
+            { step: "look", count: 14, missing: "", away: true, wait: "offline", reason: "Linux box is offline", mine: true, device: "linux", devices: ["linux", "mac"] },
+            { step: "look", count: 2, missing: "", away: true, wait: "cannot", reason: "Not made on computers yet", mine: true },
+            { step: "files", count: 1, missing: "", away: true, wait: "needs", reason: "Mac Studio is Off in Load balancing", href: "/settings/devices", mine: true, device: "mac" },
+            { step: "files", count: 3, missing: "", away: true, wait: "needs", reason: "Your owner keeps its files on their computers", mine: false },
+            // a group the status did not classify (beyond its window), and a parked shot description it did not see
+            { step: "files", count: 4, missing: "", away: true },
+            { step: "look", count: 5, missing: "Mac", computer: true },
+          ],
+        },
+      }],
+      edits: [],
+      exports: [],
+    });
+    expect(rows.map((r) => [r.id, r.state, r.mark, r.detail, r.reason, r.href])).toEqual([
+      ["library:l:stuck:files:mac", "working", "stuck", "6 files", "Mac Studio hasn't started on these", "/settings/devices"],
+      ["library:l:waits:look:linux", "working", "waits", "14 shot descriptions", "Linux box is offline", "/settings/devices"],
+      ["library:l:waits:look", "working", "waits", "2 shot descriptions", "Not made on computers yet", "/settings/devices"],
+      ["library:l:computer:files:mac", "ready", "computer", "1 file", "Mac Studio is Off in Load balancing", "/settings/devices"],
+      ["library:l:waits:files", "working", "waits", "3 files", "Your owner keeps its files on their computers", "/settings/devices"],
+      ["library:l:waits:files:2", "working", "waits", "4 files", "Waits for one of your computers", "/settings/devices"],
+      ["library:l:waits:look:2", "working", "waits", "5 shot descriptions", "Waits for one of your computers", "/settings/devices"],
+    ]);
+    // only an offline wait carries its computers (the person's own Mac can say its switch is off); never "need an AI provider"
+    expect(rows.map((r) => r.devices)).toEqual([undefined, ["linux", "mac"], undefined, undefined, undefined, undefined, undefined]);
+    expect(rows.filter((r) => r.state === "ready").map((r) => r.mark)).toEqual(["computer"]);
+  });
+
   it("lists running edits and renders, each opening its own page", () => {
     const rows = appRows({
       libraries: [{ id: "l", uploading: null, progress }],

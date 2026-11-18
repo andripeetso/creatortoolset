@@ -10,7 +10,9 @@ import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
-import { LANES, LIMIT_LIKE } from "./worker";
+import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
+import { deviceOf } from "../lib/devices";
+import { ownerKeeps } from "../../src/lib/wording";
 
 /**
  * How much processing clips will take, before they go in, and how much is left (GET /api/library/:id/estimate and
@@ -318,7 +320,24 @@ const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND (IFNULL
 // server does not do (worker.ts leftToComputers): nothing runs it until a computer of theirs is on, so it is waiting, not
 // time left (a library stuck at "about 20 min left" for days, 2026-11-17)
 // The lines that name the folder (work/library-package.ts libraryWaitLine) wait the same way.
-const AWAY = `(state = 'queued' AND (IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}) OR IFNULL(error, '') LIKE 'Only % can read %' OR IFNULL(error, '') LIKE 'No computer can read %'))`;
+const AWAY_TEXT = `(IFNULL(error, '') IN (${[WAITS_FOR_SERVER, WAITS_FOR_COMPUTER].map((w) => `'${w.replace(/'/g, "''")}'`).join(", ")}) OR IFNULL(error, '') LIKE 'Only % can read %' OR IFNULL(error, '') LIKE 'No computer can read %')`;
+// With the computers' status (work/waits.ts, leaveToComputers.status) the snapshot decides instead, by job id: `$waits` are
+// the jobs no computer takes now (offline, needs, set, cannot, stuck), `$seen` every job it classified. A job it says a
+// computer will take is work left whatever its line; a job taken since is no longer queued; one it did not see keeps the line.
+const CW = `(id IN (SELECT value FROM json_each($waits)) AND (state = 'queued' OR (kind = 'look' AND state = 'needs_key' AND error = $mac)))`;
+const AWAY = `(${CW} OR (state = 'queued' AND id NOT IN (SELECT value FROM json_each($seen)) AND ${AWAY_TEXT}))`;
+// a parked shot description a computer of its person will take (work/waits.ts): work left, never "needs an AI provider"
+const QL = `(kind = 'look' AND state = 'needs_key' AND error = $mac AND id IN (SELECT value FROM json_each($looks)))`;
+
+/** The computers' status of the library's waiting jobs (work/waits.ts), when this server has it; a failure keeps today's rule. */
+function statusOf(libraryId: string): WaitSnapshot | undefined {
+  try {
+    return leaveToComputers.status?.(libraryId);
+  } catch (e) {
+    console.warn(`[library] status of ${libraryId}:`, e);
+    return undefined;
+  }
+}
 
 /** The whole library's state per step, for "how far is indexing, is anything broken": every clip in it, not one run. */
 export function libraryStatus(libraryId: string): LibraryStatus {
@@ -345,25 +364,59 @@ export function libraryStatus(libraryId: string): LibraryStatus {
  */
 export async function progress(libraryId: string, username: string): Promise<LibraryProgress> {
   const db = libraryDb();
+  const snap = statusOf(libraryId);
+  const waitIds = snap ? [...snap.byJob].flatMap(([id, c]) => (c.wait === "queued" ? [] : [id])) : [];
+  const ids = { waits: JSON.stringify(waitIds), mac: MAC_WAITS };
+  const away = { ...ids, seen: JSON.stringify(snap ? [...snap.byJob.keys()] : []) };
+  const look = { mac: MAC_WAITS, looks: JSON.stringify(snap?.queuedLookIds ?? []) };
   const rows = db
     .prepare(
-      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, (kind = 'look' AND state = 'needs_key' AND error = ?) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, away, mac, budget`,
+      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, ${CW} AS cw, ${QL} AS ql, (kind = 'look' AND state = 'needs_key' AND error = $mac) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, away, cw, ql, mac, budget`,
     )
-    .all(LIMIT_LIKE, MAC_WAITS, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; away: number; mac: number; n: number; error: string | null }[];
-  const pending = rows.filter((r) => r.state !== "needs_key" && !r.held && !r.away);
+    .all({ ...away, ...look }, LIMIT_LIKE, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; away: number; cw: number; ql: number; mac: number; n: number; error: string | null }[];
+  const pending = rows.filter((r) => (r.state !== "needs_key" || r.ql) && !r.held && !r.away);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome;
   const waiting: LibraryProgress["waiting"] = rows
-    .filter((r) => r.state === "needs_key")
+    .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
     .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
   // waiting for one of the person's computers, per step: "6 descriptions wait for one of your computers"
-  for (const r of rows.filter((x) => x.away)) {
+  for (const r of rows.filter((x) => x.away && !x.cw)) {
     const step = STEP_OF[r.kind] ?? "files";
     const same = waiting.find((w) => w.away && w.step === step);
     if (same) same.count += r.n;
     else waiting.push({ step, count: r.n, missing: r.error ?? "", away: true });
+  }
+  // the ones the status classified, by step, class, reason, person and computer: "6 files · Mac Studio is offline"
+  if (waitIds.length) {
+    const byGroup = new Map<string, LibraryProgress["waiting"][number]>();
+    for (const { id, kind } of db.prepare(`SELECT id, kind FROM jobs WHERE library_id = ? AND ${CW}`).all(ids, libraryId) as { id: number; kind: string }[]) {
+      const c = snap!.byJob.get(id)!;
+      if (c.wait === "queued") continue;
+      const step = STEP_OF[kind] ?? "files";
+      const mine = c.actor === username;
+      // another person's computers are never named to this viewer, except that one is offline (PLAN-final D12)
+      const reason = mine ? c.reason : ownerKeeps(c.wait === "offline" && c.device ? deviceOf(c.device)?.name : undefined);
+      const key = [step, c.wait, reason, c.actor, mine ? c.device : ""].join("\0");
+      const same = byGroup.get(key);
+      if (same) same.count++;
+      else
+        byGroup.set(key, {
+          step,
+          count: 1,
+          missing: reason ?? "",
+          away: true,
+          wait: c.wait,
+          ...(reason ? { reason } : {}),
+          ...(mine && c.href ? { href: c.href } : {}),
+          mine,
+          ...(mine && c.device ? { device: c.device } : {}),
+          ...(mine && c.devices ? { devices: c.devices } : {}),
+        });
+    }
+    waiting.push(...byGroup.values());
   }
   // held for the plan's limit, per step: "4 descriptions paused", "2 shot descriptions paused"
   for (const step of ["look", "describe"] as const) {
@@ -380,8 +433,8 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
   }
   const open = db
-    .prepare(`SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND state IN ('queued', 'running') AND NOT ${HELD} AND NOT ${AWAY}`)
-    .all(libraryId, LIMIT_LIKE) as { v: string }[];
+    .prepare(`SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND ((state IN ('queued', 'running') AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL})`)
+    .all({ ...away, ...look }, libraryId, LIMIT_LIKE) as { v: string }[];
   const run = runs.get(libraryId) ?? new Set<string>();
   runs.set(libraryId, run);
   // the run before is through (nobody looked while the queue was empty): this one counts from nothing
@@ -395,9 +448,9 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     .prepare(
       `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed')) AS fin,
          COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs
-       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY} GROUP BY version_id)`,
+       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
     )
-    .get(libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
+    .get({ ...away, ...look }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
   // a clip of the run whose every step left is held is through, as far as this computer goes
   const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + toCome);
   const counts = db

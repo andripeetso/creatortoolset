@@ -21,6 +21,7 @@ import { proxiesDir, sizeOf } from "./cache";
 import { machineDisks } from "./disks";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
+import { takeTurn, TURN_LINE } from "./turn";
 
 /**
  * A library job on this computer (contracts/work.ts LibraryPackage), with the library's own media code, so what is made
@@ -234,7 +235,12 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
   loop();
   // named by the claim: a later claim of the same job never shares it; kept until the result is in or the job is dropped
   const dir = path.join(scratch(), claim ? `${lib.job.id}-${claim}` : String(lib.job.id));
+  let release = () => {};
   try {
+    // this Mac's other servers' work first, one job at a time (turn.ts); the job stays held and beating meanwhile
+    beat.line = TURN_LINE;
+    release = await takeTurn({ signal: ctl.signal });
+    beat.line = LINE[lib.job.kind];
     await mkdir(dir, { recursive: true });
     // where the file is on this computer first; a download only when it is not here
     // its job folder, and the proxy cache once the server has named the account
@@ -317,6 +323,7 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
     await c.post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e) }).catch((x) => console.warn(`[work] library job ${lib.job.id}:`, x));
     return "failed";
   } finally {
+    release();
     clearTimeout(timer);
     ctl.abort();
     if (current === ctl) current = null;
@@ -353,7 +360,11 @@ export async function runPictureJob(p: PicturePackage, o: WorkerOptions): Promis
       .then((r) => void (r.ok === false && (taken = true)))
       .catch(() => {}); // the server is away a moment: the lease outlives a few missed beats
   }, o.beatMs ?? 10_000);
+  let release = () => {};
   try {
+    // this Mac's other servers' work first, one job at a time (turn.ts)
+    release = await takeTurn();
+    if (taken) return "stopped";
     const res = await c.raw(`${base}/input`);
     if (!res.ok) throw new Error(`The server gave no pictures (${res.status})`);
     const input = (await res.json()) as PictureInput;
@@ -371,6 +382,7 @@ export async function runPictureJob(p: PicturePackage, o: WorkerOptions): Promis
     await c.post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e) }).catch(() => {});
     return "failed";
   } finally {
+    release();
     clearInterval(beat);
   }
 }

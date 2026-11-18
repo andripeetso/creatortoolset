@@ -44,6 +44,21 @@ export async function writeBalance(user: string, cur: Balance): Promise<void> {
   await rename(tmp, balanceFile(user));
 }
 
+/** A computer paired again under a new id keeps its load-balancing settings: `from`'s weight, libraries and originals move to `to` (its own win). */
+export async function moveBalance(user: string, from: string[], to: string): Promise<void> {
+  const b = await readBalance(user);
+  let moved = false;
+  for (const m of [b.weights, b.libraries, b.originals ?? {}] as Record<string, unknown>[]) {
+    for (const id of from) {
+      if (id === to || !(id in m)) continue;
+      if (!(to in m)) m[to] = m[id];
+      delete m[id];
+      moved = true;
+    }
+  }
+  if (moved) await writeBalance(user, b);
+}
+
 /**
  * The owner's computers set to Off in Load balancing (weight 0 while it is on): they take no work at all, not even when
  * no other computer could (the owner, 17 Nov: Off is off), so none of them counts as the one that could.

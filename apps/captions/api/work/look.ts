@@ -9,7 +9,7 @@ import { env } from "../lib/env";
 import { readPicture, SHEET_STRETCHES, stretchSheet } from "../library/look";
 import { probe } from "../library/media/probe";
 import { SHEET_FORMAT, sheetHashes } from "../library/shots";
-import type { client } from "./computer";
+import { claimPost, type client } from "./computer";
 import { machineDisks } from "./disks";
 
 /**
@@ -61,10 +61,12 @@ export function readable(p: string, roots: string[] = machineDisks().map((d) => 
 
 type Client = ReturnType<typeof client>;
 
-/** Claims a look waiting for this computer and makes it. True when there was one. `roots`: the shares it reads (tests). */
-export async function claimLook(c: Client, roots?: string[]): Promise<boolean> {
-  const res = await c.raw("editor/claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kinds: [LIBRARY_LOOK_KIND] }) });
-  const job = ((await res.json().catch(() => null)) as DeviceClaim | null)?.job;
+/**
+ * Claims a look waiting for this computer and makes it. True when there was one. `roots`: the shares it reads (tests).
+ * A refused token throws (computer.ts Unauthorized), so the worker backs off as it does for its own claims.
+ */
+export async function claimLook(c: Client, roots?: string[], signal?: AbortSignal): Promise<boolean> {
+  const job = (await claimPost<DeviceClaim>(c, "editor/claim", { kinds: [LIBRARY_LOOK_KIND] }, signal)).job;
   if (job?.kind !== LIBRARY_LOOK_KIND) return false;
   await runLook(c, job, roots);
   return true;

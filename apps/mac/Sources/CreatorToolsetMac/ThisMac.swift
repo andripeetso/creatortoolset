@@ -39,7 +39,7 @@ struct ThisMacView: View {
             Section {
                 Toggle("Take work from this server", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
                     .disabled(!shell.hasServer)
-                Text("This Mac runs this server's jobs for your account while the app shows it: AI requests, editor steps and media library work.")
+                Text("This Mac runs this server's jobs for your account while Creator Toolset is open: AI requests, editor steps and media library work.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(shell.aiLine)
                 if let notice = shell.notice {

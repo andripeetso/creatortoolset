@@ -10,9 +10,13 @@ final class ConsentTests: XCTestCase {
     override func setUp() {
         defaults = UserDefaults(suiteName: suite)
         defaults.removePersistentDomain(forName: suite)
+        Consent.show("studio.example.com")   // the window's server, unless a test says otherwise
     }
 
-    override func tearDown() { defaults.removePersistentDomain(forName: suite) }
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+        Consent.show(nil)
+    }
 
     private func request(_ json: String) -> RelayRequest { RelayRequest(json: Data(json.utf8))! }
     private func needs(_ json: String, root: URL = URL(fileURLWithPath: NSTemporaryDirectory())) throws -> [ConsentItem] {
@@ -80,5 +84,57 @@ final class ConsentTests: XCTestCase {
         XCTAssertEqual(consent.askHere("Run ls", "ls -la"), "allowed")
         XCTAssertEqual(titles, ["Let studio.example.com answer the assistant's questions?", "The assistant wants to: Run ls"])
         XCTAssertEqual(ConsentStore(defaults: defaults).chatAnswers("studio.example.com"), false)
+    }
+
+    // 35: a server not in the window never opens anything; its kept answers still hold
+    func testAServerNotInTheWindowIsNeverAskedAndNothingIsKeptOrSilenced() throws {
+        Consent.show("other.example.com")
+        let consent = Consent(host: "studio.example.com", store: ConsentStore(defaults: defaults)) { _, _, _, _ in
+            XCTFail("no prompt for a server not in the window"); return true
+        }
+        let agent = ConsentItem(kind: .program, text: "/usr/local/bin/my-agent acp")
+        XCTAssertThrowsError(try consent.check([agent])) { error in
+            XCTAssertEqual((error as? RelayError)?.message,
+                           "This Mac did not allow studio.example.com to start that program. Allow it on the Mac when studio.example.com is open in Creator Toolset, or pick another AI in Settings → Providers.")
+        }
+        XCTAssertEqual(ConsentStore(defaults: defaults).allowed("studio.example.com"), [])
+        XCTAssertFalse(consent.chatAnswers())
+        XCTAssertNil(ConsentStore(defaults: defaults).chatAnswers("studio.example.com"), "a background no is not kept")
+        XCTAssertEqual(consent.askHere("Run ls", "ls -la"), "denied")
+
+        // kept answers hold in the background
+        ConsentStore(defaults: defaults).allow("studio.example.com", agent)
+        ConsentStore(defaults: defaults).setChatAnswers("studio.example.com", true)
+        try consent.check([agent])
+        XCTAssertTrue(consent.chatAnswers())
+    }
+
+    // 35: shown again, the same server asks as today (nothing was silenced in the background)
+    func testOnceInTheWindowTheServerAsksAsBefore() throws {
+        var shown: [String] = []
+        let consent = Consent(host: "studio.example.com", store: ConsentStore(defaults: defaults)) { title, _, _, _ in
+            shown.append(title); return true
+        }
+        let agent = ConsentItem(kind: .program, text: "/usr/local/bin/my-agent acp")
+        Consent.show("other.example.com")
+        XCTAssertThrowsError(try consent.check([agent]))
+        XCTAssertEqual(shown, [])
+        Consent.show("studio.example.com")
+        try consent.check([agent])
+        XCTAssertEqual(shown, ["Let studio.example.com start a program on this Mac?"])
+    }
+
+    // 35b: the key is the host as the runner names it, and a job's thread reads it without waiting for the main thread
+    func testTheKeyIsTheRunnersHostAndIsReadOffTheMainThread() {
+        XCTAssertEqual(Consent.key(for: URL(string: "http://localhost:4317")!), "localhost:4317")
+        XCTAssertEqual(Consent.key(for: URL(string: "https://studio.example.com")!), "studio.example.com")
+        Consent.show("other.example.com")
+        let consent = Consent(host: "studio.example.com", store: ConsentStore(defaults: defaults)) { _, _, _, _ in true }
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            do { try consent.check([ConsentItem(kind: .folder, text: "/tmp/home")]); XCTFail("refused in the background") } catch {}
+            done.signal()
+        }
+        XCTAssertEqual(done.wait(timeout: .now() + 2), .success)
     }
 }

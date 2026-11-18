@@ -12,6 +12,8 @@ import { ImportCards } from "@/pages/library/Import";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
+import { ownMacLine } from "@/lib/wording";
+import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 
 /**
  * The Media Library's processing, said in time and money: a line per step with the time left while clips are being
@@ -104,9 +106,9 @@ function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: str
 }
 
 /** What a step waiting for the person needs, in a few words, with the page that gives it one click away. */
-function Needs({ step, what, count = 0, away }: { step: LibraryStepEstimate["step"]; what?: string; count?: number; away?: boolean }) {
+function Needs({ step, what, count = 0, away, reason, href }: { step: LibraryStepEstimate["step"]; what?: string; count?: number; away?: boolean; reason?: string; href?: string }) {
   // the estimate names the step ("AI descriptions need an AI"), the progress line counts its clips
-  const line = waitingLine({ step, count, away });
+  const line = waitingLine({ step, count, away, reason, href });
   const text = what ? `${what} need ${NEEDS[step].needs}` : line.text;
   return (
     <Link to={what ? NEEDS[step].href : line.href} className="underline-offset-4 hover:underline">
@@ -151,16 +153,30 @@ const remembered = () => {
  * order they run (pictures, proxies, duplicate checks, transcripts, descriptions), each counting up, and what waits.
  * When nothing runs, what waits for a key, an AI or the plan's limit is said by itself: it is why nothing moves.
  */
-/** `all`: also what waits for one of the person's computers (the Library status window); the library page leaves that out, as nothing there is for them to do. */
+type Waiting = LibraryProgress["waiting"][number];
+/** What only the person can change: a key or an AI provider, or (their own) a computer setting no computer can get past. */
+const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait) || (w.wait === "needs" && !!w.mine);
+
+/**
+ * `all`: also what waits for one of the person's computers (the Library status window). The library page leaves out what
+ * a computer will take or what the person can't change there, and says what needs them and work no computer has taken.
+ */
 export function LibraryProgressBar({ libraryId, all = false }: { libraryId: string; all?: boolean }) {
   const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
+  // in the Mac app, this Mac's own switch: asked only while a wait names its computers as offline
+  const bridge = useThisMac(hasThisMac() && !!p?.waiting.some((w) => w.wait === "offline" && w.devices?.length));
   // the same saved status as the folder card and the watch list; only the owner gets one
   const watch = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => getWatch(libraryId)).data;
   const [open, setOpen] = useState(remembered);
   const adding = (watch?.folders ?? []).filter((f) => f.adding > 0);
   const moving = !!p && p.left > 0;
-  // work that waits for a computer is said in the Library status window and on Settings → Computers (which share it can't reach), not over the clips
-  const shown = (p?.waiting ?? []).filter((w) => all || !w.away);
+  const entries = (p?.waiting ?? []).map((w): Waiting => {
+    const own = ownMacLine(w, bridge);
+    return own ? { ...w, wait: "needs", mine: true, reason: own.reason, href: own.href } : w;
+  });
+  // work that waits for a computer is said in the Library status window and on Settings → Computers, not over the clips;
+  // what needs the person, and work no computer has taken, are said here too
+  const shown = entries.filter((w) => all || needsYou(w) || w.wait === "stuck");
   if (!moving && !shown.length) return null;
   const toggle = () => {
     setOpen(!open);
@@ -170,14 +186,18 @@ export function LibraryProgressBar({ libraryId, all = false }: { libraryId: stri
       // a private window keeps it for this page only
     }
   };
-  const needsYou = shown.some((w) => !w.limit && !w.computer && !w.away);
-  const waiting = shown.map((w) => (
+  const needs = shown.some(needsYou);
+  const waiting = shown.map((w, i) => (
     <div
-      key={`${w.step}${w.limit ? "-limit" : w.computer ? "-computer" : w.away ? "-away" : ""}`}
+      key={`${w.step}${w.limit ? "-limit" : w.computer ? "-computer" : w.wait ? `-${w.wait}-${i}` : w.away ? "-away" : ""}`}
       // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
-      className={w.limit ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" : "flex items-center gap-2 text-xs text-zinc-500"}
+      className={
+        w.limit
+          ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
+          : cn("flex items-center gap-2 text-xs", w.wait === "stuck" ? "text-red-600 dark:text-red-400" : "text-zinc-500")
+      }
     >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", w.wait === "stuck" ? "bg-red-500" : w.limit || needsYou(w) ? "bg-amber-400" : "bg-zinc-400")} />
       {w.limit ? (
         <span>
           {w.count.toLocaleString()} {w.step === "look" ? (w.count === 1 ? "shot description" : "shot descriptions") : w.count === 1 ? "description" : "descriptions"} paused: {w.missing}
@@ -187,7 +207,7 @@ export function LibraryProgressBar({ libraryId, all = false }: { libraryId: stri
           Shot descriptions for {w.count.toLocaleString()} {w.count === 1 ? "clip need the Mac the file is on" : "clips need the Mac the files are on"}
         </span>
       ) : (
-        <Needs step={w.step} count={w.count} away={w.away} />
+        <Needs step={w.step} count={w.count} away={w.away} reason={w.reason} href={w.href} />
       )}
     </div>
   ));
@@ -200,7 +220,7 @@ export function LibraryProgressBar({ libraryId, all = false }: { libraryId: stri
               Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
               <span className="text-zinc-500"> · {aboutTime(p.seconds)} left</span>
             </span>
-            {needsYou && !open && <span aria-label="Needs a key or an AI provider" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
+            {needs && !open && <span aria-label="Needs a key or an AI provider" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
             <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")} />
           </span>
           <MovingBar value={p.share} />

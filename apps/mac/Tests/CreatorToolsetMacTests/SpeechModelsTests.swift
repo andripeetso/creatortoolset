@@ -159,6 +159,21 @@ final class SpeechModelsTests: XCTestCase {
 
     // MARK: what the owner wants on this Mac
 
+    // 33: every signed-in server's wishes count; a model goes only when none of them wants it
+    func testAModelGoesOnlyWhenNoSignedInServerWantsIt() {
+        let held = ["whisper-small", "whisper-base.en"]
+        let signedIn: (String) -> Bool = { $0 != "gone.example.com" }
+        var wants = ["a.example.com": ["whisper-small"], "b.example.com": ["whisper-base.en"]]
+        var p = SpeechModels.plan(wanted: SpeechModels.union(wants, signedIn: signedIn), held: held, downloading: nil, queue: [], failed: [:], now: Date())
+        XCTAssertEqual(p.remove, [])
+        wants["a.example.com"] = []
+        p = SpeechModels.plan(wanted: SpeechModels.union(wants, signedIn: signedIn), held: held, downloading: nil, queue: [], failed: [:], now: Date())
+        XCTAssertEqual(p.remove, ["whisper-small"])
+        // a server this Mac left keeps nothing
+        wants["gone.example.com"] = ["whisper-small"]
+        XCTAssertEqual(SpeechModels.union(wants, signedIn: signedIn), ["whisper-base.en"])
+    }
+
     func testTheOwnersWishesAreDoneOneDownloadAtATimeAndAFailedOneWaits() {
         let now = Date()
         let at = Date(timeIntervalSince1970: 0)

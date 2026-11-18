@@ -198,7 +198,30 @@ export const libraryJobsAtRisk = (): number => running.size;
  * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
  * loop leaves them alone while one can. Unset (a server without the work road), the server runs every job as before.
  */
-export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean; line?: (job: JobRow) => string | undefined } = { kinds: [] };
+export interface WaitClass {
+  wait: "queued" | "offline" | "stuck" | "needs" | "set" | "cannot";
+  reason?: string;
+  href?: string;
+  device?: string;
+  devices?: string[];
+  actor: string | null;
+}
+
+export interface WaitSnapshot {
+  at: number;
+  byJob: Map<number, WaitClass>;
+  queuedIds: number[];
+  waitingIds: number[];
+  queuedLookIds: number[];
+  queuedLookVersions: string[];
+}
+
+export const leaveToComputers: {
+  kinds: readonly string[];
+  test?: (job: JobRow) => boolean;
+  line?: (job: JobRow) => string | undefined;
+  status?: (libraryId: string, now?: number) => WaitSnapshot;
+} = { kinds: [] };
 
 /**
  * The jobs that read video or sound (design 2.1, local-first plan D7): this server runs them only where its video work
@@ -225,6 +248,24 @@ const onComputerModel = (j: JobRow): boolean => {
   }
 };
 
+/**
+ * Whether this server's lane leaves `j` to a computer now (`"computer"`) or leaves it waiting while video work is off
+ * (`"wait"`), with no database write. `false` when the lane runs it here. `"send"` is always left (no lane runs it).
+ */
+export function leftHere(j: JobRow & { source_key?: string | null }): "computer" | "wait" | false {
+  if (j.kind === "send") return "computer";
+  const test = leaveToComputers.test;
+  if (test && leaveToComputers.kinds.includes(j.kind) && test(j)) return "computer";
+  const sourceKey =
+    j.source_key !== undefined
+      ? j.source_key
+      : ((libraryDb().prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(j.version_id ?? "") as { source_key: string | null } | undefined)?.source_key ?? null);
+  if (DECODES.includes(j.kind) && (sourceKey?.startsWith("mac:") ? j.kind === "proxy" : !serverWorks(libraryWorkspace(j.library_id), j.actor)) && !readsNoPicture(j)) {
+    return "wait";
+  }
+  return false;
+}
+
 /** The queued jobs of `kinds` this server leaves to a computer now, or leaves waiting while its video work is off. */
 function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number[] {
   const test = leaveToComputers.test;
@@ -241,14 +282,15 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
     .all(now, ...all) as unknown as (JobRow & { source_key: string | null })[];
   const out: number[] = [];
   for (const j of queued) {
-    if (on.includes(j.kind) && test!(j)) {
+    const how = (on.includes(j.kind) || decodes.includes(j.kind)) && leftHere(j);
+    if (how === "computer") {
       // a computer can take it now: its old "waits for" line goes, or the Activity counts it as away until a claim
       if (j.error === WAITS_FOR_COMPUTER || j.error === WAITS_FOR_SERVER || /^(Only .+ can read |No computer can read )/.test(j.error ?? ""))
         db.prepare("UPDATE jobs SET error = NULL WHERE id = ?").run(j.id);
       out.push(j.id);
     }
     // a team proxy of a file only a computer has waits for that computer whatever the switch: this server has no bytes to read
-    else if (decodes.includes(j.kind) && (j.source_key?.startsWith("mac:") ? j.kind === "proxy" : !serverWorks(libraryWorkspace(j.library_id), j.actor)) && !readsNoPicture(j)) {
+    else if (how === "wait") {
       out.push(j.id);
       // which computers can read its folder, when that says more than "one of your computers" (library-package.ts libraryWaitLine)
       const line = leaveToComputers.kinds.includes(j.kind) ? (leaveToComputers.line?.(j) ?? WAITS_FOR_COMPUTER) : WAITS_FOR_SERVER;

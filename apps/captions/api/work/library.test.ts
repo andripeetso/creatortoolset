@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 import { WORK_V, type LibraryPackage } from "../../contracts/work";
 import type { JobRow } from "../library/jobs";
@@ -26,7 +26,7 @@ const { foldersOf } = await import("../editor/reach");
 const { unreachedShares } = await import("../../contracts/storage");
 const { LIBRARY_HERE, makeDerived, runLibraryJob } = await import("./library");
 const { writeServerWork } = await import("./server-work");
-const { WAITS_FOR_COMPUTER } = await import("../library/jobs");
+const { WAITS_FOR_COMPUTER, enqueueJob, requeueExpired } = await import("../library/jobs");
 const { cutStills } = await import("../library/describe");
 const { blobs } = await import("../library/db");
 const { quickPrint } = await import("./files");
@@ -324,7 +324,8 @@ describe("library work on the computer that has the file", () => {
     // the Mac is online (its claim is fresh): the server leaves the job to it and clears the old line
     await tick(Date.now(), ["wave"]);
     expect(job()).toMatchObject({ state: "queued", error: null });
-    expect(await awayCount()).toBe(before - 1);
+    // the computers' status (work/waits.ts) counted it as work left already, the Mac's claim being fresh, whatever its old line
+    expect(await awayCount()).toBe(before);
     // and the Mac's next claim takes it
     let got: LibraryPackage | undefined;
     for (let i = 0; i < 30 && !got; i++) {
@@ -417,5 +418,131 @@ describe("a computer's add before its first library claim", () => {
     expect(r.status).toBe(201);
     expect(((await r.json()) as { sent?: true; id: string }).sent).toBeUndefined();
     expect((await add("lib_phone", file, "not-a-device")).status).toBe(409);
+  });
+});
+
+describe("G4: a lease follows a transfer's progress, and a box short of disk or too old blocks nobody", () => {
+  afterEach(() => vi.useRealTimers());
+  const MIN = 60_000;
+  let n = 0;
+  /** A job `device` holds under claim `claim`, as a claim leaves it. */
+  const heldJob = (device: string, claimId: string): number => {
+    const v = `ver_g4_${++n}`;
+    d.exec(`
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_${v}', 'lib_p', 'video', '${v}', 'tiny', 0, NULL);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('${v}', 'ast_${v}', 1, 'k_${v}', 1, 'x', 'ready', 'tiny', 0);
+    `);
+    const { lastInsertRowid } = d
+      .prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, attempts, lease_until, held_by, claim_id) VALUES ('lib_p', ?, 'proxy', 'running', 'tiny', 1, ?, ?, ?)")
+      .run(v, Date.now() + 300_000, device, claimId);
+    return Number(lastInsertRowid);
+  };
+  const lease = (id: number) => (d.prepare("SELECT lease_until FROM jobs WHERE id = ?").get(id) as { lease_until: number | null }).lease_until;
+  const beat = (id: number, body: unknown, claimId = "c27", token = mac.token) =>
+    post(`/api/devices/relay/work/lib/${id}/beat`, body, { authorization: `Bearer ${token}`, "x-ct-claim": claimId });
+  /** Beats every minute for `minutes`, each body from `at(minute)`; whether every beat kept the lease ahead of now. */
+  const beats = async (id: number, minutes: number, at: (m: number) => unknown) => {
+    for (let m = 1; m <= minutes; m++) {
+      vi.setSystemTime(Date.now() + MIN);
+      expect((await beat(id, at(m))).status).toBe(200);
+      if (lease(id) !== Date.now() + 300_000) return false;
+    }
+    return true;
+  };
+
+  it("PRD 27: moving bytes keep it; bytes frozen below the total for 15 min let it lapse, and the next beat is 410", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const moving = heldJob(mac.device.id, "c27");
+    expect(await beats(moving, 40, (m) => ({ line: "Downloading", done: m * 1000, total: 1e9 }))).toBe(true);
+
+    const frozen = heldJob(mac.device.id, "c27");
+    expect(await beats(frozen, 14, () => ({ done: 500, total: 1000 }))).toBe(true);
+    expect(await beats(frozen, 2, () => ({ done: 500, total: 1000 }))).toBe(false);
+    vi.setSystemTime(lease(frozen)! + 1);
+    requeueExpired(d);
+    expect(d.prepare("SELECT state, attempts FROM jobs WHERE id = ?").get(frozen)).toEqual({ state: "queued", attempts: 1 });
+    expect((await beat(frozen, { done: 500, total: 1000 })).status).toBe(410);
+  });
+
+  it("PRD 27: a finished upload the server checks, beats with no progress, and the first beat after a restart renew", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const checking = heldJob(mac.device.id, "c27");
+    expect(await beats(checking, 20, () => ({ done: 1000, total: 1000 }))).toBe(true);
+    const encoding = heldJob(mac.device.id, "c27");
+    expect(await beats(encoding, 40, () => ({ line: "Making the proxy" }))).toBe(true);
+    // nothing in memory for it (as after a restart): the first beat with progress renews
+    const fresh = heldJob(mac.device.id, "c27");
+    vi.setSystemTime(Date.now() + 4 * MIN);
+    await beat(fresh, { done: 10, total: 1000 });
+    expect(lease(fresh)).toBe(Date.now() + 300_000);
+  });
+
+  it("PRD 27: the unit does not restart a refused worker (78) but does an update (3), and starts again on a new token", () => {
+    const unit = readFileSync(new URL("../../scripts/ct-library-worker.service", import.meta.url), "utf8");
+    const line = unit.split("\n").filter((l) => l.startsWith("RestartPreventExitStatus="));
+    expect(line).toEqual(["RestartPreventExitStatus=78"]);
+    expect(unit).toMatch(/^Restart=always$/m);
+    const watch = readFileSync(new URL("../../scripts/ct-library-worker-env.path", import.meta.url), "utf8");
+    expect(watch).toMatch(/^PathChanged=%h\/\.config\/ct-library-worker\.env$/m);
+    expect(readFileSync(new URL("../../scripts/ct-library-worker-env.service", import.meta.url), "utf8")).toMatch(/restart ct-library-worker\.service/);
+  });
+
+  it("PRD 9b: a low-disk claim and an update answer stamp no `at`; a box too old gets no library package, its editor steps still come", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const box = pairDevice("tiny", "Tiny Box");
+    const LINUX = { os: "linux", cpus: 32, memGb: 64, freeGb: 400, load: 0 };
+    const work = () => deviceOf(box.device.id)!.work!;
+    await claimAs(box.token, { libraryOnly: true, machine: LINUX });
+    const { at, libraryAt } = work();
+    expect(libraryAt).toBe(at);
+
+    vi.setSystemTime(Date.now() + MIN);
+    expect(await claimAs(box.token, { libraryOnly: true, lowDisk: true })).toEqual({ pkg: null });
+    expect(work()).toMatchObject({ at, libraryAt, lowDisk: true, lowDiskAt: Date.now() });
+    vi.setSystemTime(Date.now() + MIN);
+    await claimAs(box.token, { libraryOnly: true, lowDisk: true });
+    expect(work()).toMatchObject({ at, libraryAt, lowDiskAt: Date.now() });
+    await claimAs(box.token, { libraryOnly: true, machine: LINUX });
+    expect(work().lowDisk).toBeUndefined();
+    expect(work().at).toBe(Date.now());
+
+    // a package newer than it reads, handed back: too old from now on, and its restarts are told to update, stamping nothing
+    const held = heldJob(box.device.id, "cb");
+    expect(await (await post(`/api/devices/relay/work/lib/${held}/fail`, { error: "This computer needs a newer Creator Toolset", update: true }, { authorization: `Bearer ${box.token}`, "x-ct-claim": "cb" })).json()).toEqual({ ok: true });
+    expect(work().tooOld).toBe(WORK_V);
+    const before = work().at;
+    vi.setSystemTime(Date.now() + MIN);
+    expect(await claimAs(box.token, { libraryOnly: true, machine: LINUX })).toEqual({ pkg: null, update: true, account: "tiny" });
+    expect(work().at).toBe(before);
+    // a newer worker drops the mark
+    await claimAs(box.token, { libraryOnly: true, machine: LINUX, v: WORK_V + 1 });
+    expect(work().tooOld).toBeUndefined();
+    expect(work().libraryAt).toBe(Date.now());
+
+    // a worker that also takes editor steps: stamped (its steps still come) but no library package, until it is newer
+    const other = pairDevice("tiny", "Tiny Laptop");
+    const v = "ver_g4_mine";
+    d.exec(`
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_${v}', 'lib_p', 'video', 'mine', 'tiny', 0, NULL);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, mac_path, mac_device) VALUES
+        ('${v}', 'ast_${v}', 1, 'mac:${v}', 1, 'x', 'ready', 'tiny', 0, '/Users/tiny/Movies/mine.mp4', '${other.device.id}');
+    `);
+    enqueueJob(d, "lib_p", v, "wave", "tiny");
+    // as the hand-back above leaves a worker's row
+    setDeviceWork(other.device.id, { v: WORK_V, steps: [], library: true, tooOld: WORK_V });
+    vi.setSystemTime(Date.now() + MIN);
+    const got = await claimAs(other.token, { machine: MAC });
+    expect(got.lib).toBeUndefined();
+    expect((got as { update?: true }).update).toBeUndefined();
+    expect(deviceOf(other.device.id)!.work).toMatchObject({ at: Date.now(), tooOld: WORK_V, library: true });
+    expect(deviceOf(other.device.id)!.work!.libraryAt).toBeUndefined();
+    // newer: it takes library packages again, its own file's among them
+    let mine: LibraryPackage | undefined;
+    for (let i = 0; i < 30 && !mine; i++) {
+      const lib = (await claimAs(other.token, { machine: MAC, v: WORK_V + 1 })).lib;
+      if (!lib) break;
+      if (lib.job.versionId === v) mine = lib;
+    }
+    expect(mine?.job.kind).toBe("wave");
   });
 });

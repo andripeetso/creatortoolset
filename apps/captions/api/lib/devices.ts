@@ -150,12 +150,15 @@ export function deviceForToken(authorization: string | undefined): Device | null
  * - no `machineId` (an app from before): the same owner's first device of the same name without a machine id keeps its
  *   id (the folders, balance and places that name it still point at it); the others of that name without one are
  *   dropped (`replaced`). A device that has a machine id is never taken.
+ * A library-only worker (`work.libraryOnly`, the box's own token in its env file) is never adopted by a pairing with a
+ * machine id (a helper app of the same name): that would refuse the worker. Its own re-pair (a pair code, no machine id)
+ * keeps its id like any older app.
  * `replaced` ids move to the new one (moveProviders and whereis.ts aliasDevice, called by the route).
  */
 export function pairDevice(owner: string, name: string, version?: string, machineId?: string): { device: Device; token: string; replaced: string[] } {
   const token = `ctd_${randomBytes(32).toString("base64url")}`;
   const mid = machineId && /^[\w-]{8,80}$/.test(machineId) ? machineId : undefined;
-  const known = mid && (all().find((x) => x.owner === owner && x.machineId === mid) ?? all().find((x) => x.owner === owner && x.name === name && !x.machineId));
+  const known = mid && (all().find((x) => x.owner === owner && x.machineId === mid) ?? all().find((x) => x.owner === owner && x.name === name && !x.machineId && !x.work?.libraryOnly));
   if (known) {
     Object.assign(known, { name, tokenHash: sha(token), machineId: mid, ...(version ? { version } : {}) });
     persist();

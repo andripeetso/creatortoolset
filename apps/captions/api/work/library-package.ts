@@ -19,12 +19,15 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { SOUNDS } from "../../contracts/library";
+import { isWindowsPath } from "../../contracts/places";
 import type { Balance, Device } from "../../contracts/providers";
-import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type WorkFile } from "../../contracts/work";
+import { sourcesOf } from "../../contracts/storage";
+import { macAtLeast } from "../../contracts/voice";
+import { MAC_WORK_SINCE, WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type WorkFile } from "../../contracts/work";
 import { computers, either, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
 import { folderFor } from "../lib/storage";
 import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOriginals, type WorkerSeen } from "../lib/balance";
-import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
+import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDeviceWork, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
@@ -33,12 +36,15 @@ import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { FRAMES } from "../library/describe";
 import { claimJob, enqueueJob, extendLease, finishJob, parkJob, type JobRow } from "../library/jobs";
+import { lookHeldOn, lookReach, type PlaceRow } from "../library/mac-look";
 import { wakePictures } from "../library/pictures";
 import type { ProbeSummary } from "../library/media/probe";
 import { sortAfter } from "../library/roll";
 import { serveBlob } from "../library/routes";
-import { fileTranscript, hearSound, keySound, NeedsKey } from "../library/transcribe";
+import { askVersionIn, fileTranscript, hearSound, keySound, NeedsKey } from "../library/transcribe";
+import { resolveDevice } from "../library/whereis";
 import { aiWaits, describeFromStills, leaveToComputers } from "../library/worker";
+import { status } from "./waits";
 import { mayRead } from "./offline";
 
 /** The library jobs a computer runs; "send" only a computer can. */
@@ -62,17 +68,53 @@ const SENDS: Record<string, string[]> = {
 /** The file each kind must send back; a job without it fails (retried), never finishes empty. */
 const REQUIRED: Record<string, string> = { thumb: "thumb", proxy: "proxy", wave: "wave", sprite: "sprite", describe: "still0" };
 /** The kinds that may download the original of a file only the server has: the proxy, and the probe and card picture it has no lighter copy for. */
-const READS_ORIGINAL = ["proxy", "probe", "thumb"];
+export const READS_ORIGINAL = ["proxy", "probe", "thumb"];
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
 
-/** A computer whose worker reads this server's package and said it runs library jobs. */
-const takesLibrary = (d: Pick<Device, "work">): boolean => !!d.work?.library && d.work.v >= WORK_MIN;
+/** A computer whose worker claimed with `library: true` on this server (stamping `libraryAt`) and whose package is not too old. */
+export const takesLibrary = (d: Pick<Device, "work">): boolean =>
+  !!d.work?.libraryAt && d.work.v >= WORK_MIN && !(d.work.tooOld !== undefined && d.work.v <= d.work.tooOld);
 /** The kinds added after the first library jobs: only a computer that names them in its claim (work/library.ts LIBRARY_HERE) gets one. */
-const LATER_KINDS = ["probe", "thumb", "describe"];
+export const LATER_KINDS = ["probe", "thumb", "describe"];
 
-interface LibRow extends FileRow {
+export const POLL_FRESH_MS = 120_000;
+// ponytail: in memory; a restart forgets it, and the boot grace in G3 covers the first POLL_FRESH_MS
+export const polled = new Map<string, number>();
+export const notePoll = (id: string, now = Date.now()): void => {
+  polled.set(id, now);
+};
+export const called = new Map<string, number>();
+export const noteRunnerCall = (id: string, now = Date.now()): void => {
+  called.set(id, now);
+};
+export const polls = (d: Pick<Device, "id">, now = Date.now()): boolean => now - (polled.get(d.id) ?? -Infinity) < POLL_FRESH_MS;
+const isOldAppVersion = (v?: string): boolean => /^\d+\.\d+\.\d+/.test(v ?? "") && !macAtLeast(v, MAC_WORK_SINCE);
+export const oldApp = (d: Pick<Device, "id" | "version">, _now = Date.now()): boolean => isOnline(d.id) && isOldAppVersion(d.version);
+export const relayBusy = (d: Pick<Device, "id" | "version">, now = Date.now()): boolean =>
+  now - (called.get(d.id) ?? -Infinity) < ONLINE_MS && !polls(d, now) && !isOldAppVersion(d.version);
+export const asks = (d: Pick<Device, "id" | "version" | "work">, now = Date.now()): boolean =>
+  claimsFresh(d, now) || polls(d, now) || relayBusy(d, now) || holding(d.id) || lookHeldOn(d.id, now);
+export const startsForLibrary = (d: Pick<Device, "id" | "work">): boolean =>
+  (d.work?.v ?? 0) >= WORK_MIN && !(d.work?.tooOld !== undefined && d.work.v <= d.work.tooOld) && !takesLibrary(d) && !d.work?.libraryOnly && !isThisMachine(d.id);
+
+export function lift(d: Device, now = Date.now()): Device {
+  const { tooOld: _, ...rest } = d.work ?? { v: WORK_MIN, steps: [] };
+  return {
+    ...d,
+    work: {
+      ...rest,
+      v: Math.max(d.work?.v ?? 0, WORK_MIN),
+      library: true,
+      at: now,
+      libraryAt: now,
+      libraryKinds: [...new Set([...(d.work?.libraryKinds ?? []), ...LATER_KINDS])],
+    },
+  };
+}
+
+export interface LibRow extends FileRow {
   library_id: string;
   asset_id: string;
   title: string;
@@ -83,12 +125,13 @@ interface LibRow extends FileRow {
   from_path: string | null;
   from_device: string | null;
   proxy_bytes: number | null;
+  created_by?: string | null;
 }
 
-function rowOf(versionId: string | null): LibRow | undefined {
+export function rowOf(versionId: string | null): LibRow | undefined {
   return libraryDb()
     .prepare(
-      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256, v.quick,
+      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256, v.quick, v.created_by,
          a.library_id, a.id AS asset_id, a.title, a.kind, d.storage_key AS proxy, d.bytes AS proxy_bytes
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
@@ -96,8 +139,29 @@ function rowOf(versionId: string | null): LibRow | undefined {
     .get(versionId ?? "") as LibRow | undefined;
 }
 
-/** An original uploaded from a computer is still on that computer, where it was sent from. */
-const where = (r: LibRow): FileRow => (r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device });
+/** An original uploaded from a computer is still on that computer, where it was sent from; device ids follow re-pair aliases. */
+export function where(r: LibRow): FileRow {
+  const base = r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device };
+  return base.mac_device ? { ...base, mac_device: resolveDevice(base.mac_device) } : base;
+}
+
+function whereOf(r: PlaceRow): FileRow {
+  const useMac = r.source_key.startsWith("mac:") || !!r.mac_path || !r.from_path;
+  const macPath = useMac ? r.mac_path : r.from_path;
+  const rawDev = useMac ? r.mac_device : r.from_device;
+  return {
+    id: r.version_id,
+    source_key: r.source_key,
+    source_path: r.source_path ?? null,
+    mac_path: macPath,
+    mac_device: rawDev ? resolveDevice(rawDev) : null,
+    proxy: null,
+  };
+}
+lookReach.at = (device, r, folders) => {
+  const f = fileFor(whereOf(r), device, folders, isThisMachine);
+  return f && "path" in f ? f.path : null;
+};
 
 /**
  * How well computer `d` can take library job `job`: 3 has the file (on its disk, or on a share it has connected), 2 reads
@@ -121,7 +185,7 @@ export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: L
 }
 
 /** The computers of `owner` that may take a library job now: `me`, and the others online, free, holding none, asking for work lately and not Off. */
-function peersOf(owner: string, me: Device, now: number): Device[] {
+export function peersOf(owner: string, me: Device, now: number): Device[] {
   const off = offOf(owner);
   return computers(owner)
     .filter((c) => c.x.id === me.id || (c.free && !holding(c.x.id) && claimsFresh(c.x, now) && !off.has(c.x.id)))
@@ -130,7 +194,7 @@ function peersOf(owner: string, me: Device, now: number): Device[] {
 }
 
 /** Whether `device` holds a library job now (on the jobs row, so a restart of this server keeps it). */
-const holding = (device: string) => !!libraryDb().prepare("SELECT 1 FROM jobs WHERE state = 'running' AND held_by = ?").get(device);
+export const holding = (device: string) => !!libraryDb().prepare("SELECT 1 FROM jobs WHERE state = 'running' AND held_by = ?").get(device);
 
 /**
  * The job `device` holds (claimed by it, still running), else undefined: on claim `claim` when the computer names one;
@@ -164,6 +228,47 @@ async function heldSeen(id: number, device: string, claim?: string): Promise<Job
   return undefined;
 }
 
+export type LibraryDecision = { take: true } | { skip: "rank" | "balance"; by?: Device };
+
+/** The claim's per-job placement and load-balancing decision, with no claim and no database write. */
+export function decide(
+  d: Device,
+  job: Pick<JobRow, "kind" | "actor">,
+  r: LibRow,
+  peers: Device[],
+  folders: ReturnType<typeof foldersOf>,
+  balance: Balance,
+  now = Date.now(),
+): LibraryDecision {
+  const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
+  const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
+  const top = Math.max(0, ...ranked.map((p) => p.r));
+  const workers: WorkerSeen[] = ranked
+    .filter((p) => p.r === top && p.x.report?.machine)
+    .map(({ x }) => ({ host: x.id, at: x.id === d.id ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
+  if (!mine || mine < top) {
+    const by =
+      top > 0
+        ? (ranked
+            .filter((p) => p.r === top && p.x.id !== d.id)
+            .map((p) => p.x)
+            .find((x) => mayClaim(job.kind, x.id, workers, balance, now, ONLINE_MS)) ??
+          ranked.find((p) => p.r === top && p.x.id !== d.id)?.x)
+        : undefined;
+    return { skip: "rank", ...(by ? { by } : {}) };
+  }
+  if (!mayClaim(job.kind, d.id, workers, balance, now, ONLINE_MS)) {
+    const by =
+      ranked
+        .filter((p) => p.r === top && p.x.id !== d.id)
+        .map((p) => p.x)
+        .find((x) => mayClaim(job.kind, x.id, workers, balance, now, ONLINE_MS)) ??
+      ranked.find((p) => p.r === top && p.x.id !== d.id)?.x;
+    return { skip: "balance", ...(by ? { by } : {}) };
+  }
+  return { take: true };
+}
+
 /** The library job computer `d` takes now, with its package, or null. The best-placed of its owner's computers, then load balancing, decide. */
 export async function claimLibraryForComputer(d: Device, now = Date.now()): Promise<LibraryPackage | null> {
   if (!takesLibrary(d) || offOf(d.owner).has(d.id)) return null;
@@ -176,14 +281,7 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
   for (const job of queued) {
     const r = waitsForWords(job) ? undefined : rowOf(job.version_id);
     if (!r) continue;
-    const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
-    const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
-    const top = Math.max(0, ...ranked.map((p) => p.r));
-    if (!mine || mine < top) continue;
-    const workers: WorkerSeen[] = ranked
-      .filter((p) => p.r === top && p.x.report?.machine)
-      .map(({ x }) => ({ host: x.id, at: x.id === d.id ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
-    if (!mayClaim(job.kind, d.id, workers, balance, now, ONLINE_MS)) continue;
+    if (!("take" in decide(d, job, r, peers, folders, balance, now))) continue;
     if (!(await stillSees(job, r))) {
       failUnseen(job);
       continue;
@@ -198,17 +296,78 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
   return null;
 }
 
-/** The queued library jobs of `d`'s owner, in the libraries `d` takes. */
-function queuedFor(d: Device, now: number, balance: Balance): JobRow[] {
+function mineOf(id: string): string[] {
+  const db = libraryDb();
+  const seen = new Set<string>([id]);
+  const q = [id];
+  while (q.length) {
+    const cur = q.pop()!;
+    for (const r of db.prepare("SELECT old_id FROM device_alias WHERE new_id = ?").all(cur) as { old_id: string }[]) {
+      if (!seen.has(r.old_id)) {
+        seen.add(r.old_id);
+        q.push(r.old_id);
+      }
+    }
+  }
+  return [...seen];
+}
+
+function reachPrefixes(d: Device): { prefixes: string[]; win: boolean } {
+  const out = new Set<string>();
+  for (const f of sourcesOf(foldersOf(d.owner))) {
+    if (f.role !== "footage") continue;
+    if (f.origin.host !== d.id && !f.reach?.[d.id]) continue;
+    for (const p of [f.origin.path, f.mountPath, ...Object.values(f.reach ?? {}).map((r) => r.path)]) {
+      if (p) out.add(p.replace(/(.)\/+$/, "$1"));
+    }
+  }
+  const prefixes = [...out];
+  return { prefixes, win: prefixes.some(isWindowsPath) };
+}
+
+/** The queued library jobs of `d`'s owner, in the libraries `d` takes, dropping rows in SQL that rank 0 for `d` whatever its settings. */
+export function queuedFor(d: Device, now = Date.now(), balance: Balance = readBalanceSync(d.owner)): JobRow[] {
   const libs = balance.libraries?.[d.id];
   if (libs && !libs.length) return [];
-  return libraryDb()
-    .prepare(
-      `SELECT * FROM jobs WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${KINDS.map(() => "?").join(", ")})` +
-        (libs ? ` AND library_id IN (${libs.map(() => "?").join(", ")})` : "") +
-        " ORDER BY id LIMIT 100",
-    )
-    .all(now, d.owner, ...KINDS, ...(libs ?? [])) as unknown as JobRow[];
+  const mineJson = JSON.stringify(mineOf(d.id));
+  const { prefixes, win } = reachPrefixes(d);
+  const prefixesJson = JSON.stringify(prefixes);
+  // ponytail: when any of those paths is a Windows path, inside() folds case and slashes, so keep every row with a mac_path/from_path
+  const inFolder = win
+    ? "(v.mac_path IS NOT NULL OR v.from_path IS NOT NULL)"
+    : `(EXISTS (SELECT 1 FROM json_each(?) f WHERE v.mac_path = f.value OR substr(v.mac_path, 1, length(f.value) + 1) = f.value || '/')` +
+      ` OR EXISTS (SELECT 1 FROM json_each(?) f WHERE v.from_path = f.value OR substr(v.from_path, 1, length(f.value) + 1) = f.value || '/'))`;
+  const noReach =
+    `v.source_path IS NULL AND v.root IS NULL` +
+    ` AND NOT (v.from_path IS NOT NULL AND v.from_device IS NOT NULL AND v.from_device IN (SELECT value FROM json_each(?)))` +
+    ` AND NOT (v.mac_path IS NOT NULL AND v.mac_device IS NOT NULL AND v.mac_device IN (SELECT value FROM json_each(?)))` +
+    ` AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ?)` +
+    ` AND NOT ${inFolder}`;
+  const reachArgs = win ? [mineJson, mineJson, d.id] : [mineJson, mineJson, d.id, prefixesJson, prefixesJson];
+  // keySound is the one rule (libraryRank): a version nobody asked about follows the owner's own route
+  const keyOn = !!keySound(d.owner, "");
+  const askedJson = JSON.stringify([...askVersionIn].flatMap(([v, a]) => (a.by === d.owner && keySound(d.owner, v) ? [v] : [])));
+  const origOk = takesOriginals(balance, d);
+  const sql =
+    `SELECT j.* FROM jobs j LEFT JOIN asset_versions v ON v.id = j.version_id` +
+    ` WHERE j.state = 'queued' AND j.run_after <= ? AND j.actor = ? AND j.kind IN (${KINDS.map(() => "?").join(", ")})` +
+    (libs ? ` AND j.library_id IN (${libs.map(() => "?").join(", ")})` : "") +
+    ` AND NOT (j.kind = 'send' AND (${noReach}))` +
+    (keyOn ? "" : ` AND NOT (j.kind = 'transcribe' AND (j.version_id IS NULL OR j.version_id NOT IN (SELECT value FROM json_each(?))))`) +
+    (origOk ? ` AND NOT (j.kind = 'proxy' AND (${noReach}) AND v.source_key LIKE 'mac:%')` : ` AND NOT (j.kind = 'proxy' AND (${noReach}))`) +
+    ` AND NOT (j.kind IN ('wave', 'sprite', 'fingerprint') AND (${noReach}) AND NOT EXISTS (SELECT 1 FROM derivatives px WHERE px.version_id = v.id AND px.kind = 'proxy' AND px.storage_key IS NOT NULL))` +
+    " ORDER BY j.id LIMIT 100";
+  const args: (string | number)[] = [
+    now,
+    d.owner,
+    ...KINDS,
+    ...(libs ?? []),
+    ...reachArgs,
+    ...(keyOn ? [] : [askedJson]),
+    ...reachArgs,
+    ...reachArgs,
+  ];
+  return libraryDb().prepare(sql).all(...args) as unknown as JobRow[];
 }
 
 /** A description reads what is said: it waits while its clip's transcript is still to come (library/worker.ts nextJob). */
@@ -261,19 +420,22 @@ export function computerTakesLibrary(job: JobRow): boolean {
   if (!job.actor || !LIBRARY_ON_COMPUTER.includes(job.kind)) return false;
   const off = offOf(job.actor);
   const own = listDevices((x) => x.owner === job.actor && isOnline(x.id) && takesLibrary(x) && !off.has(x.id));
-  const r = own.length ? rowOf(job.version_id) : undefined;
+  const starters = listDevices((x) => x.owner === job.actor && isOnline(x.id) && polls(x) && startsForLibrary(x) && !off.has(x.id));
+  const r = own.length || starters.length ? rowOf(job.version_id) : undefined;
   if (!r) return false;
   const folders = foldersOf(job.actor);
   const balance = readBalanceSync(job.actor);
   if (own.some((x) => libraryRank(x, job, r, folders, balance) > 0)) return true;
+  if (starters.some((x) => libraryRank(lift(x), job, r, folders, balance) === 3)) return true;
   // a later kind no computer of theirs runs yet (an older app): this server's, as before
-  if (job.kind === "proxy" || (LATER_KINDS.includes(job.kind) && !own.some((x) => x.work?.libraryKinds?.includes(job.kind)))) return false;
+  if (job.kind === "proxy" || (LATER_KINDS.includes(job.kind) && !own.some((x) => x.work?.libraryKinds?.includes(job.kind)) && !starters.length)) return false;
   const p = libraryDb().prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running')").get(r.id) as JobRow | undefined;
   return !!p && (p.state === "running" ? !!p.held_by : computerTakesLibrary(p));
 }
 leaveToComputers.kinds = KINDS;
 leaveToComputers.test = computerTakesLibrary;
 leaveToComputers.line = libraryWaitLine;
+leaveToComputers.status = status;
 
 /**
  * Why a library job no computer can take now waits, naming its folder: "Only Mac Studio can read Shoots" (that one is
@@ -290,7 +452,7 @@ export function libraryWaitLine(job: JobRow): string | undefined {
   if (!m) return undefined;
   const off = offOf(job.actor);
   const balance = readBalanceSync(job.actor);
-  const takers = listDevices((x) => x.owner === job.actor && takesLibrary(x) && !off.has(x.id) && allowsLibrary(balance, x.id, r.library_id));
+  const takers = listDevices((x) => x.owner === job.actor && (takesLibrary(x) || startsForLibrary(x)) && !off.has(x.id) && allowsLibrary(balance, x.id, r.library_id));
   if (!takers.length) return undefined;
   const reads = takers.filter((x) => {
     const f = fileFor(w, x.id, folders, isThisMachine);
@@ -306,13 +468,24 @@ export function libraryWaitLine(job: JobRow): string | undefined {
 
 /** Whether a library job waits that computer `d` would be handed now: its device runner's long poll starts the worker. */
 export async function libraryWaits(d: Device, now = Date.now()): Promise<boolean> {
-  if (!takesLibrary(d) || offOf(d.owner).has(d.id)) return false;
+  if ((!takesLibrary(d) && !startsForLibrary(d)) || offOf(d.owner).has(d.id)) return false;
+  const me = takesLibrary(d) ? d : lift(d, now);
   const balance = readBalanceSync(d.owner);
-  const queued = queuedFor(d, now, balance);
-  const folders = queued.length ? foldersOf(d.owner) : [];
-  return queued.some((j) => {
-    const r = waitsForWords(j) ? undefined : rowOf(j.version_id);
-    return !!r && libraryRank(d, j, r, folders, balance) > 0;
+  const queued = queuedFor(me, now, balance);
+  if (!queued.length) return false;
+  const folders = foldersOf(d.owner);
+  const peers = peersOf(d.owner, me, now);
+  return queued.some((job) => {
+    const r = waitsForWords(job) ? undefined : rowOf(job.version_id);
+    if (!r) return false;
+    const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
+    const mine = ranked.find((p) => p.x.id === me.id)?.r ?? 0;
+    const top = Math.max(0, ...ranked.map((p) => p.r));
+    if (!mine || mine < top) return false;
+    const workers: WorkerSeen[] = ranked
+      .filter((p) => p.r === top && p.x.report?.machine)
+      .map(({ x }) => ({ host: x.id, at: x.id === me.id ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
+    return mayClaim(job.kind, me.id, workers, balance, now, ONLINE_MS);
   });
 }
 
@@ -473,11 +646,29 @@ const idOf = (c: Context): number => {
 /** Mounted at /api/devices/relay/work/lib (api/work/routes.ts), with the device's ctd_ token. */
 export const libWorkApp = new Hono();
 
-libWorkApp.post("/:id/beat", (c) => {
+/**
+ * How far each held job's transfer got, and when it last moved (memory only: after a restart the first beat renews).
+ * A download or upload that stops moving for STALL_MS keeps no lease: the job goes back to the queue (a counted try)
+ * and the computer's next beat is answered 410. A beat without progress (an encode, the server checking an upload) renews.
+ */
+const moved = new Map<number, { claim: string | null | undefined; done: number; at: number }>();
+const STALL_MS = 15 * 60_000;
+
+libWorkApp.post("/:id/beat", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = heldBy(idOf(c), d.id, claimOf(c));
-  if (!job) return GONE(c);
+  if (!job) {
+    moved.delete(idOf(c));
+    return GONE(c);
+  }
+  const b = (await c.req.json().catch(() => null)) as { done?: unknown; total?: unknown } | null;
+  if (typeof b?.done === "number" && typeof b.total === "number" && b.done < b.total) {
+    const now = Date.now();
+    const m = moved.get(job.id);
+    if (!m || m.claim !== job.claim_id || m.done !== b.done) moved.set(job.id, { claim: job.claim_id, done: b.done, at: now });
+    else if (now - m.at >= STALL_MS) return c.json({ ok: true });
+  }
   extendLease(libraryDb(), job.id, LEASE_S);
   return c.json({ ok: true });
 });
@@ -544,6 +735,7 @@ libWorkApp.post("/:id/done", async (c) => {
   const r = (await c.req.json().catch(() => null)) as LibraryResult | null;
   if (!r || typeof r !== "object" || !r.outcome || !Array.isArray(r.files)) return c.json({ error: "A library result" }, 400);
   const got = await applyLibraryResult(idOf(c), d.id, r, claimOf(c));
+  moved.delete(idOf(c));
   return got === "gone" ? GONE(c) : c.json({ ok: got === "done" });
 });
 
@@ -551,7 +743,11 @@ libWorkApp.post("/:id/fail", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = heldBy(idOf(c), d.id, claimOf(c));
+  moved.delete(idOf(c));
   if (!job) return GONE(c);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  // handed back as newer than the worker reads: its package version is kept as too old, so no library package goes to it
+  // (nor fails again) until it claims with a newer one (work/routes.ts)
+  if (b?.update === true && d.work) setDeviceWork(d.id, { ...d.work, tooOld: d.work.v });
   return c.json({ ok: failLibrary(job, typeof b?.error === "string" && b.error ? b.error.slice(0, 500) : "Your computer could not run this job") });
 });

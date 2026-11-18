@@ -32,6 +32,8 @@ struct PluginRow: Decodable, Equatable {
     var progress: Double? = nil
     /// why the work waits and when it carries on by itself (an AI plan's limit)
     var reason: String? = nil
+    /// library work held for a computer: "stuck" (none has taken it), "waits" (for a computer), "computer" (needs you)
+    var mark: String? = nil
 }
 
 /// One button of a plug-in row. `run` is "start", "stop" or "restart"; `label` the LaunchAgent it runs.
@@ -52,6 +54,10 @@ struct ActivityRow: Identifiable, Equatable {
     var actions: [PluginAction] = []
     var progress: Double? = nil
     var reason: String? = nil
+    var mark: String? = nil
+
+    /// The reason's colour: red for work no computer has taken, grey while it waits for a computer, orange otherwise.
+    var reasonColor: Color { mark == "stuck" ? .red : mark == "waits" ? .secondary : .orange }
 
     /// The word on the right: work held back says Waiting, not Working.
     var word: String { reason != nil ? "Waiting" : state.word }
@@ -60,7 +66,19 @@ struct ActivityRow: Identifiable, Equatable {
 /// The panel's own line for this Mac's last AI answer when it was a plan's limit, unless a row already gives that as its
 /// reason (said once). Nil when the last answer was no limit.
 func panelLimitLine(lastError: String?, rows: [ActivityRow]) -> String? {
-    rows.contains { $0.reason != nil } ? nil : lastError.flatMap(plainLimitLine)
+    // a computer wait's reason is not the plan's limit
+    rows.contains { $0.reason != nil && $0.mark == nil } ? nil : lastError.flatMap(plainLimitLine)
+}
+
+/// The app log's lines for library rows whose mark or reason changed since `before` ("activity: <id> <mark> <detail> ·
+/// <reason>"; a row that went says "ok"), so a computer wait can be read without the server's database. No file names.
+func activityLogLines(before: [PluginRow], after: [PluginRow]) -> [String] {
+    let library = { (rows: [PluginRow]) in Dictionary(rows.filter { $0.id.hasPrefix("library:") && $0.mark != nil }.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
+    let old = library(before), new = library(after)
+    var lines = new.values.filter { old[$0.id]?.mark != $0.mark || old[$0.id]?.reason != $0.reason }
+        .map { "activity: \($0.id) \($0.mark ?? "") \($0.detail) · \($0.reason ?? "")" }
+    lines += old.keys.filter { new[$0] == nil }.map { "activity: \($0) ok" }
+    return lines.sorted()
 }
 
 /// Active (replies being written, plug-in work, this Mac's AI and the cards it draws) and For you (new replies, plug-in
@@ -87,7 +105,7 @@ extension PluginRow {
     var row: ActivityRow {
         ActivityRow(id: "p:\(id)", title: title, detail: detail, state: state == "working" ? .working : .ready, href: href,
                     actions: (actions ?? []).filter { LaunchAgent.verbs.contains($0.run) && LaunchAgent.isValid($0.label) },
-                    progress: progress.map { min(1, max(0, $0)) }, reason: reason)
+                    progress: progress.map { min(1, max(0, $0)) }, reason: reason, mark: mark)
     }
 }
 
@@ -115,7 +133,7 @@ struct ActivityPanel: View {
             empty: shell.hasServer ? "Nothing running or waiting" : "Pick a server in the window to see your work",
             warnings: [lastError.flatMap(plainLimitLine) == nil ? lastError.map { "Last AI error: \($0)" } : nil,
                        shell.notice, shell.spaceLine,
-                       shell.worker.needsUpdate ? "This server needs a newer Creator Toolset to run its steps on your Mac" : nil].compactMap { $0 },
+                       shell.runners.worker(for: shell.runners.windowHost)?.needsUpdate == true ? "This server needs a newer Creator Toolset to run its steps on your Mac" : nil].compactMap { $0 },
             open: { row in if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() } },
             run: { shell.runAgent($0) }
         ) {
@@ -198,7 +216,7 @@ private struct RowView: View {
                         }
                     }
                     if let reason = row.reason {
-                        Text(reason).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        Text(reason).font(.system(size: 11)).foregroundStyle(row.reasonColor).fixedSize(horizontal: false, vertical: true)
                     } else if let progress = row.progress {
                         ProgressView(value: progress).progressViewStyle(.linear).controlSize(.mini)
                     }

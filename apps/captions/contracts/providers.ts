@@ -213,7 +213,16 @@ export interface Device {
    * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step. `tasks`: the computer task kinds it
    * runs (api/work/tasks.ts); absent on an older worker, which is never handed one.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; libraryKinds?: string[]; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[]; proof?: true };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; libraryKinds?: string[]; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[]; proof?: true;
+    /** when a claim last asked for library work (work/routes.ts): only a claim writes it, never a poll */
+    libraryAt?: number;
+    /** the package version that was too old: the claim was answered `update`, or a library package handed back as newer
+     *  than the worker reads. A claim with a higher `v` drops it; until then no library package goes to this computer */
+    tooOld?: number;
+    /** its library worker has too little free disk (a claim that takes nothing, at `lowDiskAt`); the next claim drops it */
+    lowDisk?: true;
+    lowDiskAt?: number;
+  };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */
@@ -395,11 +404,17 @@ export type Scope = "workspace" | string;
  *   POST /api/providers/:scope/:id/check → ProviderCheck (a one-line prompt on the instance's device; admins any scope, others their own)
  * Devices (cookie):
  *   POST /api/devices body { name, version? } → { device: Device, token: "ctd_…" } (the token is shown once; the Mac app keeps it)
- *   GET /api/devices → Array<Device & { online: boolean }>; PATCH /api/devices/:id { name }; DELETE /api/devices/:id (revoke)
+ *   GET /api/devices → Array<Device & { online: boolean; waits?: DeviceWaits }>; PATCH /api/devices/:id { name }; DELETE /api/devices/:id (revoke)
  * A device's jobs (Authorization: Bearer ctd_…):
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
  *   A device is handed only requests whose provider runs on it (provider.device === its id).
  */
+/** A computer's line on Settings → Computers about the library work it holds up: stuck work (red), or that it must be added again. */
+export interface DeviceWaits {
+  line: string;
+  tone: "stuck" | "needs";
+}
+
 export interface ProvidersView {
   /** admins: editable; other accounts: shown (read-only) while an admin shares them with it, else null */
   workspace: { settings: ProviderSettings; editable: boolean } | null;

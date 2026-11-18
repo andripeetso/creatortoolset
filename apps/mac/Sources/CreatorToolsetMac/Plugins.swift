@@ -584,7 +584,7 @@ extension Shell {
         let site = await client()
         guard let sessions: [SessionRow] = try? await site.get("/api/workshop/sessions/summary"),
               let rows: [PluginRow] = try? await site.get("/api/activity") else { return true }
-        let active = activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: rows, drawing: aiOn && ai.drawing).active.count
+        let active = activityRows(sessions: sessions, aiRunning: runners.running, plugin: rows, drawing: runners.drawing).active.count
         return serverBusyHere(active: active, recording: recorder.busy, runsPrograms: server.runsPrograms)
     }
 

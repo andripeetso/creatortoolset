@@ -10,7 +10,8 @@ import type { guidesWork } from "./documents";
 import type { captioningWork } from "./captions-job";
 import type { knowledgeWork } from "./workshop";
 import type { LibraryWork } from "./library/activity";
-import { waitingLine } from "../contracts/library";
+import { stepCount, waitingLine } from "../contracts/library";
+import { WORDS } from "../src/lib/wording";
 import type { ServerPlugin } from "./lib/plugin";
 import type { SessionUser } from "./users";
 
@@ -202,7 +203,8 @@ const STEP: Record<string, [string, string]> = {
 /**
  * The app's own rows. The Media Library: uploads, clips being prepared (a footage folder's clips still to come among
  * them), AI descriptions held back by the plan's limit (running, with the limit as the reason: nothing for the person to
- * do), and steps that wait for a key or an AI (waiting on you: a few words, opening the page that gives it). Then edits
+ * do), steps that wait for a key or an AI (waiting on you: a few words, opening the page that gives it), and steps held
+ * for one of the person's computers (`mark`: running, unless only the person can unblock them). Then edits
  * with a step queued or running, the other tools' running work (Content Analyzer, Video Notes, Audio Enhancer, Review,
  * Guide Builder, the assistant's captions, Workshop sources being read), then renders.
  */
@@ -215,14 +217,30 @@ export function appRows(w: AppWork): ActivityRow[] {
     if (up) add("upload", `Uploading ${count(up.files, "file")} · ${pct(up.received / Math.max(1, up.size))}`, { progress: up.received / Math.max(1, up.size) });
     const p = lib.progress;
     if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share });
+    const ids = new Set<string>();
     for (const x of p.waiting) {
       const [one, many] = STEP[x.step] ?? ["file", "files"];
       const what = `${count(x.count, one, many)} paused`;
       if (x.limit) add("limit", what, { reason: x.missing });
-      else {
+      else if (!x.wait && !x.away && !x.computer) {
         const { text, href } = waitingLine(x);
-        // a step waiting for one of the person's computers is not theirs to act on yet: it stays in the working list, not "Waiting on you"
-        add(`${x.away ? "away" : "key"}:${x.step}`, text, { state: x.away ? "working" : "ready", href });
+        add(`key:${x.step}`, text, { state: "ready", href });
+      } else {
+        // library work held for a computer (api/work/waits.ts): only what the person alone can change waits on them; work a
+        // computer has not taken is said in red, the rest (offline, a setting on the computer, not checked) in grey, all working
+        const mark = x.wait === "needs" && x.mine ? "computer" : x.wait === "stuck" ? "stuck" : "waits";
+        let id = `${mark}:${x.step}${x.device ? `:${x.device}` : ""}`;
+        for (let n = 2; ids.has(id); n++) id = `${mark}:${x.step}${x.device ? `:${x.device}` : ""}:${n}`;
+        ids.add(id);
+        add(id, stepCount(x), {
+          state: mark === "computer" ? "ready" : "working",
+          href: waitingLine(x).href,
+          // a group the status did not classify (an older server, beyond its window) keeps the plain line
+          reason: x.reason ?? WORDS.waits.replace(/\.$/, ""),
+          mark,
+          ...(x.device ? { device: x.device } : {}),
+          ...(x.wait === "offline" && x.devices?.length ? { devices: x.devices } : {}),
+        });
       }
     }
   }

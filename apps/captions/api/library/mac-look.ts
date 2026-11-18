@@ -1,11 +1,14 @@
+import { readFileSync } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { LIBRARY_LOOK_KIND, type DeviceJob } from "../../contracts/devices";
 import type { Device } from "../../contracts/providers";
+import type { StorageFolder } from "../../contracts/storage";
 import { balanceNow, mayClaim, type WorkerSeen } from "../lib/balance";
 import { deviceOf, listDevices, setDeviceLooks } from "../lib/devices";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import type { DeviceJobSlot } from "../lib/plugin";
+import { parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryChanged } from "./access";
 import { libraryDb, libraryLookLevel } from "./db";
 import { defer, extendLease, finishJob, firstClips } from "./jobs";
@@ -14,6 +17,7 @@ import { triesOn } from "./places";
 import { MAC_WAITS, SHEET_FORMAT, type LookSheet } from "./shots";
 import { parseSignal, storeStretches, stretchLevelOf, takeSignal } from "./stretches";
 import { WATCH_LEVELS, wantsWatch } from "./timeline";
+import { resolveDevice } from "./whereis";
 import { env } from "../lib/env";
 import type { LookLevel } from "../../contracts/library";
 
@@ -56,6 +60,13 @@ const held = new Map<number, { device: string; versionId: string; libraryId: str
  * A restart costs a resend of the sheets, never a second read of the picture, so they are not written here.
  */
 const sent = new Map<string, LookSheet[]>();
+/** Each computer's latest look claim (look jobs carry no held_by): the wait status reads it (work/waits.ts). */
+const lastTaken = new Map<string, { id: number; at: number }>();
+// shortcut: only the latest claim is kept, so an older look taken after a newer one hides it; keep a list if that misleads
+export const tookLookAfter = (device: string, jobId: number, since: number): boolean => {
+  const t = lastTaken.get(device);
+  return !!t && t.at >= since && t.id > jobId;
+};
 /** The copies for the timeline a Mac sent with its sheets, by version, until the look lane takes them (a file each). */
 const copies = new Map<string, string>();
 
@@ -90,18 +101,53 @@ function holding(device: string, id: number) {
 }
 const busy = (device: string) => [...held.keys()].some((id) => holding(device, id));
 
-type PlaceRow = { version_id: string; source_key: string; mac_path: string | null; mac_device: string | null; from_path: string | null; from_device: string | null };
-const PLACE_COLS = "v.id AS version_id, v.source_key, v.mac_path, v.mac_device, v.from_path, v.from_device";
+/** Whether `device` holds a look now (pure read: never mutates `held` or deletes a copy). */
+export function lookHeldOn(device: string, now = Date.now()): boolean {
+  const ids = [...held].flatMap(([id, h]) => (h.device === device ? [id] : []));
+  return (
+    ids.length > 0 &&
+    !!libraryDb()
+      .prepare(`SELECT 1 FROM jobs WHERE id IN (${ids.map(() => "?").join(", ")}) AND state = 'running' AND lease_until >= ? LIMIT 1`)
+      .get(...ids, now)
+  );
+}
+
+export type PlaceRow = {
+  version_id: string;
+  source_key: string;
+  source_path?: string | null;
+  mac_path: string | null;
+  mac_device: string | null;
+  from_path: string | null;
+  from_device: string | null;
+};
+const PLACE_COLS = "v.id AS version_id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device";
+
+/** Set by work/library-package.ts at load so look reach shares fileFor without a static import loop. */
+export const lookReach: { at?: (device: string, r: PlaceRow, folders: StorageFolder[]) => string | null } = {};
+
+function lookFolders(owner: string): StorageFolder[] {
+  let raw = "{}";
+  try {
+    raw = readFileSync(storageFilePath(env.dataDir, owner), "utf-8");
+  } catch {
+    // no folders set yet
+  }
+  const folders = parseStorageFile(raw).folders;
+  return withMounts(folders, listDevices((x) => x.owner === owner).map((x) => ({ id: x.id, disks: x.report?.machine?.disks })));
+}
 
 /**
  * Where computer `device` reads a version's file: on the Mac it is kept on with nothing uploaded, or the one it was
- * uploaded from or found on since, or on a share it connects with the file's root (library/places.ts), for a server that
- * does no video work itself (worker.ts lookOnMac). Null when it has none.
- * ponytail: a shared folder two computers reach (Settings → Storage) is not tried; the paths a computer reported are
+ * uploaded from or found on since, or on a share it connects with the file's root (library/places.ts) or shared folder
+ * (Settings → Storage), for a server that does no video work itself (worker.ts lookOnMac). Null when it has none.
  */
-function pathOn(device: string, r: PlaceRow): string | null {
-  const at = r.source_key.startsWith("mac:") || r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device };
-  return triesOn({ id: r.version_id, mac_path: at.mac_path, mac_device: at.mac_device }, device, [])[0] ?? null;
+export function pathOn(device: string, r: PlaceRow, folders: StorageFolder[] = []): string | null {
+  if (lookReach.at) return lookReach.at(device, r, folders);
+  const useMac = r.source_key.startsWith("mac:") || !!r.mac_path || !r.from_path;
+  const macPath = useMac ? r.mac_path : r.from_path;
+  const rawDev = useMac ? r.mac_device : r.from_device;
+  return triesOn({ id: r.version_id, mac_path: macPath, mac_device: rawDev ? resolveDevice(rawDev) : null }, device, folders)[0] ?? null;
 }
 
 /** The same window as the device road's (api/devices.ts ONLINE_MS): a computer not heard from in 40 s takes nothing. */
@@ -112,11 +158,11 @@ const ONLINE_MS = 40_000;
  * (work/library-package.ts): among those that reach the file, list the look and are online and free, the best under
  * load balancing (lib/balance.ts mayClaim). The one asking is always among them.
  */
-function placedOn(device: string, owner: string, r: PlaceRow, now = Date.now()): boolean {
+export function placedOn(device: string, owner: string, r: PlaceRow, now = Date.now(), folders = lookFolders(owner)): boolean {
   const workers: WorkerSeen[] = listDevices(
     (x) =>
       x.owner === owner &&
-      (x.id === device || (now - (x.lastSeen ?? 0) <= ONLINE_MS && !busy(x.id) && (x.kinds ?? []).includes(LIBRARY_LOOK_KIND) && !!pathOn(x.id, r))),
+      (x.id === device || (now - (x.lastSeen ?? 0) <= ONLINE_MS && !lookHeldOn(x.id, now) && (x.kinds ?? []).includes(LIBRARY_LOOK_KIND) && !!pathOn(x.id, r, folders))),
   )
     .filter((x) => x.report?.machine)
     .map((x) => ({ host: x.id, at: x.id === device ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
@@ -127,11 +173,13 @@ function placedOn(device: string, owner: string, r: PlaceRow, now = Date.now()):
 export function onTheirMac(versionId: string, owner: string | null): boolean {
   if (!owner) return false;
   const r = libraryDb().prepare(`SELECT ${PLACE_COLS} FROM asset_versions v WHERE v.id = ?`).get(versionId) as PlaceRow | undefined;
-  return !!r && listDevices((x) => x.owner === owner).some((x) => !!pathOn(x.id, r));
+  if (!r) return false;
+  const folders = lookFolders(owner);
+  return listDevices((x) => x.owner === owner).some((x) => !!pathOn(x.id, r, folders));
 }
 
 /** The look waiting for `device`: parked for the Mac its file is on, added by the Mac's own account; edits' files first. */
-function nextFor(device: string, owner: string) {
+export function nextFor(device: string, owner: string) {
   const rows = libraryDb()
     .prepare(
       `SELECT j.id, j.library_id, j.actor, ${PLACE_COLS}, v.probe FROM jobs j
@@ -140,9 +188,11 @@ function nextFor(device: string, owner: string) {
        ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 200`,
     )
     .all(MAC_WAITS, owner, JSON.stringify(firstClips())) as (PlaceRow & { id: number; library_id: string; actor: string | null; probe: string | null })[];
+  if (!rows.length) return undefined;
+  const folders = lookFolders(owner);
   for (const r of rows) {
-    const at = pathOn(device, r);
-    if (at && placedOn(device, owner, r)) return { ...r, mac_path: at };
+    const at = pathOn(device, r, folders);
+    if (at && placedOn(device, owner, r, Date.now(), folders)) return { ...r, mac_path: at };
   }
   return undefined;
 }
@@ -176,6 +226,7 @@ export const macLookJob: DeviceJobSlot = {
     const level = libraryLookLevel(r.library_id);
     if (stretchLevelOf(db, r.version_id) !== level) storeStretches(db, r.version_id, [], level);
     const watch = wantsWatch(db, r.version_id, r.actor);
+    lastTaken.set(d.id, { id: r.id, at: Date.now() });
     held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch });
     libraryChanged(r.library_id);
     const stretches = (db.prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(r.version_id) as { a: number; b: number }[]).map((s) => [s.a, s.b]);

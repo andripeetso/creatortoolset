@@ -5,7 +5,8 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "devices-"));
-const { deviceForToken, forViewer, listDevices, pairDevice, reportOf, saveReport } = await import("./devices");
+const { deviceForToken, forViewer, listDevices, pairDevice, reportOf, saveReport, setDeviceWork } = await import("./devices");
+const { moveBalance, readBalance, writeBalance } = await import("./balance");
 import type { Device, MacReport } from "../../contracts/providers";
 
 // Re-pairing the same Mac (same owner, same name) replaces its row and revokes the old token.
@@ -25,6 +26,29 @@ describe("pairDevice", () => {
     const mine = listDevices((d) => d.owner === "tinyacrobatics").map((d) => d.name).sort();
     expect(mine).toEqual(["Tiny Mac", "Tiny Studio"]);
     expect(listDevices((d) => d.owner === "otheruser")).toHaveLength(1);
+  });
+
+  it("never adopts a library-only worker for a machine id; the worker's own re-pair (no machine id) keeps its id", () => {
+    const box = pairDevice("tinybox", "Tiny Box");
+    setDeviceWork(box.device.id, { v: 9, steps: [], library: true, libraryOnly: true });
+    const app = pairDevice("tinybox", "Tiny Box", "1.0", "hw-tiny-box-1");
+    expect(app.device.id).not.toBe(box.device.id);
+    expect(deviceForToken(`Bearer ${box.token}`)?.id).toBe(box.device.id);
+    const again = pairDevice("tinybox", "Tiny Box");
+    expect(again.device.id).toBe(box.device.id);
+    expect(again.replaced).toEqual([]);
+    expect(deviceForToken(`Bearer ${box.token}`)).toBeNull();
+    expect(listDevices((d) => d.owner === "tinybox")).toHaveLength(2);
+  });
+});
+
+describe("moveBalance", () => {
+  it("moves a re-paired computer's weight, libraries and originals to its new id, and keeps the new id's own", async () => {
+    await writeBalance("tinybal", { on: true, weights: { dev_a: 3, dev_n: 1, dev_x: 2 }, libraries: { dev_a: ["lib_1"] }, originals: { dev_a: true } });
+    await moveBalance("tinybal", ["dev_a"], "dev_b");
+    expect(await readBalance("tinybal")).toEqual({ on: true, weights: { dev_b: 3, dev_n: 1, dev_x: 2 }, libraries: { dev_b: ["lib_1"] }, originals: { dev_b: true } });
+    await moveBalance("tinybal", ["dev_x"], "dev_n");
+    expect((await readBalance("tinybal")).weights).toEqual({ dev_b: 3, dev_n: 1 });
   });
 });
 

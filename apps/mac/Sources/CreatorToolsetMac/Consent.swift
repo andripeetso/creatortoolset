@@ -7,6 +7,8 @@
 //   Mac said so for that server; otherwise each question is asked here.
 // A "no" silences that server's asks for the rest of the run, so a page that changes the command each time can't fill
 // the screen with alerts. One alert at a time across all jobs.
+// Only the server in the window asks. Every other server this Mac takes work from gets the answer kept for it, or a no
+// that is not kept, so it can ask again once it is in the window: nothing opens or takes focus for a server not shown.
 import AppKit
 import Foundation
 
@@ -81,6 +83,16 @@ final class Consent {
     private let oneAlert = NSLock()
     private var silenced = false
 
+    /// The window's server, as `key(for:)` writes it (nil: none). Set by the Shell, read from any job's thread.
+    private static let shownLock = NSLock()
+    private static var shown: String?
+    static func show(_ key: String?) { shownLock.lock(); shown = key; shownLock.unlock() }
+    static var shownKey: String? { shownLock.lock(); defer { shownLock.unlock() }; return shown }
+    /// A server's host as its runner names its Consent ("host" or "host:port"; This Mac's own server is localhost:PORT).
+    static func key(for url: URL) -> String { [url.host, url.port.map(String.init)].compactMap { $0 }.joined(separator: ":") }
+
+    private var isShown: Bool { Self.shownKey == host }
+
     init(host: String, store: ConsentStore = ConsentStore(), prompt: @escaping ConsentPrompt) {
         self.host = host
         self.store = store
@@ -97,10 +109,12 @@ final class Consent {
         return prompt(words.0, words.1, yes, no)
     }
 
-    /// Throws when a job asks for something this Mac has not allowed, after asking once (a yes is kept).
+    /// Throws when a job asks for something this Mac has not allowed, after asking once (a yes is kept). A server not in
+    /// the window is never asked for: what it was not allowed is refused, and nothing is kept or silenced.
     func check(_ needs: [ConsentItem]) throws {
         let kept = store.allowed(host)
         for item in needs where !kept.contains(item.key) {
+            guard isShown else { throw refused(item, when: "\(host) is open in Creator Toolset") }
             guard !isSilenced, let line = alertLine(item.text) else { throw refused(item) }
             let words = item.kind == .program ? ConsentWords.program(host, line) : ConsentWords.folder(host, line)
             guard show(words, yes: "Allow", no: "Don't Allow") else {
@@ -111,15 +125,17 @@ final class Consent {
         }
     }
 
-    private func refused(_ item: ConsentItem) -> RelayError {
+    private func refused(_ item: ConsentItem, when: String = "it asks") -> RelayError {
         RelayError(message: item.kind == .program
-            ? "This Mac did not allow \(host) to start that program. Allow it on the Mac when it asks, or pick another AI in Settings → Providers."
-            : "This Mac did not allow \(host) to use that settings folder. Allow it on the Mac when it asks, or clear the folder in Settings → Providers.")
+            ? "This Mac did not allow \(host) to start that program. Allow it on the Mac when \(when), or pick another AI in Settings → Providers."
+            : "This Mac did not allow \(host) to use that settings folder. Allow it on the Mac when \(when), or clear the folder in Settings → Providers.")
     }
 
-    /// Whether the server's chat answers the assistant's questions: asked on this Mac the first time, then kept.
+    /// Whether the server's chat answers the assistant's questions: asked on this Mac the first time, then kept. A server
+    /// not in the window gets no, not kept, so it asks once it is shown.
     func chatAnswers() -> Bool {
         if let kept = store.chatAnswers(host) { return kept }
+        guard isShown else { return false }
         let on = show(ConsentWords.askTrust(host), yes: "Allow", no: "Ask on This Mac")
         store.setChatAnswers(host, on)
         return on
@@ -127,6 +143,7 @@ final class Consent {
 
     /// One of the assistant's questions, answered on this Mac: "allowed" or "denied".
     func askHere(_ description: String, _ detail: String) -> String {
+        guard isShown else { return "denied" }
         let words = ConsentWords.ask(alertLine(description, max: 300) ?? "do something it couldn't describe", alertLine(detail, max: 1000) ?? "")
         return show(words, yes: "Allow", no: "Don't Allow") ? "allowed" : "denied"
     }

@@ -51,6 +51,8 @@ final class WorkerTests: XCTestCase {
         XCTAssertEqual(env["CT_PLUGINS_ON"], "face-blur")
         XCTAssertEqual(env["CT_CHANNEL"], "release")
         XCTAssertEqual(env["CT_EXIT_WITH_PARENT"], "1")
+        // one folder for every server's worker: one job at a time on this Mac (api/work/turn.ts)
+        XCTAssertEqual(env["CT_TURN_DIR"], appSupport.appendingPathComponent("work-turn").path)
         XCTAssertEqual(env["PLAYWRIGHT_BROWSERS_PATH"], appSupport.appendingPathComponent("runtime/chromium").path)
         XCTAssertEqual(env["HOME"], "/Users/me")
         for key in ["PORT", "HOST", "APP_SECRET", "CT_LOCAL", "SECRET"] { XCTAssertNil(env[key], key) }
@@ -119,16 +121,71 @@ final class WorkerTests: XCTestCase {
         XCTAssertEqual(workStatusLine("[work:status] null")!, nil)
         let s = try XCTUnwrap(workStatusLine(#"[work:status] {"editId":"e1","edit":"Beach day","line":"downloading proxies","done":340000000,"total":1200000000,"leftS":180}"#) ?? nil)
         XCTAssertEqual(workDetail(s), "downloading proxies, 340 MB of 1.2 GB, about 3 min left")
-        let row = workRow(s)
+        let row = workRow(s, host: "studio.example.com")
+        XCTAssertEqual(row.id, "work:studio.example.com")
         XCTAssertEqual(row.title, "Working on Beach day")
         XCTAssertEqual(row.href, "/editor/e1")
-        XCTAssertEqual(row.actions.map(\.run), [workCancelVerb])
+        XCTAssertEqual(row.actions.map(\.run), ["cancel-work:studio.example.com"])
         XCTAssertEqual(row.progress ?? 0, 340.0 / 1200.0, accuracy: 0.001)
         XCTAssertEqual(workDetail(WorkStatus(editId: "e", edit: "x", line: "analysing")), "analysing")
         XCTAssertEqual(workBytes(0), "0 MB")
         XCTAssertEqual(workBytes(12_400_000_000), "12 GB")
         XCTAssertEqual(workTimeLeft(30), "under a minute")
         XCTAssertEqual(workTimeLeft(3900), "about 1 h 5 min")
+    }
+
+    private func lines(_ name: String) -> [Int32] {
+        ((try? String(contentsOf: folder.appendingPathComponent("work/\(name)"), encoding: .utf8)) ?? "")
+            .split(separator: "\n").compactMap { Int32($0) }
+    }
+
+    /// PRD 28: a worker that says nothing (hung) is replaced on the next hint: start() returns at once, its whole group
+    /// (node and the ffmpeg it started) goes, and the new one starts only after it ended.
+    func testASilentWorkerIsReplacedWithItsChildrenAndNeverTwoAtOnce() async throws {
+        let w = worker("""
+            for p in $(cat "$DATA_DIR/started" 2>/dev/null); do kill -0 $p 2>/dev/null && touch "$DATA_DIR/overlap"; done
+            echo $$ >> "$DATA_DIR/started"
+            sleep 30 &
+            echo $! >> "$DATA_DIR/children"
+            wait
+            """)
+        w.silentAfter = 0.2
+        XCTAssertTrue(start(w))
+        try await wait("the worker and its child started") { lines("children").count == 1 }
+        XCTAssertTrue(start(w))   // not silent yet: nothing happens
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(w.isSilent)
+        let t = Date()
+        XCTAssertTrue(start(w))
+        XCTAssertLessThan(Date().timeIntervalSince(t), 0.1)
+        try await wait("a new worker started", timeout: 20) { lines("started").count == 2 }
+        let (old, child) = (lines("started")[0], lines("children")[0])
+        XCTAssertNotEqual(kill(old, 0), 0, "the old worker is gone")
+        try await wait("its child is gone") { kill(child, 0) != 0 }
+        XCTAssertFalse(exists("overlap"))
+        XCTAssertTrue(w.isRunning)
+        XCTAssertFalse(w.isSilent)
+        w.stop()
+        for c in lines("children") { kill(c, SIGKILL) }
+    }
+
+    /// PRD 29: `[work:alive]` keeps it from being silent, replaces nothing, and never reaches the log.
+    func testAnAliveWorkerIsNeverReplacedAndItsAliveLinesAreNotLogged() async throws {
+        let w = worker("""
+            echo $$ >> "$DATA_DIR/started"
+            while :; do echo '[work:alive]'; sleep 0.05; done
+            """)
+        w.silentAfter = 0.2
+        XCTAssertTrue(start(w))
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertFalse(w.isSilent)
+        XCTAssertTrue(start(w))
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(lines("started").count, 1)
+        let log = (try? String(contentsOfFile: AppLog.path, encoding: .utf8)) ?? ""
+        XCTAssertFalse(log.contains("worker: [work:alive]"))
+        w.stop()
+        XCTAssertFalse(Worker(folder: folder).needsUpdate)
     }
 
     func testTheLongPollsWorkHint() {

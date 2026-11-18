@@ -5,7 +5,8 @@ import { pipeline } from "node:stream/promises";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
-import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
+import { LOAD_PREFERENCES, type Device, type DeviceWaits } from "../contracts/providers";
+import { addAgain } from "../src/lib/wording";
 import { COPY_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
@@ -13,7 +14,7 @@ import { fitsFor, footageFor, heldCopy } from "./editor/reach";
 import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
-import { mayClaim, offOf, readBalance, writeBalance, type WorkerSeen } from "./lib/balance";
+import { mayClaim, moveBalance, offOf, readBalance, writeBalance, type WorkerSeen } from "./lib/balance";
 import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
@@ -33,6 +34,8 @@ import { copyFile, copyJob, copyRelayIn } from "./library/copies";
 import { env } from "./lib/env";
 import { workWaits } from "./work/place";
 import { SERVER_PLACE } from "./work/server-work";
+import { notePoll, noteRunnerCall } from "./work/library-package";
+import { refused, stuckOn } from "./work/waits";
 import { workApp } from "./work/routes";
 
 /**
@@ -78,7 +81,16 @@ const jobId = (c: Context): number => {
   return Number.isSafeInteger(n) && n > 0 ? n : 0;
 };
 
-// registered before the relay mount below, so these answer first (the relay's middleware is for its own routes)
+// registered before the relay mount below, so these answer first (the relay's middleware is for its own routes).
+// editor/claim is left out: a library worker claims looks there every loop, and a runner's own claims follow its poll.
+const RUNNER_CALL = /\/relay\/(?:(?!editor\/claim$)(?:editor|job|cutout|transcribe)\/|(?!work\/)[^/]+\/(?:text|step|ask|done|fail)$)/;
+devicesApp.use("/relay/*", async (c, next) => {
+  if (RUNNER_CALL.test(c.req.path)) {
+    const d = deviceForToken(c.req.header("authorization"));
+    if (d) noteRunnerCall(d.id);
+  }
+  await next();
+});
 
 /** GET /api/devices/relay/folders → RelayFoldersAnswer: the Settings → Folders folders this computer holds, for its
  *  grants and its scans (local first, P1; library/report.ts). */
@@ -340,7 +352,13 @@ devicesApp.post("/relay/transcribe/:id/fail", async (c) => {
 });
 
 devicesApp.route("/relay/work", workApp);
-devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
+devicesApp.route(
+  "/relay",
+  relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, (device, kinds, work) => {
+    if (typeof work === "number") notePoll(device);
+    return editorWaits(device, kinds, work);
+  }),
+);
 devicesApp.route("/storage", storageApp);
 
 /** Load balancing (Settings → Devices, lib/balance.ts readBalance): each person's own computers, and the server (SERVER_PLACE). */
@@ -461,6 +479,7 @@ devicesApp.post("/", async (c) => {
   if (replaced.length) {
     await moveProviders(u.username, replaced, device.id);
     aliasDevice(replaced, device.id);
+    await moveBalance(u.username, replaced, device.id);
   }
   return c.json({ device, token });
 });
@@ -479,8 +498,20 @@ devicesApp.get("/", (c) => {
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
   const admin = u.role === "admin";
   const list = listDevices((d) => d.owner === u.username || (admin && (d.owner === "workspace" || isAdminOwner(d.owner))));
-  return c.json(list.map((d) => online(forViewer(u.username, d))));
+  return c.json(
+    list.map((d) => {
+      const waits = waitsOf(d);
+      return { ...online(forViewer(u.username, d)), ...(waits ? { waits } : {}) };
+    }),
+  );
 });
+
+/** What the computer's row says about the library work it holds up (work/waits.ts): stuck work, else that it must be added again. */
+function waitsOf(d: Device): DeviceWaits | undefined {
+  const line = stuckOn.get(d.id);
+  if (line) return { line, tone: "stuck" };
+  return refused(d) ? { line: addAgain(d.name), tone: "needs" } : undefined;
+}
 
 /** The device an account may change: its own, or any for an admin. */
 function manageable(u: AuthVars["user"], id: string): Device | null {
@@ -538,6 +569,7 @@ devicePairApp.post("/", async (c) => {
   if (paired.replaced.length) {
     await moveProviders(paired.device.owner, paired.replaced, paired.device.id);
     aliasDevice(paired.replaced, paired.device.id);
+    await moveBalance(paired.device.owner, paired.replaced, paired.device.id);
   }
   return c.json({ device: paired.device, token: paired.token });
 });

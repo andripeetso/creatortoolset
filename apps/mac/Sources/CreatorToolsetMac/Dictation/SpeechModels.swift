@@ -4,6 +4,7 @@
 // `remove`): pressed in Settings' Dictation row they run here at once and the next claim tells the server
 // (`asked`, or the model is gone); pressed on the Voice page they reach this Mac as the server's wish (`want`).
 // The earlier dictation app's folder is only ever read: a model there that is removed is set aside, never deleted.
+// Every server this Mac takes work from says what it wants; a model goes only when no server signed in here wants it.
 import Foundation
 import WhisperKit
 
@@ -20,6 +21,11 @@ final class SpeechModels {
     nonisolated static let retry: TimeInterval = 300
 
     private static let askedKey = "dictation.asked"
+    /// Each server's last wishes, by host. Kept across launches: a server that has not answered yet since the app opened
+    /// still keeps its models (the first server to answer would otherwise remove the others').
+    private static let wantsKey = "dictation.wants"
+    /// Whether a server still counts: this Mac is signed in to it. Tests set it.
+    var signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil }
     nonisolated private static let asideKey = "dictation.setAside"
 
     func changed() { onChange?() }
@@ -80,9 +86,15 @@ final class SpeechModels {
         d.set((d.stringArray(forKey: Self.askedKey) ?? []).filter { !told.contains($0) }, forKey: Self.askedKey)
     }
 
-    /// What the owner wants here: each model here that is not wanted goes (Remove), each wanted one that is missing is
-    /// downloaded, one at a time. Ids this Mac doesn't run are left alone. True when something changed at once.
-    func want(_ wanted: [String], now: Date = Date()) -> Bool {
+    /// What the owner wants here, as `host` says it: each model here that no signed-in server wants goes (Remove), each
+    /// wanted one that is missing is downloaded, one at a time. Ids this Mac doesn't run are left alone. True when
+    /// something changed at once.
+    func want(_ wanted: [String], from host: String, now: Date = Date()) -> Bool {
+        let d = UserDefaults.standard
+        var wants = d.dictionary(forKey: Self.wantsKey) as? [String: [String]] ?? [:]
+        wants[host] = wanted
+        d.set(wants, forKey: Self.wantsKey)
+        let wanted = Self.union(wants, signedIn: signedIn)
         // never removed: what the person got here and the server has not heard yet, and the setup page's download
         let keep = (UserDefaults.standard.stringArray(forKey: Self.askedKey) ?? []) + [pageHolds].compactMap { $0 }
         let plan = Self.plan(wanted: wanted, held: Self.held(), downloading: Dictation.shared.download?.id, queue: queue, failed: failed,
@@ -93,6 +105,11 @@ final class SpeechModels {
         failed = plan.failed
         startNext()
         return changed
+    }
+
+    /// Every signed-in server's wishes in one list, in a stable order. Pure, so it is tested.
+    nonisolated static func union(_ wants: [String: [String]], signedIn: (String) -> Bool) -> [String] {
+        Array(Set(wants.filter { signedIn($0.key) }.values.joined())).sorted()
     }
 
     /// What `want` does, as data. Pure, so it is tested: a model here that is not wanted goes (not one downloading, nor
@@ -144,16 +161,16 @@ final class SpeechModels {
 
     // MARK: the relay's side (its own threads)
 
-    /// What the relay is given (RelayRunner `speech`): the claim's fields and the server's wishes, on the main actor,
+    /// What `host`'s relay is given (RelayRunner `speech`): the claim's fields and the server's wishes, on the main actor,
     /// and transcripts, on the relay's own thread.
-    nonisolated static var link: SpeechLink {
+    nonisolated static func link(host: String) -> SpeechLink {
         SpeechLink(
             claim: { DispatchQueue.main.sync { MainActor.assumeIsolated { SpeechModels.shared.claim() } } },
             answered: { sent, wanted in
                 DispatchQueue.main.sync {
                     MainActor.assumeIsolated {
                         SpeechModels.shared.claimed(sent)
-                        return SpeechModels.shared.want(wanted)
+                        return SpeechModels.shared.want(wanted, from: host)
                     }
                 }
             },

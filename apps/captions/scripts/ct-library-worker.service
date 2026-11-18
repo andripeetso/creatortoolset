@@ -10,6 +10,12 @@
 #     curl -s https://your.server.example/api/devices/pair -H 'content-type: application/json' \
 #       -d "{\"code\":\"<code>\",\"name\":\"$(hostname)\"}"            # answers {"token":"ctd_..."}
 #   systemctl --user enable --now ct-library-worker && loginctl enable-linger "$USER"
+#   cp ct-library-worker-env.path ct-library-worker-env.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now ct-library-worker-env.path
+#
+# A token the server refuses (the computer removed, or added again elsewhere) for five minutes stops it with exit 78,
+# which is not restarted. Once it is added again and the new token is in the env file, ct-library-worker-env.path starts
+# it again by itself: nobody needs to run systemctl.
 #
 # Stop it taking work: Settings → Computers → Load balancing → Off, or `systemctl --user disable --now ct-library-worker`.
 # Remove it from the account there too (its token stops working).
@@ -27,9 +33,11 @@ Environment=DATA_DIR=%h/ct-library-data
 WorkingDirectory=/path/to/creatortoolset/apps/captions
 # An absolute node 22, not a version manager's shim (`mise where node@22` + /bin/node)
 ExecStart=/path/to/node22/bin/node dist/boot.js
-# it exits after 10 minutes with nothing to do, and with 3 when the server needs a newer app: it is started again
+# it exits after a day with nothing to do, and with 3 when the server needs a newer app (a pulled and built checkout is
+# picked up 30 s later): it is started again. 78: its token was refused, and it waits for the env file to change
 Restart=always
 RestartSec=30
+RestartPreventExitStatus=78
 Nice=10
 KillMode=control-group
 

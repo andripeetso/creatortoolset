@@ -1,0 +1,15 @@
+# Starts the library worker again when its env file is written (a new token after adding the computer again), so a
+# worker that stopped on a refused token (exit 78, ct-library-worker.service) needs no systemctl. It runs
+# ct-library-worker-env.service, which restarts the worker: a worker still backing off on the old token gets the new one.
+# Install beside it:
+#   cp ct-library-worker-env.path ct-library-worker-env.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now ct-library-worker-env.path
+[Unit]
+Description=Restart the Creator Toolset library worker when its token changes
+
+[Path]
+PathChanged=%h/.config/ct-library-worker.env
+Unit=ct-library-worker-env.service
+
+[Install]
+WantedBy=default.target

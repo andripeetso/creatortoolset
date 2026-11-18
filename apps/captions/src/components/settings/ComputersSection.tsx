@@ -22,11 +22,12 @@ import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
 import { useCachedLoad } from "@/lib/local-cache";
 import { call } from "./StorageRows";
 import { unreachedShares, type StorageView } from "@contracts/storage";
-import type { Balance } from "@contracts/providers";
+import type { Balance, Device, DeviceWaits } from "@contracts/providers";
 import { listLibraries } from "@/lib/library";
 import type { LibrarySummary } from "@contracts/library";
 
 const STORAGE_ALL = "/api/devices/storage?all=1";
+const DEVICES = "/api/devices";
 import { LoadBalancing } from "./ServerWorkSection";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
@@ -197,7 +198,13 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
   // and the line goes by itself once its next report has the share
   const { data: storage } = useCachedLoad<StorageView>(STORAGE_ALL, () => call<StorageView>(STORAGE_ALL), { topic: "devices", own: true });
   const unreached = primary.work && storage ? unreachedShares(storage.folders, primary.id) : [];
-  const state = offline ? (
+  // the library work it holds up (api/work/waits.ts): work it has not taken (red), or that it must be added again
+  const { data: listed } = useCachedLoad<(Device & { waits?: DeviceWaits })[]>(DEVICES, () => call(DEVICES), { topic: ["devices", "library"], own: true });
+  const held = records.map((r) => listed?.find((d) => d.id === r.id)?.waits).filter((w): w is DeviceWaits => !!w);
+  const waits = held.find((w) => w.tone === "stuck") ?? held[0];
+  const state = waits ? (
+    <Status tone={waits.tone === "stuck" ? "broken" : "attention"}>{waits.line}</Status>
+  ) : offline ? (
     <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
   ) : check && !readyLine(primary, check) ? (
     <Status tone="attention">{failedRead ? `Can't read ${failedRead.name}` : "Test failed"}</Status>
@@ -276,7 +283,7 @@ function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
       <Row
         id="use-this-mac"
         title="Take work from this server"
-        description="This Mac runs this server's jobs for your account while the app shows it: AI requests, editor steps and media library work."
+        description="This Mac runs this server's jobs for your account while Creator Toolset is open: AI requests, editor steps and media library work."
         status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
         control={
           <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Take work from this server" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />

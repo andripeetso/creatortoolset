@@ -1,0 +1,7 @@
+# Run by ct-library-worker-env.path when the library worker's env file changes: the worker starts again on the new token.
+[Unit]
+Description=Restart the Creator Toolset library worker on its new token
+
+[Service]
+Type=oneshot
+ExecStart=systemctl --user restart ct-library-worker.service
