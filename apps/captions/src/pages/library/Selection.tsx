@@ -334,11 +334,12 @@ export function saveFile(href: string) {
 
 /**
  * Show in Finder, in the Mac app. On the server on this Mac every clip has its file here; on a server elsewhere only a
- * clip read in place from a computer's folder can be (inside a folder this Mac granted, apps/mac Reveal.swift): an
- * upload from a phone has none, so it is not offered there. Decided from the card, so the menu never changes once open.
+ * clip read in place from a computer's folder, or one whose original this computer has (its place rows, `placeWord`
+ * here), can be (apps/mac Reveal.swift): an upload from a phone with no copy here has none, so it is not offered there.
+ * Decided from the card, so the menu never changes once open.
  */
-export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer">; onProblem: (p: string) => void }) {
+export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer" | "placeWord">; onProblem: (p: string) => void }) {
   const assetId = asset.id;
-  if (!servedHere() && !asset.onComputer) return null;
+  if (!servedHere() && !asset.onComputer && asset.placeWord?.word !== "here") return null;
   return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }

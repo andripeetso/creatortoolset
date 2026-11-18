@@ -115,9 +115,11 @@ private struct ReviewFile: Decodable {
 }
 
 extension Site {
-    /// The clip's file on the server's computer, as the server tells its admin (nil for anyone else, or none).
-    func clipPath(library: String, asset: String) async -> String? {
-        ((try? await get("/api/library/\(library)/assets/\(asset)")) as ClipFile?)?.sourcePath
+    /// The clip's file on the server's computer, as the server tells its admin (nil for anyone else, or none). With
+    /// `device` (this Mac's id there) a clip whose original this Mac has gives its path here (api/library/search.ts sourcePathFor).
+    func clipPath(library: String, asset: String, device: String? = nil) async -> String? {
+        let asker = device?.addingPercentEncoding(withAllowedCharacters: .alphanumerics).map { "?device=\($0)" } ?? ""
+        return ((try? await get("/api/library/\(library)/assets/\(asset)\(asker)")) as ClipFile?)?.sourcePath
     }
 
     /// A Review version's own file on the computer that made it, as the server tells the video's managers (nil else).
