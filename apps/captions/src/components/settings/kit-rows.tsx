@@ -1,7 +1,9 @@
 import { Children, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { PageTitleContext } from "./page-action";
 import type { SearchRowId } from "./search";
@@ -41,10 +43,43 @@ export function Card({ children, className }: { children: ReactNode; className?:
   );
 }
 
+/**
+ * The ⓘ after a label. Hover and keyboard focus open a tooltip after 350 ms; a tap opens a popover (Radix tooltips do not
+ * open on tap). The tooltip closes on press, so a tap never shows both.
+ */
+export function InfoTip({ text }: { text: ReactNode }) {
+  const [tapped, setTapped] = useState(false);
+  return (
+    <Popover open={tapped} onOpenChange={setTapped}>
+      <Tooltip delayDuration={350}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="About this"
+              className="ml-1.5 inline-flex size-4 shrink-0 translate-y-px items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Info className="size-3.5" aria-hidden />
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-64 whitespace-normal text-left leading-snug">
+          {text}
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent side="top" className="w-64 text-xs leading-snug">
+        {text}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 interface RowProps {
   id?: SearchRowId;
   /** The label, a few words. */
   title: ReactNode;
+  /** The ⓘ tooltip text after the title: one sentence, at most two, ending with a full stop. No tip where the title says it all. */
+  tip?: ReactNode;
   /** One short line, only when it adds something the title doesn't say. */
   description?: ReactNode;
   /** Muted text under the title. Amber or red only through `<Status tone>` when the person must act. */
@@ -74,12 +109,15 @@ export function Row(props: RowProps | LegacyRowProps) {
   return <RowBody {...props} />;
 }
 
-function RowBody({ id, title, description, status, control, children, className }: RowProps) {
+function RowBody({ id, title, tip, description, status, control, children, className }: RowProps) {
   return (
     <div data-settings-row={id} className={cn("px-3 py-3 sm:px-4", className)}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="text-sm font-medium text-foreground">{title}</div>
+          <div className="text-sm font-medium text-foreground">
+            {title}
+            {tip && <InfoTip text={tip} />}
+          </div>
           {description && <div className="text-xs text-muted-foreground">{description}</div>}
           {status && <div className="pt-0.5 text-xs text-muted-foreground">{status}</div>}
         </div>
@@ -95,10 +133,12 @@ function RowBody({ id, title, description, status, control, children, className 
  * status line, and the actions on the right: a `size="sm"` button or an `InUse` word, then the `RowMenu` last. One line
  * each: long text truncates. (`size="xs"` is only the ghost "+ Add" beside a section's title.)
  */
-export function ListRow({ id, icon, title, subtitle, status, actions, className }: {
+export function ListRow({ id, icon, title, tip, subtitle, status, actions, className }: {
   id?: SearchRowId;
   icon?: ReactNode;
   title: ReactNode;
+  /** The ⓘ tooltip after the title, as on Row. */
+  tip?: ReactNode;
   subtitle?: ReactNode;
   status?: ReactNode;
   actions?: ReactNode;
@@ -115,7 +155,10 @@ export function ListRow({ id, icon, title, subtitle, status, actions, className 
     >
       {icon && <span className="flex size-5 items-center justify-center text-muted-foreground [&>svg]:size-4">{icon}</span>}
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-foreground">{title}</div>
+        <div className="truncate text-sm font-medium text-foreground">
+          {title}
+          {tip && <InfoTip text={tip} />}
+        </div>
         {/* below sm a long line wraps to two lines instead of being cut mid-word */}
         {subtitle && <div className="line-clamp-2 break-words text-xs text-muted-foreground sm:line-clamp-1">{subtitle}</div>}
         {status && <div className="min-w-0 pt-0.5 text-xs text-muted-foreground">{status}</div>}
