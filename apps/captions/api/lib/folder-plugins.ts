@@ -211,6 +211,8 @@ const failures = new Map<string, string>();
 const fromFolder = new Set<ServerPlugin>();
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// plug-ins that left the app: a copy downloaded before stays in the folder, and is never loaded again
+const RETIRED: Record<string, string> = { "editor-face-blur": "Blur faces is no longer part of the app. Delete its folder from the plug-ins folder." };
 
 /**
  * The server halves of the plug-ins the person switched on, each admitted by itself against `compiled` and the ones
@@ -257,6 +259,7 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
     [...on].map(async ([id, fingerprint]): Promise<{ id: string; fingerprint: string; built?: Built; out: string; error?: string }> => {
       const out = path.join(dir("plugins-run"), id, "out");
       try {
+        if (RETIRED[id]) throw new Error(RETIRED[id]);
         if (state.stopped[id]) throw new Error(state.stopped[id]!.error);
         const approved = path.join(dir("plugins-approved"), id, fingerprint);
         const files = existsSync(approved) ? readFolder(approved) : null;

@@ -286,7 +286,7 @@ export interface EditorStepInput {
   values: Record<string, string>;
   workDir: string;
   signal: AbortSignal;
-  /** a line for the draft's notes, a whole sentence ("Blur faces found no face that matches …"): shown with the edit */
+  /** a line for the draft's notes, a whole sentence ("Voice found no speech to clean …"): shown with the edit */
   note(text: string): void;
   /** one line on the edit page while it runs: what it is doing now (a first-time install, waiting for the person's AI) */
   say(text: string): void;
