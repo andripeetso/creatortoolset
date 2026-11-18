@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? process.env.TMPDIR ?? tmpdir(), "plugin-workspaces-"));
 const dir = process.env.DATA_DIR;
 
-const { choiceOf, guardPlugins, pluginGuard, serverWide, pluginOnIn, pluginsOffIn, pluginWorkspacesApp, setPluginsForTest } = await import("./plugin-workspaces");
+const { choiceOf, forgetPluginWorkspaces, guardPlugins, pluginGuard, serverWide, pluginOnIn, pluginsOffIn, pluginWorkspacesApp, setPluginsForTest } = await import("./plugin-workspaces");
 const { mountPlugins } = await import("./plugin");
 const { inRequestWorkspace } = await import("./workspace-scope");
 const { default: faceBlur } = await import("../../editor-steps/blur-faces/plugin");
@@ -153,5 +153,17 @@ describe("per workspace, one on and one off", () => {
     expect((await inWs("/api/tiny-clean", "ws-tiny")).status).toBe(200);
     expect((await inWs("/api/tiny-clean", "ws-homes")).status).toBe(403);
     expect((await pluginsOffIn([{ id: "ws-homes", owner: "ana" }]))["ws-homes"]).toEqual(expect.arrayContaining(["tiny-cleaner", "clean"]));
+  });
+});
+
+describe("a removed plug-in", () => {
+  it("leaves no choice behind, and installed again it is a new install", async () => {
+    expect((await put("tiny-echo", { only: ["ws-homes"] })).status).toBe(200);
+    expect(await choiceOf(old, "ana")).toBeTruthy();
+    await forgetPluginWorkspaces("tiny-echo");
+    await forgetPluginWorkspaces("old-helper");
+    expect(await choiceOf(plain, "ana")).toEqual({ all: true });
+    // it was installed before; installed again it works by itself, so it starts off everywhere
+    expect(await choiceOf(old, "ana")).toEqual({ only: [] });
   });
 });

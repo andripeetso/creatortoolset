@@ -37,7 +37,7 @@ export function InstalledView({
       {(builtIn.length > 0 || fromFolder.length > 0) && (
         <Section title="Plug-ins">
           {builtIn.length > 0 && <PluginRows plugins={builtIn} />}
-          {folderPlugins && fromFolder.length > 0 && <FolderPluginRows folder={folderPlugins} plugins={plugins} />}
+          {folderPlugins && fromFolder.length > 0 && <FolderPluginRows folder={folderPlugins} plugins={plugins} reload={reload} />}
         </Section>
       )}
       <Section title="Packs">

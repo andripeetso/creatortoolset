@@ -6,18 +6,32 @@ import { Switch } from "@/components/ui/switch";
 import { Advanced, Card, InUse, ListRow, RowMenu, Status, type RowMenuItem } from "@/components/settings/ui";
 import { folderPluginFailures, folderRowNote, offersNewVersion, type FolderPlugins } from "@/lib/folder-plugins";
 import type { PluginAdd, PluginInfo } from "@/lib/plugin";
-import { pluginsAuto, resumePlugins, setPluginsAuto, showPluginFolder, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply, type PluginsAuto } from "@/lib/thisMac";
+import { pluginsAuto, removePlugin, resumePlugins, setPluginsAuto, showPluginFolder, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply, type PluginsAuto } from "@/lib/thisMac";
+import { PluginHereSwitch } from "@/components/settings/PluginWorkspaces";
 
 /**
  * The plug-ins this server is built with, one row each (the ones from the person's own folder are FolderPluginRows, below). "Contents" folds the list, and each line that has a place
- * is a link: it closes Community and opens that place (Settings, Home, a page). Nothing here can be removed.
+ * is a link: it closes Community and opens that place (Settings, Home, a page). Each has its On switch for the window's
+ * workspace and Settings (its workspaces). None can be removed: the server is built with them.
  */
 export function PluginRows({ plugins }: { plugins: PluginInfo[] }) {
   return (
     <Card>
       {plugins.map((p) => (
         <div key={p.id} className="[&>*+*]:border-t [&>*+*]:border-border/50">
-          <ListRow title={p.name} subtitle={p.about} status={<Status>Built into this server</Status>} />
+          <ListRow
+            title={p.name}
+            subtitle={p.about}
+            status={<Status>Built into this server</Status>}
+            actions={
+              <>
+                <PluginHereSwitch id={p.id} name={p.name} />
+                <Button asChild size="sm" variant="outline">
+                  <Link to={`/settings/plugin/${encodeURIComponent(p.id)}`}>Settings</Link>
+                </Button>
+              </>
+            }
+          />
           {p.adds.length > 0 && <Advanced summary="Contents">{p.adds.map((a) => <AddLine key={a.text} add={a} />)}</Advanced>}
         </div>
       ))}
@@ -43,7 +57,7 @@ function AddLine({ add }: { add: PluginAdd }) {
  * A plug-in that could not load says why in red. The switches exist only in the Mac app on the Mac that runs the
  * server; in a browser the rows are read-only. After a switch the Mac app restarts its server and reloads this window.
  */
-export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; plugins: PluginInfo[] }) {
+export function FolderPluginRows({ folder, plugins, reload }: { folder: FolderPlugins; plugins: PluginInfo[]; reload: () => Promise<void> }) {
   const mac = !!thisMacBridge();
   const [busy, setBusy] = useState<string | null>(null);
   const [said, setSaid] = useState<Record<string, string>>({});
@@ -80,7 +94,18 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
         // by itself only for the folder it was switched on from: a renamed folder's change waits for the click
         const rowAuto = auto?.auto && row.id && auto.folders[row.id] === row.folder ? { waiting: auto.waiting.includes(row.id), note: auto.notes[row.id] } : undefined;
         const note = said[key] ? { tone: "broken" as const, text: said[key] } : folderRowNote(row, row.id ? folderPluginFailures.get(row.id) : undefined, folder.paused, rowAuto);
-        const menu: RowMenuItem[] = row.folder ? [{ label: "Show in Finder", onSelect: () => void showPluginFolder(row.folder) }] : [];
+        const menu: RowMenuItem[] = row.folder
+          ? [
+              { label: "Show in Finder", onSelect: () => void showPluginFolder(row.folder) },
+              {
+                label: "Remove",
+                destructive: true,
+                confirm: { title: `Remove ${row.name}?`, body: "Its folder is deleted from the plug-ins folder. What it saved or made is kept.", ok: "Remove" },
+                // an on one: the Mac app restarts its server and reloads this window; an off one is read again here
+                onSelect: () => run(key, () => removePlugin(row.folder, row.on), row.on).then(() => (row.on ? undefined : reload())),
+              },
+            ]
+          : [];
         return (
           <div key={key} className="[&>*+*]:border-t [&>*+*]:border-border/50">
             <ListRow

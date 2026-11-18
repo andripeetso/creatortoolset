@@ -1,5 +1,5 @@
 import type { InstalledPack } from "@contracts/packs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CatalogEntry, UpdateRow } from "@contracts/pack-catalog";
 import { useCachedLoad } from "@/lib/local-cache";
 import { browseCatalog, catalogUpdates, json } from "@/lib/pack-catalog";
@@ -33,19 +33,28 @@ export function useCommunityData() {
   // The plug-ins in the person's own folder, on the Mac app's server (api/lib/folder-plugins.ts). Nothing anywhere else.
   // Never a saved copy: a row's switch shows what the server runs now.
   const [folderPlugins, setFolderPlugins] = useState<FolderPlugins | null>(null);
+  const live = useRef(true);
+  const refreshFolder = useCallback(
+    () =>
+      fetch("/api/plugins/folder")
+        .then((r) => json<FolderPlugins>(r))
+        .then((j) => void (live.current && setFolderPlugins(j)))
+        .catch(() => {}),
+    [],
+  );
   useEffect(() => {
-    let live = true;
-    fetch("/api/plugins/folder")
-      .then((r) => json<FolderPlugins>(r))
-      .then((j) => live && setFolderPlugins(j))
-      .catch(() => {});
+    live.current = true;
+    void refreshFolder();
     return () => {
-      live = false;
+      live.current = false;
     };
-  }, []);
+  }, [refreshFolder]);
   const refreshCatalog = catalog.refresh;
   const refreshMine = mine.refresh;
-  const reload = useCallback(() => Promise.all([refreshCatalog().catch(() => {}), refreshMine().catch(() => {})]).then(() => undefined), [refreshCatalog, refreshMine]);
+  const reload = useCallback(
+    () => Promise.all([refreshCatalog().catch(() => {}), refreshMine().catch(() => {}), refreshFolder()]).then(() => undefined),
+    [refreshCatalog, refreshMine, refreshFolder],
+  );
   return {
     catalog: catalog.data,
     catalogError: catalog.data ? null : catalog.error || null,

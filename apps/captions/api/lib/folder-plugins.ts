@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import type { Hono } from "hono";
 import { hostedMode } from "./env";
 import { admissionProblem, type ServerPlugin } from "./plugin";
+import { forgetPluginWorkspaces } from "./plugin-workspaces";
 
 // Plug-ins from the person's own folder, for the server the Mac app runs on their Mac (CT_LOCAL=1 with CT_APP_FOLDER).
 // A hosted or Docker server never reads a folder: there a plug-in would see every account's data, so its plug-ins
@@ -504,6 +505,31 @@ export async function prepareFolderPlugin(folder: string): Promise<Prepared> {
 }
 
 /**
+ * Remove, for good: the folder in plugins/, and the copies the app took of it (plugins-approved, plugins-run), and its
+ * workspace choices. What the plug-in saved in the data folder, and anything it made, stays. A plug-in that is on keeps
+ * running until the page asks the Mac app to switch it off (its record, then a restart). Returns its id when it had one.
+ */
+export async function removeFolderPlugin(folder: string): Promise<string | null> {
+  if (!/^[^./\\][^/\\]*$/.test(folder)) throw new Error("Not a plug-in folder");
+  const live = path.join(dir("plugins"), folder);
+  if (!lstatSync(live, { throwIfNoEntry: false })) throw new Error("The folder is gone");
+  let id: string | null = null;
+  try {
+    id = describeFiles(readFolder(live)).id;
+  } catch {
+    // a folder that can't be read as a plug-in still goes: it has no copies
+  }
+  rmSync(live, { recursive: true, force: true });
+  // the copies are the id's, unless another folder is the plug-in that is on with that id
+  const home = id ? parseFolders(process.env.CT_PLUGINS_FOLDERS).get(id) : undefined;
+  if (id && (!parseOn(process.env.CT_PLUGINS_ON).has(id) || home === undefined || home === folder)) {
+    for (const d of ["plugins-approved", "plugins-run"] as const) rmSync(path.join(dir(d), id), { recursive: true, force: true });
+    await forgetPluginWorkspaces(id);
+  }
+  return id;
+}
+
+/**
  * The routes: the list and Switch on's first step for the admin, and the page halves for the app's own page.
  * All under /api, so behind the login like every other route.
  */
@@ -523,6 +549,14 @@ export function mountFolderPlugins(app: Hono<any, any, any>): void {
     if (!folderPluginsEnabled() || !admin(c)) return c.json({ error: "Plug-ins are switched on in the Creator Toolset Mac app, on the Mac that runs it." }, 403);
     try {
       return c.json(await prepareFolderPlugin(c.req.param("name")));
+    } catch (e) {
+      return c.json({ error: message(e) }, 400);
+    }
+  });
+  app.delete("/api/plugins/folder/:name", async (c) => {
+    if (!folderPluginsEnabled() || !admin(c)) return c.json({ error: "Plug-ins are removed in the Creator Toolset Mac app, on the Mac that runs it." }, 403);
+    try {
+      return c.json({ id: await removeFolderPlugin(c.req.param("name")) });
     } catch (e) {
       return c.json({ error: message(e) }, 400);
     }
