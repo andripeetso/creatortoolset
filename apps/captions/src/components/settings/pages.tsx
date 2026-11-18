@@ -13,6 +13,7 @@ import { UsageSection } from "./UsageSection";
 import { WorkspaceSection } from "./WorkspaceSection";
 import { ComputersSection } from "./ComputersSection";
 import { FoldersSection, StorageSection } from "./FoldersSection";
+import { WorkspacePoliciesSection } from "./WorkspacePoliciesSection";
 import { WorkspaceDetailsSection } from "./WorkspaceDetailsSection";
 import { MediaLibrarySection } from "./MediaLibrarySection";
 import { SoundEffectsSection } from "./SoundEffectsSection";
@@ -47,6 +48,7 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   keys: ApiKeysSection,
   "own-ai": OwnAiSection,
   servers: ServersSection,
+  policies: WorkspacePoliciesSection,
   team: WorkspaceSection,
   admin: AdminSection,
   account: AccountSection,

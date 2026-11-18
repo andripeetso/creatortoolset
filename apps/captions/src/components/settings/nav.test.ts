@@ -10,8 +10,15 @@ describe("the sidebar per install and role", () => {
       "general", "appearance", "tools", "voice", "devices", "own-ai",
       "providers", "usage",
       "workspace", "connectors", "folders", "library", "sound-effects", "automations", "memory",
-      "storage", "keys",
+      "policies", "storage", "keys",
     ]);
+  });
+
+  it("Workspace policies is first in the Server group, and only the server's admin sees it", () => {
+    expect(listed(at(true, true))).toEqual(expect.arrayContaining(["policies", "team"]));
+    expect(listed(at(true, true)).filter((id) => id === "policies" || id === "team" || id === "storage")).toEqual(["policies", "team", "storage"]);
+    expect(listed(at(true, false))).not.toContain("policies");
+    expect(listed(at(false, false))).not.toContain("policies");
   });
 
   it("the Mac app adds Servers to the devices", () => {
