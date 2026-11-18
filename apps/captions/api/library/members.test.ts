@@ -27,7 +27,6 @@ writeFileSync(
 const { createUser } = await import("../users");
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
-const { searchApp } = await import("./search");
 const { pairDevice } = await import("../lib/devices");
 const { homeOf } = await import("./access");
 const { inRequestWorkspace } = await import("../lib/workspace-scope");
@@ -42,7 +41,6 @@ app.use(async (c, next) => {
 });
 app.use(inRequestWorkspace);
 app.route("/api/library", libraryApp);
-app.route("/api/library", searchApp);
 const call = (user: string, url: string, body?: unknown) =>
   app.request(url, body === undefined ? { headers: { "x-test-user": user } } : { method: "POST", headers: { "x-test-user": user, "content-type": "application/json" }, body: JSON.stringify(body) });
 
