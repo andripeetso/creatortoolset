@@ -119,16 +119,16 @@ const claimWork = (token: string, body: Record<string, unknown> = {}) =>
 async function pollWait(token: string, body: unknown, ua = "CreatorToolset/0.17.6"): Promise<{ status: number; body: any }> {
   let done = false;
   const now = Date.now();
-  const p = post(token, "/api/devices/relay/wait", body, ua).then(async (r) => {
+  const p = Promise.resolve(post(token, "/api/devices/relay/wait", body, ua)).then(async (r) => {
     done = true;
     return { status: r.status, body: r.status === 204 ? null : await r.json() };
   });
-  for (let i = 0; i < 10 && !done; i++) {
+  for (let i = 0; i < 50 && !done; i++) {
     await new Promise((r) => setImmediate(r));
-  }
-  if (!done) {
-    await vi.advanceTimersByTimeAsync(25_000);
-    vi.setSystemTime(now);
+    if (!done && i >= 2) {
+      await vi.advanceTimersByTimeAsync(25_000);
+      vi.setSystemTime(now);
+    }
   }
   return p;
 }

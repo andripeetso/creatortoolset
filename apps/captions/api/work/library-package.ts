@@ -44,6 +44,7 @@ import { serveBlob } from "../library/routes";
 import { askVersionIn, fileTranscript, hearSound, keySound, NeedsKey, transcribeRoute } from "../library/transcribe";
 import { resolveDevice } from "../library/whereis";
 import { aiWaits, describeFromStills, leaveToComputers } from "../library/worker";
+import { status } from "./waits";
 import { mayRead } from "./offline";
 
 /** The library jobs a computer runs; "send" only a computer can. */
@@ -90,7 +91,7 @@ export const noteRunnerCall = (id: string, now = Date.now()): void => {
 };
 export const polls = (d: Pick<Device, "id">, now = Date.now()): boolean => now - (polled.get(d.id) ?? -Infinity) < POLL_FRESH_MS;
 const isOldAppVersion = (v?: string): boolean => /^\d+\.\d+\.\d+/.test(v ?? "") && !macAtLeast(v, MAC_WORK_SINCE);
-export const oldApp = (d: Pick<Device, "id" | "version">, now = Date.now()): boolean => isOnline(d.id, now) && isOldAppVersion(d.version);
+export const oldApp = (d: Pick<Device, "id" | "version">, _now = Date.now()): boolean => isOnline(d.id) && isOldAppVersion(d.version);
 export const relayBusy = (d: Pick<Device, "id" | "version">, now = Date.now()): boolean =>
   now - (called.get(d.id) ?? -Infinity) < ONLINE_MS && !polls(d, now) && !isOldAppVersion(d.version);
 export const asks = (d: Pick<Device, "id" | "version" | "work">, now = Date.now()): boolean =>
@@ -99,7 +100,7 @@ export const startsForLibrary = (d: Pick<Device, "id" | "work">): boolean =>
   (d.work?.v ?? 0) >= WORK_MIN && !(d.work?.tooOld !== undefined && d.work.v <= d.work.tooOld) && !takesLibrary(d) && !d.work?.libraryOnly && !isThisMachine(d.id);
 
 export function lift(d: Device, now = Date.now()): Device {
-  const { tooOld: _, ...rest } = d.work ?? { v: WORK_MIN };
+  const { tooOld: _, ...rest } = d.work ?? { v: WORK_MIN, steps: [] };
   return {
     ...d,
     work: {
@@ -113,7 +114,7 @@ export function lift(d: Device, now = Date.now()): Device {
   };
 }
 
-interface LibRow extends FileRow {
+export interface LibRow extends FileRow {
   library_id: string;
   asset_id: string;
   title: string;
@@ -124,12 +125,13 @@ interface LibRow extends FileRow {
   from_path: string | null;
   from_device: string | null;
   proxy_bytes: number | null;
+  created_by?: string | null;
 }
 
-function rowOf(versionId: string | null): LibRow | undefined {
+export function rowOf(versionId: string | null): LibRow | undefined {
   return libraryDb()
     .prepare(
-      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256, v.quick,
+      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256, v.quick, v.created_by,
          a.library_id, a.id AS asset_id, a.title, a.kind, d.storage_key AS proxy, d.bytes AS proxy_bytes
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
@@ -192,7 +194,7 @@ function peersOf(owner: string, me: Device, now: number): Device[] {
 }
 
 /** Whether `device` holds a library job now (on the jobs row, so a restart of this server keeps it). */
-const holding = (device: string) => !!libraryDb().prepare("SELECT 1 FROM jobs WHERE state = 'running' AND held_by = ?").get(device);
+export const holding = (device: string) => !!libraryDb().prepare("SELECT 1 FROM jobs WHERE state = 'running' AND held_by = ?").get(device);
 
 /**
  * The job `device` holds (claimed by it, still running), else undefined: on claim `claim` when the computer names one;
@@ -404,6 +406,7 @@ export function computerTakesLibrary(job: JobRow): boolean {
 leaveToComputers.kinds = KINDS;
 leaveToComputers.test = computerTakesLibrary;
 leaveToComputers.line = libraryWaitLine;
+leaveToComputers.status = status;
 
 /**
  * Why a library job no computer can take now waits, naming its folder: "Only Mac Studio can read Shoots" (that one is

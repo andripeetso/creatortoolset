@@ -259,11 +259,12 @@ export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
 };
 
 /** "5 descriptions need an AI provider", and where to add it. */
-export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean }): { text: string; href: string } {
+export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean; reason?: string; href?: string }): { text: string; href: string } {
   const one = w.count === 1;
+  if (w.reason) return { text: `${stepCount(w)} · ${w.reason}`, href: w.href ?? "/settings/devices" };
   if (w.away)
-    return { text: `${stepCount(w)} ${one ? "waits" : "wait"} for one of your computers`, href: "/settings/devices" };
-  return { text: `${stepCount(w)} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
+    return { text: `${stepCount(w)} ${one ? "waits" : "wait"} for one of your computers`, href: w.href ?? "/settings/devices" };
+  return { text: `${stepCount(w)} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: w.href ?? NEEDS[w.step].href };
 }
 
 /** "6 descriptions", "1 file". */
@@ -361,6 +362,12 @@ export interface LibraryProgress {
     computer?: boolean;
     /** waits for one of the person's computers to be on: this server does not do that video work (worker.ts leftToComputers) */
     away?: boolean;
+    wait?: "offline" | "stuck" | "needs" | "set" | "cannot";
+    reason?: string;
+    href?: string;
+    mine?: boolean;
+    device?: string;
+    devices?: string[];
   }[];
   /** each step's count, in the order they run; only the steps this run has */
   stages?: LibraryStage[];
