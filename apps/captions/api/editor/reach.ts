@@ -175,21 +175,6 @@ export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">
   return can.length ? `Only ${either(can.map((c) => c.x.name))} can read ${what}` : `No computer can read ${what}: add its folder to a computer in Settings → Folders`;
 }
 
-/**
- * The library whose server copies would let a waiting step run, when Downloads is off for it (UNIFIED-PRD 4.7, S5.1):
- * the server won't run the step, no computer of the person reads every file where it is, and a file has a copy. The
- * chat then asks to turn Automatic downloads on (action_needed downloads). Undefined otherwise.
- */
-export function downloadsAsk(job: Pick<JobRow, "kind" | "version_id" | "actor">): string | undefined {
-  if (!usesFootage(job.kind) || serverOpen(job)) return undefined;
-  const rows = editFiles(editOf(job));
-  const folders = foldersOf(job.actor);
-  const onDisk = (host: string) => rows.every((r) => { const f = fileFor(r, host, folders, isThisMachine); return !!f && "path" in f; });
-  const cs = computers(job.actor);
-  if (!rows.length || !cs.length || cs.some((c) => onDisk(c.x.id))) return undefined;
-  return rows.find((r) => r.library_id && lightKey(r) && !downloadsAllow(job.actor, r.library_id))?.library_id;
-}
-
 /** The same window as isOnline (lib/devices.ts). */
 export const ONLINE_MS = 40_000;
 
