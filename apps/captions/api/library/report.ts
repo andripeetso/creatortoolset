@@ -1,14 +1,16 @@
 import { FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
-import { EVERY_WORKSPACE, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
+import { EVERY_WORKSPACE, editorDirsOf, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
 import type { Device } from "../../contracts/providers";
 import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
 import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
-import { ownedProjects } from "../lib/workshop/workspace";
-import { ensureLibrary, libraryChanged } from "./access";
+import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
+import { isTeamMember } from "../lib/workspaces";
+import { ensureLibrary, librariesHere, libraryChanged } from "./access";
 import { libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
+import { setTrashedAt, trashHeld } from "./trash";
 import { hasMembers } from "./upload-gate";
 import { indexOnMac, type OnMacIndex } from "./on-mac";
 
@@ -24,7 +26,7 @@ const db = () => libraryDb();
 const nfc = (p: string) => p.normalize("NFC");
 
 /** A media folder of a computer, as its agent sees it (GET /api/devices/relay/folders). */
-export const useOf = (f: StorageFolder): RelayFolder["use"] => (f.role === "finals" ? "finals" : f.role === "library" ? "exports" : "media");
+export const useOf = (f: StorageFolder): RelayFolder["use"] => (f.role === "projects" ? "projects" : f.role === "library" || f.role === "finals" ? "exports" : "media");
 
 /** The workspace ids a folder is in, "*" for every one; a folder from before workspaces is the first brand's. */
 async function workspacesOf(owner: string, f: StorageFolder): Promise<string[] | "*"> {
@@ -45,19 +47,38 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   );
 }
 
-/** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". */
-export async function librariesOf(owner: string, f: StorageFolder): Promise<string[]> {
+/** A library a folder's files are matched in. `locate`: a workspace the owner was given by its team owner; the files are
+ *  only found there (version_places on this computer), never indexed, never new versions. */
+export type FolderLibrary = { id: string; locate: boolean };
+
+/** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". A member
+ *  never gets a library of a workspace they were given: the owner's one is used, locate only. */
+export async function librariesOf(owner: string, f: StorageFolder): Promise<FolderLibrary[]> {
   const ws = await workspacesOf(owner, f);
-  const ids = ws === "*" ? (await ownedProjects(owner)).map((p) => p.id) : ws;
-  // an account with no workspaces: its one library
+  const owned = await ownedProjects(owner);
+  const ids = ws === "*" ? owned.map((p) => p.id) : ws;
+  const given = new Map((await sharedProjects(owner)).map((p) => [p.id, p.owner]));
+  const member = isTeamMember(owner);
+  // an account with no workspaces: its one library. A member given workspaces but none of their own makes none (theirs are the owner's)
   if (!ids.length) {
+    if (member && given.size) return [];
     const one = await ensureLibrary(owner);
-    return one ? [one] : [];
+    return one ? [{ id: one, locate: false }] : [];
   }
-  const out: string[] = [];
+  const out: FolderLibrary[] = [];
+  const add = (id: string, locate: boolean) => {
+    if (!out.some((l) => l.id === id)) out.push({ id, locate });
+  };
   for (const id of ids) {
-    const lib = await ensureLibrary(owner, id);
-    if (lib && !out.includes(lib)) out.push(lib);
+    const from = given.get(id);
+    if (from) {
+      const lib = (await librariesHere(from, id))[0]?.id;
+      if (lib) add(lib, true);
+    } else if (!member || owned.some((p) => p.id === id)) {
+      const lib = await ensureLibrary(owner, id);
+      if (lib) add(lib, false);
+    }
+    // a member's workspace not given to them: no library made in their home
   }
   return out;
 }
@@ -97,6 +118,38 @@ export function parseReportFolders(v: unknown): ReportFolder[] {
 /** When each running listing started on this server, by computer, folder and scan id: a listing's last page marks the
  *  rows it did not name gone only when its first page was seen here (a restart in between marks nothing). */
 const scans = new Map<string, number>();
+/** The AI Editor folders each listing (its key in `scans`) has named so far, over all its pages; dropped when it completes. */
+const editorSeen = new Map<string, Set<string>>();
+
+/** The listing's AI Editor folders with this page's: `fresh` are the ones this page names first. */
+export function editorDirsSeen(key: string, scan: string | undefined, rels: string[]): { dirs: Set<string>; fresh: string[] } {
+  const dirs = scan ? (editorSeen.get(key) ?? new Set<string>()) : new Set<string>();
+  const here = editorDirsOf(rels);
+  const fresh = [...here].filter((x) => !dirs.has(x));
+  for (const x of here) dirs.add(x);
+  if (scan) editorSeen.set(key, dirs);
+  return { dirs, fresh };
+}
+
+/** Moves the clips made from the files `where` (a condition on version_places p) matches out of the library, unless held. */
+function leaveLibrary(dev: Device, folderId: string, inLibs: string, libs: string[], touched: Set<string>, now: number, where: string, args: string[], what: string): void {
+  const made = db()
+    .prepare(
+      `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND ${where} AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
+         AND a.library_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(dev.id, folderId, ...args, inLibs) as { id: string }[];
+  for (const a of made) {
+    const held = trashHeld(a.id, now);
+    if (held) {
+      console.log(`[library] ${dev.name}: ${what} stays in the library (${held}), not moved to the trash`);
+      continue;
+    }
+    setTrashedAt(a.id, now);
+    libs.forEach((l) => touched.add(l));
+  }
+}
 
 type Hit = { version_id: string; library_id: string; vbytes: number; vquick: string | null; state: string; bytes: number | null; mtime: number | null; folder_id: string };
 
@@ -118,10 +171,14 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
-async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>): Promise<void> {
+async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[]): Promise<void> {
   const d = db();
   const device = dev.id;
+  const libs = libraries.map((l) => l.id);
+  const locate = new Set(libraries.filter((l) => l.locate).map((l) => l.id));
   const inLibs = JSON.stringify(libs);
+  // a locate-only library is matched, never trashed into
+  const inOwn = JSON.stringify(libs.filter((l) => !locate.has(l)));
   const state: FolderState = r.state;
   if (state !== "ok") {
     // not readable now: what was here is not checked, never gone
@@ -130,21 +187,25 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
   } else {
     const key = `${device}|${folder.id}|${r.scan ?? ""}`;
     if (r.scan && !scans.has(key)) scans.set(key, now);
-    for (const f of r.files ?? []) {
-      // only files inside the folder (its own path on this computer, or inside its container)
+    // only files inside the folder (its own path on this computer, or inside its container)
+    const placed = (r.files ?? []).flatMap((f) => {
       const rel = inside(f.path, folder.origin.path) ?? (folder.mountPath ? inside(f.path, folder.mountPath) : null);
-      if (rel === null) continue;
-      if (notFootage(rel)) {
-        // indexed here before this rule: the clip leaves the library (to its trash); the file on the computer stays
-        const made = d
-          .prepare(
-            `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-             WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
-               AND a.library_id IN (SELECT value FROM json_each(?))`,
-          )
-          .all(device, folder.id, f.path, inLibs) as { id: string }[];
-        for (const a of made) d.prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(now, a.id);
-        if (made.length) libs.forEach((l) => touched.add(l));
+      return rel === null ? [] : [{ f, rel }];
+    });
+    const { dirs: editorDirs, fresh } = editorDirsSeen(key, r.scan, placed.map((x) => x.rel));
+    // an AI Editor folder this page names that earlier pages of the listing indexed as footage: its clips leave now
+    for (const dir of fresh) {
+      const hit = placed.find((x) => x.rel.startsWith(`${dir}/`))!;
+      const full = hit.f.path.slice(0, hit.f.path.length - hit.rel.length) + dir;
+      leaveLibrary(dev, folder.id, inOwn, libs, touched, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], full);
+    }
+    for (const { f, rel } of placed) {
+      // not footage: an AI Editor folder, a half-written file, or anything inside a Projects or Exports folder
+      if (notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
+        // indexed here before this rule: the clip leaves the library through the trash (never while in Review or shared);
+        // the file on the computer stays
+        // a locate-only library is never trashed into (leaveLibrary: held clips stay, as before)
+        leaveLibrary(dev, folder.id, inOwn, libs, touched, now, "p.path = ?", [f.path], f.path);
         continue;
       }
       const hits = d
@@ -164,6 +225,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
         touched.add(h.library_id);
       }
       for (const lib of libs.filter((l) => !done.has(l))) {
+        // a member's locate-only library: a file it does not have is not for indexing (indexForDevice skips it too)
         // the same file indexed before (an upload, another computer's copy): its fingerprint and size
         let found = f.quick
           ? (d.prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.bytes = ? AND v.quick = ?").all(lib, f.bytes, f.quick) as { id: string }[]).map((x) => ({ id: x.id, state: "verified" }))
@@ -183,7 +245,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
         }
         for (const x of found) upsert(x.id, device, folder.id, f, x.state, "scan", now);
         if (found.length) touched.add(lib);
-        else if (!index.some((i) => i.folder === folder.id && i.path === f.path)) index.push({ folder: folder.id, path: f.path });
+        else if (!locate.has(lib) && !index.some((i) => i.folder === folder.id && i.path === f.path)) index.push({ folder: folder.id, path: f.path });
       }
     }
     for (const dir of r.unreadable ?? []) {
@@ -191,6 +253,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
         .run(now, device, folder.id, dir, dir, dir);
     }
     const start = scans.get(key);
+    if (r.complete) editorSeen.delete(key);
     if (r.complete && start !== undefined) {
       const gone = d
         // only in the libraries the folder fills now: a row of a library it no longer fills was not looked for, not gone
@@ -216,12 +279,14 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   const st = await storageOf(dev.owner);
   const touched = new Set<string>();
   const libs = new Set<string>();
+  // a Projects or Exports folder of this computer is never footage, wherever it sits (even inside a Media folder)
+  const keepOut = st.folders.filter((x) => x.origin.host === dev.id && useOf(x) !== "media").map((x) => x.origin.path);
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
-    for (const l of of) libs.add(l);
-    await applyFolder(dev, folder, of, r, now, index, touched);
+    for (const l of of) libs.add(l.id);
+    await applyFolder(dev, folder, of, r, now, index, touched, keepOut);
   }
   for (const l of touched) libraryChanged(l);
   for (const l of libs) await teamProxies(l, dev);
@@ -264,7 +329,9 @@ export async function indexForDevice(dev: Device, folderId: string, x: OnMacInde
   if (!folder || useOf(folder) !== "media") return "Not one of this computer's folders";
   if (inside(nfc(x.path), folder.origin.path) === null && !(folder.mountPath && inside(nfc(x.path), folder.mountPath) !== null)) return "Not inside that folder";
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
-  for (const library of await librariesOf(dev.owner, folder)) {
+  for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
+    // a member's workspace is only located, never indexed into (applyFolder answers no file for it)
+    if (locate) continue;
     const r = await indexOnMac(library, dev.owner, { ...x, path: nfc(x.path), device: dev.id, folder: folder.id });
     versions.push({ library, ...("versionId" in r ? { versionId: r.versionId } : "duplicateOf" in r ? { duplicateOf: r.duplicateOf } : {}) });
   }

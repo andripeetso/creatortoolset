@@ -15,12 +15,22 @@ export function parseStorageFile(raw: string): StorageState {
   try {
     const v = JSON.parse(raw) as Partial<StorageState> | null;
     const schema = typeof v?.schemaVersion === "number" ? v.schemaVersion : undefined;
-    const folders = Array.isArray(v?.folders) ? mediaFolders((schema ?? 0) >= 3 ? v.folders : withOwnFootage(v.folders)) : [];
+    const folders = Array.isArray(v?.folders) ? mediaFolders(finalsAsExports((schema ?? 0) >= 3 ? v.folders : withOwnFootage(v.folders))) : [];
     return { ...(schema !== undefined ? { schemaVersion: schema } : {}), folders };
   } catch (e) {
     console.warn(`[devices-storage] storage file unreadable, treated as empty: ${e instanceof Error ? e.message : e}`);
     return { folders: [] };
   }
+}
+
+/**
+ * The Finals use is gone (Finals reads Exports). A Finals folder from before becomes the workspace's Exports folder when it
+ * has none, else a Media folder (owner, 2026-11-18). Nothing is dropped and nothing is moved. Runs on every read, so it is
+ * idempotent: once written back, the list has no finals rows.
+ */
+export function finalsAsExports(folders: StorageFolder[]): StorageFolder[] {
+  const sameWs = (a: StorageFolder, b: StorageFolder) => a.workspace === b.workspace || a.workspace === EVERY_WORKSPACE || b.workspace === EVERY_WORKSPACE;
+  return folders.map((f) => (f?.role !== "finals" ? f : { ...f, role: folders.some((g) => g?.role === "library" && sameWs(g, f)) ? "footage" : "library" }));
 }
 
 /**
@@ -101,6 +111,17 @@ export async function localDisks(libraryPath?: string): Promise<Disk[]> {
   // the same volume as the system disk (a Library on "/" or in "~" on the same container) is one row
   const other = lib && (lib.freeGb !== system.freeGb || lib.totalGb !== system.totalGb) ? [lib] : [];
   return [system, ...other];
+}
+
+/**
+ * Whether a folder sits on the Mac's (or a computer's) internal disk: a home folder, or the disk the computer reports as
+ * "/" when it reports its drives (`disks`), else a path outside the usual external mounts. Auto-created folders never go there.
+ */
+export function onInternalDisk(p: string, disks: Disk[] = []): boolean {
+  if (p === "~" || p.startsWith("~/")) return true;
+  const at = disks.filter((d) => inside(p, d.path) !== null).sort((a, b) => b.path.length - a.path.length)[0];
+  if (at) return at.path === "/";
+  return !/^\/(Volumes|media|mnt|run\/media)\//.test(p);
 }
 
 /** A folder path without trailing slashes ("/" stays "/"). */

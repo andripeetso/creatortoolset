@@ -4,6 +4,7 @@ import { link, mkdir, rename, symlink } from "node:fs/promises";
 import path from "node:path";
 import type { TimelineSource } from "../../contracts/editor";
 import { blobs, libraryDb } from "../library/db";
+import { mayServe, type Received } from "../library/upload-gate";
 import { OWN } from "../library/places";
 import { onComputer, pathOf } from "../work/on-computer";
 import { editDir, type EditMeta } from "./store";
@@ -34,6 +35,7 @@ export const LINK_TTL_S = 86_400;
 
 interface Row {
   id: string;
+  library_id: string;
   title: string;
   source_key: string;
   source_path: string | null;
@@ -113,6 +115,8 @@ export interface MediaPaths {
   downloads: { name: string; url: string }[];
   /** the edit's own clips (cards) a zip carries: the name under media/ and the file on this server */
   own: { name: string; file: string }[];
+  /** the first original the library's Upload refuses the server to hand out (decision 6): the export is refused with it */
+  refused?: Received;
 }
 
 /**
@@ -124,7 +128,7 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
   // the asker's own computer (`device`): a file it has a place row for (whereis.ts), not gone there, is named where it is there
   const own = libraryDb().prepare(`SELECT ${OWN} AS path FROM asset_versions v WHERE v.id = ?`);
   const q = libraryDb().prepare(
-    `SELECT v.id, a.title, v.source_key, v.source_path, v.mac_path, v.mime, l.storage_kind FROM asset_versions v
+    `SELECT v.id, a.title, a.library_id, v.source_key, v.source_path, v.mac_path, v.mime, l.storage_kind FROM asset_versions v
      JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`,
   );
   // the edit's footage first, in the order picked, so its names never change; then the clips only the cut names
@@ -147,6 +151,15 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
     const there = device ? (own.get(device, r.id) as { path: string | null } | undefined)?.path : null;
     if (there || r.mac_path) {
       out.files[r.id] = there || r.mac_path!;
+      continue;
+    }
+    // under Upload none (or a setting that keeps no original) the server hands out no copy of it, except to the owner's
+    // computer while no computer holds it (a phone's upload, held): a path the person's computer keeps (source_path,
+    // indexed in place) is only named, never sent; anything else is refused
+    const gate = await mayServe({ id: r.library_id, versionId: r.id }, "original", { toComputer: true });
+    if (!gate.ok) {
+      if (r.source_path) out.files[r.id] = r.source_path;
+      else out.refused ??= gate;
       continue;
     }
     const at = r.storage_kind === "local" ? null : await blobs.locate(r.source_key, LINK_TTL_S, { download: name });

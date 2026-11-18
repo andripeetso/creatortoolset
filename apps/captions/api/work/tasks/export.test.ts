@@ -41,7 +41,7 @@ const c = client(o);
 const claim = async () => (await c.post<{ task?: TaskPackage }>("work/claim", { v: WORK_V, steps: [], tasks: ["export"] })).task;
 
 const disk = path.join(root, "Tiny Drive");
-const exportsDir = path.join(disk, "Finished");
+const exportsDir = disk;
 const ASS = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 64

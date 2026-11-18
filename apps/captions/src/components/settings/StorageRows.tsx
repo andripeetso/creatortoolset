@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, THIS_COMPUTER, connectFor, finalsFolderOf, folderIn, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, THIS_COMPUTER, connectFor, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,11 +45,12 @@ export const disksFor = (devices: Computer[], host: string, serverDisks: Disk[] 
   const d = devices.find((x) => x.id === host);
   return d && disksOf(d).length ? disksOf(d) : serverDisks;
 };
-const nameOf = (devices: Computer[], host: string) =>
-  host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "A removed computer");
+/** The computer a folder is on, as its row names it. A folder whose computer is none of the account's is listed and says so. */
+const nameOf = (devices: Computer[], f: StorageFolder) =>
+  f.origin.host === THIS_COMPUTER ? "This computer" : f.missing ? "Computer not found" : (devices.find((d) => d.id === f.origin.host)?.name ?? "Computer not found");
 
 /** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage too). */
-const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.origin.host)} · ${f.origin.path}`;
+const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f)} · ${f.origin.path}`;
 
 /** Show in Finder for a folder on this very Mac, in a Mac app that shows Settings → Folders folders (its mark). */
 export const canRevealFolder = (f?: StorageFolder): f is StorageFolder =>
@@ -59,15 +60,6 @@ export const canRevealFolder = (f?: StorageFolder): f is StorageFolder =>
 export async function revealFolder(f: StorageFolder): Promise<void> {
   const r = (await thisMacBridge()!.postMessage(`reveal:${JSON.stringify({ folder: f.origin.path })}`)) as unknown as { ok?: boolean; problem?: string };
   if (!r?.ok) throw new Error(r?.problem ?? "Folder not found on this Mac");
-}
-
-function RevealButton({ folder }: { folder?: StorageFolder }) {
-  if (!canRevealFolder(folder)) return null;
-  return (
-    <Button size="sm" variant="outline" onClick={() => revealFolder(folder).catch((e: Error) => saveFailed(e.message))}>
-      Show in Finder
-    </Button>
-  );
 }
 
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
@@ -194,59 +186,26 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
 const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
- * Where finished videos and Media are kept: Exports (one folder per workspace) and Media (any number), each a header row
- * with Add folder and its folders indented under it with their menu, and Finals. Used by Settings → Folders and the
- * setup's Folders step. `w`: the workspace Settings shows (workspace-pick.tsx). With all of them shown each row carries
- * its workspace and Finals has a row per workspace; left out (setup), the rows are the window's workspace's.
+ * Where the files are: Exports (finished videos, one folder per workspace), Projects (AI Editor working files, one per
+ * workspace) and Media (any number). Each is a header row with Add folder and its folders indented under it with their menu.
+ * Used by Settings → Folders and the setup's Folders step. `w`: the workspace Settings shows (workspace-pick.tsx).
  */
 export function Storage({ devices, storage, onChanged, w }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; w?: SettingsWorkspace }) {
   if (!storage) return null;
-  const each = w?.all ? w.workspaces.map((p) => p.id as string | null) : [w?.id ?? null];
   const shared = { devices, serverDisks: storage.serverDisks, onChanged };
   return (
     <Card>
       <FolderList role="library" storage={storage} w={w} {...shared} />
-      {each.map((id, i) => (
-        <FinalsRow key={id ?? "own"} first={i === 0} workspace={id} w={w} here={storage.here} folders={w?.all ? storage.folders.filter((f) => folderIn(f, (own) => own === id)) : storage.folders} {...shared} />
-      ))}
+      <FolderList role="projects" storage={storage} w={w} {...shared} />
       <FolderList role="footage" storage={storage} w={w} {...shared} />
     </Card>
   );
 }
 
-/**
- * Finals: where each Workshop project's finished video goes, a folder per project, read into Finals (one per workspace;
- * the Library's Finished/ until another is chosen). Change applies from then on and moves nothing.
- */
-function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, onChanged }: {
-  folders: StorageFolder[]; workspace: string | null; first: boolean; w?: SettingsWorkspace; here?: string[]; devices: Computer[]; serverDisks: Disk[]; onChanged: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const f = finalsFolderOf(folders);
-  return (
-    <>
-      <Row
-        id={first ? "finals-folder" : undefined}
-        title="Finals"
-        description={f ? whereOf(f, devices) : undefined}
-        status={w?.all ? <WorkspaceTag id={workspace} /> : undefined}
-        control={
-          <span className="flex gap-2">
-            <RevealButton folder={f} />
-            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-              {f ? "Change" : "Add folder"}
-            </Button>
-          </span>
-        }
-      />
-      <AddFolderDialog open={open} onOpenChange={setOpen} role="finals" devices={devices} serverDisks={serverDisks} here={here} w={w && { ...w, id: workspace, many: false }} onChanged={onChanged} />
-    </>
-  );
-}
-
-/** The two lists of folders: Exports (where finished edits are saved, one per workspace) and Media (what the Media Library takes in). */
+/** The three lists of folders: Exports (where finished edits are saved), Projects (the AI Editor's working files), Media (what the Media Library takes in). */
 const LISTS = {
   library: { id: "finished-videos", title: "Exports", description: "Where finished edits are saved: the folder you pick, one per workspace." },
+  projects: { id: "projects-folder", title: "Projects", description: "Working files for the AI Editor, one folder per workspace. Never read as footage." },
   footage: { id: "footage-folder", title: "Media", description: "Footage, music and sound effects. The Media Library takes in everything in these folders." },
 } as const;
 
@@ -330,7 +289,7 @@ function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder
           {tagged && <WorkspaceTag id={workspacesOf(f)} />}
           {f.error && <Status tone="broken">{f.error}</Status>}
           <span className="inline-flex flex-wrap items-center gap-1.5">
-            <Status tone={!f.folderState ? undefined : f.folderState === "ok" ? "ok" : "attention"}>{folderLine(f, nameOf(devices, f.origin.host), mine)}</Status>
+            <Status tone={!f.folderState ? undefined : f.folderState === "ok" ? "ok" : "attention"}>{folderLine(f, nameOf(devices, f), mine)}</Status>
             {allow}
             {repoint}
           </span>
@@ -507,7 +466,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
       }
     };
     try {
-      // a Finals folder is read project by project and Exports is written to, never taken in whole
+      // Projects and Exports are written to, never read in whole as footage
       if (role === "footage" && here.includes(host)) await big.check(p, add);
       else await add();
     } finally {
@@ -516,7 +475,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   };
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : role === "library" ? "Exports folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={hosts.length === 0} error={err}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "projects" ? "Projects folder" : role === "library" ? "Exports folder" : "Add folder"} submitLabel="Add folder" onSubmit={submit} busy={busy} submitDisabled={hosts.length === 0} error={err}>
       {hosts.length === 0 ? (
         <Status tone="attention">Needs a computer</Status>
       ) : (
@@ -526,7 +485,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
           )}
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={hosts.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
           <DriveSelect disks={host === NEW_MAC ? [] : disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "finals" ? "/Volumes/Drive/Finals" : role === "library" ? "/Volumes/Drive/Exports" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
+          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "projects" ? "/Volumes/Drive/Projects" : role === "library" ? "/Volumes/Drive/Exports" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
           {/* chosen in the Mac app's picker: the Mac app may read it (and copy a dropped final into it) with no Allow after */}
           {macImports() && (role !== "footage" || host === NEW_MAC || host === thisMacDevice()) && (
             <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => void chooseFolderOnMac().then((p) => p && setPath(p))}>

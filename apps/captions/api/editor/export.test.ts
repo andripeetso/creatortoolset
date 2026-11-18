@@ -71,9 +71,9 @@ function planned(): Timeline {
 beforeAll(() => {
   setOff(createUser("mem-a", "password1", { role: "user" }), []);
   libraryDb().exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, created_at) VALUES
-      ('lib_a', 'mem-a', 'A', 'local', NULL, 0),
-      ('lib_s3', 'mem-a', 'Bucket', 's3', '{"mode":"own","endpoint":"http://127.0.0.1:9","region":"us-east-1","bucket":"tiny","pathStyle":true,"accessKey":"test","secretKey":"test"}', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, settings, created_at) VALUES
+      ('lib_a', 'mem-a', 'A', 'local', NULL, '{"upload":"all"}', 0),
+      ('lib_s3', 'mem-a', 'Bucket', 's3', '{"mode":"own","endpoint":"http://127.0.0.1:9","region":"us-east-1","bucket":"tiny","pathStyle":true,"accessKey":"test","secretKey":"test"}', '{"upload":"all"}', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES
       ('ast_1', 'lib_a', 'video', 'Take A', 'mem-a', 0), ('ast_2', 'lib_a', 'video', 'Take A', 'mem-a', 0),
       ('ast_3', 'lib_a', 'video', 'Watched', 'mem-a', 0), ('ast_4', 'lib_s3', 'video', 'Take A', 'mem-a', 0);

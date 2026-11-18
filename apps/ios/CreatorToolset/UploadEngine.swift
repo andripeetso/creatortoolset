@@ -293,8 +293,11 @@ final class UploadEngine: ObservableObject {
         guard let library = libraries.libraries.first else { throw APIError.server(404, "This server has no Media Library") }
         let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: library.settings?.upload == "proxies") : [:]
         guard let item = store.item(id) else { return }
-        let data = try await api.send("/api/library/\(library.id)/uploads",
-                                      json: made.merging(["filename": item.filename, "size": item.size]) { $1 })
+        var request = api.request("/api/library/\(library.id)/uploads", method: "POST",
+                                  json: made.merging(["filename": item.filename, "size": item.size]) { $1 })
+        // the person's own file, sent to their computers: the server takes it under Upload none too (routes.ts x-ct-origin)
+        request.setValue("phone", forHTTPHeaderField: "x-ct-origin")
+        let data = try await api.data(request)
         let created = try JSONDecoder().decode(Created.self, from: data)
         store.update(id) {
             $0.uploadId = created.id

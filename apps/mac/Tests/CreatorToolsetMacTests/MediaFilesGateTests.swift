@@ -103,4 +103,64 @@ final class MediaFilesGateTests: XCTestCase {
         XCTAssertEqual(r.state, "disk_away")
         XCTAssertEqual(r.disk, "Tiny Acrobatics")
     }
+
+    /// A3: an empty answer ({"folders":[]}) keeps the last good list and every OK; a folder really removed still loses its OK.
+    func testEmptyAnswerKeepsTheOKs() throws {
+        let s = "studio.example:443"
+        let listed = MediaFiles.ServerFolder(id: "f1", path: footage, workspaces: ["*"], use: "media")
+        MediaFiles.setServerFolders([listed], server: s)
+        XCTAssertTrue(MediaFiles.allow(footage, server: s))
+        let empty = try XCTUnwrap(LocationAgent.folders(Data(#"{"folders":[]}"#.utf8)))
+        XCTAssertEqual(MediaFiles.setServerFolders(empty, server: s), [listed])
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        XCTAssertEqual(MediaFiles.granted(server: s, workspace: nil), [footage])
+        MediaFiles.setServerFolders([.init(id: "f2", path: root.appendingPathComponent("Other").path, workspaces: ["*"], use: "media")], server: s)
+        XCTAssertFalse(MediaFiles.isAllowed(footage, server: s))
+    }
+
+    /// OKs are keyed by folder id: a re-pull that changes the folder's workspaces keeps its OK; the store holds ids.
+    func testOKsAreKeyedByFolderId() throws {
+        let s = "s"
+        MediaFiles.setServerFolders([.init(id: "f1", path: footage, workspaces: ["B"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.allow(footage, server: s))
+        MediaFiles.setServerFolders([.init(id: "f1", path: footage, workspaces: ["*"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        let stored = try JSONDecoder().decode([String: [String]].self, from: XCTUnwrap(MediaFiles.defaults.data(forKey: "allowedFolders")))
+        XCTAssertEqual(stored, [s: ["f1"]])
+    }
+
+    /// Right after the update, before any pull: a folder OK'd by path (saved before the id key) still reads as allowed.
+    func testPathKeyedOKReadsBeforeMigration() throws {
+        let s = "s"
+        MediaFiles.defaults.set(try JSONEncoder().encode([s: [footage]]), forKey: "allowedFolders")
+        MediaFiles.defaults.set(try JSONEncoder().encode([s: [MediaFiles.ServerFolder(id: "f1", path: footage, workspaces: ["*"], use: "media")]]), forKey: "serverFolders")
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        XCTAssertEqual(MediaFiles.granted(server: s, workspace: nil), [footage])
+    }
+
+    /// The OKs saved by path before the change become the folders' ids, once; a second pull changes nothing.
+    func testPathKeyedOKsMigrateOnce() throws {
+        let s = "s"
+        let other = root.appendingPathComponent("Other").path
+        MediaFiles.defaults.set(try JSONEncoder().encode([s: [footage]]), forKey: "allowedFolders")
+        let list: [MediaFiles.ServerFolder] = [.init(id: "f1", path: footage, workspaces: ["*"], use: "media"), .init(id: "f2", path: other, workspaces: ["*"], use: "media")]
+        MediaFiles.setServerFolders(list, server: s)
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        XCTAssertFalse(MediaFiles.isAllowed(other, server: s))
+        let once = MediaFiles.defaults.data(forKey: "allowedFolders")
+        MediaFiles.setServerFolders(list, server: s)
+        XCTAssertEqual(MediaFiles.defaults.data(forKey: "allowedFolders"), once)
+        XCTAssertEqual(try JSONDecoder().decode([String: [String]].self, from: XCTUnwrap(once)), [s: ["f1"]])
+    }
+
+    /// The server collapses two rows of one path into one with a new id: the OK follows the path to the id that stays.
+    func testOKFollowsItsPathWhenTheIdChanges() throws {
+        let s = "s"
+        MediaFiles.setServerFolders([.init(id: "44919794", path: footage, workspaces: ["*"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.allow(footage, server: s))
+        MediaFiles.setServerFolders([.init(id: "cd303bbd", path: footage, workspaces: ["*"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        XCTAssertEqual(MediaFiles.granted(server: s, workspace: nil), [footage])
+        XCTAssertEqual(try JSONDecoder().decode([String: [String]].self, from: XCTUnwrap(MediaFiles.defaults.data(forKey: "allowedFolders"))), [s: ["cd303bbd"]])
+    }
 }

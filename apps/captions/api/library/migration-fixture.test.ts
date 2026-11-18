@@ -103,7 +103,8 @@ describe("T4: a data dir from before the place states", () => {
       ["f-footage", "mac_live", "/Volumes/Tiny Footage/Shoots", "media"],
       ["f-music", "mac_live", "/Users/tiny/Music/Songs", "media"],
       ["f-library", "mac_live", "/Users/tiny/Movies/Creator Toolset", "exports"],
-      ["f-finals", "mac_live", "/Users/tiny/Movies/Finals", "finals"],
+      // the Finals use is gone (decision 2): a legacy finals folder is Media when the workspace already has its Exports folder
+      ["f-finals", "mac_live", "/Users/tiny/Movies/Finals", "media"],
       ["f-here", here, "/Users/tiny/Footage", "media"],
       ["f-library:footage", "mac_live", "/Users/tiny/Movies/Creator Toolset/Footage", "media"],
     ]);

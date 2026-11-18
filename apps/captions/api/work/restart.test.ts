@@ -101,7 +101,7 @@ async function upload(file: string): Promise<string> {
 
 beforeAll(async () => {
   srv.db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_t', 'tiny', 'Tiny Acrobatics', 'local', ?, 0)").run(
-    JSON.stringify({ upload: "none", proxy: true, describe: false, embed: false }),
+    JSON.stringify({ upload: "proxies", proxy: true, describe: false, embed: false }),
   );
   mac = pairDevice("tiny", "Studio Mac");
   setCacheAccount("tiny"); // its worker learns it from the claim answer

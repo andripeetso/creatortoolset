@@ -312,7 +312,7 @@ export interface RelayFolder {
   mountPath: string;
   /** workspace ids, or "*" for every workspace */
   workspaces: string[] | "*";
-  use: "media" | "exports" | "finals";
+  use: "media" | "projects" | "exports";
 }
 export interface RelayFoldersAnswer {
   folders: RelayFolder[];

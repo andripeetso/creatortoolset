@@ -24,7 +24,7 @@ app.use(async (c, next) => {
 app.route("/api/library", libraryApp);
 
 const d = libraryDb();
-d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_s', 'owner-s', 'S', 'local', 0)").run();
+d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_s', 'owner-s', 'S', 'local', '{\"upload\":\"all\"}', 0)").run();
 // a 4K clip: its proxy and picture are made files; its original is the person's own
 const PROBE = JSON.stringify({ duration: 8, vcodec: "h264", acodec: "", width: 3840, height: 2160, pixFmt: "yuv420p10le", format: "mov,mp4" });
 const put = async (key: string, text: string) => {

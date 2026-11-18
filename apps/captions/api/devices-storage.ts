@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, STORAGE_ROLES, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, EXPORTS_NAME, PROJECTS_NAME, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { deviceByHost, deviceOf, isThisMachine, listDevices } from "./lib/devices";
-import { pluginStorageFolders } from "./lib/plugin";
+import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { inside, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { inside, localDisks, mediaFolders, migrateStorage, mountOf, onInternalDisk, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { mergeStudio, studioRows, type HostLookup } from "./lib/studio-folders";
 import { resolveDevice } from "./library/whereis";
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
@@ -22,11 +22,10 @@ import { ensureLibrary } from "./library/access";
  * Settings → Folders (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
  *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1);
  *                                     ?all=1: every workspace's folders
- *   POST   /folders   {role, host, path} → use a folder you already have as a Media folder (this computer's also go on
- *                                          the Library's watch list, which the Library and the AI Editor read), as the
- *                                          workspace's Finals folder (role "finals": in place of the one it had; each
- *                                          Workshop project's subfolder is read when the project asks, workshop.ts sessionFinals),
- *                                          or as its Exports folder (role "library": exactly that folder, made when missing)
+ *   POST   /folders   {role, host, path} → use a folder as a Media folder (role "footage"; this computer's also go on the
+ *                                          Library's watch list), as the workspace's Projects folder (role "projects": in
+ *                                          place of the one it had), or as its Exports folder (role "library": exactly that
+ *                                          folder, made when missing). Finals reads Exports; "finals" is refused.
  *   PATCH  /folders/:id {workspaces} → the workspaces a Media or Exports folder is in; null = every workspace
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
@@ -56,7 +55,8 @@ function chained<T>(user: string, fn: () => Promise<T>): Promise<T> {
 async function readStorage(user: string): Promise<StorageState> {
   const raw = await readFile(file(user), "utf-8").catch(() => "{}");
   const parsed = parseStorageFile(raw);
-  if (!parsed.folders.length) return parsed;
+  // nothing to migrate: the first folder saved onto it is written as the current schema, so no read rewrites it later
+  if (!parsed.folders.length) return { ...parsed, schemaVersion: STORAGE_SCHEMA };
   const here = listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id;
   const { st, changed } = migrateStorage(parsed, here, resolveDevice);
   if (changed) void chained(user, async () => {
@@ -68,20 +68,73 @@ async function readStorage(user: string): Promise<StorageState> {
 }
 
 /**
- * The account's folders, as every reader outside Settings gets them (report.ts, the relay's folder list), with the folders
- * a plug-in keeps in its own list (a studio's Settings → Folders), named by computer name, put on the account's computer of
- * that name. One with no workspace is every workspace's; one this list already has (same computer, path and use) is left out.
- * shortcut: a plug-in folder's folderState (report.ts updateFolder) is not kept, its id is not in this list; keep it in the
- * plug-in's list when its Settings shows that state.
+ * The account's folders, as every reader gets them (report.ts, the relay's folder list, the assistant, the AI Editor's
+ * heartbeat). One list: the Settings → Folders list (contracts/storage.ts). There is no second list, and no hostname is
+ * mapped to a device id here (the one-time import, importStudioFile, is the only place that happens).
  */
 export async function storageOf(user: string): Promise<StorageState> {
+  return readStorage(user);
+}
+
+/** The one-time import of the plug-in's Settings → Folders list (`file`, storage.json, keyed by hostname) into the accounts'
+ *  lists. A computer no account has is kept under its hostname (the page says "Computer not found"). Each row in both lists
+ *  once; the file is renamed storage.json.migrated after the lists are written, so a second run finds nothing to do.
+ *  `prepare` reads the file's own format (the plug-in's older entries). Returns the rows imported. */
+export async function importStudioFile(file: string, fallbackOwner: string, prepare: (st: StorageState) => StorageState, lookup: HostLookup = lookupHost): Promise<number> {
+  const raw = await readFile(file, "utf-8").catch(() => null);
+  if (raw === null) return 0;
+  const studio = prepare(parseStorageFile(raw));
+  const byOwner = studioRows(studio.folders, lookup, fallbackOwner);
+  for (const [owner, rows] of byOwner) {
+    await chained(owner, async () => {
+      const st = await readStorage(owner);
+      st.folders = mergeStudio(st.folders, rows);
+      await writeStorage(owner, st);
+    });
+  }
+  await rename(file, `${file}.migrated`);
+  return studio.folders.length;
+}
+
+/** A hostname's computer on any account but the team's AI worker's: the one seen last (the import's lookup). */
+function lookupHost(host: string): { id: string; owner: string } | undefined {
+  const short = (x: string) => x.toLowerCase().replace(/\.local$/, "");
+  const h = short(host);
+  const d = listDevices((x) => x.owner !== "workspace" && !!x.report?.machine?.host && short(x.report.machine.host) === h)
+    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+  return d ? { id: d.id, owner: d.owner } : undefined;
+}
+
+/**
+ * The workspace's Projects or Exports folder for work on computer `device` (AI Editor working files; finished videos):
+ * the one it has, else one made next to its first Media folder on that computer, written as a record. Never on the
+ * Mac's internal disk: with no Media folder off it, the answer says what to choose (Settings → Folders).
+ */
+export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string }> {
+  // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
+  // folders that have no workspace are its own: a workspace's folder is another client's, never picked
+  const owned = workspace ? [] : await ownedProjects(user);
+  if (!workspace && owned.length > 1) return { error: "Choose a Projects folder in Settings → Folders." };
+  const ws = workspace ?? owned[0]?.id;
+  const inWs = (w?: string) => w === ws;
   const st = await readStorage(user);
-  const same = (a: StorageFolder, b: StorageFolder) => a.role === b.role && a.origin.host === b.origin.host && a.origin.path === b.origin.path;
-  const theirs = (await pluginStorageFolders(user, true)).flatMap((f): StorageFolder[] => {
-    const d = deviceByHost(user, f.origin.host);
-    return d ? [{ ...f, origin: { ...f.origin, host: d.id }, reach: {}, workspace: f.workspace ?? EVERY_WORKSPACE }] : [];
+  const has = st.folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, inWs));
+  if (has) return has;
+  const media = st.folders.find((f) => f.role === "footage" && f.origin.host === device && folderIn(f, inWs));
+  const disks = deviceOf(device)?.report?.machine?.disks ?? [];
+  const parent = media ? media.origin.path.replace(/\/[^/]*$/, "") : "";
+  const p = `${parent}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
+  // shortcut: a Media folder at a volume's root has no room beside it on that volume (its parent is /Volumes), so it is refused
+  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return { error: "Choose a Projects folder in Settings → Folders." };
+  return chained(user, async () => {
+    const cur = await readStorage(user);
+    const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));
+    if (had) return had;
+    const f: StorageFolder = { id: randomUUID(), role, name: p.split("/").pop() ?? p, origin: { host: device, path: p }, make: true, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) };
+    cur.folders.push(f);
+    await writeStorage(user, cur);
+    return f;
   });
-  return { ...st, folders: [...st.folders, ...theirs.filter((f) => !st.folders.some((g) => same(f, g)))] };
 }
 
 /**
@@ -98,6 +151,16 @@ export function updateFolder(user: string, id: string, fn: (f: StorageFolder) =>
     st.folders[i] = next;
     await writeStorage(user, st);
     return true;
+  });
+}
+
+/** Changes an account's list as one queued write (a plug-in's Settings → Folders routes use it): `fn` edits the list in place. */
+export function changeStorage(user: string, fn: (st: StorageState) => void | "keep"): Promise<StorageState> {
+  return chained(user, async () => {
+    const st = await readStorage(user);
+    if (fn(st) === "keep") return st;
+    await writeStorage(user, st);
+    return st;
   });
 }
 
@@ -189,13 +252,18 @@ async function scopeOf(c: C): Promise<{ mine: (f: StorageFolder) => boolean; wor
   return { mine: (f) => folderIn(f, inWs), ...(workspace ? { workspace } : {}), named };
 }
 /** The list the page gets: the folders `mine` keeps, each with the workspace it is in and the account's computers that reach it through a connected share (lib/storage.ts withMounts). */
-const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string, named: Named): StorageState => ({
-  ...st,
-  folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))).map((f) => {
-    const workspace = named(f);
-    return workspace ? { ...f, workspace } : f;
-  }),
-});
+const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string, named: Named): StorageState => {
+  const ours = new Set(listDevices((d) => d.owner === user).map((d) => d.id).concat(THIS_COMPUTER));
+  return {
+    ...st,
+    folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))).map((f) => {
+      const workspace = named(f);
+      const row = workspace ? { ...f, workspace } : f;
+      // a folder whose computer is none of the account's: listed, and the page says so
+      return ours.has(f.origin.host) ? row : { ...row, missing: true as const };
+    }),
+  };
+};
 
 /**
  * The workspaces that read a folder on this computer through their Library's watch list: the ones that list its path
@@ -285,7 +353,8 @@ storageApp.post("/folders", async (c) => {
   const user = u.username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
-  const role = b?.role === "finals" || b?.role === "library" ? b.role : b?.role === "music" ? "footage" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
+  // the three uses (Media, Projects, Exports); "music" from an older app is footage; "finals" is no use any more (Finals reads Exports)
+  const role: "footage" | "library" | "projects" | undefined = b?.role === "music" ? "footage" : b?.role === "footage" || b?.role === "library" || b?.role === "projects" ? b.role : undefined;
   // "this computer" (setup's Folders step) is the paired computer this server runs on, when there is one (schema 2)
   const asked = str(b?.host, 120);
   const host = asked === THIS_COMPUTER ? (listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id ?? asked) : asked;
@@ -307,7 +376,8 @@ storageApp.post("/folders", async (c) => {
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
-    if (role === "finals") st.folders = st.folders.filter((f) => !(here(f) && f.role === "finals"));
+    // one Projects folder per workspace: the one it had is replaced (its files stay)
+    if (role === "projects") st.folders = st.folders.filter((f) => !(here(f) && f.role === "projects"));
     // the workspace's Exports comes off the folder that had it; with no workspaces there is one Exports folder
     if (role === "library") {
       // one folder is one Exports record (one marker): another workspace's folder picked here gets this workspace too
@@ -323,7 +393,7 @@ storageApp.post("/folders", async (c) => {
     // the share its drive is on that computer, so another computer can be told how to connect it (never a password)
     const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
     // an Exports folder is made when missing (setup's default may not be there yet); the others must already exist
-    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: role === "library", createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
+    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: role !== "footage", createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });

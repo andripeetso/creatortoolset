@@ -48,8 +48,8 @@ beforeAll(() => {
   Object.assign(process.env, bucketEnv);
   process.env.LIBRARY_DISK_RESERVE_GB = "0"; // the local case stages a file here; the test disk may be nearly full
   vi.spyOn(S3Client.prototype, "send").mockImplementation(bucket.send as never);
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, created_at) VALUES ('lib_s3', 'owner-s3', 'S3', 's3', '{\"mode\":\"server\"}', 0)").run();
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_local', 'owner-s3', 'Local', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, settings, created_at) VALUES ('lib_s3', 'owner-s3', 'S3', 's3', '{\"mode\":\"server\"}', '{\"upload\":\"all\"}', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_local', 'owner-s3', 'Local', 'local', '{\"upload\":\"all\"}', 0)").run();
 });
 
 afterAll(() => {

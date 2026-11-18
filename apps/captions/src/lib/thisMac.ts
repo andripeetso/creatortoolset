@@ -7,6 +7,16 @@ import type { PlacesCheckAnswer, PlacesCheckAsk, PlacesConnectAnswer, PlacesConn
 export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean; pairs?: boolean; computer?: string };
 type Bridge = { postMessage: (m: string) => Promise<ThisMacState> };
 
+/**
+ * The Mac app's own page: its mark on <html> (data-mac-reveal, apps/mac Reveal.swift) and its bridge. The one test for
+ * "this page is the Mac app" that Show in Finder (pages/library/clip.ts canReveal) and the in-place drops (lib/library.ts
+ * macIndexOnly) both use, so they never disagree.
+ */
+export const macPageMarked = (): boolean => {
+  const mark = typeof document === "undefined" ? undefined : document.documentElement.dataset.macReveal;
+  return (mark === "1" || mark === "2") && !!thisMacBridge();
+};
+
 /** The Mac app's bridge, or undefined in a browser (no window at all in a test). */
 export function thisMacBridge(): Bridge | undefined {
   if (typeof window === "undefined") return undefined;

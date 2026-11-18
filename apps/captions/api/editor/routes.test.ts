@@ -46,7 +46,7 @@ const drain = async () => {
 beforeAll(async () => {
   for (const u of ["maker", "other"]) await login(u);
   libraryDb().exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'maker', 'A', 'local', 0), ('lib_b', 'other', 'B', 'local', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'maker', 'A', 'local', '{"upload":"all"}', 0), ('lib_b', 'other', 'B', 'local', '{}', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES
       ('ast_a1', 'lib_a', 'video', 'Take 1', 'maker', 0, NULL), ('ast_a2', 'lib_a', 'video', 'Take 2', 'maker', 0, NULL),
       ('ast_t', 'lib_a', 'video', 'Old', 'maker', 0, 1), ('ast_b', 'lib_b', 'video', 'Theirs', 'other', 0, NULL);

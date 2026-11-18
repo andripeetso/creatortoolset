@@ -99,6 +99,7 @@ describe("Relink: moved files are found again by themselves", () => {
     const q = (await quickPrint(file))!;
     const { libraries } = (await (await app.request("/api/library", { headers: { cookie } })).json()) as { libraries: { id: string }[] };
     const lib = libraries[0]!.id;
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all') WHERE id = ?`).run(lib); // a browser's original: Upload all (decision 6)
     const start = await app.request(`/api/library/${lib}/uploads`, { method: "POST", headers: asAna, body: JSON.stringify({ filename: "upload.mp4", size: body.length, quick: q }) });
     expect(start.status).toBe(201);
     const { id } = (await start.json()) as { id: string };

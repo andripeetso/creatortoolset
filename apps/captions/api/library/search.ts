@@ -128,11 +128,18 @@ export function sourcePathFor(libraryId: string, versionId: string, user: Pick<S
     .prepare("SELECT v.source_key, v.source_path, v.mac_path, v.from_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
     .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; from_path: string | null; storage_kind: string } | undefined;
   if (!v) return undefined;
+  // a computer asking: another computer's path (mac_path, source_path) or a stale from_path is never handed over; only this server's own stored copy
+  if (device) return storedCopyPath(v);
   // a file indexed on a Mac: its path there (Show in Finder finds it on that Mac)
   if (v.source_path || v.mac_path) return v.source_path ?? v.mac_path!;
-  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return v.from_path ?? undefined;
+  return storedCopyPath(v) ?? v.from_path ?? undefined;
+}
+
+/** The server's own stored copy, on the Mac app's own server on this Mac (CT_LOCAL=1, never hosted), when it is on disk. */
+function storedCopyPath(v: { source_key: string; storage_kind: string }): string | undefined {
+  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return undefined;
   const file = path.join(env.dataDir, "library", "blobs", ...keyParts(v.source_key)); // the local store's layout (storage/local.ts)
-  return existsSync(file) ? file : (v.from_path ?? undefined);
+  return existsSync(file) ? file : undefined;
 }
 
 /** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */

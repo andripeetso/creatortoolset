@@ -15,9 +15,8 @@ import {
 } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { promptDialog } from "@/lib/dialogs";
-import { thisMacDevice } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { revealClip, servedHere } from "./clip";
+import { revealClip, revealsHere } from "./clip";
 
 /**
  * Picking several clips in the Media Library (LibraryPage.tsx), as Review picks videos: a plain click still opens a clip,
@@ -335,13 +334,13 @@ export function saveFile(href: string) {
 
 /**
  * Show in Finder, in the Mac app. On the server on this Mac every clip has its file here; on a server elsewhere only a
- * clip read in place from a computer's folder, or one whose original this computer has (its place rows, `placeWord`
- * here), can be (apps/mac Reveal.swift): an upload from a phone with no copy here has none, so it is not offered there.
- * Decided from the card, so the menu never changes once open.
+ * original this computer has (`placeWord` here, seen from this computer's id), can be (apps/mac Reveal.swift): an upload
+ * from a phone with no copy here has none, so it is not offered there. `onComputer` alone says only that some computer
+ * holds the file, so it does not count. Decided from the card, so the menu never changes once open.
  */
-export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer" | "placeWord">; onProblem: (p: string) => void }) {
+export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "placeWord">; onProblem: (p: string) => void }) {
   const assetId = asset.id;
-  // without this Mac's id the card's "here" means any of the person's computers
-  if (!servedHere() && !asset.onComputer && !(asset.placeWord?.word === "here" && thisMacDevice())) return null;
+  // the same test as the panel's button (revealsHere)
+  if (!revealsHere(asset.placeWord)) return null;
   return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }

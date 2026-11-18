@@ -80,6 +80,9 @@ function cookieValue(username: string, hash: string): string {
 /** What the cookie is signed over: the password hash, plus the session stamp once the sign-in code made one (users.ts). */
 const stamp = (u: UserRecord) => (u.session ? `${u.hash}:${u.session}` : u.hash);
 
+/** The iPhone app's marker: signed over the same stamp as the cookie, with its own label. */
+const appSign = (username: string, hash: string) => createHmac("sha256", env.appSecret).update(`app:${username}:${hash}`).digest("hex");
+
 const signedBy = (username: string, hash: string, hex: string) => {
   const expected = Buffer.from(sign(username, hash), "hex");
   const got = Buffer.from(hex, "hex");
@@ -339,12 +342,33 @@ export const secureAttr = (c: Context) => {
   return proto.toLowerCase() === "https" ? "; Secure" : "";
 };
 
-export const setLoginCookie = (c: Context, user: UserRecord) => {
+/** The cookie value for a user's session. `app`: the iPhone app's own session (/api/auth/app) carries a third signed part a browser's login never gets. */
+export const sessionCookieFor = (username: string, app: boolean): string | null => {
+  const user = findUser(username);
+  if (!user) return null;
+  return `${COOKIE}=${cookieValue(username, stamp(user))}${app ? `.${appSign(username, stamp(user))}` : ""}`;
+};
+
+export const setLoginCookie = (c: Context, user: UserRecord, app = false) => {
   const secure = secureAttr(c);
+  const value = sessionCookieFor(user.username, app)!.slice(COOKIE.length + 1);
   c.header(
     "Set-Cookie",
-    `${COOKIE}=${cookieValue(user.username, stamp(user))}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
+    `${COOKIE}=${value}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
   );
+};
+
+/** Whether the request's cookie is the iPhone app's own session for this user (the phone's file, never a browser's claim). */
+export const isAppSession = (cookieHeader: string | undefined, username: string): boolean => {
+  const user = findUser(username);
+  if (!user) return false;
+  const want = Buffer.from(appSign(username, stamp(user)), "hex");
+  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})\\.([a-f0-9]{64})`, "g"))) {
+    if (Buffer.from(m[1], "base64url").toString() !== username || !signedBy(username, stamp(user), m[2])) continue;
+    const got = Buffer.from(m[3], "hex");
+    if (got.length === want.length && timingSafeEqual(got, want)) return true;
+  }
+  return false;
 };
 
 /**
@@ -531,7 +555,7 @@ authApp.post("/app", async (c) => {
   // one answer for a wrong, used or expired code and a wrong verifier: it says nothing about which
   if (!user || stamp(user) !== hit!.hash) return c.json({ error: "That sign-in code is used or expired" }, 400);
   bumpUsage(user.username, { logins: 1 });
-  setLoginCookie(c, user);
+  setLoginCookie(c, user, true);
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
 });
 

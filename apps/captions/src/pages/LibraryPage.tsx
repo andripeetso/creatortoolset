@@ -1183,6 +1183,7 @@ export default function LibraryPage() {
               libraryId={libId}
               asset={preview}
               startAt={startAt}
+              serverPlays={!library || library.settings.upload !== "none" || !!library.shared || !!preview.finished}
               inTrash={trash}
               readOnly={readOnly}
               moveTo={moveOptions(collections, into)}

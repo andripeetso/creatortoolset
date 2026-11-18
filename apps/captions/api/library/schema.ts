@@ -661,4 +661,8 @@ export const MIGRATIONS: string[] = [
   `,
   // Finals upload written down where it was never set (local-first plan DM6, decision 6): "all", what it read as
   `UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'all') WHERE json_extract(settings, '$.finalsUpload') IS NULL;`,
+  // an upload the iPhone app sent to the person's computers ("phone", routes.ts): taken under Upload none too
+  `ALTER TABLE uploads ADD COLUMN origin TEXT;`,
+  // the upload's origin kept on its version: a version the iPhone app sent is the only original held for a computer (upload-gate.ts mayServe)
+  `ALTER TABLE asset_versions ADD COLUMN origin TEXT;`,
 ];

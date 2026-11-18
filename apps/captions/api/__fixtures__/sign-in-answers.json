@@ -239,7 +239,7 @@
         "member": true
       }
     },
-    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "cookie": "cap_auth=<signed>.<app>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
     "location": null,
     "cacheControl": "no-store"
   },

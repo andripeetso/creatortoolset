@@ -49,7 +49,7 @@ const own = { kind: "s3", mode: "own", endpoint: "https://s3.example.com", regio
 beforeAll(() => {
   mkdirSync(process.env.DATA_DIR!, { recursive: true });
   libraryDb()
-    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0), ('lib_b', 'owner-a', 'B', 'local', 1), ('lib_m', 'owner-a', 'M', 'local', 2)")
+    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', '{\"upload\":\"all\"}', 0), ('lib_b', 'owner-a', 'B', 'local', '{}', 1), ('lib_m', 'owner-a', 'M', 'local', '{}', 2)")
     .run();
 });
 
@@ -247,7 +247,7 @@ describe("library storage choice", () => {
 
   it("proxies only: a library holding files read in place sends every video's proxy, and nothing else, to the bucket", async () => {
     const d = libraryDb();
-    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_p', 'owner-a', 'P', 'local', 4)").run();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_p', 'owner-a', 'P', 'local', '{\"upload\":\"proxies\"}', 4)").run();
     const probe = (width: number, height: number, format: string) =>
       JSON.stringify({ duration: 10, width, height, fps: 25, rotation: 0, format, vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" });
     const clip = async (v: string, p: string) => {
@@ -293,7 +293,8 @@ describe("library storage choice", () => {
     expect((await blobs.locate("libraries/lib_p/v/v_4k/source", 60)).kind).toBe("path");
     expect(stored("lib_p")).toBe(20);
     // a clip that plays as it is plays from this disk; one that needs its proxy gets it from the bucket
-    expect((await call("owner-a", "GET", "/api/library/media/v_hd/play")).status).toBe(200);
+    // decision 5: under proxies the server plays a proxy only; a clip with none yet is refused, never its original
+    expect((await call("owner-a", "GET", "/api/library/media/v_hd/play")).status).toBe(409);
     expect((await call("owner-a", "GET", "/api/library/media/v_4k/play")).status).toBe(302);
 
     // nothing in the cloud: the proxies leave the bucket, and come back here only where the window needs one

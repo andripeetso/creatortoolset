@@ -13,9 +13,14 @@ import type { FolderState } from "./places";
  */
 
 export const STORAGE_ROLES = [{ value: "footage", label: "Footage" }] as const;
-/** "library" is an Exports folder (exportsOf); footage is the Media list; "finals" is a workspace's Finals folder, one at most
- *  (none: the Library's Finished/, finalsFolderOf). A "music" folder from before is read as footage (api/lib/storage.ts). */
-export type StorageRole = "footage" | "finals" | "library";
+/** The Projects folder's name, made next to a workspace's first Media folder (ensureUseFolder, api/devices-storage.ts). */
+export const PROJECTS_NAME = "Projects";
+/** The Exports folder's name, made next to a workspace's first Media folder when the workspace has none (ensureUseFolder). */
+export const EXPORTS_NAME = "Exports";
+/** The three uses (owner, 2026-11-18): "footage" is Media (many per workspace), "projects" is the workspace's Projects folder
+ *  (AI Editor working files, one), "library" is its Exports folder (finals and deliverables, one; Finals reads it). "finals"
+ *  is a legacy role, read as Exports (api/library/report.ts useOf). A "music" folder from before is read as footage. */
+export type StorageRole = "footage" | "finals" | "library" | "projects";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 
 export const MARKER_FILE = ".creatortoolset-folder";
@@ -88,6 +93,8 @@ export interface StorageFolder {
   checkedAt?: number;
   /** a Media folder that is also a destination for the library's copies */
   copyTo?: true;
+  /** set by the page's view only, never stored: this folder's computer is not one of the account's ("Computer not found") */
+  missing?: true;
 }
 
 /** A Media folder's `workspace` when every workspace uses it (Settings → Folders, a folder's Workspaces: All workspaces). */
@@ -173,10 +180,10 @@ export function inLibrary(lib: StorageFolder, role: "footage" | "finals"): Stora
   };
 }
 
-/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Exports' Finished/. */
+/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Exports folder. */
 export function finalsFolderOf(folders: StorageFolder[]): StorageFolder | undefined {
   const lib = exportsOf(folders);
-  return folders.find((f) => f.role === "finals") ?? (lib && inLibrary(lib, "finals"));
+  return folders.find((f) => f.role === "finals") ?? (lib && { ...lib, id: `${lib.id}:finals`, role: "finals" });
 }
 
 /** A Workshop project's folder inside the Finals folder: its title, made safe as a file name on a Mac, Linux or Windows. */
@@ -190,10 +197,10 @@ export interface MakeLibraryBody {
   disk: string;
 }
 
-/** POST /api/devices/storage/folders: use a folder for a role ("finals" takes the place of the workspace's one; "library":
+/** POST /api/devices/storage/folders: use a folder for a role ("projects" takes the place of the workspace's one; "library":
  *  the workspace's Exports folder, exactly that folder, made when missing, taken off the Exports folder that had it). */
 export interface AddFolderBody {
-  role: SourceRole | "finals" | "library";
+  role: SourceRole | "projects" | "library";
   host: string;
   path: string;
 }
@@ -229,13 +236,27 @@ export function okFolderPath(p: unknown): p is string {
 }
 
 /**
- * A file under a Media folder that is not footage, by its path below the folder: inside an AI Editor project folder
- * ("<name>_edit", its drafts, stems and motion graphics; apps/editor skips the same) or a half-written file (".tmp",
- * ".part"). Every scan leaves these out of the Media Library.
+ * The folders (by their path below a Media folder) that an AI Editor made: a "<name>_edit" folder that holds a drafts/
+ * folder in the same scan. A user's own "_edit" folder without one is footage (decision 4, 2026-11-18).
  */
-export function notFootage(rel: string): boolean {
+export function editorDirsOf(rels: string[]): Set<string> {
+  const dirs = new Set<string>();
+  for (const rel of rels) {
+    const parts = rel.split(/[\\/]/);
+    for (let i = 0; i + 2 < parts.length; i++) if (/_edit$/i.test(parts[i]!) && parts[i + 1] === "drafts") dirs.add(parts.slice(0, i + 1).join("/"));
+  }
+  return dirs;
+}
+
+/**
+ * A file under a Media folder that is not footage, by its path below the folder: inside one of `editorDirs` (see
+ * editorDirsOf; apps/editor skips the same folders) or a half-written file (".tmp", ".part": "clip.part.mp4" and
+ * "clip.tmp" are; "party.mp4" and "clip.partial.mov" are not). Every scan leaves these out of the Media Library.
+ */
+export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set()): boolean {
   const parts = rel.split(/[\\/]/);
-  return parts.slice(0, -1).some((s) => /_edit$/i.test(s)) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+  const dirs = parts.slice(0, -1);
+  return dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
 }
 
 /**

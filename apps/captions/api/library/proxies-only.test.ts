@@ -127,7 +127,7 @@ describe("a Media Library whose upload is proxies only", () => {
     const id = await upload("lib_p", "Roll.mp4");
     const proxy = await proxied(id);
     await dropOriginal(id);
-    expect(mediaFile(id, "play")).toEqual({ key: proxy, type: "video/mp4" });
+    expect(mediaFile(id, "play")).toEqual({ key: proxy, type: "video/mp4", what: "proxy" });
     expect(mediaFile(id, "source")).toMatchObject({ onMac: "Mac" });
     const res = await app.request(`/api/library/media/${id}/source`);
     expect(res.status).toBe(409);

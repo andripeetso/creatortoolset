@@ -17,7 +17,7 @@ import { uploadReviewFile } from "@/lib/review";
 import { canUse, useMe } from "@/lib/auth";
 import { alertDialog } from "@/lib/dialogs";
 import { footageTarget } from "@/lib/editor";
-import { changeFolderItems, getAsset, uploadFile } from "@/lib/library";
+import { changeFolderItems, getAsset, macIndexOnly, uploadFile } from "@/lib/library";
 import type { Picked } from "@/pages/EditorPage";
 import { openLocalRecording } from "@/lib/screen-source";
 import { useMacRecorder } from "@/components/settings/ThisMacSection";
@@ -106,7 +106,8 @@ export default function ScreenProjectPage() {
       let done = 0;
       for (const p of parts) {
         const file = new File([p.blob], p.name, { type: "video/mp4" });
-        const up = await uploadFile(target.libraryId, file, (sent) => setToEditor(Math.round(((done + sent) / total) * 100)), target.collectionId);
+        const onMac = await macIndexOnly(target.libraryId);
+        const up = await uploadFile(target.libraryId, file, (sent) => setToEditor(Math.round(((done + sent) / total) * 100)), target.collectionId, undefined, { onMac });
         const assetId = up.assetId ?? up.duplicateOf;
         if (!assetId) throw new Error(`${p.name} was not added to the Media Library`);
         await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);

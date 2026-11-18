@@ -17,6 +17,7 @@ process.env.ACCOUNT_SIGNIN_SERVICE = "https://signin.test";
 for (const k of ["APPLE_SIGNIN_KEY", "GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET", "SIGN_UPS", "PUBLIC_ORIGIN"]) delete process.env[k];
 
 const { createUser, findUser, linkIdentity, setPassword } = await import("./users");
+const { isAppSession } = await import("./auth");
 const app = (await import("./boot")).default;
 
 createUser("cy", "cypass123", { role: "user" });
@@ -93,7 +94,8 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
     // the cookie is the very one a browser's sign-in gets, and it is a working session
     const browser = await github("for=site");
     expect(browser.headers.get("location")).toBe("/");
-    expect(res.headers.get("set-cookie")).toBe(browser.headers.get("set-cookie"));
+    // the app's cookie is a browser's cookie plus the iPhone app's signed third part (auth.ts isAppSession), checked in its own test below
+    expect(res.headers.get("set-cookie")!.replace(/\.[a-f0-9]{64}(?=;)/, "")).toBe(browser.headers.get("set-cookie"));
     expect(res.headers.get("set-cookie")).toMatch(/^cap_auth=[^;]+; HttpOnly; Path=\/; Max-Age=\d+; SameSite=Lax$/);
     const check = (await (await app.request("/api/auth/check", { headers: { cookie: cookieOf(res) } })).json()) as { authed: boolean; user: { username: string } };
     expect(check.authed).toBe(true);
@@ -104,6 +106,18 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
     expect(again.status).toBe(400);
     expect(await again.json()).toEqual(REFUSED);
     expect(again.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("the app's session carries the iPhone app's marker, and a browser's login never does", async () => {
+    const res = await redeem(codeOf(await github(`for=site&${APP}`)));
+    expect(res.status).toBe(200);
+    const appValue = res.headers.get("set-cookie")!.split(";")[0]!.slice("cap_auth=".length);
+    const browserValue = (await github("for=site")).headers.get("set-cookie")!.split(";")[0]!.slice("cap_auth=".length);
+    expect(appValue).toMatch(/^[A-Za-z0-9_-]+\.[a-f0-9]{64}\.[a-f0-9]{64}$/);
+    expect(appValue.split(".").slice(0, 2).join(".")).toBe(browserValue);
+    expect(isAppSession(`cap_auth=${appValue}`, "cy")).toBe(true);
+    expect(isAppSession(`cap_auth=${browserValue}`, "cy")).toBe(false);
+    expect(isAppSession(`cap_auth=${appValue.split(".").slice(0, 2).join(".")}.${"0".repeat(64)}`, "cy")).toBe(false);
   });
 
   it("refuses a wrong verifier, and that try uses the code up", async () => {

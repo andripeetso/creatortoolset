@@ -15,7 +15,7 @@ const page = (folders: StorageFolder[]) => renderToStaticMarkup(<Storage devices
 describe("Storage rows", () => {
   it("with nothing set, each kind's row only offers its button", () => {
     const html = page([]);
-    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Finals, Media
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Projects, Media
     expect(html).not.toContain("Not set");
     expect(html).not.toContain("No folders");
   });
@@ -25,10 +25,25 @@ describe("Storage rows", () => {
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset");
     expect(html).toContain('aria-label="Actions for Creator Toolset"');
     expect(html).not.toContain("/Volumes/Footage SSD/Creator Toolset/Footage");
-    // Finals: the Exports folder's Finished/ until another folder is chosen
-    expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset/Finished");
-    expect(html.match(/>Change</g)).toHaveLength(1); // Finals
-    expect(html.match(/>Add folder</g)).toHaveLength(2); // Exports, Media
+    // no Finals row any more: Finals reads Exports, so the folder shows once
+    expect(html).not.toContain("/Creator Toolset/Finished");
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Projects, Media
+  });
+
+  it("a Projects folder is listed under Projects with its menu", () => {
+    const projects: StorageFolder = { id: "p_1", role: "projects", name: "Projects", origin: { host: "dev_1", path: "/Volumes/Footage SSD/Projects" }, make: true, createdAt: 0, reach: {} };
+    const html = page([projects]);
+    expect(html).toContain(">Projects<");
+    expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Projects");
+    expect(html).toContain('aria-label="Actions for Projects"');
+  });
+
+  it("a folder whose computer is none of the account's says Computer not found, and keeps its menu", () => {
+    const gone: StorageFolder = { ...library, id: "gone_1", origin: { host: "device-nobody-has", path: "/Volumes/Old/Exports" }, missing: true };
+    const html = page([gone]);
+    expect(html).toContain("Computer not found · /Volumes/Old/Exports");
+    expect(html).not.toContain("A removed computer");
+    expect(html).toContain('aria-label="Actions for Creator Toolset"');
   });
 });
 
@@ -41,11 +56,11 @@ describe("every workspace's folders (Settings on All workspaces)", () => {
     return renderToStaticMarkup(<Storage devices={[mac]} storage={view(folders)} onChanged={() => {}} w={all} />);
   };
 
-  it("Exports is one list like Media, and Finals a row per workspace", () => {
+  it("Exports, Projects and Media are each one list, with no Finals row per workspace", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
     expect(html.match(/>Exports</g)).toHaveLength(1);
-    expect(html.match(/>Change</g)).toHaveLength(1); // ws-a's Finals
-    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, the other workspace's Finals, Media
+    expect(html.match(/>Change</g)).toBeNull();
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Projects, Media
     expect(html).toContain("/Volumes/Footage SSD/Songs");
   });
 
@@ -164,10 +179,10 @@ describe("Show in Finder, in the Mac app", () => {
     asks.length = 0;
   });
 
-  it("is on Exports, Finals and each Media folder of this Mac", () => {
+  it("is in the menu of each Exports, Projects and Media folder of this Mac (no Finals button)", () => {
     inMacApp(true);
     const html = page([library]);
-    expect(html.match(/>Show in Finder</g)).toHaveLength(1); // Finals' button; Exports has it in its menu, like Media
+    expect(html.match(/>Show in Finder</g)).toBeNull(); // in each row's menu, which is closed until pressed
     expect(html).toContain('aria-label="Actions for Creator Toolset"');
     expect(canRevealFolder(library)).toBe(true);
   });

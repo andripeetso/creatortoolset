@@ -9,6 +9,7 @@ import { libraryRole, mayWrite } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { downloadName, readerOf } from "./routes";
+import { mayServe } from "./upload-gate";
 import { assetRef, canSee } from "./sources";
 import { learnAll } from "./learn";
 import { lookable } from "./shots";
@@ -52,6 +53,8 @@ bulkApp.get("/:id/zip", async (c) => {
       .get(id, libraryId) as { v: string; key: string; mac_path: string | null } | undefined;
     // an original kept on a Mac is not here (its source may be its proxy): the zip holds originals only
     if (!a || a.mac_path || !(await canSee(viewer, assetRef(libraryId, id, a.v)))) continue;
+    // under Upload none the server gives no original (decision 6): the zip skips it
+    if (!(await mayServe({ id: libraryId, versionId: a.v }, "original")).ok) continue;
     // a file read where it is may be on a drive that is away: stat first, so one gone file never breaks the zip midway
     const file = await blobs.localCopy(a.key).catch(() => null);
     if (!file || !(await stat(file).catch(() => null))?.isFile()) continue;

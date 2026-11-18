@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearPieceCover, getPiece, libraryNews, patchPieceItem, reorderedPositions, setPieceCover, uploadFile } from "./library";
+import { clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -109,6 +109,25 @@ describe("uploadFile from the Mac app on its own server", () => {
     expect(told).toEqual([[0, true]]);
   });
 
+  it("a drop in the Mac app with Upload none is indexed in place (macIndexOnly); a browser or Upload all is not", async () => {
+    const libs = (upload: string) => vi.fn(async () => new Response(JSON.stringify({ libraries: [{ id: "lib_1", settings: { upload } }] })));
+    mac(picked);
+    // the Mac app's page mark (the one canReveal reads): without it the bridge alone is not the Mac app's page
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
+    vi.stubGlobal("fetch", libs("none"));
+    expect(await macIndexOnly("lib_1")).toBe(true);
+    vi.stubGlobal("fetch", libs("all"));
+    expect(await macIndexOnly("lib_1")).toBe(false);
+    vi.stubGlobal("document", { documentElement: { dataset: {} } });
+    vi.stubGlobal("fetch", libs("none"));
+    expect(await macIndexOnly("lib_1")).toBe(false);
+    vi.stubGlobal("window", {});
+    const browser = libs("none");
+    vi.stubGlobal("fetch", browser);
+    expect(await macIndexOnly("lib_1")).toBe(false);
+    expect(browser).not.toHaveBeenCalled();
+  });
+
   it("uploads as before in an older Mac app, which answers the question with its state, and when the server says to", async () => {
     for (const [answer, inPlace] of [
       [{ aiOn: false, paired: false }, null], // an older Mac app: no files in its answer
@@ -154,6 +173,54 @@ describe("uploadFile from the Mac app on its own server", () => {
     expect(await uploadFile("lib_1", clip(), (sent) => told.push(sent))).toEqual({ assetId: "a4" });
     expect(urls.filter((u) => !u.endsWith("/in-place"))).toEqual(["/api/library/lib_1/uploads"]);
     expect(told.at(-1)).toBe(5000); // after the in-place attempt's own 0s
+  });
+
+  it("under Upload none (onMac) a Mac-app drop never posts to /uploads: in place, indexed on this Mac, or refused where its path is unknown", async () => {
+    mac(picked);
+    const fetchMock = vi.fn(async (url: string) => (url.endsWith("/in-place") ? new Response("{}", { status: 400 }) : Response.json({ assetId: "a1" })));
+    vi.stubGlobal("fetch", fetchMock);
+    // the drop's own path, the server refuses the in-place add: indexed on this Mac, nothing sent
+    expect(await uploadFile("lib_1", clip(), () => {}, undefined, "/Volumes/Card/C0001.MP4", { onMac: true })).toEqual({ assetId: "a1" });
+    // a file whose place on this Mac is unknown: refused, never uploaded
+    await expect(uploadFile("lib_1", new File([new Uint8Array(9)], "Other.MP4"), () => {}, undefined, undefined, { onMac: true })).rejects.toThrow("Not added");
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls).toEqual(["/api/library/lib_1/in-place", "/api/library/lib_1/on-mac"]);
+    expect(urls.some((url) => /\/uploads(\?|$)/.test(url))).toBe(false);
+  });
+
+  it("Add final under Upload none (no onMac) still reaches the server: a remote server refuses the in-place add, so the file uploads", async () => {
+    mac(picked);
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
+    const fetchMock = vi.fn(async (url: string) => (url.endsWith("/in-place") ? new Response("{}", { status: 403 }) : Response.json({ assetId: "a2", versionId: "v2" })));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await uploadFile("lib_1", clip(), () => {}, "finals_1", "/Volumes/Card/C0001.MP4")).toEqual({ assetId: "a2", versionId: "v2" });
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => /\/uploads(\?|$)/.test(url))).toBe(true);
+  });
+
+  it("Add final copied into its folder on this Mac, Upload none, the Mac app's page (uploadFinal): the server still gets it; only Finals none keeps it here", async () => {
+    mac({ ...picked, device: "dev_1" });
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
+    const copied = "/Volumes/Tiny/Finals/Tiny Acrobatics handstand/C0001.MP4";
+    const urls: string[] = [];
+    const starts: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      urls.push(url);
+      if (url === "/api/library") return Response.json({ libraries: [{ id: "lib_1", settings: { upload: "none" } }] });
+      if (url.endsWith("/in-place")) return new Response("{}", { status: 403 });
+      // a Mac the server does not let send it (an older Mac app): an upload to fill with the bytes
+      if (url.endsWith("/uploads")) return starts.push(JSON.parse(String(init!.body))), new Response(JSON.stringify({ id: "u1", offset: 0, chunkSize: 1 << 20 }), { status: 201 });
+      if (url.endsWith("/finish")) return Response.json({ assetId: "fin1" });
+      if (url.endsWith("/on-mac")) return Response.json({ assetId: "here1" });
+      return new Response(null, { status: 204, headers: { "upload-offset": "5000" } });
+    });
+    expect(await uploadFinal("lib_1", clip(), copied, "all", "finals_1", () => {})).toEqual({ assetId: "fin1" });
+    expect(urls.filter((u) => !u.endsWith("/in-place"))).toEqual(["/api/library/lib_1/uploads", "/api/library/uploads/u1", "/api/library/uploads/u1/finish"]);
+    expect(starts).toMatchObject([{ collectionId: "finals_1", fromPath: copied, fromDevice: "dev_1", send: true }]);
+    // the Finals setting none: read where it was copied, nothing sent
+    urls.length = 0;
+    expect(await uploadFinal("lib_1", clip(), copied, "none", "finals_1", () => {})).toEqual({ assetId: "here1" });
+    expect(urls).toEqual(["/api/library/lib_1/on-mac"]);
   });
 
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {

@@ -23,7 +23,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { showAssistantNotice, useAssistant } from "@/lib/assistant";
 import { createEdit, createEmpty, deleteEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, patchEdit, restoreEdit, runEdit } from "@/lib/editor";
-import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
+import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, macIndexOnly, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
@@ -625,7 +625,8 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
           const of = files.length > 1 ? `${i + 1} of ${files.length} · ` : "";
           setAdding(`${of}${file.name}`);
           // a file the Mac app reads where it lies is not sent: it has no percent
-          const up = await uploadFile(target.libraryId, file, (sent, inPlace) => setAdding(`${of}${file.name}${inPlace || !file.size ? "" : ` · ${Math.round((sent / file.size) * 100)}%`}`), target.collectionId);
+          const onMac = await macIndexOnly(target.libraryId);
+          const up = await uploadFile(target.libraryId, file, (sent, inPlace) => setAdding(`${of}${file.name}${inPlace || !file.size ? "" : ` · ${Math.round((sent / file.size) * 100)}%`}`), target.collectionId, undefined, { onMac });
           const assetId = up.assetId ?? up.duplicateOf;
           if (!assetId) throw new Error(`Could not add ${file.name} to the Media Library`);
           await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
