@@ -159,6 +159,24 @@ describe("defaults", () => {
     expect(sw.serverWorks(null, "early")).toBe(false);
     sw.writeServerWork({ on: true });
   });
+
+  it("an owner's 'Your computers' choice becomes the list, once; a workspace made later starts off", () => {
+    workspace("ws-mig-on", "early");
+    workspace("ws-mig-own", "early", { serverWork: false });
+    sw.writeServerWork({ on: true, offByUpdate: true });
+    sw.migrateOwnerChoices();
+    const once = sw.readServerWork();
+    expect(once).toMatchObject({ on: true, offByUpdate: true });
+    expect(once?.projectIds).toContain("ws-mig-on");
+    expect(once?.projectIds).not.toContain("ws-mig-own");
+    sw.migrateOwnerChoices();
+    expect(sw.readServerWork()).toEqual(once);
+    workspace("ws-mig-new", "early");
+    expect(sw.serverWorks("ws-mig-on", "early")).toBe(true);
+    expect(sw.serverWorks("ws-mig-own", "early")).toBe(false);
+    expect(sw.serverWorks("ws-mig-new", "early")).toBe(false);
+    sw.writeServerWork({ on: true });
+  });
 });
 
 describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
@@ -241,6 +259,23 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
     expect(await view("ws-on")).toMatchObject({ serverName: await firstAdminServer(), workspace: { id: "ws-on", rendering: true } });
     expect(await view("ws-off")).toMatchObject({ workspace: { id: "ws-off", rendering: false } });
     sw.writeServerWork({ on: true });
+  });
+
+  it("the server's name: Creator Toolset Cloud on Cloud, none on This Mac", async () => {
+    process.env.CT_MODE = "hosted";
+    try {
+      expect(await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }))).toMatchObject({ kind: "hosted", serverName: "Creator Toolset Cloud" });
+    } finally {
+      delete process.env.CT_MODE;
+    }
+    process.env.CT_LOCAL = "1";
+    try {
+      const v = await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }));
+      expect(v.kind).toBe("local");
+      expect(v.serverName).toBeUndefined();
+    } finally {
+      delete process.env.CT_LOCAL;
+    }
   });
 
   it("Settings: the admin's switch, and the person's server row", async () => {

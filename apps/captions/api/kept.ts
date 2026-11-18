@@ -3,7 +3,7 @@ import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { EMPTIED, KEPT_KINDS, type KeptKind, type KeptRow, type KeptView, type WorkspaceStorage } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
 import type { SessionUser } from "./users";
 
 /**
@@ -240,6 +240,8 @@ export async function keptView(u: Who, stores?: Stores): Promise<KeptView> {
  */
 export async function workspaceStorage(): Promise<WorkspaceStorage[]> {
   const { libraryDb } = await import("./library/db");
+  const { accountOf } = await import("./library/access");
+  const { projectOf } = await import("./lib/project-of");
   const projects = await Promise.all(
     (await readdir(at("workshop", "projects")).catch(() => [] as string[])).filter((n) => n.endsWith(".json")).map((n) => json(at("workshop", "projects", n))),
   );
@@ -247,13 +249,23 @@ export async function workspaceStorage(): Promise<WorkspaceStorage[]> {
     .filter((p): p is Record<string, unknown> & { id: string; name: string } => typeof p?.id === "string" && typeof p.name === "string")
     .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
   const bytes = new Map<string, number>();
-  const libs = libraryDb().prepare("SELECT id, json_extract(settings, '$.projectId') AS ws FROM libraries").all() as { id: string; ws: string | null }[];
+  const libs = libraryDb().prepare("SELECT id, workspace_id, json_extract(settings, '$.projectId') AS ws FROM libraries").all() as { id: string; workspace_id: string; ws: string | null }[];
+  // the owner's rule (hasMembers, upload-gate.ts): a library with no workspace, or one that is gone, is the owner's first one
+  const ofOwner = new Map<string, Awaited<ReturnType<typeof projectOf>>>();
   for (const l of libs) {
-    const ws = l.ws ?? list[0]?.id;
+    const owner = accountOf(l.workspace_id);
+    if (owner && !ofOwner.has(owner)) ofOwner.set(owner, await projectOf({ username: owner } as SessionUser));
+    // a library with no known owner keeps its own workspace while it exists
+    const mine = owner ? ofOwner.get(owner)?.(l.ws ?? undefined) : l.ws && list.some((p) => p.id === l.ws) ? l.ws : undefined;
+    const ws = mine ?? list[0]?.id;
     if (!ws) continue;
     bytes.set(ws, (bytes.get(ws) ?? 0) + (await dirBytes(at("library", "blobs", "libraries", l.id))) + (await bucketBytes([l.id])));
   }
   return list.map((p) => ({ id: p.id, name: p.name, bytes: bytes.get(p.id) ?? 0 }));
+}
+
+/** Storage › Workspaces is never listed on Creator Toolset Cloud: it would show every customer's workspaces. */
+export const workspaceStorageAllowed = (user: SessionUser): boolean => user.role === "admin" && !hostedMode();
 }
 
 /** Empty one kind: exactly the items its row counts go, each the way its own tool deletes it. */
@@ -272,7 +284,7 @@ export async function emptyKept(kind: KeptKind, u: Who, device?: string): Promis
 keptApp.get("/", async (c) => c.json(await keptView(c.get("user"))));
 
 keptApp.get("/workspaces", async (c) => {
-  if (c.get("user").role !== "admin") return c.json({ error: "Only an admin sees this" }, 403);
+  if (!workspaceStorageAllowed(c.get("user"))) return c.json({ error: "Only an admin sees this, and not on Creator Toolset Cloud" }, 403);
   return c.json(await workspaceStorage());
 });
 

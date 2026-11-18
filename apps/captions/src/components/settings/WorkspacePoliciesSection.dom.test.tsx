@@ -64,3 +64,23 @@ it("Creator Toolset Cloud: the master is read-only and there are no per-workspac
   expect(switches()).toHaveLength(1);
   expect(switches()[0]!.disabled).toBe(true);
 });
+
+it("each switch saves the list the page shows: a workspace off keeps the others as they are; All workspaces on saves all", async () => {
+  const sent: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.body) sent.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify(init?.body ? admin : { kind: "server", place: null, admin }), { headers: { "content-type": "application/json" } });
+    }),
+  );
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<WorkspacePoliciesSection />));
+  const click = (label: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
+  await click("Server rendering for Second Brand");
+  await click("Server rendering for Tiny Acrobatics");
+  await click("All workspaces");
+  expect(sent).toEqual([{ only: ["ws-a", "ws-b"] }, { only: [] }, { all: true }]);
+});

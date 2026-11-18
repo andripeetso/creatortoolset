@@ -13,7 +13,7 @@
  * - Each person's Load balancing has a row for the server (balance weight SERVER_PLACE): Prefer sends work there first,
  *   Off never; Normal and Less often leave it to their computers first, as before.
  */
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_WEIGHT, type Balance } from "../../contracts/providers";
 import { balanceFile } from "../lib/balance";
@@ -91,6 +91,22 @@ export function settleServerWork(): void {
     return users.length > 1 || users.some((u) => u.usage.lastActiveAt > 0) || !!libraryDb().prepare("SELECT 1 FROM assets LIMIT 1").get();
   };
   writeServerWork({ on: false, ...(s?.projectIds ? { projectIds: s.projectIds } : {}), offByUpdate: s ? s.on : used() });
+}
+
+/**
+ * Once, after settleServerWork: a workspace whose owner chose "Your computers" (its project's serverWork false, no longer
+ * read) is left out of the admin's list, so All workspaces does not start it on this server. Once the file has a list,
+ * nothing is read again; a workspace made later starts off (PRD E3).
+ */
+export function migrateOwnerChoices(): void {
+  const s = readServerWork();
+  if (serverKind() !== "server" || s?.projectIds) return;
+  const dir = path.join(env.dataDir, "workshop", "projects");
+  const projects = (existsSync(dir) ? readdirSync(dir) : [])
+    .filter((n) => n.endsWith(".json") && ID.test(n.slice(0, -5)))
+    .map((n) => ({ id: n.slice(0, -5), off: readJson<{ serverWork?: boolean }>(path.join(dir, n))?.serverWork === false }));
+  if (!projects.some((p) => p.off)) return;
+  writeServerWork({ on: !!s?.on, projectIds: projects.filter((p) => !p.off).map((p) => p.id), ...(s?.offByUpdate ? { offByUpdate: true } : {}) });
 }
 
 /** Whether the server lets video work run on it for `workspace` (a Workshop project id; none = filed in no workspace), asked by `account`. */

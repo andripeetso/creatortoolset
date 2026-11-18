@@ -201,9 +201,13 @@ function MacComputer() {
   const kept = useCachedLoad<KeptView>(KEPT_API, () => call<KeptView>(KEPT_API), { own: true });
   const mine = useThisDevice();
   const [location, setLocation] = useState<string | null>(null);
-  useEffect(() => void downloadLocation().then((r) => setLocation(r?.path ?? null)), []);
+  // the row shows only once the Mac answers: a Mac release without the location bridge shows nothing, not a blank path
+  useEffect(() => void downloadLocation().then((r) => setLocation(r?.path ?? null), () => {}), []);
   const row = kept.data?.rows.find((r) => r.kind === "proxies" && r.device?.id === mine);
-  const limit = row?.limit ? ` of ${row.limit % 1e9 === 0 ? `${row.limit / 1e9} GB` : bytesLabel(row.limit)}` : "";
+  // the cap is named only when the server enforces one (cacheLimit), so the tooltip never promises a limit it does not hold
+  const cap = row?.limit ? (row.limit % 1e9 === 0 ? `${row.limit / 1e9} GB` : bytesLabel(row.limit)) : "";
+  const limit = cap ? ` of ${cap}` : "";
+  const cacheTip = `Files downloaded for edits on this computer. ${cap ? `Past ${cap}, the files used longest ago are removed. ` : ""}Files you made available offline are never removed.`;
   // the computer's proxies: Empty keeps the ones made available offline (the same route as the Your files row)
   const emptyCache = async (device: string | null) => {
     await call<KeptView>(`${KEPT_API}/proxies/empty?device=${encodeURIComponent(device ?? "")}`, "POST").catch((e: unknown) => saveFailed(e instanceof Error ? e.message : "Could not empty"));
@@ -218,7 +222,7 @@ function MacComputer() {
       <Card>
         <Row
           title="Download cache"
-          tip="Files downloaded for edits on this computer. Past 25 GB, the files used longest ago are removed. Files you made available offline are never removed."
+          tip={cacheTip}
           control={
             <>
               <span className="text-sm text-muted-foreground">{`${bytesLabel(row?.bytes ?? 0)}${limit}`}</span>
@@ -226,15 +230,17 @@ function MacComputer() {
             </>
           }
         />
-        <Row
-          title="Download location"
-          control={
-            <>
-              {location && <span className="min-w-0 truncate text-sm text-muted-foreground">{location}</span>}
-              <RowMenu label="Download location" items={[{ label: "Change…", onSelect: change }, { label: "Show in Finder", onSelect: () => showDownloadLocation() }]} />
-            </>
-          }
-        />
+        {location !== null && (
+          <Row
+            title="Download location"
+            control={
+              <>
+                <span className="min-w-0 truncate text-sm text-muted-foreground">{location}</span>
+                <RowMenu label="Download location" items={[{ label: "Change…", onSelect: change }, { label: "Show in Finder", onSelect: () => showDownloadLocation() }]} />
+              </>
+            }
+          />
+        )}
       </Card>
     </Section>
   );

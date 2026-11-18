@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ServerWorkView } from "@contracts/work";
 import { Switch } from "@/components/ui/switch";
-import { call, msg } from "./ServerWorkSection";
+import { call } from "./StorageRows";
+import { msg } from "./helpers";
 import { Card, ErrorRow, LoadingRow, Row, saveFailed, Section } from "./ui";
 
 /** The admin's view of the server (GET /api/work/server-work): the switch and its workspaces; set only on a server by address. */

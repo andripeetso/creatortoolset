@@ -35,7 +35,7 @@ export function StorageSection() {
     <>
       {me?.role === "admin" && <ServerUpdateSection />}
       <KeptSection />
-      {me?.role === "admin" && <WorkspaceStorageSection />}
+      {me?.role === "admin" && !hosted && <WorkspaceStorageSection />}
       <ThisComputerSection />
       {me?.role === "admin" && <Drives />}
       {me &&

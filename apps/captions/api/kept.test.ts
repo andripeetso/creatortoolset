@@ -177,3 +177,31 @@ it("Storage › Workspaces (admin): a library's bytes under its workspace, one w
   expect((await app.request("/api/devices/storage/kept/workspaces", { headers: { "x-who": "admin" } })).status).toBe(200);
   expect((await app.request("/api/devices/storage/kept/workspaces")).status).toBe(403);
 });
+
+it("Storage › Workspaces: an owner's library counts under the owner's first workspace, a gone one too; none on Cloud", async () => {
+  const { createUser } = await import("./users");
+  createUser("boss", "password1", { role: "admin" });
+  put("workshop/projects/ws-boss.json", JSON.stringify({ id: "ws-boss", name: "Boss brand", owner: "boss", createdAt: 3 }));
+  libraryDb().exec(`
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_boss', 'boss', 'B', 'local', '{}', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_gone', 'boss', 'G', 'local', '{"projectId":"ws-deleted"}', 0);
+  `);
+  put("library/blobs/libraries/lib_boss/source", 500);
+  put("library/blobs/libraries/lib_gone/source", 300);
+  const { workspaceStorage } = await import("./kept");
+  expect((await workspaceStorage()).find((w) => w.id === "ws-boss")).toEqual({ id: "ws-boss", name: "Boss brand", bytes: 800 });
+  expect((await workspaceStorage()).find((w) => w.id === "ws-other")?.bytes).toBe(4000);
+  const { storageApp } = await import("./devices-storage");
+  const app = new Hono<{ Variables: AuthVars }>();
+  app.use(async (c, next) => {
+    c.set("user", admin as never);
+    return next();
+  });
+  app.route("/api/devices/storage", storageApp);
+  process.env.CT_MODE = "hosted";
+  try {
+    expect((await app.request("/api/devices/storage/kept/workspaces")).status).toBe(403);
+  } finally {
+    delete process.env.CT_MODE;
+  }
+});
