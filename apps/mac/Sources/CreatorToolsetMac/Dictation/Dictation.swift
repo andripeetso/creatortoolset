@@ -612,7 +612,7 @@ final class Dictation: ObservableObject {
             capture: capture,
             transcriber: engineTranscriber(),
             observers: [pill, sounds, PhaseObserver()],
-            delivery: UnlessEarlierApp(TextDelivery(mode: .paste)),
+            delivery: UnlessEarlierApp(TextDelivery()),
             recordings: Self.recordings,
             context: { [weak self] in TranscriptionContext(spokenLanguages: self?.prefs.languages ?? self?.spoken ?? []) }
         )

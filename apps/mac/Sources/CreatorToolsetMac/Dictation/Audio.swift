@@ -25,9 +25,6 @@ final class AudioCapture {
     var onLevel: ((Float) -> Void)?
 
 
-    /// Counts and timings of the last finished capture, including press to
-    /// first sample. Nil until one finishes.
-    private(set) var lastStats: CaptureBuffer.Stats?
 
     /// Samples at the target rate per level report: ~33 ms, about the
     /// meter's frame rate, instead of one report per input buffer.
@@ -102,9 +99,7 @@ final class AudioCapture {
 
         // The input has stopped; flush what the resampler still holds.
         converters.drain { buffer.appendTail($0) }
-        let stats = buffer.currentStats
-        lastStats = stats
-        logStats(stats)
+        logStats(buffer.currentStats)
         return try buffer.finish()
     }
 

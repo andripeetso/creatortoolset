@@ -2,6 +2,7 @@
 // POST /api/transcribe/mic with the window's session, and the server's engine for talking to the assistant (their own
 // Deepgram or OpenAI key, Settings → API keys) answers { text, language }. This Mac's model (the default) needs no server.
 import Foundation
+import os
 
 /// Who writes dictation down; stored on this Mac (dictation is per Mac) under `dictation.engine`.
 enum DictationEngine: String {
@@ -87,14 +88,30 @@ struct SpeechServerTranscriber: Transcriber {
     /// Quick to give up when the server is off, with time for a long recording.
     static func timeout(seconds: TimeInterval) -> TimeInterval { 4 + seconds * 0.25 }
 
+    /// After a failed request a server is skipped this long, so one that is off or asleep doesn't make every
+    /// dictation wait out its timeout first.
+    static let skipAfterFailure: TimeInterval = 60
+    /// Until when each server is skipped. Static: Dictation makes a new transcriber from the setting each time.
+    static let downUntil = OSAllocatedUnfairLock<[URL: Date]>(initialState: [:])
+
+    func transcribe(_ audio: [Float], context: TranscriptionContext) async throws -> Transcript {
+        if let until = Self.downUntil.withLock({ $0[endpoint] }), until > Date() { throw URLError(.cannotConnectToHost) }
+        do {
+            return Transcript(text: try await postRetried(audio))
+        } catch {
+            if !Task.isCancelled { Self.downUntil.withLock { $0[endpoint] = Date() + Self.skipAfterFailure } }
+            throw error
+        }
+    }
+
     /// The first connection after launch can fail with "offline" while macOS checks Local Network access, so that
     /// error is tried once more.
-    func transcribe(_ audio: [Float], context: TranscriptionContext) async throws -> Transcript {
+    private func postRetried(_ audio: [Float]) async throws -> String {
         do {
-            return Transcript(text: try await post(audio))
+            return try await post(audio)
         } catch let error as URLError where error.code == .notConnectedToInternet {
             try await Task.sleep(nanoseconds: 300_000_000)
-            return Transcript(text: try await post(audio))
+            return try await post(audio)
         }
     }
 
@@ -115,6 +132,7 @@ struct SpeechServerTranscriber: Transcriber {
         request.timeoutInterval = 5
         for attempt in 1...10 {
             if (try? await URLSession.shared.data(for: request)) != nil {
+                Self.downUntil.withLock { $0[endpoint] = nil }
                 return DictationLog.info("speech server reachable (attempt \(attempt))")
             }
             try? await Task.sleep(nanoseconds: 1_000_000_000)

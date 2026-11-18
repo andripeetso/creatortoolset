@@ -3,20 +3,11 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-/// How a transcript is inserted at the cursor. Paste is the default.
-///
-/// Paste works in every app that supports paste, including the terminals and
-/// Electron editors that ignore `type-unicode` and drop its text with no
-/// error. It borrows the clipboard until the target app has read it, at
-/// least `TextInjector.settleDelay`, and always restores it. `type-unicode` leaves the clipboard alone.
-enum InjectMode: String, CaseIterable, Sendable {
-    case paste
-    case typeUnicode = "type-unicode"
-}
-
-/// Inserts text at the current cursor location by synthesizing keyboard
-/// events: ⌘V over the clipboard (`.paste`) or Unicode key events
-/// (`.typeUnicode`).
+/// Inserts text at the current cursor location with ⌘V over the clipboard,
+/// which works in every app that supports paste, including the terminals and
+/// Electron editors that drop synthesized Unicode key events with no error.
+/// It borrows the clipboard until the target app has read it, at least
+/// `TextInjector.settleDelay`, and always restores it.
 ///
 /// Every event comes from a private `CGEventSource` with its flags set
 /// explicitly. An event with a nil source inherits the modifiers the user is
@@ -42,14 +33,9 @@ final class TextInjector {
     /// Virtual keycode for V on ANSI layouts (kVK_ANSI_V).
     private static let keycodeV: CGKeyCode = 9
 
-    /// `CGEventKeyboardSetUnicodeString` takes about 20 UTF-16 units per event.
-    private static let chunkSize = 20
-
-    let mode: InjectMode
     private let clipboard: PasteboardSession
 
-    init(mode: InjectMode, pasteboard: NSPasteboard = .general) {
-        self.mode = mode
+    init(pasteboard: NSPasteboard = .general) {
         self.clipboard = PasteboardSession(
             pasteboard: SystemPasteboard(pasteboard),
             settleDelay: Self.settleDelay,
@@ -60,10 +46,7 @@ final class TextInjector {
     /// Inserts `text` at the cursor.
     func inject(_ text: String) {
         guard !text.isEmpty else { return }
-        switch mode {
-        case .paste: clipboard.paste(text)
-        case .typeUnicode: Self.typeUnicode(text)
-        }
+        clipboard.paste(text)
     }
 
     private static func postCommandV() {
@@ -76,32 +59,6 @@ final class TextInjector {
         up.flags = .maskCommand
         down.post(tap: postLocation)
         up.post(tap: postLocation)
-    }
-
-    private static func typeUnicode(_ text: String) {
-        let source = CGEventSource(stateID: .privateState)
-        let utf16 = Array(text.utf16)
-        var index = 0
-        while index < utf16.count {
-            var end = min(index + chunkSize, utf16.count)
-            // Keep a surrogate pair in one event.
-            if end < utf16.count, UTF16.isLeadSurrogate(utf16[end - 1]) {
-                end -= 1
-            }
-            var chunk = Array(utf16[index..<end])
-            guard
-                let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-            else { return }
-            down.flags = []
-            up.flags = []
-            // Payload on key-down only: some apps insert a key-up payload too,
-            // which typed every chunk twice.
-            down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
-            down.post(tap: postLocation)
-            up.post(tap: postLocation)
-            index = end
-        }
     }
 }
 
@@ -125,10 +82,9 @@ protocol PasteboardAccess: AnyObject {
     var changeCount: Int { get }
     func snapshot() -> PasteboardSnapshot
     func restore(_ snapshot: PasteboardSnapshot)
-    /// Replaces the contents with `text`, plus an empty item of each marker type.
-    func write(_ text: String, markers: [String])
-    /// Like `write`, but the text is only handed over when an app asks for
-    /// it, and `onRead` runs then.
+    /// Replaces the contents with `text`, plus an empty item of each marker
+    /// type. The text is only handed over when an app asks for it, and
+    /// `onRead` runs then.
     func promise(_ text: String, markers: [String], onRead: @escaping () -> Void)
 }
 
@@ -139,14 +95,14 @@ protocol PasteboardAccess: AnyObject {
 /// passed, or after `maxWait` if nothing reads it. A fixed delay was not
 /// enough: a busy app handled ⌘V after the restore and pasted the clipboard
 /// from before, often an earlier transcript. A second paste before the
-/// restore keeps the first snapshot, so the user's own clipboard comes back,
-/// not an earlier transcript. If anything else writes the clipboard during
-/// the window, that write wins and nothing is restored over it.
+/// restore waits for the first to be read or given up, so each ⌘V gets its
+/// own text, and the user's own clipboard comes back after the last. If
+/// anything else writes the clipboard during the window, that write wins and
+/// nothing is restored over it. A password manager's clipboard (marked
+/// concealed or transient) is not put back: it is cleared instead.
 final class PasteboardSession {
     /// nspasteboard.org markers: clipboard managers skip these items.
     static let transientMarkers = ["org.nspasteboard.TransientType", "org.nspasteboard.ConcealedType"]
-    /// A clipboard fallback is meant to stay, but is still kept out of history.
-    static let concealedMarkers = ["org.nspasteboard.ConcealedType"]
     /// How long a paste waits to be read before the clipboard comes back anyway.
     static let maxWait: TimeInterval = 3
 
@@ -159,6 +115,8 @@ final class PasteboardSession {
 
     /// The user's clipboard while a restore is pending.
     private var saved: PasteboardSnapshot?
+    /// Texts waiting for the current paste to be read or given up.
+    private var queue: [String] = []
     /// The change count right after our last write.
     private var ourChangeCount = 0
     /// Bumped on every write; only the latest scheduled restore runs.
@@ -185,9 +143,13 @@ final class PasteboardSession {
     var isRestorePending: Bool { saved != nil }
 
     func paste(_ text: String) {
-        if saved == nil {
-            saved = pasteboard.snapshot()
-        }
+        // One promise at a time: a second would replace the first before its ⌘V read it.
+        guard saved == nil else { return queue.append(text) }
+        saved = pasteboard.snapshot()
+        send(text)
+    }
+
+    private func send(_ text: String) {
         generation += 1
         let current = generation
         read = false
@@ -229,23 +191,22 @@ final class PasteboardSession {
         restore(ifGeneration: expected)
     }
 
-    /// Puts `text` on the clipboard to stay. Drops any pending restore, which
-    /// would otherwise overwrite it.
-    func copy(_ text: String) {
-        saved = nil
-        generation += 1
-        pasteboard.write(text, markers: Self.concealedMarkers)
-        ourChangeCount = pasteboard.changeCount
-    }
-
     private func restore(ifGeneration expected: Int) {
         guard expected == generation, let snapshot = saved else { return }
+        let changed = pasteboard.changeCount != ourChangeCount
+        if !queue.isEmpty {
+            // Someone copied meanwhile: theirs is what comes back after the last paste.
+            if changed { saved = pasteboard.snapshot() }
+            return send(queue.removeFirst())
+        }
         saved = nil
-        guard pasteboard.changeCount == ourChangeCount else {
+        guard !changed else {
             DictationLog.info("  clipboard changed during paste; not restoring")
             return
         }
-        pasteboard.restore(snapshot)
+        // A password manager's copy would outlive its auto-clear: leave the clipboard empty.
+        let secret = snapshot.items.contains { $0.contains { Self.transientMarkers.contains($0.type) } }
+        pasteboard.restore(secret ? PasteboardSnapshot(items: []) : snapshot)
     }
 }
 
@@ -280,16 +241,6 @@ final class SystemPasteboard: PasteboardAccess {
         if !items.isEmpty {
             pasteboard.writeObjects(items)
         }
-    }
-
-    func write(_ text: String, markers: [String]) {
-        pasteboard.clearContents()
-        let item = NSPasteboardItem()
-        item.setString(text, forType: .string)
-        for marker in markers {
-            item.setData(Data(), forType: NSPasteboard.PasteboardType(marker))
-        }
-        pasteboard.writeObjects([item])
     }
 
     /// Kept here as well as by the item, until the next write replaces it.
@@ -363,8 +314,8 @@ enum DeliveryDecision: Equatable {
 final class TextDelivery {
     private let injector: TextInjector
 
-    init(mode: InjectMode) {
-        self.injector = TextInjector(mode: mode)
+    init() {
+        self.injector = TextInjector()
     }
 
     /// Throws `DeliveryError` when the transcript did not reach the cursor.
@@ -386,14 +337,12 @@ final class TextDelivery {
     }
 }
 
-/// What had keyboard focus at one moment: the frontmost app, its focused
-/// element, and whether that element is a secure (password) field.
+/// What had keyboard focus at one moment: the focused element, and whether
+/// it is a secure (password) field.
 ///
 /// Taken at recording start and again right before delivery, over
 /// Accessibility, so delivery needs no watch on keystrokes or clicks.
 struct FocusSnapshot {
-    /// The frontmost app, if any.
-    var pid: pid_t?
     /// The focused element, if the app exposes one over Accessibility.
     var element: FocusedElement?
     /// The focused element is a secure text field or reports protected content.
@@ -405,7 +354,6 @@ struct FocusSnapshot {
 
     @MainActor
     static func capture() -> FocusSnapshot {
-        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let systemWide = AXUIElementCreateSystemWide()
         // On the system-wide element, this sets the timeout for every element.
         AXUIElementSetMessagingTimeout(systemWide, messagingTimeout)
@@ -413,10 +361,10 @@ struct FocusSnapshot {
         var value: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &value)
         guard status == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            return FocusSnapshot(pid: pid, element: nil, isSecure: false)
+            return FocusSnapshot(element: nil, isSecure: false)
         }
         let element = value as! AXUIElement
-        return FocusSnapshot(pid: pid, element: FocusedElement(element), isSecure: isSecure(element))
+        return FocusSnapshot(element: FocusedElement(element), isSecure: isSecure(element))
     }
 
     /// Secure only when the element says so. An element that cannot be read
@@ -439,16 +387,12 @@ struct FocusSnapshot {
     }
 }
 
-/// An Accessibility element compared by identity (`CFEqual`).
-struct FocusedElement: Equatable {
+/// The focused Accessibility element.
+struct FocusedElement {
     let ref: AXUIElement
 
     init(_ ref: AXUIElement) {
         self.ref = ref
-    }
-
-    static func == (lhs: FocusedElement, rhs: FocusedElement) -> Bool {
-        CFEqual(lhs.ref, rhs.ref)
     }
 
     /// The character before the insertion point, for `Spacing`. Reads the
