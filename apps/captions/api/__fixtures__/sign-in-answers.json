@@ -223,6 +223,26 @@
     "location": null,
     "cacheControl": "no-store"
   },
+  "hosted app, its code": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "user": {
+        "username": "tina",
+        "name": "tina",
+        "role": "user",
+        "cloud": true,
+        "off": [],
+        "read": [],
+        "logins": 2,
+        "picture": null,
+        "member": true
+      }
+    },
+    "cookie": "cap_auth=<signed>.<app>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": "no-store"
+  },
   "hosted invite, a new account": {
     "status": 200,
     "body": {
