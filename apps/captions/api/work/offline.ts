@@ -27,6 +27,9 @@ export interface OfflineList {
   versions: string[];
   collections: string[];
   libraries?: string[];
+  /** Downloads per library (UNIFIED-PRD M13): none, needed (Automatic downloads) or all (Make available offline) + kinds.
+   *  An old `libraries` entry reads as { mode: "all", proxies: true } at read time. */
+  downloads?: Record<string, { mode: "none" | "needed" | "all"; proxies?: boolean; originals?: boolean }>;
 }
 
 const fileOf = (user: string) => path.join(env.dataDir, "offline", `${encodeURIComponent(user)}.json`);

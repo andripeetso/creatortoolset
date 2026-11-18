@@ -12,23 +12,26 @@ import type { FolderState } from "./places";
  * account's folder under $DATA_DIR/storage/); each computer that reports its folders says where it found each one.
  */
 
-export const STORAGE_ROLES = [{ value: "footage", label: "Footage" }] as const;
+export const STORAGE_ROLES = [{ value: "footage", label: "Source media" }] as const;
 /** The Projects folder's name, made next to a workspace's first Media folder (ensureUseFolder, api/devices-storage.ts). */
-export const PROJECTS_NAME = "Projects";
+export const PROJECTS_NAME = "Project files";
 /** The Exports folder's name, made next to a workspace's first Media folder when the workspace has none (ensureUseFolder). */
-export const EXPORTS_NAME = "Exports";
+export const EXPORTS_NAME = "Final exports";
 /** The three uses (owner, 2026-11-18): "footage" is Media (many per workspace), "projects" is the workspace's Projects folder
  *  (AI Editor working files, one), "library" is its Exports folder (finals and deliverables, one; Finals reads it). "finals"
  *  is a legacy role, read as Exports (api/library/report.ts useOf). A "music" folder from before is read as footage. */
 export type StorageRole = "footage" | "finals" | "library" | "projects";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
+/** The one label of each folder use, on every surface (Settings → Folders, Library settings, setup, the AI's words). */
+export const FOLDER_LABELS: Record<StorageRole, string> = { footage: "Source media", projects: PROJECTS_NAME, library: EXPORTS_NAME, finals: EXPORTS_NAME };
 
 export const MARKER_FILE = ".creatortoolset-folder";
 /** The host of a folder on the computer the server runs on, when no paired Mac stands for it (setup's Folders step, owner only). */
 export const THIS_COMPUTER = "this-computer";
 /** The Exports folder setup suggests (~/Movies/Creator Toolset), and the subfolder for each role inside it. */
 export const LIBRARY_NAME = "Creator Toolset";
-export const LIBRARY_SUBFOLDERS: Record<"footage" | "finished", string> = { footage: "Footage", finished: "Finished" };
+/** New disk folders' names (existing folders are never renamed); apps/editor/editor/storage.py mirrors them. */
+export const LIBRARY_SUBFOLDERS: Record<"footage" | "finished", string> = { footage: "Source media", finished: "Final exports" };
 
 /** A drive or volume a computer reported: its name, where it is mounted, and its space (GB). A network share
  *  also says it is one (`network`) and which machine it lives on (`server`, e.g. the NAS's name). */

@@ -1,3 +1,4 @@
+import type { ProxyQuality } from "./library";
 /**
  * The work package: a core AI Editor step run on one of the asker's own computers instead of on the server. The server
  * keeps the queue, runs each step's gate and every step that reads no video or sound; a computer runs a video step's
@@ -150,7 +151,9 @@ export interface LibraryPackage {
   /** send: what the library keeps of an upload */
   upload?: "proxies" | "all";
   /** send: wantsProxy's options (library/media/proxy.ts) */
-  proxy?: { cloud: boolean; on: boolean };
+  proxy?: { cloud: boolean; on: boolean; quality?: ProxyQuality };
+  /** send under Upload off with Generate proxies on: make the proxy and keep it in this computer's cache (kept.json); nothing is sent */
+  keepProxy?: boolean;
   /** send: the person said it is a song or a sound effect: no strip, no fingerprint */
   music?: boolean;
   /** transcribe: the sound to cut from the file (library/transcribe.ts soundArgs), sent to the server's /hear for the words */
@@ -259,4 +262,8 @@ export interface ServerWorkView {
    * turned it off (it was on), shown until the admin changes it
    */
   admin?: { on: boolean; offByUpdate: boolean; all: boolean; workspaces: { id: string; name: string; owner: string; on: boolean }[] };
+  /** the name members see: "Creator Toolset Cloud", else the first admin's name + "'s server"; absent on This Mac */
+  serverName?: string;
+  /** the current workspace's Server rendering, for any member of it */
+  workspace?: { id: string; rendering: boolean };
 }

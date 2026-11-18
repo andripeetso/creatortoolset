@@ -153,7 +153,17 @@ export interface LibrarySettings {
   timeline: boolean; // Gemini watches each of those videos and writes its timeline (Timelines): on a Gemini key with its sound, on Antigravity its picture only
   /** what watches (WATCH_MODELS); absent: the first */
   timelineModel?: WatchModel;
-  proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+  proxy: boolean; // Generate proxies for imported media: a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+  /** Proxy quality (PROXY_QUALITIES); absent: "standard". Changing it affects new proxies only. */
+  proxyQuality?: ProxyQuality;
+  /** transcripts at import (Analysis effort Low and up); absent: on */
+  transcribe?: boolean;
+  /** Analysis effort Max: talking takes get shot descriptions too (with lookLevel "detailed") */
+  lookTalking?: boolean;
+  /** when setup was finished (ISO); absent: not set up, so mediaReady is false and the Library opens setup */
+  setupAt?: string;
+  /** Use default folders: missing Source media / Project files / Final exports are made at the default paths; absent: on */
+  defaultFolders?: boolean;
   /**
    * What a file added from a computer the server is not on sends to the server: "none" (the default) indexes it where it
    * is; "proxies" sends it, keeps only its proxy and forgets the original there; "all" keeps the video file and its proxy.
@@ -163,11 +173,12 @@ export interface LibrarySettings {
   /** The same for a final (a file that goes into Finals, from a project's folder in the Finals folder): "all" when unset,
    *  so a phone can download the finished file to post it. */
   finalsUpload?: LibraryUpload;
-  /** how files come in, asked on the first add (absent: not asked yet): used where they are, or copied into `copyTo` */
+  /** How should imported media behave? copied into the first Source media folder, or used where they are. Absent: in place
+   *  (libraries from before setup); setup stores "copy" by default. */
   importMode?: ImportMode;
-  /** the folder copies go into (a path on the person's computer); absent: the Mac's default (~/Movies/Creator Toolset/<library>) */
+  /** @deprecated read only by the one-time migration (UNIFIED-PRD §4.6); removed from the type at integrate */
   copyTo?: string;
-  /** folders files came from and how each was taken: a later add from inside one is not asked again, a new place is */
+  /** @deprecated read only by the one-time migration (UNIFIED-PRD §4.6); removed from the type at integrate */
   places?: ImportPlace[];
   /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
   organize?: Organize;
@@ -209,8 +220,53 @@ export const watchModelOf = (v: unknown): WatchModel => (WATCH_MODELS.some((m) =
 /** A new library's monthly cap on shot descriptions, in dollars (API-equivalent on an AI provider). */
 export const LOOK_BUDGET_DEFAULT = 20;
 
-export type LibraryUpload = "none" | "proxies" | "all";
-export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "proxies", "all"];
+/** Hosted media: what the server keeps. Read only through hostsOriginals / hostsProxies (never `upload ===`). */
+export type LibraryUpload = "none" | "originals" | "proxies" | "all";
+export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];
+export const hostsOriginals = (u: LibraryUpload | null | undefined): boolean => u === "originals" || u === "all";
+export const hostsProxies = (u: LibraryUpload | null | undefined): boolean => u === "proxies" || u === "all";
+/** The Hosted media switches back to the one stored value. */
+export const uploadFrom = (originals: boolean, proxies: boolean): LibraryUpload =>
+  originals && proxies ? "all" : originals ? "originals" : proxies ? "proxies" : "none";
+
+/** Proxy quality (UNIFIED-PRD §4.1): short side cap, CRF and max video rate; never upscaled, never above 0.8 × the source's rate. */
+export type ProxyQuality = "low" | "standard" | "high";
+export const PROXY_QUALITIES: readonly { value: ProxyQuality; label: string; short: number; crf: number; maxKbps: number }[] = [
+  { value: "low", label: "Low (540p)", short: 540, crf: 28, maxKbps: 2000 },
+  { value: "standard", label: "Standard (720p)", short: 720, crf: 26, maxKbps: 4000 },
+  { value: "high", label: "High (1080p)", short: 1080, crf: 23, maxKbps: 8000 },
+];
+export const proxyQualityOf = (v: unknown): ProxyQuality => (PROXY_QUALITIES.some((q) => q.value === v) ? (v as ProxyQuality) : "standard");
+
+/**
+ * Analysis effort (UNIFIED-PRD §4.4): one slider over the existing flags, which stay the store. flagsOf writes them;
+ * levelOf reads back the lowest level that covers every step they run.
+ */
+export type AnalysisLevel = "off" | "low" | "medium" | "high" | "xhigh" | "max";
+export const ANALYSIS_LEVELS: readonly { value: AnalysisLevel; label: string }[] = [
+  { value: "off", label: "Off" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+];
+export const ANALYSIS_DEFAULT: AnalysisLevel = "high";
+export type AnalysisFlags = Pick<LibrarySettings, "describe" | "embed" | "pictures" | "look" | "lookLevel" | "timeline" | "transcribe" | "lookTalking">;
+export function flagsOf(level: AnalysisLevel): AnalysisFlags {
+  const n = ANALYSIS_LEVELS.findIndex((l) => l.value === level);
+  const look: LookLevel = n >= 4 ? "detailed" : n === 2 ? "light" : "standard";
+  return { transcribe: n >= 1, describe: n >= 1, embed: n >= 1, pictures: n >= 1, look: n >= 2, lookLevel: look, timeline: n >= 3, lookTalking: n >= 5 };
+}
+export function levelOf(s: Partial<AnalysisFlags>): AnalysisLevel {
+  let n = s.transcribe !== false || s.describe || s.embed || s.pictures ? 1 : 0;
+  if (s.look) {
+    const l = lookLevelOf(s.lookLevel);
+    n = Math.max(n, l === "light" ? 2 : l === "standard" ? 3 : s.lookTalking ? 5 : 4);
+  }
+  if (s.timeline) n = Math.max(n, 3);
+  return ANALYSIS_LEVELS[n]!.value;
+}
 /** in-place: the files stay where they are and are read there; copy: copied into the library's folder first, then read there */
 export type ImportMode = "in-place" | "copy";
 export interface ImportPlace {
@@ -221,8 +277,10 @@ export interface ImportPlace {
 export const placeOf = (places: readonly ImportPlace[] | undefined, path: string): ImportPlace | undefined =>
   (places ?? []).filter((p) => path === p.path || path.startsWith(p.path.endsWith("/") ? p.path : `${p.path}/`)).sort((a, b) => b.path.length - a.path.length)[0];
 
-/** Default folders: DEFAULT_FOLDERS made. AI organizes: no folder up front; the AI files each file and makes a folder that fits the footage with its first file. Own: nothing made. */
+/** Organization: "ai" Smart folders (the default for new libraries), "own" Organize yourself. "default" is a stored value
+ *  from before (Default folders), read as "own" by organizeOf. */
 export type Organize = "default" | "ai" | "own";
+export const organizeOf = (v: unknown): "ai" | "own" | undefined => (v === "ai" ? "ai" : v === "own" || v === "default" ? "own" : undefined);
 
 /**
  * The folders "Default folders" and "AI organizes" make, in this order. A-roll and B-roll are smart folders over the roll
@@ -715,3 +773,43 @@ export interface CopyItem {
 export interface WhereAnswer {
   versions: Record<string, WhereIs & { word: PlaceWord }>;
 }
+
+/**
+ * Every label and tooltip more than one surface shows (owner page, member page, setup, chat), written once
+ * (UNIFIED-PRD §2, SCREENS-COPY.md). Folder labels live in contracts/storage.ts (FOLDER_LABELS).
+ */
+export const LIBRARY_WORDS = {
+  importTitle: "How should imported media behave?",
+  importCopy: { label: "Copy into Source media", tip: "Imported files are copied into your Source media folder. The file you imported stays where it was." },
+  importInPlace: { label: "Use files where they are", tip: "Imported files stay where you imported them from. Import from Downloads, and the clip keeps using that file." },
+  foldersTitle: "Folders",
+  defaultFolders: { label: "Use default folders", tip: "Source media, Project files and Final exports are made in ~/Movies/Creator Toolset/<workspace>." },
+  notSet: "Not set",
+  organizationTitle: "Organization",
+  smartFolders: { label: "Smart folders", tip: "Clips are filed into folders by what they show, and new clips are filed as they come in. Files on disk never move." },
+  organizeYourself: { label: "Organize yourself", tip: "Every clip goes into one library. You make and fill the folders yourself." },
+  proxyTitle: "Proxy workflow",
+  generateProxies: { label: "Generate proxies for imported media", tip: "Creates smaller copies of your media files for faster uploads, playback and editing, and easier AI processing." },
+  proxyQuality: { label: "Proxy quality", tip: "Higher quality looks sharper while editing and takes more space. A proxy is never larger than its original." },
+  hostedTitle: "Hosted media",
+  uploadToServer: "Upload to server",
+  originals: "Originals",
+  proxies: "Proxies",
+  finalExportsUpload: { label: "Final exports", tip: "Finished videos are uploaded so they can be reviewed and shared." },
+  noServer: "No server connected",
+  analysisTitle: "Analysis",
+  effort: "Effort",
+  effortTips: {
+    off: "Imports only: file name, date, length and camera data. Nothing is analyzed until an edit needs it.",
+    low: "Transcripts, plus a description and tags for each clip.",
+    medium: "Everything in Low, plus what's on screen every 12–24 seconds.",
+    high: "Everything in Medium, with what's on screen every 4–8 seconds, plus a video breakdown.",
+    xhigh: "Everything in High, with what's on screen every 2–4 seconds.",
+    max: "Everything in Extra high, and talking-head clips are described shot by shot too.",
+  } satisfies Record<AnalysisLevel, string>,
+  modelsTitle: "Models",
+  descriptions: "Descriptions",
+  videoBreakdown: "Video breakdown",
+  transcripts: "Transcripts",
+  downloadsTitle: "Downloads",
+} as const;
