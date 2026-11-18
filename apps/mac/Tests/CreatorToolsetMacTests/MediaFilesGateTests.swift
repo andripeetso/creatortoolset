@@ -129,6 +129,15 @@ final class MediaFilesGateTests: XCTestCase {
         XCTAssertEqual(stored, [s: ["f1"]])
     }
 
+    /// Right after the update, before any pull: a folder OK'd by path (saved before the id key) still reads as allowed.
+    func testPathKeyedOKReadsBeforeMigration() throws {
+        let s = "s"
+        MediaFiles.defaults.set(try JSONEncoder().encode([s: [footage]]), forKey: "allowedFolders")
+        MediaFiles.defaults.set(try JSONEncoder().encode([s: [MediaFiles.ServerFolder(id: "f1", path: footage, workspaces: ["*"], use: "media")]]), forKey: "serverFolders")
+        XCTAssertTrue(MediaFiles.isAllowed(footage, server: s))
+        XCTAssertEqual(MediaFiles.granted(server: s, workspace: nil), [footage])
+    }
+
     /// The OKs saved by path before the change become the folders' ids, once; a second pull changes nothing.
     func testPathKeyedOKsMigrateOnce() throws {
         let s = "s"

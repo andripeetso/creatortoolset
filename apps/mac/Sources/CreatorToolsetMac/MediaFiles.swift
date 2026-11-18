@@ -98,7 +98,7 @@ enum MediaFiles {
         encode(all, serversKey)
         var ok: [String: [String]] = decoded(allowedKey)
         // OKs are keyed by folder id; one saved by path (before) becomes the id of the listed folder at that path, once
-        if let was = ok[server] { ok[server] = was.compactMap { x in list.first { $0.id == x || $0.path == x }?.id } }
+        if let was = ok[server] { ok[server] = Array(Set(was.compactMap { x in list.first { $0.id == x || $0.path == x }?.id })) }
         encode(ok, allowedKey)
         return list
     }
@@ -116,7 +116,8 @@ enum MediaFiles {
     /// Whether this Mac may read a server's folder: OK'd for that server, or at or under a folder picked or dropped here.
     static func isAllowed(_ path: String, server: String) -> Bool {
         let ok: [String: [String]] = decoded(allowedKey)
-        if serverFolders(server).contains(where: { $0.path == path && ok[server]?.contains($0.id) == true }) { return true }
+        // an OK saved by path before the id key still counts until a pull migrates it (setServerFolders)
+        if serverFolders(server).contains(where: { $0.path == path && (ok[server]?.contains($0.id) == true || ok[server]?.contains($0.path) == true) }) { return true }
         return Imports.inside(path, defaults.stringArray(forKey: pickedKey) ?? []) != nil
     }
 

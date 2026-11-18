@@ -43,7 +43,9 @@ describe("Show in Finder on a server elsewhere", () => {
 
   it("is not offered without the Mac app's reveal mark, even for a clip this computer has", async () => {
     delete document.documentElement.dataset.macReveal;
-    expect(await menuFor({ id: "a1", onComputer: true })).not.toContain("Show in Finder");
+    const menu = await menuFor({ id: "a1", onComputer: true });
+    expect(menu).toContain("Open");   // the menu opened, so the absence below means something
+    expect(menu).not.toContain("Show in Finder");
   });
 
   it("is offered for an upload whose original this computer has", async () => {
