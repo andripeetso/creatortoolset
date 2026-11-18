@@ -13,9 +13,14 @@ import type { FolderState } from "./places";
  */
 
 export const STORAGE_ROLES = [{ value: "footage", label: "Footage" }] as const;
-/** "library" is an Exports folder (exportsOf); footage is the Media list; "finals" is a workspace's Finals folder, one at most
- *  (none: the Library's Finished/, finalsFolderOf). A "music" folder from before is read as footage (api/lib/storage.ts). */
-export type StorageRole = "footage" | "finals" | "library";
+/** The Projects folder's name, made next to a workspace's first Media folder (ensureUseFolder, api/devices-storage.ts). */
+export const PROJECTS_NAME = "Projects";
+/** The Exports folder's name, made next to a workspace's first Media folder when the workspace has none (ensureUseFolder). */
+export const EXPORTS_NAME = "Exports";
+/** The three uses (owner, 2026-11-18): "footage" is Media (many per workspace), "projects" is the workspace's Projects folder
+ *  (AI Editor working files, one), "library" is its Exports folder (finals and deliverables, one; Finals reads it). "finals"
+ *  is a legacy role, read as Exports (api/library/report.ts useOf). A "music" folder from before is read as footage. */
+export type StorageRole = "footage" | "finals" | "library" | "projects";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 
 export const MARKER_FILE = ".creatortoolset-folder";
@@ -88,6 +93,8 @@ export interface StorageFolder {
   checkedAt?: number;
   /** a Media folder that is also a destination for the library's copies */
   copyTo?: true;
+  /** set by the page's view only, never stored: this folder's computer is not one of the account's ("Computer not found") */
+  missing?: true;
 }
 
 /** A Media folder's `workspace` when every workspace uses it (Settings → Folders, a folder's Workspaces: All workspaces). */

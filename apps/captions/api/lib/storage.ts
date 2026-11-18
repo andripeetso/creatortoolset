@@ -103,6 +103,17 @@ export async function localDisks(libraryPath?: string): Promise<Disk[]> {
   return [system, ...other];
 }
 
+/**
+ * Whether a folder sits on the Mac's (or a computer's) internal disk: a home folder, or the disk the computer reports as
+ * "/" when it reports its drives (`disks`), else a path outside the usual external mounts. Auto-created folders never go there.
+ */
+export function onInternalDisk(p: string, disks: Disk[] = []): boolean {
+  if (p === "~" || p.startsWith("~/")) return true;
+  const at = disks.filter((d) => inside(p, d.path) !== null).sort((a, b) => b.path.length - a.path.length)[0];
+  if (at) return at.path === "/";
+  return !/^\/(Volumes|media|mnt|run\/media)\//.test(p);
+}
+
 /** A folder path without trailing slashes ("/" stays "/"). */
 const norm = (p: string) => p.replace(/(.)\/+$/, "$1");
 

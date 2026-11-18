@@ -24,7 +24,7 @@ const db = () => libraryDb();
 const nfc = (p: string) => p.normalize("NFC");
 
 /** A media folder of a computer, as its agent sees it (GET /api/devices/relay/folders). */
-export const useOf = (f: StorageFolder): RelayFolder["use"] => (f.role === "finals" ? "finals" : f.role === "library" ? "exports" : "media");
+export const useOf = (f: StorageFolder): RelayFolder["use"] => (f.role === "projects" ? "projects" : f.role === "library" || f.role === "finals" ? "exports" : "media");
 
 /** The workspace ids a folder is in, "*" for every one; a folder from before workspaces is the first brand's. */
 async function workspacesOf(owner: string, f: StorageFolder): Promise<string[] | "*"> {
