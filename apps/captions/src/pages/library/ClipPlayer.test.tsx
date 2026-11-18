@@ -229,3 +229,30 @@ describe("under Upload none", () => {
     expect(video().getAttribute("src")).toBe("ctlocal://media/a");
   });
 });
+
+describe("where a clip is, when this Mac cannot play it (decision 5, A4/A5)", () => {
+  const openNone = (a: AssetCard = card) =>
+    act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+
+  it("a clip on none of his computers under Upload none: no server address, and the panel says Not checked yet", async () => {
+    answer = undefined;
+    await openNone({ ...card, onMac: undefined });
+    expect(video().getAttribute("src")).toBeNull();
+    expect(host.textContent).toContain("Not checked yet");
+  });
+
+  it("a clip missing on a computer under Upload none: no server address, and the panel says Missing on that computer", async () => {
+    answer = undefined;
+    await openNone({ ...card, onMac: undefined, placeWord: { word: "missing", computer: "Studio" } });
+    expect(video().getAttribute("src")).toBeNull();
+    expect(host.textContent).toContain("Missing on Studio");
+  });
+
+  it("a clip a computer holds (a listed folder or a place row) asks this Mac and never sets a server /play address", async () => {
+    answer = original;
+    await open({ ...card, onMac: undefined, placeWord: { word: "on", computer: "Studio" } });
+    expect(post).toHaveBeenCalled();
+    expect(video().getAttribute("src")).toBe("ctlocal://media/a");
+    expect(video().getAttribute("src")).not.toMatch(/\/api\/library\/media\/.*\/play/);
+  });
+});

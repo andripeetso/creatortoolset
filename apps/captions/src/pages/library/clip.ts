@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { AssetCard, AssetDetail, ShareRow, TagCount } from "@contracts/library";
-import { thisMacBridge } from "@/lib/thisMac";
+import { macPageMarked, thisMacBridge } from "@/lib/thisMac";
 import { thisMacDevice } from "@/lib/providers";
 import { getAsset } from "@/lib/library";
 import { allGranted, askMediaFolder, listMediaFolders } from "@/lib/local-files";
@@ -143,10 +143,10 @@ export function tagSuggestions(all: TagCount[], have: string[], typed: string): 
 /** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
 export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
-const revealMark = () => (typeof document === "undefined" ? undefined : document.documentElement.dataset.macReveal);
-
 /** The Mac app shows a clip's file in Finder (<html data-mac-reveal>, apps/mac Reveal.swift). */
-export const canReveal = () => (revealMark() === "1" || revealMark() === "2") && !!thisMacBridge();
+export const canReveal = () => macPageMarked();
+
+const revealMark = () => (typeof document === "undefined" ? undefined : document.documentElement.dataset.macReveal);
 
 /** From '2' the Mac app shows a video, sound or picture file in Finder with no folder granted first. */
 export const revealsAnywhere = () => revealMark() === "2";

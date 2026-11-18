@@ -260,6 +260,16 @@ describe("the clip's path on this computer", () => {
     }
   });
 
+  it("a computer asking is never handed another computer's path, nor a stale one from the server's row", () => {
+    libraryDb().prepare("UPDATE asset_versions SET source_path = '/Volumes/Cam/C0001.MP4', from_path = '/Users/tiny/Desktop/jump.mp4' WHERE id = 'ver-ast-roll-0001'").run();
+    try {
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin, "dev_other")).toBeUndefined();
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin)).toBe("/Volumes/Cam/C0001.MP4");
+    } finally {
+      libraryDb().prepare("UPDATE asset_versions SET source_path = NULL, from_path = NULL WHERE id = 'ver-ast-roll-0001'").run();
+    }
+  });
+
   it("a clip kept on this server's disk: the stored file, only on the Mac app's own server on a Mac", () => {
     try {
       onMac(true);

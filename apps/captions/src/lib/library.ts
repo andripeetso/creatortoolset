@@ -26,7 +26,7 @@ import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
-import { pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { macPageMarked, pathOnMac } from "@/lib/thisMac";
 import { deviceHere, indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
 
@@ -49,7 +49,7 @@ export const listLibraries = () =>
  * never sent to the server (local-first R-A1). The Mac app's bridge is the marker; a browser is never this case.
  */
 export async function macIndexOnly(libraryId: string): Promise<boolean> {
-  if (!thisMacBridge()) return false;
+  if (!macPageMarked()) return false;
   const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
   return libs.find((l) => l.id === libraryId)?.settings.upload === "none";
 }

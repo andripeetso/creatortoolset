@@ -112,9 +112,14 @@ describe("uploadFile from the Mac app on its own server", () => {
   it("a drop in the Mac app with Upload none is indexed in place (macIndexOnly); a browser or Upload all is not", async () => {
     const libs = (upload: string) => vi.fn(async () => new Response(JSON.stringify({ libraries: [{ id: "lib_1", settings: { upload } }] })));
     mac(picked);
+    // the Mac app's page mark (the one canReveal reads): without it the bridge alone is not the Mac app's page
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
     vi.stubGlobal("fetch", libs("none"));
     expect(await macIndexOnly("lib_1")).toBe(true);
     vi.stubGlobal("fetch", libs("all"));
+    expect(await macIndexOnly("lib_1")).toBe(false);
+    vi.stubGlobal("document", { documentElement: { dataset: {} } });
+    vi.stubGlobal("fetch", libs("none"));
     expect(await macIndexOnly("lib_1")).toBe(false);
     vi.stubGlobal("window", {});
     const browser = libs("none");
@@ -181,6 +186,16 @@ describe("uploadFile from the Mac app on its own server", () => {
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls).toEqual(["/api/library/lib_1/in-place", "/api/library/lib_1/on-mac"]);
     expect(urls.some((url) => /\/uploads(\?|$)/.test(url))).toBe(false);
+  });
+
+  it("Add final under Upload none (no onMac) still reaches the server: a remote server refuses the in-place add, so the file uploads", async () => {
+    mac(picked);
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
+    const fetchMock = vi.fn(async (url: string) => (url.endsWith("/in-place") ? new Response("{}", { status: 403 }) : Response.json({ assetId: "a2", versionId: "v2" })));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await uploadFile("lib_1", clip(), () => {}, "finals_1", "/Volumes/Card/C0001.MP4")).toEqual({ assetId: "a2", versionId: "v2" });
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => /\/uploads(\?|$)/.test(url))).toBe(true);
   });
 
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {
