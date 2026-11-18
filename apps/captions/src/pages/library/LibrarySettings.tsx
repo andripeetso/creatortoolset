@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Folder } from "lucide-react";
 import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
@@ -17,10 +17,7 @@ import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
-import { addFrom, CantRead, copyAvailable, copyRoot, lookedLine, lookForNew, NEEDS_MAC } from "./Import";
-import { placesHere } from "./Locate";
-import type { HereAnswer } from "@contracts/places";
-import { getWorkspace } from "@/lib/workspaces";
+import { addFrom, CantRead, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 import { LibraryCopies } from "./Copies";
 
@@ -33,9 +30,7 @@ import { LibraryCopies } from "./Copies";
  * footage and the finals goes to the server, and where); Storage (where the video files are, proxies, and the space the
  * library's own made files take); Descriptions (what is written down about each video, with Shot detail and the
  * Timeline model under it); Search (how a search matches); All clips (redo). The button carries an amber dot while a
- * folder or clip is not found. The sheet has two parts: This workspace (the owner's settings above; a member reads
- * them as a few locked sentences, memberLines) and On this computer (the same for everyone: Keep proxies, Connect
- * originals).
+ * folder or clip is not found.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -89,132 +84,26 @@ interface BodyProps {
 }
 
 type SheetProps = { open: boolean; onOpenChange: (open: boolean) => void };
-/** Connect originals… (LibraryPage's, the same as its More menu item); absent where this computer cannot (a browser, an older Mac app) */
-type ConnectProp = { onConnect?: () => Promise<void> };
 
 /** Library settings, a sheet on the right; the page's More menu opens it by that name. */
-export function LibrarySettings({ open, onOpenChange, onConnect, ...body }: BodyProps & SheetProps & ConnectProp) {
-  const [here, reread] = useHere(body.library.id, open);
+export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & SheetProps) {
   return (
     <SettingsSheet open={open} onOpenChange={onOpenChange}>
-      <Part title="This workspace">
-        <LibrarySettingsBody {...body} />
-      </Part>
-      <Part title="On this computer">
-        <ThisComputer library={body.library} here={here} onConnect={onConnect && (() => onConnect().then(reread))} onError={body.onError} />
-      </Part>
+      <LibrarySettingsBody {...body} />
     </SettingsSheet>
   );
 }
 
-/** A member's Library settings (a workspace the owner gave them): the owner's settings as locked sentences, then this computer's. */
-export function MemberLibrarySettings({ open, onOpenChange, library, onConnect, onError }: Pick<BodyProps, "library" | "onError"> & SheetProps & ConnectProp) {
-  const [here, reread] = useHere(library.id, open);
-  const [owner, setOwner] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    getWorkspace().then(
-      (v) => {
-        const o = v?.members.find((m) => m.role === "owner");
-        setOwner(o ? (o.name ?? o.username) : null);
-      },
-      () => {},
-    );
-  }, [open]);
+/** A member's Library settings (a workspace the owner gave them): only Keep on this computer, the rest is the owner's. */
+export function MemberLibrarySettings({ open, onOpenChange, library, onError }: Pick<BodyProps, "library" | "onError"> & SheetProps) {
   return (
     <SettingsSheet open={open} onOpenChange={onOpenChange}>
-      <Part title="This workspace" by={owner}>
+      <Section title="Storage">
         <Card>
-          {memberLines(library, here?.proxies.files).map((line) => (
-            <Row key={line} title={line} />
-          ))}
+          <KeepOffline library={library} proxies onError={onError} />
         </Card>
-      </Part>
-      <Part title="On this computer">
-        <ThisComputer library={library} here={here} onConnect={onConnect && (() => onConnect().then(reread))} onError={onError} />
-      </Part>
+      </Section>
     </SettingsSheet>
-  );
-}
-
-/**
- * What a member reads of the owner's settings, from the library's Upload setting (api/library/upload-gate.ts): what is on
- * the server and so whether clips play online, where the originals are, and for Read & write what happens to the files
- * they add (kept where they are, the owner's Import is for the owner's own folders). With Upload off the server holds the
- * proxies its computers send for the team (api/library/report.ts teamProxies); `proxies`, the count, when known.
- */
-export function memberLines(library: LibrarySummary, proxies?: number): string[] {
-  const upload = library.settings.upload;
-  const server =
-    upload !== "none"
-      ? "Proxies are on the server, so every clip plays online"
-      : proxies === 0
-        ? "No proxies on the server yet, so clips play only where their originals are"
-        : "Proxies are on the server for the team, so every clip plays online";
-  const originals = upload === "all" ? "Originals are on the server too" : "Originals stay on the computers they were added from";
-  const adds = !library.canAdd
-    ? []
-    : [upload === "all" ? "Files you add are uploaded to the server with their proxies" : "Files you add stay where they are on your computer, and their proxies go to the server"];
-  return [server, originals, ...adds];
-}
-
-/** The library's videos, how many originals this computer reads and the server's proxies (null in a browser, or until read). */
-function useHere(libraryId: string, open: boolean) {
-  const [here, setHere] = useState<HereAnswer | null>(null);
-  const read = useCallback(() => placesHere(libraryId).then(setHere, () => {}), [libraryId]);
-  useEffect(() => {
-    if (open && thisMacDevice()) void read();
-  }, [open, read]);
-  return [here, read] as const;
-}
-
-/** One part of the sheet under its small heading; `by`: who sets it, for a member. */
-function Part({ title, by, children }: { title: string; by?: string | null; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-6 border-t border-border/60 pt-6 first-of-type:border-t-0 first-of-type:pt-0">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {title}
-        {by && <span className="normal-case tracking-normal"> · Set by {by}</span>}
-      </h2>
-      {children}
-    </div>
-  );
-}
-
-/**
- * On this computer, the same for the owner and members: Keep proxies on this computer (with their size) and the
- * originals this computer reads ("12 of 16 here") with Connect originals…. Only in the Mac app; a browser gets one line.
- */
-function ThisComputer({ library, here, onConnect, onError }: Pick<BodyProps, "library" | "onError"> & { here: HereAnswer | null; onConnect?: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  if (!thisMacDevice())
-    return (
-      <Card>
-        <Row title="Proxies and originals on this computer" status={<Status>Needs the Mac app</Status>} />
-      </Card>
-    );
-  const connect = () => {
-    setBusy(true);
-    void onConnect!().finally(() => setBusy(false));
-  };
-  return (
-    <Card>
-      {here && <KeepOffline library={library} proxies={here.proxies} onError={onError} />}
-      <Row
-        title="Originals"
-        description="Clips play from the original where this computer has it, in a folder or on an office NAS."
-        status={here && here.videos > 0 ? `${here.here.toLocaleString()} of ${here.videos.toLocaleString()} here` : null}
-        control={
-          onConnect ? (
-            <Button size="sm" variant="outline" disabled={busy} onClick={connect}>
-              Connect originals…
-            </Button>
-          ) : (
-            !macImports() && <Status>{NEEDS_MAC}</Status>
-          )
-        }
-      />
-    </Card>
   );
 }
 
@@ -247,7 +136,7 @@ export function LibrarySettingsBody({ library, watch, folders, onChange, onError
       </Section>
       {watch.allowed && !inSettings && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
       <LibraryCopies libraryId={library.id} />
-      <Storage library={library} onThisComputer={watch.allowed} inSettings={inSettings} onChange={onChange} onError={onError} />
+      <Storage library={library} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />
       <AiSwitches library={library} onChange={onChange} onError={onError} />
       <RedoAll library={library} onError={onError} />
     </>
@@ -619,7 +508,7 @@ export function videoFacts(v: LibrarySpace["videos"], o: Parameters<typeof video
  * setting, on its own computer the cloud copy. Where the video files are is said by that row (videoFacts); a row of
  * its own says it only where that row is not drawn.
  */
-function Storage({ library, onThisComputer, inSettings, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { onThisComputer: boolean; inSettings?: boolean }) {
+function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { onThisComputer: boolean }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
   const onMac = thisMacBridge() && !onThisComputer ? { upload: library.settings.upload !== "none" } : null;
@@ -633,21 +522,20 @@ function Storage({ library, onThisComputer, inSettings, onChange, onError }: Pic
       upload={(facts) => <UploadSelect library={library} onChange={onChange} onError={onError} facts={facts} />}
     >
       {(saved, uploadRow) => (
-        <SpaceRows library={library} saved={saved} space={space} read={read} keepOffline={!!inSettings} videos={space && saved && !uploadRow ? videoPlace(space.videos, place(saved)) : null} onChange={onChange} onError={onError} />
+        <SpaceRows library={library} saved={saved} space={space} read={read} videos={space && saved && !uploadRow ? videoPlace(space.videos, place(saved)) : null} onChange={onChange} onError={onError} />
       )}
     </LibraryStorageSettings>
   );
 }
 
 /**
- * Keep proxies on this computer (api/work/offline.ts), on a computer of the person's (the Mac app): every proxy the
- * server holds of this library, `proxies` (what a switch-on downloads). With Upload off and none there yet the server
- * refuses it, so the row says so in place of the switch (an on switch stays, to turn off).
+ * Keep on this computer (api/work/offline.ts), on a computer of the person's (the Mac app). `proxies`: the server holds
+ * proxies of this library; with Upload off those are the ones its computers send for the members it is shared with.
  */
-function KeepOffline({ library, proxies, onError }: Pick<BodyProps, "library" | "onError"> & { proxies: { files: number; bytes: number } }) {
+function KeepOffline({ library, proxies, onError }: Pick<BodyProps, "library" | "onError"> & { proxies: boolean }) {
   const [libs, setLibs] = useState<string[] | null>(null);
   const on = !!libs?.includes(library.id);
-  const noServerProxy = library.settings.upload === "none" && !proxies.files;
+  const noServerProxy = library.settings.upload === "none" && !proxies;
   useEffect(() => {
     if (thisMacDevice()) void fetch("/api/library/offline").then((r) => r.json() as Promise<{ libraries?: string[] }>).then((x) => setLibs(x.libraries ?? []), () => {});
   }, []);
@@ -662,24 +550,26 @@ function KeepOffline({ library, proxies, onError }: Pick<BodyProps, "library" | 
   if (!libs) return null;
   return (
     <Row
-      title="Keep proxies on this computer"
-      description="Downloads a proxy of each video in this library so it plays without internet."
-      status={noServerProxy ? "No proxies on the server yet" : proxies.files ? `${files(proxies.files)}, ${size(proxies.bytes)}` : null}
-      control={(!noServerProxy || on) && <Switch aria-label="Keep proxies on this computer" checked={on} onCheckedChange={(x) => void flip(x)} />}
+      title="Keep on this computer"
+      description={
+        noServerProxy
+          ? "This library keeps its files on the computers they were added from; there is no proxy to keep."
+          : "Downloads a proxy of each video in this library to this computer so it plays without internet."
+      }
+      control={<Switch aria-label="Keep on this computer" checked={on} disabled={noServerProxy && !on} onCheckedChange={(x) => void flip(x)} />}
     />
   );
 }
 
 /**
- * What the library makes (api/library/space.ts), on the server: the proxies switch, the proxy files with what they take and Clear,
+ * What the library makes (api/library/space.ts): the proxies switch, the proxy files with what they take and Clear,
  * and the downloaded speech and search models with Clear. The person's own files are never cleared. Proxies kept in the
  * cloud (one for every video) have no switch and no Clear: both would do nothing there. `videos`: where the video files
  * are, as a row of its own (no Upload row says it).
  */
-function SpaceRows({ library, saved, space, read, keepOffline, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; keepOffline: boolean; videos: string | null }) {
+function SpaceRows({ library, saved, space, read, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; videos: string | null }) {
   const cloud = saved?.proxies ?? null;
-  // in the sheet Keep proxies is On this computer's; Settings → Media Library has it here
-  const offline = keepOffline && !!thisMacDevice();
+  const offline = !!thisMacDevice();
   useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
@@ -702,7 +592,7 @@ function SpaceRows({ library, saved, space, read, keepOffline, videos, onChange,
     <Section title="Storage">
       <Card>
         {videos && <Row title="Video files" description={videos} />}
-        {offline && space && <KeepOffline library={library} proxies={space.proxies} onError={onError} />}
+        {offline && <KeepOffline library={library} proxies={!!space?.proxies.files} onError={onError} />}
         {!cloud && (
           <Row
             id="library-proxies"

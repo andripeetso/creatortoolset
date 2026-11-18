@@ -243,23 +243,24 @@ describe("the Media Library's settings", () => {
     expect(changed.at(-1)?.settings.upload).toBe("proxies");
   });
 
-  it("Keep proxies on this computer in Settings → Media Library toggles library-wide offline proxies in the Mac app; with Upload Off and no proxies a line says why in place of the switch", async () => {
+  it("Keep on this computer in Library settings toggles library-wide offline proxies in the Mac app and is disabled when Upload is Off", async () => {
     document.documentElement.dataset.macDevice = "dev_mac";
     try {
-      await render(<LibrarySettingsBody inSettings library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-      const sw = () => host!.querySelector<HTMLButtonElement>('[aria-label="Keep proxies on this computer"]');
-      expect(document.body.textContent).toContain("Keep proxies on this computer");
-      expect(sw()).toBeNull();
-      expect(document.body.textContent).toContain("No proxies on the server yet");
+      await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+      const offSwitch = host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
+      expect(offSwitch).not.toBeNull();
+      expect(offSwitch.disabled).toBe(true);
+      expect(document.body.textContent).toContain("there is no proxy to keep.");
 
       act(() => root!.unmount());
       host!.remove();
-      await render(<LibrarySettingsBody inSettings library={{ ...library, settings: { ...library.settings, upload: "proxies" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-      expect(sw()!.disabled).toBe(false);
-      expect(sw()!.getAttribute("aria-checked")).toBe("false");
-      await act(async () => sw()!.click());
+      await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, upload: "proxies" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+      const sw = () => host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
+      expect(sw().disabled).toBe(false);
+      expect(sw().getAttribute("aria-checked")).toBe("false");
+      await act(async () => sw().click());
       expect(asked.some(([what]) => what === "POST /api/library/offline")).toBe(true);
-      expect(sw()!.getAttribute("aria-checked")).toBe("true");
+      expect(sw().getAttribute("aria-checked")).toBe("true");
     } finally {
       delete document.documentElement.dataset.macDevice;
     }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { FolderSearch } from "lucide-react";
-import { PLACES_MAX, type GoneAnswer, type HereAnswer, type PlacesReportAnswer } from "@contracts/places";
+import { PLACES_MAX, type GoneAnswer, type PlacesReportAnswer } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { deviceHere } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
@@ -115,13 +115,4 @@ export async function connectOriginals(libraryId: string): Promise<number | null
     n += ((await res.json()) as PlacesReportAnswer).confirmed.length;
   }
   return n;
-}
-
-/** This computer's count of the library's originals and the server's proxies (api/library/places.ts here); null outside the Mac app. */
-export async function placesHere(libraryId: string): Promise<HereAnswer | null> {
-  const device = thisMacDevice() ?? (await deviceHere());
-  if (!device) return null;
-  const r = await fetch(`/api/library/${libraryId}/places/here?${new URLSearchParams({ device })}`);
-  if (!r.ok) throw new Error("Could not read the library");
-  return (await r.json()) as HereAnswer;
 }

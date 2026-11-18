@@ -144,13 +144,6 @@ export interface GoneAnswer {
   gone: GoneVersion[];
 }
 
-/** GET /api/library/:lib/places/here?device: the library's videos, how many of their originals that computer reads, and the server's proxies. */
-export interface HereAnswer {
-  videos: number;
-  here: number;
-  proxies: { files: number; bytes: number };
-}
-
 /** GET /api/library/:lib/places/moves: the last reconnects (at most 50 per library), newest first, one per folder change. */
 export interface PlaceMove {
   at: number;
