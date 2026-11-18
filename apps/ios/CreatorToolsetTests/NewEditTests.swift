@@ -68,6 +68,11 @@ final class NewEditTests: XCTestCase {
         XCTAssertEqual(EditState.of(edit, clips: clips, remote: landed, starting: false), .uploading(done: 2, of: 2))
         // its copy is gone from the phone and the server never got it
         XCTAssertEqual(EditState.of(edit, clips: [a: clips[a]!], remote: try remote(waiting), starting: false), .failed("A clip didn't upload"))
+        // the server's own line when it said why (a refused upload)
+        var refused = clips[b]!
+        refused.note = "This library takes proxies only. Your computer makes the proxy and sends that."
+        XCTAssertEqual(EditState.of(edit, clips: [a: clips[a]!, b: refused], remote: try remote(waiting), starting: false),
+                       .failed("This library takes proxies only. Your computer makes the proxy and sends that."))
     }
 
     func testStartStoppedBeforeTheEdit() {

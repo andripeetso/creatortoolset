@@ -446,7 +446,7 @@ function micFallback(user: AuthVars["user"]): { route: Route; by: string } | nul
 const MIC_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
- * Talking to the assistant (the web dock's mic and the phone's): a short recording in any format ffmpeg reads (WAV, the
+ * Talking to the assistant (the web dock's mic and the phone's): a short recording in any common sound format (WAV, the
  * phone's m4a) → `{ text, language }`, written down by the engine the person chose for `mic` (Settings → AI → Voice,
  * speechFor) in their languages. With no engine it answers NEEDS_KEY and what to add. On their own computers, when
  * those can't (off, busy, slow, failing: MIC_LIMITS) it is written another way (micFallback) with a `note` saying so,

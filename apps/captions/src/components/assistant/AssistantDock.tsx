@@ -36,7 +36,7 @@ import { whenSaid } from "@/lib/when-said";
 import { Composer } from "./Composer";
 import { ChatPicture } from "@/components/chat/ChatPicture";
 import { AiPicker } from "./AiPicker";
-import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
+import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, draftEmpty, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, removeUpload, startUploads, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { WorkCards, WorkingFor } from "./WorkCards";
@@ -407,6 +407,8 @@ export function AssistantDock() {
     openId.current = id;
     // the first chat loaded keeps whatever was typed while it loaded
     if (was === undefined) return;
+    // a Send waiting on its uploads stays with its box: it goes when Send is pressed there again
+    sendWhenUp.current = false;
     drafts.current.set(was, draftRef.current);
     setDraft(drafts.current.get(id) ?? EMPTY_DRAFT);
     drafts.current.delete(id);
@@ -441,6 +443,26 @@ export function AssistantDock() {
       return { ...d, images: [...d.images, ...imgs].slice(0, MAX_PICTURES) };
     });
   }, []);
+  const patchFile = (key: string) => (p: Partial<Draft["files"][number]>) =>
+    setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
+  // Send with videos still in the box: they upload, and the message goes once each has its id (the server waits for
+  // the rest). A failed one ends the wait: its chip says so and the words stay.
+  const sendWhenUp = useRef(false);
+  useEffect(() => {
+    if (!sendWhenUp.current) return;
+    if (draftEmpty(draft) || draft.files.some((f) => f.error)) {
+      sendWhenUp.current = false;
+      return;
+    }
+    // one added while the others upload goes too
+    startUploads(draft, uploads.current, patchFile);
+    if (!draft.files.every((f) => f.id || f.path)) return;
+    sendWhenUp.current = false;
+    setDraft(EMPTY_DRAFT);
+    submit({ ...draft, text: draft.text.trim() });
+    // submit is a fresh function each render; only the box decides when
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
   const addFiles = useCallback(
     async (files: File[], folder = false, paths?: Map<File, string>) => {
       const pics = files.filter(isPicture);
@@ -454,14 +476,12 @@ export function AssistantDock() {
         setError(`Send up to ${MAX_FILES} videos at a time: the first ${Math.max(room, 0)} were added`);
         media = media.slice(0, Math.max(room, 0));
       }
-      // dropped in the Mac app, a video goes as its path and nothing uploads. Otherwise it uploads at once, and the message
-      // may go as soon as the upload is made: the server waits for the rest, and it keeps uploading after the message goes
+      // dropped in the Mac app, a video goes as its path and nothing uploads. Otherwise it waits in the box and uploads
+      // on Send (nothing goes to the server before: a chip removed first sent nothing)
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
-        const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
         setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
-        const u = addVideo(f, paths?.get(f), patch);
-        if (u) uploads.current.set(key, u);
+        addVideo(f, paths?.get(f), patchFile(key));
       }
       if (!pics.length) return;
       try {
@@ -607,13 +627,7 @@ export function AssistantDock() {
     void stopTurn(target?.id).then((r) => r.ok && setView(r.data));
   };
   /** A chip's X in the box: its upload stops, and what reached the server is deleted. */
-  const removeFile = (f: Draft["files"][number]) => {
-    const u = uploads.current.get(f.key);
-    uploads.current.delete(f.key);
-    if (u) cancelUpload(u);
-    // put back from a message that didn't go: its upload ended earlier, its server copy is still there
-    else if (f.id) cancelUpload({ ctl: new AbortController(), id: f.id });
-  };
+  const removeFile = (f: Draft["files"][number]) => removeUpload(f, uploads.current);
   /** The X on a reply's send: its upload stops, its copy is deleted, and the reply that waited for it ends as stopped. */
   const cancelSend = (reply: string) => {
     const u = sends.current.get(reply);
@@ -1048,6 +1062,12 @@ export function AssistantDock() {
             draft={draft}
             setDraft={setDraft}
             onSend={(d) => {
+              // videos still in the box upload now; the message goes when each has its id (sendWhenUp)
+              if (d.files.some((f) => f.file)) {
+                sendWhenUp.current = true;
+                startUploads(d, uploads.current, patchFile);
+                return;
+              }
               setDraft(EMPTY_DRAFT);
               submit(d);
             }}

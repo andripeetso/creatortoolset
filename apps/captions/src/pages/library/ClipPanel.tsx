@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { alikeShots, getAsset, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
+import { alikeShots, getAsset, getWhere, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
+import { placeLine } from "@/lib/wording";
+import type { PlaceWord } from "@contracts/places";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
 import { ClipImage, ClipPlayer } from "./ClipPlayer";
 import { ClipShare } from "./ClipShare";
@@ -65,6 +67,17 @@ function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, 
   const me = useMe();
   const a = detail ?? asset;
   const win = useClipView() === "window";
+  // where its original is, asked when the clip opens (the card's word until then)
+  const [where, setWhere] = useState<PlaceWord | null>(null);
+  useEffect(() => {
+    let live = true;
+    setWhere(null);
+    getWhere(libraryId, [asset.versionId]).then((w) => live && setWhere(w.versions[asset.versionId]?.word ?? null), () => {});
+    return () => {
+      live = false;
+    };
+  }, [libraryId, asset.versionId]);
+  const placeWord = where ?? a.placeWord;
 
   useEffect(() => {
     let live = true;
@@ -272,9 +285,11 @@ function Panel({ libraryId, asset, startAt, inTrash, readOnly, moveTo, onTrash, 
         </div>
       )}
       <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
-      {a.state === "missing" && (
+      {placeWord ? (
+        <p className="text-sm text-zinc-400">{placeLine(placeWord)}</p>
+      ) : a.state === "missing" && (
         <p className="text-sm text-zinc-400">
-          The file was moved or renamed, or its drive is not connected.
+          The file was moved or renamed, or its drive isn't connected.
         </p>
       )}
       <Locate libraryId={libraryId} versionId={a.versionId} missing={a.state === "missing"} onMac={!!a.onMac} />

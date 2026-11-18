@@ -20,6 +20,7 @@ import type {
   ShareCreated,
   ShareInput,
   WatchStatus,
+  WhereAnswer,
 } from "@contracts/library";
 import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from "@contracts/places";
 import { useEffect, useRef } from "react";
@@ -235,6 +236,12 @@ function setFilters(p: URLSearchParams, f: LibraryFilters) {
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */
 function setFacets(p: URLSearchParams, facets: Record<string, string[]> | undefined) {
   for (const [key, values] of Object.entries(facets ?? {})) if (values.length) p.set(`f.${key}`, values.join(","));
+}
+
+/** Where each version's original is, seen from this Mac (in a browser: any of the person's computers): the place words. */
+export function getWhere(libraryId: string, versions: string[]): Promise<WhereAnswer> {
+  const device = thisMacDevice();
+  return send<WhereAnswer>(`/api/library/${libraryId}/where?versions=${versions.map(encodeURIComponent).join(",")}${device ? `&device=${encodeURIComponent(device)}` : ""}`, "GET");
 }
 
 export const getAsset = (libraryId: string, assetId: string) => send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "GET");

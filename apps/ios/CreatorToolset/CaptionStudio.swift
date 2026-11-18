@@ -334,7 +334,8 @@ extension API {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 if (200..<300).contains(status) { return }
                 let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-                let failure = Failure(status: status, message: object?["error"] as? String ?? "Upload failed (HTTP \(status))")
+                let failure = APIError.refusal(status, object).map(APIError.refused)
+                    ?? Failure(status: status, message: object?["error"] as? String ?? "Upload failed (HTTP \(status))")
                 if status < 500 || attempt == 3 { throw failure }
             } catch let failure as Failure {
                 throw failure
@@ -628,24 +629,19 @@ final class CaptionEditor: ObservableObject, Identifiable {
         return editor
     }
 
-    /// Every project picked on this phone whose video or captions haven't all reached the server in use carries on:
-    /// at launch, on a server change and when Caption Studio opens.
+    /// Every project picked on this phone whose captions haven't reached the server in use carries on: at launch, on a
+    /// server change and when Caption Studio opens. Its video stays on the phone; only Export sends it.
     static func resumeKept() {
         guard let api = API.current, ToolsetAccess.shared.allows("captions") else { return }
         for id in CaptionSources.kept(server: api.cacheKey) { _ = project(id) }
     }
 
     private func carryOn() {
-        guard !busy, uploading == nil, connection != nil else { return }
-        if project == nil, clip == nil {
-            Task { await load() }
-        } else if canRetryUpload {
-            Task { await upload() }
-        }
+        guard !busy, uploading == nil, connection != nil, project == nil, clip == nil else { return }
+        Task { await load() }
     }
 
     var busy: Bool { step != nil || exporting != nil }
-    var canRetryUpload: Bool { local != nil && !hasOriginal && uploading == nil && clip != nil }
     var cues: [CapCue] { clip?.cues ?? [] }
     var style: CapStyle? { clip?.style ?? presets.first?.style }
     var transcript: String { cues.map(\.text).joined(separator: "\n") }
@@ -663,7 +659,7 @@ final class CaptionEditor: ObservableObject, Identifiable {
             if let file = CaptionSources.file(for: id, server: server) {
                 await resume(file)
             } else if !hasOriginal, cues.isEmpty {
-                fail("This video didn't finish uploading from the phone it was picked on. Pick it again.")
+                fail("This video is on the phone it was picked on. Open it there, or pick it again.")
             }
         case .missing:
             // picked while the server couldn't be reached: the project is made now, from the kept copy
@@ -797,8 +793,8 @@ final class CaptionEditor: ObservableObject, Identifiable {
         }
     }
 
-    /// A project picked on this phone whose upload or captions didn't
-    /// finish (the app was closed): carry on from the kept copy.
+    /// A project picked on this phone: it plays from the kept copy, and captions that didn't finish (the app was
+    /// closed) carry on. Nothing uploads here.
     private func resume(_ file: URL) async {
         // still opening while the kept copy is read: Transcribe pressed then ran beside the transcription below
         step = .opening
@@ -811,8 +807,7 @@ final class CaptionEditor: ObservableObject, Identifiable {
         local = source
         frame = CGSize(width: source.width, height: source.height)
         fps = source.fps
-        play(AVPlayer(url: file))   // plays before the upload is done
-        if !hasOriginal { Task { await upload() } }
+        play(AVPlayer(url: file))
         if (clip.cues ?? []).isEmpty {
             do { try await caption(file) } catch { fail(error.localizedDescription) }
         }
@@ -839,13 +834,11 @@ final class CaptionEditor: ObservableObject, Identifiable {
                                 cadenceDirty: false, done: false)
             clips = [fresh]
             clip = fresh
-            Task { await upload() }
             try await caption(source.url)
             step = nil
             #if DEBUG
             // simulator checks without taps: -AutoExport YES
             if debugArg("AutoExport") != nil {
-                while !hasOriginal, uploading != nil { try? await Task.sleep(for: .seconds(1)) }
                 await export(toFinals: false)
             }
             #endif
@@ -860,8 +853,9 @@ final class CaptionEditor: ObservableObject, Identifiable {
         }
     }
 
-    /// Sends the picked file up (export needs it on the server). Safe to call again after a failure.
-    func upload() async {
+    /// Sends the picked file up: only Export calls it, as the render needs it on the server. Safe to call again after a
+    /// failure (parts the server has are skipped).
+    private func upload() async {
         guard let api = connection, let local, let clipId = clip?.id, uploading == nil, !hasOriginal else { return }
         uploading = 0
         let background = UIApplication.shared.beginBackgroundTask(withName: "Caption Studio upload")
@@ -872,6 +866,8 @@ final class CaptionEditor: ObservableObject, Identifiable {
         do {
             try await api.uploadOriginal(project: id, clip: clipId, file: local.url) { [weak self] in self?.uploading = $0 }
             hasOriginal = true
+        } catch APIError.refused(let line) {
+            fail(line)   // the library's Upload setting: its line as it is
         } catch {
             fail("Upload stopped: \(error.localizedDescription)")
         }
@@ -1106,14 +1102,17 @@ final class CaptionEditor: ObservableObject, Identifiable {
     private static let renderTimeout: TimeInterval = 15 * 60
 
     /// The captioned MP4 rendered on the server (the web's pixel-perfect
-    /// render), then into Photos, or to Finals (admins).
+    /// render), then into Photos, or to Finals (admins). The video goes up first when the server doesn't have it.
     func export(toFinals: Bool) async {
         guard let api = connection, let clip, let style = clip.style, !cues.isEmpty, !busy else { return }
-        guard hasOriginal else {
-            return fail(uploading != nil ? "Still uploading the video. Export once it's up." : "The video isn't on the server yet.")
+        exporting = "Exporting…"
+        defer { exporting = nil }
+        if !hasOriginal {
+            guard local != nil else { return fail("The video is on the phone it was picked on. Export it there.") }
+            await upload()
+            guard hasOriginal else { return }   // upload() said why
         }
         exporting = "Starting…"
-        defer { exporting = nil }
         await save()
         let seconds = (clip.duration ?? 0) > 0 ? clip.duration! : (player?.currentItem?.duration.seconds ?? 0)
         struct Spec: Encodable {

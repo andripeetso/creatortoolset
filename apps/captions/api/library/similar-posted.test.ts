@@ -13,7 +13,10 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const { phashPerSecond } = await import("./fingerprint");
 const { similarToPosted, voiceOverlap } = await import("./similar");
-const { printPosts } = await import("../lib/connectors/prints");
+const { filePrints, printPosts } = await import("../lib/connectors/prints");
+await import("../work/task-kinds");
+// the posted-prints task runs here: the server's video work is on (work/tasks/media-tasks.test.ts has the computer's road)
+(await import("../work/server-work")).writeServerWork({ on: true });
 const { findAccount, publicAccount, saveAccounts } = await import("../lib/connectors/store");
 
 const ff = (args: string[]) => execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: "pipe" });
@@ -96,8 +99,10 @@ describe("voice in the posted reels check", () => {
         { id: "reel-quiet", at: 1, text: "Other words", mediaUrl: "quiet.mp4" },
       ] },
     ]);
-    const speak = async (src: string) => (src === "talk.mp4" ? said : ["something", "else", "entirely", "this", "time", "round"]);
-    expect(await printPosts("tiny-voice", "instagram:17003", async () => [], speak)).toBe(2);
+    const speak = async (src: string) => (src === "talk.wav" ? said : ["something", "else", "entirely", "this", "time", "round"]);
+    // the task's result as it comes: no prints, each reel's sound
+    const posts = [{ id: "reel-talk", url: "talk.mp4", print: false, voice: true }, { id: "reel-quiet", url: "quiet.mp4", print: false, voice: true }];
+    await filePrints({ user: "tiny-voice", key: "instagram:17003", posts }, { "reel-talk": [], "reel-quiet": [] }, { "reel-talk": "talk.wav", "reel-quiet": "quiet.wav" }, speak);
     const r = similarToPosted("tiny-voice", clipHashes, { words: clipWords });
     expect(r.matches.map((m) => m.postId)).toEqual(["reel-talk"]);
     expect(r.matches[0]).toMatchObject({ overlap: 0, voice: { pct: 100 } });
@@ -111,7 +116,7 @@ describe("voice in the posted reels check", () => {
 
   it("leaves a reel's speech unset without a key, so a later pull with one fills it", async () => {
     saveAccounts("tiny-nokey", [{ platform: "instagram", platformId: "17004", handle: "tinynokey", via: "login", token: "t", posts: [{ id: "reel-x", at: 1, text: "X", mediaUrl: "x.mp4" }] }]);
-    await printPosts("tiny-nokey", "instagram:17004", async () => []);
+    await printPosts("tiny-nokey", "instagram:17004");
     expect(findAccount("tiny-nokey", "instagram:17004")?.voices).toBeUndefined();
   });
 });

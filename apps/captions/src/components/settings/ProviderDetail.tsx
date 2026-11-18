@@ -50,7 +50,7 @@ export function ProviderDetail({
   selection: { model: string; effort: Effort };
   /** the computers this AI can move to (only when it runs on none, or on one that was removed) */
   computers?: Array<{ id: string; name: string }>;
-  /** the state of its computer, when that needs saying: "Computer not found" */
+  /** the state of its computer, when that needs saying: "Computer removed" */
   computerNote?: string;
   /** below `lg` this page is a sub-page: its back arrow goes here */
   backTo?: string;

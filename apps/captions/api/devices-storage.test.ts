@@ -141,7 +141,10 @@ describe("a folder added in setup", () => {
 
 // Settings → Storage picks a computer. When that computer is the machine this server runs on (the Mac app's own
 // pairing on a server inside the Mac app), its folder joins the Library like a setup folder does.
-const { pairDevice, saveReport } = await import("./lib/devices");
+const { deviceOf, pairDevice, saveReport } = await import("./lib/devices");
+const { applyReport, indexForDevice, parseReportFolders } = await import("./library/report");
+const { whereIs } = await import("./library/whereis");
+const { updateFolder } = await import("./devices-storage");
 describe("a folder added in Settings for the computer this server runs on", () => {
   const add = (host: string, p: string, role = "footage") =>
     app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ role, host, path: p }) });
@@ -184,10 +187,53 @@ describe("a folder added in Settings for the computer this server runs on", () =
     expect(((await r.json()) as { error: string }).error).toMatch(/Folder not found on the server/);
   });
 
-  it("another computer's folder is only recorded: the server cannot read it, so nothing is watched or checked", async () => {
-    const theirs = "/Volumes/Tiny Drive/Footage";
-    expect((await add(other, theirs)).status).toBe(200);
+  // T2: a folder on another computer is read by that computer's location agent; the server never opens its path. The
+  // same report contract for a Mac and a Linux helper (contracts/places.ts ReportV2)
+  it.each([
+    ["a Mac", "Tiny MacBook", "tiny-macbook.local", "0.17.5"],
+    ["a helper", "Tiny NAS Helper", "tiny-nas", undefined],
+  ] as const)("another computer's folder (%s) lands in whereIs from its agent's report; the server never reads it", async (_kind, name, host, version) => {
+    const dev = pairDevice(USER, name, version).device.id;
+    saveReport(dev, machine(host));
+    // the same path exists on this server, with a file of its own: never read, never indexed
+    const theirs = path.join(dir, `On ${name}`);
+    mkdirSync(theirs, { recursive: true });
+    writeFileSync(path.join(theirs, "only-on-the-server.mp4"), Buffer.alloc(1024, 5));
+    expect((await add(dev, theirs)).status).toBe(200);
     expect(await watchedPaths()).not.toContain(theirs);
+    const folder = (await view()).folders.find((f) => f.origin.host === dev && f.origin.path === theirs)!;
+    // the agent lists a file this server does not have
+    const file = { path: path.join(theirs, "on-their-disk.mp4"), bytes: 4096, mtime: 1_700_000_000_000, quick: (version ? "c" : "d").repeat(64) };
+    const agent = deviceOf(dev)!;
+    const answer = await applyReport(agent, parseReportFolders([{ id: folder.id, state: "ok", scan: "t2", complete: true, files: [file] }]));
+    expect(answer.index).toEqual([{ folder: folder.id, path: file.path }]);
+    const ix = await indexForDevice(agent, folder.id, { name: "on-their-disk.mp4", path: file.path, size: file.bytes, quick: file.quick, frames: [] });
+    const versionId = (ix as { versions: { versionId?: string }[] }).versions[0]!.versionId!;
+    expect(whereIs(versionId)!.computers).toEqual([
+      expect.objectContaining({ device: dev, name, original: expect.objectContaining({ state: "verified", path: file.path, folder: folder.id }) }),
+    ]);
+    // a scan here reads only what this server watches: the server's own file in that path never comes in
+    await scanWatchFolders(Date.now() + 10 * SETTLE_MS);
+    expect(libraryDb().prepare("SELECT count(*) AS n FROM asset_versions WHERE source_path LIKE ?").get(`${theirs}%`)).toEqual({ n: 0 });
+  });
+
+  it("re-points a folder on its computer: the new path, its state cleared, its place rows not checked yet", async () => {
+    const dev = pairDevice(USER, "Tiny Repoint Mac").device.id;
+    const was = "/Volumes/Tiny Drive/Old name";
+    expect((await add(dev, was)).status).toBe(200);
+    const f = (await view()).folders.find((x) => x.origin.path === was)!;
+    await updateFolder(USER, f.id, (x) => ({ ...x, folderState: "not_found", checkedAt: 1 }));
+    libraryDb().prepare("INSERT INTO version_places (version_id, device, folder_id, path, state) VALUES ('v-repoint', ?, ?, ?, 'gone')").run(dev, f.id, `${was}/a.mp4`);
+    const repoint = (id: string, p: unknown) => app.request(`/api/devices/storage/folders/${id}/re-point`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: p }) });
+    const r = await repoint(f.id, "/Volumes/Tiny Drive/New name/");
+    expect(r.status).toBe(200);
+    const now = ((await r.json()) as { folders: { id: string; name: string; origin: { host: string; path: string }; folderState?: string; checkedAt?: number }[] }).folders.find((x) => x.id === f.id)!;
+    expect(now).toMatchObject({ name: "New name", origin: { host: dev, path: "/Volumes/Tiny Drive/New name" } });
+    expect(now.folderState).toBeUndefined();
+    expect(now.checkedAt).toBeUndefined();
+    expect(libraryDb().prepare("SELECT state FROM version_places WHERE version_id = 'v-repoint'").get()).toEqual({ state: "unchecked" });
+    expect((await repoint(f.id, "relative/path")).status).toBe(400);
+    expect((await repoint("no-such-folder", "/Volumes/Tiny Drive/X")).status).toBe(404);
   });
 
   it("where the server may not read the person's folders (a hosted server), a folder is recorded as before and no computer is named", async () => {
@@ -224,7 +270,7 @@ describe("each workspace", () => {
     expect(added.status).toBe(200); // "music" from an older app: added as footage, the Media Library sorts the songs
     expect(((await added.json()) as View).folders.map((f) => f.origin.path)).toEqual([music]);
     expect((await list("ws-a")).map((f) => f.id)).toEqual(before.map((f) => f.id));
-    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music}`);
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music} (on Tiny Studio Mac)`); // schema 2: "this computer" is the paired computer this server runs on
     expect(await foldersNote(USER, "ws-a")).not.toContain(music);
     // Settings shows every workspace: each folder says which one it is in (an older one the first brand's)
     const id = (await list("ws-b"))[0]!.id;
@@ -253,7 +299,7 @@ describe("each workspace", () => {
     expect((await all()).find((f) => f.id === id)!.workspace).toBe("*");
     expect((await list("ws-b")).map((f) => f.id)).toEqual([id]);
     expect((await list("ws-a")).map((f) => f.id)).toContain(id);
-    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music}`);
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music} (on Tiny Studio Mac)`); // schema 2: the setup folder is now on the computer this server runs on
     expect(await foldersNote(USER, "ws-a")).toContain(`- Footage: ${music}`);
     expect(watchedIn("ws-a")).toContain(music);
     expect(watchedIn("ws-b")).toEqual([music]);

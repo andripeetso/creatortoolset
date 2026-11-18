@@ -28,7 +28,6 @@ describe("the Help screen", () => {
     const storage = { serverDisks: [], folders: [f("1", "studio", "/Volumes/T/A", "w1"), f("2", "studio", "/Volumes/T/A", "w2"), f("3", "me", "/Users/me/B")], copied: ["2"] } as StorageView;
     const listed = sharedFolders(storage, "me");
     expect(listed.map((x) => x.id)).toEqual(["1"]);
-    expect(skippedLine(listed[0]!, storage.copied, "Tiny Studio Mac")).toBe("Stays on Tiny Studio Mac");
-    expect(skippedLine(storage.folders[1]!, storage.copied, "Tiny Studio Mac")).toBe("Through the server copy");
+    expect(skippedLine("Tiny Studio Mac")).toBe("Stays on Tiny Studio Mac");
   });
 });

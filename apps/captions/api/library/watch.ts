@@ -14,7 +14,7 @@ import { enqueueJob, folderWalks, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
 import { pointSource } from "./locate";
 import { findUser } from "../users";
-import { isThisMachine } from "../lib/devices";
+import { isThisMachine, listDevices } from "../lib/devices";
 import { libraryPath, parseStorageFile, storageFilePath } from "../lib/storage";
 import { LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
 
@@ -681,6 +681,27 @@ async function scanFolders(libraryId: string, now: number): Promise<number> {
 }
 
 /**
+ * A referenced original's place on the computer this server runs on (version_places, source 'server-disk', folder ''):
+ * found while the file is there, gone once it is not (the version turns `missing` too). Only where that computer is
+ * paired (the person's device whose report names this machine); a server with none keeps the version state alone.
+ */
+function serverPlace(versionId: string, owner: string, file: string, st: { size: number; mtimeMs: number } | null, now = Date.now()): void {
+  const device = listDevices((d) => d.owner === owner && isThisMachine(d.id))[0]?.id;
+  if (!device) return;
+  db()
+    .prepare(
+      `INSERT INTO version_places (version_id, device, kind, folder_id, path, bytes, mtime, state, source, confirmed_at, checked_at, gone_at)
+       VALUES (?, ?, 'original', '', ?, ?, ?, ?, 'server-disk', ?, ?, ?)
+       ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET path = excluded.path, bytes = excluded.bytes, mtime = excluded.mtime,
+         state = CASE WHEN excluded.state = 'gone' THEN 'gone' WHEN version_places.state = 'verified' AND version_places.mtime = excluded.mtime THEN 'verified' ELSE 'found' END,
+         confirmed_at = COALESCE(excluded.confirmed_at, version_places.confirmed_at), checked_at = excluded.checked_at, gone_at = excluded.gone_at
+       -- written when something changed: a scan of a big library is not a write per file
+       WHERE (excluded.state = 'gone') <> (version_places.state = 'gone') OR version_places.mtime IS NOT excluded.mtime OR version_places.path <> excluded.path`,
+    )
+    .run(versionId, device, file, st?.size ?? null, st ? Math.round(st.mtimeMs) : null, st ? "found" : "gone", st ? now : null, now, st ? null : now);
+}
+
+/**
  * Referenced originals that went away turn `missing`; ones that came back return to `ready`, or to `processing` with
  * their failed jobs queued again (the worker fails a job whose file is gone). Rows and files are never deleted here.
  */
@@ -689,7 +710,9 @@ async function refreshMissing(): Promise<void> {
     .prepare("SELECT v.id, v.state, v.source_path, v.created_by, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.source_path IS NOT NULL")
     .all() as { id: string; state: string; source_path: string; created_by: string; library_id: string }[];
   for (const v of refs) {
-    const there = !!(await stat(v.source_path).catch(() => null));
+    const st = await stat(v.source_path).catch(() => null);
+    const there = !!st;
+    serverPlace(v.id, v.created_by, v.source_path, st);
     if (!there && v.state !== "missing") {
       db().prepare("UPDATE asset_versions SET state = 'missing' WHERE id = ?").run(v.id);
       libraryChanged(v.library_id);

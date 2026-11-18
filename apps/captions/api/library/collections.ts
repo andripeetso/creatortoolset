@@ -13,7 +13,7 @@ import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
 import { blobs, libraryDb } from "./db";
-import { ffmpegTo } from "./media/run";
+import { frameAt, frameWaits, whenFramed, type FrameInput } from "../lib/clip-frame";
 import { externalCanSee, externalRefById } from "./refs";
 import { FINISHED, KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
@@ -778,7 +778,8 @@ collectionApp.get("/:id/pieces/:pid", async (c) => {
   const all = pieceOf(row);
   const seen = await visibleItems(viewer, libraryId, all);
   if (!seen.items.length && all.items.length) return notFound(c);
-  return c.json({ ...seen, writable: !!(await writablePiece(user.username, libraryId, row.id)) });
+  const waits = frameWaits(`cover:${row.id}`);
+  return c.json({ ...seen, writable: !!(await writablePiece(user.username, libraryId, row.id)), ...(waits ? { coverWaits: waits } : {}) });
 });
 
 const EXT_OF: Record<string, string> = {
@@ -851,33 +852,47 @@ collectionApp.post("/:id/pieces/:pid/cover", async (c) => {
   // the version must be an item of this piece, live in the library; the proxy (playable) when there is one
   const v = db()
     .prepare(
-      `SELECT v.source_key, a.kind, d.storage_key AS proxy FROM piece_items i
+      `SELECT v.source_key, v.mac_path, v.mac_device, a.kind, d.storage_key AS proxy FROM piece_items i
          JOIN asset_versions v ON v.id = i.version_id
          JOIN assets a ON a.id = v.asset_id
          LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy'
        WHERE i.piece_id = ? AND i.version_id = ? AND a.trashed_at IS NULL`,
     )
-    .get(piece.id, versionId) as { source_key: string; kind: AssetKind; proxy: string | null } | undefined;
+    .get(piece.id, versionId) as { source_key: string; mac_path: string | null; mac_device: string | null; kind: AssetKind; proxy: string | null } | undefined;
   if (!v) return notFound(c);
   const dir = path.join(process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch"));
   await mkdir(dir, { recursive: true });
   const out = path.join(dir, `cover-${randomUUID()}.jpg`);
+  // the server's copy when it has one; else the computer that holds the original makes the frame
+  const src = await blobs.localCopy(v.proxy ?? v.source_key).catch(() => undefined);
+  const mac = !v.proxy && v.mac_path ? { paths: { src: v.mac_path }, device: v.mac_device ?? undefined } : {};
   try {
-    const src = await blobs.localCopy(v.proxy ?? v.source_key);
-    const framed = await ffmpegTo(out, [...(v.kind === "video" ? ["-ss", String(t)] : []), "-i", src, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"]).then(
-      () => true,
-      () => false,
-    );
-    if (!framed) return c.json({ error: "There is no picture at that time", code: "invalid" }, 400);
-    const stamp = Date.now();
-    const key = `libraries/${libraryId}/pieces/${piece.id}/cover-${stamp}.jpg`;
-    await blobs.put(key, out, { contentType: "image/jpeg" });
-    const old = piece.cover_key;
-    db().prepare("UPDATE pieces SET cover_key = ?, cover_version_id = ?, cover_at = ? WHERE id = ?").run(key, versionId, stamp, piece.id);
-    if (old) await blobs.delete(old).catch(() => {});
-    return c.json(pieceOf({ ...piece, cover_key: key, cover_version_id: versionId, cover_at: stamp }));
-  } finally {
+    const got = await frameAt(`cover:${piece.id}`, c.get("user").username, (await workspaceIdOf(db(), versionId)) ?? null, {
+      files: { src }, ...mac, atMs: t * 1000, still: v.kind !== "video", vf: "scale=480:-2", q: 4, to: out, then: "finals-cover", data: { piece: piece.id, versionId },
+    });
+    // it waits for a computer: the cover is set when the frame comes (whenFramed below)
+    if ("wait" in got) return c.json({ ...pieceOf(piece), coverWaits: got.wait }, 202);
+  } catch {
     await rm(out, { force: true });
+    return c.json({ error: "There is no picture at that time", code: "invalid" }, 400);
+  }
+  const now = await writablePiece(c.get("user").username, libraryId, piece.id);
+  return now ? c.json(pieceOf(now)) : notFound(c);
+});
+
+/** The picked frame, wherever it was made: stored as the piece's cover, the one before it removed. */
+whenFramed("finals-cover", async (input: FrameInput) => {
+  const { piece: id, versionId } = input.data as { piece: string; versionId: string };
+  try {
+    const piece = db().prepare("SELECT * FROM pieces WHERE id = ?").get(id) as PieceRow | undefined;
+    if (!piece) return;
+    const stamp = Date.now();
+    const key = `libraries/${piece.library_id}/pieces/${piece.id}/cover-${stamp}.jpg`;
+    await blobs.put(key, input.to, { contentType: "image/jpeg" });
+    db().prepare("UPDATE pieces SET cover_key = ?, cover_version_id = ?, cover_at = ? WHERE id = ?").run(key, versionId, stamp, piece.id);
+    if (piece.cover_key) await blobs.delete(piece.cover_key).catch(() => {});
+  } finally {
+    await rm(input.to, { force: true });
   }
 });
 

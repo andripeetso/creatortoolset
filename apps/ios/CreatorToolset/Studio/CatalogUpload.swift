@@ -58,7 +58,10 @@ extension ServerPlugins.Known {
 
 extension APIError {
     /// Worth trying again later rather than giving up on the clip.
-    var transient: Bool { [0, 408, 409, 425, 429].contains(status) || status >= 500 }
+    var transient: Bool {
+        if case .refused = self { return false }
+        return [0, 408, 409, 425, 429].contains(status) || status >= 500
+    }
 }
 
 /// The catalog's upload and clip routes, through the plug-in's proxy with the studio's sign-in cookie.
@@ -98,6 +101,7 @@ struct CatalogAPI {
     /// 403 `toolset_unreachable`: that is a wait, not a refusal. The proxy's bare 404 means the account has no Media
     /// Library (or the server no catalog).
     func failure(_ status: Int, _ object: [String: Any]) async -> APIError {
+        if let line = APIError.refusal(status, object) { return .refused(line) }
         let message = object["error"] as? String ?? "The server answered \(status)"
         // the proxy's own 401: the library doesn't know this sign-in; the computer's sign-in still holds
         if status == 401, CatalogRules.libraryRefused(message) { return .server(403, message) }
@@ -365,6 +369,7 @@ enum CatalogRules {
                       networkError: Bool) -> CatalogNext {
         if networkError { return .retryLater("The connection dropped") }
         let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        if let line = APIError.refusal(status, json) { return .failed(line) }
         if restarting(status, json) { return .retryLater("The library is restarting") }
         if status == 401, let said = json?["error"] as? String, libraryRefused(said) { return .failed(said) }
         let hiccup = "The server had a hiccup (HTTP \(status))"

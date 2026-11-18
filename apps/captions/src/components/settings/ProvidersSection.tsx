@@ -481,7 +481,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   models={modelsOf(view, detailInst)}
                   selection={effectiveSelection(editing, detailInst, modelsOf(view, detailInst))}
                   computers={!onDevice(detailInst) ? devices.map((d) => ({ id: d.id, name: d.name })) : undefined}
-                  computerNote={!onDevice(detailInst) && deviceOf(detailInst) ? "Computer not found" : undefined}
+                  computerNote={!onDevice(detailInst) && deviceOf(detailInst) ? "Computer removed" : undefined}
                   backTo="/settings/providers"
                   onChange={(p) => patch(detailInst, p)}
                   onTest={() => void runCheck(detailInst)}

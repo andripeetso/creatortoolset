@@ -29,7 +29,6 @@ const WORDS: Record<string, number[]> = { red: [1, 0, 0], blue: [0, 0, 1] };
 const model = vi.hoisted(() => ({ withText: [] as boolean[] }));
 vi.mock("../lib/device-picture", async (real) => ({
   ...(await real<typeof import("../lib/device-picture")>()),
-  picturesHere: () => false,
   PICTURE_DIM: 3,
   pictureText: () => "ready",
   embedPictures: async (pics: Uint8Array[], withText = true) => (model.withText.push(withText), pics.map(mean)),

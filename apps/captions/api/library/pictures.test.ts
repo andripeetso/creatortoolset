@@ -11,6 +11,7 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "library-pictures-"));
 process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET;
+delete process.env.CT_PICTURE_MODEL; // this server makes the vectors here (its video work is on, no computer runs the model)
 
 // the model stands in as a picture's mean colour, and a search's colour word as that colour: no download in tests
 const mean = (p: Uint8Array) => {
@@ -22,7 +23,6 @@ const mean = (p: Uint8Array) => {
 const WORDS: Record<string, number[]> = { red: [1, 0, 0], blue: [0, 0, 1], green: [0, 1, 0] };
 vi.mock("../lib/device-picture", async (real) => ({
   ...(await real<typeof import("../lib/device-picture")>()),
-  picturesHere: () => true,
   pictureModelKept: () => true,
   pictureTextKept: () => true,
   pictureText: () => "ready",

@@ -1,19 +1,13 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
-import path from "node:path";
-import { ffmpegCommand } from "../ffmpeg-runtime";
-import { safeMs } from "./clip-agent-context";
+import { readFile, stat } from "node:fs/promises";
+import { awaitTask, dropTask, startTask, taskFor, taskWaitLine } from "../work/tasks";
 
-const FRAME_TIMEOUT_MS = 20_000;
-const MAX_CONCURRENT = 2;
-const MAX_CACHED_FRAMES = 64;
-const STDERR_LIMIT = 16 * 1024;
+/**
+ * A frame of a video as a JPEG, made by the `frame` computer task (work/tasks/frames.ts): on one of the person's
+ * computers, or here where the server's video work is on. A frame already made is served at once.
+ */
 
-export type FrameErrorCode =
-  | "NO_VIDEO"
-  | "FFMPEG_UNAVAILABLE"
-  | "EXTRACTION_FAILED";
+export type FrameErrorCode = "NO_VIDEO" | "FFMPEG_UNAVAILABLE" | "EXTRACTION_FAILED";
 
 export class ClipFrameError extends Error {
   constructor(
@@ -25,197 +19,96 @@ export class ClipFrameError extends Error {
   }
 }
 
-let active = 0;
-const waiters: Array<() => void> = [];
-
-async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
-  if (active >= MAX_CONCURRENT) {
-    await new Promise<void>((resolve) => waiters.push(resolve));
-  }
-  active += 1;
-  try {
-    return await fn();
-  } finally {
-    active = Math.max(0, active - 1);
-    waiters.shift()?.();
-  }
-}
-
-function runFfmpeg(args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let cmd: string;
-    try {
-      cmd = ffmpegCommand();
-    } catch {
-      reject(
-        new ClipFrameError(
-          "FFMPEG_UNAVAILABLE",
-          "Frame extraction requires ffmpeg.",
-        ),
-      );
-      return;
-    }
-    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new ClipFrameError("EXTRACTION_FAILED", "ffmpeg timed out"));
-    }, FRAME_TIMEOUT_MS);
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString("utf8")).slice(-STDERR_LIMIT);
-    });
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      if (/enoent|not found|eacces|enoexec/i.test(err.message)) {
-        reject(
-          new ClipFrameError(
-            "FFMPEG_UNAVAILABLE",
-            "Frame extraction requires ffmpeg.",
-          ),
-        );
-        return;
-      }
-      reject(
-        new ClipFrameError(
-          "EXTRACTION_FAILED",
-          `Failed to extract video frame: ${err.message}`,
-        ),
-      );
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      if (
-        /matches no streams|does not contain any stream|video: none/i.test(
-          stderr,
-        )
-      ) {
-        reject(
-          new ClipFrameError(
-            "NO_VIDEO",
-            "This recording does not contain a video track.",
-          ),
-        );
-        return;
-      }
-      reject(
-        new ClipFrameError(
-          "EXTRACTION_FAILED",
-          `Failed to extract video frame: ffmpeg exited ${code}`,
-        ),
-      );
-    });
-  });
-}
-
-async function pruneFrameCache(dir: string): Promise<void> {
-  let entries: { name: string; mtime: number }[] = [];
-  try {
-    const names = await readdir(dir);
-    entries = await Promise.all(
-      names
-        .filter((name) => name.endsWith(".jpg"))
-        .map(async (name) => {
-          const info = await stat(path.join(dir, name)).catch(() => null);
-          return { name, mtime: info?.mtimeMs ?? 0 };
-        }),
-    );
-  } catch {
-    return;
-  }
-  if (entries.length <= MAX_CACHED_FRAMES) return;
-  entries.sort((a, b) => a.mtime - b.mtime);
-  const extra = entries.slice(0, entries.length - MAX_CACHED_FRAMES);
-  await Promise.all(
-    extra.map((e) => rm(path.join(dir, e.name), { force: true }).catch(() => {})),
-  );
-}
-
-export async function extractClipJpegFrame({
-  src,
-  cacheDir,
-  atMs,
-}: {
-  src: string;
-  cacheDir: string;
+export interface FrameInput {
+  /** the video (or still) where the server has it */
+  files: { src?: string };
+  /** where computer `device` has it itself */
+  paths?: { src?: string };
+  device?: string;
   atMs: number;
-}): Promise<Buffer> {
-  if (!existsSync(src)) {
-    throw new ClipFrameError("NO_VIDEO", "Recording media is missing.");
-  }
-  const ms = safeMs(atMs);
-  await mkdir(cacheDir, { recursive: true });
-  const outPath = path.join(cacheDir, `${ms}.jpg`);
-  if (existsSync(outPath)) {
-    const cached = await readFile(outPath);
-    if (cached.length) return cached;
-  }
+  /** a still: no seek */
+  still?: boolean;
+  vf?: string;
+  q?: number;
+  /** where the server keeps the JPEG */
+  to: string;
+  /** a frame cache to keep small after */
+  prune?: string;
+  /** what the tool does with it once it is here (whenFramed), with what it needs */
+  then?: string;
+  data?: Record<string, unknown>;
+}
 
-  return withSlot(async () => {
-    const seconds = ms / 1000;
-    try {
-      await runFfmpeg([
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-nostdin",
-        "-y",
-        "-ss",
-        String(seconds),
-        "-i",
-        src,
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale='min(1280,iw)':-2",
-        "-q:v",
-        "3",
-        outPath,
-      ]);
-    } catch (err) {
-      if (err instanceof ClipFrameError && err.code === "NO_VIDEO" && ms > 0) {
-        await runFfmpeg([
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          "-nostdin",
-          "-y",
-          "-ss",
-          "0",
-          "-i",
-          src,
-          "-frames:v",
-          "1",
-          "-vf",
-          "scale='min(1280,iw)':-2",
-          "-q:v",
-          "3",
-          outPath,
-        ]);
-      } else {
-        throw err;
-      }
-    }
+/** A still made smaller or into another format: `out` names the encoder, `ext` the file. */
+export interface PictureInput {
+  /** `src`, or for `tile` the numbered pictures (001.png, …) in the order the tile filter lays them */
+  files: Record<string, string>;
+  vf?: string;
+  out: string[];
+  ext: string;
+  to: string;
+  /** a JPEG no longer than `side` and no bigger than `bytes`: the quality goes down, then the size, until it fits */
+  fit?: { side: number; bytes: number };
+  /** the numbered pictures tiled into one sheet, each 540 wide and `h` high, `cols` × `rows` */
+  tile?: { h: number; cols: number; rows: number };
+}
 
-    let info;
-    try {
-      info = await stat(outPath);
-    } catch {
-      throw new ClipFrameError(
-        "NO_VIDEO",
-        "No frame was available at that timestamp.",
-      );
+const after = new Map<string, (input: FrameInput) => Promise<void> | void>();
+
+/** What a tool does with a frame that came later (a computer made it): set a cover, add a picture. */
+export function whenFramed(name: string, fn: (input: FrameInput) => Promise<void> | void): void {
+  after.set(name, fn);
+}
+
+/** The frame task's apply: the tool's own step for it. */
+export async function framed(input: FrameInput): Promise<void> {
+  if (input.then) await after.get(input.then)?.(input);
+}
+
+/** Said while a computer that can take it is about to. */
+export const FRAME_SOON = "Your computer is making it now";
+
+/**
+ * The frame `input` asks for, as JPEG bytes, or `wait`: the line it waits with (it is queued for a computer, and the
+ * tool's `then` gets it when it comes). `cached`: a JPEG already at `to` is the answer. A failure here throws.
+ */
+export async function frameAt(ref: string, actor: string, workspace: string | null, input: FrameInput, cached = false): Promise<{ jpeg: Buffer } | { wait: string }> {
+  if (cached && existsSync(input.to) && (await stat(input.to)).size) return { jpeg: await readFile(input.to) };
+  if (!(input.files.src && existsSync(input.files.src)) && !input.paths?.src) throw new ClipFrameError("NO_VIDEO", "Recording media is missing.");
+  const r = await startTask("frame", ref, actor, workspace, input);
+  if (r.state === "queued") return { wait: r.line ?? FRAME_SOON };
+  // a frame with a `then` was taken by its tool's step already
+  return { jpeg: input.then ? Buffer.alloc(0) : await readFile(input.to) };
+}
+
+/** How long a request waits for one of the person's computers to make a picture it needs now. */
+export const PICTURE_WAIT_MS = 60_000;
+
+/**
+ * A still made into `to` by the `picture` task: on one of `actor`'s computers, or here where the server's video work is
+ * on (a picture is processing too). True when made; else the line why not (no computer can take it now, or it could
+ * not be read).
+ */
+export async function pictureMade(actor: string, input: PictureInput, waitMs = PICTURE_WAIT_MS): Promise<true | string> {
+  try {
+    const r = await startTask("picture", input.to, actor, null, input);
+    if (r.state === "queued") {
+      if (r.line) return r.line;
+      if ((await awaitTask(r.id, waitMs)) !== "done") return taskFor("picture", input.to)?.state === "failed" ? "That picture could not be read" : FRAME_SOON;
     }
-    if (!info.size) {
-      throw new ClipFrameError(
-        "NO_VIDEO",
-        "No frame was available at that timestamp.",
-      );
-    }
-    await pruneFrameCache(cacheDir);
-    return readFile(outPath);
-  });
+    return existsSync(input.to) || "That picture could not be read";
+  } catch {
+    return "That picture could not be read";
+  } finally {
+    dropTask("picture", input.to);
+  }
+}
+
+/** pictureMade, as made or not. */
+export const pictureInto = async (actor: string, input: PictureInput): Promise<boolean> => (await pictureMade(actor, input)) === true;
+
+/** The line a frame task `ref` waits with while it is queued for a computer. */
+export function frameWaits(ref: string): string | undefined {
+  const t = taskFor("frame", ref);
+  return t?.state === "queued" ? (taskWaitLine(t) ?? FRAME_SOON) : undefined;
 }

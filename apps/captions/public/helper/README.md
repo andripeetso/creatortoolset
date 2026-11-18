@@ -47,7 +47,10 @@ of a folder on the host as above: with no mount, or an anonymous volume, the pai
 is made again (an update), and the code no longer works. Mount the dataset the copy goes in at `/copies`. When the
 dataset is not mounted the copy finds no marker there and asks to be reconnected; it never writes into the empty
 folder under it. Then in Creator Toolset: Settings → Media Library → Copies → Add copy → this computer →
-`/copies`. Once the computer is removed in Settings → Devices the helper exits (status 3) on each start: stop the
+`/copies`. `/copies` is on its folder list (`CT_FOLDERS`, see Folders below); add `-e CT_FOLDERS=/copies:/footage`
+for more. A folder mounted at another path than on the NAS (`-v /mnt/tank/footage:/footage`) has both paths in its
+folder record (`hostPath`, `mountPath`): the helper reads it at `/footage` and reports the NAS's path, so every computer
+reads the same one. Once the computer is removed in Settings → Devices the helper exits (status 3) on each start: stop the
 container, empty `/data` and start it again with a new code.
 
 ## What it does
@@ -65,6 +68,29 @@ container, empty `/data` and start it again with a new code.
   `.creatortoolset-copy.lock` keeps a second computer out. A Mac and a helper read and write the same folder the same
   way. Nothing in the folder is ever deleted but this computer's own partials. Copies need no speech libraries.
 - Sends an original it holds to the server when another computer's copy needs it.
+- Reports its disks (network shares and local disks) every minute, and lists its folders (Folders below).
+
+## Folders
+
+The helper reads and writes only in the folders on its list. The server can't add one: a folder listing (Add copy's
+folder browser) or a copy into a folder that is not on it is refused with a sentence that says so. The list is:
+
+- the folders you add on this computer: `helper.py add <folder>` (in a container, `helper.py add <folder> <path on the
+  host>`), `helper.py remove <folder>`, `helper.py folders` to see them; and `CT_FOLDERS` (":"-separated);
+- the copy folders it already keeps (`copies.json`);
+- your Settings → Folders Media folders for this computer, from the server, each only while it is there (its path in
+  the container exists).
+
+Every 15 minutes, and at once when the server's folders change, it lists each Media folder of this computer: the size
+and time of each video, sound and picture file, and a fingerprint of it (SHA-256 of its size, first MiB and last MiB),
+read one file at a time with a pause between files and kept in `scans.json`, so a file is read again only when its
+size or time changes. It sends the listing in pages of up to 2000 files; the server answers the files it does not know
+and the helper indexes each where it is (its fingerprint, and its length and size when `ffprobe` is there). No file is
+uploaded. A folder that is not there is reported as not found, or, when the drive it is on was connected before and
+is not now, as that drive being away: its files read "not checked", never "missing". A folder that can't be read in 10
+seconds is named as unreadable and its files are not checked this time. A file the helper copies is hashed (SHA-256)
+and the hash goes with the next listing. Each computer keeps its own id (`machineId` in `config.json`), so pairing it
+again keeps its place in your library.
 
 ## Logs, stop, remove
 

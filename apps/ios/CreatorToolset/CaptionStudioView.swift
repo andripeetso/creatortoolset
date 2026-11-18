@@ -221,9 +221,6 @@ struct CaptionEditorView: View {
             }
             if let error = editor.error {
                 Problem(text: error).onTapGesture { editor.error = nil }
-                if editor.canRetryUpload {
-                    Button("Try the upload again") { Task { await editor.upload() } }.font(.footnote)
-                }
             }
             if let notice = editor.notice {
                 Text(notice).font(.footnote).foregroundStyle(.secondary)

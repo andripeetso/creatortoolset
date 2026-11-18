@@ -3,6 +3,7 @@ import { readSound } from "@/lib/synced-sound";
 import { nleAudio, runningAudio } from "@/lib/nle/audio";
 import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
 import { picturesAt, picturesSoon, placement, soundPieces, sourceTime, type SoundPiece } from "@/lib/nle/picture";
+import { localFileState, pathLine } from "@/lib/local-files";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
 
 // The editor's viewer: the timeline played live from its source files. Every picture at the playhead is drawn on a
@@ -19,13 +20,21 @@ type Media = {
   lead: number;
   bad: boolean;
   used: number;
+  /** why it doesn't play, once the Mac app said (a drive away, a folder not allowed) */
+  why?: string;
   /** a numbered picture sequence: its pictures by number, loaded ahead of the playhead */
   seq?: { frame: (n: number) => string; got: Map<number, HTMLImageElement> };
 };
 
 /** A source's file as this browser plays it; `lead`: seconds into the file where the source's frame 0 is; `frame`: the
- *  file of picture n when the source is a numbered picture sequence (from 0). */
-export type NleFile = { url: string; lead?: number; frame?: (n: number) => string };
+ *  file of picture n when the source is a numbered picture sequence (from 0). `why`, with no `url`: it doesn't play here,
+ *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). */
+export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string };
+
+/** The line for a Mac file that didn't load, from the Mac app's answer (HTTP 409 disk_away, 403 not allowed). */
+export async function whyNot(url: string): Promise<string | undefined> {
+  return url.startsWith("ctlocal://media/") ? pathLine(await localFileState(url)) : undefined;
+}
 
 const DRIFT_S = 0.25;
 const SEQ_AHEAD = 8;
@@ -60,7 +69,7 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
     const small = document.createElement("canvas");
     const media = (k: string, src: string): Media | null => {
       const file = now.current.urlOf(src);
-      if (!file) return null;
+      if (!file?.url) return null;
       const u = file.url;
       let m = pool.current.get(k);
       if (m && m.url !== u) {
@@ -70,7 +79,10 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
       if (!m) {
         const el = file.frame || isImage(u) ? new Image() : Object.assign(document.createElement("video"), { muted: true, playsInline: true, preload: "auto" });
         const made: Media = { el, url: u, lead: file.lead ?? 0, bad: false, used: tick, ...(file.frame ? { seq: { frame: file.frame, got: new Map() } } : {}) };
-        el.addEventListener("error", () => void (made.bad = true));
+        el.addEventListener("error", () => {
+          made.bad = true;
+          void whyNot(u).then((why) => void (made.why = why));
+        });
         el.src = file.frame ? file.frame(0) : u;
         pool.current.set(k, (m = made));
       }
@@ -196,7 +208,8 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
         const m = media(key, item.src);
         live.add(key);
         if (!m || m.bad) {
-          missing(ctx, item, track, name(item.src), m ? "This file won't play here" : "File not found here");
+          const why = m?.why ?? now.current.urlOf(item.src)?.why;
+          missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : "File not found here"));
           continue;
         }
         const d = pictureOf(m, own, srcFps(item.src), forward && !still, (item.speed || 1) * r);
@@ -286,7 +299,7 @@ const buffers = new Map<string, Promise<{ buf: AudioBuffer; from: number }>>();
 function useNleSound(tl: NleTimeline, time: number, playing: boolean, rate: number, urlOf: (src: string) => NleFile | null) {
   const pieces = useMemo(() => soundPieces(tl).flatMap((p): (SoundPiece & { url: string })[] => {
     const f = urlOf(p.src);
-    return f ? [{ ...p, url: f.url, offset: p.offset + (f.lead ?? 0) }] : [];
+    return f?.url ? [{ ...p, url: f.url, offset: p.offset + (f.lead ?? 0) }] : [];
   }), [tl, urlOf]);
   const key = JSON.stringify(pieces);
   const state = useRef<{ nodes: { stop(): void; disconnect(): void }[]; anchor: { t: number; at: number } | null; gen: number }>({ nodes: [], anchor: null, gen: 0 });

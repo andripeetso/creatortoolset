@@ -21,7 +21,7 @@ import { assetRef, canSee } from "./sources";
  * drop, src/lib/onMac.ts). The video never comes here: the Mac sends what the library needs to list and search it, its
  * length and size, its card picture, its hover strip and a few stills for the AI's description. The version keeps the
  * file's path on that Mac and the Mac's device id; source_key "mac:<version id>" has no blob, so a step that needs the
- * file itself (proxy, transcript, fingerprint) is never run here (worker.ts).
+ * file itself (proxy, fingerprint) is never run here (worker.ts); its transcript is cut on that Mac from the file.
  */
 
 export interface OnMacIndex {
@@ -39,6 +39,8 @@ export interface OnMacIndex {
   sprite?: string;
   frames: string[];
   collectionId?: string;
+  /** the Settings → Folders folder it was found in (a location agent's scan, POST /api/devices/relay/index); none: a drop */
+  folder?: string;
 }
 
 const MB = 1024 * 1024;
@@ -124,7 +126,12 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
     d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ?, quick = ?, root = ?, root_rel = ? WHERE id = ?")
       .run(x.path, x.device ?? null, JSON.stringify(probe), x.quick, at?.key ?? null, at?.rel ?? null, versionId);
-    if (mine) d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at) VALUES (?, ?, ?, ?)").run(versionId, mine.id, x.path, Date.now());
+    if (mine) {
+      // the Mac read this very file for its fingerprint: verified there (contracts/places.ts PlaceState)
+      const now = Date.now();
+      d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, quick, confirmed_at, checked_at, verified_at, state, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)")
+        .run(versionId, mine.id, x.folder ?? "", x.path, x.size, x.quick, now, now, now, x.folder ? "scan" : "drop");
+    }
     d.exec("COMMIT");
   } catch (e) {
     d.exec("ROLLBACK");
@@ -146,6 +153,9 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   const sound = await settleSoundKind(d, versionId, { song: kind === "audio" && looksLikeSong(x.name, probe as ProbeSummary), seconds: probe.duration });
   if (kind === "audio") tagSoundType(d, versionId, x.name, probe.duration);
   organizeOnProbe(d, versionId, sound);
+  // its transcript is made on that Mac from the file where it is (worker.ts): never uploaded for it
+  // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
+  if (kind === "video") enqueueJob(d, libraryId, versionId, "transcribe", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     const dir = framesDir(versionId);
     await mkdir(dir, { recursive: true });

@@ -9,7 +9,8 @@ import Foundation
 // gets a status and no contents, and a missing file outside the folders reads as not granted, never as missing.
 // Each folder is also kept by its root (Places.swift): the disk's root key and the folder's path inside it, so a share
 // mounted again at another path (/Volumes/footage-1) is still the folder that was granted. A file on a network disk
-// that doesn't answer gets 503 at once (Places.guarded), never a wait. The proxy cache of the account the window is signed
+// that doesn't answer gets 503 at once (Places.guarded), never a wait; a granted file on a drive that is not connected
+// gets 409 with the drive's name (disk_away), never 403. The proxy cache of the account the window is signed
 // in to on the page's server plays without a grant (ProxyCache.swift); every other account's cache is outside.
 
 enum MediaFiles {
@@ -46,15 +47,123 @@ enum MediaFiles {
         for url in urls { grant(url.path) }
     }
 
-    static var granted: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+    static var granted: [String] { defaults.stringArray(forKey: key) ?? [] }
 
     static func add(_ folder: String) {
-        if !granted.contains(folder) { UserDefaults.standard.set(granted + [folder], forKey: key) }
+        if !granted.contains(folder) { defaults.set(granted + [folder], forKey: key) }
+        // picked or dropped here: a Settings → Folders folder at or under it needs no OK (LocationAgent.swift)
+        let picked = defaults.stringArray(forKey: pickedKey) ?? []
+        if !picked.contains(folder) { defaults.set(picked + [folder], forKey: pickedKey) }
         addRootGrants(disks: Places.shared.diskList())
     }
 
+    // MARK: per server (local first): the Settings → Folders folders each server lists for this Mac
+
+    /// One Settings → Folders folder of this Mac, as its server lists it (GET /api/devices/relay/folders, RelayFolder).
+    struct ServerFolder: Codable, Equatable {
+        let id: String
+        /// the path on this Mac (hostPath)
+        let path: String
+        /// workspace ids; ["*"] for every workspace
+        let workspaces: [String]
+        let use: String
+    }
+
+    /// The store; the tests give their own.
+    static var defaults = UserDefaults.standard
+    private static let serversKey = "serverFolders"     // [server: [ServerFolder]], replaced on each pull
+    private static let allowedKey = "allowedFolders"    // [server: [path]], "Allow on this Mac" pressed
+    private static let pickedKey = "pickedFolders"      // [path], chosen in an open panel or dropped since this list began
+
+    /// A server by its address as the grants key it: host and port (the window's page, or an agent's base).
+    static func serverKey(_ url: URL?) -> String {
+        guard let url, let host = url.host else { return "" }
+        return url.port.map { "\(host):\($0)" } ?? host
+    }
+
+    private static func decoded<T: Decodable>(_ key: String) -> [String: T] {
+        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([String: T].self, from: $0) } ?? [:]
+    }
+    private static func encode<T: Encodable>(_ value: [String: T], _ key: String) { defaults.set(try? JSONEncoder().encode(value), forKey: key) }
+
+    static func serverFolders(_ server: String) -> [ServerFolder] { (decoded(serversKey) as [String: [ServerFolder]])[server] ?? [] }
+
+    /// The pull replaces the server's list: a folder it no longer lists loses its grant (its OK goes with it).
+    static func setServerFolders(_ list: [ServerFolder], server: String) {
+        var all: [String: [ServerFolder]] = decoded(serversKey)
+        all[server] = list
+        encode(all, serversKey)
+        var ok: [String: [String]] = decoded(allowedKey)
+        if let was = ok[server] { ok[server] = was.filter { p in list.contains { $0.path == p } } }
+        encode(ok, allowedKey)
+    }
+
+    /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.
+    @discardableResult
+    static func allow(_ path: String, server: String) -> Bool {
+        guard serverFolders(server).contains(where: { $0.path == path }) else { return false }
+        var ok: [String: [String]] = decoded(allowedKey)
+        if ok[server]?.contains(path) != true { ok[server, default: []].append(path) }
+        encode(ok, allowedKey)
+        return true
+    }
+
+    /// Whether this Mac may read a server's folder: OK'd for that server, or at or under a folder picked or dropped here.
+    static func isAllowed(_ path: String, server: String) -> Bool {
+        let ok: [String: [String]] = decoded(allowedKey)
+        if ok[server]?.contains(path) == true { return true }
+        return Imports.inside(path, defaults.stringArray(forKey: pickedKey) ?? []) != nil
+    }
+
+    /// The folders of `folders` this Mac may read for a clip of `workspace` (nil: any workspace of that server).
+    static func folderGrants(_ folders: [ServerFolder], workspace: String?, allowed: (String) -> Bool) -> [String] {
+        folders.filter { f in (workspace == nil || f.workspaces.contains("*") || f.workspaces.contains(workspace!)) && allowed(f.path) }.map(\.path)
+    }
+
+    /// What the page of `server` may play for a clip of `workspace`: the open-panel and drop grants (kept as they were,
+    /// DM10) and that server's allowed folders in that workspace.
+    static func granted(server: String, workspace: String?) -> [String] {
+        granted + folderGrants(serverFolders(server), workspace: workspace, allowed: { isAllowed($0, server: server) })
+    }
+
+    /// The drive of a path on a disk that is not mounted ("/Volumes/Footage/a.mov" with no Footage): its name. The
+    /// disk list can lag (empty before its first read), so the mount table has the last word; reading it never waits.
+    static func unmountedDisk(_ path: String, disks: [PlaceDisk], mounted: () -> [String] = mountPaths) -> String? {
+        guard Places.disk(of: path, in: disks) == nil, path.hasPrefix("/Volumes/"),
+              let name = path.split(separator: "/").dropFirst().first.map(String.init) else { return nil }
+        let mount = "/Volumes/" + name
+        return mounted().contains { $0.precomposedStringWithCanonicalMapping == mount.precomposedStringWithCanonicalMapping } ? nil : name
+    }
+
+    /// Whether `path` is at or under one of `folders`, by name alone (no file call: its disk may be gone).
+    static func underByName(_ path: String, _ folders: [String]) -> Bool {
+        let p = path.precomposedStringWithCanonicalMapping
+        return folders.map(\.precomposedStringWithCanonicalMapping).contains { p == $0 || p.hasPrefix($0 == "/" ? "/" : $0 + "/") }
+    }
+
+    /// The page's placesState for one path on `server`: here | not_here | disk_away | not_granted | needs_ok, and the
+    /// drive's name for disk_away. Reads the file only when it is granted and its disk is here.
+    static func placeState(_ path: String, server: String, places: Places = .shared) -> (state: String, disk: String?) {
+        guard isPlain(path) else { return ("not_granted", nil) }
+        let folders = serverFolders(server)
+        let allowed = { (p: String) in isAllowed(p, server: server) }
+        let grants = granted + folderGrants(folders, workspace: nil, allowed: allowed)
+        guard underByName(path, grants + rootGrants.map(\.path)) else {
+            return underByName(path, folders.map(\.path)) ? ("needs_ok", nil) : ("not_granted", nil)
+        }
+        let disks = places.diskList()
+        if let name = unmountedDisk(path, disks: disks) { return ("disk_away", name) }
+        if let disk = Places.disk(of: path, in: disks), disk.network, !places.answers(disk.path) {
+            return ("disk_away", disk.name.isEmpty ? (disk.path as NSString).lastPathComponent : disk.name)
+        }
+        guard let there = places.guarded(path, { FileManager.default.fileExists(atPath: path) }) else {
+            return ("disk_away", Places.disk(of: path, in: disks)?.name)
+        }
+        return (there ? "here" : "not_here", nil)
+    }
+
     static func remove(_ folder: String) {
-        UserDefaults.standard.set(granted.filter { $0 != folder }, forKey: key)
+        defaults.set(granted.filter { $0 != folder }, forKey: key)
         saveRoots(rootGrants.filter { $0.path != folder })
     }
 
@@ -67,9 +176,9 @@ enum MediaFiles {
 
     private static let rootsKey = "mediaRoots"
     static var rootGrants: [RootGrant] {
-        UserDefaults.standard.data(forKey: rootsKey).flatMap { try? JSONDecoder().decode([RootGrant].self, from: $0) } ?? []
+        defaults.data(forKey: rootsKey).flatMap { try? JSONDecoder().decode([RootGrant].self, from: $0) } ?? []
     }
-    private static func saveRoots(_ list: [RootGrant]) { UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: rootsKey) }
+    private static func saveRoots(_ list: [RootGrant]) { defaults.set(try? JSONEncoder().encode(list), forKey: rootsKey) }
 
     /// Each granted folder without a root grant gets one once its disk is mounted (the grants made before roots
     /// existed, on the first launch that sees their disk). Reads no file: the disk comes from the mount paths.
@@ -126,6 +235,7 @@ enum MediaFiles {
     enum Gate: Equatable {
         case file(String, type: String)   // the real path to read, and its type
         case status(Int)                  // 403 not granted, 404 missing, 415 not a media file, 503 its disk doesn't answer
+        case diskAway(String)             // 409 {"state":"disk_away","disk"}: granted, on a drive that is not connected
     }
 
     /// An absolute path with no `.` or `..` part.
@@ -143,6 +253,10 @@ enum MediaFiles {
         guard type(of: path) != nil else { return .status(415) }
         let disks = places.diskList()
         let allowed = granted + (cache.map { [$0] } ?? [])
+        // a drive that is not connected: granted is told by the folder's name (nothing on it can be resolved)
+        if let disk = unmountedDisk(path, disks: disks) {
+            return underByName(path, allowed + roots.map(\.path)) ? .diskAway(disk) : .status(403)
+        }
         return places.guarded(path) { look(path, granted: allowed, roots: roots, disks: disks) } ?? .status(503)
     }
 

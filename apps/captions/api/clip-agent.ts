@@ -1,8 +1,10 @@
+import path from "node:path";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AuthVars } from "./auth";
 import {
   clipFramesDir,
+  clipOwner,
   getClipAgentSource,
   getClipRecordingPath,
   loadWords,
@@ -22,7 +24,7 @@ import {
   wantsAgentJson,
   wordsToAgentSegments,
 } from "./lib/clip-agent-context";
-import { ClipFrameError, extractClipJpegFrame } from "./lib/clip-frame";
+import { ClipFrameError, frameAt } from "./lib/clip-frame";
 
 export const clipAgentApp = new Hono<{ Variables: AuthVars }>();
 
@@ -201,12 +203,11 @@ clipAgentApp.get("/agent-frame.jpg", async (c) => {
     durationMs > 0 ? Math.min(requested, Math.max(0, durationMs - 1)) : requested;
 
   try {
-    const jpeg = await extractClipJpegFrame({
-      src,
-      cacheDir: clipFramesDir(clip.id),
-      atMs,
-    });
-    return new Response(new Uint8Array(jpeg), {
+    const ms = safeMs(atMs);
+    const dir = clipFramesDir(clip.id);
+    const got = await frameAt(`clip:${clip.id}:${ms}`, await clipOwner(clip.id), null, { files: { src }, atMs: ms, to: path.join(dir, `${ms}.jpg`), prune: dir }, true);
+    if ("wait" in got) return c.json({ error: got.wait, waiting: true }, 409);
+    return new Response(new Uint8Array(got.jpeg), {
       headers: {
         "Content-Type": "image/jpeg",
         "X-Content-Type-Options": "nosniff",

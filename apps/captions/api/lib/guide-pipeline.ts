@@ -1,9 +1,9 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { aiFor, completeWithFallback } from "../ai-complete";
-import { clipFramesDir, getClipRecordingPath } from "../clips";
+import { getClipRecordingPath } from "../clips";
 import { env } from "./env";
-import { extractClipJpegFrame } from "./clip-frame";
+import { frameAt } from "./clip-frame";
 import {
   guideToMarkdown,
   parseGuidePlan,
@@ -153,14 +153,9 @@ Rules:
     if (!recording) return [];
     const requestedMs = Math.max(0, Math.round(atSec * 1000));
     try {
-      const jpeg = await extractClipJpegFrame({
-        src: recording,
-        cacheDir: clipFramesDir(clipId),
-        atMs: requestedMs,
-      });
-      if (!jpeg.length) return [];
       const assetId = `step-${index + 1}.jpg`;
-      await writeFile(path.join(assetsDir, assetId), jpeg);
+      // made into the guide's own file: one a computer makes later lands where the guide already shows it
+      await frameAt(`guide:${assetsDir}:${assetId}`, owner, workspace ?? null, { files: { src: recording }, atMs: requestedMs, to: path.join(assetsDir, assetId) });
       return [
         {
           assetId,

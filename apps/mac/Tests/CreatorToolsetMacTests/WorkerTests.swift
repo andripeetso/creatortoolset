@@ -51,6 +51,7 @@ final class WorkerTests: XCTestCase {
         XCTAssertEqual(env["CT_PLUGINS_ON"], "face-blur")
         XCTAssertEqual(env["CT_CHANNEL"], "release")
         XCTAssertEqual(env["CT_EXIT_WITH_PARENT"], "1")
+        XCTAssertEqual(env["PLAYWRIGHT_BROWSERS_PATH"], appSupport.appendingPathComponent("runtime/chromium").path)
         XCTAssertEqual(env["HOME"], "/Users/me")
         for key in ["PORT", "HOST", "APP_SECRET", "CT_LOCAL", "SECRET"] { XCTAssertNil(env[key], key) }
     }

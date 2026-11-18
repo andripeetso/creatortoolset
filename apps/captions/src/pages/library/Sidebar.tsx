@@ -88,7 +88,7 @@ export function LibrarySidebar(p: SidebarProps) {
   const tags = useCachedLoad(`/api/library/${p.libraryId}/tags`, () => listTags(p.libraryId));
   const places = useCachedLoad(`/api/library/${p.libraryId}/countries`, () => listPlaces(p.libraryId));
   const f = p.filters;
-  // Missing here shows only when this computer found clips gone (or while it is on): up to 100 counted, then "100+"
+  // Missing on this computer shows only when this computer found clips gone (or while it is on): up to 100 counted, then "100+"
   const missing = useCachedLoad(macPlaces() ? `/api/library/${p.libraryId}/assets?missing=1` : null, () =>
     listAssets(p.libraryId, { missing: true, limit: 100 }),
   );
@@ -147,7 +147,7 @@ export function LibrarySidebar(p: SidebarProps) {
             {macPlaces() && (!!missing.data?.items.length || !!f.missing) && (
               <Pill on={!!f.missing} onClick={() => set({ missing: f.missing ? undefined : true })}>
                 <FileX aria-hidden className="h-3.5 w-3.5" />
-                Missing here
+                Missing on this computer
                 {!!missing.data?.items.length && (
                   <span className="tabular-nums text-zinc-500">{missing.data.next ? "100+" : missing.data.items.length.toLocaleString()}</span>
                 )}

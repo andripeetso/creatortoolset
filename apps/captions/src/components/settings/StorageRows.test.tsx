@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { Storage, type Computer, driveLabel, driveOf, driveStart, shareAddress } from "./StorageRows";
+import { Storage, type Computer, driveLabel, driveOf, driveStart, folderLine, shareAddress } from "./StorageRows";
 import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
@@ -71,13 +71,13 @@ describe("which computers can read a folder", () => {
   const rows = (copies?: boolean, devices = [mac, pc, laptop]) =>
     renderToStaticMarkup(<Storage devices={devices} storage={{ ...view([shoots]), ...(copies ? { copies } : {}) }} onChanged={() => {}} />);
 
-  it("says per computer: on it, through the server copy, or not connected, with Connect for a share", () => {
+  it("says per computer: on it, or not checked yet there, with Connect for a share", () => {
     const html = rows();
-    expect(html).toContain("Sam&#x27;s Mac Studio · On this computer");
-    expect(html).toContain("Edit PC · On this computer");
-    expect(html).toContain("Laptop · Not connected");
+    expect(html).toContain("On Sam&#x27;s Mac Studio");
+    expect(html).toContain("On Edit PC");
+    expect(html).toContain("Not checked yet on Laptop");
     expect(html.match(/>Connect</g)).toHaveLength(1);
-    expect(rows(true)).toContain("Laptop · Through the server copy");
+    expect(rows(true)).not.toContain("server copy");
   });
 
   it("says nothing of it with one computer", () => {
@@ -128,5 +128,23 @@ describe("Connect network storage", () => {
 
   it("refuses anything that is not a share: the address becomes a link", () => {
     for (const bad of ["", "   ", "javascript://alert(1)", "https://example.com/x", "file:///etc/passwd", "smb://", "smb:// spaced host/x", "smb://-bad/x"]) expect(shareAddress(bad)).toBeNull();
+  });
+});
+
+describe("a folder's state on its computer", () => {
+  const f: StorageFolder = { id: "f_1", role: "footage", name: "Shoots", origin: { host: "dev_1", path: "/Volumes/Tiny Drive/Shoots" }, make: false, createdAt: 0, reach: {} };
+  it("says what its computer last reported, in the plan's words", () => {
+    expect(folderLine(f, "Studio Mac", true)).toBe("Not checked yet");
+    expect(folderLine(f, "Studio Mac", false)).toBe("Not checked yet on Studio Mac");
+    expect(folderLine({ ...f, folderState: "ok", checkedAt: Date.now() - 5 * 60_000 }, "Studio Mac", true)).toBe("Last checked 5 min ago");
+    expect(folderLine({ ...f, folderState: "not_found" }, "Studio Mac", true)).toBe("Folder not found, re-point?");
+    expect(folderLine({ ...f, folderState: "needs_ok" }, "Studio Mac", true)).toBe("Needs your OK");
+    expect(folderLine({ ...f, folderState: "disk_away" }, "Studio Mac", true)).toBe("Tiny Drive isn't connected");
+  });
+
+  it("outside the Mac app's window a folder waiting for an OK has no Allow button", () => {
+    const html = page([{ ...f, folderState: "needs_ok" }]);
+    expect(html).toContain("Needs your OK");
+    expect(html).not.toContain("Allow on this Mac");
   });
 });

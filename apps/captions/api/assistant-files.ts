@@ -6,7 +6,8 @@ import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
-import { notesFromFile, probeDuration } from "./clips";
+import { notesFromFile } from "./clips";
+import { probe } from "./library/media/probe";
 import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
@@ -314,7 +315,7 @@ export async function useFile(
   // answer (captions-job.ts), and the chat says when they are ready. It can be opened at once: the page shows that
   // the captions are being made instead of Transcribe, and takes them when they land (src/lib/persist.ts)
   const workspace = await currentWorkspaceId(user);
-  const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file), later: true, workspace });
+  const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: (await probe(file).catch(() => null))?.duration ?? 0, later: true, workspace });
   const project = { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
   const route = captionEngine(user);
   // nothing on this server transcribes for them: said in the route's own words (on the page, their browser still can)

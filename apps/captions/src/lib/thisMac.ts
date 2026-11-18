@@ -4,7 +4,7 @@
 import type { PlacesCheckAnswer, PlacesCheckAsk, PlacesConnectAnswer, PlacesConnectAsk, PlacesSearchAsk, PlacesSearchState } from "@contracts/places";
 
 /** `device`: this Mac's device id on the open server, once paired (null before that). */
-export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean };
+export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean; pairs?: boolean; computer?: string };
 type Bridge = { postMessage: (m: string) => Promise<ThisMacState> };
 
 /** The Mac app's bridge, or undefined in a browser (no window at all in a test). */
@@ -28,6 +28,23 @@ export async function startThisMac(): Promise<ThisMacState | null> {
   }
 }
 
+/** This Mac's state on the open server; null in a browser. */
+export async function thisMacState(): Promise<ThisMacState | null> {
+  const bridge = thisMacBridge();
+  return bridge ? bridge.postMessage("state").catch(() => null) : null;
+}
+
+/**
+ * Adds this Mac to the open server as one of the person's computers, its AI left as it is (a press in Settings →
+ * Folders: a folder on this Mac needs it). null when the app can't (a browser, or an app from before that only pairs
+ * with the AI on: never asked then, its "pair" would switch the AI on).
+ */
+export async function pairThisMac(): Promise<ThisMacState | null> {
+  const s = await thisMacState();
+  if (!s?.pairs) return null;
+  return s.paired ? s : thisMacBridge()!.postMessage("pair").catch(() => null);
+}
+
 /** The server's answer when no Mac of the person's own is on for a call (api/designs.ts fromMac): `device` is the Mac of theirs it can't reach. */
 type NoMac = Error & { code?: string; device?: { id: string; name: string } };
 const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).code === "no_mac";
@@ -35,7 +52,7 @@ const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).cod
 /**
  * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
  * theirs, it is done on this Mac: `onHere` is told so first ("Ana's Mac Studio is unreachable. Doing it on this Mac.",
- * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, Take work from this server, which adds
+ * or this Mac isn't connected to this server), this Mac is switched on for it (Settings → Computers, Take work from this server, which adds
  * it to this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
  * for any other answer, the call's own error.
  */

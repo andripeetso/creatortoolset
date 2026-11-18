@@ -8,7 +8,8 @@ import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { inside, libraryPath, localDisks, mediaFolders, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { inside, libraryPath, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { resolveDevice } from "./library/whereis";
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
@@ -47,10 +48,42 @@ function chained<T>(user: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** No file yet, or a file that is not valid JSON: an empty list (parseStorageFile logs the bad one). */
+/**
+ * No file yet, or a file that is not valid JSON: an empty list (parseStorageFile logs the bad one). A file from before
+ * schema 2 is moved on read (lib/storage.ts migrateStorage) and written back in the account's queue.
+ */
 async function readStorage(user: string): Promise<StorageState> {
   const raw = await readFile(file(user), "utf-8").catch(() => "{}");
-  return parseStorageFile(raw);
+  const parsed = parseStorageFile(raw);
+  if (!parsed.folders.length) return parsed;
+  const here = listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id;
+  const { st, changed } = migrateStorage(parsed, here, resolveDevice);
+  if (changed) void chained(user, async () => {
+    const now = parseStorageFile(await readFile(file(user), "utf-8").catch(() => "{}"));
+    const again = migrateStorage(now, here, resolveDevice);
+    if (again.changed) await writeStorage(user, again.st);
+  }).catch((e: unknown) => console.warn(`[devices-storage] schema 2 not saved: ${e instanceof Error ? e.message : e}`));
+  return st;
+}
+
+/** The account's folders, as every reader outside Settings gets them (report.ts, the relay's folder list). */
+export const storageOf = (user: string): Promise<StorageState> => readStorage(user);
+
+/**
+ * Changes one folder in the account's list, in its queue (a location agent's report writes the folder's state there).
+ * `fn` gets the folder and gives it back changed, or null for no change. False when there is no such folder.
+ */
+export function updateFolder(user: string, id: string, fn: (f: StorageFolder) => StorageFolder | null): Promise<boolean> {
+  return chained(user, async () => {
+    const st = await readStorage(user);
+    const i = st.folders.findIndex((f) => f.id === id);
+    if (i < 0) return false;
+    const next = fn(st.folders[i]!);
+    if (!next) return true;
+    st.folders[i] = next;
+    await writeStorage(user, st);
+    return true;
+  });
 }
 
 async function writeStorage(user: string, st: StorageState): Promise<void> {
@@ -108,6 +141,8 @@ const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMo
  * A folder this server reads in place, so it joins the Media Library's watch list: "this computer" by name (setup's
  * Folders step), or the paired computer that is the machine this server runs on (Settings → Storage picks a computer),
  * where the server may read the person's folders at all (watchAllowed: not a hosted server).
+ * A folder on any other computer (a Mac, a helper) is read only by that computer's location agent: its report
+ * (library/report.ts applyReport) writes the place rows whereIs reads. The server never opens that path, never watches it.
  */
 const readHere = (user: string, host: string) => host === THIS_COMPUTER || (isThisMachine(host) && watchAllowed(user));
 
@@ -249,7 +284,9 @@ storageApp.post("/folders", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
   const role = b?.role === "finals" ? "finals" : b?.role === "music" ? "footage" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
-  const host = str(b?.host, 120);
+  // "this computer" (setup's Folders step) is the paired computer this server runs on, when there is one (schema 2)
+  const asked = str(b?.host, 120);
+  const host = asked === THIS_COMPUTER ? (listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id ?? asked) : asked;
   const raw = b?.path;
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);
   // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
@@ -260,7 +297,7 @@ storageApp.post("/folders", async (c) => {
   if (outer) return c.json({ error: `That folder is already in ${outer.name}` }, 400);
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there.
   // A Finals folder is not footage: only its projects' subfolders are read, into Finals (library/watch.ts watchFinals)
-  if (role !== "finals" && readHere(user, host)) {
+  if (role !== "finals" && (asked === THIS_COMPUTER || readHere(user, host))) {
     const refused = await addWatchFolder(user, p);
     if (refused) return c.json({ error: refused }, 400);
   }
@@ -322,6 +359,50 @@ storageApp.patch("/folders/:id", async (c) => {
   });
   if (!out) return c.json({ error: "Not found" }, 404);
   await unwatch(user, f.origin.path, was, now);
+  return c.json(shown(out, here, user, named));
+});
+
+/**
+ * POST /api/devices/storage/folders/:id/re-point {path}: the folder moved or was renamed on its computer, and the person
+ * picked where it is now (the Mac's folder picker). Same computer, new path; its state there is cleared ("Not checked
+ * yet") and its place rows turn unchecked until that computer's next report lists it. A folder this server reads itself
+ * moves on the watch list too. Returns the folder list like the other routes here.
+ */
+storageApp.post("/folders/:id/re-point", async (c) => {
+  const u = c.get("user");
+  const user = u.username;
+  const id = c.req.param("id");
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const raw = b?.path;
+  // the folder's own computer's path, whole ("~" is a home folder this server cannot say for another computer)
+  if (!okFolderPath(raw) || raw.startsWith("~")) return c.json({ error: "Needs a folder" }, 400);
+  const p = raw.normalize("NFC").replace(/(.)\/+$/, "$1");
+  const { mine: here, named } = await scopeOf(c);
+  const before = (await readStorage(user)).folders;
+  const f = before.find((x) => x.id === id);
+  if (!f) return c.json({ error: "Not found" }, 404);
+  if (f.origin.path === p) return c.json(shown({ folders: before }, here, user, named));
+  if (before.some((x) => x.id !== id && x.role === f.role && x.origin.host === f.origin.host && x.origin.path === p)) return c.json({ error: "That folder is already there" }, 400);
+  const watched = f.role !== "library" && f.role !== "finals" && readHere(user, f.origin.host);
+  const of = watched ? await projectOf(u) : null;
+  const was = watched ? await readersOf(user, of, before, f.origin) : new Set<string>();
+  for (const ws of was) {
+    const refused = await watchIn(user, p, ws);
+    if (refused) return c.json({ error: refused }, 400);
+  }
+  const out = await chained(user, async () => {
+    const st = await readStorage(user);
+    const i = st.folders.findIndex((x) => x.id === id);
+    if (i < 0) return null;
+    // its state there and a container path were the old path's
+    const { folderState: _s, checkedAt: _c, mountPath: _m, ...rest } = st.folders[i]!;
+    st.folders[i] = { ...rest, name: p.split("/").filter(Boolean).pop() ?? p, origin: { ...rest.origin, path: p } };
+    await writeStorage(user, st);
+    return st;
+  });
+  if (!out) return c.json({ error: "Not found" }, 404);
+  libraryDb().prepare("UPDATE version_places SET state = 'unchecked' WHERE device = ? AND folder_id = ? AND state <> 'unchecked'").run(f.origin.host, id);
+  if (watched) await unwatch(user, f.origin.path, was, await readersOf(user, of, out.folders, f.origin));
   return c.json(shown(out, here, user, named));
 });
 

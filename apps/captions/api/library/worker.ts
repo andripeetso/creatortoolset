@@ -22,13 +22,12 @@ import { looksLikeSong, probe, type ProbeSummary } from "./media/probe";
 import { placeUnplaced } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
-import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
+import { keySound, NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
 import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
-import { sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
-import { picturesHere } from "../lib/device-picture";
+import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
@@ -56,13 +55,13 @@ const LEASE_S = 300;
 
 /**
  * Jobs at once, per lane. Pictures: one, apart from the files, so a card's picture never waits for a proxy that already
- * started (its ffmpeg runs in a line of its own, media/run.ts). Files: one, since ffmpeg has its own server-wide limit. Transcripts: a key's
+ * started (its decoder runs in a line of its own, media/run.ts). Files: one, since the decoder has its own server-wide limit. Transcripts: a key's
  * service takes many, and on this computer they never overlap anyway (device-transcribe.ts). AI: the Mac relay runs
  * two library calls at once per computer (background slots, mac-claude.ts) and queues the rest; an API key takes all six.
  * Shot descriptions: three videos at a time, apart from the descriptions, so a long video's calls never hold a clip's
  * description back; their AI calls run side by side, at most two at once per account on an AI provider (the background
  * requests its computer runs; more only queue there) and six on the account's own key, as its descriptions
- * (shots.ts callsAtOnce). A look waiting for a Mac to read its file holds no place here (mac-look.ts). Its picture read takes the one ffmpeg slot in one go, a twentieth of a proxy's time or less: a
+ * (shots.ts callsAtOnce). A look waiting for a Mac to read its file holds no place here (mac-look.ts). Its picture read takes the one decoder slot in one go, a twentieth of a proxy's time or less: a
  * 20-minute 720p file in 8 to 48 s (the computer idle to busy; 59 s for 1080p at 60 fps), a real 45-minute one in 41 s
  * (171 s on one thread). Its sheets are runs of under 2 s each (7.8 s a sheet on a heavy 720p file), so other work
  * gets the slot in between.
@@ -176,7 +175,7 @@ export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | n
 }
 
 // this computer's transcripts and search entries run one at a time (lib/device-transcribe.ts, lib/device-embed.ts: the
-// one line every ffmpeg runs in): the next is claimed when the one before ends, so a clip is "running" (its card and the
+// one line every decoder runs in): the next is claimed when the one before ends, so a clip is "running" (its card and the
 // step line say Transcribing, Adding to search) only while it really is
 // ponytail: one such job first in its lane holds back a key's job behind it (another account's)
 let onDevice = 0;
@@ -202,21 +201,29 @@ export const libraryJobsAtRisk = (): number => running.size;
 export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean; line?: (job: JobRow) => string | undefined } = { kinds: [] };
 
 /**
- * The jobs that decode video or sound (design 2.1): this server runs them only where its video work is on
- * (work/server-work.ts). A probe reads the file's header: that always runs here. A file
+ * The jobs that read video or sound (design 2.1, local-first plan D7): this server runs them only where its video work
+ * is on (work/server-work.ts); else one of the uploader's computers does (work/library-package.ts), or they wait. A file
  * indexed on a Mac decodes nothing here (its description and shot descriptions read what the Mac sent).
  */
-// thumb decodes a frame of the original; the job itself moves to a computer later (local-first plan P3f), until then it waits
-export const DECODES: readonly string[] = ["thumb", "wave", "proxy", "sprite", "fingerprint", "transcribe", "describe", "look"];
+export const DECODES: readonly string[] = ["probe", "thumb", "wave", "proxy", "sprite", "fingerprint", "transcribe", "describe", "look"];
 
 export { WAITS_FOR_COMPUTER, WAITS_FOR_SERVER };
 
 /**
  * A step that decodes nothing here even where video work is off (run): a look a Mac of theirs reads (it waits for that
- * Mac, saying so), or a description written again from the words a clip has.
+ * Mac, saying so), a description written again from the words a clip has, or a transcript on a computer's speech model
+ * (that computer cuts the sound from its own copy, transcribe.ts ownSound).
  */
 const readsNoPicture = (j: JobRow): boolean =>
-  (j.kind === "look" && onTheirMac(j.version_id ?? "", j.actor)) || (j.kind === "describe" && described(j.version_id ?? ""));
+  (j.kind === "look" && onTheirMac(j.version_id ?? "", j.actor)) || (j.kind === "describe" && described(j.version_id ?? "")) || (j.kind === "transcribe" && onComputerModel(j));
+
+const onComputerModel = (j: JobRow): boolean => {
+  try {
+    return versionRoute(j.actor, j.version_id ?? "").provider === "computer";
+  } catch {
+    return false; // no route: it parks as needs_key when it runs
+  }
+};
 
 /** The queued jobs of `kinds` this server leaves to a computer now, or leaves waiting while its video work is off. */
 function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number[] {
@@ -240,7 +247,8 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
         db.prepare("UPDATE jobs SET error = NULL WHERE id = ?").run(j.id);
       out.push(j.id);
     }
-    else if (decodes.includes(j.kind) && !j.source_key?.startsWith("mac:") && !serverWorks(libraryWorkspace(j.library_id), j.actor) && !readsNoPicture(j)) {
+    // a team proxy of a file only a computer has waits for that computer whatever the switch: this server has no bytes to read
+    else if (decodes.includes(j.kind) && (j.source_key?.startsWith("mac:") ? j.kind === "proxy" : !serverWorks(libraryWorkspace(j.library_id), j.actor)) && !readsNoPicture(j)) {
       out.push(j.id);
       // which computers can read its folder, when that says more than "one of your computers" (library-package.ts libraryWaitLine)
       const line = leaveToComputers.kinds.includes(j.kind) ? (leaveToComputers.line?.(j) ?? WAITS_FOR_COMPUTER) : WAITS_FOR_SERVER;
@@ -404,9 +412,9 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
       `SELECT v.source_key, a.library_id, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
        WHERE v.id = ? AND a.kind = 'video' AND v.from_path IS NOT NULL AND v.mac_path IS NULL AND v.source_path IS NULL
-         -- the computer it came from still holds it (a place it reported, not gone): else the original waits on the server
-         -- ponytail: a reported place, not a checked one; P1a's verified place row (state 'verified', full sha256) replaces this
-         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.gone_at IS NULL)
+         -- the computer it came from still holds it: else the original waits on the server
+         -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
+         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified')
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
@@ -483,6 +491,14 @@ async function run(job: JobRow): Promise<void> {
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
   if (v.source_key.startsWith("mac:")) {
     if (job.kind === "embed") return embedVersion(db, v.id, job.actor);
+    // its transcript is made on that Mac from the file where it is (transcribe.ts ownSound): no upload, nothing cut here.
+    // On a key, a computer that has the file cuts the sound (work/library-package.ts); none online: it waits for one
+    if (job.kind === "transcribe") {
+      if (keySound(job.actor, v.id)) throw new ComputerOff(WAITS_FOR_COMPUTER);
+      await transcribeVersion(db, v.id, () => Promise.reject(new Error(`The file is on a Mac (${v.mac_path}), not on this server`)), job.actor, scratch());
+      if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+      return;
+    }
     // its picture is read on that Mac (mac-look.ts): the sheets it sent are looked at here once and dropped; until it
     // sends them the look waits for it, never fails. No AI to ask: it waits for that, and the Mac reads nothing
     if (job.kind === "look") return lookOnMac(db, v, job);
@@ -493,13 +509,11 @@ async function run(job: JobRow): Promise<void> {
     // descriptions, else the description it has and what is said)
     if (!frames.length) {
       if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac were not found: add the file again in the Mac app");
+      if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     } else {
-      const fresh = !described(v.id);
-      await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
+      await describeFromStills(db, v.library_id, v.id, job.actor, frames, p?.duration);
       await dropMacFrames(v.id);
-      if (fresh && sortRoll(db, v.id)) queueLook(db, v.id, job.actor);
     }
-    if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     return;
   }
   // a server that does no video work (hosted, or its owner's choice: work/server-work.ts) decodes nothing for a file it
@@ -568,7 +582,7 @@ async function run(job: JobRow): Promise<void> {
     await keep("sprite", file, `${base}/sprite.jpg`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
     // the lighter copy, as every reader that only measures a clip (editor/media.ts measurable): the proxy keeps every
-    // sound track and ffmpeg picks the same one from it as from the original (proxy.ts), at the same times; the original
+    // sound track and the decoder picks the same one from it as from the original (proxy.ts), at the same times; the original
     // when there is no proxy yet. The frames from it too: the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
     // a transcript on a computer's model reads nothing here: that computer cuts the sound from its own copy (transcribe.ts ownSound)
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, lighter, job.actor, dir);
@@ -618,7 +632,7 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
     throw new NeedsKey(MAC_WAITS);
   }
   // search by picture reads the same sheets now: they are not kept here (a model that fails leaves them without)
-  if (picturesHere() && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
+  if (picturesHere(v.library_id, job.actor) && librarySetting(v.library_id, "pictures")) await sheetPictures(db, v.id, sheets).catch((e: unknown) => console.warn("[library] search by picture:", e));
   await lookFromSheets(db, v.id, job.actor, sheets);
   // the copy that Mac made for the timeline (timeline.ts), when it was asked for one; dropped once watched
   const copy = takeWatchCopy(v.id);
@@ -626,6 +640,32 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
   if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
   // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
   else if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+}
+
+/**
+ * Describes a version from stills already cut (a Mac's, on-mac.ts, or a computer's, work/library-package.ts), then
+ * what follows a description: its first one gets shot descriptions, new words get search by meaning. The caller drops the stills.
+ */
+export async function describeFromStills(db: ReturnType<typeof libraryDb>, libraryId: string, versionId: string, actor: string | null, stills: string[], duration?: number): Promise<void> {
+  const fresh = !described(versionId);
+  const p = JSON.parse((db.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null;
+  await describeVersion(db, versionId, "", duration ?? p?.duration ?? 0, actor, scratch(), stills);
+  if (fresh && sortRoll(db, versionId)) queueLook(db, versionId, actor);
+  if (librarySetting(libraryId, "embed") && canEmbed(actor)) enqueueJob(db, libraryId, versionId, "embed", actor, true);
+  releaseLimit(db, actor);
+}
+
+/**
+ * A description a computer's stills went with that met a usage limit or a busy AI (waitFor): back in the queue for the
+ * wait, saying so, as the server's own run waits. True when it waits; false for a real failure.
+ */
+export function aiWaits(db: ReturnType<typeof libraryDb>, job: JobRow, e: unknown): boolean {
+  const wait = waitFor(e);
+  if (!wait) return false;
+  defer(db, job.id, wait);
+  if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
+  libraryChanged(job.library_id);
+  return true;
 }
 
 /** Holds a look whose library spent its monthly budget (BudgetSpent), before its picture is read or its AI asked. */

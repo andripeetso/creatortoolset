@@ -143,15 +143,26 @@ export function deviceForToken(authorization: string | undefined): Device | null
 }
 
 /**
- * A new app device for `owner`; the token is returned once and never stored. An earlier device of the same owner
- * with the same name is the same Mac paired again (the app re-pairs when its token is lost): its token stops working and
- * the list keeps one row per Mac. The new row keeps the first one's id, so the folders, balance and file places that
- * name the computer by id still point at it. `replaced` are the other dropped ids (their providers move to the new one,
- * moveProviders, called by the route).
+ * A device for `owner`; the token is returned once and never stored. Which earlier device it is (local first, P1):
+ * - `machineId` given: the device with that machine id keeps its id and gets the new token (the same computer paired
+ *   again); else the same owner's device of the same name that has no machine id yet (that computer before it sent one)
+ *   is adopted the same way. A device with another machine id is never touched, whatever its name.
+ * - no `machineId` (an app from before): the same owner's first device of the same name without a machine id keeps its
+ *   id (the folders, balance and places that name it still point at it); the others of that name without one are
+ *   dropped (`replaced`). A device that has a machine id is never taken.
+ * `replaced` ids move to the new one (moveProviders and whereis.ts aliasDevice, called by the route).
  */
-export function pairDevice(owner: string, name: string, version?: string): { device: Device; token: string; replaced: string[] } {
+export function pairDevice(owner: string, name: string, version?: string, machineId?: string): { device: Device; token: string; replaced: string[] } {
   const token = `ctd_${randomBytes(32).toString("base64url")}`;
-  const same = all().filter((x) => x.owner === owner && x.name === name);
+  const mid = machineId && /^[\w-]{8,80}$/.test(machineId) ? machineId : undefined;
+  const known = mid && (all().find((x) => x.owner === owner && x.machineId === mid) ?? all().find((x) => x.owner === owner && x.name === name && !x.machineId));
+  if (known) {
+    Object.assign(known, { name, tokenHash: sha(token), machineId: mid, ...(version ? { version } : {}) });
+    persist();
+    tell(owner);
+    return { device: strip(known), token, replaced: [] };
+  }
+  const same = mid ? [] : all().filter((x) => x.owner === owner && x.name === name && !x.machineId);
   const d: Stored = {
     id: same[0]?.id ?? `dev_${randomBytes(8).toString("hex")}`,
     owner,
@@ -159,13 +170,23 @@ export function pairDevice(owner: string, name: string, version?: string): { dev
     createdAt: Date.now(),
     tokenHash: sha(token),
     ...(version ? { version } : {}),
+    ...(mid ? { machineId: mid } : {}),
   };
   const replaced = same.slice(1).map((x) => x.id);
-  list = all().filter((x) => !same.some((s) => s.id === x.id));
+  list = all().filter((x) => !same.some((y) => y.id === x.id));
   list.push(d);
   persist();
   tell(owner);
   return { device: strip(d), token, replaced };
+}
+
+/** A report that names the computer's machine id stamps it on its device once (so a later pairing keeps the id). */
+export function noteMachineId(id: string, machineId: unknown): void {
+  const d = find(id);
+  if (!d || d.machineId || typeof machineId !== "string" || !/^[\w-]{8,80}$/.test(machineId)) return;
+  if (all().some((x) => x.owner === d.owner && x.machineId === machineId)) return;
+  d.machineId = machineId;
+  persist();
 }
 
 /**
@@ -188,13 +209,13 @@ export function mintPairCode(owner: string, now = Date.now()): { code: string; e
 }
 
 /** The code's computer, paired for the account that made the code; null for a wrong, used or expired code (it is used up either way). */
-export function pairWithCode(typed: string, name: string, version?: string, now = Date.now()): ReturnType<typeof pairDevice> | null {
+export function pairWithCode(typed: string, name: string, version?: string, now = Date.now(), machineId?: string): ReturnType<typeof pairDevice> | null {
   const code = plainCode(typed);
   const hit = pairCodes.get(code);
   pairCodes.delete(code);
   // an account removed since it made the code pairs nothing (an open server's one account is in no list)
   if (!hit || hit.expiresAt <= now || (env.appSecret && !findUser(hit.owner))) return null;
-  return pairDevice(hit.owner, name, version);
+  return pairDevice(hit.owner, name, version, machineId);
 }
 
 export const listDevices = (keep: (d: Device) => boolean): Device[] => all().filter((d) => keep(strip(d))).map(strip);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askMediaFolder, localFilesOverlap, localMediaFiles, localMediaUrl, readLocalFile } from "./local-files";
+import { askMediaFolder, localFileState, localFilesOverlap, localMediaFiles, localMediaUrl, pathLine, placesState, readLocalFile } from "./local-files";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -57,5 +57,28 @@ describe("original media files from the Mac app", () => {
     vi.stubGlobal("window", { webkit: { messageHandlers: { mediaAccess: { postMessage } } } });
     expect(await askMediaFolder("/Volumes/Footage")).toEqual(["/Volumes"]);
     expect(postMessage).toHaveBeenCalledWith({ ask: "/Volumes/Footage" });
+  });
+});
+
+describe("what the Mac app says of a file", () => {
+  it("a drive away: the 409 names the drive; 403 is not allowed; 404 not there", async () => {
+    const answer = (status: number, body?: unknown) => vi.stubGlobal("fetch", async () => ({ status, json: async () => body, body: null }));
+    answer(409, { state: "disk_away", disk: "Tiny Drive" });
+    const a = await localFileState("ctlocal://media/x");
+    expect(a).toEqual({ state: "disk_away", disk: "Tiny Drive" });
+    expect(pathLine(a)).toBe("Tiny Drive isn't connected");
+    answer(403);
+    expect(pathLine(await localFileState("ctlocal://media/x"))).toBe("Needs your OK");
+    answer(404);
+    expect(pathLine(await localFileState("ctlocal://media/x"))).toBeUndefined();
+  });
+
+  it("placesState: null outside the app and from an app that doesn't answer it", async () => {
+    vi.stubGlobal("window", {});
+    expect(await placesState(["/a.mov"])).toBeNull();
+    vi.stubGlobal("window", { webkit: { messageHandlers: { mediaAccess: { postMessage: async () => ({ granted: [] }) } } } });
+    expect(await placesState(["/a.mov"])).toBeNull();
+    vi.stubGlobal("window", { webkit: { messageHandlers: { mediaAccess: { postMessage: async () => ({ states: { "/a.mov": "here" } }) } } } });
+    expect(await placesState(["/a.mov"])).toEqual({ states: { "/a.mov": "here" }, disks: {} });
   });
 });

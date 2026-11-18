@@ -9,12 +9,15 @@ import type { AuthVars } from "./auth";
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "enhance-"));
 process.env.NVIDIA_API_KEY = "";
 process.env.ELEVENLABS_API_KEY = "";
+// This Mac: the server is the person's computer, so a run's task runs here at once (work/tasks.ts)
+process.env.CT_LOCAL = "1";
 // NVIDIA answers with what it got: the passes' plumbing is what's tested here
 vi.mock("./lib/nvidia-voice", async (orig) => ({
   ...(await orig<typeof import("./lib/nvidia-voice")>()),
   studioVoice: async (_key: string, x: Float32Array) => x,
 }));
 const { enhanceApp, ENHANCE_MOVES, enhancing, enhanceHost } = await import("./enhance");
+await import("./work/task-kinds");
 const { inRequestWorkspace, inCurrentWorkspace } = await import("./lib/workspace-scope");
 const { saveMyKey } = await import("./my-keys");
 const { IllegalTransition, move } = await import("./lib/transition");

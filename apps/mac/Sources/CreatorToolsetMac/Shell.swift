@@ -191,7 +191,9 @@ final class Shell: NSObject, ObservableObject {
                     let device = DeviceVault.deviceID(for: self.base.host ?? "")
                     // the proxy cache is a server elsewhere's (no worker runs for This Mac)
                     let cache = !self.runsHere
-                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache)) }
+                    // what the page may play: this server's folders allowed on this Mac too, not only the open-panel picks
+                    let granted = MediaFiles.granted(server: MediaFiles.serverKey(self.base), workspace: nil)
+                    Task { done(await Places.shared.answerCheck(library: library, versions: versions, site: await self.client(), device: device, cache: cache, granted: granted)) }
                 case .connect(let root)?:
                     // a share this Mac never had asks first, naming this window's server
                     let server = [self.base.host, self.base.port.map(String.init)].compactMap { $0 }.joined(separator: ":")
@@ -245,6 +247,8 @@ final class Shell: NSObject, ObservableObject {
             // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             case "folder": done(self.chooseFolder())
+            // Settings → Folders' "This Mac" on a server it isn't on yet (a press): paired, the AI left as it is
+            case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; done(self.thisMacState()) }
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
@@ -298,6 +302,8 @@ final class Shell: NSObject, ObservableObject {
             }
         }
         Places.shared.start()
+        // the location agents (LocationAgent.swift): one per server this Mac is paired with, AI on or off
+        LocationAgents.shared.start { [unowned self] in (self.server.map { [$0.url] } ?? []) + self.servers.compactMap { URL(string: $0.url) } }
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.runner?.reportNow() }
@@ -415,6 +421,9 @@ final class Shell: NSObject, ObservableObject {
     private func serverReady() {
         Task {
             await signIn()
+            // This Mac is paired on its first run, AI off: its location agent reports its folders (LocationAgent.swift)
+            if runsHere, !pairedHere { try? await pairThisMac() }
+            LocationAgents.shared.poke()
             // after a restart for the plug-ins (Plugins.swift) the window goes back to the page it was on
             let back = pluginWatch.returnTo
             pluginWatch.returnTo = nil
@@ -818,6 +827,8 @@ final class Shell: NSObject, ObservableObject {
     /// so the page's next check finds the device. Replies with the state.
     func startThisMac() async -> [String: Any] {
         guard hasServer else { return thisMacState() }
+        // paired first, AI still off (its location agent starts on the token); then the AI the page asked for
+        if !pairedHere { try? await pairThisMac() }
         if !aiOn { setAI(true) }
         if await bringUpAI().value { runner?.reportNow() }
         return thisMacState()
@@ -829,11 +840,12 @@ final class Shell: NSObject, ObservableObject {
         let client = await client()
         let host = client.base.host ?? ""   // the site the device is made on, whatever is open when it answers
         let name = Host.current().localizedName ?? macHostName()
-        let data = try await client.postData("/api/devices", ["name": name, "version": appVersion])
+        let data = try await client.postData("/api/devices", ["name": name, "version": appVersion, "machineId": MachineID.value])
         let pair = try JSONDecoder().decode(PairReply.self, from: data)
         guard DeviceVault.save(pair.token, for: host) else { throw SiteError.keychain }
         DeviceVault.setDeviceID(pair.device.id, for: host)
         markDevice()
+        LocationAgents.shared.poke()
     }
 
     private func startRunner() {

@@ -1,3 +1,5 @@
+import type { FolderState } from "./places";
+
 /**
  * Where the files are (Settings → Storage). The app enforces one thing: where it saves. That is the Library,
  * one "Creator Toolset" folder (finished videos, edit files, downloads) with Footage/ and Finished/ inside it.
@@ -77,6 +79,15 @@ export interface StorageFolder {
   workspaces?: string[];
   /** the share its drive is, on the computer that added it (api/lib/storage.ts mountOf); none: a disk of that computer's own */
   mount?: FolderMount;
+  /** the same folder's path inside the container a helper runs in (a NAS's Docker helper); none: origin.path, a native
+   *  computer. whereIs translates through both (api/library/whereis.ts) */
+  mountPath?: string;
+  /** the origin computer's last word on the folder (its location agent's report, contracts/places.ts FolderState), and
+   *  when it said it ("Last checked"). None: not checked yet */
+  folderState?: FolderState;
+  checkedAt?: number;
+  /** a Media folder that is also a destination for the library's copies */
+  copyTo?: true;
 }
 
 /** A Media folder's `workspace` when every workspace uses it (Settings → Folders, a folder's Workspaces: All workspaces). */
@@ -124,7 +135,12 @@ export function unreachedShares(folders: StorageFolder[], device: string): strin
   return [...new Set(folders.filter((f) => f.role === "footage" && f.mount && f.origin.host !== device && !f.reach[device]).map((f) => f.mount!.share))];
 }
 
+/** The storage file's shape: 2 = every folder's computer is a device id (no THIS_COMPUTER), duplicates merged
+ *  (api/lib/storage.ts migrateStorage). A file from before has none and is moved on read. */
+export const STORAGE_SCHEMA = 2;
+
 export interface StorageState {
+  schemaVersion?: number;
   folders: StorageFolder[];
 }
 

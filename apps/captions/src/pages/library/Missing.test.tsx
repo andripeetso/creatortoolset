@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { moveLine, searchLine } from "./Missing";
 
-// Missing here's lines: what moved or was found elsewhere, and how far Find missing files is.
+// Missing on this computer's lines: what moved or was found elsewhere, and how far Find missing files is.
 
-describe("Missing here", () => {
+describe("Missing on this computer", () => {
   it("says each folder change in one line", () => {
     const footage = { key: "smb://office-nas/footage", name: "footage", server: "office-nas" };
     expect(moveLine({ at: 1, kind: "moved", from: "2025", to: "Archive/2025", count: 48, root: footage })).toBe("Moved: 2025 → Archive/2025 (48 files)");

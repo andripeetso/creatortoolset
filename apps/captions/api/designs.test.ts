@@ -11,6 +11,9 @@ process.env.APP_SECRET = "designs-test-secret";
 
 const { Hono } = await import("hono");
 const { designsApp } = await import("./designs");
+await import("./work/task-kinds");
+// a video's frame is cut here: the server's video work is on
+(await import("./work/server-work")).writeServerWork({ on: true });
 const { createAnimation, pictureFile } = await import("./editor/animation-styles");
 const { change } = await import("./editor/styles");
 const { ffmpegCommand } = await import("./ffmpeg-runtime");

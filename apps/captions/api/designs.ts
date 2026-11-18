@@ -9,7 +9,7 @@ import type { AnimationStyle } from "../contracts/editor-styles";
 import { animationStyles, carouselApp, carouselStyles } from "./editor/animation-styles";
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
-import { extractClipJpegFrame } from "./lib/clip-frame";
+import { frameAt, pictureInto } from "./lib/clip-frame";
 import { cutOut, NoMac, splitPicture } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
@@ -19,7 +19,6 @@ import { env } from "./lib/env";
 import { pluginLooks } from "./lib/plugin";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
 import { blobs, libraryDb } from "./library/db";
-import { ffmpeg } from "./library/media/run";
 import { ownedProjects, resolveProjectId } from "./lib/workshop/workspace";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { ownedSession, readDoc } from "./workshop";
@@ -177,21 +176,30 @@ async function addPicture(d: Design, bytes: Buffer, ext: string, given?: unknown
 
 /** A moment of a library video this account may read, as a JPEG, with the video's title. The frame is copied: a design keeps what it shows, whatever happens to the video. */
 async function videoFrame(owner: string, version: string, t: number): Promise<{ frame: Buffer; title: string }> {
-  if (!sourcesWorkspace(owner, [version])) throw new DesignError("Not found", 404);
-  const row = libraryDb().prepare("SELECT v.source_key, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; title: string } | undefined;
+  const ws = sourcesWorkspace(owner, [version]);
+  if (!ws) throw new DesignError("Not found", 404);
+  const row = libraryDb().prepare("SELECT v.source_key, v.mac_path, v.mac_device, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; mac_path: string | null; mac_device: string | null; title: string } | undefined;
   if (!row) throw new DesignError("Not found", 404);
+  const ms = Math.round(t * 1000);
+  const frames = path.join(dirOf(owner), ".frames");
+  let got: Awaited<ReturnType<typeof frameAt>>;
   try {
-    return { frame: await extractClipJpegFrame({ src: await blobs.localCopy(row.source_key), cacheDir: path.join(dirOf(owner), ".frames"), atMs: Math.round(t * 1000) }), title: row.title };
+    // the server's copy when it has one; else the computer that holds the original makes it
+    const src = await blobs.localCopy(row.source_key).catch(() => undefined);
+    got = await frameAt(`design:${owner}:${version}:${ms}`, owner, ws, { files: { src }, ...(row.mac_path ? { paths: { src: row.mac_path }, device: row.mac_device ?? undefined } : {}), atMs: ms, to: path.join(frames, `${version}-${ms}.jpg`), prune: frames }, true);
   } catch (e) {
     throw new DesignError(`That moment of the video could not be read (${e instanceof Error ? e.message : String(e)})`, 502);
   }
+  // asked again once it is made, it is here at once
+  if ("wait" in got) throw new DesignError(got.wait, 409, { code: "waiting" });
+  return { frame: got.jpeg, title: row.title };
 }
 
 /** What cannot be done, as the person (or their AI) reads it; `status` is the answer's. */
 export class DesignError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 502 = 400,
+    readonly status: 400 | 404 | 409 | 502 = 400,
     /** more the answer carries beside `error` */
     readonly more?: Record<string, unknown>,
   ) {
@@ -294,7 +302,7 @@ interface Look {
 /**
  * The looks an AI may design in: the account's own carousel styles, its animation styles, then the ones a plug-in
  * keeps (a studio's own collections). A plug-in's look named like one of the account's own is left out.
- * ponytail: a plug-in's pictures are made small at every read that shows them (ffmpeg, a few a call); kept by file and
+ * ponytail: a plug-in's pictures are made small at every read that shows them (a few a call); kept by file and
  * change time when that is felt.
  */
 async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
@@ -324,7 +332,7 @@ async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
         const out: { jpeg: string; made: boolean }[] = [];
         for (const p of [...l.pictures.filter((x) => x.made), ...l.pictures.filter((x) => !x.made)]) {
           if (out.length >= max) break;
-          const jpeg = await smallJpeg(p.file, LOOK_SIDE);
+          const jpeg = await smallJpeg(p.file, LOOK_SIDE, owner);
           if (jpeg) out.push({ jpeg, made: p.made });
         }
         return out;
@@ -734,7 +742,7 @@ async function forMac(d: Design, pid: string, tmp: string): Promise<Buffer> {
   if (!PICTURE.test(pid) || !d.pictures.includes(pid)) throw new DesignError("Not found", 404);
   const dir = picturesOf(d.owner, d.id);
   if (!pid.endsWith(".webp")) return readFile(path.join(dir, pid));
-  await ffmpeg(["-y", "-i", path.join(dir, pid), "-frames:v", "1", "-f", "image2", "-c:v", "png", tmp], true);
+  if (!(await pictureInto(d.owner, { files: { src: path.join(dir, pid) }, out: ["-f", "image2", "-c:v", "png"], ext: "png", to: tmp }))) throw new DesignError("That picture could not be read");
   return readFile(tmp);
 }
 
@@ -743,7 +751,8 @@ async function keepable(png: Buffer, tmp: string, what: string): Promise<Buffer>
   if (png.length <= DESIGN_LIMITS.pictureBytes) return png;
   const whole = `${tmp}.whole.png`;
   await writeFile(whole, png);
-  await ffmpeg(["-y", "-i", whole, "-frames:v", "1", "-vf", `scale=w='min(${CUT_SIDE},iw)':h='min(${CUT_SIDE},ih)':force_original_aspect_ratio=decrease`, "-f", "image2", "-c:v", "png", tmp], true).finally(() => rm(whole, { force: true }));
+  const made = await pictureInto("", { files: { src: whole }, vf: `scale=w='min(${CUT_SIDE},iw)':h='min(${CUT_SIDE},ih)':force_original_aspect_ratio=decrease`, out: ["-f", "image2", "-c:v", "png"], ext: "png", to: tmp }).finally(() => rm(whole, { force: true }));
+  if (!made) throw new DesignError(`${what} could not be made smaller`);
   const out = await readFile(tmp);
   if (out.length > 2 * DESIGN_LIMITS.pictureBytes) throw new DesignError(`${what} is too large to keep in a design`);
   return out;

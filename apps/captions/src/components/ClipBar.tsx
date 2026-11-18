@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
+  Clock,
   CloudUpload,
   Crown,
   Film,
@@ -114,6 +115,15 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
     return (
       <span className="flex items-center gap-1 text-red-400" title={st.message}>
         <TriangleAlert className="h-3 w-3 shrink-0" /> Transcription failed
+      </span>
+    );
+  }
+  // its editing copy waits for one of the owner's computers: the server's line, its first sentence on the chip
+  if (clip.proxyWait) {
+    return (
+      <span className="flex items-center gap-1 text-amber-400" title={clip.proxyWait}>
+        <Clock className="h-3 w-3 shrink-0" />
+        <span className="truncate">{clip.proxyWait.split(". ")[0]}</span>
       </span>
     );
   }

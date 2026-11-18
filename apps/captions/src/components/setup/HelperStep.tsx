@@ -48,9 +48,8 @@ export function sharedFolders(storage: StorageView | null, device: string): Stor
   });
 }
 
-/** How a folder this computer doesn't reach is worked on anyway: the server's copy, else only on the computer that has it. */
-export const skippedLine = (f: StorageFolder, copied: readonly string[] | undefined, origin: string) =>
-  copied?.includes(f.id.split(":")[0]!) ? "Through the server copy" : `Stays on ${origin}`;
+/** A folder this computer doesn't reach: its files stay on the computer that has them, and are worked on there. */
+export const skippedLine = (origin: string) => `Stays on ${origin}`;
 
 const STORAGE_ALL = "/api/devices/storage?all=1";
 const ok = <Check className="size-4 text-emerald-500" aria-label="Fine" />;
@@ -149,7 +148,7 @@ export function HelperSetup({ device }: { device: string }) {
               <Row
                 key={f.id}
                 title={f.name}
-                description={has || how ? where : `${where} · ${skippedLine(f, storage?.copied, origin)}`}
+                description={has || how ? where : `${where} · ${skippedLine(origin)}`}
                 status={failed.has(f.id) ? <Status tone="broken">{failed.get(f.id)}</Status> : undefined}
                 control={has ? ok : how ? <Button size="sm" variant="outline" onClick={() => setConnect(f)}>Connect</Button> : undefined}
               />

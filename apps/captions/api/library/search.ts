@@ -8,6 +8,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "../auth";
 import type { AssetDetail, SearchHit, SearchQuery, StretchLines } from "../../contracts/library";
+import { deviceOf } from "../lib/devices";
+import { OWN } from "./places";
 import { deviceEmbedStatus } from "../lib/device-embed";
 import { env, hostedMode } from "../lib/env";
 import type { SessionUser } from "../users";
@@ -113,8 +115,13 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
  * Else a clip sent from a Mac keeps the place it was sent from (from_path; its upload drops mac_path), which the Mac
  * app shows only when the file is still there.
  */
-export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined): string | undefined {
+export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined, device?: string): string | undefined {
   if (user?.role !== "admin") return undefined;
+  // the asker's own computer has a place for it (whereis.ts), not gone: that path
+  const own = device
+    ? (db().prepare(`SELECT ${OWN} AS path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?`).get(device, versionId, libraryId) as { path: string | null } | undefined)?.path
+    : null;
+  if (own) return own;
   const v = db()
     .prepare("SELECT v.source_key, v.source_path, v.mac_path, v.from_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
     .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; from_path: string | null; storage_kind: string } | undefined;
@@ -127,7 +134,7 @@ export function sourcePathFor(libraryId: string, versionId: string, user: Pick<S
 }
 
 /** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */
-export function assetDetail(libraryId: string, assetId: string, user?: Pick<SessionUser, "role">): AssetDetail | null {
+export function assetDetail(libraryId: string, assetId: string, user?: Pick<SessionUser, "role">, device?: string): AssetDetail | null {
   const row = db()
     .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?`)
     .get(assetId, libraryId) as CardRow | undefined;
@@ -163,7 +170,7 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     ...(t ? { transcript: { provider: t.provider, segments: segmentsOf(db(), row.version_id) } } : {}),
     ...(shots.length ? { shots } : {}),
     ...(timeline.length ? { timeline } : {}),
-    ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user)),
+    ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user, device)),
   };
 }
 
@@ -193,7 +200,7 @@ searchApp.get("/:id/search", async (c) => {
   if (!meaning && meaningGettingReady(libraryId, user.username)) c.header("X-Search-Meaning", "getting-ready");
   // a search not in English: its English line for the pictures is being written, so the page asks again soon
   if (pictured.pending) c.header("X-Search-Pictures", "pending");
-  const seen = markHere(db(), await visibleCards(viewer, libraryId, hits.map((h) => h.asset)), query.device);
+  const seen = await markHere(db(), await visibleCards(viewer, libraryId, hits.map((h) => h.asset)), query.device);
   const shown = new Map(seen.map((a) => [a.id, a]));
   return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll)).map((h) => ({ ...h, asset: shown.get(h.asset.id)! }))); // ponytail: narrowed after the top hits
 });
@@ -232,8 +239,12 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   const libraryId = c.req.param("id");
   const viewer = await readerOf(c.get("user").username, libraryId);
   if (!viewer) return notFound(c);
-  const detail = assetDetail(libraryId, c.req.param("assetId"), c.get("user"));
-  if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
+  const asker = c.req.query("device");
+  const device = asker && deviceOf(asker)?.owner === c.get("user").username ? asker : undefined;
+  const found = assetDetail(libraryId, c.req.param("assetId"), c.get("user"), device);
+  if (!found || !(await canSee(viewer, assetRef(libraryId, found.id, found.versionId)))) return notFound(c);
+  // where it is, as its card says it (the place rows, whereis.ts), seen from the asker's computer
+  const detail = { ...found, ...(await markHere(db(), [found], device))[0] } as AssetDetail;
   if (detail.state === "processing") prepareFirst(detail.versionId); // opened while it is prepared: it goes first (worker.ts)
   // opened by someone who may change it: a description written under another workspace context is written again
   else if (await mayWrite(c.get("user").username, libraryId, detail.id, detail.versionId)) void refreshDescription(db(), detail.versionId, c.get("user").username).catch(() => {});

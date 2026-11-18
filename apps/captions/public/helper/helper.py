@@ -4,9 +4,13 @@ its owner's Creator Toolset server, with models it downloads itself, and keeps c
 
   helper.py pair <server> <code>   swap the one-time code from Settings → Devices → Add a computer for this computer's token
   helper.py run                    take transcripts until stopped (the systemd --user unit runs this)
+  helper.py add <folder> [<host>]  list a folder here (and, in a container, where it is on the host)
+  helper.py remove <folder>        take a folder off the list
+  helper.py folders                the folders this helper may read and write for the server
 
 Its folder is $CT_HELPER_HOME, else ~/.local/share/creator-toolset-helper: config.json (the server and the token, mode
-0600), models/<id>/ (one folder per model; a model is ready once its .done file is there) and hf/ (the download
+0600; also this computer's machineId and its folder list), scans.json (what the folder scans read: size, time and
+fingerprints), models/<id>/ (one folder per model; a model is ready once its .done file is there) and hf/ (the download
 library's own cache). Nothing else is written there; a copy's files go in the folder its owner picked for it.
 The road it speaks is the server's contracts/devices.ts (TRANSCRIBE_KIND, COPY_KIND, FOLDER_LIST_KIND). Copies and folder
 lists need the standard library only: without the speech libraries the helper keeps copies and nothing else.
@@ -29,6 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import unicodedata
+import uuid
 import wave
 
 VERSION = "1"
@@ -63,6 +68,16 @@ CATALOG = {
 }
 RETRY_DOWNLOAD_S = 300
 REPORT_EVERY_S = 60
+# the listed folders are read again this often (README "What it does"); a new folder from the server at once
+SCAN_EVERY_S = 15 * 60
+# a folder that does not answer in this long is unreadable this time; between two fingerprints a pause, so a scan never
+# keeps a disk busy
+SCAN_DIR_S = 10
+QUICK_PAUSE_S = 0.05
+# files in one report call (contracts/places.ts REPORT_FILES_MAX)
+PAGE = 2000
+MIB = 1 << 20
+SCANS = os.path.join(HOME, "scans.json")
 
 
 def log(*a):
@@ -95,17 +110,38 @@ def call(server, token, method, path, body=None, raw=False, timeout=60):
 
 # ---- pairing ----
 
+def read_config():
+    return read_json(CONFIG) or {}
+
+
+def write_config(c):
+    """config.json written whole, mode 0600 (it holds the token)."""
+    os.makedirs(HOME, exist_ok=True)
+    tmp = CONFIG + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(c, f, indent=1)
+    os.replace(tmp, CONFIG)
+
+
+def machine_id(c):
+    """This computer's own id, made once and kept in the config `c` (the caller writes it): paired again with it, the
+    server keeps this computer's device id and its place rows."""
+    if not re.fullmatch(r"[\w-]{8,80}", str(c.get("machineId") or "")):
+        c["machineId"] = str(uuid.uuid4())
+    return c["machineId"]
+
+
 def pair(server, code):
     server = server.rstrip("/")
     name = socket.gethostname()
+    c = read_config()
     try:
-        r = call(server, None, "POST", "/api/devices/pair", {"code": code, "name": name, "version": VERSION})
+        r = call(server, None, "POST", "/api/devices/pair", {"code": code, "name": name, "version": VERSION, "machineId": machine_id(c)})
     except (RuntimeError, OSError) as e:
         sys.exit(f"Not paired: {e}")
-    os.makedirs(HOME, exist_ok=True)
-    fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump({"server": server, "token": r["token"]}, f)
+    c.update(server=server, token=r["token"])
+    write_config(c)
     print(f"Paired as {name}. It shows up in Settings → Devices once it runs (systemctl --user start creator-toolset-helper).")
 
 
@@ -147,6 +183,7 @@ def machine():
 
 
 NET_FS = {"cifs": "smb", "smb3": "smb", "nfs": "nfs", "nfs4": "nfs"}
+LOCAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3", "fuseblk", "hfsplus", "apfs"}
 
 
 def soon(fn, wait=2):
@@ -164,19 +201,31 @@ def soon(fn, wait=2):
     return box[0] if box else None
 
 
-def disks():
-    """The network shares this computer has connected (Disk in contracts/storage.ts): where each is, its server and its
-    name there, so the server knows which of its person's shared folders this computer reaches. Never a user name."""
-    out = []
+def mount_rows():
+    """/proc/mounts as (source, mount point, file system) rows."""
     try:
         with open("/proc/mounts") as f:
             rows = [line.split() for line in f]
     except OSError:
-        return out
-    for row in rows:
-        if len(row) < 3 or row[2] not in NET_FS:
+        return []
+    return [(r[0].replace("\\040", " "), r[1].replace("\\040", " "), r[2]) for r in rows if len(r) >= 3]
+
+
+def disks():
+    """The network shares this computer has connected and its local disks (Disk in contracts/storage.ts): where each is,
+    for a share its server and its name there, so the server knows which of its person's shared folders this computer
+    reaches. Never a user name. Shares first."""
+    out, local = [], []
+    for src, at, kind in mount_rows():
+        if kind in LOCAL_FS and os.path.isdir(at) and not at.startswith(("/boot", "/snap/", "/var/lib/")):
+            st = soon(lambda at=at: os.statvfs(at))
+            if st and st.f_blocks:
+                gb = lambda n, st=st: round(n * st.f_frsize / 2**30, 1)
+                local.append({"path": at, "name": os.path.basename(at.rstrip("/")) or at, "freeGb": gb(st.f_bavail), "totalGb": gb(st.f_blocks)})
             continue
-        src, at, fs = row[0].replace("\\040", " "), row[1].replace("\\040", " "), NET_FS[row[2]]
+        if kind not in NET_FS:
+            continue
+        fs = NET_FS[kind]
         if fs == "smb":
             if not src.startswith("//") or "/" not in src[2:]:
                 continue
@@ -192,7 +241,7 @@ def disks():
         gb = lambda n: round(n * st.f_frsize / 2**30, 1)
         out.append({"path": at, "name": os.path.basename(at.rstrip("/")) or at, "freeGb": gb(st.f_bavail), "totalGb": gb(st.f_blocks),
                     "network": True, "server": server.lower(), "fs": fs, "share": share.strip("/")})
-    return out[:20]
+    return (out + local)[:20]
 
 
 def cuda_libs():
@@ -295,8 +344,15 @@ def read_wav(data):
 # ---- the road to the server ----
 
 class Helper:
-    def __init__(self, server, token):
+    def __init__(self, server, token, config=None):
         self.server, self.token = server, token
+        self.config = config if config is not None else {"server": server, "token": token}
+        self.server_folders = []  # GET /api/devices/relay/folders, at each report
+        self.known = dict(self.config.get("disks") or {})  # every disk this computer has had: path → name
+        self.cache = read_json(SCANS) or {}  # scan_pages's cache
+        self.cache_lock = threading.Lock()
+        self.rescan = threading.Event()
+        self.last_machine = {}
         self.lock = threading.Lock()  # one claim at a time, and the download state
         self.getting = set()  # downloading now, or failed and waiting to try again
         self.failed = {}  # id → when to try again
@@ -385,10 +441,12 @@ class Helper:
                 if job.get("kind") != KIND or job.get("model") not in held():
                     raise RuntimeError(f"This computer does not have {job.get('model')}")
                 self.busy = job["model"]
-                audio = self.call("GET", f"/api/devices/relay/transcribe/{jid}", raw=True, timeout=600)
+                samples = self.own_sound(job)
+                if samples is None:  # a recording only the server has (a Caption Studio upload, the mic): its WAV
+                    samples = read_wav(self.call("GET", f"/api/devices/relay/transcribe/{jid}", raw=True, timeout=600))
                 t0 = time.time()
-                out, gpu_used = self.runner.transcribe(job["model"], read_wav(audio), job.get("languages") or [])
-                log(f"transcript {jid}: {len(out['words'])} words, {len(audio) / 32000:.0f} s of audio in {time.time() - t0:.1f} s",
+                out, gpu_used = self.runner.transcribe(job["model"], samples, job.get("languages") or [])
+                log(f"transcript {jid}: {len(out['words'])} words, {len(samples) / 16000:.0f} s of audio in {time.time() - t0:.1f} s",
                     "on the graphics card" if gpu_used else "on the CPU")
                 r = self.safe(self.call, "POST", f"/api/devices/relay/transcribe/{jid}", out)
             except Removed:
@@ -435,7 +493,12 @@ class Helper:
         except ValueError:
             depth = 6
         try:
-            r = self.call("POST", base, folder_walk(os.path.expanduser(o.get("path") or ""), depth, o.get("disk") == "1"))
+            given = os.path.expanduser(o.get("path") or "")
+            fs = self.folders()
+            here = to_mount(given, fs)
+            if not allowed(here, fs):
+                raise RuntimeError(refused(given))
+            r = self.call("POST", base, folder_walk(here, depth, o.get("disk") == "1"))
         except Removed:
             raise
         except Exception as e:
@@ -454,6 +517,16 @@ class Helper:
         o = job.get("options") or {}
         root = "" if o.get("op") == "send" else (o.get("root") or "")
         base = f"/api/devices/relay/job/{COPY}/{job['id']}"
+        if root:
+            fs = self.folders()
+            here = to_mount(root, fs)
+            # a folder that is not here asks to be reconnected (copy_run); one that is here must be on the list
+            if os.path.isdir(here) and not allowed(here, fs):
+                r = self.call("POST", base + "/fail", {"error": refused(root)})
+                if r and r.get("editor"):
+                    self.claim()
+                return
+            root, o = here, {**o, "root": here}
         folder, ended = Folder(root, o.get("device") or ""), threading.Event()
 
         def beat():
@@ -484,6 +557,7 @@ class Helper:
         if body is not None:
             if "done" in body:
                 log("copied", body["done"]["rel"], "to", root)
+                self.remember(real(root, body["done"]["rel"]), body["done"]["sha256"])
             r = self.call("POST", base, {**body, **free_of(root)}, timeout=120)
         if r and r.get("editor"):
             self.claim()
@@ -513,13 +587,104 @@ class Helper:
             raise RuntimeError(f"The server did not take the file ({e.code})") from e
         return json.loads(data) if data else None
 
+    def base(self):
+        """What every report carries (contracts/places.ts ReportV2)."""
+        return {"reportVersion": 2, "machineId": machine_id(self.config), "drivers": [], "homes": [], "machine": self.last_machine, "version": VERSION}
+
     def report(self):
-        self.call("POST", "/api/devices/relay/report", {"drivers": [], "homes": [], "machine": machine(), "version": VERSION})
+        """This computer as it is now, then its folders from the server (a new or moved one is scanned at once)."""
+        self.last_machine = m = machine()
+        new = {d["path"]: d["name"] for d in m.get("disks") or [] if self.known.get(d["path"]) != d["name"]}
+        if new:
+            self.known.update(new)
+            c = read_config()  # as it is on disk: `helper.py add` may have written it since
+            c["disks"] = self.known
+            write_config(c)
+        self.call("POST", "/api/devices/relay/report", self.base())
+        try:
+            got = (self.call("GET", "/api/devices/relay/folders") or {}).get("folders") or []
+        except RuntimeError:
+            return  # a server from before: no folders
+        got = [f for f in got if isinstance(f, dict) and all(isinstance(f.get(k), str) and f[k] for k in ("id", "hostPath", "mountPath"))]
+        if {(f["id"], f["mountPath"]) for f in got} != {(f["id"], f["mountPath"]) for f in self.server_folders}:
+            self.rescan.set()
+        self.server_folders = got
+
+    def folders(self):
+        return listed(self.server_folders, read_config())
+
+    def scans(self):
+        """Every SCAN_EVERY_S, and at once when the server's folders change: each Media folder of this computer listed and
+        reported in pages; each file the server knows nothing of indexed where it is."""
+        while not self.stop:
+            self.rescan.wait(SCAN_EVERY_S)
+            self.rescan.clear()
+            mounted = {at for _, at, _ in mount_rows()}
+            for f in [f for f in self.server_folders if f.get("use") == "media"]:
+                for page in scan_pages(f, self.cache, self.known, mounted):
+                    r = self.safe(self.call, "POST", "/api/devices/relay/report", {**self.base(), "folders": [page]}, timeout=120)
+                    for x in (r or {}).get("index") or []:
+                        if isinstance(x, dict) and x.get("folder") == f["id"] and isinstance(x.get("path"), str):
+                            self.safe(self.index, f, x["path"])
+                    if self.stop:
+                        return
+                self.save_cache()
+
+    def own_sound(self, job):
+        """The sound of a library file cut here from this computer's own copy (where the server says it is, with its size,
+        in one of this helper's folders), as 16 kHz mono samples: the server's own cut (api/library/transcribe.ts
+        soundArgs), so the same words, and the server decodes nothing for it. None when the job names no copy here."""
+        o = job.get("options") or {}
+        p, size = o.get("path"), str(o.get("bytes") or "")
+        if not isinstance(p, str) or not p.startswith("/") or not size.isdigit():
+            return None
+        folders = listed(self.server_folders, self.config)
+        here = to_mount(p, folders)
+        if not allowed(here, folders) or not os.path.isfile(here) or os.path.getsize(here) != int(size):
+            return None
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            raise RuntimeError("ffmpeg is not installed on this computer, so it can't read the sound of its own copy")
+        r = subprocess.run([ff, "-nostdin", "-v", "error", "-i", here, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"],
+                           capture_output=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"This computer could not read the sound of {os.path.basename(here)}: {r.stderr.decode(errors='replace').strip()[-200:]}")
+        import numpy
+        return numpy.frombuffer(r.stdout, dtype=numpy.int16).astype(numpy.float32) / 32768
+
+    def index(self, f, path):
+        """POST /api/devices/relay/index for one file of folder `f` (`path` on the host): what this computer reads of it,
+        never its bytes. Only a file inside that folder."""
+        here = to_mount(path, [f])
+        if under(path, f["hostPath"]) is None or not allowed(here, [f]) or not os.path.isfile(here):
+            return
+        quick = (self.cache.get(here) or [None] * 4)[2] or quick_print(here)
+        if quick:
+            self.call("POST", "/api/devices/relay/index", {"folder": f["id"], "name": os.path.basename(here), "path": path,
+                                                           "size": os.path.getsize(here), "quick": quick, "frames": [], **probe(here)}, timeout=120)
+
+    def remember(self, p, sha):
+        """A file this helper wrote (a copy) and its sha256, for the next report."""
+        try:
+            st = os.stat(p)
+        except OSError:
+            return
+        self.cache[p] = [st.st_size, st.st_mtime_ns // 1_000_000, None, sha]
+        self.save_cache()
+
+    def save_cache(self):
+        with self.cache_lock:
+            os.makedirs(HOME, exist_ok=True)
+            tmp = SCANS + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(dict(self.cache), f)
+            os.replace(tmp, SCANS)
 
     def run(self):
         os.makedirs(MODELS, exist_ok=True)
         threading.Thread(target=self.work, daemon=True).start()
         threading.Thread(target=self.copy_work, daemon=True).start()
+        threading.Thread(target=self.safe, args=(self.scans,), daemon=True).start()
         log(f"Creator Toolset helper {VERSION} for {self.server}, models in {MODELS},", "graphics card:", (gpu() or ["none"])[0])
         reported, failures = 0.0, 0
         while not self.stop:
@@ -582,6 +747,160 @@ def encode_speed():
                         "-t", str(ENCODE_S), "-c:v", "libx264", "-preset", "veryfast", "-f", "null", "-"], capture_output=True, timeout=120)
     took = time.time() - t0
     return round(ENCODE_S / took, 2) if r.returncode == 0 and took > 0 else None
+
+
+# ---- the folders this helper keeps, and what is in them (local first: the computers report, the server records) ----
+# A folder is {hostPath, mountPath} (and, from the server, id and use): mountPath is where it is here, hostPath where the
+# computer itself has it (the same outside a container). Paths sent to the server are host paths; paths read are mount paths.
+
+def local_folders(c):
+    """The folders the person listed on this computer: config `folders` (a path, or {mountPath, hostPath}) and CT_FOLDERS
+    (":"-separated paths, the container's)."""
+    out = []
+    for f in (c.get("folders") or []) + [p for p in os.environ.get("CT_FOLDERS", "").split(":") if p]:
+        f = {"mountPath": f} if isinstance(f, str) else f
+        m = f.get("mountPath") if isinstance(f, dict) else None
+        if isinstance(m, str) and m.startswith("/"):
+            h = f.get("hostPath")
+            out.append({"hostPath": h if isinstance(h, str) and h.startswith("/") else m, "mountPath": m})
+    return out
+
+
+def listed(server_folders, c):
+    """Where this helper may read and write for the server: its own list, the copy folders it already keeps (COPIES), and
+    the server's Media folders that are here (their mountPath exists)."""
+    own = local_folders(c) + [{"hostPath": r, "mountPath": r} for r in (read_json(COPIES) or {})]
+    return own + [f for f in server_folders if f.get("use") == "media" and os.path.isdir(f["mountPath"])]
+
+
+def under(p, root):
+    """`p` inside `root`: the rest of it ("" for `root` itself), or None."""
+    root = root.rstrip("/") or "/"
+    if p == root:
+        return ""
+    pre = root if root == "/" else root + "/"
+    return p[len(pre):] if p.startswith(pre) else None
+
+
+def swap(p, folders, src, dst):
+    """`p` from the folder's `src` path to its `dst` path (the deepest folder it is in); unchanged when in none."""
+    for f in sorted(folders, key=lambda f: -len(f[src])):
+        rest = under(p, f[src])
+        if rest is not None:
+            return f[dst].rstrip("/") + ("/" + rest if rest else "") or "/"
+    return p
+
+
+def to_host(p, folders):
+    return swap(p, folders, "mountPath", "hostPath")
+
+
+def to_mount(p, folders):
+    return swap(p, folders, "hostPath", "mountPath")
+
+
+def allowed(path, folders):
+    """`path` (here) is one of `folders` or inside one, links resolved."""
+    r = os.path.realpath(path)
+    return any(under(r, os.path.realpath(f["mountPath"])) is not None for f in folders)
+
+
+def refused(path):
+    return f"{path} is not in this computer's folder list. On it: helper.py add <folder> (README \"Folders\")."
+
+
+def quick_print(p):
+    """SHA-256 over the size as decimal text, the first MiB and, over 2 MiB, the last MiB: the server's work/files.ts
+    quickPrint and the Mac's, byte for byte. None when it can't be read."""
+    try:
+        with open(p, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            h = hashlib.sha256(str(size).encode())
+            h.update(f.read(MIB))
+            if size > 2 * MIB:
+                f.seek(size - MIB)
+                h.update(f.read(MIB))
+            return h.hexdigest()
+    except OSError:
+        return None
+
+
+def folder_state(path, known, mounted):
+    """Why folder `path` can't be listed: ("disk_away", name) when the disk it is on (`known`: path → name, the disks
+    this computer has had) is not mounted now (`mounted`: mount points), else ("not_found", None)."""
+    on = [d for d in known if under(path, d) is not None and d != "/"]
+    d = max(on, key=len, default=None)
+    return ("disk_away", known[d]) if d and d not in mounted else ("not_found", None)
+
+
+def scan_pages(f, cache, known, mounted, quick=quick_print, pause=QUICK_PAUSE_S):
+    """One folder from the server listed: its report pages (contracts/places.ts ReportFolder), each at most PAGE files
+    sharing one scan id, `complete` on the last. Never into hidden entries or links; media files only. A file's
+    fingerprint is read once per size and time (`cache`: path here → [bytes, mtime, quick, sha256]), one at a time."""
+    top, scan, seen = f["mountPath"], uuid.uuid4().hex, set()
+    host = lambda p: to_host(p, [f])
+    # ponytail: an empty folder reads as not there (an unmounted share's mount point is empty too); a folder emptied on
+    # purpose shows "not checked" instead of "missing" until a file is in it again
+    if not (os.path.isdir(top) and soon(lambda: os.listdir(top), SCAN_DIR_S)):
+        state, disk = folder_state(top, known, mounted)
+        yield {"id": f["id"], "state": state, **({"disk": disk} if disk else {})}
+        return
+    files, unreadable, dirs = [], [], [top]
+    while dirs:
+        d = dirs.pop()
+        got = soon(lambda d=d: list(os.scandir(d)), SCAN_DIR_S)
+        if got is None:
+            unreadable.append(host(d))
+            continue
+        for e in sorted(got, key=lambda e: e.name):
+            try:
+                if e.name.startswith(".") or e.is_symlink():
+                    continue
+                if e.is_dir(follow_symlinks=False):
+                    if not PACKAGE.search(e.name):
+                        dirs.append(e.path)
+                    continue
+                if not e.is_file(follow_symlinks=False) or os.path.splitext(e.name)[1].lower() not in MEDIA:
+                    continue
+                st = e.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            size, mtime = st.st_size, st.st_mtime_ns // 1_000_000
+            c = cache.get(e.path)
+            if not c or c[0] != size or c[1] != mtime:
+                c = [size, mtime, None, None]
+            if c[2] is None:
+                c[2] = quick(e.path)
+                time.sleep(pause)
+            cache[e.path] = c
+            seen.add(e.path)
+            files.append({"path": host(e.path), "bytes": size, "mtime": mtime, **({"quick": c[2]} if c[2] else {}), **({"sha256": c[3]} if c[3] else {})})
+            if len(files) == PAGE:
+                yield {"id": f["id"], "state": "ok", "scan": scan, "files": files, **({"unreadable": unreadable} if unreadable else {})}
+                files, unreadable = [], []
+    for k in [k for k in list(cache) if under(k, top) is not None and k not in seen]:
+        cache.pop(k, None)
+    yield {"id": f["id"], "state": "ok", "scan": scan, "complete": True, "files": files, **({"unreadable": unreadable} if unreadable else {})}
+
+
+def probe(p):
+    """A video's duration, width and height from ffprobe, when it is there; {} otherwise."""
+    ff = shutil.which("ffprobe")
+    if not ff:
+        return {}
+    try:
+        out = json.loads(subprocess.run([ff, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", p],
+                                        capture_output=True, text=True, timeout=30).stdout or "{}")
+        r = {}
+        d = float((out.get("format") or {}).get("duration") or 0)
+        if d > 0:
+            r["duration"] = d
+        v = next((s for s in out.get("streams") or [] if s.get("codec_type") == "video" and s.get("width")), None)
+        if v:
+            r.update(width=int(v["width"]), height=int(v["height"]))
+        return r
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {}
 
 
 # ---- a folder listed for the server (FOLDER_LIST_KIND; the server's lib/folder-list.ts walkFolder) ----
@@ -892,7 +1211,7 @@ def readable(paths, size, copied_too=True):
     server named as a copy never opens the person's files already in it. Else None: "not on this computer". A server
     that names any other file (a key in ~/.ssh, found by its size) never gets it read, through a link or otherwise.
     `copied_too` False: shares only."""
-    roots = [r for r in (os.path.realpath(d["path"]).rstrip("/") for d in disks()) if r]
+    roots = [r for r in (os.path.realpath(d["path"]).rstrip("/") for d in disks() if d.get("network")) if r]
     copied = {}
     for root, copy in (read_json(COPIES) or {}).items() if copied_too else ():
         try:
@@ -1117,12 +1436,32 @@ def main():
         if libs:
             env = dict(os.environ, LD_LIBRARY_PATH=":".join(libs + [p for p in os.environ.get("LD_LIBRARY_PATH", "").split(":") if p]))
             os.execve(sys.executable, [sys.executable, *sys.argv], env)
-        try:
-            with open(CONFIG) as f:
-                c = json.load(f)
-        except FileNotFoundError:
+        c = read_config()
+        if not c.get("token"):
             sys.exit(f"Not paired yet: run {sys.argv[0]} pair <server> <code> first (the code is in Settings → Devices → Add a computer).")
-        return Helper(c["server"], c["token"]).run()
+        was = c.get("machineId")
+        if machine_id(c) != was:
+            write_config(c)
+        return Helper(c["server"], c["token"], c).run()
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "add" and sys.argv[2].startswith("/") and sys.argv[-1].startswith("/"):
+        c = read_config()
+        at = os.path.realpath(sys.argv[2])
+        c["folders"] = [f for f in c.get("folders") or [] if (f if isinstance(f, str) else f.get("mountPath")) != at] + [{"mountPath": at, "hostPath": sys.argv[3] if len(sys.argv) == 4 else at}]
+        write_config(c)
+        return print(f"Listed {at}.")
+    if len(sys.argv) == 3 and sys.argv[1] == "remove":
+        c = read_config()
+        at = os.path.realpath(sys.argv[2])
+        c["folders"] = [f for f in c.get("folders") or [] if (f if isinstance(f, str) else f.get("mountPath")) not in (at, sys.argv[2])]
+        write_config(c)
+        return print(f"{sys.argv[2]} is off the list.")
+    if len(sys.argv) == 2 and sys.argv[1] == "folders":
+        c = read_config()
+        for f in local_folders(c):
+            print(f["mountPath"] + ("" if f["hostPath"] == f["mountPath"] else f"  (on the host: {f['hostPath']})"))
+        for r in read_json(COPIES) or {}:
+            print(r, " (a copy it keeps)")
+        return print("…and the server's Media folders for this computer that are here.")
     sys.exit(__doc__)
 
 
