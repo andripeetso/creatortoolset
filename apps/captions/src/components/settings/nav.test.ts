@@ -70,7 +70,7 @@ describe("the sidebar blocks", () => {
     expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Workspace", "Server"]);
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "devices", "servers", "own-ai"]);
     expect(blocks[2].items.map((s) => s.id)).toEqual(["workspace", "connectors", "folders", "library", "sound-effects", "automations", "memory"]);
-    expect(blocks[3].items.map((s) => s.id)).toEqual(["team", "storage", "keys"]);
+    expect(blocks[3].items.map((s) => s.id)).toEqual(["policies", "team", "storage", "keys"]);
   });
 
   it("a plug-in's own section with no group heads a Plug-ins block, last", () => {
