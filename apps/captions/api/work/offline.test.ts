@@ -98,7 +98,7 @@ describe("Available offline", () => {
     });
 
     // switch library to proxies: Keep on this computer turns on and sends all current clips (including vc)
-    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', '\"proxies\"') WHERE id = 'lib_tiny'").run();
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', 'proxies') WHERE id = 'lib_tiny'").run();
     const on = await as("tiny", "/api/library/offline", { library: "lib_tiny", on: true });
     expect(on.status).toBe(200);
     expect(await on.json()).toEqual({ versions: ["va"], collections: ["col_t"], libraries: ["lib_tiny"] });
