@@ -244,7 +244,11 @@ export function getWhere(libraryId: string, versions: string[]): Promise<WhereAn
   return send<WhereAnswer>(`/api/library/${libraryId}/where?versions=${versions.map(encodeURIComponent).join(",")}${device ? `&device=${encodeURIComponent(device)}` : ""}`, "GET");
 }
 
-export const getAsset = (libraryId: string, assetId: string) => send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "GET");
+/** One clip, seen from this Mac: with its id the server gives the path of this Mac's own copy (Show in Finder, Copy path). */
+export function getAsset(libraryId: string, assetId: string) {
+  const device = thisMacDevice();
+  return send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}${device ? `?device=${encodeURIComponent(device)}` : ""}`, "GET");
+}
 
 /** Queue a job again (a transcript that needed a key), as the caller. */
 export const rerunJobs = (libraryId: string, assetId: string, kinds: string[]) =>
