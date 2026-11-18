@@ -29,18 +29,15 @@ export interface OfflineList {
   libraries?: string[];
 }
 
-export const NO_PROXY_TO_KEEP = "This library keeps its files on your computers; there is no proxy to keep.";
-
 const fileOf = (user: string) => path.join(env.dataDir, "offline", `${encodeURIComponent(user)}.json`);
 
 export function offlineOf(user: string): OfflineList {
   try {
     const v = JSON.parse(readFileSync(fileOf(user), "utf8")) as Partial<OfflineList>;
-    const libraries = Array.isArray(v.libraries) ? v.libraries.filter((x): x is string => typeof x === "string") : [];
     return {
       versions: Array.isArray(v.versions) ? v.versions : [],
       collections: Array.isArray(v.collections) ? v.collections : [],
-      ...(libraries.length ? { libraries } : {}),
+      ...(Array.isArray(v.libraries) && v.libraries.length ? { libraries: v.libraries } : {}),
     };
   } catch {
     return { versions: [], collections: [] };
@@ -138,29 +135,16 @@ offlineApp.post("/", async (c) => {
   const id = typeof b?.version === "string" ? b.version : typeof b?.collection === "string" ? b.collection : typeof b?.library === "string" ? b.library : null;
   if (!id || typeof b?.on !== "boolean") return c.json({ error: "version, collection or library: an id, on: true or false" }, 400);
   const key = typeof b.version === "string" ? "versions" : typeof b.collection === "string" ? "collections" : "libraries";
-  const ok =
-    key === "versions"
-      ? await (async () => {
-          const v = db().prepare("SELECT a.library_id, a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { library_id: string; id: string } | undefined;
-          return !!v && (await mayRead(user, v.library_id, v.id, id));
-        })()
-      : key === "collections"
-        ? await (async () => {
-            const f = db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined;
-            return !!f && !!(await readerOf(user, f.library_id));
-          })()
-        : !!(await readerOf(user, id));
+  const v = key === "versions" ? (db().prepare("SELECT a.library_id, a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { library_id: string; id: string } | undefined) : undefined;
+  const libId = key === "versions" ? v?.library_id : key === "collections" ? (db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined)?.library_id : id;
+  const ok = !!libId && (key === "versions" ? await mayRead(user, libId, v!.id, id) : !!(await readerOf(user, libId)));
   if (!ok) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (key === "libraries" && b.on && libraryUpload(id) === "none") return c.json({ error: NO_PROXY_TO_KEEP, code: "no_proxies" }, 409);
+  if (key === "libraries" && b.on && libraryUpload(id) === "none")
+    return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
   const list = offlineOf(user);
-  const prev = list[key] ?? [];
-  const next = [...prev.filter((x) => x !== id), ...(b.on ? [id] : [])];
-  if (key === "libraries") {
-    if (next.length) list.libraries = next;
-    else delete list.libraries;
-  } else {
-    list[key] = next;
-  }
-  saveOffline(user, list);
-  return c.json(list);
+  const next = [...(list[key] ?? []).filter((x) => x !== id), ...(b.on ? [id] : [])];
+  const saved = { ...list, [key]: next };
+  if (!saved.libraries?.length) delete saved.libraries;
+  saveOffline(user, saved);
+  return c.json(saved);
 });

@@ -23,7 +23,7 @@ import type {
   WhereAnswer,
 } from "@contracts/library";
 import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from "@contracts/places";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { pathOnMac } from "@/lib/thisMac";
@@ -231,24 +231,6 @@ function setFilters(p: URLSearchParams, f: LibraryFilters) {
   if (f.filmedFrom !== undefined) p.set("filmedFrom", String(f.filmedFrom));
   if (f.filmedTo !== undefined) p.set("filmedTo", String(f.filmedTo));
   if (f.place) p.set("place", f.place);
-}
-
-/** Keep on this computer (api/work/offline.ts): the clips' versions, folders or whole libraries the person's computers keep. */
-export interface OfflineList {
-  versions: string[];
-  collections: string[];
-  libraries?: string[];
-}
-const OFFLINE_API = "/api/library/offline";
-
-/** The person's offline list, and its switch for a clip's version, a folder or a whole library (the list as the server keeps it). */
-export function useOffline(): { list: OfflineList | null; set: (what: { version: string } | { collection: string } | { library: string }, on: boolean) => Promise<void> } {
-  const [list, setList] = useState<OfflineList | null>(null);
-  useEffect(() => {
-    if (thisMacDevice()) void fetch(OFFLINE_API).then((r) => json<OfflineList>(r)).then(setList, () => {});
-  }, []);
-  const set = async (what: { version: string } | { collection: string } | { library: string }, on: boolean) => setList(await send<OfflineList>(OFFLINE_API, "POST", { ...what, on }));
-  return { list, set };
 }
 
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */
