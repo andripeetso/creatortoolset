@@ -141,6 +141,21 @@ describe("watch folder scan", () => {
     expect(libraryDb().prepare("SELECT state FROM jobs WHERE version_id = ?").get(v!.id)).toEqual({ state: "queued" });
   });
 
+  it("leaves a trashed clip's gone file alone, out of the missing count, and checks it again once restored", async () => {
+    const t = t0 + 250 * SETTLE_MS;
+    const [v] = versions();
+    const trash = (at: number | null) => libraryDb().prepare("UPDATE assets SET trashed_at = ? WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(at, v!.id);
+    trash(t);
+    rmSync(clip); // moved away after it went to the trash
+    await scanWatchFolders(t);
+    expect(versions()[0]!.state).not.toBe("missing");
+    trash(null);
+    await scanWatchFolders(t + 1000);
+    expect(versions()[0]!.state).toBe("missing");
+    writeFileSync(clip, "frame data one");
+    await scanWatchFolders(t + 2000);
+  });
+
   it("does nothing on a server that may not watch", async () => {
     writeFileSync(path.join(watched, "Roll.mp4"), "another clip");
     process.env.LIBRARY_WATCH_FOLDERS = "0";
