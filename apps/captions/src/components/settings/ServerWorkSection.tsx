@@ -94,8 +94,8 @@ export function ServerWorkSection() {
  * Settings → Computers → Load balancing: every place the person may use, their computers that do video work first, then
  * this server where it works for them, each with the same preference. Prefer on the server sends work there first.
  * Its first row, Automatic, turns the whole thing on or off (the preferences only count while it is on, so they are hidden
- * when off). The one Load balancing card: a plug-in adds rows of its own under it without a heading. Shown with two places
- * or more (one has nothing to balance). Changes save at once.
+ * when off). The one Load balancing card: a plug-in adds rows of its own under it without a heading. Shown always, with
+ * one place too, so the switch is never missing. Changes save at once.
  */
 /** What Off means, under a computer set to it: no work at all, even when no other computer could take it. */
 export const OFF_LINE = "Off — takes no work";
@@ -120,7 +120,7 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
         <ErrorRow title="Could not load Load balancing" detail={error} retry={load} />
       </Card>
     );
-  if (!balance || workers.length + (server ? 1 : 0) < 2) return null;
+  if (!balance) return null;
 
   const weightOf = (id: string) => {
     const v = id === SERVER_PLACE ? (server?.weight ?? DEFAULT_WEIGHT) : (balance.weights[id] ?? DEFAULT_WEIGHT);
