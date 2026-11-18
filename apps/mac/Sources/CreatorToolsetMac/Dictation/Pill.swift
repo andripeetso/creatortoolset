@@ -42,6 +42,8 @@ final class DictationPill {
     private let model = OverlayModel()
     /// Bumped by every `show`, so a message timer only hides its own message.
     private var generation = 0
+    /// The newest state asked for. A first appearance applies it a tick later, so a hide in between still wins.
+    private var wanted: State = .hidden
     /// What the dictation loop is doing now. A transcription that ends while a newer recording or transcription
     /// runs leaves the pill on that one instead of hiding it.
     var current: () -> DictationController.State = { .idle }
@@ -72,14 +74,18 @@ final class DictationPill {
         }
 
         guard let window else { return }
+        wanted = state
         let needsAppear = !window.isVisible
         if needsAppear {
             positionAtBottomCenter(window)
             window.orderFrontRegardless()
             // Defer the state change so SwiftUI lays out in the .hidden style
             // first, then animates to the visible style on the next runloop tick.
-            DispatchQueue.main.async { [model] in
-                model.state = state
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.model.state = self.wanted
+                }
             }
         } else {
             model.state = state
@@ -87,6 +93,7 @@ final class DictationPill {
     }
 
     func hide() {
+        wanted = .hidden
         model.state = .hidden
         // Let the SwiftUI scale+fade animation play out before yanking the
         // window — otherwise it just pops away. Skip it if something was
