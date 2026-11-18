@@ -198,7 +198,7 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  * big upload says first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts),
  * search by picture where this server makes picture vectors (pictures.ts).
  */
-export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true } as const;
+export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true, transcribe: true } as const;
 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
