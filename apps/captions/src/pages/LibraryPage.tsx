@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, MoreHorizontal, Music, Play, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, MoreHorizontal, Music, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -51,9 +51,10 @@ import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
-import { AssetRow, AssetTile, clock, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
+import { AssetRow, AssetTile, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
 import { alreadyThere, UploadTray, type Upload as UploadItem } from "./library/Uploads";
 import { ClipView } from "./library/ClipView";
+import { FoundInClips } from "./library/FoundInClips";
 import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
 import { ClipShare } from "./library/ClipShare";
 import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
@@ -1069,24 +1070,7 @@ export default function LibraryPage() {
 
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Preparing search by meaning</p>}
 
-                {said.length > 0 && (
-                  <section aria-label="Moments" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
-                    <span className="text-sm font-medium">Moments</span>
-                    {said.slice(0, 12).map((h, i) => (
-                      <button
-                        key={`${h.asset.versionId}-${i}`}
-                        type="button"
-                        onClick={() => openClip(h.asset, h.seconds)}
-                        className="flex items-baseline gap-2 rounded px-1 py-1 text-left text-sm hover:bg-zinc-500/10"
-                      >
-                        <Play className="h-3.5 w-3.5 shrink-0 self-center text-zinc-500" />
-                        <span className="shrink-0 font-mono text-xs text-zinc-500">{clock(h.seconds ?? 0)}</span>
-                        <span className="min-w-0 flex-1 truncate">{h.snippet}</span>
-                        <span className="max-w-[35%] shrink-0 truncate text-xs text-zinc-500">{h.asset.title}</span>
-                      </button>
-                    ))}
-                  </section>
-                )}
+                {said.length > 0 && <FoundInClips hits={said} words={words} onOpen={(h) => openClip(h.asset, h.seconds)} />}
 
                 {(searching ? !found : !first.data) || settling ? (
                   view === "list" ? <RowFrame /> : <TileFrame columns={columns} />
