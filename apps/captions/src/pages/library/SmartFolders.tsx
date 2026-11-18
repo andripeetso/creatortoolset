@@ -82,8 +82,8 @@ export function SmartFolderDialog({
 }
 
 /**
- * Reorganize: the AI reads the library and proposes two or three ways to sort it, each folder with what goes in it and
- * how many clips would. Use this makes them smart folders (a plain top-level folder of the same name gets the rule);
+ * Reorganize: the dialog first says what it does and that it costs tokens; Read the library has the AI read it and
+ * propose two or three ways to sort it, each folder with what goes in it and how many clips would. Use this makes them smart folders (a plain top-level folder of the same name gets the rule);
  * Undo takes them back.
  */
 export function ReorganizeDialog({
@@ -103,7 +103,10 @@ export function ReorganizeDialog({
   const [about, setAbout] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [using, setUsing] = useState<number | null>(null);
+  // The AI only runs on a second, deliberate press inside the dialog: the page's button just explains it
+  const [asked, setAsked] = useState(false);
   const ask = () => {
+    setAsked(true);
     setWays(null);
     setError(null);
     suggestWays(libraryId).then(
@@ -115,8 +118,10 @@ export function ReorganizeDialog({
     );
   };
   useEffect(() => {
-    if (open) ask();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!open) return;
+    setAsked(false);
+    setWays(null);
+    setError(null);
   }, [open, libraryId]);
 
   const use = async (way: ReorganizeWay, i: number) => {
@@ -150,7 +155,16 @@ export function ReorganizeDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent aria-describedby={undefined} className="flex max-h-[90dvh] flex-col gap-4 overflow-y-auto sm:max-w-lg">
         <DialogTitle className="text-base">Reorganize</DialogTitle>
-        {!ways && !error && (
+        {!asked && (
+          <div className="flex flex-col gap-2 text-sm text-zinc-500">
+            <p>
+              The AI reads the library's tags and up to 60 clips' descriptions and proposes two or three ways to sort it into folders. Then it checks up to 150 clips to count what
+              each folder would hold.
+            </p>
+            <p>It runs on your AI provider, so it uses tokens each time. Nothing moves until you press Use this on one of the ways.</p>
+          </div>
+        )}
+        {asked && !ways && !error && (
           <p className="flex items-center gap-2 text-sm text-zinc-500">
             <Spinner /> Reading the library
           </p>
@@ -185,6 +199,7 @@ export function ReorganizeDialog({
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
+          {!asked && <Button onClick={ask}>Read the library</Button>}
         </div>
       </DialogContent>
     </Dialog>
