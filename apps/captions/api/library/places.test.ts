@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { afterAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
-import type { GoneAnswer, MovesAnswer, PlacesAnswer, PlacesReportAnswer } from "../../contracts/places";
+import type { GoneAnswer, HereAnswer, MovesAnswer, PlacesAnswer, PlacesReportAnswer } from "../../contracts/places";
 import type { Disk, StorageFolder } from "../../contracts/storage";
 
 // Here or away: a clip's original is at its root + root path for every computer, plus each computer's own places.
@@ -268,6 +268,23 @@ describe("indexing and reading by places", () => {
     expect(n).toBe(1);
     expect(place("july", boMac)?.path).toBe("/Volumes/Travel SSD/b.mov");
     expect(version("july").mac_path).toBe("/Volumes/footage/Archive/2025/July/b.mov");
+  });
+});
+
+describe("on this computer", () => {
+  it("counts the originals a computer reads and the server's proxies, for a member too, on their own computer only", async () => {
+    const here = async () => (await call<HereAnswer>("bo", `/api/library/lib/places/here?device=${boMac}`)).json;
+    const before = await here();
+    add("counted", { bytes: 900, quick: q("c"), key: "libraries/lib/v/counted/source.mov" });
+    add("away", { bytes: 901, quick: q("d"), key: "libraries/lib/v/away/source.mov" });
+    const put = (v: string, state: string) => d.prepare("INSERT INTO version_places (version_id, device, kind, path, state) VALUES (?, ?, 'original', ?, ?)").run(v, boMac, `/x/${v}.mov`, state);
+    put("counted", "verified");
+    put("away", "gone");
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('counted', 'proxy', 'p/counted.mp4', 50)").run();
+    expect(await here()).toEqual({ videos: before.videos + 2, here: before.here + 1, proxies: { files: before.proxies.files + 1, bytes: before.proxies.bytes + 50 } });
+    expect((await call("bo", `/api/library/lib/places/here?device=${anaMac}`)).status).toBe(403);
+    expect((await call("zed", `/api/library/lib/places/here?device=${boMac}`)).status).toBe(404);
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('a_counted', 'a_away')").run();
   });
 });
 

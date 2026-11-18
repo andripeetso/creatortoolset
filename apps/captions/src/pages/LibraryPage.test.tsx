@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { memberLines } from "./library/LibrarySettings";
 
 // The Media Library page in a DOM, with a test plug-in that adds facets to it: the page reads them from webPlugins
 // (library-slots.ts), so the plug-in's facet groups must show once the library has loaded. Also: an empty library is its
@@ -326,6 +327,13 @@ describe("Media Library page", () => {
     expect(sheet()).toContain("Search by meaning");
     expect(sheet()).toContain("Uses the AI provider");
     expect(sheet()).not.toContain("OpenAI key");
+    // the owner's part keeps every control; this computer's part is its own
+    expect(sheet()).toContain("This workspace");
+    expect(sheet()).toContain("On this computer");
+    expect(sheet()).not.toContain("Set by");
+    expect([...document.querySelectorAll('[role="dialog"] [role="switch"]')].map((x) => x.getAttribute("aria-label"))).toEqual(
+      expect.arrayContaining(["Clip descriptions", "Shot descriptions", "Search by meaning", "Proxies"]),
+    );
     act(() => root?.unmount());
     document.body.innerHTML = "";
     server.watch = { allowed: false, folders: [], missing: 0 };
@@ -337,27 +345,47 @@ describe("Media Library page", () => {
     expect(sheet()).not.toContain("Footage folders");
   });
 
-  it("a member's Library settings, on their own computer, is only Keep on this computer", async () => {
+  it("a member's Library settings: the workspace's rules as locked sentences, then On this computer; no budget, models or switches of the owner's", async () => {
     server.readOnly = true;
     server.watch = null;
+    server.settings = { upload: "none", look: true, timeline: true };
     document.documentElement.dataset.macDevice = "dev_tiny_laptop";
     const real = globalThis.fetch;
-    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
-      String(url) === "/api/library/offline" ? new Response(JSON.stringify({ versions: [], collections: [] })) : real(url, init),
-    );
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u === "/api/library/offline") return new Response(JSON.stringify({ versions: [], collections: [] }));
+      if (u.startsWith("/api/library/lib_tiny/places/here?")) return new Response(JSON.stringify({ videos: 16, here: 12, proxies: { files: 16, bytes: 3.2e9 } }));
+      if (u === "/api/workspace") return new Response(JSON.stringify({ members: [{ username: "tinyowner", role: "owner", name: "Tiny Owner" }, { username: "tinyeditor", role: "member" }] }));
+      return real(url, init);
+    });
     try {
       const host = await mount();
       await openMore(host);
       expect(moreItem("Library status")).toBeUndefined();
       await act(async () => moreItem("Library settings")!.click());
       await settle();
-      const rows = [...document.querySelectorAll('[role="dialog"] [role="switch"]')].map((x) => x.getAttribute("aria-label"));
-      expect(rows).toEqual(["Keep on this computer"]);
-      expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Footage folders");
+      await settle();
+      const dialog = document.querySelector('[role="dialog"]')!;
+      const switches = [...dialog.querySelectorAll('[role="switch"]')].map((x) => x.getAttribute("aria-label"));
+      expect(switches).toEqual(["Keep proxies on this computer"]);
+      expect(dialog.querySelectorAll('select, [role="combobox"], input, [disabled]')).toHaveLength(0);
+      const text = dialog.textContent ?? "";
+      for (const line of ["This workspace", "Set by Tiny Owner", "Proxies are on the server for the team, so every clip plays online", "Originals stay on the computers they were added from", "On this computer", "16 files, 3.2 GB", "12 of 16 here"])
+        expect(text).toContain(line);
+      for (const owners of ["Monthly budget", "Timeline model", "Descriptions", "Search by meaning", "Speech and search models", "Footage folders", "Upload to the server", "Files you add"]) expect(text).not.toContain(owners);
     } finally {
       vi.unstubAllGlobals();
       delete document.documentElement.dataset.macDevice;
     }
+  });
+
+  it("a member's sentence follows the workspace's Upload setting and the proxies the server holds", () => {
+    const lib = (upload: "none" | "proxies" | "all", canAdd = false) => ({ id: "lib_tiny", name: "Tiny", storage: "local" as const, settings: { upload } as never, readOnly: true as const, ...(canAdd ? { canAdd: true as const } : {}) });
+    expect(memberLines(lib("proxies"))).toEqual(["Proxies are on the server, so every clip plays online", "Originals stay on the computers they were added from"]);
+    expect(memberLines(lib("none"), 0)[0]).toBe("No proxies on the server yet, so clips play only where their originals are");
+    expect(memberLines(lib("none"), 3)[0]).toBe("Proxies are on the server for the team, so every clip plays online");
+    expect(memberLines(lib("all", true)).slice(1)).toEqual(["Originals are on the server too", "Files you add are uploaded to the server with their proxies"]);
+    expect(memberLines(lib("proxies", true))[2]).toBe("Files you add stay where they are on your computer, and their proxies go to the server");
   });
 
   it("the A-roll and B-roll tabs ask the server for that roll, so the whole library is narrowed", async () => {

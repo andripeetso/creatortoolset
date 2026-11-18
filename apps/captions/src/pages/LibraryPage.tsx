@@ -61,7 +61,6 @@ import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./librar
 import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
 import { LibrarySettings, MemberLibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { connectOriginals } from "./library/Locate";
-import { thisMacDevice } from "@/lib/providers";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
@@ -773,12 +772,12 @@ export default function LibraryPage() {
     if (libId) listTags(libId).then((t) => setTags(t.map((x) => x.tag)), () => setTags([]));
   }, [libId]);
   const plural = (n: number) => (n === 1 ? "1 clip" : `${n} clips`);
-  // a member's own computer: Keep on this computer is theirs (the rest of Library settings is the owner's)
-  const memberSettings = !!library && !watch && !!library.readOnly && !!thisMacDevice();
+  // a member's Library settings: the owner's settings as sentences, and On this computer, theirs
+  const memberSettings = !!library && !watch && !!library.readOnly;
   // Connect originals…: files this computer has of clips it has no place for, from a folder picked on this Mac
   const connectable = !!libId && macImports() && !trash && !firstScreen;
   const connect = () =>
-    void connectOriginals(libId!).then(
+    connectOriginals(libId!).then(
       (n) => {
         if (n === null) return;
         toast(n ? `${plural(n)} connected` : "No matching files in that folder");
@@ -1017,7 +1016,7 @@ export default function LibraryPage() {
                             </DropdownMenuItem>
                           )}
                           {connectable && (
-                            <DropdownMenuItem onSelect={connect}>
+                            <DropdownMenuItem onSelect={() => void connect()}>
                               <FolderSearch /> Connect originals…
                             </DropdownMenuItem>
                           )}
@@ -1042,7 +1041,7 @@ export default function LibraryPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
-                    {memberSettings && <MemberLibrarySettings open={settingsOpen} onOpenChange={setSettingsOpen} library={library} onError={setError} />}
+                    {memberSettings && <MemberLibrarySettings open={settingsOpen} onOpenChange={setSettingsOpen} library={library} onConnect={connectable ? connect : undefined} onError={setError} />}
                     {watch && (
                       <LibrarySettings
                         open={settingsOpen}
@@ -1050,6 +1049,7 @@ export default function LibraryPage() {
                         library={library}
                         watch={watch}
                         folders={collections.filter(holdsClips)}
+                        onConnect={connectable ? connect : undefined}
                         onChange={(l) => void organize.organized(l).catch((e) => setError(message(e)))}
                         onError={setError}
                       />

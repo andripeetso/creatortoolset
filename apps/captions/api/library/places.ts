@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AuthVars } from "../auth";
 import type { LibraryViewer } from "../../contracts/library-source";
-import { derivedMove, joinRoot, PLACES_MAX, rootKey, type GoneVersion, type PathMove, type PlaceMove, type PlaceOn, type PlacesAnswer, type PlacesReportAnswer, type RootLabel, type VersionPlaces } from "../../contracts/places";
+import { derivedMove, joinRoot, PLACES_MAX, rootKey, type GoneVersion, type HereAnswer, type PathMove, type PlaceMove, type PlaceOn, type PlacesAnswer, type PlacesReportAnswer, type RootLabel, type VersionPlaces } from "../../contracts/places";
 import type { Device } from "../../contracts/providers";
 import type { Disk, StorageFolder } from "../../contracts/storage";
 import { deviceOf, listDevices } from "../lib/devices";
@@ -357,6 +357,27 @@ placesApp.get("/:id/places/gone", async (c) => {
     return { versionId: v.id, bytes: v.bytes, quick: v.quick!, root: v.root, rootRel: v.root_rel, path, name: path ? base(path) : v.title };
   });
   return c.json({ gone });
+});
+
+/**
+ * GET /api/library/:id/places/here?device → HereAnswer (Library settings → On this computer): the library's videos, how
+ * many that computer last read the original of, and the proxies the server holds of them (what Keep proxies downloads).
+ */
+placesApp.get("/:id/places/here", async (c) => {
+  const a = await asked(c.get("user"), c.req.param("id"), c.req.query("device"));
+  if ("error" in a) return c.json(a.error, a.status);
+  const r = libraryDb()
+    .prepare(
+      `SELECT COUNT(*) AS videos,
+         COALESCE(SUM(EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.kind = 'original' AND p.state IN ('verified', 'found'))), 0) AS here,
+         COALESCE(SUM(d.bytes IS NOT NULL), 0) AS proxies, COALESCE(SUM(d.bytes), 0) AS bytes
+       FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+       LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
+       WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL`,
+    )
+    .get(a.dev.id, a.libraryId) as { videos: number; here: number; proxies: number; bytes: number };
+  const answer: HereAnswer = { videos: r.videos, here: r.here, proxies: { files: r.proxies, bytes: r.bytes } };
+  return c.json(answer);
 });
 
 /** GET /api/library/:id/places/moves → MovesAnswer: moves on a root (everybody's), and copies the caller's computers found. */
