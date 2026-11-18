@@ -88,6 +88,29 @@ describe("Available offline", () => {
     expect((await claim(theirs.token, { bytes: 5, offline: ["vx"] })).offline).toEqual([]); // it lets go of what it kept
   });
 
+  it("Keep on this computer (library-wide): keeps every current clip in the library when Upload allows proxies, and refuses under Upload: Off", async () => {
+    // default upload is none: refused with D8 message
+    const refused = await as("tiny", "/api/library/offline", { library: "lib_tiny", on: true });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: "This library keeps its files on your computers; there is no proxy to keep.",
+      code: "no_proxies",
+    });
+
+    // switch library to proxies: Keep on this computer turns on and sends all current clips (including vc)
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', '\"proxies\"') WHERE id = 'lib_tiny'").run();
+    const on = await as("tiny", "/api/library/offline", { library: "lib_tiny", on: true });
+    expect(on.status).toBe(200);
+    expect(await on.json()).toEqual({ versions: ["va"], collections: ["col_t"], libraries: ["lib_tiny"] });
+    expect((await claim(mac.token)).offline!.map((f) => f.id).sort()).toEqual(["va", "vb", "vc"]); // vm is already on mac
+    expect((await claim(laptop.token)).offline!.map((f) => f.id).sort()).toEqual(["va", "vb", "vc", "vm"]);
+
+    // turning it off removes libraries from the list again
+    const off = await as("tiny", "/api/library/offline", { library: "lib_tiny", on: false });
+    expect(off.status).toBe(200);
+    expect(await off.json()).toEqual({ versions: ["va"], collections: ["col_t"] });
+  });
+
   it("a computer downloads only a proxy it was told to keep", async () => {
     const get = (token: string, v: string) => app.request(`/api/devices/relay/work/offline/${v}`, { headers: { authorization: `Bearer ${token}` } });
     expect(await (await get(laptop.token, "va")).text()).toBe("proxy va");

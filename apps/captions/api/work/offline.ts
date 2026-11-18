@@ -6,18 +6,19 @@ import type { WorkOffline } from "../../contracts/work";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { deviceOf, listDevices, setDeviceWork } from "../lib/devices";
-import { libraryDb } from "../library/db";
+import { libraryDb, libraryUpload } from "../library/db";
 import { readerOf } from "../library/reader";
 import { assetRef, canSee } from "../library/sources";
 
 /**
  * The proxies a person keeps on their computers (design 6.3, PRD 4.4).
  *
- * Available offline, per person: `$DATA_DIR/offline/<user>.json { versions, collections }`, a clip's version or a whole
- * folder. Each of their computers is sent the list on its claim (offlineFor) and keeps those proxies, never removed by its
- * size limit; it downloads them while nothing else runs (the offline route in routes.ts). Mounted at /api/library/offline:
+ * Available offline, per person: `$DATA_DIR/offline/<user>.json { versions, collections, libraries }`, a clip's version, a
+ * folder, or a whole library (Library settings → Keep on this computer). Each of their computers is sent the list on its
+ * claim (offlineFor) and keeps those proxies, never removed by its size limit; it downloads them while nothing else runs
+ * (the offline route in routes.ts). Mounted at /api/library/offline:
  *   GET  /   → OfflineList
- *   POST /   { version | collection, on } → OfflineList    only what the person can see
+ *   POST /   { version | collection | library, on } → OfflineList    only what the person can see
  *
  * Settings → Storage counts each computer's cache from its last claim (api/kept.ts) and Empty tells it on the next one.
  */
@@ -25,14 +26,22 @@ import { assetRef, canSee } from "../library/sources";
 export interface OfflineList {
   versions: string[];
   collections: string[];
+  libraries?: string[];
 }
+
+export const NO_PROXY_TO_KEEP = "This library keeps its files on your computers; there is no proxy to keep.";
 
 const fileOf = (user: string) => path.join(env.dataDir, "offline", `${encodeURIComponent(user)}.json`);
 
 export function offlineOf(user: string): OfflineList {
   try {
     const v = JSON.parse(readFileSync(fileOf(user), "utf8")) as Partial<OfflineList>;
-    return { versions: Array.isArray(v.versions) ? v.versions : [], collections: Array.isArray(v.collections) ? v.collections : [] };
+    const libraries = Array.isArray(v.libraries) ? v.libraries.filter((x): x is string => typeof x === "string") : [];
+    return {
+      versions: Array.isArray(v.versions) ? v.versions : [],
+      collections: Array.isArray(v.collections) ? v.collections : [],
+      ...(libraries.length ? { libraries } : {}),
+    };
   } catch {
     return { versions: [], collections: [] };
   }
@@ -58,15 +67,19 @@ export async function mayRead(user: string, libraryId: string, assetId: string, 
  */
 export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkOffline[]> {
   const list = offlineOf(d.owner);
-  if (!list.versions.length && !list.collections.length) return [];
+  const libraries = list.libraries ?? [];
+  if (!list.versions.length && !list.collections.length && !libraries.length) return [];
   const rows = db()
     .prepare(
       `SELECT v.id, a.id AS asset_id, a.title, a.library_id, p.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        JOIN derivatives p ON p.version_id = v.id AND p.kind = 'proxy'
-       WHERE a.trashed_at IS NULL AND v.mac_device IS NOT ? AND (v.id IN (SELECT value FROM json_each(?))
-         OR (v.id = a.current_version_id AND a.id IN (SELECT asset_id FROM collection_items WHERE collection_id IN (SELECT value FROM json_each(?)))))`,
+       WHERE a.trashed_at IS NULL AND v.mac_device IS NOT ?
+         AND NOT EXISTS (SELECT 1 FROM version_places vp WHERE vp.version_id = v.id AND vp.device = ? AND vp.kind = 'original' AND vp.state IN ('verified', 'found'))
+         AND (v.id IN (SELECT value FROM json_each(?))
+           OR (v.id = a.current_version_id AND (a.library_id IN (SELECT value FROM json_each(?))
+             OR a.id IN (SELECT asset_id FROM collection_items WHERE collection_id IN (SELECT value FROM json_each(?))))))`,
     )
-    .all(d.id, JSON.stringify(list.versions), JSON.stringify(list.collections)) as { id: string; asset_id: string; title: string; library_id: string; bytes: number }[];
+    .all(d.id, d.id, JSON.stringify(list.versions), JSON.stringify(libraries), JSON.stringify(list.collections)) as { id: string; asset_id: string; title: string; library_id: string; bytes: number }[];
   const out: WorkOffline[] = [];
   for (const r of rows) if (await mayRead(d.owner, r.library_id, r.asset_id, r.id)) out.push({ id: r.id, title: r.title, bytes: r.bytes });
   return out;
@@ -121,23 +134,33 @@ offlineApp.get("/", (c) => c.json(offlineOf(c.get("user").username)));
 
 offlineApp.post("/", async (c) => {
   const user = c.get("user").username;
-  const b = (await c.req.json().catch(() => null)) as { version?: unknown; collection?: unknown; on?: unknown } | null;
-  const id = typeof b?.version === "string" ? b.version : typeof b?.collection === "string" ? b.collection : null;
-  if (!id || typeof b?.on !== "boolean") return c.json({ error: "version or collection: an id, on: true or false" }, 400);
-  const key = typeof b.version === "string" ? "versions" : "collections";
+  const b = (await c.req.json().catch(() => null)) as { version?: unknown; collection?: unknown; library?: unknown; on?: unknown } | null;
+  const id = typeof b?.version === "string" ? b.version : typeof b?.collection === "string" ? b.collection : typeof b?.library === "string" ? b.library : null;
+  if (!id || typeof b?.on !== "boolean") return c.json({ error: "version, collection or library: an id, on: true or false" }, 400);
+  const key = typeof b.version === "string" ? "versions" : typeof b.collection === "string" ? "collections" : "libraries";
   const ok =
     key === "versions"
       ? await (async () => {
           const v = db().prepare("SELECT a.library_id, a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { library_id: string; id: string } | undefined;
           return !!v && (await mayRead(user, v.library_id, v.id, id));
         })()
-      : await (async () => {
-          const f = db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined;
-          return !!f && !!(await readerOf(user, f.library_id));
-        })();
+      : key === "collections"
+        ? await (async () => {
+            const f = db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined;
+            return !!f && !!(await readerOf(user, f.library_id));
+          })()
+        : !!(await readerOf(user, id));
   if (!ok) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (key === "libraries" && b.on && libraryUpload(id) === "none") return c.json({ error: NO_PROXY_TO_KEEP, code: "no_proxies" }, 409);
   const list = offlineOf(user);
-  list[key] = [...list[key].filter((x) => x !== id), ...(b.on ? [id] : [])];
+  const prev = list[key] ?? [];
+  const next = [...prev.filter((x) => x !== id), ...(b.on ? [id] : [])];
+  if (key === "libraries") {
+    if (next.length) list.libraries = next;
+    else delete list.libraries;
+  } else {
+    list[key] = next;
+  }
   saveOffline(user, list);
   return c.json(list);
 });

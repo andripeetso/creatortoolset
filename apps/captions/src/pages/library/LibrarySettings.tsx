@@ -10,7 +10,7 @@ import type { Organize } from "@contracts/library";
 import { aboutTime, aboutUsd, CopyTo, folderName } from "@/components/LibraryProcessing";
 import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
-import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
+import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary, useOffline } from "@/lib/library";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
@@ -500,6 +500,9 @@ function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps,
  */
 function SpaceRows({ library, saved, space, read, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; videos: string | null }) {
   const cloud = saved?.proxies ?? null;
+  const offline = useOffline();
+  const keepOffline = !!offline.list?.libraries?.includes(library.id);
+  const noServerProxy = library.settings.upload === "none";
   useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
@@ -517,11 +520,30 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
       .catch((e) => onError(message(e)));
   const proxyFiles = !!space && (cloud || space.proxies.files > 0);
   const models = !!space?.models && space.models.bytes > 0;
-  if (!videos && cloud && !proxyFiles && !models) return null;
+  if (!videos && !offline.list && cloud && !proxyFiles && !models) return null;
   return (
     <Section title="Storage">
       <Card>
         {videos && <Row title="Video files" description={videos} />}
+        {offline.list && (
+          <Row
+            id="library-keep-offline"
+            title="Keep on this computer"
+            description={
+              noServerProxy
+                ? "This library keeps its files on the computers they were added from; there is no proxy to keep."
+                : "Downloads a proxy of each video in this library to this computer so it plays without internet."
+            }
+            control={
+              <Switch
+                aria-label="Keep on this computer"
+                checked={keepOffline}
+                disabled={noServerProxy && !keepOffline}
+                onCheckedChange={(on) => void offline.set({ library: library.id }, on).catch((e: unknown) => onError(message(e)))}
+              />
+            }
+          />
+        )}
         {!cloud && (
           <Row
             id="library-proxies"
