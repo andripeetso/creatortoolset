@@ -123,7 +123,6 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     expect((await claim(weak.token, ["reach-render"])).job).toMatchObject({ kind: "reach-render", editId });
     // server rendering on: the server runs the step, so the computer that lacks the file gets no copy
     serverWork(true);
-    libraryDb().exec("UPDATE edit_jobs SET state = 'done', device = NULL WHERE kind = 'reach-render'");
     enqueueJob(libraryDb(), "maker", `${editId}:v5`, "reach-render", "maker", false, "edit_jobs");
     expect((await claim(strong.token, ["reach-render"])).job).toBeNull();
   });
