@@ -341,6 +341,14 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(pill.state, .hidden)
     }
 
+    func testAHideRightAfterTheFirstShowLeavesThePillHidden() async {
+        let pill = DictationPill()
+        pill.show(.recording)
+        pill.hide()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(pill.state, .hidden, "a press and release in the same moment never leaves Listening up")
+    }
+
     func testThePillShowsEarlierTranscriptionsBehindANewRecording() async {
         let pill = DictationPill()
         var queued = 1
