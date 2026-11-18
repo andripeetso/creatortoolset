@@ -12,7 +12,6 @@ import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { LibraryCopies } from "./library/Copies";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -43,7 +42,7 @@ import {
   updateAsset,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
-import { importCancel, importCopy, importProgress, macImports, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { chooseFolderOnMac, importCancel, importCopy, importProgress, macImports, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { checkUpload } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
@@ -63,7 +62,7 @@ import { LibrarySettings, MemberLibrarySettings, needsAttention } from "./librar
 import { connectOriginals } from "./library/Locate";
 import { thisMacDevice } from "@/lib/providers";
 import { useLibraryDrop } from "./library/LibraryDrop";
-import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
+import { addFrom, FoldersToAllow, lookedLine, lookForNew, rememberImport, useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
@@ -858,6 +857,22 @@ export default function LibraryPage() {
 
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
+  // the first screen in the Mac app with the server elsewhere: a folder on this Mac, read where it is (nothing uploads)
+  const folderHere = !!library && !readOnly && addFrom(watch?.allowed) === "mac";
+  const chooseFolder = async () => {
+    const picked = await chooseFolderOnMac();
+    if (!picked || !library) return;
+    try {
+      const l = await rememberImport(library, "in-place", [picked]);
+      saved(l);
+      const r = await lookForNew(l, (line) => toast.loading(line, { id: "library-folder" }));
+      toast.success(lookedLine(r.added, r.reconnected), { id: "library-folder" });
+      reload();
+    } catch (e) {
+      toast.dismiss("library-folder");
+      setError(message(e));
+    }
+  };
   const changing = !!library && !readOnly && !trash;
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
 
@@ -1154,8 +1169,7 @@ export default function LibraryPage() {
                   )
                 )}
 
-                {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} offer={organize.offer} onOffer={organize.answerOffer} />}
-                {firstScreen && !readOnly && <LibraryCopies libraryId={library.id} className="mx-auto w-full max-w-md" />}
+                {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} onChooseFolder={folderHere ? chooseFolder : undefined} offer={organize.offer} onOffer={organize.answerOffer} />}
 
                 {next &&
                   (watchesEnd() ? (

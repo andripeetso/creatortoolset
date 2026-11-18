@@ -41,12 +41,15 @@ const rememberSkip = () => {
 export function FootageFolderCard({
   libraryId,
   onUpload,
+  onChooseFolder,
   page = false,
   offer = false,
   onOffer,
 }: {
   libraryId: string;
   onUpload?: () => void;
+  /** the Mac app with the server elsewhere: a folder on this Mac, read where it is (the Library page adds it) */
+  onChooseFolder?: () => Promise<void>;
   page?: boolean;
   offer?: boolean;
   onOffer?: (o: Organize) => Promise<void>;
@@ -118,6 +121,42 @@ export function FootageFolderCard({
       Skip
     </Button>
   );
+
+  if (folderless && page && onChooseFolder) {
+    const pick = async () => {
+      setBusy(true);
+      try {
+        await onChooseFolder();
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <section aria-label="Footage folder" className={box}>
+        <h2 className="text-base font-medium">Add your footage</h2>
+        <ol className="flex w-full flex-col gap-3 text-left">
+          <li className="flex items-center gap-3 rounded-xl border border-zinc-500/20 p-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">Your footage folder</span>
+              <span className="text-sm text-zinc-500">The clips stay where they are on this Mac. Nothing is uploaded.</span>
+            </div>
+            <Button onClick={() => void pick()} disabled={busy}>
+              {busy ? "Reading…" : "Choose folder"}
+            </Button>
+          </li>
+          <li className="flex items-center gap-3 rounded-xl border border-zinc-500/20 p-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">Single files</span>
+              <span className="text-sm text-zinc-500">Pick clips to add one by one.</span>
+            </div>
+            <Button variant="outline" onClick={() => (onUpload ? onUpload() : navigate("/library"))}>
+              Upload files
+            </Button>
+          </li>
+        </ol>
+      </section>
+    );
+  }
 
   if (folderless) {
     return (

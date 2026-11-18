@@ -46,14 +46,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function render(onUpload?: () => void, page = false) {
+async function render(onUpload?: () => void, page = false, onChooseFolder?: () => Promise<void>) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root!.render(
       <MemoryRouter>
-        <FootageFolderCard libraryId="lib_1" onUpload={onUpload} page={page} />
+        <FootageFolderCard libraryId="lib_1" onUpload={onUpload} page={page} onChooseFolder={onChooseFolder} />
       </MemoryRouter>,
     );
   });
@@ -140,6 +140,19 @@ describe("Where are your videos?", () => {
     await render(onUpload);
     expect(host!.textContent).toContain("Reading a folder needs the Mac app");
     expect(button("Choose a folder")).toBeUndefined();
+    await click("Upload files");
+    expect(onUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("the empty page in the Mac app, server elsewhere: two steps, a folder on this Mac or single files; never \"needs the Mac app\"", async () => {
+    watch.allowed = false;
+    const onUpload = vi.fn();
+    const onChooseFolder = vi.fn(async () => {});
+    await render(onUpload, true, onChooseFolder);
+    expect(host!.textContent).toContain("Add your footage");
+    expect(host!.textContent).not.toContain("needs the Mac app");
+    await click("Choose folder");
+    expect(onChooseFolder).toHaveBeenCalledTimes(1);
     await click("Upload files");
     expect(onUpload).toHaveBeenCalledTimes(1);
   });
