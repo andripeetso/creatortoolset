@@ -15,8 +15,8 @@ import { kindOf, recordVersion } from "./routes";
 import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
-import { libraryPath, parseStorageFile, storageFilePath } from "../lib/storage";
-import { LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
+import { parseStorageFile, storageFilePath } from "../lib/storage";
+import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
@@ -148,13 +148,13 @@ const withFound = async (s: WatchStatus): Promise<WatchStatus> => ({
 });
 
 /**
- * Where a folder's files are copied by default: the Footage folder in the account's Library folder on this computer
- * (Settings → Storage), else ~/Movies/Creator Toolset/Footage, setup's default. "~/" stays as it is, for showing.
+ * Where a folder's files are copied by default: an older Exports folder's own Footage on this computer (a listed Media
+ * folder since storage schema 3, with the id it had), else ~/Movies/Creator Toolset/Footage. "~/" stays as it is, for showing.
  */
 export async function defaultCopyTo(username: string): Promise<string> {
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
   const here = sourcesOf(st.folders).find((f) => f.role === "footage" && f.id.endsWith(":footage") && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host)));
-  return here?.origin.path ?? `${libraryPath("~/Movies")}/${LIBRARY_SUBFOLDERS.footage}`;
+  return here?.origin.path ?? `~/Movies/${LIBRARY_NAME}/${LIBRARY_SUBFOLDERS.footage}`;
 }
 
 // GET /api/library/:id/watch → WatchStatus. The owner only: paths on the server are theirs to see.

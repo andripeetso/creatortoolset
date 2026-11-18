@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { connectFor, finalsDirName, finalsFolderOf, sourcesOf, type Disk, type StorageFolder } from "../../contracts/storage";
-import { canReach, folderFor, hostPath, isInside, mountOf, withMounts, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+import { canReach, folderFor, hostPath, isInside, mountOf, withMounts, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
 
 // Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
 vi.mock("node:fs/promises", async (orig) => {
@@ -133,13 +133,6 @@ describe("where the files are: the workers' reports", () => {
 });
 
 describe("where the files are: the library and its files", () => {
-  it("the library sits in Creator Toolset under the chosen folder; / and ~ mean the home folder", () => {
-    expect(libraryPath("~")).toBe("~/Creator Toolset");
-    expect(libraryPath("/")).toBe("~/Creator Toolset");
-    expect(libraryPath("/Volumes/TEAM/")).toBe("/Volumes/TEAM/Creator Toolset");
-    expect(libraryPath("/Volumes/TEAM")).toBe("/Volumes/TEAM/Creator Toolset");
-  });
-
   it("a file is inside a music folder only below it, never beside or at it", () => {
     expect(isInside("/m/Music/a.mp3", ["/m/Music"])).toBe(true);
     expect(isInside("/m/Music/album/a.mp3", ["/x", "/m/Music"])).toBe(true);
@@ -179,16 +172,34 @@ describe("where the files are: the library and its files", () => {
     expect(parseStorageFile(JSON.stringify({ folders: [f] }))).toEqual({ folders: [f] });
   });
 
-  it("the library folder's Footage counts as a Media folder, and reach follows its subfolders", () => {
+  it("an Exports folder is never a Media folder; an older one's Footage, listed on read, keeps its reach", () => {
     const lib: StorageFolder = {
       id: "lib", role: "library", name: "Creator Toolset", origin: { host: "studio-mac", path: "~/Creator Toolset" },
       make: true, createdAt: 0, reach: { pc: { path: "/Mnt/CT", at: 1 } },
     };
-    const footage = sourcesOf([lib]).find((f) => f.role === "footage");
-    expect(footage?.origin.path).toBe("~/Creator Toolset/Footage");
-    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "pc")).toBe(true);
-    expect(hostPath("/Mnt/CT/Footage/a.mp4", [lib], "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
-    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "laptop")).toBe(false);
+    expect(sourcesOf([lib])).toEqual([]);
+    const read = parseStorageFile(JSON.stringify({ folders: [lib] })).folders;
+    expect(canReach(["/Mnt/CT/Footage/a.mp4"], read, "pc")).toBe(true);
+    expect(hostPath("/Mnt/CT/Footage/a.mp4", read, "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
+    expect(canReach(["/Mnt/CT/Footage/a.mp4"], read, "laptop")).toBe(false);
+  });
+
+  it("schema 3, once: a Library made before 2026-11-17 gets its Footage/ as a listed Media folder, a newer one none", () => {
+    const old: StorageFolder = {
+      id: "lib", role: "library", name: "Creator Toolset", origin: { host: "mac", path: "/Volumes/Tiny/Creator Toolset" },
+      make: true, createdAt: 1, reach: { pc: { path: "/Mnt/CT", at: 1 } }, workspace: "ws-a", workspaces: ["ws-a", "ws-b"], folderState: "found" as never,
+    };
+    const made: StorageFolder = { ...old, id: "new", origin: { host: "mac", path: "/Volumes/Tiny/Exports" }, createdAt: Date.UTC(2026, 10, 18), workspace: "ws-c", workspaces: undefined };
+    const read = parseStorageFile(JSON.stringify({ schemaVersion: 2, folders: [old, made] }));
+    const footage = read.folders.filter((f) => f.role === "footage");
+    expect(footage).toHaveLength(1);
+    expect(footage[0]).toMatchObject({ id: "lib:footage", name: "Footage", make: false, origin: { host: "mac", path: "/Volumes/Tiny/Creator Toolset/Footage" }, reach: { pc: { path: "/Mnt/CT/Footage" } }, workspace: "ws-a", workspaces: ["ws-a", "ws-b"] });
+    expect(footage[0]!.folderState).toBeUndefined();
+    // once: a file at schema 3 (written back after the first read) never gets it again, so a removed one stays removed
+    expect(parseStorageFile(JSON.stringify({ schemaVersion: 3, folders: [old] })).folders.map((f) => f.role)).toEqual(["library"]);
+    // one already listed at that path is not added twice
+    const listed = { ...footage[0]!, id: "mine" };
+    expect(parseStorageFile(JSON.stringify({ folders: [old, listed] })).folders.map((f) => f.id)).toEqual(["lib", "mine"]);
   });
 });
 
@@ -200,7 +211,7 @@ describe("the Finals folder", () => {
     expect(finalsFolderOf([lib, own])?.id).toBe("fin");
     expect(finalsFolderOf([])).toBeUndefined();
     // the Library's own Finished/ is no Media folder
-    expect(sourcesOf([lib]).map((f) => f.origin.path)).toEqual(["~/Creator Toolset/Footage"]); // no Music/: one Media list
+    expect(sourcesOf([lib])).toEqual([]);
   });
   it("names a project's folder by its title, safe as a file name", () => {
     expect(finalsDirName("Tiny Acrobatics: rolls / v2?")).toBe("Tiny Acrobatics rolls v2");

@@ -1,11 +1,11 @@
 import type { FolderState } from "./places";
 
 /**
- * Where the files are (Settings → Storage). The app enforces one thing: where it saves. That is the Library,
- * one "Creator Toolset" folder (finished videos, edit files, downloads) with Footage/ and Finished/ inside it.
- * Media is one list of sources: folders read in place, any number, never moved. The Library's own Footage/ counts as
- * one too, so a user with no system of their own just drops files there. There is no music folder: the Media Library
- * tells songs and sound effects apart itself (owner, 2026-11-17).
+ * Where the files are (Settings → Storage). The app enforces one thing: where it saves. That is Exports (role "library"),
+ * the exact folder the person picked (finished videos, edit files, downloads), one per workspace, with Finished/ inside it.
+ * Media is one list of sources: folders read in place, any number, never moved, only the ones someone added (an older
+ * Library's own Footage/ became one of them once: api/lib/storage.ts parseStorageFile). There is no music folder: the
+ * Media Library tells songs and sound effects apart itself (owner, 2026-11-17).
  *
  * Every folder has a small marker file (MARKER_FILE, JSON `{ "id", "role", "name" }`), so every computer finds it by the
  * marker on whatever drive it is connected, at whatever path. Kept per account on the server (storage.json in the
@@ -13,7 +13,7 @@ import type { FolderState } from "./places";
  */
 
 export const STORAGE_ROLES = [{ value: "footage", label: "Footage" }] as const;
-/** "library" is the one Library folder; footage is the Media list; "finals" is a workspace's Finals folder, one at most
+/** "library" is an Exports folder (exportsOf); footage is the Media list; "finals" is a workspace's Finals folder, one at most
  *  (none: the Library's Finished/, finalsFolderOf). A "music" folder from before is read as footage (api/lib/storage.ts). */
 export type StorageRole = "footage" | "finals" | "library";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
@@ -21,7 +21,7 @@ export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 export const MARKER_FILE = ".creatortoolset-folder";
 /** The host of a folder on the computer the server runs on, when no paired Mac stands for it (setup's Folders step, owner only). */
 export const THIS_COMPUTER = "this-computer";
-/** The library folder's name and the subfolder for each role inside it. */
+/** The Exports folder setup suggests (~/Movies/Creator Toolset), and the subfolder for each role inside it. */
 export const LIBRARY_NAME = "Creator Toolset";
 export const LIBRARY_SUBFOLDERS: Record<"footage" | "finished", string> = { footage: "Footage", finished: "Finished" };
 
@@ -136,23 +136,30 @@ export function unreachedShares(folders: StorageFolder[], device: string): strin
 }
 
 /** The storage file's shape: 2 = every folder's computer is a device id (no THIS_COMPUTER), duplicates merged
- *  (api/lib/storage.ts migrateStorage). A file from before has none and is moved on read. */
-export const STORAGE_SCHEMA = 2;
+ *  (api/lib/storage.ts migrateStorage); 3 = an older Library's own Footage/ is a listed Media folder (parseStorageFile).
+ *  A file from before is moved on read. */
+export const STORAGE_SCHEMA = 3;
 
 export interface StorageState {
   schemaVersion?: number;
   folders: StorageFolder[];
 }
 
-/** The folders the Media Library takes in: the listed ones, plus the Library's own Footage/ (same host, same reach, one
- *  level down). Derived entries carry the Library's id with the subfolder appended. */
-export function sourcesOf(folders: StorageFolder[]): StorageFolder[] {
-  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => inLibrary(lib, "footage"));
-  return [...folders.filter((f) => f.role !== "library"), ...derived];
-}
+/** Whether a Library's own Footage/ was a Media folder: only for one made before 2026-11-17, where setup and card copies
+ *  may have put clips. It is a listed one since (api/lib/storage.ts parseStorageFile); no other folder is added for an
+ *  Exports folder (owner, 2026-11-18). */
+export const ownFootage = (lib: Pick<StorageFolder, "createdAt">): boolean => lib.createdAt < Date.UTC(2026, 10, 17);
 
-/** The Library's own subfolder for `role` as a folder of its own: the same host and reach, one level down. */
-function inLibrary(lib: StorageFolder, role: "footage" | "finals"): StorageFolder {
+/** The folders the Media Library takes in: the listed ones, never a folder no one added (owner, 2026-11-18). */
+export const sourcesOf = (folders: StorageFolder[]): StorageFolder[] => folders.filter((f) => f.role !== "library");
+
+/** A workspace's Exports folder (`folders`: that workspace's, folderIn): the one given to it by name before the one for
+ *  every workspace, so giving a workspace its own never needs the other one changed. */
+export const exportsOf = (folders: StorageFolder[]): StorageFolder | undefined =>
+  folders.find((f) => f.role === "library" && f.workspace !== EVERY_WORKSPACE) ?? folders.find((f) => f.role === "library");
+
+/** An Exports folder's own subfolder for `role` as a folder of its own: the same host and reach, one level down. */
+export function inLibrary(lib: StorageFolder, role: "footage" | "finals"): StorageFolder {
   const sub = LIBRARY_SUBFOLDERS[role === "finals" ? "finished" : role];
   return {
     ...lib,
@@ -160,14 +167,15 @@ function inLibrary(lib: StorageFolder, role: "footage" | "finals"): StorageFolde
     role,
     name: sub,
     origin: { host: lib.origin.host, path: `${lib.origin.path}/${sub}` },
+    ...(lib.mountPath ? { mountPath: `${lib.mountPath}/${sub}` } : {}),
     reach: Object.fromEntries(Object.entries(lib.reach).map(([h, r]) => [h, { ...r, path: `${r.path}/${sub}` }])),
     ...(lib.mount ? { mount: { ...lib.mount, sub: lib.mount.sub ? `${lib.mount.sub}/${sub}` : sub } } : {}),
   };
 }
 
-/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Library's Finished/. */
+/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Exports' Finished/. */
 export function finalsFolderOf(folders: StorageFolder[]): StorageFolder | undefined {
-  const lib = folders.find((f) => f.role === "library");
+  const lib = exportsOf(folders);
   return folders.find((f) => f.role === "finals") ?? (lib && inLibrary(lib, "finals"));
 }
 
@@ -175,21 +183,23 @@ export function finalsFolderOf(folders: StorageFolder[]): StorageFolder | undefi
 export const finalsDirName = (title: string): string =>
   title.replace(/[\/\\:*?"<>|\p{Cc}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/^\.+|[. ]+$/g, "").slice(0, 100).trim() || "Untitled";
 
-/** POST /api/devices/storage/library: make the library folder on one computer. `disk` is the folder it goes in;
- *  "/" or "~" means its home folder. */
+/** A plug-in's own Exports route: a computer and the folder (`disk`) the plug-in makes its folder in. The app's own
+ *  Exports folder is added like any other, AddFolderBody with role "library". */
 export interface MakeLibraryBody {
   host: string;
   disk: string;
 }
 
-/** POST /api/devices/storage/folders: use a folder you already have for a role ("finals" takes the place of the workspace's one). */
+/** POST /api/devices/storage/folders: use a folder for a role ("finals" takes the place of the workspace's one; "library":
+ *  the workspace's Exports folder, exactly that folder, made when missing, taken off the Exports folder that had it). */
 export interface AddFolderBody {
-  role: SourceRole | "finals";
+  role: SourceRole | "finals" | "library";
   host: string;
   path: string;
 }
 
-/** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before. */
+/** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before.
+ *  An Exports folder takes the workspaces it is given off the Exports folder that had them (api/devices-storage.ts). */
 export type MoveFolderBody = { workspaces: string[] | null } | { workspace: string | null };
 
 /** GET /api/devices/storage: the account's folders, plus the disks of the server's own computer when the server runs on

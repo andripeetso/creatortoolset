@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -328,14 +328,66 @@ describe("each workspace", () => {
     expect((await all()).find((f) => f.id === id)!.workspaces).toBeUndefined();
     expect(watchedIn("ws-a")).not.toContain(music);
     expect(watchedIn("ws-b")).toEqual([music]);
-    // Finished videos stays one folder per workspace
-    const made = await app.request("/api/devices/storage/library", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" }, body: JSON.stringify({ host: "this-computer", disk: dir }) });
-    expect(made.status).toBe(200);
-    const library = (await all()).find((f) => f.role === "library")!;
-    expect(library.workspace).toBe("ws-b");
-    expect((await app.request(`/api/devices/storage/folders/${library.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace: "ws-b" }) })).status).toBe(400);
+    // Exports is the exact folder picked, and one per workspace: giving it to a workspace takes it off the one that had it
+    const exportsTo = (ws: string, p: string) => app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": ws }, body: JSON.stringify({ role: "library", host: "this-computer", path: p }) });
+    const exportsA = path.join(dir, "Exports A");
+    const exportsB = path.join(dir, "Exports B");
+    expect((await exportsTo("ws-b", exportsA)).status).toBe(200);
+    const exportsOfAll = async () => (await all()).filter((f) => f.role === "library");
+    const [lib] = await exportsOfAll();
+    expect(lib).toMatchObject({ workspace: "ws-b", origin: { path: exportsA } });
+    expect((await list("ws-b")).filter((f) => f.role === "footage").map((f) => f.origin.path)).toEqual([music]); // no Footage of its own
+    expect((await exportsTo("ws-a", exportsB)).status).toBe(200);
+    const libB = (await exportsOfAll()).find((f) => f.origin.path === exportsB)!;
+    // ws-b given to Exports B too: Exports A had only ws-b, so it is forgotten (its files stay)
+    const placeB = (workspaces: string[] | null) => app.request(`/api/devices/storage/folders/${libB.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaces }) });
+    expect((await placeB(["ws-a", "ws-b"])).status).toBe(200);
+    expect((await exportsOfAll()).map((f) => [f.origin.path, f.workspaces])).toEqual([[exportsB, ["ws-a", "ws-b"]]]);
+    // a new one for ws-a: Exports B keeps ws-b only
+    expect((await exportsTo("ws-a", exportsA)).status).toBe(200);
+    expect((await exportsOfAll()).map((f) => [f.origin.path, f.workspace, f.workspaces])).toEqual([[exportsB, "ws-b", undefined], [exportsA, "ws-a", undefined]]);
+    // ws-a picks Exports B again: the one record gets ws-a back, no second record for the same folder
+    expect((await exportsTo("ws-a", exportsB)).status).toBe(200);
+    expect((await exportsOfAll()).map((f) => [f.origin.path, f.workspaces])).toEqual([[exportsB, ["ws-b", "ws-a"]]]);
+    expect((await exportsTo("ws-a", exportsA)).status).toBe(200);
+    // every workspace: another folder for every workspace goes, ones given to a workspace by name stay theirs
+    expect((await placeB(null)).status).toBe(200);
+    expect((await exportsOfAll()).map((f) => f.origin.path)).toEqual([exportsB, exportsA]);
+    expect((await exportsTo("ws-b", exportsB)).status).toBe(400);
+    const { exportsOf, folderIn } = await import("../contracts/storage");
+    const st = (await all()) as unknown as import("../contracts/storage").StorageFolder[];
+    expect(exportsOf(st.filter((f) => folderIn(f, (own) => own === "ws-a")))?.origin.path).toBe(exportsA);
+    expect(exportsOf(st.filter((f) => folderIn(f, (own) => own === "ws-b")))?.origin.path).toBe(exportsB);
+    expect((await app.request(`/api/devices/storage/folders/${libB.id}`, { method: "DELETE" })).status).toBe(200);
     expect((await app.request(`/api/devices/storage/folders/${id}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-a" } })).status).toBe(200);
     expect(watchedIn("ws-b")).toEqual([]);
     expect((await all()).some((f) => f.id === id)).toBe(false);
+  });
+
+  it("Exports is the folder picked: no Creator Toolset level, no Media folder of its own; an older Library's Footage is listed once", async () => {
+    const { storageFilePath } = await import("./lib/storage");
+    type View = { folders: { id: string; role: string; origin: { path: string } }[] };
+    const view = async () => ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": "ws-b" } })).json()) as View).folders;
+    const media = async () => (await view()).filter((f) => f.role === "footage").map((f) => f.origin.path);
+    const change = (p: string) => app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" }, body: JSON.stringify({ role: "library", host: "this-computer", path: p }) });
+    const before = await media();
+    const exportsC = path.join(dir, "Exports C");
+    expect((await change(`${exportsC}/`)).status).toBe(200);
+    expect((await view()).filter((f) => f.role === "library").map((f) => f.origin.path)).toEqual([exportsC]);
+    expect(await media()).toEqual(before);
+    // a file from before schema 3 with a Library made before 2026-11-17 (setup may have put clips in its Footage/)
+    const file = storageFilePath(process.env.DATA_DIR!, USER);
+    const st = JSON.parse(readFileSync(file, "utf-8")) as { schemaVersion?: number; folders: { role: string; createdAt: number }[] };
+    for (const f of st.folders) if (f.role === "library") f.createdAt = 0;
+    delete st.schemaVersion;
+    writeFileSync(file, JSON.stringify(st));
+    expect(await media()).toEqual([...before, `${exportsC}/Footage`]);
+    // a real, removable folder: removed, it stays gone
+    const own = (await view()).find((f) => f.origin.path === `${exportsC}/Footage`)!;
+    expect((await app.request(`/api/devices/storage/folders/${encodeURIComponent(own.id)}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-b" } })).status).toBe(200);
+    expect(await media()).toEqual(before);
+    // Change Exports never adds the old one's Footage
+    expect((await change(path.join(dir, "Exports D"))).status).toBe(200);
+    expect(await media()).toEqual(before);
   });
 });

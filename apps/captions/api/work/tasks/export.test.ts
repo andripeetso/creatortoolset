@@ -41,7 +41,7 @@ const c = client(o);
 const claim = async () => (await c.post<{ task?: TaskPackage }>("work/claim", { v: WORK_V, steps: [], tasks: ["export"] })).task;
 
 const disk = path.join(root, "Tiny Drive");
-const exportsDir = path.join(disk, "Creator Toolset", "Finished");
+const exportsDir = path.join(disk, "Finished");
 const ASS = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 64
@@ -83,7 +83,7 @@ describe("exports as computer tasks", () => {
   });
 
   it("one of the owner's computers renders it, keeps a copy in its Exports folder and sends it", async () => {
-    const add = await app.request("/api/devices/storage/library", { method: "POST", headers: json, body: JSON.stringify({ host: pc.device.id, disk }) });
+    const add = await app.request("/api/devices/storage/folders", { method: "POST", headers: json, body: JSON.stringify({ role: "library", host: pc.device.id, path: disk }) });
     expect(add.status, await add.clone().text()).toBe(200);
     const t = await claim();
     expect(t).toMatchObject({ task: { kind: "export", actor: "tiny" }, input: { kind: "overlay", format: "mov" } });

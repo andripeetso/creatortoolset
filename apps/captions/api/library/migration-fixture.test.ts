@@ -94,23 +94,24 @@ describe("T4: a data dir from before the place states", () => {
     expect(whereIs("v2")!.computers[0]!.original!.state).toBe("unchecked");
   });
 
-  it("the storage list moves to schema 2: every folder kept, music read as media, this computer is the paired computer the server runs on", async () => {
+  it("the storage list moves to schema 3: every folder kept, music read as media, this computer is the paired computer the server runs on, the old Library's Footage listed", async () => {
     const here = pairDevice(USER, "Tiny Studio Mac").device.id;
     saveReport(here, { at: Date.now(), drivers: [], homes: [], machine: { host: hostname(), cpus: 8, memGb: 16 } } as never);
     const st = await storageOf(USER);
-    expect(st.schemaVersion).toBe(2);
+    expect(st.schemaVersion).toBe(3);
     expect(st.folders.map((f) => [f.id, f.origin.host, f.origin.path, useOf(f)])).toEqual([
       ["f-footage", "mac_live", "/Volumes/Tiny Footage/Shoots", "media"],
       ["f-music", "mac_live", "/Users/tiny/Music/Songs", "media"],
       ["f-library", "mac_live", "/Users/tiny/Movies/Creator Toolset", "exports"],
       ["f-finals", "mac_live", "/Users/tiny/Movies/Finals", "finals"],
       ["f-here", here, "/Users/tiny/Footage", "media"],
+      ["f-library:footage", "mac_live", "/Users/tiny/Movies/Creator Toolset/Footage", "media"],
     ]);
     // written back in the account's queue: the next read is the file itself
     await updateFolder(USER, "none", () => null);
     const saved = JSON.parse(readFileSync(storage, "utf-8")) as { schemaVersion: number; folders: { id: string; origin: { host: string } }[] };
-    expect(saved.schemaVersion).toBe(2);
-    expect(saved.folders.map((f) => f.id)).toEqual(folders.map((f) => f.id));
+    expect(saved.schemaVersion).toBe(3);
+    expect(saved.folders.map((f) => f.id)).toEqual([...folders.map((f) => f.id), "f-library:footage"]);
     expect(saved.folders.find((f) => f.id === "f-here")!.origin.host).toBe(here);
   });
 });

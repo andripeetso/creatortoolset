@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { Storage, type Computer, driveLabel, driveOf, driveStart, folderLine, shareAddress } from "./StorageRows";
+import { Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
 import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
@@ -20,14 +20,15 @@ describe("Storage rows", () => {
     expect(html).not.toContain("No folders");
   });
 
-  it("a set row shows its full path on its computer and says Change", () => {
+  it("an Exports folder is a row under Exports with its menu; Media lists only the folders someone added", () => {
     const html = page([library]);
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset");
-    expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset/Footage");
-    // Finals: the Library's Finished/ until another folder is chosen
+    expect(html).toContain('aria-label="Actions for Creator Toolset"');
+    expect(html).not.toContain("/Volumes/Footage SSD/Creator Toolset/Footage");
+    // Finals: the Exports folder's Finished/ until another folder is chosen
     expect(html).toContain("Sam&#x27;s Mac Studio · /Volumes/Footage SSD/Creator Toolset/Finished");
-    expect(html).toContain(">Change<");
-    expect(html).not.toContain("Library/Footage");
+    expect(html.match(/>Change</g)).toHaveLength(1); // Finals
+    expect(html.match(/>Add folder</g)).toHaveLength(2); // Exports, Media
   });
 });
 
@@ -40,21 +41,21 @@ describe("every workspace's folders (Settings on All workspaces)", () => {
     return renderToStaticMarkup(<Storage devices={[mac]} storage={view(folders)} onChanged={() => {}} w={all} />);
   };
 
-  it("Finished videos has a row per workspace: Change where it has a folder, Add folder where it has none", () => {
+  it("Exports is one list like Media, and Finals a row per workspace", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
-    expect(html.match(/>Exports</g)).toHaveLength(2);
-    expect(html.match(/>Change</g)).toHaveLength(2); // its Exports and its Finals
-    expect(html.match(/>Add folder</g)).toHaveLength(3); // the other workspace's Exports and Finals, Media
+    expect(html.match(/>Exports</g)).toHaveLength(1);
+    expect(html.match(/>Change</g)).toHaveLength(1); // ws-a's Finals
+    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, the other workspace's Finals, Media
     expect(html).toContain("/Volumes/Footage SSD/Songs");
   });
 
-  it("a Finished videos folder of a workspace that is not listed still has its row", () => {
-    const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...library, id: "lib_2", workspace: "ws-elsewhere", origin: { host: "dev_1", path: "/Volumes/Other/Creator Toolset" } }]);
-    expect(html.match(/>Exports</g)).toHaveLength(3);
-    expect(html).toContain("/Volumes/Other/Creator Toolset");
+  it("every Exports folder is listed, one of a workspace that is not listed too", () => {
+    const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...library, id: "lib_2", workspace: "ws-elsewhere", origin: { host: "dev_1", path: "/Volumes/Other/Exports" } }]);
+    expect(html.match(/aria-label="Actions for Creator Toolset"/g)).toHaveLength(2);
+    expect(html).toContain("/Volumes/Other/Exports");
   });
 
-  it("with one workspace picked, Finished videos is one row", () => {
+  it("with one workspace picked, Exports is one list", () => {
     const html = shown({ id: "ws-a", all: false, cacheKey: "ws-a" }, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
     expect(html.match(/>Exports</g)).toHaveLength(1);
     expect(html).toContain("/Volumes/Footage SSD/Songs");
@@ -146,5 +147,46 @@ describe("a folder's state on its computer", () => {
     const html = page([{ ...f, folderState: "needs_ok" }]);
     expect(html).toContain("Needs your OK");
     expect(html).not.toContain("Allow on this Mac");
+  });
+});
+
+describe("Show in Finder, in the Mac app", () => {
+  const g = globalThis as unknown as { window?: unknown; document?: unknown };
+  const asks: string[] = [];
+  // the Mac app's bridge and marks: this Mac is dev_1; `reveal`: it shows Settings → Folders folders
+  const inMacApp = (reveal: boolean, answer: object = { ok: true }) => {
+    g.window = { webkit: { messageHandlers: { thisMac: { postMessage: async (m: string) => (asks.push(m), answer) } } } };
+    g.document = { documentElement: { dataset: { macDevice: "dev_1", ...(reveal ? { macFolderReveal: "1" } : {}) } } };
+  };
+  afterEach(() => {
+    delete g.window;
+    delete g.document;
+    asks.length = 0;
+  });
+
+  it("is on Exports, Finals and each Media folder of this Mac", () => {
+    inMacApp(true);
+    const html = page([library]);
+    expect(html.match(/>Show in Finder</g)).toHaveLength(1); // Finals' button; Exports has it in its menu, like Media
+    expect(html).toContain('aria-label="Actions for Creator Toolset"');
+    expect(canRevealFolder(library)).toBe(true);
+  });
+
+  it("is left out without the Mac app's mark, and for a folder on another computer", () => {
+    inMacApp(false);
+    expect(page([library])).not.toContain("Show in Finder");
+    expect(page([library])).not.toContain('aria-label="Actions for Footage"');
+    inMacApp(true);
+    const elsewhere = { ...library, origin: { host: "dev_2", path: "/Volumes/Other/Creator Toolset" } };
+    expect(canRevealFolder(elsewhere)).toBe(false);
+    expect(page([elsewhere])).not.toContain("Show in Finder");
+  });
+
+  it("asks the Mac app by the folder's path and passes on its answer", async () => {
+    inMacApp(true);
+    await revealFolder(library);
+    expect(asks).toEqual([`reveal:${JSON.stringify({ folder: "/Volumes/Footage SSD/Creator Toolset" })}`]);
+    inMacApp(true, { ok: false, problem: "Folder not found on this Mac" });
+    await expect(revealFolder(library)).rejects.toThrow("Folder not found on this Mac");
   });
 });

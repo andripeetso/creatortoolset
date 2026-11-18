@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LIBRARY_NAME, THIS_COMPUTER, connectFor, finalsFolderOf, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, THIS_COMPUTER, connectFor, finalsFolderOf, folderIn, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
-import { chooseFolderOnMac, macImports, pairThisMac, thisMacState, type ThisMacState } from "@/lib/thisMac";
+import { chooseFolderOnMac, macImports, pairThisMac, thisMacBridge, thisMacState, type ThisMacState } from "@/lib/thisMac";
 import { folderGrant, foldersChanged } from "@/lib/local-files";
 import { thisMacDevice } from "@/lib/providers";
 import { timeAgo } from "@/lib/exports";
@@ -33,7 +33,6 @@ export const STORAGE_API = "/api/devices/storage";
 export const STORAGE_ALL = `${STORAGE_API}?all=1`;
 export const getStorage = () => call<StorageView>(STORAGE_API);
 // a new folder goes to the workspace the call works in; one is moved or removed by its id, whatever workspace it is in
-const makeLibrary = (b: MakeLibraryBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/library`, "POST", b, workspace);
 const addStorageFolder = (b: AddFolderBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b, workspace);
 const moveStorageFolder = (id: string, workspaces: string[] | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspaces } satisfies MoveFolderBody);
 const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
@@ -52,6 +51,25 @@ const nameOf = (devices: Computer[], host: string) =>
 /** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage too). */
 const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.origin.host)} · ${f.origin.path}`;
 
+/** Show in Finder for a folder on this very Mac, in a Mac app that shows Settings → Folders folders (its mark). */
+export const canRevealFolder = (f?: StorageFolder): f is StorageFolder =>
+  !!f && !!thisMacBridge() && !!thisMacDevice() && f.origin.host === thisMacDevice() && typeof document !== "undefined" && document.documentElement.dataset.macFolderReveal === "1";
+
+/** The Mac app shows the folder only when the window's server lists it as one of this Mac's (Reveal.swift). */
+export async function revealFolder(f: StorageFolder): Promise<void> {
+  const r = (await thisMacBridge()!.postMessage(`reveal:${JSON.stringify({ folder: f.origin.path })}`)) as unknown as { ok?: boolean; problem?: string };
+  if (!r?.ok) throw new Error(r?.problem ?? "Folder not found on this Mac");
+}
+
+function RevealButton({ folder }: { folder?: StorageFolder }) {
+  if (!canRevealFolder(folder)) return null;
+  return (
+    <Button size="sm" variant="outline" onClick={() => revealFolder(folder).catch((e: Error) => saveFailed(e.message))}>
+      Show in Finder
+    </Button>
+  );
+}
+
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
 /** Almost full: under 20 GB free, or under a tenth of the disk. */
 export const isFull = (d: { freeGb: number; totalGb?: number }) => d.freeGb < 20 || (d.totalGb !== undefined && d.freeGb / d.totalGb < 0.1);
@@ -62,15 +80,6 @@ export const spaceOf = (d: { freeGb: number; totalGb?: number }, mark = true) =>
     {mark && isFull(d) && <span className="text-amber-600 dark:text-amber-400"> · almost full</span>}
   </>
 );
-
-/** The disk a folder sits on: the longest drive path that holds it, else the system disk. A computer that reports no
- *  drives is read from the server's own disks (a local install: the computer is this machine). */
-function diskOf(f: StorageFolder, devices: Computer[], serverDisks: Disk[]): Disk | undefined {
-  const host = devices.find((d) => d.id === f.origin.host);
-  const disks = host && !disksOf(host).length ? serverDisks : host ? disksOf(host) : [];
-  const holding = disks.filter((d) => d.path !== "/" && f.origin.path.startsWith(`${d.path.replace(/\/$/, "")}/`));
-  return [...holding].sort((a, b) => b.path.length - a.path.length)[0] ?? disks.find((d) => d.path === "/");
-}
 
 /** A drive as the Drive select names it: "BABY ACROBATICS · nas-name · 2.8 TB free" (a network share says whose it is). */
 export const driveLabel = (d: Disk) => `${d.name}${d.network ? ` · ${d.server && d.server !== d.name ? d.server : "Network"}` : ""} · ${size(d.freeGb)} free`;
@@ -185,114 +194,23 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
 const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
- * Where finished videos and Media are kept: Exports is one folder per workspace, the Media folders any
- * number, each folder a row with its menu. Used by Settings → Folders and the setup's Folders step.
- * `w`: the workspace Settings shows (workspace-pick.tsx). With all of them shown each row carries its workspace and
- * Finished videos has a row per workspace; left out (setup), the rows are the window's workspace's.
+ * Where finished videos and Media are kept: Exports (one folder per workspace) and Media (any number), each a header row
+ * with Add folder and its folders indented under it with their menu, and Finals. Used by Settings → Folders and the
+ * setup's Folders step. `w`: the workspace Settings shows (workspace-pick.tsx). With all of them shown each row carries
+ * its workspace and Finals has a row per workspace; left out (setup), the rows are the window's workspace's.
  */
 export function Storage({ devices, storage, onChanged, w }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; w?: SettingsWorkspace }) {
   if (!storage) return null;
-  const libraries = storage.folders.filter((f) => f.role === "library");
-  const each = w?.all ? w.workspaces.map((p) => ({ id: p.id as string | null, library: libraries.find((f) => f.workspace === p.id) })) : [{ id: w?.id ?? null, library: libraries[0] }];
-  // one that no listed workspace has (another account's workspace, a second one in one workspace) still shows
-  const rest = w?.all ? libraries.filter((f) => !each.some((r) => r.library === f)).map((f) => ({ id: f.workspace ?? null, library: f })) : [];
+  const each = w?.all ? w.workspaces.map((p) => p.id as string | null) : [w?.id ?? null];
   const shared = { devices, serverDisks: storage.serverDisks, onChanged };
   return (
     <Card>
-      {[...each, ...rest].map((r, i) => (
-        <LibraryRow key={r.library?.id ?? r.id ?? "own"} first={i === 0} workspace={r.id} tagged={!!w?.all} library={r.library} {...shared} />
+      <FolderList role="library" storage={storage} w={w} {...shared} />
+      {each.map((id, i) => (
+        <FinalsRow key={id ?? "own"} first={i === 0} workspace={id} w={w} here={storage.here} folders={w?.all ? storage.folders.filter((f) => folderIn(f, (own) => own === id)) : storage.folders} {...shared} />
       ))}
-      {each.map((r, i) => (
-        <FinalsRow key={r.id ?? "own"} first={i === 0} workspace={r.id} w={w} here={storage.here} folders={w?.all ? storage.folders.filter((f) => f.workspace === r.id) : storage.folders} {...shared} />
-      ))}
-      <SourceRows storage={storage} w={w} {...shared} />
+      <FolderList role="footage" storage={storage} w={w} {...shared} />
     </Card>
-  );
-}
-
-/** Finished videos: the Library the app saves to, one per workspace. Change applies from then on and moves nothing. */
-function LibraryRow({ library, workspace, tagged, first, devices, serverDisks, onChanged }: {
-  library?: StorageFolder; workspace: string | null; tagged: boolean; first: boolean; devices: Computer[]; serverDisks: Disk[]; onChanged: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const disk = library && diskOf(library, devices, serverDisks);
-  const where = library && (
-    <>
-      {nameOf(devices, library.origin.host)} · {library.origin.path}
-      {disk && <> · {spaceOf(disk)}</>}
-    </>
-  );
-  return (
-    <>
-      <Row
-        id={first ? "finished-videos" : undefined}
-        title="Exports"
-        description={where || "Where finished edits are saved. A Creator Toolset folder is made in the folder you pick."}
-        status={
-          tagged || library?.error ? (
-            <span className="flex flex-col gap-0.5">
-              {tagged && <WorkspaceTag id={workspace} />}
-              {library?.error && <Status tone="broken">{library.error}</Status>}
-            </span>
-          ) : undefined
-        }
-        control={
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            {library ? "Change" : "Add folder"}
-          </Button>
-        }
-      />
-      <LibraryDialog open={open} onOpenChange={setOpen} devices={devices} serverDisks={serverDisks} change={!!library} workspace={workspace} onChanged={onChanged} />
-    </>
-  );
-}
-
-function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, workspace, onChanged }: {
-  open: boolean; onOpenChange: (o: boolean) => void; devices: Computer[]; serverDisks: Disk[]; change: boolean; workspace: string | null; onChanged: () => void;
-}) {
-  const [pickHost, setPickHost] = useState("");
-  const [folder, setFolder] = useState("~");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const host = devices.some((d) => d.id === pickHost) ? pickHost : devices[0]?.id ?? "";
-  const where = `${folder.trim().replace(/\/+$/, "") || "~"}/${LIBRARY_NAME}`;
-
-  const submit = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await makeLibrary({ host, disk: folder.trim() }, workspace);
-      onOpenChange(false);
-      onChanged();
-    } catch (x) {
-      setErr(msg(x));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <FormDialog
-      open={open}
-      onOpenChange={(o) => { onOpenChange(o); setErr(null); }}
-      title="Exports"
-      submitLabel={change ? "Change folder" : "Add folder"}
-      onSubmit={submit}
-      busy={busy}
-      submitDisabled={devices.length === 0}
-      error={err}
-    >
-      {devices.length === 0 ? (
-        <Status tone="attention">Needs a computer</Status>
-      ) : (
-        <>
-          <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
-          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={folder} onPick={setFolder} onLook={onChanged} />
-          <Input value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="~" aria-label="Folder" />
-          <p className="font-mono text-xs text-muted-foreground">{where}</p>
-        </>
-      )}
-    </FormDialog>
   );
 }
 
@@ -313,9 +231,12 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
         description={f ? whereOf(f, devices) : undefined}
         status={w?.all ? <WorkspaceTag id={workspace} /> : undefined}
         control={
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            {f ? "Change" : "Add folder"}
-          </Button>
+          <span className="flex gap-2">
+            <RevealButton folder={f} />
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+              {f ? "Change" : "Add folder"}
+            </Button>
+          </span>
         }
       />
       <AddFolderDialog open={open} onOpenChange={setOpen} role="finals" devices={devices} serverDisks={serverDisks} here={here} w={w && { ...w, id: workspace, many: false }} onChanged={onChanged} />
@@ -323,21 +244,28 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
   );
 }
 
+/** The two lists of folders: Exports (where finished edits are saved, one per workspace) and Media (what the Media Library takes in). */
+const LISTS = {
+  library: { id: "finished-videos", title: "Exports", description: "Where finished edits are saved: the folder you pick, one per workspace." },
+  footage: { id: "footage-folder", title: "Media", description: "Footage, music and sound effects. The Media Library takes in everything in these folders." },
+} as const;
+
 /**
- * The folders the Media Library takes in (footage, music, sound effects: the Library sorts them), under one row with
- * Add folder, each folder indented under it (a music folder from before is one of them: api/lib/storage.ts mediaFolders).
+ * One list of folders under a row with Add folder, each folder indented under it with its menu: Exports, or the folders
+ * the Media Library takes in (footage, music, sound effects: the Library sorts them; a music folder from before is one of
+ * them, api/lib/storage.ts mediaFolders). Only folders someone added are listed.
  */
-function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
-  storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
+function FolderList({ role, storage, devices, serverDisks, w, onChanged }: {
+  role: keyof typeof LISTS; storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const mine = sourcesOf(storage.folders);
+  const mine = storage.folders.filter((f) => f.role === role);
   return (
     <>
       <Row
-        id="footage-folder"
-        title="Media"
-        description="Footage, music and sound effects. The Media Library takes in everything in these folders."
+        id={LISTS[role].id}
+        title={LISTS[role].title}
+        description={LISTS[role].description}
         control={
           <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
             Add folder
@@ -347,19 +275,19 @@ function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
       {mine.map((f) => (
         <FolderRow key={f.id} folder={f} devices={devices} w={w} onChanged={onChanged} />
       ))}
-      <AddFolderDialog open={open} onOpenChange={setOpen} role="footage" devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
     </>
   );
 }
 
 /**
- * One Media folder: its name, the computer it is on and its full path, its workspace while every workspace
- * is shown, and its menu: Workspaces (any of them, or all), Remove.
+ * One Media or Exports folder: its name, the computer it is on and its full path, its workspaces (always for Exports with
+ * two or more workspaces: which one saves where), and its menu: Show in Finder (on this Mac), Workspaces (any of them, or
+ * all), Remove.
  */
 function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
-  // the Library's own Footage comes with the Finished videos folder: they are not moved or removed here
-  const own = !f.id.includes(":");
-  const tagged = !!w?.all;
+  const exports = f.role === "library";
+  const tagged = !!w?.all || (exports && !!w?.many);
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -411,25 +339,25 @@ function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder
         </span>
       }
       actions={
-        own ? (
-          <RowMenu
-            label={`Actions for ${f.name}`}
-            items={[
-              ...(w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
-              {
-                label: "Remove",
-                destructive: true,
-                confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
-                onSelect: () => removeStorageFolder(f.id).then(onChanged),
-              },
-            ]}
-          />
-        ) : undefined
+        <RowMenu
+          label={`Actions for ${f.name}`}
+          items={[
+            ...(w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
+            ...(canRevealFolder(f) ? [{ label: "Show in Finder", onSelect: () => revealFolder(f) }] : []),
+            {
+              label: "Remove",
+              destructive: true,
+              confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
+              onSelect: () => removeStorageFolder(f.id).then(onChanged),
+            },
+          ]}
+        />
       }
     />
     {picking && w && (
       <WorkspacesDialog
         title={`Workspaces that use ${f.name}`}
+        note={exports ? "Each workspace saves to one Exports folder. Switching a workspace on here takes it off the folder it saved to." : undefined}
         workspaces={w.workspaces}
         on={workspacesOf(f)}
         save={(to) => moveStorageFolder(f.id, to).then(onChanged, (e: Error) => (saveFailed(e.message), Promise.reject(e)))}
@@ -579,8 +507,8 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
       }
     };
     try {
-      // a Finals folder is read project by project, never taken in whole
-      if (role !== "finals" && here.includes(host)) await big.check(p, add);
+      // a Finals folder is read project by project and Exports is written to, never taken in whole
+      if (role === "footage" && here.includes(host)) await big.check(p, add);
       else await add();
     } finally {
       setBusy(false);
@@ -588,7 +516,7 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
   };
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={hosts.length === 0} error={err}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title={role === "finals" ? "Finals folder" : role === "library" ? "Exports folder" : "Add folder"} submitLabel={role === "finals" ? "Change folder" : "Add folder"} onSubmit={submit} busy={busy} submitDisabled={hosts.length === 0} error={err}>
       {hosts.length === 0 ? (
         <Status tone="attention">Needs a computer</Status>
       ) : (
@@ -598,9 +526,9 @@ function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here 
           )}
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={hosts.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
           <DriveSelect disks={host === NEW_MAC ? [] : disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "finals" ? "/Volumes/Drive/Finals" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
+          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "finals" ? "/Volumes/Drive/Finals" : role === "library" ? "/Volumes/Drive/Exports" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
           {/* chosen in the Mac app's picker: the Mac app may read it (and copy a dropped final into it) with no Allow after */}
-          {macImports() && (role === "finals" || host === NEW_MAC || host === thisMacDevice()) && (
+          {macImports() && (role !== "footage" || host === NEW_MAC || host === thisMacDevice()) && (
             <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => void chooseFolderOnMac().then((p) => p && setPath(p))}>
               Choose folder
             </Button>

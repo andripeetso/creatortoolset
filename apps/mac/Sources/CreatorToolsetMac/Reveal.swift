@@ -12,6 +12,8 @@ import Foundation
 // the same answer.
 // A copy of the library (`reveal:{"library","copy","path"}`, Settings → Media Library → Copies; LibraryCopyJob.swift): the
 // page names the folder, and it is shown only when it is an existing folder whose marker is that copy's.
+// A Settings → Folders folder (`reveal:{"folder"}`: Exports, Finals, a Media folder): the page names its path, and it is
+// shown only when the window's server lists it as one of this Mac's folders and it is an existing folder here.
 
 func isRevealAsk(_ ask: String) -> Bool { ask.hasPrefix("reveal:") }
 
@@ -45,6 +47,22 @@ func copyRevealAsk(_ ask: String) -> (library: String, copy: String, path: Strin
     return (library, copy, path)
 }
 
+/// A Settings → Folders folder's path in a reveal ask (`reveal:{"folder"}`); nil when it is not one.
+func folderRevealAsk(_ ask: String) -> String? {
+    guard isRevealAsk(ask),
+          let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst("reveal:".count).utf8))) as? [String: Any],
+          let path = json["folder"] as? String, !path.isEmpty, path.count <= 1000
+    else { return nil }
+    return path
+}
+
+/// One folder of the server's Settings → Folders list (GET /api/devices/storage, contracts/storage.ts StorageFolder).
+struct ListedFolder: Decodable {
+    struct Origin: Decodable { let host: String; let path: String }
+    let role: String
+    let origin: Origin
+}
+
 enum Reveal {
     static let problem = "That file isn't on this Mac."
     static let folderProblem = "Folder not found on this Mac"
@@ -69,6 +87,38 @@ enum Reveal {
     @MainActor static func answerCopy(_ path: String, library: String, copy: String) async -> [String: Any] {
         let real = await withCheckedContinuation { c in
             DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: copyFolder(path, library: library, copy: copy)) }
+        }
+        guard let real else { return ["ok": false, "problem": folderProblem] }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: real)])
+        return ["ok": true]
+    }
+
+    /// The paths of this Mac's folders in the server's list, as listed: each folder made on `hosts` (this Mac's device id,
+    /// "this-computer" on the server this Mac runs), with a Library's Footage/ and Finished/ (its Media and Finals folders).
+    static func ownFolders(_ folders: [ListedFolder], hosts: Set<String>) -> Set<String> {
+        Set(folders.filter { hosts.contains($0.origin.host) }.flatMap { f in
+            f.role == "library" ? [f.origin.path, f.origin.path + "/Footage", f.origin.path + "/Finished"] : [f.origin.path]
+        })
+    }
+
+    /// The real path of a listed folder of this Mac's, or nil: one of `listed`, then ("~/" is this Mac's home) an absolute
+    /// path with no `.`/`..` parts and an existing folder. One on a network disk that doesn't answer is not shown.
+    static func listedFolder(_ path: String, listed: Set<String>) -> String? {
+        guard listed.contains(path) else { return nil }
+        let full = path == "~" || path.hasPrefix("~/") ? NSHomeDirectory() + path.dropFirst() : path
+        let parts = full.split(separator: "/")
+        guard full.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return nil }
+        return Places.shared.guarded(full) { () -> String? in
+            guard let real = realPath(full) else { return nil }
+            var directory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: real, isDirectory: &directory) && directory.boolValue ? real : nil
+        } ?? nil
+    }
+
+    /// Shows a listed folder selected in Finder; the reply is { ok: true } or { ok: false, problem }.
+    @MainActor static func answerFolder(_ path: String, listed: Set<String>) async -> [String: Any] {
+        let real = await withCheckedContinuation { c in
+            DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: listedFolder(path, listed: listed)) }
         }
         guard let real else { return ["ok": false, "problem": folderProblem] }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: real)])
@@ -108,6 +158,7 @@ enum Reveal {
 }
 
 private struct ClipFile: Decodable { let sourcePath: String? }
+private struct FolderList: Decodable { let folders: [ListedFolder] }
 private struct ReviewFile: Decodable {
     struct Asset: Decodable { let versions: [Version] }
     struct Version: Decodable { let n: Int; let local: String? }
@@ -120,6 +171,11 @@ extension Site {
     func clipPath(library: String, asset: String, device: String? = nil) async -> String? {
         let asker = device?.addingPercentEncoding(withAllowedCharacters: .alphanumerics).map { "?device=\($0)" } ?? ""
         return ((try? await get("/api/library/\(library)/assets/\(asset)\(asker)")) as ClipFile?)?.sourcePath
+    }
+
+    /// Every workspace's Settings → Folders folders, as the server lists them to this window's account (none on a failure).
+    func listedFolders() async -> [ListedFolder] {
+        ((try? await get("/api/devices/storage?all=1")) as FolderList?)?.folders ?? []
     }
 
     /// A Review version's own file on the computer that made it, as the server tells the video's managers (nil else).
