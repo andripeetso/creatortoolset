@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -337,5 +337,23 @@ describe("each workspace", () => {
     expect((await app.request(`/api/devices/storage/folders/${id}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-a" } })).status).toBe(200);
     expect(watchedIn("ws-b")).toEqual([]);
     expect((await all()).some((f) => f.id === id)).toBe(false);
+  });
+
+  it("Change Exports: a new Library brings no Media folder, an older Library's Footage stays one", async () => {
+    const { storageFilePath } = await import("./lib/storage");
+    type View = { folders: { role: string; origin: { path: string } }[] };
+    const media = async () => ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": "ws-b" } })).json()) as View).folders.filter((f) => f.role === "footage").map((f) => f.origin.path);
+    const change = (disk: string) => app.request("/api/devices/storage/library", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" }, body: JSON.stringify({ host: "this-computer", disk }) });
+    const before = await media();
+    const exportsA = path.join(dir, "Exports A");
+    expect((await change(exportsA)).status).toBe(200);
+    expect(await media()).toEqual(before);
+    // a Library made before 2026-11-17 (setup may have put clips in its Footage/)
+    const file = storageFilePath(process.env.DATA_DIR!, USER);
+    const st = JSON.parse(readFileSync(file, "utf-8")) as { folders: { role: string; createdAt: number }[] };
+    for (const f of st.folders) if (f.role === "library") f.createdAt = 0;
+    writeFileSync(file, JSON.stringify(st));
+    expect((await change(path.join(dir, "Exports B"))).status).toBe(200);
+    expect(await media()).toEqual([...before, `${exportsA}/Creator Toolset/Footage`]);
   });
 });

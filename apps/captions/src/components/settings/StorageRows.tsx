@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
-import { chooseFolderOnMac, macImports, pairThisMac, thisMacState, type ThisMacState } from "@/lib/thisMac";
+import { chooseFolderOnMac, macImports, pairThisMac, thisMacBridge, thisMacState, type ThisMacState } from "@/lib/thisMac";
 import { folderGrant, foldersChanged } from "@/lib/local-files";
 import { thisMacDevice } from "@/lib/providers";
 import { timeAgo } from "@/lib/exports";
@@ -51,6 +51,25 @@ const nameOf = (devices: Computer[], host: string) =>
 
 /** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage too). */
 const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.origin.host)} · ${f.origin.path}`;
+
+/** Show in Finder for a folder on this very Mac, in a Mac app that shows Settings → Folders folders (its mark). */
+export const canRevealFolder = (f?: StorageFolder): f is StorageFolder =>
+  !!f && !!thisMacBridge() && !!thisMacDevice() && f.origin.host === thisMacDevice() && typeof document !== "undefined" && document.documentElement.dataset.macFolderReveal === "1";
+
+/** The Mac app shows the folder only when the window's server lists it as one of this Mac's (Reveal.swift). */
+export async function revealFolder(f: StorageFolder): Promise<void> {
+  const r = (await thisMacBridge()!.postMessage(`reveal:${JSON.stringify({ folder: f.origin.path })}`)) as unknown as { ok?: boolean; problem?: string };
+  if (!r?.ok) throw new Error(r?.problem ?? "Folder not found on this Mac");
+}
+
+function RevealButton({ folder }: { folder?: StorageFolder }) {
+  if (!canRevealFolder(folder)) return null;
+  return (
+    <Button size="sm" variant="outline" onClick={() => revealFolder(folder).catch((e: Error) => saveFailed(e.message))}>
+      Show in Finder
+    </Button>
+  );
+}
 
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
 /** Almost full: under 20 GB free, or under a tenth of the disk. */
@@ -237,9 +256,12 @@ function LibraryRow({ library, workspace, tagged, first, devices, serverDisks, o
           ) : undefined
         }
         control={
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            {library ? "Change" : "Add folder"}
-          </Button>
+          <span className="flex gap-2">
+            <RevealButton folder={library} />
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+              {library ? "Change" : "Add folder"}
+            </Button>
+          </span>
         }
       />
       <LibraryDialog open={open} onOpenChange={setOpen} devices={devices} serverDisks={serverDisks} change={!!library} workspace={workspace} onChanged={onChanged} />
@@ -313,9 +335,12 @@ function FinalsRow({ folders, workspace, first, w, here, devices, serverDisks, o
         description={f ? whereOf(f, devices) : undefined}
         status={w?.all ? <WorkspaceTag id={workspace} /> : undefined}
         control={
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            {f ? "Change" : "Add folder"}
-          </Button>
+          <span className="flex gap-2">
+            <RevealButton folder={f} />
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+              {f ? "Change" : "Add folder"}
+            </Button>
+          </span>
         }
       />
       <AddFolderDialog open={open} onOpenChange={setOpen} role="finals" devices={devices} serverDisks={serverDisks} here={here} w={w && { ...w, id: workspace, many: false }} onChanged={onChanged} />
@@ -354,7 +379,7 @@ function SourceRows({ storage, devices, serverDisks, w, onChanged }: {
 
 /**
  * One Media folder: its name, the computer it is on and its full path, its workspace while every workspace
- * is shown, and its menu: Workspaces (any of them, or all), Remove.
+ * is shown, and its menu: Show in Finder (on this Mac), Workspaces (any of them, or all), Remove.
  */
 function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
   // the Library's own Footage comes with the Finished videos folder: they are not moved or removed here
@@ -411,17 +436,20 @@ function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder
         </span>
       }
       actions={
-        own ? (
+        own || canRevealFolder(f) ? (
           <RowMenu
             label={`Actions for ${f.name}`}
             items={[
-              ...(w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
-              {
-                label: "Remove",
-                destructive: true,
-                confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
-                onSelect: () => removeStorageFolder(f.id).then(onChanged),
-              },
+              ...(canRevealFolder(f) ? [{ label: "Show in Finder", onSelect: () => revealFolder(f) }] : []),
+              ...(own && w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
+              ...(own
+                ? [{
+                    label: "Remove",
+                    destructive: true,
+                    confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
+                    onSelect: () => removeStorageFolder(f.id).then(onChanged),
+                  }]
+                : []),
             ]}
           />
         ) : undefined

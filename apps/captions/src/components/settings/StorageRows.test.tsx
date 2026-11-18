@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { Storage, type Computer, driveLabel, driveOf, driveStart, folderLine, shareAddress } from "./StorageRows";
+import { Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
 import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
@@ -146,5 +146,45 @@ describe("a folder's state on its computer", () => {
     const html = page([{ ...f, folderState: "needs_ok" }]);
     expect(html).toContain("Needs your OK");
     expect(html).not.toContain("Allow on this Mac");
+  });
+});
+
+describe("Show in Finder, in the Mac app", () => {
+  const g = globalThis as unknown as { window?: unknown; document?: unknown };
+  const asks: string[] = [];
+  // the Mac app's bridge and marks: this Mac is dev_1; `reveal`: it shows Settings → Folders folders
+  const inMacApp = (reveal: boolean, answer: object = { ok: true }) => {
+    g.window = { webkit: { messageHandlers: { thisMac: { postMessage: async (m: string) => (asks.push(m), answer) } } } };
+    g.document = { documentElement: { dataset: { macDevice: "dev_1", ...(reveal ? { macFolderReveal: "1" } : {}) } } };
+  };
+  afterEach(() => {
+    delete g.window;
+    delete g.document;
+    asks.length = 0;
+  });
+
+  it("is on Exports, Finals and each Media folder of this Mac", () => {
+    inMacApp(true);
+    const html = page([library]);
+    expect(html.match(/>Show in Finder</g)).toHaveLength(2); // Exports and Finals buttons
+    expect(html).toContain('aria-label="Actions for Footage"'); // the Library's own Footage: a menu with Show in Finder only
+  });
+
+  it("is left out without the Mac app's mark, and for a folder on another computer", () => {
+    inMacApp(false);
+    expect(page([library])).not.toContain("Show in Finder");
+    expect(page([library])).not.toContain('aria-label="Actions for Footage"');
+    inMacApp(true);
+    const elsewhere = { ...library, origin: { host: "dev_2", path: "/Volumes/Other/Creator Toolset" } };
+    expect(canRevealFolder(elsewhere)).toBe(false);
+    expect(page([elsewhere])).not.toContain("Show in Finder");
+  });
+
+  it("asks the Mac app by the folder's path and passes on its answer", async () => {
+    inMacApp(true);
+    await revealFolder(library);
+    expect(asks).toEqual([`reveal:${JSON.stringify({ folder: "/Volumes/Footage SSD/Creator Toolset" })}`]);
+    inMacApp(true, { ok: false, problem: "Folder not found on this Mac" });
+    await expect(revealFolder(library)).rejects.toThrow("Folder not found on this Mac");
   });
 });

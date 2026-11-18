@@ -3,8 +3,8 @@ import type { FolderState } from "./places";
 /**
  * Where the files are (Settings → Storage). The app enforces one thing: where it saves. That is the Library,
  * one "Creator Toolset" folder (finished videos, edit files, downloads) with Footage/ and Finished/ inside it.
- * Media is one list of sources: folders read in place, any number, never moved. The Library's own Footage/ counts as
- * one too, so a user with no system of their own just drops files there. There is no music folder: the Media Library
+ * Media is one list of sources: folders read in place, any number, never moved. A Library made before 2026-11-17 counts its
+ * own Footage/ as one too (ownFootage). There is no music folder: the Media Library
  * tells songs and sound effects apart itself (owner, 2026-11-17).
  *
  * Every folder has a small marker file (MARKER_FILE, JSON `{ "id", "role", "name" }`), so every computer finds it by the
@@ -144,10 +144,14 @@ export interface StorageState {
   folders: StorageFolder[];
 }
 
-/** The folders the Media Library takes in: the listed ones, plus the Library's own Footage/ (same host, same reach, one
- *  level down). Derived entries carry the Library's id with the subfolder appended. */
+/** Whether a Library's own Footage/ is a Media folder: only for one made before 2026-11-17, where setup and card copies
+ *  may have put clips. Choosing an Exports folder since then never adds a Media folder no one added (owner, 2026-11-18). */
+export const ownFootage = (lib: Pick<StorageFolder, "createdAt">): boolean => lib.createdAt < Date.UTC(2026, 10, 17);
+
+/** The folders the Media Library takes in: the listed ones, plus an older Library's own Footage/ (ownFootage; same host,
+ *  same reach, one level down). Derived entries carry the Library's id with the subfolder appended. */
 export function sourcesOf(folders: StorageFolder[]): StorageFolder[] {
-  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => inLibrary(lib, "footage"));
+  const derived = folders.filter((f) => f.role === "library" && ownFootage(f)).map((lib) => inLibrary(lib, "footage"));
   return [...folders.filter((f) => f.role !== "library"), ...derived];
 }
 

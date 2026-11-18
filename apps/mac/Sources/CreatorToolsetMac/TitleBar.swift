@@ -312,6 +312,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // a library copy's Show in Finder (the "reveal:" ask with copy and path, Reveal.swift): Settings → Media Library → Copies
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macCopyReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // a Settings → Folders folder's Show in Finder (the "reveal:" ask with folder, Reveal.swift): StorageRows.tsx canRevealFolder
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macFolderReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the Media Library's copy, progress, cancel, scan and print asks ("import:", Import.swift): src/lib/thisMac.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macImport = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // here or away: the places:check and places:connect asks and the mac-places event (Places.swift; contracts/places.ts);

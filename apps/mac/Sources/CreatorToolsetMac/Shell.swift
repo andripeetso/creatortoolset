@@ -187,6 +187,13 @@ final class Shell: NSObject, ObservableObject {
                     Task { done(await Reveal.answerCopy(c.path, library: c.library, copy: c.copy)) }
                     return
                 }
+                // a Settings → Folders folder: only one the window's server lists as this Mac's
+                if let path = folderRevealAsk(ask) {
+                    var hosts: Set<String> = self.runsHere ? ["this-computer"] : []
+                    if let id = DeviceVault.deviceID(for: self.base.host ?? "") { hosts.insert(id) }
+                    Task { done(await Reveal.answerFolder(path, listed: Reveal.ownFolders(await self.client().listedFolders(), hosts: hosts))) }
+                    return
+                }
                 let clip = revealAsk(ask), review = reviewRevealAsk(ask)
                 guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
                 let here = self.runsHere && self.server != nil

@@ -189,6 +189,9 @@ describe("where the files are: the library and its files", () => {
     expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "pc")).toBe(true);
     expect(hostPath("/Mnt/CT/Footage/a.mp4", [lib], "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
     expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "laptop")).toBe(false);
+    // a Library chosen since 2026-11-17 is Exports only: its Footage/ is no Media folder no one added
+    const made = { ...lib, createdAt: Date.UTC(2026, 10, 18) };
+    expect(sourcesOf([made])).toEqual([]);
   });
 });
 

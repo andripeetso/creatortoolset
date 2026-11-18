@@ -36,6 +36,31 @@ final class RevealTests: XCTestCase {
         XCTAssertNil(copyRevealAsk(#"reveal:{"library":"lib","asset":"a1"}"#))
     }
 
+    func testASettingsFolderIsShownOnlyWhenTheServerListsItAsThisMacs() throws {
+        let ask = #"reveal:{"folder":"/Volumes/Tiny Acrobatics/Exports/Creator Toolset"}"#
+        XCTAssertEqual(folderRevealAsk(ask), "/Volumes/Tiny Acrobatics/Exports/Creator Toolset")
+        XCTAssertNil(copyRevealAsk(ask), "not a copy's ask")
+        XCTAssertNil(revealAsk(ask), "not a clip's ask")
+        XCTAssertNil(folderRevealAsk(#"reveal:{"folder":""}"#))
+        XCTAssertNil(folderRevealAsk(#"reveal:{"library":"lib","copy":"cp1","path":"/x"}"#))
+
+        let json = #"{"folders":[{"id":"lib","role":"library","origin":{"host":"mac-1","path":"\#(path("Exports"))"}},"#
+            + #"{"id":"m1","role":"footage","origin":{"host":"mac-1","path":"\#(path("Footage"))"}},"#
+            + #"{"id":"m2","role":"footage","origin":{"host":"pc-2","path":"\#(path("Footagebar"))"}}]}"#
+        struct List: Decodable { let folders: [ListedFolder] }
+        let folders = try JSONDecoder().decode(List.self, from: Data(json.utf8)).folders
+        let listed = Reveal.ownFolders(folders, hosts: ["mac-1"])
+        XCTAssertEqual(listed, [path("Exports"), path("Exports/Footage"), path("Exports/Finished"), path("Footage")])
+
+        XCTAssertNotNil(Reveal.listedFolder(path("Footage"), listed: listed))
+        XCTAssertNil(Reveal.listedFolder(path("Footagebar"), listed: listed), "another computer's folder")
+        XCTAssertNil(Reveal.listedFolder(path("Footage/Day 1"), listed: listed), "not a listed folder")
+        XCTAssertNil(Reveal.listedFolder(path("Exports"), listed: listed), "listed, not on this Mac's disk")
+        XCTAssertNil(Reveal.listedFolder(path("secret.txt"), listed: [path("secret.txt")]), "a file is not a folder")
+        XCTAssertNil(Reveal.listedFolder(path("Footage/../Footagebar"), listed: [path("Footage/../Footagebar")]), "no .. parts")
+        XCTAssertNil(Reveal.listedFolder("Footage", listed: ["Footage"]), "relative")
+    }
+
     func testAServerElsewhereShowsAnExistingMediaFileWithNoFolderGranted() throws {
         XCTAssertNotNil(Reveal.check(path("Footage/Day 1/A001.MOV"), anyFile: false))
         XCTAssertNotNil(Reveal.check(path("Footagebar/B001.MOV"), anyFile: false))

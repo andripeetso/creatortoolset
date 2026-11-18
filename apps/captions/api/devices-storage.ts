@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, folderIn, okFolderPath, ownFootage, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { deviceByHost, deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { pluginStorageFolders } from "./lib/plugin";
@@ -264,7 +264,7 @@ storageApp.get("/", async (c) => {
 });
 
 /** The Library: "Creator Toolset" inside `disk` on one computer ("/" or "~" = its home folder). Choosing another
- *  place applies from then on: nothing moves, and the old Library's Footage stays listed as a Media folder. */
+ *  place applies from then on: nothing moves, and the old Library's Footage, when it was a Media folder (ownFootage), stays one. */
 storageApp.post("/library", async (c) => {
   const user = c.get("user").username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -282,7 +282,7 @@ storageApp.post("/library", async (c) => {
     if (old) {
       st.folders = st.folders.filter((f) => f !== old);
       const at = `${old.origin.path}/${LIBRARY_SUBFOLDERS.footage}`;
-      if (!st.folders.some((f) => f.role === "footage" && f.origin.host === old.origin.host && f.origin.path === at))
+      if (ownFootage(old) && !st.folders.some((f) => f.role === "footage" && f.origin.host === old.origin.host && f.origin.path === at))
         st.folders.push({ id: randomUUID(), role: "footage", name: LIBRARY_SUBFOLDERS.footage, origin: { host: old.origin.host, path: at }, make: false, createdAt: now, reach: {}, ...(workspace ? { workspace } : {}) });
     }
     const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
