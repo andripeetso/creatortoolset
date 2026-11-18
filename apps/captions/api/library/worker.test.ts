@@ -120,6 +120,18 @@ describe("a transcript whose speech model did not download", () => {
 });
 
 describe("the order clips are prepared in", () => {
+  it("skips a trashed clip's jobs, which hold nothing back, and runs them once it is restored", () => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at) VALUES ('a_t', 'lib_a', 'video', 't', 'v_t', 'local', 1, 1)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('v_t', 'a_t', 1, 'k/v_t', 1, 'v_t', 'processing', 'local', 1)").run();
+    for (const k of ["thumb", "transcribe"]) enqueueJob(d, "lib_a", "v_t", k, "local");
+    enqueueJob(d, "lib_a", "v_live", "transcribe", "local");
+    expect(next("pictures")).toBeNull();
+    expect(next("transcripts")).toBe("v_live transcribe"); // the trashed clip's picture does not hold the library back
+    expect(next("transcripts")).toBeNull();
+    d.prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'a_t'").run();
+    expect([next("pictures"), next("transcripts")]).toEqual(["v_t thumb", "v_t transcribe"]);
+  });
+
   it("every clip's picture first, then the slow steps; in a lane, all lighter copies before the duplicate checks", () => {
     // v1 came in and was probed, v2 and v3 came in after: their probes and v1's picture are still to do
     for (const k of ["proxy", "fingerprint", "transcribe", "thumb"]) enqueueJob(d, "lib_a", "v1", k, "local");

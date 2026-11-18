@@ -139,6 +139,9 @@ export function holdForLimit(db: ReturnType<typeof libraryDb>, actor: string | n
 
 const marks = (a: readonly unknown[]) => a.map(() => "?").join(",");
 
+/** A job's clip is out of the trash. A trashed clip's jobs wait queued (no AI spent on it) and run again if it is restored. */
+const NOT_TRASHED = "NOT EXISTS (SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = j.version_id AND a.trashed_at IS NOT NULL)";
+
 /**
  * The job a lane of `kinds` runs next (the order above). A picture that waits for its retry holds nothing back. A
  * description waits while its clip's transcript is still to come, since it reads what is said.
@@ -149,7 +152,7 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
     ...takingClips,
     ...(db
       // a picture step left waiting for a computer (leftToComputers) holds nothing back: nothing here runs it
-      .prepare(`SELECT DISTINCT library_id FROM jobs WHERE kind IN (${marks(PICTURES)}) AND (state = 'running' OR (state = 'queued' AND run_after <= ? AND IFNULL(error, '') NOT IN (?, ?)))`)
+      .prepare(`SELECT DISTINCT library_id FROM jobs j WHERE kind IN (${marks(PICTURES)}) AND (state = 'running' OR (state = 'queued' AND run_after <= ? AND IFNULL(error, '') NOT IN (?, ?) AND ${NOT_TRASHED}))`)
       .all(...PICTURES, now, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER) as { library_id: string }[]).map((r) => r.library_id),
   ];
   const first = firstClips();
@@ -157,7 +160,7 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
   // pictures) before the other slow steps: never before another clip's picture
   const row = db
     .prepare(
-      `SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(kinds)}) AND id NOT IN (${marks(skip)})
+      `SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(kinds)}) AND id NOT IN (${marks(skip)}) AND ${NOT_TRASHED}
          AND (kind IN (${marks(PICTURES)}) OR library_id NOT IN (${marks(held)}))
          AND NOT (kind = 'describe' AND EXISTS (SELECT 1 FROM jobs t WHERE t.version_id = j.version_id AND t.kind = 'transcribe' AND t.state IN ('queued', 'running')))
        ORDER BY kind IN (${marks(PICTURES)}) DESC, version_id IN (${marks(first)}) DESC, CASE kind ${kinds.map((_, i) => `WHEN ? THEN ${i}`).join(" ")} END, id LIMIT 1`,

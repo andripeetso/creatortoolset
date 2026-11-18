@@ -134,7 +134,7 @@ function status(libraryId: string): WatchStatus {
   }));
   const missing = (
     db()
-      .prepare("SELECT COUNT(*) AS n FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.state = 'missing'")
+      .prepare("SELECT COUNT(*) AS n FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.state = 'missing' AND a.trashed_at IS NULL")
       .get(libraryId) as { n: number }
   ).n;
   return { allowed: watchAllowed(), folders, missing };
@@ -704,10 +704,11 @@ function serverPlace(versionId: string, owner: string, file: string, st: { size:
 /**
  * Referenced originals that went away turn `missing`; ones that came back return to `ready`, or to `processing` with
  * their failed jobs queued again (the worker fails a job whose file is gone). Rows and files are never deleted here.
+ * A trashed clip is left as it is: its file may go with it, which is no fault; it is checked again once restored.
  */
 async function refreshMissing(): Promise<void> {
   const refs = db()
-    .prepare("SELECT v.id, v.state, v.source_path, v.created_by, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.source_path IS NOT NULL")
+    .prepare("SELECT v.id, v.state, v.source_path, v.created_by, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.source_path IS NOT NULL AND a.trashed_at IS NULL")
     .all() as { id: string; state: string; source_path: string; created_by: string; library_id: string }[];
   for (const v of refs) {
     const st = await stat(v.source_path).catch(() => null);
