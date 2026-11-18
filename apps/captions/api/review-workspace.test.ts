@@ -20,6 +20,8 @@ for (const [id, at] of [["first", 1], ["second", 2]] as const)
 mkdirSync(path.join(dataDir, "workshop", "users"), { recursive: true });
 writeFileSync(path.join(dataDir, "workshop", "users", "ana.json"), JSON.stringify({ currentProjectId: "first" }));
 
+const { libraryDb: libs } = await import("./library/db");
+for (const ws of ["ana", "first", "second"]) libs().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'L', 'local', '{\"upload\":\"all\"}', 0)").run(`lib_${ws}_all`, ws);
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
   c.set("user", { username: "ana", role: "user", cloud: false, off: [] });
@@ -52,9 +54,18 @@ async function upload(name: string, workspace: string, to: { assetId?: string; p
   return asset as { id: string };
 }
 
+it("a Review upload into a library that keeps no originals is refused at its start, and taken again once the library takes them", async () => {
+  libs().prepare(`UPDATE libraries SET settings = '{"upload":"none"}'`).run();
+  expect(await call("/uploads", post({ name: "Tiny R.mp4", size: 4 }, "first"))).toMatchObject({ code: "upload_refused" });
+  libs().prepare(`UPDATE libraries SET settings = '{"upload":"all"}'`).run();
+  expect(await call("/uploads", post({ name: "Tiny R.mp4", size: 4 }, "first"))).toHaveProperty("id");
+});
+
 it("keeps each workspace's videos and folders to it; a video from before workspaces is the first one's", async () => {
   const a = await upload("Tiny A.mp4", "second");
   await upload("Tiny B.mp4", "first");
+  // the libraries the first uploads made take originals (their Upload is all), so a version can follow
+  libs().prepare(`UPDATE libraries SET settings = '{"upload":"all"}'`).run();
   // a new version sent from the other window stays where its video is
   await upload("Tiny A2.mp4", "first", { assetId: a.id });
   await addVersion(undefined, { owner: "ana", name: "Old.mp4", mime: "video/mp4", bytes: 1 }, async () => {});

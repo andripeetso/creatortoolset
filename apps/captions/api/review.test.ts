@@ -20,6 +20,8 @@ const inode = (p: string) => statSync(p).ino;
 
 const { reviewApp, addVersion, browserPlayable, cleanDrawing, parseProbe, readMeta } = await import("./review");
 const { paintStrokes } = await import("./work/tasks/review");
+const { libraryDb } = await import("./library/db");
+libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_owner_all', 'owner', 'L', 'local', '{\"upload\":\"all\"}', 0)").run();
 // frames and reference looks are computer tasks: here the server's video work is on, so the server makes them
 (await import("./work/server-work")).writeServerWork({ on: true });
 

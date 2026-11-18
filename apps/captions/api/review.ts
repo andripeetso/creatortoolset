@@ -33,6 +33,7 @@ import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
 import { ensureLibrary } from "./library/access";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
+import { mayReceive } from "./library/upload-gate";
 import { enqueueJob } from "./library/jobs";
 import { probe as probeSummary } from "./library/media/probe";
 import { indexAsset } from "./library/query";
@@ -220,7 +221,7 @@ type Ref = { id: string; name: string; mime: string; bytes: number; kind: "image
 const REFS_PER_VERSION = 100;
 
 /** `direct`: the upload's object in the server's bucket (the upload relay's "direct" kind), finished by complete. */
-export type UploadInit = UploadState & { assetId?: string; projectId?: string; workspace?: string; direct?: { key: string; uploadId: string }; relay?: { id: string; vid: string } };
+export type UploadInit = UploadState & { assetId?: string; projectId?: string; workspace?: string; libraryId?: string; direct?: { key: string; uploadId: string }; relay?: { id: string; vid: string } };
 
 interface Project {
   id: string;
@@ -1011,9 +1012,14 @@ export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<R
   if (projectId && !(await ownsProject(user.username, projectId))) {
     return c.json({ error: "Project not found" }, 404);
   }
+  // the library the bytes land in: under Upload none the server takes no original (decision 6), asked again at each part
+  const libraryId = assetId ? ownLibrary(assetId, user.username) : libraryFor(user.username);
+  const gate = mayReceive("original", { id: libraryId }, "person");
+  if (!gate.ok) return c.json(gate.body, gate.status);
   return {
     total: size,
     partSize: PART_SIZE,
+    libraryId,
     name: cleanText(body?.name, 160) || "Untitled",
     mime: cleanText(body?.mime, 80) || "video/mp4",
     owner: user.username,
@@ -1046,9 +1052,17 @@ reviewApp.get("/uploads/:uid/parts", async (c) => {
   return c.json({ partSize: state.partSize, parts: await receivedParts(uploadDir(uid), state) });
 });
 
-reviewApp.post("/uploads/:uid/parts/:partNumber", (c) => {
+/** Each part and the finish ask the gate again: a library switched to none mid-upload takes nothing more (decision 6). */
+const receiveRefusal = (c: Context<{ Variables: AuthVars }>, state: UploadInit | null): Response | null => {
+  const gate = mayReceive("original", { id: state?.libraryId ?? "" }, "person");
+  return gate.ok ? null : c.json(gate.body, gate.status);
+};
+
+reviewApp.post("/uploads/:uid/parts/:partNumber", async (c) => {
   const uid = c.req.param("uid");
   if (!UUID.test(uid)) return c.json({ error: "Invalid part" }, 400);
+  const refusal = receiveRefusal(c, await readUploadState<UploadInit>(uploadDir(uid)));
+  if (refusal) return refusal;
   return receivePart(c, uploadDir(uid), c.get("user"));
 });
 
@@ -1138,6 +1152,8 @@ reviewApp.post("/uploads/:uid/complete", async (c) => {
   const uid = c.req.param("uid");
   const state = UUID.test(uid) ? await readUploadState<UploadInit>(uploadDir(uid)) : null;
   if (!state) return c.json({ error: "No upload in progress" }, 409);
+  const refusal = receiveRefusal(c, state);
+  if (refusal) return refusal;
   return finishUpload(c, state, (dest) => assembleParts(uploadDir(uid), dest, state));
 });
 
@@ -2369,6 +2385,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const v = await viewer(c);
     const n = Number(c.req.param("n"));
     if (!v || !v.meta.versions.some((x) => x.n === n)) return c.json({ error: "Not found" }, 404);
+    const refs = mayReceive("original", { id: ownLibrary(v.meta.id, v.meta.owner) }, "person");
+    if (!refs.ok) return c.json(refs.body, refs.status);
     const mime = (c.req.header("content-type") ?? "").split(";")[0].trim().toLowerCase();
     // never SVG: it would run scripts when opened from this origin
     const kind = mime.includes("svg") ? null : mime.startsWith("video/") || mime === "image/gif" ? "video" : mime.startsWith("image/") ? "image" : null;

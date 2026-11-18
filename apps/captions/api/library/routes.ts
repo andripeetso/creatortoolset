@@ -1006,7 +1006,7 @@ libraryApp.get("/:id/where", async (c) => {
  * card's link, api/mcp-cards.ts) or source. A clip that plays as it is plays from this disk, not from its proxy in the
  * cloud. Null: no such kind.
  */
-export function mediaFile(versionId: string, kind: string): { key?: string; type: string; onMac?: string } | null {
+export function mediaFile(versionId: string, kind: string): { key?: string; type: string; onMac?: string; what?: "original" | "proxy" } | null {
   const v = db()
     .prepare("SELECT v.source_key, v.mime, v.probe, v.mac_path, v.mac_device, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
     .get(versionId) as { source_key: string; mime: string | null; probe: string | null; mac_path: string | null; mac_device: string | null; library_id: string } | undefined;
@@ -1017,33 +1017,33 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
       | undefined)?.storage_key ?? undefined;
   const original = v.mime ?? "application/octet-stream";
   if (kind === "thumb") return { key: derived("thumb"), type: "image/jpeg" };
-  if (kind === "proxy") return { key: derived("proxy"), type: "video/mp4" };
+  if (kind === "proxy") return { key: derived("proxy"), type: "video/mp4", what: "proxy" };
   if (kind === "sprite") return { key: derived("sprite"), type: "image/jpeg" };
   // the original is on a Mac (indexed there, or uploaded to a library that keeps only proxies): it plays from its proxy
   // when it has one, and a download says where the original is
   if (v.mac_path && kind === "source") return { type: original, onMac: macPlace(v.mac_path, v.mac_device) };
-  if (v.mac_path && kind === "play") return { key: derived("proxy"), type: "video/mp4" };
+  if (v.mac_path && kind === "play") return { key: derived("proxy"), type: "video/mp4", what: "proxy" };
   if (kind === "play") {
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const proxy = p && proxiesInCloud(v.library_id) && !needsProxy(p) ? undefined : derived("proxy");
-    return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original };
+    return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original, what: proxy ? "proxy" : "original" };
   }
-  if (kind === "source") return { key: v.source_key, type: original };
+  if (kind === "source") return { key: v.source_key, type: original, what: "original" };
   return null;
 }
 
 /**
- * What the server may stream of a version to a viewer (local-first decision 5): a video's file, asked of mayServe as its
- * original (the source, or a play that falls back to it) or its proxy. Pictures pass. Review, Finals and team proxies are
- * mayServe's own exceptions.
+ * What the server may stream of a version to a viewer (local-first decision 5): the file mediaFile picked, asked of
+ * mayServe as its original or its proxy (`what`, never a key comparison: a proxies library's proxy can share its key
+ * with the source). Pictures pass. Review, Finals and team proxies are mayServe's own exceptions.
  */
-export async function serveGate(versionId: string, kind: string, key: string | undefined): Promise<Received> {
-  if (!["play", "proxy", "source"].includes(kind) || !key) return { ok: true };
-  const v = db().prepare("SELECT v.source_key, a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
-    | { source_key: string; asset_id: string; library_id: string }
+export async function serveGate(versionId: string, kind: string, file: { key?: string; what?: "original" | "proxy" }): Promise<Received> {
+  if (!["play", "proxy", "source"].includes(kind) || !file.key) return { ok: true };
+  const v = db().prepare("SELECT a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
+    | { asset_id: string; library_id: string }
     | undefined;
   if (!v || inReview(v.asset_id)) return { ok: true }; // a Review video is Review's, served by it (R2)
-  return mayServe({ id: v.library_id, versionId }, kind === "source" || key === v.source_key ? "original" : "proxy");
+  return mayServe({ id: v.library_id, versionId }, file.what ?? (kind === "proxy" ? "proxy" : "original"));
 }
 
 /** Whether the library made a playable copy of this version (its proxy). A card's video link is signed only for that copy, never for the original (api/mcp-cards.ts). */
@@ -1093,7 +1093,7 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (file.onMac) return c.json({ error: `The original is on ${file.onMac}, not on this server`, code: "on_mac" }, 409);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
-  const gate = await serveGate(versionId, kind, file.key);
+  const gate = await serveGate(versionId, kind, file);
   if (!gate.ok) return c.json(gate.body, gate.status);
   // a clip whose proxy was cleared (Library settings → Storage) gets it again when it is opened
   if (kind === "play" && unproxied(v.library_id, versionId).length) {

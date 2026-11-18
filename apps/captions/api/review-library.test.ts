@@ -18,6 +18,7 @@ const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 const { reviewApp, readMeta, reviewToLibrary } = await import("./review");
 const { libraryApp } = await import("./library/routes");
 const { libraryDb } = await import("./library/db");
+libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_owner_all', 'owner', 'L', 'local', '{\"upload\":\"all\"}', 0)").run();
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {

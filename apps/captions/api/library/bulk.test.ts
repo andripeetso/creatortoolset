@@ -54,7 +54,7 @@ function seed(id: string, title: string, content: string, o: { kind?: string; fi
 }
 
 beforeAll(() => {
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_z', 'owner-z', 'Z', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_z', 'owner-z', 'Z', 'local', '{\"upload\":\"all\"}', 0)").run();
   seed("c1", "Clip", "first clip bytes");
   seed("c2", "Clip", "second clip bytes");
   seed("hid", "Secret", "hidden clip bytes");

@@ -12,6 +12,7 @@ import { storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
+import { mayServe, type Received } from "./upload-gate";
 import { blobs, libraryDb } from "./db";
 import { frameAt, frameWaits, whenFramed, type FrameInput } from "../lib/clip-frame";
 import { externalCanSee, externalRefById } from "./refs";
@@ -813,16 +814,24 @@ collectionApp.get("/:id/pieces/:pid/zip", async (c) => {
   if (!seen.items.length && all.items.length) return notFound(c);
   try {
     const files: { path: string; name: string }[] = [];
+    let refused: Received | undefined;
     for (const [n, item] of seen.items.entries()) {
       if (!item.versionId) continue; // an external ref has no file in this library
       const v = db()
-        .prepare("SELECT v.source_key, v.source_path, v.mime, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
-        .get(item.versionId) as { source_key: string; source_path: string | null; mime: string | null; title: string } | undefined;
+        .prepare("SELECT v.source_key, v.source_path, v.mime, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
+        .get(item.versionId) as { source_key: string; source_path: string | null; mime: string | null; title: string; library_id: string } | undefined;
       if (!v) continue;
+      // under Upload none the server gives no original (decision 6): the zip carries the others and names the refusal
+      const gate = await mayServe({ id: v.library_id, versionId: item.versionId }, "original");
+      if (!gate.ok) {
+        refused ??= gate;
+        continue;
+      }
       const base = (item.label || v.title).replace(/[^\w.-]+/g, "_").slice(0, 80) || "version";
       const ext = path.extname(v.source_path ?? "") || EXT_OF[v.mime ?? ""] || "";
       files.push({ path: await blobs.localCopy(v.source_key), name: `${String(n + 1).padStart(2, "0")}-${base}${ext}` });
     }
+    if (refused && !refused.ok) return c.json(refused.body, refused.status);
     if (!files.length) return c.json({ error: "No versions to save", code: "conflict" }, 409);
     const zip = await storedZip(files);
     const name = `${row.label.replace(/[^\w.-]+/g, "_").slice(0, 80) || "finals"}.zip`;

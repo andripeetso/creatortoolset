@@ -35,7 +35,7 @@ writeFileSync(
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { hasMembers, mayReceive, mayServe, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
-const { serveGate } = await import("./routes");
+const { mediaFile, serveGate } = await import("./routes");
 const { acceptLibraryFile } = await import("../work/library-package");
 const { pairDevice, setDeviceWork } = await import("../lib/devices");
 const { createUser } = await import("../users");
@@ -252,7 +252,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/library/derived.ts": "P2: the send branch reads the gate's setting (uploadFor); a phone's made proxy (parseMade) carries its SHA-256, checked by mayReceive in routes.ts",
   "apps/captions/api/lib/uploads.ts": "PASS: the helpers (appendBody, writeBody, receivePart); gated by their callers",
   "apps/captions/api/lib/incoming.ts": "PASS: requestBodyStream, a helper; gated by its callers",
-  "apps/captions/api/review.ts": "PASS: a person's own upload into a review (decision 1); Review is serving (decision 5)",
+  "apps/captions/api/review.ts": "P0: uploadInit (start, also the relay), the part and finish routes and the refs route call mayReceive",
   "apps/captions/api/projects.ts": "P3a: POST /, POST /:id/clips and every /:id/clips/:clipId/original route call mayReceive (takesOriginal): a person's upload is taken, a computer's own file (?fromPath=) by the clip's library, none off This Mac without one",
   "apps/captions/api/clips.ts": "OPEN P3d: Video Notes recordings stay on the recorder's computer (decision 19)",
   "apps/captions/api/transcribe.ts": "OPEN P3f: speech for transcription",
@@ -317,9 +317,9 @@ describe("A11: nothing streams an original under none (decision 5, R2)", () => {
 
   // the play route itself needs a registered source policy (canSee); usage.test.ts covers the route end to end
   it("the serve gate: under none the original is refused, pictures pass; On This Mac serves its own", async () => {
-    expect(await serveGate("vs_none", "play", "k")).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused", message: REFUSED_NONE } });
-    expect(await serveGate("vs_none", "source", "k")).toMatchObject({ ok: false, status: 409 });
-    expect((await serveGate("vs_none", "thumb", "thumb-key")).ok).toBe(true);
+    expect(await serveGate("vs_none", "play", { key: "k", what: "original" })).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused", message: REFUSED_NONE } });
+    expect(await serveGate("vs_none", "source", { key: "k", what: "original" })).toMatchObject({ ok: false, status: 409 });
+    expect((await serveGate("vs_none", "thumb", { key: "thumb-key" })).ok).toBe(true);
     process.env.CT_LOCAL = "1";
     try {
       expect((await mayServe({ id: "lib_none", versionId: "vs_none" }, "original")).ok).toBe(true);
@@ -328,17 +328,56 @@ describe("A11: nothing streams an original under none (decision 5, R2)", () => {
     }
   });
 
-  // the prevention test: a new route that streams a clip's file must ask mayServe, or be a computer's own job read named here
-  it("every file that streams a clip's file asks mayServe, or is a computer's own job read (PASS, named)", () => {
-    const streams = filesMatching("apps/captions/api", /mediaFile\(|serveBlob\(/, /\.ts$/);
+  // a proxy whose key is the source's (a proxies library that dropped its original) is the proxy, not the original
+  it("a proxy under the source's key is served as the proxy: by its library's setting, not refused as an original", async () => {
+    const sharedVersion = (id: string, lib: string) => {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, ?, 'video', 'Shared', 'tinyacrobatics', 0)").run(`a_${id}`, lib);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, 'pk', 900, 'x', 'tinyacrobatics', 0, 'ready')").run(id, `a_${id}`);
+      d.prepare("INSERT INTO derivatives (version_id, kind, storage_key) VALUES (?, 'proxy', 'pk')").run(id);
+    };
+    sharedVersion("vs_shared_p", "lib_p");
+    sharedVersion("vs_shared_none", "lib_none");
+    const play = mediaFile("vs_shared_p", "play");
+    expect(play).toMatchObject({ key: "pk", what: "proxy" });
+    expect((await serveGate("vs_shared_p", "play", play!)).ok).toBe(true);
+    expect((await serveGate("vs_shared_none", "play", mediaFile("vs_shared_none", "play")!)).ok).toBe(false);
+    expect((await serveGate("vs_shared_p", "source", { key: "pk", what: "original" })).ok).toBe(false);
+  });
+
+  // the prevention test: a route that reads a clip's file from the server must ask mayServe, or be named here with its reason
+  it("every file that streams or reads a server copy of a clip asks mayServe, or is named with its reason (PASS, OPEN)", () => {
+    const streams = filesMatching("apps/captions/api", /mediaFile\(|serveBlob\(|localCopy\(|blobs\.locate\(/, /\.ts$/);
     expect(streams).toEqual(Object.keys(STREAMS).sort());
     for (const [f, why] of Object.entries(STREAMS)) if (why.startsWith("mayServe")) expect(readFileSync(path.join(repo, f), "utf8"), f).toMatch(/mayServe\(|serveGate\(/);
   });
 });
 
+// every file that touches a server copy: mayServe-gated (a viewer's route), PASS (not a viewer's stream: a picture,
+// an adapter, a computer's own job, an upload being taken), or OPEN (a server job on a held copy: P3 gates it)
 const STREAMS: Record<string, string> = {
-  "apps/captions/api/library/routes.ts": "mayServe: GET /media/:versionId/:kind (play, proxy, source)",
+  "apps/captions/api/library/routes.ts": "mayServe: GET /media/:versionId/:kind (serveGate); finishDirect hashes an upload just taken; serveBlob is asked by its callers",
   "apps/captions/api/library/shares.ts": "mayServe: a shared link's media route (serveGate)",
+  "apps/captions/api/library/bulk.ts": "mayServe: the library's zip of originals (skips any the Upload refuses)",
+  "apps/captions/api/library/collections.ts": "mayServe: pieces zip (Save all). PASS: the cover frame and cover picture are pictures",
+  "apps/captions/api/editor/media.ts": "mayServe: an export's originals (mediaPaths refuses them, 409)",
   "apps/captions/api/devices.ts": "PASS: a computer's own job reads (its footage copy, its transcript proxy, its copy file), not a viewer",
   "apps/captions/api/work/library-package.ts": "PASS: a computer's own job reads (the light proxy, the original for its proxy), not a viewer",
+  "apps/captions/api/review.ts": "PASS: a Review upload being assembled (gated at start, each part and the finish)",
+  "apps/captions/api/library/pictures.ts": "PASS: a card's picture (a derivative; pictures pass under none)",
+  "apps/captions/api/library/attach.ts": "PASS: a thumbnail (a derivative)",
+  "apps/captions/api/library/smart.ts": "PASS: a picture the AI reads (pictures pass under none)",
+  "apps/captions/api/library/shots.ts": "PASS: kept sheets (derivatives)",
+  "apps/captions/api/work/pictures.ts": "PASS: a picture's thumbnail for a computer's work",
+  "apps/captions/api/library/db.ts": "PASS: the blob adapter wiring, no route",
+  "apps/captions/api/library/storage/types.ts": "PASS: the adapter interface",
+  "apps/captions/api/library/storage/local.ts": "PASS: the local adapter",
+  "apps/captions/api/library/storage/s3.ts": "PASS: the bucket adapter",
+  "apps/captions/api/library/storage/bunny.ts": "PASS: the bunny adapter",
+  "apps/captions/api/library/storage/blob-contract.ts": "PASS: the adapter contract test helper",
+  "apps/captions/api/library/access.ts": "OPEN P3a: versionSource hands a held copy to Caption Studio's open (search.ts) and its clip cache: server processing",
+  "apps/captions/api/library/locate.ts": "OPEN P3: the server's own backfill of a copy it holds (processing, not a viewer's stream)",
+  "apps/captions/api/library/worker.ts": "OPEN P3: the server's derivative workers read a held original (processing)",
+  "apps/captions/api/library/media/probe.ts": "OPEN P3: the server probes a held file (processing)",
+  "apps/captions/api/designs.ts": "OPEN P3: a design's video frame cut on the server (processing)",
+  "apps/captions/api/editor/preview.ts": "OPEN P3d: the editor's preview and measure read a held copy on the server (processing)",
 };

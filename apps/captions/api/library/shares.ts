@@ -313,7 +313,7 @@ publicShareApp.get("/s/:token/media/:versionId/:kind", async (c) => {
   if (!file) return notFound(c);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
   // a shared link streams what the library's Upload lets the server hold (decision 5): never an original under none
-  const gate = await serveGate(versionId, kind, file.key);
+  const gate = await serveGate(versionId, kind, file);
   if (!gate.ok) return c.json(gate.body, gate.status);
   const name = kind === "source" ? `${shareName(s).replace(/[^\w .-]/g, "_").slice(0, 120) || "download"}` : undefined;
   return serveBlob(c, file.key, file.type, name);

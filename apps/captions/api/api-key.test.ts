@@ -20,6 +20,7 @@ describe("AI access key", () => {
     expect((await app.request("/api/projects", { headers: auth })).status).toBe(401);
     expect((await app.request("/api/review/projects", { method: "POST", headers: auth })).status).toBe(401);
     // uploading a finished cut to Review, and only that
+    (await import("./library/db")).libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_keyowner_all', 'keyowner', 'L', 'local', '{\"upload\":\"all\"}', 0)").run();
     const up = await app.request("/api/review/uploads", {
       method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ name: "Cut.mp4", size: 3 }),
     });

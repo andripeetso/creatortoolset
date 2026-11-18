@@ -55,7 +55,7 @@ function seed(id: string, title: string, by: string) {
 const ids = (listing: any) => listing.items.map((i: any) => i.id).sort();
 
 beforeAll(() => {
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', '{\"upload\":\"all\"}', 0)").run();
   seed("e1", "Alpha reel", "owner-a");
   seed("e2", "Beta reel", "owner-a");
   seed("e3", "Alpha cut", "owner-a");

@@ -30,6 +30,8 @@ const { runTaskJob } = await import("./work/tasks");
 const { reviewApp, reviewJobsDone } = await import("./review");
 CLAIM_POLL.holdMs = 0;
 
+const { libraryDb: libs } = await import("./library/db");
+libs().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_tiny_all', 'tiny', 'L', 'local', '{\"upload\":\"all\"}', 0)").run();
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
   c.set("user", { username: "tiny", role: "user", cloud: false, off: [] });
