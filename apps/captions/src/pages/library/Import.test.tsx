@@ -86,13 +86,13 @@ describe("places and copies", () => {
 });
 
 describe("Look for new files", () => {
-  it("reads this workspace's footage and music folders on this Mac: a clip uploaded before is reconnected to its file there", async () => {
+  it("reads this workspace's Media folders on this Mac: a clip uploaded before is reconnected to its file there", async () => {
     document.documentElement.dataset.macDevice = "mac_1";
     const folder = (role: string, path: string, workspace?: string, host = "mac_1") => ({ id: path, role, name: path, origin: { host, path }, make: false, createdAt: 0, reach: {}, ...(workspace ? { workspace } : {}) });
     const view = {
       folders: [
         folder("footage", "/Volumes/Tiny/Game", "Tiny Game"),
-        folder("music", "/Volumes/Tiny/Game/Music", "Tiny Game"), // inside the one above: read with it
+        folder("footage", "/Volumes/Tiny/Game/Music", "Tiny Game"), // inside the one above: read with it
         folder("footage", "/Volumes/Tiny", "*"), // every workspace: a whole drive, left out
         folder("footage", "/Users/other/Footage", "Tiny Game", "mac_2"), // another computer's
         folder("finals", "/Volumes/Tiny/Finals", "Tiny Game"),

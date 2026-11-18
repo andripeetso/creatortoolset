@@ -83,6 +83,12 @@ describe("a folder added in setup", () => {
     // the second add is "already there" (the screen treats that as added); the watch list still has it once
     const again = await addSetupFolder(footage);
     expect(((await again.json()) as { error?: string }).error).toMatch(/already/);
+    // a folder inside it (an old MUSIC folder) is in it already: refused by name, not added nor watched
+    const songs = path.join(footage, "MUSIC");
+    mkdirSync(songs, { recursive: true });
+    const inner = await addSetupFolder(songs, "music");
+    expect(inner.status).toBe(400);
+    expect(((await inner.json()) as { error?: string }).error).toBe(`That folder is already in ${path.basename(footage)}`);
     expect(await watchedPaths()).toEqual([footage]);
     const st = (await (await app.request("/api/devices/storage")).json()) as { folders: { id: string; origin: { path: string } }[] };
     const id = st.folders.find((f) => f.origin.path === footage)!.id;

@@ -79,7 +79,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   connect: { title: "Connect your computers", hint: "Add a phone or another computer." },
   folders: {
     title: "Where are your videos?",
-    hint: "The folders with footage and music, read by the Editor and the Media Library.",
+    hint: "The folders with footage, music and sound effects, read by the Editor and the Media Library.",
   },
   how: { title: "How do you work best?", hint: "" },
   own: { title: "Add Creator Toolset to an AI app", hint: "Installs Creator Toolset in the AI apps on this computer." },

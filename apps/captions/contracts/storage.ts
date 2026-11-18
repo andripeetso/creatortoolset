@@ -1,8 +1,9 @@
 /**
  * Where the files are (Settings → Storage). The app enforces one thing: where it saves. That is the Library,
- * one "Creator Toolset" folder (finished videos, edit files, downloads) with Footage/, Music/ and Finished/ inside it.
- * Footage and Music are lists of sources: folders read in place, any number, never moved. The Library's own Footage/
- * and Music/ count as sources too, so a user with no system of their own just drops files there.
+ * one "Creator Toolset" folder (finished videos, edit files, downloads) with Footage/ and Finished/ inside it.
+ * Media is one list of sources: folders read in place, any number, never moved. The Library's own Footage/ counts as
+ * one too, so a user with no system of their own just drops files there. There is no music folder: the Media Library
+ * tells songs and sound effects apart itself (owner, 2026-11-17).
  *
  * Every folder has a small marker file (MARKER_FILE, JSON `{ "id", "role", "name" }`), so every computer finds it by the
  * marker on whatever drive it is connected, at whatever path. Kept per account on the server (storage.json in the
@@ -10,9 +11,9 @@
  */
 
 export const STORAGE_ROLES = [{ value: "footage", label: "Footage" }] as const;
-/** "library" is the one Library folder; footage and music are the source lists; "finals" is a workspace's Finals folder,
- *  one at most (none: the Library's Finished/, finalsFolderOf). */
-export type StorageRole = "footage" | "music" | "finals" | "library"; // "music": from before, read as footage (api/lib/storage.ts)
+/** "library" is the one Library folder; footage is the Media list; "finals" is a workspace's Finals folder, one at most
+ *  (none: the Library's Finished/, finalsFolderOf). A "music" folder from before is read as footage (api/lib/storage.ts). */
+export type StorageRole = "footage" | "finals" | "library";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 
 export const MARKER_FILE = ".creatortoolset-folder";
@@ -20,7 +21,7 @@ export const MARKER_FILE = ".creatortoolset-folder";
 export const THIS_COMPUTER = "this-computer";
 /** The library folder's name and the subfolder for each role inside it. */
 export const LIBRARY_NAME = "Creator Toolset";
-export const LIBRARY_SUBFOLDERS: Record<"footage" | "music" | "finished", string> = { footage: "Footage", music: "Music", finished: "Finished" };
+export const LIBRARY_SUBFOLDERS: Record<"footage" | "finished", string> = { footage: "Footage", finished: "Finished" };
 
 /** A drive or volume a computer reported: its name, where it is mounted, and its space (GB). A network share
  *  also says it is one (`network`) and which machine it lives on (`server`, e.g. the NAS's name). */
@@ -71,14 +72,14 @@ export interface StorageFolder {
   /** the workspace it belongs to (stamped when added), or EVERY_WORKSPACE; none = from before workspaces kept their
    *  own: the first brand's. A list sent to a page names the workspace each folder is in (api/devices-storage.ts) */
   workspace?: string;
-  /** the workspaces it is in when that is two or more (Settings → Folders, a footage or music folder's Workspaces);
+  /** the workspaces it is in when that is two or more (Settings → Folders, a Media folder's Workspaces);
    *  `workspace` is then the first of them, so a reader that knows only `workspace` keeps it to that one */
   workspaces?: string[];
   /** the share its drive is, on the computer that added it (api/lib/storage.ts mountOf); none: a disk of that computer's own */
   mount?: FolderMount;
 }
 
-/** A footage or music folder's `workspace` when every workspace uses it (Settings → Folders, "Use in every workspace"). */
+/** A Media folder's `workspace` when every workspace uses it (Settings → Folders, "Use in every workspace"). */
 export const EVERY_WORKSPACE = "*";
 
 /**
@@ -127,15 +128,15 @@ export interface StorageState {
   folders: StorageFolder[];
 }
 
-/** The folders the Media Library takes in: the listed ones, plus the Library's own Footage/ and Music/ (same host, same
- *  reach, one level down). Derived entries carry the Library's id with the subfolder appended. */
+/** The folders the Media Library takes in: the listed ones, plus the Library's own Footage/ (same host, same reach, one
+ *  level down). Derived entries carry the Library's id with the subfolder appended. */
 export function sourcesOf(folders: StorageFolder[]): StorageFolder[] {
-  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => (["footage", "music"] as const).map((sub) => ({ ...inLibrary(lib, sub), role: "footage" as const })));
+  const derived = folders.filter((f) => f.role === "library").flatMap((lib) => inLibrary(lib, "footage"));
   return [...folders.filter((f) => f.role !== "library"), ...derived];
 }
 
 /** The Library's own subfolder for `role` as a folder of its own: the same host and reach, one level down. */
-function inLibrary(lib: StorageFolder, role: "footage" | "music" | "finals"): StorageFolder {
+function inLibrary(lib: StorageFolder, role: "footage" | "finals"): StorageFolder {
   const sub = LIBRARY_SUBFOLDERS[role === "finals" ? "finished" : role];
   return {
     ...lib,
@@ -172,7 +173,7 @@ export interface AddFolderBody {
   path: string;
 }
 
-/** PATCH /api/devices/storage/folders/:id: the workspace a footage or music folder is in; null = every workspace. */
+/** PATCH /api/devices/storage/folders/:id: the workspace a Media folder is in; null = every workspace. */
 /** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before. */
 export type MoveFolderBody = { workspaces: string[] | null } | { workspace: string | null };
 

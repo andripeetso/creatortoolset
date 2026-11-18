@@ -117,14 +117,14 @@ export async function reconnectKnown(libraryId: string, known: Known[], seen: Se
 }
 
 /**
- * This workspace's own footage and music folders on this computer (Settings → Folders), when the server can't read this
+ * This workspace's own Media folders on this computer (Settings → Folders), when the server can't read this
  * computer itself (`here`): Look for new files reads them as places used where they are. A folder in every workspace is
  * left out (a whole drive would fill this workspace's library), and so is one this computer never found.
  */
 export function foldersHere(view: Pick<StorageView, "folders" | "here">, device: string): string[] {
   if (view.here?.includes(device)) return [];
   const paths = view.folders
-    .filter((f) => (f.role === "footage" || f.role === "music") && f.workspace !== EVERY_WORKSPACE)
+    .filter((f) => f.role === "footage" && f.workspace !== EVERY_WORKSPACE)
     .map((f) => f.reach[device]?.path ?? (f.origin.host === device ? f.origin.path : ""))
     .filter((p) => p.startsWith("/"));
   // a folder inside another listed one is read with it
@@ -133,7 +133,7 @@ export function foldersHere(view: Pick<StorageView, "folders" | "here">, device:
 
 /**
  * Look for new files, from the Mac app with the server elsewhere: each place used where it is (and the workspace's
- * footage and music folders on this computer, foldersHere) is read again on this
+ * Media folders on this computer, foldersHere) is read again on this
  * Mac, the files the library has already (by their fingerprint) are left out, and each new one is indexed where it is,
  * read by its address. One the library has at a path this computer doesn't know is reconnected (reconnectKnown). `onStep`
  * hears how far it is. Resolves to the numbers added and reconnected.

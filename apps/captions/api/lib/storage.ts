@@ -1,7 +1,7 @@
 import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { EVERY_WORKSPACE, LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 import { isWindowsPath, joinRoot, rootKey } from "../../contracts/places";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
@@ -18,13 +18,29 @@ export function storageFilePath(dataDir: string, user: string): string {
 export function parseStorageFile(raw: string): StorageState {
   try {
     const v = JSON.parse(raw) as Partial<StorageState> | null;
-    // a music folder from before is footage now: everything in a folder goes into the Media Library, which sorts songs
-    // and sound effects by itself (owner, 2026-11-17)
-    return { folders: Array.isArray(v?.folders) ? v.folders.map((f) => (f?.role === "music" ? { ...f, role: "footage" } : f)) : [] };
+    return { folders: Array.isArray(v?.folders) ? mediaFolders(v.folders) : [] };
   } catch (e) {
     console.warn(`[devices-storage] storage file unreadable, treated as empty: ${e instanceof Error ? e.message : e}`);
     return { folders: [] };
   }
+}
+
+/** A folder's workspaces, or null for every workspace (EVERY_WORKSPACE). One from before (no stamp) is its own "". */
+const placesOf = (f: StorageFolder): string[] | null => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? [f.workspace ?? ""]));
+
+/**
+ * The one Media list (owner, 2026-11-17: no Music folder in Settings → Folders): a "music" folder from before is a Media
+ * folder, and a Media folder inside another one of the same computer that is in all of its workspaces is left out, the
+ * outer one already brings its files into the Media Library. `places`: a folder's workspaces, null for every workspace.
+ */
+export function mediaFolders(folders: StorageFolder[], places = placesOf): StorageFolder[] {
+  const all = folders.map((f) => ((f?.role as string) === "music" ? { ...f, role: "footage" as const } : f));
+  const covers = (o: StorageFolder, f: StorageFolder) => {
+    const outer = places(o);
+    const inner = places(f);
+    return !outer || (!!inner && inner.every((w) => outer.includes(w)));
+  };
+  return all.filter((f) => f?.role !== "footage" || !all.some((o) => o !== f && o.role === "footage" && o.origin?.host === f.origin?.host && !!inside(f.origin.path, o.origin.path) && covers(o, f)));
 }
 
 /** The disk a path is on, read by the server (statfs). A path that does not exist yet (a Library not made) is read at its
