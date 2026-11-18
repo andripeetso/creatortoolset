@@ -20,7 +20,7 @@ export function shortLine(snippet: string, words: string): string {
   if (list.length <= MAX_WORDS) return part;
   const at = Math.max(0, list.findIndex(named));
   const from = Math.max(0, Math.min(at - 2, list.length - MAX_WORDS));
-  return `${from ? "…" : ""}${list.slice(from, from + MAX_WORDS).join(" ")}…`;
+  return `${from ? "…" : ""}${list.slice(from, from + MAX_WORDS).join(" ")}${from + MAX_WORDS < list.length ? "…" : ""}`;
 }
 
 /** The moments a search found inside clips (lines said, shots seen), closed until opened: a picture of each moment, a few words, the clip. */

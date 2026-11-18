@@ -51,7 +51,7 @@ import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
-import { AssetRow, AssetTile, clock, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
+import { AssetRow, AssetTile, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
 import { alreadyThere, UploadTray, type Upload as UploadItem } from "./library/Uploads";
 import { ClipView } from "./library/ClipView";
 import { FoundInClips } from "./library/FoundInClips";
