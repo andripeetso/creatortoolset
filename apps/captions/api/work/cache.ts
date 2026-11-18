@@ -13,7 +13,8 @@ import { env } from "../lib/env";
  */
 
 let account: string | null = null;
-const root = () => path.join(env.dataDir, "proxies");
+// the Mac's Download location (Settings → Storage › This computer) comes in as CT_PROXY_DIR (apps/mac Worker.swift)
+const root = () => process.env.CT_PROXY_DIR || path.join(env.dataDir, "proxies");
 
 /**
  * The account this worker runs for, from the claim answer (WorkClaim.account; one per worker, as its token is). The first
@@ -53,10 +54,11 @@ export const sizeOf = (file: string): number | null => {
   }
 };
 
-/** The size limit, when the person set one. */
-export const cacheLimit = (): number | undefined => {
+/** The size limit: 25 GB, or CT_PROXY_LIMIT (bytes) when set (UNIFIED-PRD M16). */
+export const CACHE_LIMIT_DEFAULT = 25 * 1024 ** 3;
+export const cacheLimit = (): number => {
   const n = Number(process.env.CT_PROXY_LIMIT);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
+  return Number.isFinite(n) && n > 0 ? n : CACHE_LIMIT_DEFAULT;
 };
 
 /** The versions kept offline, as the server last listed them. */
