@@ -8,13 +8,15 @@ import { env } from "../lib/env";
 import { deviceOf, listDevices, setDeviceWork } from "../lib/devices";
 import { libraryDb, libraryUpload } from "../library/db";
 import { readerOf } from "../library/reader";
+import { hasMembers } from "../library/upload-gate";
 import { assetRef, canSee } from "../library/sources";
 
 /**
  * The proxies a person keeps on their computers (design 6.3, PRD 4.4).
  *
  * Available offline, per person: `$DATA_DIR/offline/<user>.json { versions, collections, libraries }`, a clip's version, a
- * folder, or a whole library (Library settings → Keep on this computer). Each of their computers is sent the list on its
+ * folder, or a whole library (Library settings → Keep on this computer; with Upload off, once the library is shared with
+ * members and holds their proxies). Each of their computers is sent the list on its
  * claim (offlineFor) and keeps those proxies, never removed by its size limit; it downloads them while nothing else runs
  * (the offline route in routes.ts). Mounted at /api/library/offline:
  *   GET  /   → OfflineList
@@ -125,6 +127,12 @@ export async function claimExtras(deviceId: string, kept?: string[], cached?: st
   return { empty: true, ...extras };
 }
 
+/** Upload off, yet the library holds proxies: its computers sent them for the members it is shared with (report.ts). */
+const teamProxies = (libraryId: string): boolean =>
+  !!db()
+    .prepare("SELECT 1 FROM derivatives d JOIN asset_versions v ON v.id = d.version_id JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND d.kind = 'proxy' AND d.storage_key IS NOT NULL LIMIT 1")
+    .get(libraryId);
+
 export const offlineApp = new Hono<{ Variables: AuthVars }>();
 
 offlineApp.get("/", (c) => c.json(offlineOf(c.get("user").username)));
@@ -139,7 +147,7 @@ offlineApp.post("/", async (c) => {
   const libId = key === "versions" ? v?.library_id : key === "collections" ? (db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined)?.library_id : id;
   const ok = !!libId && (key === "versions" ? await mayRead(user, libId, v!.id, id) : !!(await readerOf(user, libId)));
   if (!ok) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (key === "libraries" && b.on && libraryUpload(id) === "none")
+  if (key === "libraries" && b.on && libraryUpload(id) === "none" && !(teamProxies(id) && (await hasMembers(id))))
     return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
   const list = offlineOf(user);
   const next = [...(list[key] ?? []).filter((x) => x !== id), ...(b.on ? [id] : [])];
