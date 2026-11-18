@@ -108,10 +108,10 @@ describe("library trash", () => {
     share("collection", "col_t", now + DAY_MS);   // the collection holds every clip in it (ast_col is in col_t)
     expect(trashHeld("ast_col", now)).toBe("behind a share link");
 
-    trashed("ast_review", 1, now);
-    libraryDb().prepare("DELETE FROM shares WHERE target_id = 'ast_review'").run();
-    mkdirSync(path.join(dir, "review", "ast_review"), { recursive: true });
-    writeFileSync(path.join(dir, "review", "ast_review", "meta.json"), "{}");
-    expect(trashHeld("ast_review", now)).toBe("in Review");
+    trashed("ast_rv_held", 1, now);
+    libraryDb().prepare("DELETE FROM shares WHERE target_id = 'ast_rv_held'").run();
+    mkdirSync(path.join(dir, "review", "ast_rv_held"), { recursive: true });
+    writeFileSync(path.join(dir, "review", "ast_rv_held", "meta.json"), "{}");
+    expect(trashHeld("ast_rv_held", now)).toBe("in Review");
   });
 });
