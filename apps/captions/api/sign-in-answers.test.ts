@@ -102,7 +102,12 @@ it("every sign-in route answers as it did before the sign-in code, for accounts 
   out["hosted app, no code"] = await seen(await req("POST", "/api/auth/app", { body: {} }));
   const verifier = "w".repeat(43);
   const code = mintAppCode(findUser("tina")!, createHash("sha256").update(verifier).digest("base64url"));
-  out["hosted app, its code"] = await seen(await req("POST", "/api/auth/app", { body: { code, verifier } }));
+  // the iPhone app's own session is the one sign-in that sets the app marker (a third signed part), so it is checked apart
+  const appAnswer = await req("POST", "/api/auth/app", { body: { code, verifier } });
+  const appSet = appAnswer.headers.get("set-cookie") ?? "";
+  expect(appAnswer.status).toBe(200);
+  expect(appSet).toMatch(/^cap_auth=[A-Za-z0-9_-]+\.[a-f0-9]{64}\.[a-f0-9]{64};/);
+  expect(((await (await req("GET", "/api/auth/check", { cookie: appSet.split(";")[0] })).json()) as { authed: boolean }).authed).toBe(true);
   const adminCookie = cookieOf(await req("POST", "/api/auth/login", { body: { username: "admin", password: "tinyacrobatics-owner" } }));
   const made = (await (await req("POST", "/api/workspace/invites", { cookie: adminCookie, body: { ai: "own", budgetUsd: 0 } })).json()) as { token: string };
   out["hosted invite, a new account"] = await seen(await req("POST", `/api/auth/invite/${made.token}`, { address: "198.51.100.5", body: { username: "tomas", password: "tomas-password-1" } }));
