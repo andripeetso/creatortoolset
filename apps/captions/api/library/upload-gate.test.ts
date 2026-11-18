@@ -460,3 +460,31 @@ const STREAMS: Record<string, string> = {
   "apps/captions/api/designs.ts": "OPEN P3: a design's video frame cut on the server (processing)",
   "apps/captions/api/editor/preview.ts": "OPEN P3d: the editor's preview and measure read a held copy on the server (processing)",
 };
+
+describe("U2 §4.6 library migration: set up what has clips; a shared library keeps the team's proxies", () => {
+  it("a dry run lists every change and writes none; a real run writes them; a second run changes nothing", async () => {
+    const { migrateLibraries } = await import("./migrate");
+    d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES
+      ('lib_mig_team', 'tinyacrobatics', 'T', 'local', '{"upload":"none","projectId":"ws_team"}', 0),
+      ('lib_mig_solo', 'tinyacrobatics', 'S', 'local', '{"upload":"none"}', 0),
+      ('lib_mig_empty', 'tinyacrobatics', 'E', 'local', '{}', 0),
+      ('lib_mig_set', 'tinyacrobatics', 'K', 'local', '{"upload":"all","setupAt":"2026-01-01T00:00:00.000Z"}', 0)`).run();
+    d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES
+      ('a_mig_team', 'lib_mig_team', 'video', 'V', 'tinyacrobatics', 0), ('a_mig_solo', 'lib_mig_solo', 'video', 'V', 'tinyacrobatics', 0),
+      ('a_mig_set', 'lib_mig_set', 'video', 'V', 'tinyacrobatics', 0)`).run();
+    const mine = (c: { libraryId: string }) => c.libraryId.startsWith("lib_mig_");
+    const dry = (await migrateLibraries({ dryRun: true, now: "2026-11-18T00:00:00.000Z" })).filter(mine);
+    expect(dry).toEqual([
+      { libraryId: "lib_mig_team", field: "setupAt", from: null, to: "2026-11-18T00:00:00.000Z" },
+      { libraryId: "lib_mig_team", field: "upload", from: "none", to: "proxies" },
+      { libraryId: "lib_mig_solo", field: "setupAt", from: null, to: "2026-11-18T00:00:00.000Z" },
+    ]);
+    expect(JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_team'").get() as { settings: string }).settings).not.toHaveProperty("setupAt");
+    await migrateLibraries({ now: "2026-11-18T00:00:00.000Z" });
+    const team = JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_team'").get() as { settings: string }).settings);
+    expect(team).toMatchObject({ upload: "proxies", setupAt: "2026-11-18T00:00:00.000Z" });
+    expect((await migrateLibraries()).filter(mine)).toEqual([]);
+    const kept = JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_set'").get() as { settings: string }).settings);
+    expect(kept).toMatchObject({ upload: "all", setupAt: "2026-01-01T00:00:00.000Z" });
+  });
+});
