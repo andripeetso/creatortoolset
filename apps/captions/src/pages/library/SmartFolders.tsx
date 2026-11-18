@@ -161,7 +161,7 @@ export function ReorganizeDialog({
               The AI reads the library's tags and up to 60 clips' descriptions and proposes two or three ways to sort it into folders. Then it checks up to 150 clips to count what
               each folder would hold.
             </p>
-            <p>It runs on your AI provider, so it uses tokens each time. Nothing moves until you press Use this on one of the ways.</p>
+            <p>It runs on the AI provider set in Settings, so it uses tokens each time. Nothing moves until you press Use this on one of the ways.</p>
           </div>
         )}
         {asked && !ways && !error && (
