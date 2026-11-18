@@ -142,8 +142,10 @@ export function WorkspaceTag({ id, none = "Every workspace" }: { id?: string | n
  * Which workspaces a thing is in, any number of them (`on`: their ids, null = every workspace): an All workspaces switch
  * with every workspace listed under it, each saved as it is switched (`save`). The last one on can't be switched off.
  */
-export function WorkspacesDialog({ title, workspaces, on, save, onClose }: {
+export function WorkspacesDialog({ title, note, workspaces, on, save, onClose }: {
   title: string;
+  /** a line under the title, for a thing with a rule of its own */
+  note?: string;
   workspaces: ReadonlyArray<{ id: string; name: string }>;
   on: readonly string[] | null;
   save: (to: string[] | null) => Promise<unknown>;
@@ -163,6 +165,7 @@ export function WorkspacesDialog({ title, workspaces, on, save, onClose }: {
       <SettingsDialogContent className="sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          {note && <p className="text-sm text-muted-foreground">{note}</p>}
         </DialogHeader>
         <Card>
           <Row

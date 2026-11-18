@@ -30,7 +30,7 @@ import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac
 import { watchAllowed } from "./library/watch";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { parseStorageFile, storageFilePath } from "./lib/storage";
-import { folderIn, LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
+import { exportsOf, folderIn, LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
@@ -124,7 +124,7 @@ export async function foldersNote(username: string, workspace?: string): Promise
   const inWs = await inProjectOf({ username } as SessionUser, workspace);
   const all = [...st.folders.filter((f) => folderIn(f, inWs)), ...(await pluginStorageFolders(username))];
   const mine = sourcesOf(all);
-  const lib = all.find((f) => f.role === "library");
+  const lib = exportsOf(all);
   const on = (f: StorageFolder) => (f.origin.host === THIS_COMPUTER ? "" : ` (on ${deviceOf(f.origin.host)?.name ?? "another computer"})`);
   const lines = [
     ...mine.filter((f) => f.role === "footage").map((f) => `- Footage: ${f.origin.path}${on(f)}`),

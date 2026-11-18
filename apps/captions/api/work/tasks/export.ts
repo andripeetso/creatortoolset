@@ -253,7 +253,9 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
       const { relayFolders } = await import("../../library/report");
       const d = t.held_by ? deviceOf(t.held_by) : undefined;
       if (!d) return null;
-      const f = (await relayFolders(d)).find((x) => x.use === "exports" && (x.workspaces === "*" || !t.workspace || x.workspaces.includes(t.workspace)));
+      const all = (await relayFolders(d)).filter((x) => x.use === "exports" && (x.workspaces === "*" || !t.workspace || x.workspaces.includes(t.workspace)));
+      // the workspace's own Exports folder before the one for every workspace (contracts/storage.ts exportsOf)
+      const f = all.find((x) => x.workspaces !== "*") ?? all[0];
       return f ? path.join(f.hostPath, LIBRARY_SUBFOLDERS.finished) : null;
     },
   },

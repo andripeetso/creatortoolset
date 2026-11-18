@@ -10,7 +10,7 @@ import { LIBRARY_NAME, THIS_COMPUTER, type SourceRole, type StorageView } from "
 import type { ProvidersView } from "@contracts/providers";
 
 const STORAGE = "/api/devices/storage";
-const DEFAULT_LIBRARY_DISK = "~/Movies";
+const DEFAULT_EXPORTS = `~/Movies/${LIBRARY_NAME}`;
 const ROWS: { role: SourceRole; name: string; why: string }[] = [
   { role: "footage", name: "Media", why: "Footage, music and sound effects." },
 ];
@@ -53,10 +53,10 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
     }
     void (async () => {
       await reload();
-      // the Library is where finished videos go: a default in Movies, only when the person has none
+      // Exports is where finished videos go: a default in Movies, only when the person has none
       const st = await getStorage().catch(() => null);
       if (st && !st.folders.some((f) => f.role === "library")) {
-        await send(`${STORAGE}/library`, "POST", { host: THIS_COMPUTER, disk: DEFAULT_LIBRARY_DISK }).catch(() => {});
+        await send(`${STORAGE}/folders`, "POST", { role: "library", host: THIS_COMPUTER, path: DEFAULT_EXPORTS }).catch(() => {});
         await reload();
       }
     })();
@@ -65,7 +65,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
   // the folders the person already uses on this computer
   const added = (storage?.folders ?? []).filter((f) => f.role !== "library" && f.origin.host === THIS_COMPUTER);
   const library = storage?.folders.find((f) => f.role === "library");
-  const libraryShown = library?.origin.path ?? `${DEFAULT_LIBRARY_DISK}/${LIBRARY_NAME}`;
+  const libraryShown = library?.origin.path ?? DEFAULT_EXPORTS;
 
   // the server checks the folder (it must be a folder on this computer); a refusal stays on the step with its reason
   const add = async (role: SourceRole, p: string) => {

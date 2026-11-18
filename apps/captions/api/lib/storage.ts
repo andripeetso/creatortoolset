@@ -1,28 +1,40 @@
 import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, LIBRARY_NAME, okFolderPath, sourcesOf, STORAGE_SCHEMA, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { EVERY_WORKSPACE, inLibrary, okFolderPath, ownFootage, sourcesOf, STORAGE_SCHEMA, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type FolderMount, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 import { isWindowsPath, joinRoot, rootKey } from "../../contracts/places";
-
-/** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
-export function libraryPath(disk: string): string {
-  return `${disk.replace(/\/+$/, "") || "~"}/${LIBRARY_NAME}`;
-}
 
 /** An account's storage list on the server: $DATA_DIR/storage/<user>.json (usernames are [a-z0-9_-] only). */
 export function storageFilePath(dataDir: string, user: string): string {
   return path.join(dataDir, "storage", `${user}.json`);
 }
 
-/** The stored list, read tolerantly: a file that is not JSON (or has no folder list) counts as empty, and is logged. */
+/** The stored list, read tolerantly: a file that is not JSON (or has no folder list) counts as empty, and is logged.
+ *  A file from before schema 3 gets its older Library's own Footage/ as a listed folder (withOwnFootage). */
 export function parseStorageFile(raw: string): StorageState {
   try {
     const v = JSON.parse(raw) as Partial<StorageState> | null;
-    return { ...(typeof v?.schemaVersion === "number" ? { schemaVersion: v.schemaVersion } : {}), folders: Array.isArray(v?.folders) ? mediaFolders(v.folders) : [] };
+    const schema = typeof v?.schemaVersion === "number" ? v.schemaVersion : undefined;
+    const folders = Array.isArray(v?.folders) ? mediaFolders((schema ?? 0) >= 3 ? v.folders : withOwnFootage(v.folders)) : [];
+    return { ...(schema !== undefined ? { schemaVersion: schema } : {}), folders };
   } catch (e) {
     console.warn(`[devices-storage] storage file unreadable, treated as empty: ${e instanceof Error ? e.message : e}`);
     return { folders: [] };
   }
+}
+
+/**
+ * Storage schema 3, once: the Footage/ inside an Exports folder made before 2026-11-17 (ownFootage) was read as Media
+ * without being listed; it becomes a listed, removable Media folder in the same workspaces, unless one is there already.
+ * It keeps the id it was read under (`<library id>:footage`), so what was found in it stays found. Newer ones get none.
+ */
+export function withOwnFootage(folders: StorageFolder[]): StorageFolder[] {
+  const add = folders.filter((f) => f?.role === "library" && ownFootage(f)).flatMap((lib): StorageFolder[] => {
+    const { folderState: _s, checkedAt: _c, error: _e, copyTo: _t, ...f } = inLibrary(lib, "footage");
+    const listed = folders.some((g) => ["footage", "music"].includes(g?.role) && g.origin?.host === f.origin.host && g.origin?.path === f.origin.path);
+    return listed ? [] : [{ ...f, make: false }];
+  });
+  return [...folders, ...add];
 }
 
 /** A folder's workspaces, or null for every workspace (EVERY_WORKSPACE). One from before (no stamp) is its own "". */
@@ -44,7 +56,7 @@ export function mediaFolders(folders: StorageFolder[], places = placesOf): Stora
 }
 
 /**
- * A storage list moved to schema 2 (contracts/storage.ts STORAGE_SCHEMA): every computer is a device id now, the
+ * A storage list moved to the current schema (contracts/storage.ts STORAGE_SCHEMA; 3's Footage is parseStorageFile's): every computer is a device id now, the
  * "this-computer" folders the computer the server runs on (`thisDevice`; kept as they were when it has none: a server with
  * no paired computer of its own reads them itself) and ids of computers paired again resolved
  * (`resolve`, whereis.ts resolveDevice). Two entries for one path in two workspaces stay two (a folder in several
