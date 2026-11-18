@@ -18,9 +18,10 @@ import Foundation
 /// The capture guarantees hold without an Objective-C exception to guard
 /// against: every Core Audio call returns a status, and 0 Hz, 0 channel and
 /// non-finite formats are refused before the unit is configured with them.
-/// Mid-recording, the default input moving to another device or the device
-/// going away is reported through the sink, so the recording is discarded
-/// instead of returned partial. A new rate or channel count on the same
+/// Mid-recording, the device going away is reported through the sink, and
+/// what was recorded until then is kept for History, never pasted. Another
+/// device becoming the default input changes nothing: the unit stays bound to
+/// its own. A new rate or channel count on the same
 /// device is followed instead: AUHAL does not resample input, so the unit is
 /// restarted in the new format and the recording continues, missing only the
 /// few tens of milliseconds the restart takes.
@@ -34,8 +35,8 @@ final class HALInput: CaptureInput {
         case none
         /// The same device now runs at this rate or channel count.
         case format(InputDevice)
-        /// The default input is another device, the device went away, or it
-        /// now reports a format that cannot be recorded.
+        /// The device went away, or it now reports a format that cannot be
+        /// recorded.
         case route
     }
 
@@ -266,7 +267,8 @@ final class HALInput: CaptureInput {
     /// What `current`, a fresh read of the input, means for a unit built for
     /// `built`.
     static func classify(built: InputDevice, current: DeviceWatcher.Snapshot) -> Change {
-        guard current.defaultInput == built.id, current.isAlive else { return .route }
+        // the unit records its own device, so a new default input (AirPods connecting) changes nothing
+        guard current.isAlive else { return .route }
         if sameInput(built, current.device) { return .none }
         guard (try? InputDevice.validate(sampleRate: current.device.sampleRate, channels: current.device.channels)) != nil else {
             return .route
@@ -393,7 +395,6 @@ private let halInputCallback: AURenderCallback = { refCon, flags, timestamp, bus
 final class DeviceWatcher {
     /// A fresh read of the input a unit was built for.
     struct Snapshot: Equatable {
-        var defaultInput: AudioDeviceID?
         var isAlive: Bool
         var device: InputDevice
     }
@@ -432,7 +433,6 @@ final class DeviceWatcher {
     /// Reads the default input and `id`'s presence, rate and channels now.
     static func snapshot(of id: AudioDeviceID) -> Snapshot {
         Snapshot(
-            defaultInput: InputDevice.defaultInputID(),
             isAlive: isAlive(id),
             device: InputDevice(
                 sampleRate: InputDevice.nominalSampleRate(id),

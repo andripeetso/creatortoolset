@@ -181,7 +181,7 @@ extension DictationPill: DictationObserver {
         show(.waiting)
     }
 
-    func dictationFinished(_ result: DictationResult) {
+    func dictationFinished() {
         showCurrent()
     }
 

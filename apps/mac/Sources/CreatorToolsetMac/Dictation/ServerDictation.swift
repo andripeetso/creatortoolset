@@ -7,9 +7,6 @@ import Foundation
 enum DictationEngine: String {
     case thisMac = "mac"
     case server
-
-    /// The server's engine is wired here (ServerTranscriber), so Settings offers it.
-    static let serverWired = true
 }
 
 struct ServerTranscriber: Transcriber {

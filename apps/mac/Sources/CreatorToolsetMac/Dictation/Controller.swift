@@ -62,6 +62,8 @@ final class DictationController {
     /// cancelled by `discard` and deliver nothing when they finish.
     private var lastStarted = 0
     private var discardedThrough = 0
+    /// The newest transcription's delivery; the next one waits for it.
+    private var lastDelivery: Task<Void, Never>?
     /// What had focus when the current recording started.
     private var focusAtStart: FocusSnapshot?
 
@@ -113,20 +115,22 @@ final class DictationController {
     var focus: () -> FocusSnapshot? = { FocusSnapshot.capture() }
 
     func release() {
-        let released = CFAbsoluteTimeGetCurrent()
         let samples: [Float]
         do {
             samples = try capture.finish()
         } catch {
-            // The route changed mid-recording: no partial capture is delivered.
             DictationLog.error("capture failed: \(error)")
             focusAtStart = nil
             state = inFlight > 0 ? .transcribing : .idle
-            observers.forEach { $0.dictationFailed(error) }
+            // The mic went away mid-recording: what it caught is kept in History, never pasted.
+            if case CaptureError.routeChanged(let captured) = error, !captured.isEmpty {
+                let failure = TranscriptionFailed(underlying: error, saved: recordings.save(captured))
+                observers.forEach { $0.dictationFailed(failure) }
+            } else {
+                observers.forEach { $0.dictationFailed(error) }
+            }
             return
         }
-        let captureStop = CFAbsoluteTimeGetCurrent() - released
-        let pressToFirstSample = (capture as? AudioCapture)?.lastStats?.firstSampleDelay
         let focus = focusAtStart
         focusAtStart = nil
         state = .transcribing
@@ -150,47 +154,36 @@ final class DictationController {
         let recordings = self.recordings
         // On disk before transcription, so a failure can be retried from History.
         let saved = recordings.save(samples)
-        Task {
+        let previous = lastDelivery
+        lastDelivery = Task {
             let started = CFAbsoluteTimeGetCurrent()
+            let outcome: Result<Transcript, Error>
             do {
                 // The transcriber is an actor; this await runs off the main actor.
                 let transcript = try await transcribe(samples, context: context, local: transcriber, remote: remote, id: id)
-                let transcribed = CFAbsoluteTimeGetCurrent()
-                let elapsed = transcribed - started
                 // Never log the transcript itself: the agent's log is a file on disk.
-                DictationLog.info(String(format: "→ %.2fs · %d chars", elapsed, transcript.text.count))
-                let processed = CFAbsoluteTimeGetCurrent()
+                DictationLog.info(String(format: "→ %.2fs · %d chars", CFAbsoluteTimeGetCurrent() - started, transcript.text.count))
                 if let saved { recordings.saveTranscript(transcript.text, for: saved) }
-                // Still in History, in case the cancel was a mistake.
-                guard id > discardedThrough else {
-                    inFlight -= 1
-                    settle()
-                    return
-                }
-                let delivered = Result { try delivery.deliver(transcript.text, focusAtStart: focus) }
-                let done = CFAbsoluteTimeGetCurrent()
-                inFlight -= 1
-                settle()
-                if case .failure(let error) = delivered {
-                    observers.forEach { $0.dictationFailed(error) }
-                    return
-                }
-                let result = DictationResult(
-                    captureDuration: seconds,
-                    transcriptionTime: elapsed,
-                    charCount: transcript.text.count,
-                    captureStop: captureStop,
-                    transcriber: transcript.timings,
-                    delivery: done - processed,
-                    releaseToText: done - released,
-                    pressToFirstSample: pressToFirstSample
-                )
-                observers.forEach { $0.dictationFinished(result) }
+                outcome = .success(transcript)
             } catch {
                 DictationLog.error("transcription failed: \(error)")
-                inFlight -= 1
-                settle()
-                guard id > discardedThrough else { return }
+                outcome = .failure(error)
+            }
+            // Delivered in release order: a short dictation never pastes before a longer one released earlier.
+            if id > discardedThrough { await previous?.value }
+            // Still in History, in case the cancel was a mistake. `discard` already stopped counting it.
+            guard id > discardedThrough else { return }
+            inFlight -= 1
+            settle()
+            switch outcome {
+            case .success(let transcript):
+                do {
+                    try delivery.deliver(transcript.text, focusAtStart: focus)
+                    observers.forEach { $0.dictationFinished() }
+                } catch {
+                    observers.forEach { $0.dictationFailed(error) }
+                }
+            case .failure(let error):
                 let failure = TranscriptionFailed(underlying: error, saved: saved)
                 observers.forEach { $0.dictationFailed(failure) }
             }
@@ -263,6 +256,8 @@ final class DictationController {
             DictationLog.info("○ discarded recording")
         case .transcribing:
             discardedThrough = lastStarted
+            inFlight = 0
+            lastDelivery = nil
             state = .idle
             DictationLog.info("○ discarded transcription")
         }
@@ -276,27 +271,6 @@ final class DictationController {
             state = .idle
         }
     }
-}
-
-/// Counts and timings for one delivered dictation. Never the text.
-struct DictationResult: Equatable, Sendable {
-    /// Seconds of audio captured.
-    var captureDuration: TimeInterval
-    /// Seconds the transcriber took.
-    var transcriptionTime: TimeInterval
-    /// Characters delivered.
-    var charCount: Int
-    /// Seconds to stop the capture engine and collect its samples.
-    var captureStop: TimeInterval = 0
-    /// The transcriber's own breakdown, when the engine reports one.
-    var transcriber: TranscriberTimings?
-    /// Seconds to deliver the text to the cursor.
-    var delivery: TimeInterval = 0
-    /// Seconds from the hotkey release to the text being delivered.
-    var releaseToText: TimeInterval = 0
-    /// Seconds from the hotkey press to the capture time of the first
-    /// recorded sample: speech in that gap is lost. Nil if unknown.
-    var pressToFirstSample: TimeInterval?
 }
 
 enum DictationError: Error {
@@ -331,7 +305,7 @@ protocol DictationObserver: AnyObject {
     /// The model is still loading (the first time in a new app it takes a few minutes); transcribing comes after.
     func dictationWaitingForModel()
     /// The transcript was delivered.
-    func dictationFinished(_ result: DictationResult)
+    func dictationFinished()
     /// Nothing reached the cursor: capture failed (`CaptureError`), no audio
     /// (`DictationError.noAudio`), the transcriber threw, or delivery was
     /// refused (`DeliveryError`).
@@ -342,7 +316,7 @@ extension DictationObserver {
     func dictationStarted() {}
     func dictationTranscribing() {}
     func dictationWaitingForModel() {}
-    func dictationFinished(_ result: DictationResult) {}
+    func dictationFinished() {}
     func dictationFailed(_ error: Error) {}
 }
 

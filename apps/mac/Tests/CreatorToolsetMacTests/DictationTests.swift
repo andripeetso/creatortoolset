@@ -344,7 +344,10 @@ final class DictationControllerTests: XCTestCase {
     func testHistoryKeepsTheNewestOnly() {
         let recordings = DictationRecordings(directory: dir)
         recordings.keep = 2
-        for i in 0..<3 { _ = recordings.save([0.1], at: Date(timeIntervalSince1970: 1_800_000_000 + Double(i) * 60)) }
+        for i in 0..<3 {
+            let wav = recordings.save([0.1], at: Date(timeIntervalSince1970: 1_800_000_000 + Double(i) * 60))!
+            recordings.saveTranscript("take \(i)", for: wav)
+        }
         XCTAssertEqual(recordings.recent().count, 2)
         // two in the same second both stay
         recordings.keep = 10
@@ -399,7 +402,7 @@ final class SpeechServerTests: XCTestCase {
         func dictationStarted() { events.append("listening") }
         func dictationTranscribing() { events.append("transcribing") }
         func dictationWaitingForModel() { events.append("getting the model ready") }
-        func dictationFinished(_ result: DictationResult) { events.append("done") }
+        func dictationFinished() { events.append("done") }
         func dictationFailed(_ error: Error) { events.append("failed: \(DictationPill.message(for: error) ?? "")") }
     }
 

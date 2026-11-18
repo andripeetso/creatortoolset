@@ -101,8 +101,8 @@ final class AudioCapture {
     }
 
     /// Stop recording, stop the input, and return the captured samples.
-    /// Throws `CaptureError.routeChanged` instead of returning a partial
-    /// capture if the input route changed mid-recording.
+    /// Throws `CaptureError.routeChanged`, carrying the partial capture, if
+    /// the input went away mid-recording.
     func finish() throws -> [Float] {
         guard recording else { return [] }
         recording = false
@@ -397,8 +397,8 @@ final class CaptureBuffer: @unchecked Sendable {
     }
 
     /// Ends the recording and returns its samples. If the route changed at
-    /// any point, the partial capture is discarded and this throws
-    /// `CaptureError.routeChanged`, so it is never delivered as a success.
+    /// any point, this throws `CaptureError.routeChanged` with the partial
+    /// capture, so it can be kept but is never delivered as a success.
     /// Either way the buffer is empty afterwards.
     func finish() throws -> [Float] {
         lock.lock()
@@ -408,7 +408,7 @@ final class CaptureBuffer: @unchecked Sendable {
         routeChanged = false
         isOpen = false
         lock.unlock()
-        if changed { throw CaptureError.routeChanged }
+        if changed { throw CaptureError.routeChanged(captured: captured) }
         return captured
     }
 }
@@ -705,9 +705,9 @@ enum CaptureError: Error, UserFacingError, CustomStringConvertible {
     case invalidInputFormat(sampleRate: Double, channels: UInt32)
     /// `AVAudioEngine.start()` threw.
     case engineStartFailed(Error)
-    /// The input route changed mid-recording (a device was connected or
-    /// removed, or its format changed). The partial capture was discarded.
-    case routeChanged
+    /// The input went away mid-recording, or its new format could not be
+    /// followed. `captured` is what was recorded until then.
+    case routeChanged(captured: [Float])
 
     var userMessage: String {
         switch self {
@@ -720,7 +720,7 @@ enum CaptureError: Error, UserFacingError, CustomStringConvertible {
         case .engineStartFailed:
             return "microphone failed to start: try again, or check System Settings → Sound"
         case .routeChanged:
-            return "microphone changed while recording: nothing captured, try again"
+            return "microphone went away while recording"
         }
     }
 
