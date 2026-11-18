@@ -72,7 +72,7 @@ enum MediaFiles {
     /// The store; the tests give their own.
     static var defaults = UserDefaults.standard
     private static let serversKey = "serverFolders"     // [server: [ServerFolder]], replaced on each pull
-    private static let allowedKey = "allowedFolders"    // [server: [path]], "Allow on this Mac" pressed
+    private static let allowedKey = "allowedFolders"    // [server: [folder id]], "Allow on this Mac" pressed (paths before: migrated in setServerFolders)
     private static let pickedKey = "pickedFolders"      // [path], chosen in an open panel or dropped since this list began
 
     /// A server by its address as the grants key it: host and port (the window's page, or an agent's base).
@@ -88,22 +88,27 @@ enum MediaFiles {
 
     static func serverFolders(_ server: String) -> [ServerFolder] { (decoded(serversKey) as [String: [ServerFolder]])[server] ?? [] }
 
-    /// The pull replaces the server's list: a folder it no longer lists loses its grant (its OK goes with it).
-    static func setServerFolders(_ list: [ServerFolder], server: String) {
+    /// The pull replaces the server's list: a folder it no longer lists loses its grant (its OK goes with it). An empty
+    /// list is not an answer to trust (a failed or half-made one): the last good list and its OKs stay. Returns the list in effect.
+    @discardableResult
+    static func setServerFolders(_ list: [ServerFolder], server: String) -> [ServerFolder] {
+        guard !list.isEmpty else { return serverFolders(server) }
         var all: [String: [ServerFolder]] = decoded(serversKey)
         all[server] = list
         encode(all, serversKey)
         var ok: [String: [String]] = decoded(allowedKey)
-        if let was = ok[server] { ok[server] = was.filter { p in list.contains { $0.path == p } } }
+        // OKs are keyed by folder id; one saved by path (before) becomes the id of the listed folder at that path, once
+        if let was = ok[server] { ok[server] = was.compactMap { x in list.first { $0.id == x || $0.path == x }?.id } }
         encode(ok, allowedKey)
+        return list
     }
 
     /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.
     @discardableResult
     static func allow(_ path: String, server: String) -> Bool {
-        guard serverFolders(server).contains(where: { $0.path == path }) else { return false }
+        guard let folder = serverFolders(server).first(where: { $0.path == path }) else { return false }
         var ok: [String: [String]] = decoded(allowedKey)
-        if ok[server]?.contains(path) != true { ok[server, default: []].append(path) }
+        if ok[server]?.contains(folder.id) != true { ok[server, default: []].append(folder.id) }
         encode(ok, allowedKey)
         return true
     }
@@ -111,7 +116,7 @@ enum MediaFiles {
     /// Whether this Mac may read a server's folder: OK'd for that server, or at or under a folder picked or dropped here.
     static func isAllowed(_ path: String, server: String) -> Bool {
         let ok: [String: [String]] = decoded(allowedKey)
-        if ok[server]?.contains(path) == true { return true }
+        if serverFolders(server).contains(where: { $0.path == path && ok[server]?.contains($0.id) == true }) { return true }
         return Imports.inside(path, defaults.stringArray(forKey: pickedKey) ?? []) != nil
     }
 

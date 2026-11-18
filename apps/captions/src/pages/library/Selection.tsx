@@ -17,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { promptDialog } from "@/lib/dialogs";
 import { thisMacDevice } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { revealClip, servedHere } from "./clip";
+import { canReveal, revealClip, servedHere } from "./clip";
 
 /**
  * Picking several clips in the Media Library (LibraryPage.tsx), as Review picks videos: a plain click still opens a clip,
@@ -341,7 +341,7 @@ export function saveFile(href: string) {
  */
 export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer" | "placeWord">; onProblem: (p: string) => void }) {
   const assetId = asset.id;
-  // without this Mac's id the card's "here" means any of the person's computers
-  if (!servedHere() && !asset.onComputer && !(asset.placeWord?.word === "here" && thisMacDevice())) return null;
+  // the same mark as the panel's button (canReveal); without this Mac's id the card's "here" means any of the person's computers
+  if (!canReveal() || (!servedHere() && !asset.onComputer && !(asset.placeWord?.word === "here" && thisMacDevice()))) return null;
   return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }
