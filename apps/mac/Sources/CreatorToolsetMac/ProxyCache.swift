@@ -7,6 +7,17 @@ import Foundation
 // (GET /api/auth/check with the window's cookies, never anything from the page), and only for a page of that server.
 // Remembered per server while the app runs, so it still plays when the server doesn't answer.
 
+/// The Download location (UNIFIED-PRD M15): the folder a worker keeps its download cache in, passed as CT_PROXY_DIR
+/// (api/work/cache.ts). Nil = the default folder under the server's data.
+enum DownloadLocation {
+    static let key = "downloadLocation"
+
+    static func path(_ defaults: UserDefaults = .standard) -> String? {
+        guard let p = defaults.string(forKey: key), !p.isEmpty else { return nil }
+        return p
+    }
+}
+
 enum ProxyCache {
     /// A server's relay folder (ClaudeRequest.swift relayFolder); the tests give their own.
     static var relay: (URL) -> URL = { relayFolder(for: $0, localData: nil) }
