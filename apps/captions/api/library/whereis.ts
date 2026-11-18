@@ -42,6 +42,7 @@ export function aliasDevice(oldIds: string[], newId: string, now = Date.now()): 
       d.prepare("UPDATE device_alias SET new_id = ? WHERE new_id = ?").run(newId, old);
       d.prepare("UPDATE OR REPLACE version_places SET device = ? WHERE device = ?").run(newId, old);
       d.prepare("UPDATE asset_versions SET mac_device = ? WHERE mac_device = ?").run(newId, old);
+      d.prepare("UPDATE asset_versions SET from_device = ? WHERE from_device = ?").run(newId, old);
       d.prepare("UPDATE OR IGNORE library_copies SET device = ? WHERE device = ?").run(newId, old);
     }
     d.exec("COMMIT");

@@ -194,3 +194,13 @@ describe("fingerprints (B8)", () => {
     expect(at("twins")).toBe("/Volumes/Old/Shoot/other.mov");
   });
 });
+
+describe("aliasDevice", () => {
+  it("moves the computer an uploaded file came from with the alias", async () => {
+    const { aliasDevice } = await import("./whereis");
+    add("came-from");
+    d().prepare("UPDATE asset_versions SET from_device = 'dev_old', mac_device = 'dev_old' WHERE id = 'came-from'").run();
+    aliasDevice(["dev_old"], mac);
+    expect(d().prepare("SELECT from_device, mac_device FROM asset_versions WHERE id = 'came-from'").get()).toEqual({ from_device: mac, mac_device: mac });
+  });
+});

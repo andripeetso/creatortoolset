@@ -14,7 +14,7 @@ import { fitsFor, footageFor, heldCopy } from "./editor/reach";
 import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
-import { mayClaim, offOf, readBalance, writeBalance, type WorkerSeen } from "./lib/balance";
+import { mayClaim, moveBalance, offOf, readBalance, writeBalance, type WorkerSeen } from "./lib/balance";
 import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
@@ -473,6 +473,7 @@ devicesApp.post("/", async (c) => {
   if (replaced.length) {
     await moveProviders(u.username, replaced, device.id);
     aliasDevice(replaced, device.id);
+    await moveBalance(u.username, replaced, device.id);
   }
   return c.json({ device, token });
 });
@@ -562,6 +563,7 @@ devicePairApp.post("/", async (c) => {
   if (paired.replaced.length) {
     await moveProviders(paired.device.owner, paired.replaced, paired.device.id);
     aliasDevice(paired.replaced, paired.device.id);
+    await moveBalance(paired.device.owner, paired.replaced, paired.device.id);
   }
   return c.json({ device: paired.device, token: paired.token });
 });
