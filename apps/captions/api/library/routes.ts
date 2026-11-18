@@ -30,7 +30,7 @@ import { locateApp } from "./locate";
 import { folderStatesFor, placesApp } from "./places";
 import { whereIsMany } from "./whereis";
 import { PLACES_MAX, placeWordOf } from "../../contracts/places";
-import { emptyTrash, inReview } from "./trash";
+import { emptyTrash, inReview, setTrashedAt } from "./trash";
 import { copiesWake } from "./copies";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -1122,7 +1122,7 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
   if (inReview(assetId)) return c.json(IN_REVIEW, 409);
-  db().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, assetId);
+  setTrashedAt(assetId, trash ? Date.now() : null);
   return c.json({ ok: true });
 }
 

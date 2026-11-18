@@ -108,6 +108,14 @@ describe("location agents: the computers report, the server records", () => {
     const r = (await (await report([draft, f("Hard Edit_edit/MG/flash.mov", 2), f("song.m4a.tmp.m4a", 3), f("raw/clip.mp4", 4)])).json()) as { index: { path: string }[] };
     expect(r.index).toEqual([{ folder, path: `${root}/raw/clip.mp4` }]);
     expect(trashed()).not.toBeNull();
+
+    // the same draft, now behind a live share link: it stays in the library, and the file is still left alone
+    const again = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "e.mp4", path: `${root}/Other_edit/drafts/Other.mp4`, size: 9, quick: quick(9), frames: [] }) });
+    const other = ((await again.json()) as { versions: { versionId: string }[] }).versions[0]!.versionId;
+    const shared = libraryDb().prepare("SELECT a.id AS id, a.library_id AS lib FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(other) as { id: string; lib: string };
+    libraryDb().prepare("INSERT INTO shares (token_hash, library_id, target_kind, target_id, scope, password_hash, created_by, expires_at, views) VALUES ('tok-held', ?, 'asset', ?, 'view', NULL, 'ana', ?, 0)").run(shared.lib, shared.id, Date.now() + 86_400_000);
+    await report([f("Other_edit/drafts/Other.mp4", 9)]);
+    expect(libraryDb().prepare("SELECT trashed_at AS t FROM assets WHERE id = ?").get(shared.id)).toEqual({ t: null });
   });
 
   it("keeps an old pairing's id and its places when an app from before pairs again", async () => {

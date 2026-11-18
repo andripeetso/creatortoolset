@@ -25,6 +25,26 @@ const PIECE_TRASH_DAYS = 5;
 export const inReview = (assetId: string) =>
   [path.join(env.dataDir, "review", assetId), path.join(env.dataDir, "review", "trash", assetId)].some((d) => existsSync(path.join(d, "meta.json")));
 
+/** Why an asset must not leave the library by a scan (a file it no longer matches): in Review, or behind a live share
+ *  link (an asset, one of its versions, or a collection it is in). Null: it may go. */
+export function trashHeld(assetId: string, now = Date.now()): string | null {
+  if (inReview(assetId)) return "in Review";
+  const shared = libraryDb()
+    .prepare(
+      `SELECT 1 FROM shares s WHERE s.expires_at > ? AND ((s.target_kind = 'asset' AND s.target_id = ?)
+         OR (s.target_kind = 'version' AND s.target_id IN (SELECT id FROM asset_versions WHERE asset_id = ?))
+         OR (s.target_kind = 'collection' AND s.target_id IN (SELECT collection_id FROM collection_items WHERE asset_id = ?))) LIMIT 1`,
+    )
+    .get(now, assetId, assetId, assetId);
+  return shared ? "behind a share link" : null;
+}
+
+/** Moves an asset into the library's trash (`at` a time) or back out (null): the one writer of assets.trashed_at
+ *  besides Empty trash. */
+export function setTrashedAt(assetId: string, at: number | null): void {
+  libraryDb().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(at, assetId);
+}
+
 const inList = (n: number) => Array(n).fill("?").join(", ");
 
 /** Empty trash: deletes every asset in library `libraryId`'s trash that may go now. Returns how many went. */
