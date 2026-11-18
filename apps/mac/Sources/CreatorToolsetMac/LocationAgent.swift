@@ -186,7 +186,7 @@ final class LocationAgent: @unchecked Sendable {
 
     private func pass() {
         guard !isStopped else { return }
-        guard let reply = try? api.get("/api/devices/relay/folders", timeout: 30), reply.status == 200, let folders = Self.folders(reply.data) else {
+        guard let reply = try? api.get("/api/devices/relay/folders", timeout: 30), reply.status == 200, let answered = Self.folders(reply.data) else {
             if !isStopped {
                 queue.asyncAfter(deadline: .now() + retry) { [weak self] in self?.poke() }
                 retry = min(retry * 2, 960)
@@ -194,7 +194,7 @@ final class LocationAgent: @unchecked Sendable {
             return
         }
         retry = 60
-        MediaFiles.setServerFolders(folders, server: server)
+        let folders = MediaFiles.setServerFolders(answered, server: server)   // an empty answer keeps the last good list
         var head = macReport()
         head["reportVersion"] = 2
         head["machineId"] = MachineID.value
