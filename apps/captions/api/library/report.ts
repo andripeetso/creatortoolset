@@ -196,7 +196,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     for (const dir of fresh) {
       const hit = placed.find((x) => x.rel.startsWith(`${dir}/`))!;
       const full = hit.f.path.slice(0, hit.f.path.length - hit.rel.length) + dir;
-      leaveLibrary(dev, folder.id, inLibs, libs, touched, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], full);
+      leaveLibrary(dev, folder.id, inOwn, libs, touched, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], full);
     }
     for (const { f, rel } of placed) {
       // not footage: an AI Editor folder, a half-written file, or anything inside a Projects or Exports folder

@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-trash-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
-const { emptyTrash, purgeTrashedPieces } = await import("./trash");
+const { emptyTrash, purgeTrashedPieces, trashHeld } = await import("./trash");
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -83,5 +83,35 @@ describe("library trash", () => {
     expect((d.prepare("SELECT COUNT(*) AS n FROM piece_items WHERE piece_id = 'pce_old'").get() as { n: number }).n).toBe(0);
     expect((d.prepare("SELECT COUNT(*) AS n FROM postings WHERE piece_item_id = 'pci_old'").get() as { n: number }).n).toBe(0);
     expect((d.prepare("SELECT COUNT(*) AS n FROM asset_versions WHERE id = 'v_ast_piece'").get() as { n: number }).n).toBe(1);
+  });
+
+  it("trashHeld holds a clip in Review or behind a live share (of the clip, a version or its collection), and only while the share lives", () => {
+    const now = Date.now();
+    const DAY_MS = 86_400_000;
+    libraryDb().prepare("INSERT OR IGNORE INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_t', 'ws', 'T', 'local', 0)").run();
+    libraryDb().prepare("INSERT OR IGNORE INTO collections (id, library_id, name, kind, created_at) VALUES ('col_t', 'lib_t', 'F', 'manual', 0)").run();
+    const share = (kind: string, target: string, expires: number) =>
+      libraryDb().prepare("INSERT INTO shares (token_hash, library_id, target_kind, target_id, scope, created_by, expires_at) VALUES (?, 'lib_t', ?, ?, 'view', 'owner', ?)").run(`h_${kind}_${target}`, kind, target, expires);
+    trashed("ast_held", 1, now);   // the share trashed() adds has run out (expires_at 0): nothing holds it
+    expect(trashHeld("ast_held", now)).toBeNull();
+    libraryDb().prepare("UPDATE shares SET expires_at = ? WHERE target_id = 'ast_held'").run(now + DAY_MS);
+    expect(trashHeld("ast_held", now)).toBe("behind a share link");
+    expect(trashHeld("ast_held", now + 2 * DAY_MS)).toBeNull();   // the same share, past its end
+
+    trashed("ast_ver", 1, now);
+    libraryDb().prepare("DELETE FROM shares WHERE target_id = 'ast_ver'").run();
+    share("version", "v_ast_ver", now + DAY_MS);
+    expect(trashHeld("ast_ver", now)).toBe("behind a share link");
+
+    trashed("ast_col", 1, now);
+    libraryDb().prepare("DELETE FROM shares WHERE target_id = 'ast_col'").run();
+    share("collection", "col_t", now + DAY_MS);   // the collection holds every clip in it (ast_col is in col_t)
+    expect(trashHeld("ast_col", now)).toBe("behind a share link");
+
+    trashed("ast_review", 1, now);
+    libraryDb().prepare("DELETE FROM shares WHERE target_id = 'ast_review'").run();
+    mkdirSync(path.join(dir, "review", "ast_review"), { recursive: true });
+    writeFileSync(path.join(dir, "review", "ast_review", "meta.json"), "{}");
+    expect(trashHeld("ast_review", now)).toBe("in Review");
   });
 });
