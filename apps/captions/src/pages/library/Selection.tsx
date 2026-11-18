@@ -228,6 +228,7 @@ const barButton = "h-8 gap-1.5 px-2.5";
 export function PickBar({
   count,
   inTrash,
+  readOnly,
   moveTo,
   tags,
   redo,
@@ -235,6 +236,8 @@ export function PickBar({
 }: {
   count: number;
   inTrash: boolean;
+  /** someone else's library to look at: Download only (a member never moves, tags or deletes the owner's footage) */
+  readOnly?: boolean;
   moveTo: MoveTarget[];
   tags: string[];
   redo: { kind: string; label: string }[];
@@ -250,7 +253,7 @@ export function PickBar({
         className="pointer-events-auto flex max-w-full items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 pl-3.5 text-sm text-zinc-100 shadow-2xl"
       >
         <span className="mr-1 shrink-0 tabular-nums text-zinc-300">{count} selected</span>
-        {inTrash ? (
+        {readOnly ? null : inTrash ? (
           <Button size="sm" className={cn(barButton, "bg-violet-600 text-white hover:bg-violet-500")} onClick={on.restore}>
             <RotateCcw /> Restore
           </Button>
@@ -283,7 +286,7 @@ export function PickBar({
         <Button size="sm" variant="ghost" className={barButton} title="Download" onClick={on.download}>
           <Download /> <span className="hidden sm:inline">Download</span>
         </Button>
-        {!inTrash && (
+        {!inTrash && !readOnly && (
           <>
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>

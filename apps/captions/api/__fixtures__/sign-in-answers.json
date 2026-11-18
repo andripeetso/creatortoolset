@@ -206,7 +206,8 @@
         "off": [],
         "read": [],
         "logins": 1,
-        "picture": null
+        "picture": null,
+        "member": true
       }
     },
     "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
@@ -234,7 +235,8 @@
         "off": [],
         "read": [],
         "logins": 2,
-        "picture": null
+        "picture": null,
+        "member": true
       }
     },
     "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",

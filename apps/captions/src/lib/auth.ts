@@ -19,6 +19,8 @@ export interface Me {
   off: (Tool | PluginGateId)[];
   /** Apps it opens but doesn't change (Settings → Team → Access: Read); the server refuses their writes. */
   read?: Tool[];
+  /** a member of someone else's team: never deletes the owner's footage or finals (the server refuses it) */
+  member?: true;
   logins?: number | null; // real accounts only — used to spot a first login
   /** The picture from a linked Google or GitHub sign-in (its own URL); null: the initial is shown. */
   picture?: string | null;
