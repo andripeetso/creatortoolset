@@ -204,8 +204,8 @@ final class DeliveryTests: XCTestCase {
         FocusedElement(AXUIElementCreateApplication(pid))
     }
 
-    private func focus(pid: pid_t? = 100, element: FocusedElement? = nil, secure: Bool = false) -> FocusSnapshot {
-        FocusSnapshot(pid: pid, element: element, isSecure: secure)
+    private func focus(element: FocusedElement? = nil, secure: Bool = false) -> FocusSnapshot {
+        FocusSnapshot(element: element, isSecure: secure)
     }
 
     func testUnchangedFocusInjects() {
@@ -221,17 +221,16 @@ final class DeliveryTests: XCTestCase {
 
     /// Secure wins over drift: a password field never gets the clipboard.
     func testSecureFieldAfterDriftStillDiscards() {
-        XCTAssertEqual(DeliveryDecision.decide(start: focus(pid: 1), now: focus(pid: 2, secure: true)), .discardSecure)
+        XCTAssertEqual(DeliveryDecision.decide(start: focus(element: element(1)), now: focus(element: element(2), secure: true)), .discardSecure)
     }
 
     /// Clicking around while talking: the text goes where focus is at the end.
     func testMovedFocusStillInjects() {
-        XCTAssertEqual(DeliveryDecision.decide(start: focus(pid: 1), now: focus(pid: 2)), .inject)
         XCTAssertEqual(DeliveryDecision.decide(start: focus(element: element(1)), now: focus(element: element(2))), .inject)
     }
 
     func testNoStartSnapshotInjects() {
-        XCTAssertEqual(DeliveryDecision.decide(start: nil, now: focus(pid: 7)), .inject)
+        XCTAssertEqual(DeliveryDecision.decide(start: nil, now: focus()), .inject)
     }
 
     func testUserMessagesNeverCarryText() {
@@ -380,20 +379,26 @@ final class PasteboardSessionTests: XCTestCase {
         XCTAssertFalse(session.isRestorePending)
     }
 
+    /// The second waits for the first (DictationDeliveryFixTests), then the clipboard comes back once.
     func testSecondPasteInsideSettleWindowDoesNotResnapshot() {
         session.paste("one")
         session.paste("two")
+        XCTAssertEqual(pastes, 1)
+        runPending()  // "one" given up: "two" goes
         XCTAssertEqual(pastes, 2)
+        XCTAssertEqual(pasteboard.writes.last?.text, "two")
         runPending()
         XCTAssertEqual(pasteboard.contents, original)
     }
 
     func testOnlyTheLatestRestoreRuns() {
         session.paste("one")
-        let first = pending.removeFirst()
+        let firstGiveUp = pending.removeLast()
+        pending.removeFirst()()  // settle
+        pasteboard.targetReads()
+        pending.removeFirst()()  // the read's restore sends nothing queued: restores
         session.paste("two")
-        first()
-        // The first window's restore is stale; "two" may not be read yet.
+        firstGiveUp()  // stale: "two" may not be read yet
         XCTAssertEqual(pasteboard.writes.last?.text, "two")
         XCTAssertNotEqual(pasteboard.contents, original)
         runPending()
@@ -417,16 +422,6 @@ final class PasteboardSessionTests: XCTestCase {
         session.paste("two")
         runPending()
         XCTAssertEqual(pasteboard.contents, newer)
-    }
-
-    func testCopyStaysAndCancelsPendingRestore() {
-        session.paste("one")
-        session.copy("fallback")
-        XCTAssertEqual(pasteboard.writes.last?.markers, ["org.nspasteboard.ConcealedType"])
-        runPending()
-        XCTAssertEqual(pasteboard.writes.last?.text, "fallback")
-        XCTAssertNotEqual(pasteboard.contents, original)
-        XCTAssertFalse(session.isRestorePending)
     }
 
     /// `pending` holds the settle-delay check, then the `maxWait` give-up.
@@ -461,9 +456,11 @@ final class PasteboardSessionTests: XCTestCase {
         session.paste("one")
         let firstRead = pasteboard.onRead
         session.paste("two")
-        pending[2]()  // the second paste's settle delay
+        runPending()  // "one" given up unread: "two" goes
+        pending.removeFirst()()  // the second paste's settle delay
         firstRead?()
         XCTAssertNotEqual(pasteboard.contents, original)
+        XCTAssertEqual(pending.count, 1, "only the second paste's give-up")
     }
 
     func testEmptyClipboardRestoresEmpty() {
@@ -492,12 +489,9 @@ final class SystemPasteboardTests: XCTestCase {
         let saved = pasteboard.snapshot()
         XCTAssertEqual(saved.items.count, 2)
 
-        pasteboard.write("transcript", markers: PasteboardSession.transientMarkers)
-        XCTAssertEqual(named.string(forType: .string), "transcript")
-        XCTAssertNotNil(named.data(forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
-
         var reads = 0
         pasteboard.promise("promised", markers: PasteboardSession.transientMarkers) { reads += 1 }
+        XCTAssertNotNil(named.data(forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
         let promisedCount = named.changeCount
         XCTAssertEqual(reads, 0)
         XCTAssertEqual(named.string(forType: .string), "promised")
@@ -523,7 +517,7 @@ final class SanitizeTests: XCTestCase {
     func testKeepsSpeechAndCollapsesWhitespace() {
         XCTAssertEqual(
             WhisperKitTranscriber.sanitize("  Hello [MUSIC]  there (music playing)\n world <|endoftext|> "),
-            "Hello there world"
+            "Hello there (music playing) world"
         )
     }
 

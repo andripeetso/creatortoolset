@@ -42,9 +42,27 @@ final class DictationPill {
     private let model = OverlayModel()
     /// Bumped by every `show`, so a message timer only hides its own message.
     private var generation = 0
+    /// What the dictation loop is doing now. A transcription that ends while a newer recording or transcription
+    /// runs leaves the pill on that one instead of hiding it.
+    var current: () -> DictationController.State = { .idle }
+    /// How many transcriptions are still running; shown next to Listening while a new recording runs.
+    var transcribing: () -> Int = { 0 }
+    var state: State { model.state }
+    var behind: Int { model.behind }
+
+    /// Shows what the dictation loop is doing now, or hides the pill when it is idle.
+    func showCurrent() {
+        model.behind = transcribing()
+        switch current() {
+        case .idle: hide()
+        case .recording: if model.state != .recording { show(.recording) }
+        case .transcribing: if model.state != .transcribing { show(.transcribing) }
+        }
+    }
 
     func show(_ state: State) {
         generation += 1
+        model.behind = transcribing()
         ensureWindow()
         if state == .recording {
             model.resetLevels()
@@ -95,7 +113,7 @@ final class DictationPill {
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.generation == shown else { return }
-                self.hide()
+                self.showCurrent()
             }
         }
     }
@@ -168,15 +186,15 @@ extension DictationPill: DictationObserver {
         show(.waiting)
     }
 
-    func dictationFinished(_ result: DictationResult) {
-        hide()
+    func dictationFinished() {
+        showCurrent()
     }
 
     func dictationFailed(_ error: Error) {
         if let text = Self.message(for: error) {
             showMessage(text)
         } else {
-            hide()
+            showCurrent()
         }
     }
 }
@@ -189,6 +207,8 @@ final class OverlayModel: ObservableObject {
     private static let envelope: [Float] = [0.55, 0.85, 1.0, 1.0, 0.85, 0.55]
 
     @Published var state: DictationPill.State = .hidden
+    /// Earlier dictations still being transcribed while this one records.
+    @Published var behind = 0
     @Published var levels: [Float] = Array(repeating: 0, count: barCount)
     /// When the current state was shown, for the seconds counter while transcribing.
     @Published var since = Date()
@@ -272,6 +292,7 @@ private struct OverlayPill: View {
                 Waveform(levels: model.levels)
                     .frame(width: 51, height: 20)
                 label("Listening")
+                if model.behind > 0 { Backlog(count: model.behind) }
             }
         case .transcribing:
             // Always moving, with a seconds counter, so a long one reads as
@@ -307,6 +328,32 @@ private struct OverlayPill: View {
             .foregroundColor(Color(red: 235/255, green: 238/255, blue: 242/255))
             .lineLimit(1)
             .fixedSize()
+    }
+}
+
+/// Earlier dictations still being transcribed: a turning ring with how many inside.
+private struct Backlog: View {
+    let count: Int
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.18), lineWidth: 1.5)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(Color(red: 181/255, green: 209/255, blue: 255/255),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .rotationEffect(.degrees(turn * 360))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundColor(Color(red: 235/255, green: 238/255, blue: 242/255))
+            }
+            .frame(width: 18, height: 18)
+        }
+        .accessibilityElement()
+        .accessibilityLabel("\(count) still transcribing")
     }
 }
 

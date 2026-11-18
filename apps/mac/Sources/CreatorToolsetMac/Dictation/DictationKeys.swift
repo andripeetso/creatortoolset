@@ -196,6 +196,7 @@ enum KeyPicker {
     private static var watch: Any?
     private static var label: NSTextField?
     private static var onClose: (() -> Void)?
+    private static var closeWatch: NSObjectProtocol?
 
     /// `check` refuses a key with a sentence; `done` gets the new key, or nil for none. Esc closes without either.
     static func show(title: String, prompt: String, allowsHold: Bool,
@@ -243,7 +244,7 @@ enum KeyPicker {
             }
             return nil
         }
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: p, queue: .main) { _ in
+        closeWatch = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: p, queue: .main) { _ in
             MainActor.assumeIsolated { if panel === p { close() } }
         }
     }
@@ -255,6 +256,9 @@ enum KeyPicker {
         panel = nil
         if let watch { NSEvent.removeMonitor(watch) }
         watch = nil
+        // the observer's block holds the panel; dropping it frees the panel
+        if let closeWatch { NotificationCenter.default.removeObserver(closeWatch) }
+        closeWatch = nil
         p.orderOut(nil)
         pauseKeys(false)
         let closed = onClose
