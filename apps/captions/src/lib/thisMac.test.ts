@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { allowOtherDevices, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
+import { allowOtherDevices, chooseDownloadFolderOnMac, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
 
 const bridgeWith = (postMessage: (m: string) => Promise<unknown>) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage } } } });
 
@@ -127,4 +127,15 @@ describe("a call that needs a Mac of the person's own", () => {
     vi.stubGlobal("window", {});
     await expect(onThisMac(async () => Promise.reject(away(studio)), { wait: 1 })).rejects.toThrow("Ana's Mac Studio is unreachable");
   });
+});
+
+it("asks this Mac for the download folder and answers its path, or null when cancelled", async () => {
+  const asked: string[] = [];
+  bridgeWith(async (m) => (asked.push(m), { path: "/Volumes/WinningFriends/Downloads" }));
+  expect(await chooseDownloadFolderOnMac()).toBe("/Volumes/WinningFriends/Downloads");
+  expect(asked).toEqual(["download-folder"]);
+  bridgeWith(async () => ({ path: null }));
+  expect(await chooseDownloadFolderOnMac()).toBeNull();
+  vi.stubGlobal("window", {});
+  expect(await chooseDownloadFolderOnMac()).toBeUndefined();
 });

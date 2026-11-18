@@ -98,10 +98,22 @@ export async function onThisMac<T>(run: () => Promise<T>, opts: { onHere?: (why:
  * or null when it was cancelled. undefined in a browser, where the page asks for a typed path instead.
  */
 export async function chooseFolderOnMac(): Promise<string | null | undefined> {
+  return pathAskOnMac("folder");
+}
+
+/**
+ * Settings → Storage › This computer, Download location › Change…: this Mac's own folder panel for the download cache
+ * (ThisMacBridge.swift chooseDownloadFolder). The same answer shape as chooseFolderOnMac.
+ */
+export async function chooseDownloadFolderOnMac(): Promise<string | null | undefined> {
+  return pathAskOnMac("download-folder");
+}
+
+async function pathAskOnMac(what: string): Promise<string | null | undefined> {
   const bridge = thisMacBridge();
   if (!bridge) return undefined;
   try {
-    const reply = (await (bridge.postMessage("folder") as unknown as Promise<{ path?: string | null }>)) ?? {};
+    const reply = (await (bridge.postMessage(what) as unknown as Promise<{ path?: string | null }>)) ?? {};
     return reply.path ?? null;
   } catch {
     return null;
