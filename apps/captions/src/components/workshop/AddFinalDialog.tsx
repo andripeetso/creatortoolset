@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { uploadFile } from "@/lib/library";
-import { addFromMac, deviceHere, quickPrint } from "@/lib/onMac";
+import { uploadFinal } from "@/lib/library";
+import { addFromMac, deviceHere } from "@/lib/onMac";
 import { importCancel, importCopy, importPrint, importProgress, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { getSessionFinals, putFinal, type SessionFinals, type SessionStatus } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
@@ -135,15 +135,10 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
       // in the Mac app with the project's folder on this Mac: a copy goes there, and the folder is where it is read from
       const copied = onMac(finals) ? await copyIn(f, finals.folder!, ctl.signal, setSent) : null;
       if (copied && finals.reads) return setStage("done"); // the server reads the folder itself
-      let up;
-      if (copied) {
-        setStage("finals");
-        up = await addFromMac(ask.libraryId, { url: macMediaUrl(copied), name: copied.split("/").pop() ?? f.name, size: f.size, quick: await quickPrint(f) }, copied, finalsId, finals.upload);
-      } else {
-        setSent(0);
-        setStage("upload");
-        up = await uploadFile(ask.libraryId, f, (n) => setSent(n), finalsId, undefined, { signal: ctl.signal });
-      }
+      // the copy on this Mac is extra: the server still gets the final, under Upload none too (uploadFinal)
+      setSent(0);
+      setStage(copied && finals.upload === "none" ? "finals" : "upload");
+      const up = await uploadFinal(ask.libraryId, f, copied, finals.upload, finalsId, (n) => setSent(n), ctl.signal);
       const id = up.assetId ?? up.duplicateOf;
       if (!id) throw new Error("The upload did not finish");
       setStage("finals");

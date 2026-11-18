@@ -26,8 +26,8 @@ import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
-import { macPageMarked, pathOnMac } from "@/lib/thisMac";
-import { deviceHere, indexOnMac, quickPrint } from "@/lib/onMac";
+import { macMediaUrl, macPageMarked, pathOnMac } from "@/lib/thisMac";
+import { addFromMac, deviceHere, indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
@@ -352,6 +352,26 @@ async function addInPlace(libraryId: string, where: string, size: number, collec
     if (r.status === 400 || r.status === 403) return null;
     return json<UploadResult>(r);
   }
+}
+
+/**
+ * A final from Add final (components/workshop/AddFinalDialog.tsx). Finals are served (local-first R2), so under the
+ * library's Upload none too it reaches the server: this Mac sends it from `copied` (its copy in the project's folder on
+ * this Mac) or these bytes go. Only the Finals setting none keeps it on this Mac, read where it was copied.
+ */
+export async function uploadFinal(
+  libraryId: string,
+  file: File,
+  copied: string | null,
+  finalsUpload: LibraryUpload,
+  collectionId: string | undefined,
+  onProgress: (sent: number) => void,
+  signal?: AbortSignal,
+): Promise<{ assetId?: string; duplicateOf?: string }> {
+  if (copied && finalsUpload === "none") {
+    return addFromMac(libraryId, { url: macMediaUrl(copied), name: copied.split("/").pop() ?? file.name, size: file.size, quick: await quickPrint(file) }, copied, collectionId, "none");
+  }
+  return uploadFile(libraryId, file, onProgress, collectionId, copied ?? undefined, { signal });
 }
 
 /**

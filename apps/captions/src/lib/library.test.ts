@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile } from "./library";
+import { clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -196,6 +196,31 @@ describe("uploadFile from the Mac app on its own server", () => {
     expect(await uploadFile("lib_1", clip(), () => {}, "finals_1", "/Volumes/Card/C0001.MP4")).toEqual({ assetId: "a2", versionId: "v2" });
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls.some((url) => /\/uploads(\?|$)/.test(url))).toBe(true);
+  });
+
+  it("Add final copied into its folder on this Mac, Upload none, the Mac app's page (uploadFinal): the server still gets it; only Finals none keeps it here", async () => {
+    mac({ ...picked, device: "dev_1" });
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
+    const copied = "/Volumes/Tiny/Finals/Tiny Acrobatics handstand/C0001.MP4";
+    const urls: string[] = [];
+    const starts: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      urls.push(url);
+      if (url === "/api/library") return Response.json({ libraries: [{ id: "lib_1", settings: { upload: "none" } }] });
+      if (url.endsWith("/in-place")) return new Response("{}", { status: 403 });
+      // a Mac the server does not let send it (an older Mac app): an upload to fill with the bytes
+      if (url.endsWith("/uploads")) return starts.push(JSON.parse(String(init!.body))), new Response(JSON.stringify({ id: "u1", offset: 0, chunkSize: 1 << 20 }), { status: 201 });
+      if (url.endsWith("/finish")) return Response.json({ assetId: "fin1" });
+      if (url.endsWith("/on-mac")) return Response.json({ assetId: "here1" });
+      return new Response(null, { status: 204, headers: { "upload-offset": "5000" } });
+    });
+    expect(await uploadFinal("lib_1", clip(), copied, "all", "finals_1", () => {})).toEqual({ assetId: "fin1" });
+    expect(urls.filter((u) => !u.endsWith("/in-place"))).toEqual(["/api/library/lib_1/uploads", "/api/library/uploads/u1", "/api/library/uploads/u1/finish"]);
+    expect(starts).toMatchObject([{ collectionId: "finals_1", fromPath: copied, fromDevice: "dev_1", send: true }]);
+    // the Finals setting none: read where it was copied, nothing sent
+    urls.length = 0;
+    expect(await uploadFinal("lib_1", clip(), copied, "none", "finals_1", () => {})).toEqual({ assetId: "here1" });
+    expect(urls).toEqual(["/api/library/lib_1/on-mac"]);
   });
 
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {
