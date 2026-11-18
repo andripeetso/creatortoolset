@@ -47,7 +47,7 @@ export function Card({ children, className }: { children: ReactNode; className?:
  * The ⓘ after a label. Hover and keyboard focus open a tooltip after 350 ms; a tap opens a popover (Radix tooltips do not
  * open on tap). The tooltip closes on press, so a tap never shows both.
  */
-export function InfoTip({ text }: { text: ReactNode }) {
+export function InfoTip({ text, label }: { text: ReactNode; label?: string }) {
   const [tapped, setTapped] = useState(false);
   return (
     <Popover open={tapped} onOpenChange={setTapped}>
@@ -56,7 +56,7 @@ export function InfoTip({ text }: { text: ReactNode }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              aria-label="About this"
+              aria-label={label ? `About ${label}` : "About this"}
               className="ml-1.5 inline-flex size-4 shrink-0 translate-y-px items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Info className="size-3.5" aria-hidden />
@@ -116,7 +116,7 @@ function RowBody({ id, title, tip, description, status, control, children, class
         <div className="min-w-0 flex-1 space-y-0.5">
           <div className="text-sm font-medium text-foreground">
             {title}
-            {tip && <InfoTip text={tip} />}
+            {tip && <InfoTip text={tip} label={typeof title === "string" ? title : undefined} />}
           </div>
           {description && <div className="text-xs text-muted-foreground">{description}</div>}
           {status && <div className="pt-0.5 text-xs text-muted-foreground">{status}</div>}
@@ -157,7 +157,7 @@ export function ListRow({ id, icon, title, tip, subtitle, status, actions, class
       <div className="min-w-0">
         <div className="truncate text-sm font-medium text-foreground">
           {title}
-          {tip && <InfoTip text={tip} />}
+          {tip && <InfoTip text={tip} label={typeof title === "string" ? title : undefined} />}
         </div>
         {/* below sm a long line wraps to two lines instead of being cut mid-word */}
         {subtitle && <div className="line-clamp-2 break-words text-xs text-muted-foreground sm:line-clamp-1">{subtitle}</div>}

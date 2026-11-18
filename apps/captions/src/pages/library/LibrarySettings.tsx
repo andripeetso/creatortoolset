@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Folder } from "lucide-react";
-import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus, hostsProxies } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -280,7 +280,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
           {row("look", "look", "Shot descriptions")}
           {look && (
             <Row
-              title="Timelines"
+              title="Video breakdown"
               description={WHAT.timeline}
               status={
                 timeline &&
@@ -311,7 +311,7 @@ function AiSwitches({ library, onChange, onError }: Pick<BodyProps, "library" | 
                   </Status>
                 ))
               }
-              control={<Switch aria-label="Timelines" checked={timeline} onCheckedChange={(on) => void flip("timeline", on)} />}
+              control={<Switch aria-label="Video breakdown" checked={timeline} onCheckedChange={(on) => void flip("timeline", on)} />}
             />
           )}
         </Card>
@@ -515,7 +515,7 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
   const cloud = saved?.proxies ?? null;
   const [offlineLibs, setOfflineLibs] = useState<string[] | null>(null);
   const keepOffline = !!offlineLibs?.includes(library.id);
-  const noServerProxy = library.settings.upload === "none";
+  const noServerProxy = !hostsProxies(library.settings.upload);
   useEffect(() => {
     if (thisMacDevice()) void fetch("/api/library/offline").then((r) => r.json() as Promise<{ libraries?: string[] }>).then((x) => setOfflineLibs(x.libraries ?? []), () => {});
   }, []);
