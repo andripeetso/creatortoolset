@@ -27,7 +27,8 @@ import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 import { ratedLine } from "./look";
-import { timelineOf } from "./timeline";
+import { lookable } from "./shots";
+import { askedWatch, canWatch, timelineOf } from "./timeline";
 import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
 
 /**
@@ -251,8 +252,9 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   return c.json(detail);
 });
 
-// a look on one clip, asked for by name: never a whole library's (bulk.ts has no look)
-const RERUN = new Set(["transcribe", "describe", "look", "fingerprint", "embed"]);
+// a look on one clip, asked for by name: never a whole library's (bulk.ts has no look). `timeline` is no job of its own:
+// the look runs again (its lines kept) and the watch after it makes the clip's timeline, Timelines on or off (askedWatch)
+const RERUN = new Set(["transcribe", "describe", "look", "fingerprint", "embed", "timeline"]);
 
 // POST /api/library/:id/assets/:assetId/jobs { kinds } → queued again, with the caller as the actor (their key)
 searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
@@ -268,8 +270,13 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { kinds?: unknown } | null;
   const kinds = Array.isArray(body?.kinds) ? body.kinds.filter((k): k is string => typeof k === "string" && RERUN.has(k)) : [];
   if (!kinds.length) return c.json({ error: `Nothing to run: kinds may be ${[...RERUN].join(", ")}`, code: "invalid" }, 400);
+  if (kinds.includes("timeline")) {
+    if (!canWatch(db(), libraryId, user.username)) return c.json({ error: "Needs a Gemini API key", code: "needs_key" }, 409);
+    if (!lookable(db(), a.current_version_id)) return c.json({ error: "Only a B-roll video with shot descriptions gets a timeline", code: "invalid" }, 400);
+    askedWatch.add(a.current_version_id);
+  }
   // asked for by name: a done job runs again too (a fresh description, new vectors)
-  for (const k of kinds) enqueueJob(db(), libraryId, a.current_version_id, k, user.username, true);
+  for (const k of new Set(kinds.map((k) => (k === "timeline" ? "look" : k)))) enqueueJob(db(), libraryId, a.current_version_id, k, user.username, true);
   return c.json({ ok: true });
 });
 

@@ -10,6 +10,23 @@ import { allGranted, askMediaFolder, listMediaFolders } from "@/lib/local-files"
  */
 
 export const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+type Shot = NonNullable<AssetDetail["shots"]>[number];
+type Moment = NonNullable<AssetDetail["timeline"]>[number];
+
+/**
+ * A clip's shots under the timeline moment each starts in, in order (What happens on the clip panel); the shots before
+ * the first moment come first, with no moment. Without a timeline: one group of every shot.
+ */
+export function shotsByMoment(events: Moment[], shots: Shot[]): { event?: Moment; shots: Shot[] }[] {
+  const groups: { event?: Moment; shots: Shot[] }[] = [{ shots: [] }, ...events.map((event) => ({ event, shots: [] as Shot[] }))];
+  for (const s of shots) {
+    let i = 0;
+    while (i < events.length && events[i]!.a <= s.a + 0.05) i++;
+    groups[i]!.shots.push(s);
+  }
+  return groups.filter((g) => g.event || g.shots.length);
+}
 export const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
 /** The clip's facts as label and value: when it was filmed, its length, size, roll, and its version past the first. */
