@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssetCard, AssetDetail, ShareRow, TagCount } from "@contracts/library";
 import { thisMacBridge } from "@/lib/thisMac";
+import { thisMacDevice } from "@/lib/providers";
 import { getAsset } from "@/lib/library";
 import { allGranted, askMediaFolder, listMediaFolders } from "@/lib/local-files";
 
@@ -149,6 +150,9 @@ export const canReveal = () => (revealMark() === "1" || revealMark() === "2") &&
 
 /** From '2' the Mac app shows a video, sound or picture file in Finder with no folder granted first. */
 export const revealsAnywhere = () => revealMark() === "2";
+
+/** Show in Finder only where this Mac has the file: the server on this Mac, or a card's "here" on this Mac (never another computer's path). */
+export const revealsHere = (placeWord: AssetCard["placeWord"]) => canReveal() && (servedHere() || (placeWord?.word === "here" && !!thisMacDevice()));
 
 /** On a server elsewhere an older Mac app shows only files inside the folders granted to it, so a folder not granted yet
  *  is asked for first, from this click, in the app's own open panel. false: the panel closed without a folder that holds it. */

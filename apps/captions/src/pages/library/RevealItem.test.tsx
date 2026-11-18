@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
 import type { AssetCard } from "@contracts/library";
 import { RevealItem } from "./Selection";
+import { revealsHere } from "./clip";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -77,5 +78,39 @@ describe("Show in Finder on a server elsewhere", () => {
     const menu = await menuFor({ id: "a1", placeWord: { word: "on", computer: "Studio PC" } });
     expect(menu).toContain("Open");
     expect(menu).not.toContain("Show in Finder");
+  });
+});
+
+// The panel's button and the card share one test (revealsHere): a path on another computer is never offered.
+describe("revealsHere: Show in Finder only where this Mac holds the file", () => {
+  beforeEach(() => {
+    document.documentElement.dataset.macDevice = "dev_mine";
+    document.documentElement.dataset.macReveal = "2";
+    (window as unknown as { webkit: unknown }).webkit = { messageHandlers: { thisMac: { postMessage: async () => ({}) } } };
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete document.documentElement.dataset.macDevice;
+    delete document.documentElement.dataset.macReveal;
+    delete (window as unknown as { webkit?: unknown }).webkit;
+  });
+
+  it("a server elsewhere: this Mac's own 'here' clip only, not another computer's and not a path it cannot read", () => {
+    vi.stubGlobal("location", { hostname: "studio.example.com" });
+    expect(revealsHere({ word: "here" })).toBe(true);
+    expect(revealsHere({ word: "on", computer: "Studio PC" })).toBe(false);
+    expect(revealsHere({ word: "found" })).toBe(false);
+    expect(revealsHere(undefined)).toBe(false);
+  });
+
+  it("the server on this Mac (localhost) serves its own files: shown without a 'here' word", () => {
+    vi.stubGlobal("location", { hostname: "localhost" });
+    expect(revealsHere(undefined)).toBe(true);
+  });
+
+  it("not in the Mac app's page (no reveal mark): never", () => {
+    vi.stubGlobal("location", { hostname: "localhost" });
+    delete document.documentElement.dataset.macReveal;
+    expect(revealsHere({ word: "here" })).toBe(false);
   });
 });
