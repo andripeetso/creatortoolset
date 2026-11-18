@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { EVERY_WORKSPACE, LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
+import { deviceByHost, deviceOf, isThisMachine, listDevices } from "./lib/devices";
+import { pluginStorageFolders } from "./lib/plugin";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
 import { inside, libraryPath, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
@@ -66,8 +67,22 @@ async function readStorage(user: string): Promise<StorageState> {
   return st;
 }
 
-/** The account's folders, as every reader outside Settings gets them (report.ts, the relay's folder list). */
-export const storageOf = (user: string): Promise<StorageState> => readStorage(user);
+/**
+ * The account's folders, as every reader outside Settings gets them (report.ts, the relay's folder list), with the folders
+ * a plug-in keeps in its own list (a studio's Settings → Folders), named by computer name, put on the account's computer of
+ * that name. One with no workspace is every workspace's; one this list already has (same computer, path and use) is left out.
+ * shortcut: a plug-in folder's folderState (report.ts updateFolder) is not kept, its id is not in this list; keep it in the
+ * plug-in's list when its Settings shows that state.
+ */
+export async function storageOf(user: string): Promise<StorageState> {
+  const st = await readStorage(user);
+  const same = (a: StorageFolder, b: StorageFolder) => a.role === b.role && a.origin.host === b.origin.host && a.origin.path === b.origin.path;
+  const theirs = (await pluginStorageFolders(user, true)).flatMap((f): StorageFolder[] => {
+    const d = deviceByHost(user, f.origin.host);
+    return d ? [{ ...f, origin: { ...f.origin, host: d.id }, reach: {}, workspace: f.workspace ?? EVERY_WORKSPACE }] : [];
+  });
+  return { ...st, folders: [...st.folders, ...theirs.filter((f) => !st.folders.some((g) => same(f, g)))] };
+}
 
 /**
  * Changes one folder in the account's list, in its queue (a location agent's report writes the folder's state there).

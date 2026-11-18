@@ -104,7 +104,8 @@ export interface ServerPlugin {
   deviceJobs?: DeviceJobSlot[];
   // Media folders this plug-in keeps in its own store, for this person: the assistant counts them as the
   // workspace's own (its folders note, folder_list). A folder's host may be a name the app doesn't know: any Mac of theirs walks it.
-  storageFolders?: (username: string) => Promise<StorageFolder[]>;
+  // `every`: all of them, whatever workspace the request is in (the computers' location agents, devices-storage.ts storageOf).
+  storageFolders?: (username: string, every?: boolean) => Promise<StorageFolder[]>;
   // Replaces a built-in tool: answers that tool's old root paths (the URLs a script or worker still posts to), mounted by
   // boot.ts ahead of the built-in router, so the plug-in answers first. `paths` must be in REPLACEABLE_PATHS, and no two
   // plug-ins may claim one. `largeBodies` are the request paths that may carry a body over 50 MB (read after the token check).
@@ -403,8 +404,8 @@ export interface CopySource {
   // copies kept by a copier the app does not run, shown read-only beside the library's own
   rows?: (libraryId: string) => Promise<LibraryCopy[]>;
 }
-export const pluginStorageFolders = async (username: string): Promise<StorageFolder[]> =>
-  (await Promise.all(loaded.map((p) => p.storageFolders?.(username).catch(() => []) ?? []))).flat();
+export const pluginStorageFolders = async (username: string, every?: boolean): Promise<StorageFolder[]> =>
+  (await Promise.all(loaded.map((p) => p.storageFolders?.(username, every).catch(() => []) ?? []))).flat();
 
 /** Refuses a device job kind that is not lowercase words, is one of the app's own, or that two plug-ins both declare. */
 function checkDeviceJobs(plugins: ServerPlugin[]): void {
