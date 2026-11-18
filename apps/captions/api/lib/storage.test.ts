@@ -205,8 +205,8 @@ describe("where the files are: the library and its files", () => {
 
 describe("the Finals folder", () => {
   const lib: StorageFolder = { id: "lib", role: "library", name: "Creator Toolset", origin: { host: "mac", path: "~/Creator Toolset" }, make: true, createdAt: 0, reach: { pc: { path: "/Mnt/CT", at: 1 } } };
-  it("is the Library's Finished/ until one is chosen, and the chosen one after", () => {
-    expect(finalsFolderOf([lib])).toMatchObject({ id: "lib:finals", role: "finals", origin: { path: "~/Creator Toolset/Finished" }, reach: { pc: { path: "/Mnt/CT/Finished" } } });
+  it("is the Exports folder itself until one is chosen, and the chosen one after", () => {
+    expect(finalsFolderOf([lib])).toMatchObject({ id: "lib:finals", role: "finals", origin: { path: "~/Creator Toolset" }, reach: { pc: { path: "/Mnt/CT" } } });
     const own: StorageFolder = { ...lib, id: "fin", role: "finals", name: "Finals", origin: { host: "mac", path: "/Volumes/Drive/Finals" }, reach: {} };
     expect(finalsFolderOf([lib, own])?.id).toBe("fin");
     expect(finalsFolderOf([])).toBeUndefined();

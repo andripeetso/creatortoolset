@@ -117,8 +117,10 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   if (has) return has;
   const media = st.folders.find((f) => f.role === "footage" && f.origin.host === device && folderIn(f, inWs));
   const disks = deviceOf(device)?.report?.machine?.disks ?? [];
-  if (!media || onInternalDisk(media.origin.path, disks)) return { error: "Choose a Projects folder in Settings → Folders." };
-  const p = `${media.origin.path.replace(/\/[^/]*$/, "") || ""}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
+  const parent = media ? media.origin.path.replace(/\/[^/]*$/, "") : "";
+  const p = `${parent}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
+  // shortcut: a Media folder at a volume's root has no room beside it on that volume (its parent is /Volumes), so it is refused
+  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return { error: "Choose a Projects folder in Settings → Folders." };
   return chained(user, async () => {
     const cur = await readStorage(user);
     const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));

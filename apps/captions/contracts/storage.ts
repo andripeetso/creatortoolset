@@ -180,10 +180,10 @@ export function inLibrary(lib: StorageFolder, role: "footage" | "finals"): Stora
   };
 }
 
-/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Exports' Finished/. */
+/** A workspace's Finals folder (`folders`: that workspace's): the one chosen in Settings → Folders, else its Exports folder. */
 export function finalsFolderOf(folders: StorageFolder[]): StorageFolder | undefined {
   const lib = exportsOf(folders);
-  return folders.find((f) => f.role === "finals") ?? (lib && inLibrary(lib, "finals"));
+  return folders.find((f) => f.role === "finals") ?? (lib && { ...lib, id: `${lib.id}:finals`, role: "finals" });
 }
 
 /** A Workshop project's folder inside the Finals folder: its title, made safe as a file name on a Mac, Linux or Windows. */

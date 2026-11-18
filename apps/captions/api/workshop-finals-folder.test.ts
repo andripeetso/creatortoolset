@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-// A Workshop project's folder in the workspace's Finals folder (the Library's Finished/ by default): made when the
+// A Workshop project's folder in the workspace's Finals folder (the Exports folder by default): made when the
 // project asks for its final, kept through a rename, a video in it counts as the final, and only those subfolders are
 // read, into Finals, linked to the project. And finals follow their own upload setting (full files by default).
 
@@ -50,7 +50,7 @@ describe.skipIf(rootReplaced)("Workshop: a project's folder in the Finals folder
     );
     const s = (await (await call("maker", "POST", "/api/workshop/sessions", { title: "Tiny Acrobatics: rolls" })).json()) as { id: string };
     const url = `/api/workshop/sessions/${s.id}/finals`;
-    const sub = path.join(library, "Finished", "Tiny Acrobatics rolls");
+    const sub = path.join(library, "Tiny Acrobatics rolls");
 
     const first = (await (await call("maker", "GET", url)).json()) as Finals;
     expect(first.linked).toBe(false);
@@ -60,10 +60,10 @@ describe.skipIf(rootReplaced)("Workshop: a project's folder in the Finals folder
     // a rename keeps the folder it had
     await call("maker", "PATCH", `/api/workshop/sessions/${s.id}`, { title: "Renamed" });
     expect(((await (await call("maker", "GET", url)).json()) as Finals).linked).toBe(false);
-    expect(existsSync(path.join(library, "Finished", "Renamed"))).toBe(false);
+    expect(existsSync(path.join(library, "Renamed"))).toBe(false);
 
     // a render saved beside the project folders is not a final; the file in the project's folder is
-    writeFileSync(path.join(library, "Finished", "render.mp4"), "not a final");
+    writeFileSync(path.join(library, "render.mp4"), "not a final");
     writeFileSync(path.join(sub, "final.mp4"), "the final");
     expect(((await (await call("maker", "GET", url)).json()) as Finals).linked).toBe(true);
 
