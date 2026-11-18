@@ -28,14 +28,17 @@ describe("pairDevice", () => {
     expect(listDevices((d) => d.owner === "otheruser")).toHaveLength(1);
   });
 
-  it("never adopts a library-only worker of the same name, with or without a machine id", () => {
+  it("never adopts a library-only worker for a machine id; the worker's own re-pair (no machine id) keeps its id", () => {
     const box = pairDevice("tinybox", "Tiny Box");
     setDeviceWork(box.device.id, { v: 9, steps: [], library: true, libraryOnly: true });
     const app = pairDevice("tinybox", "Tiny Box", "1.0", "hw-tiny-box-1");
-    const old = pairDevice("tinybox", "Tiny Box");
-    expect(new Set([box.device.id, app.device.id, old.device.id]).size).toBe(3);
-    expect(old.replaced).toEqual([]);
+    expect(app.device.id).not.toBe(box.device.id);
     expect(deviceForToken(`Bearer ${box.token}`)?.id).toBe(box.device.id);
+    const again = pairDevice("tinybox", "Tiny Box");
+    expect(again.device.id).toBe(box.device.id);
+    expect(again.replaced).toEqual([]);
+    expect(deviceForToken(`Bearer ${box.token}`)).toBeNull();
+    expect(listDevices((d) => d.owner === "tinybox")).toHaveLength(2);
   });
 });
 

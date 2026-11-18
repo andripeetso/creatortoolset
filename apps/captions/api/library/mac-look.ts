@@ -60,6 +60,13 @@ const held = new Map<number, { device: string; versionId: string; libraryId: str
  * A restart costs a resend of the sheets, never a second read of the picture, so they are not written here.
  */
 const sent = new Map<string, LookSheet[]>();
+/** Each computer's latest look claim (look jobs carry no held_by): the wait status reads it (work/waits.ts). */
+const lastTaken = new Map<string, { id: number; at: number }>();
+// shortcut: only the latest claim is kept, so an older look taken after a newer one hides it; keep a list if that misleads
+export const tookLookAfter = (device: string, jobId: number, since: number): boolean => {
+  const t = lastTaken.get(device);
+  return !!t && t.at >= since && t.id > jobId;
+};
 /** The copies for the timeline a Mac sent with its sheets, by version, until the look lane takes them (a file each). */
 const copies = new Map<string, string>();
 
@@ -155,7 +162,7 @@ export function placedOn(device: string, owner: string, r: PlaceRow, now = Date.
   const workers: WorkerSeen[] = listDevices(
     (x) =>
       x.owner === owner &&
-      (x.id === device || (now - (x.lastSeen ?? 0) <= ONLINE_MS && !busy(x.id) && (x.kinds ?? []).includes(LIBRARY_LOOK_KIND) && !!pathOn(x.id, r, folders))),
+      (x.id === device || (now - (x.lastSeen ?? 0) <= ONLINE_MS && !lookHeldOn(x.id, now) && (x.kinds ?? []).includes(LIBRARY_LOOK_KIND) && !!pathOn(x.id, r, folders))),
   )
     .filter((x) => x.report?.machine)
     .map((x) => ({ host: x.id, at: x.id === device ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
@@ -219,6 +226,7 @@ export const macLookJob: DeviceJobSlot = {
     const level = libraryLookLevel(r.library_id);
     if (stretchLevelOf(db, r.version_id) !== level) storeStretches(db, r.version_id, [], level);
     const watch = wantsWatch(db, r.version_id, r.actor);
+    lastTaken.set(d.id, { id: r.id, at: Date.now() });
     held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch });
     libraryChanged(r.library_id);
     const stretches = (db.prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(r.version_id) as { a: number; b: number }[]).map((s) => [s.a, s.b]);

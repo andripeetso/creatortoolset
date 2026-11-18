@@ -517,7 +517,13 @@ const workerFor = process.env.CT_WORKER;
 if (process.env.NODE_ENV !== "test" && !workerFor) {
   settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   startLibraryWorker();
-  setInterval(() => checkWaits(), 60_000).unref();
+  setInterval(() => {
+    try {
+      checkWaits();
+    } catch (e) {
+      console.warn("[library] the wait check failed:", e instanceof Error ? e.message : e);
+    }
+  }, 60_000).unref();
   startEditorWorker();
   // computer tasks (work/tasks.ts): a queued one the server may run once its video work is switched on
   void sweepTasks().then(startTaskTick);

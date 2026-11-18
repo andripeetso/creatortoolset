@@ -217,9 +217,7 @@ final class RelayRunner {
     private let home: URL
     /// relayFolder(for:localData:): Workshop session folders and the blob cache
     private let work: URL
-    /// one pool for every server's runner: this Mac runs at most `slotCount` relay jobs at once, however many servers
-    static let sharedSlots = DispatchSemaphore(value: RelayRunner.slotCount)
-    private let slots = RelayRunner.sharedSlots
+    private let slots = DispatchSemaphore(value: RelayRunner.slotCount)
     private let lock = NSLock()
     private var stopped = false
     private var status = AIStatus()

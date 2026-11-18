@@ -150,8 +150,9 @@ export function deviceForToken(authorization: string | undefined): Device | null
  * - no `machineId` (an app from before): the same owner's first device of the same name without a machine id keeps its
  *   id (the folders, balance and places that name it still point at it); the others of that name without one are
  *   dropped (`replaced`). A device that has a machine id is never taken.
- * A library-only worker (`work.libraryOnly`, the box's own token in its env file) is never adopted by a same-name pairing:
- * that would refuse the worker until it is added again.
+ * A library-only worker (`work.libraryOnly`, the box's own token in its env file) is never adopted by a pairing with a
+ * machine id (a helper app of the same name): that would refuse the worker. Its own re-pair (a pair code, no machine id)
+ * keeps its id like any older app.
  * `replaced` ids move to the new one (moveProviders and whereis.ts aliasDevice, called by the route).
  */
 export function pairDevice(owner: string, name: string, version?: string, machineId?: string): { device: Device; token: string; replaced: string[] } {
@@ -164,7 +165,7 @@ export function pairDevice(owner: string, name: string, version?: string, machin
     tell(owner);
     return { device: strip(known), token, replaced: [] };
   }
-  const same = mid ? [] : all().filter((x) => x.owner === owner && x.name === name && !x.machineId && !x.work?.libraryOnly);
+  const same = mid ? [] : all().filter((x) => x.owner === owner && x.name === name && !x.machineId);
   const d: Stored = {
     id: same[0]?.id ?? `dev_${randomBytes(8).toString("hex")}`,
     owner,

@@ -41,7 +41,7 @@ import { wakePictures } from "../library/pictures";
 import type { ProbeSummary } from "../library/media/probe";
 import { sortAfter } from "../library/roll";
 import { serveBlob } from "../library/routes";
-import { askVersionIn, fileTranscript, hearSound, keySound, NeedsKey, transcribeRoute } from "../library/transcribe";
+import { askVersionIn, fileTranscript, hearSound, keySound, NeedsKey } from "../library/transcribe";
 import { resolveDevice } from "../library/whereis";
 import { aiWaits, describeFromStills, leaveToComputers } from "../library/worker";
 import { status } from "./waits";
@@ -68,7 +68,7 @@ const SENDS: Record<string, string[]> = {
 /** The file each kind must send back; a job without it fails (retried), never finishes empty. */
 const REQUIRED: Record<string, string> = { thumb: "thumb", proxy: "proxy", wave: "wave", sprite: "sprite", describe: "still0" };
 /** The kinds that may download the original of a file only the server has: the proxy, and the probe and card picture it has no lighter copy for. */
-const READS_ORIGINAL = ["proxy", "probe", "thumb"];
+export const READS_ORIGINAL = ["proxy", "probe", "thumb"];
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
@@ -344,14 +344,9 @@ export function queuedFor(d: Device, now = Date.now(), balance: Balance = readBa
     ` AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ?)` +
     ` AND NOT ${inFolder}`;
   const reachArgs = win ? [mineJson, mineJson, d.id] : [mineJson, mineJson, d.id, prefixesJson, prefixesJson];
-  let keyOn = false;
-  try {
-    const p = transcribeRoute(d.owner).provider;
-    keyOn = p === "deepgram" || p === "openai";
-  } catch {
-    keyOn = false;
-  }
-  const askedJson = JSON.stringify([...askVersionIn].flatMap(([v, a]) => (a.by === d.owner ? [v] : [])));
+  // keySound is the one rule (libraryRank): a version nobody asked about follows the owner's own route
+  const keyOn = !!keySound(d.owner, "");
+  const askedJson = JSON.stringify([...askVersionIn].flatMap(([v, a]) => (a.by === d.owner && keySound(d.owner, v) ? [v] : [])));
   const origOk = takesOriginals(balance, d);
   const sql =
     `SELECT j.* FROM jobs j LEFT JOIN asset_versions v ON v.id = j.version_id` +

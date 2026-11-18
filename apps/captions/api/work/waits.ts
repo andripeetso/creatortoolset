@@ -27,7 +27,7 @@ import { folderFor, hostPath } from "../lib/storage";
 import { libraryChanged } from "../library/access";
 import { libraryDb } from "../library/db";
 import { firstClips, type JobRow } from "../library/jobs";
-import { lookHeldOn, placedOn, type PlaceRow } from "../library/mac-look";
+import { lookHeldOn, placedOn, tookLookAfter, type PlaceRow } from "../library/mac-look";
 import { OWN, placesFor } from "../library/places";
 import { BUDGET_WAITS, MAC_WAITS } from "../library/shots";
 import { keySound } from "../library/transcribe";
@@ -44,6 +44,7 @@ import {
   POLL_FRESH_MS,
   polls,
   queuedFor,
+  READS_ORIGINAL,
   relayBusy,
   rowOf,
   takesLibrary,
@@ -124,7 +125,7 @@ class Ctx {
   private readonly placeVersions = new Map<string, { root: string | null; root_rel: string | null; hasPlace: boolean; ownByDev: Map<string, string | null> }>();
   private readonly triesCache = new Map<string, string[]>();
   private readonly fileForCache = new Map<string, FileAt | null>();
-  private readonly proxyJobs = new Map<string, JobRow | null>();
+  private readonly openJobs = new Map<string, JobRow | null>();
   private readonly queuedIdsByDev = new Map<string, Set<number>>();
   private readonly lookWindowByOwner = new Map<string, Set<number>>();
   private readonly newerMaxIdCache = new Map<string, number>();
@@ -257,7 +258,7 @@ class Ctx {
   }
 
   fileFor(r: FileRow, host: string, folders: StorageFolder[]): FileAt | null {
-    const key = `${r.id}\0${host}\0${r.proxy ? 1 : 0}`;
+    const key = `${r.id}\0${host}\0${r.proxy ? 1 : 0}\0${r.mac_path ?? ""}\0${r.mac_device ?? ""}`;
     if (this.fileForCache.has(key)) return this.fileForCache.get(key) ?? null;
     let out: FileAt | null = null;
     if (!r.mac_path && r.source_path) {
@@ -347,13 +348,14 @@ class Ctx {
   }
 
   tookNewerAfter(deviceId: string, isLook: boolean, jobId: number, sinceAt: number): boolean {
-    const key = `${deviceId} ${isLook ? 1 : 0} ${sinceAt}`;
+    if (isLook) return tookLookAfter(deviceId, jobId, sinceAt);
+    const key = `${deviceId}\u0000${sinceAt}`;
     let maxId = this.newerMaxIdCache.get(key);
     if (maxId === undefined) {
       const row = libraryDb()
         .prepare(
           `SELECT MAX(id) AS max_id FROM jobs
-           WHERE held_by = ? AND state IN ('running', 'done') AND ${isLook ? "kind = 'look'" : "kind != 'look'"}
+           WHERE held_by = ? AND state IN ('running', 'done') AND kind != 'look'
              AND (COALESCE(started_at, 0) >= ? OR COALESCE(done_at, 0) >= ? OR (started_at IS NULL AND done_at IS NULL))`,
         )
         .get(deviceId, sinceAt, sinceAt) as { max_id: number | null } | undefined;
@@ -363,13 +365,15 @@ class Ctx {
     return maxId > jobId;
   }
 
-  proxyJobOf(versionId: string): JobRow | undefined {
-    if (this.proxyJobs.has(versionId)) return this.proxyJobs.get(versionId) ?? undefined;
+  /** The version's newest queued or running job of `kind`. */
+  jobOf(versionId: string, kind: "proxy" | "transcribe"): JobRow | undefined {
+    const key = `${versionId}\0${kind}`;
+    if (this.openJobs.has(key)) return this.openJobs.get(key) ?? undefined;
     const p =
       (libraryDb()
-        .prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running') ORDER BY id DESC LIMIT 1")
-        .get(versionId) as JobRow | undefined) ?? null;
-    this.proxyJobs.set(versionId, p);
+        .prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = ? AND state IN ('queued', 'running') ORDER BY id DESC LIMIT 1")
+        .get(versionId, kind) as JobRow | undefined) ?? null;
+    this.openJobs.set(key, p);
     return p ?? undefined;
   }
 }
@@ -390,8 +394,9 @@ function liftedFolderLine(ctx: Ctx, owner: string, r: LibRow, C: Device[]): stri
     const f = ctx.fileFor(w, x.id, folders);
     return !!f && "path" in f;
   });
+  // a computer reads the file: the folder is not what holds it up
+  if (reads.length) return undefined;
   const name = m.folder.name;
-  if (reads.length) return `Only ${either(reads.map((x) => x.name))} can read ${name}`;
   const share = m.folder.mount?.share;
   return share
     ? `No computer can read ${name}: connect ${share} on ${either(takers.map((x) => x.name))}`
@@ -407,7 +412,7 @@ function heldReason(ctx: Ctx, x: Device, job: JobRow, r: LibRow): { kind: HeldKi
   const b = ctx.balance(x.owner);
   const isLook = job.kind === "look";
   if (!isLook && !allowsLibrary(b, x.id, r.library_id)) return { kind: "notThisLibrary", line: notThisLibrary(c) };
-  if (!isLook && job.kind === "proxy") {
+  if (!isLook && READS_ORIGINAL.includes(job.kind)) {
     const folders = ctx.folders(x.owner);
     const lx = lift(x, ctx.now);
     const realRank = libraryRank(lx, job, r, folders, b);
@@ -472,7 +477,7 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
 
   // A job that reads the proxy while the version's proxy job is queued or running takes the proxy job's class (running with held_by -> queued).
   if (!isLook && r && READS_PROXY.has(job.kind) && !r.proxy) {
-    const p = ctx.proxyJobOf(r.id);
+    const p = ctx.jobOf(r.id, "proxy");
     if (p && p.id !== job.id) {
       if (p.state === "running") {
         if (p.held_by) {
@@ -488,6 +493,17 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
         seenInPass.set(job.id, out);
         return out;
       }
+    }
+  }
+
+  // A describe waits for its clip's transcript, as the claim does (library-package.ts waitsForWords): it takes that job's class.
+  if (!isLook && r && job.kind === "describe") {
+    const t = ctx.jobOf(r.id, "transcribe");
+    if (t) {
+      since.delete(job.id);
+      const out: WaitClass = t.state === "running" ? { wait: "queued", actor: job.actor } : { ...classifyJob(ctx, t, seenInPass), actor: job.actor };
+      seenInPass.set(job.id, out);
+      return out;
     }
   }
 
@@ -527,12 +543,6 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
       seenInPass.set(job.id, out);
       return out;
     }
-    const folderLine = liftedFolderLine(ctx, owner, r, C);
-    if (folderLine) {
-      const out: WaitClass = { wait: "needs", reason: folderLine, href: "/settings/folders", actor: owner };
-      seenInPass.set(job.id, out);
-      return out;
-    }
     const kindRunsOnComputer =
       (job.kind === "send" || LIBRARY_ON_COMPUTER.includes(job.kind) || isLook) &&
       (job.kind !== "transcribe" || !!keySound(job.actor, r.id));
@@ -540,6 +550,12 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
       !r.source_key.startsWith("mac:") && !r.from_device && !r.mac_device && !ctx.hasAnyPlace(r.id);
     if (!kindRunsOnComputer || serverOnlyFile) {
       const out: WaitClass = { wait: "cannot", reason: notOnComputers, actor: owner };
+      seenInPass.set(job.id, out);
+      return out;
+    }
+    const folderLine = liftedFolderLine(ctx, owner, r, C);
+    if (folderLine) {
+      const out: WaitClass = { wait: "needs", reason: folderLine, href: "/settings/folders", actor: owner };
       seenInPass.set(job.id, out);
       return out;
     }
@@ -565,7 +581,6 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     const h = heldReason(ctx, x, job, r);
     if (h) {
       heldByDev.set(x.id, h);
-      freeSince.delete(x.id);
     } else {
       L.push(x);
     }
@@ -654,10 +669,10 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
       const me = takesLibrary(pick) ? pick : lift(pick, ctx.now);
       const peers = peersOf(owner, me, ctx.now);
       const dec = ctx.decideFn(me, job, r, peers, folders, b, ctx.now);
-      if ("skip" in dec && dec.skip === "rank") {
-        reason = aheadOf(pick.name, dec.by?.name ?? pick.name);
-      } else if ("skip" in dec && dec.skip === "balance") {
-        reason = keptFor(dec.by?.name ?? pick.name);
+      if ("skip" in dec && dec.by && dec.skip === "rank") {
+        reason = aheadOf(pick.name, dec.by.name);
+      } else if ("skip" in dec && dec.by && dec.skip === "balance") {
+        reason = keptFor(dec.by.name);
       } else if (claimsFresh(pick, ctx.now)) {
         reason = notTaking(pick.name);
       } else {
@@ -801,7 +816,7 @@ export function checkWaits(now = Date.now()): void {
       for (const [id, c] of snap.byJob) {
         seenJobs.add(id);
         const prev = last.get(id);
-        if (prev !== undefined && prev !== c.wait) changed = true;
+        if (prev !== c.wait) changed = true; // a new wait shows too
         last.set(id, c.wait);
       }
       const gap = ctx.identityGaps.get(libId);

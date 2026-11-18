@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -71,6 +71,14 @@ const heldBy = (holder: string): number => {
   }
 };
 
+const emptyLeft = (holder: string): boolean => {
+  try {
+    return Date.now() - statSync(holder).mtimeMs > 5_000;
+  } catch {
+    return false;
+  }
+};
+
 /** Takes the turn when it is free, or held by a process that died. */
 function grab(holder: string, pid: number, alive: (pid: number) => boolean): boolean {
   for (let tries = 0; tries < 2; tries++) {
@@ -81,8 +89,9 @@ function grab(holder: string, pid: number, alive: (pid: number) => boolean): boo
       return true;
     } catch {
       const was = heldBy(holder);
-      // empty: just made, its pid not written yet
-      if (!was || alive(was)) return false;
+      // empty: just made, its pid not written yet, unless its maker died before writing it
+      if (!was && !emptyLeft(holder)) return false;
+      if (was && alive(was)) return false;
       rmSync(holder, { force: true });
     }
   }

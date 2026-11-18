@@ -81,8 +81,9 @@ const jobId = (c: Context): number => {
   return Number.isSafeInteger(n) && n > 0 ? n : 0;
 };
 
-// registered before the relay mount below, so these answer first (the relay's middleware is for its own routes)
-const RUNNER_CALL = /\/relay\/(?:(?:editor|job|cutout|transcribe)\/|(?!work\/)[^/]+\/(?:text|step|ask|done|fail)$)/;
+// registered before the relay mount below, so these answer first (the relay's middleware is for its own routes).
+// editor/claim is left out: a library worker claims looks there every loop, and a runner's own claims follow its poll.
+const RUNNER_CALL = /\/relay\/(?:(?!editor\/claim$)(?:editor|job|cutout|transcribe)\/|(?!work\/)[^/]+\/(?:text|step|ask|done|fail)$)/;
 devicesApp.use("/relay/*", async (c, next) => {
   if (RUNNER_CALL.test(c.req.path)) {
     const d = deviceForToken(c.req.header("authorization"));
