@@ -25,7 +25,7 @@ export type ReceiveKind = "original" | "proxy" | "derivative" | "serving";
  */
 export type ReceiveOrigin = "person" | "computer" | "phone";
 
-export const REFUSED_NONE = "This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them.";
+export const REFUSED_NONE = "Upload is off for this workspace. Add footage in the Mac app.";
 export const REFUSED_PROXIES = "This library takes proxies only. Your computer makes the proxy and sends that.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
 

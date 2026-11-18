@@ -86,6 +86,10 @@ describe("mayReceive: original bytes only where somebody chose to send them", ()
     }
   });
 
+  it("the refusal under none says exactly what to do (Amendment c)", () => {
+    expect(REFUSED_NONE).toBe("Upload is off for this workspace. Add footage in the Mac app.");
+  });
+
   it("an upload started under all is asked again at each part and at the finish: once the library says none, nothing more is taken", async () => {
     d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_flip', 'tinyacrobatics', 'F', 'local', '{\"upload\":\"all\"}', 0)").run();
     const { id } = (await (await start("lib_flip")).json()) as { id: string };
