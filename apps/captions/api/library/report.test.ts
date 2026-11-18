@@ -89,6 +89,28 @@ describe("location agents: the computers report, the server records", () => {
     expect((await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "x.mp4", path: "/Users/someone/x.mp4", size: 5, quick: quick(9), frames: [] }) })).status).toBe(400);
   });
 
+  it("leaves AI Editor project folders and half-written files out, and takes ones indexed before out of the library", async () => {
+    const { device, token } = await pair("machine-eeee-5555");
+    const auth = { ...json, authorization: `Bearer ${token}` };
+    const root = "/Volumes/Tiny Footage/Edits";
+    await app.request("/api/devices/storage/folders", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ role: "footage", host: device.id, path: root }) });
+    const folder = ((await (await app.request("/api/devices/relay/folders", { headers: auth })).json()) as { folders: { id: string; path: string }[] }).folders.find((f) => f.path === root)!.id;
+    const report = (files: object[]) =>
+      app.request("/api/devices/relay/report", { method: "POST", headers: auth, body: JSON.stringify({ reportVersion: 2, folders: [{ id: folder, state: "ok", scan: `s${Math.random()}`, complete: true, files }] }) });
+    const f = (p: string, n: number) => ({ path: `${root}/${p}`, bytes: 100 + n, mtime: 1_700_000_000_000, quick: quick(100 + n) });
+    const draft = f("Hard Edit_edit/drafts/Hard Edit_V1A_D1.camera.mp4", 1);
+
+    // a draft indexed before the rule: it leaves the library on the next report, its file untouched
+    const ix = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "d.mp4", path: draft.path, size: draft.bytes, quick: draft.quick, frames: [] }) });
+    const versionId = ((await ix.json()) as { versions: { versionId: string }[] }).versions[0]!.versionId;
+    const trashed = () => (libraryDb().prepare("SELECT a.trashed_at AS t FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { t: number | null }).t;
+    expect(trashed()).toBeNull();
+
+    const r = (await (await report([draft, f("Hard Edit_edit/MG/flash.mov", 2), f("song.m4a.tmp.m4a", 3), f("raw/clip.mp4", 4)])).json()) as { index: { path: string }[] };
+    expect(r.index).toEqual([{ folder, path: `${root}/raw/clip.mp4` }]);
+    expect(trashed()).not.toBeNull();
+  });
+
   it("keeps an old pairing's id and its places when an app from before pairs again", async () => {
     const old = await pair();
     libraryDb().prepare("INSERT INTO version_places (version_id, device, path, state, source) VALUES ('v-old', ?, '/x.mp4', 'verified', 'scan')").run(old.device.id);

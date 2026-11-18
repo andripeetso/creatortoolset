@@ -219,6 +219,16 @@ export function okFolderPath(p: unknown): p is string {
 }
 
 /**
+ * A file under a Media folder that is not footage, by its path below the folder: inside an AI Editor project folder
+ * ("<name>_edit", its drafts, stems and motion graphics; apps/editor skips the same) or a half-written file (".tmp",
+ * ".part"). Every scan leaves these out of the Media Library.
+ */
+export function notFootage(rel: string): boolean {
+  const parts = rel.split(/[\\/]/);
+  return parts.slice(0, -1).some((s) => /_edit$/i.test(s)) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+}
+
+/**
  * Upload relays (api/uploads/relay): how a big video gets from the browser to the server. Both kinds are built in, and
  * the server picks the active one (api/lib/storage.ts uploadRelayView), so a client asks the server and never chooses.
  * "chunked": 16 MB parts through this server (works everywhere, the default). "direct": the browser PUTs the parts
