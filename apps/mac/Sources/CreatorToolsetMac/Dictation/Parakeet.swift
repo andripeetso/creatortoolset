@@ -45,6 +45,8 @@ actor ParakeetTranscriber: LoadingTranscriber {
     private var loading: Task<Void, Error>?
     /// Set by `unload`: this transcriber was replaced and loads nothing more.
     private var retired = false
+    /// Transcriptions handed to it and not done yet; a retired one keeps its model until the last ends.
+    private var users = 0
 
     init(model: TranscriptionModel, base: URL = DictationPaths.base) {
         self.modelID = model.id
@@ -58,8 +60,9 @@ actor ParakeetTranscriber: LoadingTranscriber {
 
     /// Loads the model, downloading it first when it isn't here. A copy on disk loads with no network call.
     func load() async throws {
-        if asr != nil || retired { return }
+        if asr != nil { return }
         if let loading { return try await loading.value }
+        if retired { return }
         let task = Task { try await self.loadNow() }
         loading = task
         defer { loading = nil }
@@ -71,14 +74,20 @@ actor ParakeetTranscriber: LoadingTranscriber {
         let folder = try await ParakeetFiles.download(model, in: base)
         let made = AsrManager()
         try await made.loadModels(AsrModels.loadLocal(from: folder, version: ParakeetFiles.version(model)))
-        if retired { return await made.cleanup() }
+        // replaced while loading, with no transcription waiting for it
+        if retired && users == 0 { return await made.cleanup() }
         asr = made
         DictationLog.info("✓ \(model.id) ready")
     }
 
+    /// Frees the model once the transcriptions already handed to it are done.
     func unload() async {
         retired = true
-        guard let asr else { return }
+        await freeIfUnused()
+    }
+
+    private func freeIfUnused() async {
+        guard retired, users == 0, let asr else { return }
         self.asr = nil
         await asr.cleanup()
     }
@@ -100,6 +109,20 @@ actor ParakeetTranscriber: LoadingTranscriber {
     }
 
     private func run(_ audio: [Float]) async throws -> ASRResult {
+        users += 1
+        do {
+            let result = try await runHeld(audio)
+            users -= 1
+            await freeIfUnused()
+            return result
+        } catch {
+            users -= 1
+            await freeIfUnused()
+            throw error
+        }
+    }
+
+    private func runHeld(_ audio: [Float]) async throws -> ASRResult {
         try await load()
         guard let asr else { throw TranscriberError.notLoaded }
         // it refuses under a second; silence after a short word changes nothing
