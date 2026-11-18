@@ -618,6 +618,7 @@ final class Dictation: ObservableObject {
         )
         made.remote = prefs.engine == .thisMac ? speechServer : nil
         pill.current = { [weak made] in made?.state ?? .idle }
+        pill.transcribing = { [weak made] in made?.transcribing ?? 0 }
         controllerStore = made
         return made
     }

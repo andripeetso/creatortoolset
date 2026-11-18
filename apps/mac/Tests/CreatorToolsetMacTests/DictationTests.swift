@@ -341,6 +341,20 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(pill.state, .hidden)
     }
 
+    func testThePillShowsEarlierTranscriptionsBehindANewRecording() async {
+        let pill = DictationPill()
+        var queued = 1
+        pill.current = { .recording }
+        pill.transcribing = { queued }
+        pill.dictationStarted()
+        await waitFor { pill.state == .recording }
+        XCTAssertEqual(pill.behind, 1)
+        queued = 0
+        pill.dictationFinished()
+        XCTAssertEqual(pill.state, .recording, "the earlier one pasting leaves Listening up")
+        XCTAssertEqual(pill.behind, 0)
+    }
+
     func testHistoryKeepsTheNewestOnly() {
         let recordings = DictationRecordings(directory: dir)
         recordings.keep = 2

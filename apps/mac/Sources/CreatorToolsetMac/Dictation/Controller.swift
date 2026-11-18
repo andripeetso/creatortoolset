@@ -58,6 +58,8 @@ final class DictationController {
     private let context: @MainActor () -> TranscriptionContext
     /// Transcriptions started and not yet finished or failed.
     private var inFlight = 0
+    /// Transcriptions still running, so the pill can show them behind a new recording.
+    var transcribing: Int { inFlight }
     /// Numbers each transcription; those at or below `discardedThrough` were
     /// cancelled by `discard` and deliver nothing when they finish.
     private var lastStarted = 0
