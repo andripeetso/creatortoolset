@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { constants, copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { LIBRARY_SUBFOLDERS } from "../../../contracts/storage";
 import type { CaptionRenderSpec } from "../../../src/lib/types";
 import { createCaptionFrameRenderer } from "../../caption-frames";
 import { filterEscape, requireFontsDir } from "../../export";
@@ -14,7 +13,7 @@ import { taskKind } from "../tasks";
  * A Caption Studio export (api/exports.ts) as a computer task: the native engine burns the client-built ASS with
  * ffmpeg/libass; the wysiwyg engine draws each caption frame in headless Chromium (caption-frames.ts) and pipes the PNGs
  * to ffmpeg. The same code runs on the server (This Mac, or its video work on) and on a computer, which also keeps the
- * file in its Exports folder's Finished (Settings → Folders). Either way the server gets the file through apply, for its download
+ * file in its Exports folder (Settings → Folders). Either way the server gets the file through apply, for its download
  * and Finals. Progress and Cancel go through the `progress` call: its answer stops a render whose job was removed.
  */
 
@@ -256,7 +255,7 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
       const all = (await relayFolders(d)).filter((x) => x.use === "exports" && (x.workspaces === "*" || !t.workspace || x.workspaces.includes(t.workspace)));
       // the workspace's own Exports folder before the one for every workspace (contracts/storage.ts exportsOf)
       const f = all.find((x) => x.workspaces !== "*") ?? all[0];
-      return f ? path.join(f.hostPath, LIBRARY_SUBFOLDERS.finished) : null;
+      return f ? f.hostPath : null;
     },
   },
   apply: async (t, _r, files) => (await import("../../exports")).exportRendered(t.input.id, files[`out.${t.input.ext}`]!),

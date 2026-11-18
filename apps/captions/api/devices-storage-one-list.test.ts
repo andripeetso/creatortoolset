@@ -123,4 +123,11 @@ describe("Projects and Exports are made beside the workspace's first Media folde
     expect(r).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
     expect((await storageOf(USER)).folders.some((f) => f.role === "library")).toBe(false);
   });
+
+  it("refuses a Media folder at a volume's root: Projects would land beside the volumes, not on it", async () => {
+    const dev = "dev-studio-3";
+    listFile([folder("m3", dev, "/Volumes/MONOLITH")]);
+    expect(await ensureUseFolder(USER, undefined, "projects", dev)).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
+    expect((await storageOf(USER)).folders.filter((f) => f.role === "projects")).toHaveLength(0);
+  });
 });
