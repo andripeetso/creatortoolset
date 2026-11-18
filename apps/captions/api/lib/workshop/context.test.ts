@@ -38,15 +38,24 @@ describe("a workspace's context, carried to every AI in it", () => {
     expect(await workspaceContext(undefined, 6000)).toBe("");
   });
 
-  it("fits in what the call can carry: the files keep a third when the instructions are long, whole lines only", () => {
+  it("names every file, gives whole text up to the budget and names the ones left out (owner 2026-11-17: never dropped silently)", () => {
     const p = { ...project, id: "p", notes: "x".repeat(10_000), createdAt: 1, updatedAt: 1 };
-    const files = Array.from({ length: 50 }, (_, i) => ({ id: `f${i}`, name: `f${i}.md`, text: "", addedAt: 1, about: "y".repeat(80) }));
-    const out = renderContext(p, files, 3000);
-    expect(out.length).toBeLessThanOrEqual(3000);
-    expect(out).toContain("…[shortened]");
-    expect(out).toMatch(/- f0\.md \[f0\]: y+\n/);
-    expect(out.split("\n").filter((l) => l.startsWith("- f")).every((l) => l.endsWith("y"))).toBe(true);
-    // short instructions leave the files the rest
-    expect(renderContext({ ...p, notes: "short" }, files, 3000).split("\n").filter((l) => l.startsWith("- f")).length).toBeGreaterThan(20);
+    const files = Array.from({ length: 50 }, (_, i) => ({ id: `f${i}`, name: `f${i}.md`, text: `text of f${i}`, addedAt: 1, about: "y".repeat(80) }));
+    files.push({ id: "big", name: "big.md", text: "z".repeat(50_000), addedAt: 1, about: "the long one" });
+    files.push({ id: "last", name: "last.md", text: "the last file's words", addedAt: 1, about: "short" });
+    const small = renderContext(p, files, 3000);
+    // a small call: instructions shortened, but every file is still named and the left-out ones are pointed to the tool
+    expect(small).toContain("…[shortened]");
+    expect(small.split("\n").filter((l) => l.startsWith("- ")).length).toBe(52);
+    expect(small).toMatch(/Not given whole here[^\n]*big\.md \[big\][^\n]*last\.md \[last\][^\n]*workspace_files/);
+    expect(small).not.toContain("the last file's words");
+
+    const wide = renderContext(p, files, 40_000);
+    // the big file is past the budget: named, not loaded; the smaller ones after it still go in whole
+    expect(wide).toContain("### last.md [last]\nthe last file's words");
+    expect(wide).toContain("### f49.md [f49]\ntext of f49");
+    expect(wide).not.toContain("z".repeat(100));
+    expect(wide).toMatch(/Not given whole here[^\n]*: big\.md \[big\]\. Read one with the workspace_files tool/);
+    expect(wide.length).toBeLessThanOrEqual(40_000);
   });
 });

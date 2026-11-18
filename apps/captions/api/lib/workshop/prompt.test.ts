@@ -88,16 +88,17 @@ describe("buildGeneratePrompt", () => {
         notes: "never medical",
         knowledge: [{ id: "file-1", name: "voice.md", text: "We never say exercise.", addedAt: 1 }],
       },
+      loaded: [{ id: "file-1", name: "voice.md", text: "We never say exercise.", addedAt: 1 }],
     });
     expect(user).toContain("Instructions:\nnever medical");
     expect(user).toContain("K1 voice.md");
     expect(user).toContain("We never say exercise.");
     expect(user).toContain("Context files (not loaded");
-    expect(user).toContain("Context excerpts");
+    expect(user).toContain("Context loaded this turn");
     expect(user.indexOf("Context files")).toBeLessThan(user.indexOf("PAS — problem first"));
   });
 
-  it("keeps a huge context file to a short excerpt", () => {
+  it("lists a context file it was not given whole, without its text", () => {
     const { user } = buildGeneratePrompt({
       kind: "free",
       packs: [],
@@ -113,7 +114,6 @@ describe("buildGeneratePrompt", () => {
       },
     });
     expect(user).toContain("K1 big.md");
-    expect(user).toContain("…[shortened]");
     expect(user).not.toContain("x".repeat(9000));
   });
 

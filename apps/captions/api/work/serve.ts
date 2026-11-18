@@ -8,7 +8,7 @@ import { aiErrorJson, aiFor, completeWithFallback } from "../ai-complete";
 import { completeVisionWithFallback, type VisionImage } from "../ai-vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { footageProfile } from "../lib/workshop/context";
+import { CONTEXT_MAX, footageProfile } from "../lib/workshop/context";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { workspaceSetup } from "../editor/plan";
@@ -82,7 +82,7 @@ const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
 
 /** The reads a computer's step may ask for, each bound to the held job's account and edit; the args are plain extras. */
 const CALLS: Record<string, (h: { edit: EditMeta; actor: string }, args: unknown[]) => Promise<unknown>> = {
-  workspaceSetup: ({ edit }, [max]) => workspaceSetup(edit, typeof max === "number" ? Math.max(0, Math.min(100_000, max)) : 24_000),
+  workspaceSetup: ({ edit }, [max]) => workspaceSetup(edit, typeof max === "number" ? Math.max(0, Math.min(CONTEXT_MAX, max)) : CONTEXT_MAX),
   footageProfile: ({ edit }) => footageProfile(edit.projectId),
   styleBlock: ({ edit }) => styleBlock(edit.style, edit),
   finishedProfile: ({ edit }) => finishedProfile(ownerOf(edit), edit.projectId ?? ""),

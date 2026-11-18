@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { footageProfile, workspaceContext, workspaceOf } from "./lib/workshop/context";
+import { CONTEXT_MAX, footageProfile, workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -126,12 +126,9 @@ export async function foldersNote(username: string, workspace?: string): Promise
   return lines.length ? `\n\nThis workspace's folders:\n${lines.join("\n")}` : "";
 }
 
-/** How much of the workspace's context rides each chat turn: the rest is a tool call away (workspace_files). */
-const CONTEXT_MAX = 8000;
-
 /**
- * The turn's workspace in its memory: its folders (above), then its context, the instructions and what each file added
- * to it is (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking; then
+ * The turn's workspace in its memory: its folders (above), then its context, the instructions, every file added to it
+ * and as much of their text as fits (lib/workshop/context.ts), so the chat knows the brand, product or game it works for without asking; then
  * what footage it holds and what was finished in it (footageProfile, finishedProfile), when there is any.
  */
 export async function workspaceNote(username: string, workspace?: string): Promise<string> {

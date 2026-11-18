@@ -16,9 +16,9 @@ import { ask, onComputer } from "../../work/on-computer";
 /**
  * A workspace's context, carried to every AI that works in it (the chat, the Media Library, the AI Editor, a connected
  * AI): its instructions and the context files added to it (the Workshop's Knowledge sources kept to it or to every
- * workspace, minus the ones it switched off), each read and filed once (fileSource, workshop.ts). One-shot calls get
- * workspaceContext: the instructions and what each file is, cut to what the call can carry. An AI with tools reads a
- * file's text itself (the workspace_files tool).
+ * workspace, minus the ones it switched off), each read and filed once (fileSource, workshop.ts). Every call gets
+ * workspaceContext (renderContext): the instructions, every file named, and as much whole text as the call can carry. An
+ * AI with tools reads the rest itself (the workspace_files tool).
  */
 
 const ROOT = path.join(env.dataDir, "workshop");
@@ -72,34 +72,50 @@ export function filesIndex(files: Array<Pick<KnowledgeFile, "id" | "name" | "tit
 }
 
 /**
- * What a one-shot AI call is told of the workspace: its instructions, then what each context file is, in `max`
- * characters. The instructions take what they need up to two thirds; the files the rest, whole lines only.
+ * How much of the files' own text a call that works with the workspace as a whole carries (a chat turn, an edit's
+ * plan, a draft): 100k characters, about 25k tokens, an eighth of a 200k-token window, so it fits every model the app
+ * sends to with room for the rest. A call made for each clip or shot passes less (it rides every item).
  */
-export function renderContext(p: Project, files: KnowledgeFile[], max: number): string {
-  const LIST = "\n\nContext files added to the workspace:\n";
-  const MARK = "\n…[shortened]";
-  const head = renderInstructions(p);
-  const room = max - Math.min(head.length, Math.floor((max * 2) / 3)) - LIST.length;
-  const lines: string[] = [];
-  let used = 0;
-  for (const line of filesIndex(files).split("\n")) {
-    if (!line || used + line.length + 1 > room) break;
-    lines.push(line);
-    used += line.length + 1;
+// shortcut: one budget for every model, a per-model window when the app knows each AI's
+export const CONTEXT_MAX = 100_000;
+
+/** The files whose whole text fits in `room` characters, in their order: one too big is left out and a smaller one after it still goes in. */
+export function wholeFiles<T extends { text: string }>(files: T[], room: number): T[] {
+  const out: T[] = [];
+  for (const f of files) {
+    if (!f.text.trim() || f.text.length > room) continue;
+    out.push(f);
+    room -= f.text.length;
   }
-  const list = lines.length ? `${LIST}${lines.join("\n")}` : "";
-  const cut = max - list.length;
-  return `${head.length <= cut ? head : `${head.slice(0, cut - MARK.length).trimEnd()}${MARK}`}${list}`;
+  return out;
 }
 
 /**
- * The workspace's context for a one-shot call (above); "" when there is no such workspace. The files' own text is not
- * read: a line a file needs only what it was filed as.
+ * What an AI call is told of the workspace (the one rule, owner 2026-11-17: no context file is ever dropped without the
+ * AI knowing it exists): its instructions (up to two thirds of `max`), then every context file by name and what it is,
+ * always, then the whole text of the files that fit the rest of `max`; the ones that don't are named, with the tool
+ * that reads them whole.
  */
+export function renderContext(p: Project, files: KnowledgeFile[], max: number): string {
+  const MARK = "\n…[shortened]";
+  const list = files.length ? `\n\nContext files added to the workspace:\n${filesIndex(files)}` : "";
+  const full = renderInstructions(p);
+  const cap = Math.floor((max * 2) / 3);
+  const head = full.length <= cap ? full : `${full.slice(0, cap - MARK.length).trimEnd()}${MARK}`;
+  const loaded = wholeFiles(files, max - head.length - list.length);
+  const texts = loaded.map((f) => `\n\n### ${f.title || f.name} [${f.id}]\n${f.text.trim()}`).join("");
+  const left = files.filter((f) => f.text.trim() && !loaded.includes(f));
+  const out = left.length
+    ? `\n\nNot given whole here (too long for this call; the line above says what each is): ${left.map((f) => `${f.title || f.name} [${f.id}]`).join(", ")}. Read one with the workspace_files tool (file = the id in brackets).`
+    : "";
+  return `${head}${list}${loaded.length ? `\n\nTheir whole text:${texts}` : ""}${out}`;
+}
+
+/** The workspace's context for a call (above); "" when there is no such workspace. */
 export async function workspaceContext(projectId: string | undefined, max: number): Promise<string> {
   const p = await readWorkspace(projectId);
   if (!p) return "";
-  return renderContext(p, [...(p.knowledge ?? []), ...(await workspaceSources(p)).map((s) => asKnowledge(s, ""))], max);
+  return renderContext(p, await workspaceKnowledge(p), max);
 }
 
 /**
@@ -121,8 +137,8 @@ export const stampOf = (context: string, salt = ""): string => createHash("sha25
  * Which context a stored text would be written under now: the stamp (stampOf) of exactly what
  * `workspaceContext(projectId, max)` gives. A library description or shot description keeps the stamp it was written
  * with; when the workspace's instructions or files change what that call reads, the stamp differs and the text is
- * written again when an edit uses the file or the person opens the clip (tasks/flywheel/PLAN.md, 6.1). A change past
- * what the call reads (beyond `max`) leaves the stamp alone.
+ * written again when an edit uses the file or the person opens the clip (tasks/flywheel/PLAN.md, 6.1). A change to a
+ * file's text that the call does not carry (past `max`) leaves the stamp alone.
  */
 export async function contextStamp(projectId: string | undefined, max: number, salt = ""): Promise<string> {
   return stampOf(await workspaceContext(projectId, max), salt);
