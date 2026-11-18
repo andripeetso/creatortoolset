@@ -25,7 +25,7 @@ import { ensureLibrary } from "./library/access";
  *                                          the Library's watch list, which the Library and the AI Editor read), or as the
  *                                          workspace's Finals folder (role "finals": in place of the one it had; each
  *                                          Workshop project's subfolder is read when the project asks, workshop.ts sessionFinals)
- *   PATCH  /folders/:id {workspace} → move a Media folder to another workspace; null = every workspace
+ *   PATCH  /folders/:id {workspaces} → the workspaces a Media folder is in; null = every workspace
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
  * Each account has its own list in $DATA_DIR/storage/<user>.json, and each workspace its own folders in it (a folder's

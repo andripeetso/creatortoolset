@@ -79,7 +79,7 @@ export interface StorageFolder {
   mount?: FolderMount;
 }
 
-/** A Media folder's `workspace` when every workspace uses it (Settings → Folders, "Use in every workspace"). */
+/** A Media folder's `workspace` when every workspace uses it (Settings → Folders, a folder's Workspaces: All workspaces). */
 export const EVERY_WORKSPACE = "*";
 
 /**
@@ -173,7 +173,6 @@ export interface AddFolderBody {
   path: string;
 }
 
-/** PATCH /api/devices/storage/folders/:id: the workspace a Media folder is in; null = every workspace. */
 /** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before. */
 export type MoveFolderBody = { workspaces: string[] | null } | { workspace: string | null };
 
