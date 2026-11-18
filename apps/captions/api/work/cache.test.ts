@@ -145,7 +145,7 @@ describe("the worker and its cache", () => {
     claims = [{ pkg: null, account: "bo" }, { pkg, account: "bo" }];
     expect(await bo.computer.startComputerWorker(o)).toBe("update");
     expect(bodies[0]!.cache).toBeUndefined(); // nothing reported before the server named the account
-    expect(bodies[1]!.cache).toEqual({ bytes: 0, versions: [] }); // the first account's proxy is not its
+    expect(bodies[1]!.cache).toEqual({ bytes: 0, limit: 25 * 1024 ** 3, versions: [] }); // the first account's proxy is not its
     expect(got).toEqual(["footage va"]); // so its step downloads its own copy
     expect(bodies[2]!.cache).toMatchObject({ bytes: 5, versions: ["va"] });
     expect(bo.cache.proxiesDir()).toBe(path.join(dir, "proxies", "bo"));
