@@ -12,18 +12,20 @@ import { updateLibrary } from "@/lib/library";
  */
 
 export const UPLOAD_LABEL = "Upload to the server";
-const WORDS: Record<LibraryUpload, string> = { none: "Off", proxies: "Proxies only", all: "Originals and proxies" };
+const WORDS: Record<LibraryUpload, string> = { none: "Off", originals: "Originals only", proxies: "Proxies only", all: "Originals and proxies" };
 export const UPLOAD_OPTIONS = LIBRARY_UPLOADS.map((value) => ({ value, label: WORDS[value] }));
 const DETAIL: Record<LibraryUpload, string> = {
   none: "New videos are not uploaded and play only on the computer they were added from.",
+  originals: "Each original is uploaded, so it downloads anywhere; no proxy is kept on the server.",
   proxies: "A proxy of each video is uploaded so it plays anywhere, and the original stays on the computer.",
   all: "Each video is uploaded with its proxy, so it plays and downloads anywhere.",
 };
 /** A final is one finished file, so its choices say copy and file, not proxy and original. */
-const FINALS_WORDS: Record<LibraryUpload, string> = { none: "Off", proxies: "Smaller copies", all: "Full files" };
+const FINALS_WORDS: Record<LibraryUpload, string> = { none: "Off", originals: "Full files", proxies: "Smaller copies", all: "Full files" };
 const FINALS_OPTIONS = LIBRARY_UPLOADS.map((value) => ({ value, label: FINALS_WORDS[value] }));
 const FINALS_DETAIL: Record<LibraryUpload, string> = {
   none: "New finished videos are not uploaded and play only on the computer they were made on.",
+  originals: "Each finished video is uploaded, so it plays and downloads anywhere.",
   proxies: "A smaller copy of each finished video is uploaded so it plays anywhere.",
   all: "Each finished video is uploaded whole, so it can be downloaded on a phone.",
 };

@@ -400,9 +400,10 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(job.kind === "transcribe" ? { audio: keySound(job.actor, r.id) ?? "wav" } : {}),
     ...(send
       ? {
-          upload,
+          // older workers read only "proxies" | "all": Originals only is sent as "all" with no proxy (UNIFIED-PRD §4.2, E9)
+          upload: upload === "originals" ? "all" : upload,
           // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
-          proxy: { cloud: proxiesInCloud(r.library_id) || upload === "proxies", on: librarySetting(r.library_id, "proxy") },
+          proxy: { cloud: proxiesInCloud(r.library_id) || upload === "proxies", on: upload !== "originals" && librarySetting(r.library_id, "proxy") },
           music: !!libraryDb()
             .prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map(() => "?").join(", ")})`)
             .get(r.id, ...Object.values(SOUNDS).map((s) => s.tag)),
