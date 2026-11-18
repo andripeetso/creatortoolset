@@ -177,7 +177,7 @@ watchApp.get("/:id/watch/size", async (c) => {
   if (!watchAllowed(user.username)) return c.json({ error: "This server cannot read your folders", code: "forbidden" }, 403);
   const f = await checkFolder(libraryId, { path: expandHome(c.req.query("path") ?? ""), mode: "reference" }, user.username);
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
-  const files = await filesIn(f.path);
+  const files = await filesIn(f.path, await keepOutOf(user.username));
   let bytes = 0;
   let audio = 0;
   let audioBytes = 0;
@@ -328,7 +328,8 @@ watchApp.post("/import-folder", async (c) => {
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(f.path, p)));
-  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs));
+  const keep = await keepOutOf(user.username);
+  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => inside(p, k)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
     const s = await stat(file).catch(() => null);
@@ -492,14 +493,23 @@ const tell = (libraryId: string) => {
 };
 
 /** Media files under a folder: no hidden files or folders (.DS_Store, ._ files on external drives), no links. */
-async function filesIn(root: string): Promise<string[]> {
+/**
+ * The Projects and Exports folders on this account's computers: never footage, wherever they sit (a Projects folder inside a
+ * Media folder included). The same list report.ts keeps out (its role, not its name).
+ */
+export async function keepOutOf(user: string): Promise<string[]> {
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, user), "utf-8").catch(() => "{}"));
+  return st.folders.filter((f) => (f.role === "projects" || f.role === "library") && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
+}
+
+export async function filesIn(root: string, keepOut: string[] = []): Promise<string[]> {
   const all = await readdir(root, { recursive: true, withFileTypes: true });
   const seen = all
     .filter((e) => e.isFile() && kindOf(e.name) !== "doc")
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs));
+  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => inside(p, k)));
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -627,7 +637,7 @@ async function scanFolders(libraryId: string, now: number): Promise<number> {
     let files: string[];
     const folderKey = `${libraryId}\0${f.path}`;
     try {
-      files = await filesIn(f.path);
+      files = await filesIn(f.path, await keepOutOf(f.addedBy));
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {
