@@ -317,9 +317,8 @@ placesApp.post("/:id/places", async (c) => {
 });
 
 /**
- * GET /api/library/:id/places/gone?device[&away=1][&connect=1] → GoneAnswer: what that computer last found gone, with a
- * fingerprint to search by; `away=1` (Find missing files pressed) also the clips whose root isn't connected there (copies
- * on another disk); `connect=1` (Connect originals…) also the ones it never had a place for and that are not indexed on it.
+ * GET /api/library/:id/places/gone?device[&away=1] → GoneAnswer: what that computer last found gone, with a fingerprint to
+ * search by; `away=1` (Find missing files pressed) also the clips whose root isn't connected there (copies on another disk).
  */
 placesApp.get("/:id/places/gone", async (c) => {
   const a = await asked(c.get("user"), c.req.param("id"), c.req.query("device"));
@@ -341,18 +340,7 @@ placesApp.get("/:id/places/gone", async (c) => {
           )
           .all(a.libraryId, JSON.stringify(rootsOn(a.dev.id))) as { id: string }[]).map((r) => r.id)
       : [];
-  const never =
-    c.req.query("connect") === "1"
-      ? (libraryDb()
-          .prepare(
-            `SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-             WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.mac_device IS NOT ? AND (v.root IS NULL OR v.root NOT IN (SELECT value FROM json_each(?)))
-               AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = ? AND p.kind = 'original')
-               AND v.quick IS NOT NULL AND v.quick != '' ORDER BY v.created_at DESC LIMIT 20000`,
-          )
-          .all(a.libraryId, a.dev.id, JSON.stringify(rootsOn(a.dev.id)), a.dev.id) as { id: string }[]).map((r) => r.id)
-      : [];
-  const gone: GoneVersion[] = (await versionsOf(a.libraryId, a.viewer, a.dev.id, [...new Set([...ids, ...away, ...never])])).map((v) => {
+  const gone: GoneVersion[] = (await versionsOf(a.libraryId, a.viewer, a.dev.id, [...new Set([...ids, ...away])])).map((v) => {
     const path = v.own ?? v.gone_path ?? (v.mac_device === a.dev.id ? v.mac_path : null) ?? "";
     return { versionId: v.id, bytes: v.bytes, quick: v.quick!, root: v.root, rootRel: v.root_rel, path, name: path ? base(path) : v.title };
   });

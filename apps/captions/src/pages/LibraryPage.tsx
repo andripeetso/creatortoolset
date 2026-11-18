@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, FolderSearch, MoreHorizontal, Music, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, MoreHorizontal, Music, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -43,7 +43,7 @@ import {
   updateAsset,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
-import { importCancel, importCopy, importProgress, macImports, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { checkUpload } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
@@ -59,9 +59,7 @@ import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trai
 import { ClipShare } from "./library/ClipShare";
 import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
 import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
-import { LibrarySettings, MemberLibrarySettings, needsAttention } from "./library/LibrarySettings";
-import { connectOriginals } from "./library/Locate";
-import { thisMacDevice } from "@/lib/providers";
+import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
@@ -773,19 +771,6 @@ export default function LibraryPage() {
     if (libId) listTags(libId).then((t) => setTags(t.map((x) => x.tag)), () => setTags([]));
   }, [libId]);
   const plural = (n: number) => (n === 1 ? "1 clip" : `${n} clips`);
-  // a member's own computer: Keep on this computer is theirs (the rest of Library settings is the owner's)
-  const memberSettings = !!library && !watch && !!library.readOnly && !!thisMacDevice();
-  // Connect originals…: files this computer has of clips it has no place for, from a folder picked on this Mac
-  const connectable = !!libId && macImports() && !trash && !firstScreen;
-  const connect = () =>
-    void connectOriginals(libId!).then(
-      (n) => {
-        if (n === null) return;
-        toast(n ? `${plural(n)} connected` : "No matching files in that folder");
-        if (n) reload();
-      },
-      (e: unknown) => setError(message(e)),
-    );
 
   // into the trash or back out; Undo takes it back. A clip the server keeps (it is in Review, or not this person's) stays
   const trashMany = async (cards: AssetCard[], toTrash = true) => {
@@ -985,7 +970,7 @@ export default function LibraryPage() {
                     )}
                     {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
                     <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
-                    {(watch || (changing && !firstScreen) || memberSettings || connectable) && (
+                    {(watch || (changing && !firstScreen)) && (
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -1006,21 +991,9 @@ export default function LibraryPage() {
                               {needsAttention(watch) && <span aria-hidden className="ml-auto h-2 w-2 rounded-full bg-amber-500" />}
                             </DropdownMenuItem>
                           )}
-                          {memberSettings && (
-                            <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
-                              <Settings2 /> Library settings
-                            </DropdownMenuItem>
-                          )}
-                          {(watch || changing) && (
-                            <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
-                              <Activity /> Library status
-                            </DropdownMenuItem>
-                          )}
-                          {connectable && (
-                            <DropdownMenuItem onSelect={connect}>
-                              <FolderSearch /> Connect originals…
-                            </DropdownMenuItem>
-                          )}
+                          <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
+                            <Activity /> Library status
+                          </DropdownMenuItem>
                           {changing && !firstScreen && (
                             <DropdownMenuItem asChild>
                               <Link to="/library?trash=1">
@@ -1042,7 +1015,6 @@ export default function LibraryPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
-                    {memberSettings && <MemberLibrarySettings open={settingsOpen} onOpenChange={setSettingsOpen} library={library} onError={setError} />}
                     {watch && (
                       <LibrarySettings
                         open={settingsOpen}
