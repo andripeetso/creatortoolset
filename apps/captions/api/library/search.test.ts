@@ -249,6 +249,17 @@ describe("the clip's path on this computer", () => {
     }
   });
 
+  it("a clip this computer has: its path there, for a member too", () => {
+    libraryDb().prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES ('ver-ast-roll-0001', 'dev_mine', '/Volumes/Tiny/C0001.MP4', ?, 'found')").run(Date.now());
+    try {
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", { role: "user" }, "dev_mine")).toBe("/Volumes/Tiny/C0001.MP4");
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", { role: "user" }, "dev_other")).toBeUndefined();
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", { role: "user" })).toBeUndefined();
+    } finally {
+      libraryDb().prepare("DELETE FROM version_places WHERE device = 'dev_mine'").run();
+    }
+  });
+
   it("a clip kept on this server's disk: the stored file, only on the Mac app's own server on a Mac", () => {
     try {
       onMac(true);

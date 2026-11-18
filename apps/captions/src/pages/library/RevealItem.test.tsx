@@ -27,14 +27,23 @@ async function menuFor(asset: Pick<AssetCard, "id" | "onComputer" | "placeWord">
 
 // A Tiny Acrobatics clip on a server elsewhere: Show in Finder only when this computer has its file.
 describe("Show in Finder on a server elsewhere", () => {
-  beforeEach(() => vi.stubGlobal("location", { hostname: "studio.example.com" }));
+  beforeEach(() => {
+    vi.stubGlobal("location", { hostname: "studio.example.com" });
+    document.documentElement.dataset.macDevice = "dev_mine";
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete document.documentElement.dataset.macDevice;
     document.body.innerHTML = "";
   });
 
   it("is offered for an upload whose original this computer has", async () => {
     expect(await menuFor({ id: "a1", placeWord: { word: "here" } })).toContain("Show in Finder");
+  });
+
+  it("is not offered for \"here\" when this Mac has no id on the server (here then means any of the person's computers)", async () => {
+    delete document.documentElement.dataset.macDevice;
+    expect(await menuFor({ id: "a1", placeWord: { word: "here" } })).not.toContain("Show in Finder");
   });
 
   it("is offered for a clip read in place", async () => {

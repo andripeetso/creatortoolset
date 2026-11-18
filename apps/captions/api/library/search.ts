@@ -109,19 +109,20 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
 }
 
 /**
- * Where the clip's file is on this computer, for its Copy path and Show in Finder: the admin only. A clip read in place
+ * Where the clip's file is on this computer, for its Copy path and Show in Finder. The asker's own computer's place
+ * (`device`, checked as theirs by the route) for anyone who can read the clip; every other path for the admin only. A clip read in place
  * from a footage folder: that file. A clip kept on this server's own disk: the stored copy, only when the server is the
  * Mac app's own on this Mac (CT_LOCAL=1, never hosted), so a path is never given for a disk the viewer can't open.
  * Else a clip sent from a Mac keeps the place it was sent from (from_path; its upload drops mac_path), which the Mac
  * app shows only when the file is still there.
  */
 export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined, device?: string): string | undefined {
-  if (user?.role !== "admin") return undefined;
   // the asker's own computer has a place for it (whereis.ts), not gone: that path
   const own = device
     ? (db().prepare(`SELECT ${OWN} AS path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?`).get(device, versionId, libraryId) as { path: string | null } | undefined)?.path
     : null;
   if (own) return own;
+  if (user?.role !== "admin") return undefined;
   const v = db()
     .prepare("SELECT v.source_key, v.source_path, v.mac_path, v.from_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
     .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; from_path: string | null; storage_kind: string } | undefined;

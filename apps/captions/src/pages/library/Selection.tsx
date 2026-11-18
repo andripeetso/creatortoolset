@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { promptDialog } from "@/lib/dialogs";
+import { thisMacDevice } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { revealClip, servedHere } from "./clip";
 
@@ -340,6 +341,7 @@ export function saveFile(href: string) {
  */
 export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer" | "placeWord">; onProblem: (p: string) => void }) {
   const assetId = asset.id;
-  if (!servedHere() && !asset.onComputer && asset.placeWord?.word !== "here") return null;
+  // without this Mac's id the card's "here" means any of the person's computers
+  if (!servedHere() && !asset.onComputer && !(asset.placeWord?.word === "here" && thisMacDevice())) return null;
   return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }
