@@ -479,7 +479,7 @@ describe("U2 §4.6 library migration: set up what has clips; a shared library ke
       { libraryId: "lib_mig_team", field: "upload", from: "none", to: "proxies" },
       { libraryId: "lib_mig_solo", field: "setupAt", from: null, to: "2026-11-18T00:00:00.000Z" },
     ]);
-    expect(JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_team'").get() as { settings: string }).settings).not.toHaveProperty("setupAt");
+    expect(JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_team'").get() as { settings: string }).settings)).not.toHaveProperty("setupAt");
     await migrateLibraries({ now: "2026-11-18T00:00:00.000Z" });
     const team = JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_team'").get() as { settings: string }).settings);
     expect(team).toMatchObject({ upload: "proxies", setupAt: "2026-11-18T00:00:00.000Z" });
