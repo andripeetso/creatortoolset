@@ -5,8 +5,9 @@ import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
 import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
-import { ownedProjects } from "../lib/workshop/workspace";
-import { ensureLibrary, libraryChanged } from "./access";
+import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
+import { isTeamMember } from "../lib/workspaces";
+import { ensureLibrary, librariesHere, libraryChanged } from "./access";
 import { libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { hasMembers } from "./upload-gate";
@@ -45,19 +46,37 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   );
 }
 
-/** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". */
-export async function librariesOf(owner: string, f: StorageFolder): Promise<string[]> {
+/** A library a folder's files are matched in. `locate`: a workspace the owner was given by its team owner; the files are
+ *  only found there (version_places on this computer), never indexed, never new versions. */
+export type FolderLibrary = { id: string; locate: boolean };
+
+/** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". A member
+ *  never gets a library of a workspace they were given: the owner's one is used, locate only. */
+export async function librariesOf(owner: string, f: StorageFolder): Promise<FolderLibrary[]> {
   const ws = await workspacesOf(owner, f);
-  const ids = ws === "*" ? (await ownedProjects(owner)).map((p) => p.id) : ws;
+  const owned = await ownedProjects(owner);
+  const ids = ws === "*" ? owned.map((p) => p.id) : ws;
   // an account with no workspaces: its one library
   if (!ids.length) {
     const one = await ensureLibrary(owner);
-    return one ? [one] : [];
+    return one ? [{ id: one, locate: false }] : [];
   }
-  const out: string[] = [];
+  const given = new Map((await sharedProjects(owner)).map((p) => [p.id, p.owner]));
+  const member = isTeamMember(owner);
+  const out: FolderLibrary[] = [];
+  const add = (id: string, locate: boolean) => {
+    if (!out.some((l) => l.id === id)) out.push({ id, locate });
+  };
   for (const id of ids) {
-    const lib = await ensureLibrary(owner, id);
-    if (lib && !out.includes(lib)) out.push(lib);
+    const from = given.get(id);
+    if (from) {
+      const lib = (await librariesHere(from, id))[0]?.id;
+      if (lib) add(lib, true);
+    } else if (!member || owned.some((p) => p.id === id)) {
+      const lib = await ensureLibrary(owner, id);
+      if (lib) add(lib, false);
+    }
+    // a member's workspace not given to them: no library made in their home
   }
   return out;
 }
@@ -118,10 +137,14 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
-async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>): Promise<void> {
+async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>): Promise<void> {
   const d = db();
   const device = dev.id;
+  const libs = libraries.map((l) => l.id);
+  const locate = new Set(libraries.filter((l) => l.locate).map((l) => l.id));
   const inLibs = JSON.stringify(libs);
+  // a locate-only library is matched, never trashed into
+  const inOwn = JSON.stringify(libs.filter((l) => !locate.has(l)));
   const state: FolderState = r.state;
   if (state !== "ok") {
     // not readable now: what was here is not checked, never gone
@@ -142,7 +165,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
              WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
                AND a.library_id IN (SELECT value FROM json_each(?))`,
           )
-          .all(device, folder.id, f.path, inLibs) as { id: string }[];
+          .all(device, folder.id, f.path, inOwn) as { id: string }[];
         for (const a of made) d.prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(now, a.id);
         if (made.length) libs.forEach((l) => touched.add(l));
         continue;
@@ -164,6 +187,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
         touched.add(h.library_id);
       }
       for (const lib of libs.filter((l) => !done.has(l))) {
+        // a member's locate-only library: a file it does not have is not for indexing (indexForDevice skips it too)
         // the same file indexed before (an upload, another computer's copy): its fingerprint and size
         let found = f.quick
           ? (d.prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.bytes = ? AND v.quick = ?").all(lib, f.bytes, f.quick) as { id: string }[]).map((x) => ({ id: x.id, state: "verified" }))
@@ -183,7 +207,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
         }
         for (const x of found) upsert(x.id, device, folder.id, f, x.state, "scan", now);
         if (found.length) touched.add(lib);
-        else if (!index.some((i) => i.folder === folder.id && i.path === f.path)) index.push({ folder: folder.id, path: f.path });
+        else if (!locate.has(lib) && !index.some((i) => i.folder === folder.id && i.path === f.path)) index.push({ folder: folder.id, path: f.path });
       }
     }
     for (const dir of r.unreadable ?? []) {
@@ -220,7 +244,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
-    for (const l of of) libs.add(l);
+    for (const l of of) libs.add(l.id);
     await applyFolder(dev, folder, of, r, now, index, touched);
   }
   for (const l of touched) libraryChanged(l);
@@ -264,7 +288,9 @@ export async function indexForDevice(dev: Device, folderId: string, x: OnMacInde
   if (!folder || useOf(folder) !== "media") return "Not one of this computer's folders";
   if (inside(nfc(x.path), folder.origin.path) === null && !(folder.mountPath && inside(nfc(x.path), folder.mountPath) !== null)) return "Not inside that folder";
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
-  for (const library of await librariesOf(dev.owner, folder)) {
+  for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
+    // a member's workspace is only located, never indexed into (applyFolder answers no file for it)
+    if (locate) continue;
     const r = await indexOnMac(library, dev.owner, { ...x, path: nfc(x.path), device: dev.id, folder: folder.id });
     versions.push({ library, ...("versionId" in r ? { versionId: r.versionId } : "duplicateOf" in r ? { duplicateOf: r.duplicateOf } : {}) });
   }

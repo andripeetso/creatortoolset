@@ -113,7 +113,7 @@ function lookupHost(host: string): { id: string; owner: string } | undefined {
 export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string }> {
   const inWs = workspace ? (w?: string) => w === workspace : null;
   const st = await readStorage(user);
-  const has = st.folders.find((f) => f.role === role && folderIn(f, inWs));
+  const has = st.folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, inWs));
   if (has) return has;
   const media = st.folders.find((f) => f.role === "footage" && f.origin.host === device && folderIn(f, inWs));
   const disks = deviceOf(device)?.report?.machine?.disks ?? [];
