@@ -144,6 +144,8 @@ final class Shell: NSObject, ObservableObject {
         runners.onChange = { [weak self] in self?.objectWillChange.send() }
         runners.make = { [unowned self] host, url, token, id in self.startRunner(host: host, url: url, token: token, id: id) }
         runners.windowHost = current == nil ? nil : base.host
+        // only the window's server may ask this Mac anything (Consent.swift)
+        Consent.show(current == nil ? nil : Consent.key(for: base))
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
@@ -751,6 +753,7 @@ final class Shell: NSObject, ObservableObject {
         Task { await refresh() }
         let host = url.host ?? ""
         runners.windowHost = hasServer ? host : nil
+        Consent.show(hasServer ? Consent.key(for: url) : nil)
         // shown again: a pairing that failed is tried again (the didSet syncs the runners and sets aiOn)
         switches.pairFailed.remove(host)
         // a token is per site: pair again if this one has none (the server on this Mac: once it answers, serverReady)
@@ -890,7 +893,7 @@ final class Shell: NSObject, ObservableObject {
         let worker = Worker(folder: LocalServer.folder)
         worker.onNeedsUpdate = { UpdateWhenIdle.shared.neededByServer() }
         let relay = RelayRunner(base: url, token: token, work: work,
-            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }), speech: SpeechModels.link,
+            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }), speech: SpeechModels.link(host: host),
             onStatus: { [weak self] status in
                 Task { @MainActor in
                     guard let self, self.runners.isCurrent(host, id) else { return }

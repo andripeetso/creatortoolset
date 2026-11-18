@@ -7,11 +7,12 @@ private final class FakeRelay: HostRelay {
     var started = false
     var stopped = false
     var reports = 0
+    var models = 0
     var isStopped: Bool { stopped }
     func start() { started = true }
     func stop() { stopped = true }
     func reportNow() { reports += 1 }
-    func modelsChanged() {}
+    func modelsChanged() { models += 1 }
 }
 
 @MainActor
@@ -73,6 +74,10 @@ final class RunnersTests: XCTestCase {
         r.sync(["a.example.com": a, "b.example.com": b], token: { "t-\($0)" })
         XCTAssertEqual(relay(r, "a.example.com")?.stopped, false)
         XCTAssertEqual(made["a.example.com"]?.count, 1, "the window's change restarts nothing")
+        // 33: a disk or a speech model change reaches every server's runner (Shell's Places and SpeechModels sinks)
+        r.forEach { $0.reportNow(); $0.modelsChanged() }
+        XCTAssertEqual([relay(r, "a.example.com")?.reports, relay(r, "b.example.com")?.reports], [1, 1])
+        XCTAssertEqual([relay(r, "a.example.com")?.models, relay(r, "b.example.com")?.models], [1, 1])
     }
 
     // 31
