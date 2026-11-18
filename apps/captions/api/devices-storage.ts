@@ -110,9 +110,12 @@ function lookupHost(host: string): { id: string; owner: string } | undefined {
  * Mac's internal disk: with no Media folder off it, the answer says what to choose (Settings → Folders).
  */
 export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string }> {
-  // no workspace named and more than one of the account's: no folder is picked for it (a workspace's folder is another client's)
-  if (!workspace && (await ownedProjects(user)).length > 1) return { error: "Choose a Projects folder in Settings → Folders." };
-  const inWs = workspace ? (w?: string) => w === workspace : null;
+  // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
+  // folders that have no workspace are its own: a workspace's folder is another client's, never picked
+  const owned = workspace ? [] : await ownedProjects(user);
+  if (!workspace && owned.length > 1) return { error: "Choose a Projects folder in Settings → Folders." };
+  const ws = workspace ?? owned[0]?.id;
+  const inWs = (w?: string) => w === ws;
   const st = await readStorage(user);
   const has = st.folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, inWs));
   if (has) return has;
@@ -126,7 +129,7 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
     const cur = await readStorage(user);
     const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));
     if (had) return had;
-    const f: StorageFolder = { id: randomUUID(), role, name: p.split("/").pop() ?? p, origin: { host: device, path: p }, make: true, createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}) };
+    const f: StorageFolder = { id: randomUUID(), role, name: p.split("/").pop() ?? p, origin: { host: device, path: p }, make: true, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) };
     cur.folders.push(f);
     await writeStorage(user, cur);
     return f;

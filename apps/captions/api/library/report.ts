@@ -57,13 +57,14 @@ export async function librariesOf(owner: string, f: StorageFolder): Promise<Fold
   const ws = await workspacesOf(owner, f);
   const owned = await ownedProjects(owner);
   const ids = ws === "*" ? owned.map((p) => p.id) : ws;
-  // an account with no workspaces: its one library
+  const given = new Map((await sharedProjects(owner)).map((p) => [p.id, p.owner]));
+  const member = isTeamMember(owner);
+  // an account with no workspaces: its one library. A member given workspaces but none of their own makes none (theirs are the owner's)
   if (!ids.length) {
+    if (member && given.size) return [];
     const one = await ensureLibrary(owner);
     return one ? [{ id: one, locate: false }] : [];
   }
-  const given = new Map((await sharedProjects(owner)).map((p) => [p.id, p.owner]));
-  const member = isTeamMember(owner);
   const out: FolderLibrary[] = [];
   const add = (id: string, locate: boolean) => {
     if (!out.some((l) => l.id === id)) out.push({ id, locate });

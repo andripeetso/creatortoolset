@@ -16,7 +16,7 @@ writeFileSync(path.join(dir, "workshop", "projects", `${BRAND}.json`), JSON.stri
 const member = (username: string, role = "member") => ({ username, role, ai: "own", budgetUsd: 0, joinedAt: 0, ...(role === "member" ? { workspaces: [BRAND] } : {}) });
 writeFileSync(
   path.join(dir, "workspaces.json"),
-  JSON.stringify({ workspaces: [{ id: "t", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [member("ana", "owner"), member("bo")] }], invites: [], spend: {} }),
+  JSON.stringify({ workspaces: [{ id: "t", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [member("ana", "owner"), member("bo"), member("cy")] }], invites: [], spend: {} }),
 );
 
 const { createUser } = await import("../users");
@@ -27,6 +27,7 @@ const { changeStorage } = await import("../devices-storage");
 const { pairDevice } = await import("../lib/devices");
 createUser("ana", "password1", { role: "admin" });
 createUser("bo", "password1", { role: "user" });
+createUser("cy", "password1", { role: "user" });
 
 const d = libraryDb();
 const quick = (n: number) => n.toString(16).padStart(64, "0");
@@ -76,4 +77,13 @@ it("a stray library of the member's own for that workspace changes nothing: new 
   expect(row).toHaveLength(1);
   const strays = d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = 'lib_stray'").get() as { n: number };
   expect(strays.n).toBe(0);
+});
+
+it("a member with no workspaces of their own gets no library from a folder for every workspace: nothing is made", async () => {
+  const { librariesOf } = await import("./report");
+  const folder = { id: "fold_cy", role: "footage", name: "Shoots", origin: { host: "cy-computer", path: DIR }, make: false, createdAt: 0, reach: {}, workspace: "*" } as Parameters<typeof librariesOf>[1];
+  const libs = () => (d.prepare("SELECT COUNT(*) AS n FROM libraries WHERE workspace_id = ?").get(homeOf("cy")) as { n: number }).n;
+  const before = libs();
+  expect(await librariesOf("cy", folder)).toEqual([]);
+  expect(libs() - before).toBe(0);
 });
