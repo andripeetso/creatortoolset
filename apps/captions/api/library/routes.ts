@@ -468,7 +468,8 @@ libraryApp.post("/here/uploads", async (c) => {
 });
 // POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice?, quick?, send? } → 201 { id, offset, chunkSize }
 // fromPath / fromDevice: where the file is on the Mac it is sent from (a library that keeps only proxies keeps that place)
-// send (with quick, the Mac's quickPrint): a video on the caller's own computer whose worker takes library jobs is not
+// send (with quick, the Mac's quickPrint): a video on the caller's own computer (registered, an app that reads WORK_MIN; not
+// only one that already claimed library work, so a freshly paired Mac's file stays on it too) is not
 // uploaded by the page: 200 { assetId, versionId, sent: true } | { duplicateOf }, and that computer makes the proxy and
 // the small files and sends them, the original too only to a library that keeps originals (derived.ts sendLater)
 libraryApp.post("/:id/uploads", (c) => startUpload(c, c.req.param("id")));
@@ -507,7 +508,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
   if (
-    body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
+    body?.send === true && from && !replaces && sender?.owner === user.username && (sender.work?.v ?? 0) >= WORK_MIN &&
     typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
