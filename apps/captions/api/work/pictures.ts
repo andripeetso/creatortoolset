@@ -44,6 +44,10 @@ function holding(id: number, device: string): Hold | undefined {
 }
 const busy = (device: string) => [...held.keys()].some((id) => holding(id, device));
 
+/** Whether `device` holds a picture job now (pure read: never mutates `held`). */
+export const picturesHeldOn = (device: string, now = Date.now()): boolean =>
+  [...held.values()].some((h) => h.device === device && h.until >= now);
+
 type Todo = { version_id: string; asset_id: string; library_id: string; card: number; shots_in: number; sheets: number };
 
 /**

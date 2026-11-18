@@ -5,11 +5,16 @@ import { WORK_MIN } from "../../contracts/work";
 import {
   addAgain,
   addComputer,
+  aheadOf,
+  behind,
   fileUnchecked,
+  keptFor,
   lowDiskOn,
   noLooksOn,
   noOriginals,
   notOnComputers,
+  notStarted,
+  notTaking,
   notThisLibrary,
   offline,
   offInBalancing,
@@ -21,31 +26,36 @@ import { deviceOf, isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { folderFor, hostPath } from "../lib/storage";
 import { libraryChanged } from "../library/access";
 import { libraryDb } from "../library/db";
-import type { JobRow } from "../library/jobs";
-import { lookHeldOn, type PlaceRow } from "../library/mac-look";
+import { firstClips, type JobRow } from "../library/jobs";
+import { lookHeldOn, placedOn, type PlaceRow } from "../library/mac-look";
 import { OWN, placesFor } from "../library/places";
 import { BUDGET_WAITS, MAC_WAITS } from "../library/shots";
 import { keySound } from "../library/transcribe";
 import { resolveDevice } from "../library/whereis";
 import { DECODES, leaveToComputers, leftHere, LIMIT_LIKE, type WaitClass, type WaitSnapshot } from "../library/worker";
 import {
+  decide,
   holding,
   LIBRARY_ON_COMPUTER,
   libraryRank,
   lift,
   oldApp,
+  peersOf,
   POLL_FRESH_MS,
   polls,
+  queuedFor,
   relayBusy,
   rowOf,
   takesLibrary,
   where,
   type LibRow,
 } from "./library-package";
+import { picturesHeldOn } from "./pictures";
 
 export type { WaitClass, WaitSnapshot };
 
 export const FRESH_MS = 15_000;
+export const STUCK_MS = 10 * 60_000;
 export const LOW_DISK_FRESH_MS = 3 * 60_000;
 export const REFUSED_IDLE_MS = 15 * 60_000;
 
@@ -101,6 +111,8 @@ export function refused(x: Device, now = Date.now(), off = offOf(x.owner), heldS
 
 class Ctx {
   readonly now: number;
+  readonly decideFn: typeof decide;
+  readonly seenDevices = new Set<string>();
   private readonly devicesByOwner = new Map<string, Device[]>();
   private readonly offByOwner = new Map<string, Set<string>>();
   private readonly balanceByOwner = new Map<string, Balance>();
@@ -111,12 +123,16 @@ class Ctx {
   private readonly triesCache = new Map<string, string[]>();
   private readonly fileForCache = new Map<string, FileAt | null>();
   private readonly proxyJobs = new Map<string, JobRow | null>();
+  private readonly queuedIdsByDev = new Map<string, Set<number>>();
+  private readonly lookWindowByOwner = new Map<string, Set<number>>();
+  private readonly newerMaxIdCache = new Map<string, number>();
   readonly holdingSet: Set<string>;
   private readonly lookHeldCache = new Map<string, boolean>();
   readonly identityGaps = new Map<string, { versions: Set<string>; onlineComputer: string; fromId: string }>();
 
-  constructor(now: number) {
+  constructor(now: number, decideFn: typeof decide = decide) {
     this.now = now;
+    this.decideFn = decideFn;
     const rows = libraryDb().prepare("SELECT DISTINCT held_by FROM jobs WHERE state = 'running' AND held_by IS NOT NULL").all() as {
       held_by: string;
     }[];
@@ -132,8 +148,21 @@ class Ctx {
     return d;
   }
 
+  noteDeviceState(x: Device): void {
+    if (this.seenDevices.has(x.id)) return;
+    this.seenDevices.add(x.id);
+    const lowDiskFresh = !!(x.work?.lowDisk && x.work.lowDiskAt !== undefined && this.now - x.work.lowDiskAt < LOW_DISK_FRESH_MS);
+    if (this.asks(x) && !this.busy(x) && !lowDiskFresh && !this.off(x.owner).has(x.id)) {
+      if (!freeSince.has(x.id)) freeSince.set(x.id, Math.max(this.now, BOOT));
+    } else {
+      freeSince.delete(x.id);
+    }
+  }
+
   computersOf(owner: string): Device[] {
-    return this.devices(owner).filter(isComputer);
+    const list = this.devices(owner).filter(isComputer);
+    for (const x of list) this.noteDeviceState(x);
+    return list;
   }
 
   off(owner: string): Set<string> {
@@ -282,9 +311,53 @@ class Ctx {
     return (
       this.holdingSet.has(x.id) ||
       this.lookHeld(x.id) ||
+      picturesHeldOn(x.id, this.now) ||
       this.busyEditors(x.owner).has(x.id) ||
       relayBusy(x, this.now)
     );
+  }
+
+  queuedIdsFor(d: Device, balance: Balance): Set<number> {
+    let s = this.queuedIdsByDev.get(d.id);
+    if (!s) {
+      s = new Set(queuedFor(d, this.now, balance).map((j) => j.id));
+      this.queuedIdsByDev.set(d.id, s);
+    }
+    return s;
+  }
+
+  lookWindowFor(owner: string): Set<number> {
+    let s = this.lookWindowByOwner.get(owner);
+    if (!s) {
+      const rows = libraryDb()
+        .prepare(
+          `SELECT j.id FROM jobs j
+             JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
+           WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.created_by = ? AND a.trashed_at IS NULL
+           ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 200`,
+        )
+        .all(MAC_WAITS, owner, JSON.stringify(firstClips(this.now))) as { id: number }[];
+      s = new Set(rows.map((r) => r.id));
+      this.lookWindowByOwner.set(owner, s);
+    }
+    return s;
+  }
+
+  tookNewerAfter(deviceId: string, isLook: boolean, jobId: number, sinceAt: number): boolean {
+    const key = `${deviceId} ${isLook ? 1 : 0} ${sinceAt}`;
+    let maxId = this.newerMaxIdCache.get(key);
+    if (maxId === undefined) {
+      const row = libraryDb()
+        .prepare(
+          `SELECT MAX(id) AS max_id FROM jobs
+           WHERE held_by = ? AND state IN ('running', 'done') AND ${isLook ? "kind = 'look'" : "kind != 'look'"}
+             AND (COALESCE(started_at, 0) >= ? OR COALESCE(done_at, 0) >= ? OR (started_at IS NULL AND done_at IS NULL))`,
+        )
+        .get(deviceId, sinceAt, sinceAt) as { max_id: number | null } | undefined;
+      maxId = row?.max_id ?? 0;
+      this.newerMaxIdCache.set(key, maxId);
+    }
+    return maxId > jobId;
   }
 
   proxyJobOf(versionId: string): JobRow | undefined {
@@ -400,11 +473,13 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     if (p && p.id !== job.id) {
       if (p.state === "running") {
         if (p.held_by) {
+          since.delete(job.id);
           const out: WaitClass = { wait: "queued", actor: job.actor };
           seenInPass.set(job.id, out);
           return out;
         }
       } else if (p.state === "queued") {
+        since.delete(job.id);
         const pClass = classifyJob(ctx, p, seenInPass);
         const out: WaitClass = { ...pClass, actor: job.actor };
         seenInPass.set(job.id, out);
@@ -414,6 +489,7 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   }
 
   if (!owner || !r) {
+    since.delete(job.id);
     const out: WaitClass = { wait: "cannot", reason: notOnComputers, actor: job.actor };
     seenInPass.set(job.id, out);
     return out;
@@ -423,17 +499,18 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   const folders = ctx.folders(owner);
   const b = ctx.balance(owner);
 
+  const pr: PlaceRow = {
+    version_id: r.id,
+    source_key: r.source_key,
+    source_path: r.source_path,
+    mac_path: r.mac_path,
+    mac_device: r.mac_device,
+    from_path: r.from_path,
+    from_device: r.from_device,
+  };
+
   let A: Device[] = [];
   if (isLook) {
-    const pr: PlaceRow = {
-      version_id: r.id,
-      source_key: r.source_key,
-      source_path: r.source_path,
-      mac_path: r.mac_path,
-      mac_device: r.mac_device,
-      from_path: r.from_path,
-      from_device: r.from_device,
-    };
     A = C.filter((x) => !!ctx.pathOn(x.id, pr, folders));
   } else if (job.kind === "send" || LIBRARY_ON_COMPUTER.includes(job.kind)) {
     A = C.filter((x) => !isThisMachine(x.id) && libraryRank(lift(x, ctx.now), job, r, folders, openBalance(b, x)) > 0);
@@ -441,6 +518,7 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
 
   // Class 1: A is empty
   if (!A.length) {
+    since.delete(job.id);
     if (!C.length) {
       const out: WaitClass = { wait: "needs", reason: addComputer, href: "/settings/devices", actor: owner };
       seenInPass.set(job.id, out);
@@ -482,12 +560,17 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   const L: Device[] = [];
   for (const x of A) {
     const h = heldReason(ctx, x, job, r);
-    if (h) heldByDev.set(x.id, h);
-    else L.push(x);
+    if (h) {
+      heldByDev.set(x.id, h);
+      freeSince.delete(x.id);
+    } else {
+      L.push(x);
+    }
   }
 
   // Class 2: L is empty
   if (!L.length) {
+    since.delete(job.id);
     const rankedA = rankMembers(ctx, A, job, r, owner, true);
     const top = heldByDev.get(rankedA[0]!.id)!;
     const allSettings = A.every((x) => SETTINGS_HELD.has(heldByDev.get(x.id)!.kind));
@@ -501,6 +584,7 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   // Class 3: No member of L asks
   const askingL = L.filter((x) => ctx.asks(x));
   if (!askingL.length) {
+    since.delete(job.id);
     const rankedL = rankMembers(ctx, L, job, r, owner, false);
     const top = rankedL[0]!;
     const line = refused(top, ctx.now, ctx.off(owner), ctx.holdingSet) ? addAgain(top.name) : offline(top.name);
@@ -515,6 +599,14 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     return out;
   }
 
+  let jobSince = since.get(job.id);
+  if (jobSince === undefined) {
+    jobSince = Math.max(ctx.now, BOOT);
+    since.set(job.id, jobSince);
+  } else if (jobSince < BOOT) {
+    jobSince = BOOT;
+  }
+
   // Class 4: Every asking member of L is busy -> queued
   const freeAskingL = askingL.filter((x) => !ctx.busy(x));
   if (!freeAskingL.length) {
@@ -523,8 +615,55 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     return out;
   }
 
-  // Class 5: queued (stuck is added in CT-3b)
-  const out: WaitClass = { wait: "queued", actor: owner };
+  // Class 5: pick is the top-ranked free asking member of L; queued unless stuck
+  const pick = isLook
+    ? (freeAskingL.find((x) => placedOn(x.id, owner, pr, ctx.now, folders)) ?? rankMembers(ctx, freeAskingL, job, r, owner, false)[0]!)
+    : rankMembers(ctx, freeAskingL, job, r, owner, false)[0]!;
+
+  const pickFreeAt = Math.max(freeSince.get(pick.id) ?? ctx.now, BOOT);
+  const isStuck =
+    ctx.now - jobSince >= STUCK_MS &&
+    (ctx.now - pickFreeAt >= STUCK_MS || ctx.tookNewerAfter(pick.id, isLook, job.id, jobSince));
+
+  if (!isStuck) {
+    const out: WaitClass = { wait: "queued", actor: owner };
+    seenInPass.set(job.id, out);
+    return out;
+  }
+
+  let reason: string;
+  if (isLook) {
+    if (!ctx.lookWindowFor(owner).has(job.id)) {
+      reason = behind(pick.name);
+    } else if (!placedOn(pick.id, owner, pr, ctx.now, folders)) {
+      const winner =
+        L.find((d) => d.id !== pick.id && placedOn(d.id, owner, pr, ctx.now, folders)) ??
+        L.find((d) => d.id !== pick.id) ??
+        pick;
+      reason = keptFor(winner.name);
+    } else {
+      reason = notTaking(pick.name);
+    }
+  } else {
+    if (!ctx.queuedIdsFor(pick, b).has(job.id)) {
+      reason = behind(pick.name);
+    } else {
+      const me = takesLibrary(pick) ? pick : lift(pick, ctx.now);
+      const peers = peersOf(owner, me, ctx.now);
+      const dec = ctx.decideFn(me, job, r, peers, folders, b, ctx.now);
+      if ("skip" in dec && dec.skip === "rank") {
+        reason = aheadOf(pick.name, dec.by?.name ?? pick.name);
+      } else if ("skip" in dec && dec.skip === "balance") {
+        reason = keptFor(dec.by?.name ?? pick.name);
+      } else if (claimsFresh(pick, ctx.now)) {
+        reason = notTaking(pick.name);
+      } else {
+        reason = notStarted(pick.name);
+      }
+    }
+  }
+
+  const out: WaitClass = { wait: "stuck", reason, device: pick.id, actor: owner };
   seenInPass.set(job.id, out);
   return out;
 }
@@ -584,14 +723,31 @@ function classifyLibrary(ctx: Ctx, libraryId: string): WaitSnapshot {
     queuedLookVersions: [...queuedLookVersions],
   };
   snapshots.set(libraryId, snap);
+  syncStuckOn();
   return snap;
 }
 
+function syncStuckOn(): void {
+  const byDev = new Map<string, { line: string; oldest: number }>();
+  for (const snap of snapshots.values()) {
+    for (const [id, c] of snap.byJob) {
+      if (c.wait === "stuck" && c.device && c.reason) {
+        const prev = byDev.get(c.device);
+        if (!prev || id < prev.oldest) {
+          byDev.set(c.device, { line: c.reason, oldest: id });
+        }
+      }
+    }
+  }
+  stuckOn.clear();
+  for (const [devId, v] of byDev) stuckOn.set(devId, v.line);
+}
+
 /** Serves the library's snapshot when younger than FRESH_MS (15 s); otherwise classifies that library now and stores the result. */
-export function status(libraryId: string, now = Date.now()): WaitSnapshot {
+export function status(libraryId: string, now = Date.now(), decideFn?: typeof decide): WaitSnapshot {
   const prev = snapshots.get(libraryId);
-  if (prev && now - prev.at < FRESH_MS && now >= prev.at) return prev;
-  const ctx = new Ctx(now);
+  if (!decideFn && prev && now - prev.at < FRESH_MS && now >= prev.at) return prev;
+  const ctx = new Ctx(now, decideFn ?? decide);
   return classifyLibrary(ctx, libraryId);
 }
 
@@ -614,15 +770,25 @@ export function checkWaits(now = Date.now()): void {
     .map((r) => r.library_id)
     .sort((a, b) => (snapshots.get(a)?.at ?? -Infinity) - (snapshots.get(b)?.at ?? -Infinity));
 
+  const libsSet = new Set(libs);
+  for (const k of [...snapshots.keys()]) {
+    if (!libsSet.has(k)) snapshots.delete(k);
+  }
+
   const picked = libs.slice(0, 20);
   const unpicked = new Set(libs.slice(20));
   const ctx = new Ctx(now);
   const seenJobs = new Set<number>();
 
-  // Keep job ids from libraries that still have candidates but were beyond the 20-library cap this pass
+  // Keep job ids and device states from libraries that still have candidates but were beyond the 20-library cap this pass
   for (const libId of unpicked) {
     const snap = snapshots.get(libId);
-    if (snap) for (const id of snap.byJob.keys()) seenJobs.add(id);
+    if (snap) {
+      for (const [id, c] of snap.byJob) {
+        seenJobs.add(id);
+        if (c.actor) ctx.computersOf(c.actor);
+      }
+    }
   }
 
   for (const libId of picked) {
@@ -653,7 +819,7 @@ export function checkWaits(now = Date.now()): void {
     }
   }
 
-  // Stuck log lines per (device, line) when the condition starts (populated by CT-3b)
+  // Stuck log lines per (device, line) when the condition starts
   const stuckGroups = new Map<string, { deviceId: string; cName: string; line: string; count: number; oldest: number }>();
   for (const libId of libs) {
     const snap = snapshots.get(libId);
@@ -672,9 +838,8 @@ export function checkWaits(now = Date.now()): void {
       }
     }
   }
-  stuckOn.clear();
+  syncStuckOn();
   for (const [key, g] of stuckGroups) {
-    if (!stuckOn.has(g.deviceId)) stuckOn.set(g.deviceId, g.line);
     if (!loggedStuck.has(key)) {
       loggedStuck.add(key);
       console.warn(`[library] stuck on ${g.cName}: ${g.line} (${g.count} jobs, oldest ${g.oldest})`);
@@ -689,5 +854,8 @@ export function checkWaits(now = Date.now()): void {
   }
   for (const id of [...since.keys()]) {
     if (!seenJobs.has(id)) since.delete(id);
+  }
+  for (const devId of [...freeSince.keys()]) {
+    if (!ctx.seenDevices.has(devId)) freeSince.delete(devId);
   }
 }

@@ -7,11 +7,16 @@ import { waitingLine } from "../../contracts/library";
 import { WORK_V } from "../../contracts/work";
 import {
   addComputer,
+  aheadOf,
+  behind,
   fileUnchecked,
+  keptFor,
   lowDiskOn,
   noLooksOn,
   noOriginals,
   notOnComputers,
+  notStarted,
+  notTaking,
   notThisLibrary,
   offline,
   offInBalancing,
@@ -58,22 +63,34 @@ const { deviceOf, devicesSaved, listDevices, pairDevice, revokeDevice, setDevice
 const { storageFilePath } = await import("../lib/storage");
 const { writeServerWork } = await import("./server-work");
 const { CLAIM_POLL } = await import("./routes");
+const { currentSeq } = await import("../lib/sync");
+const { foldersOf } = await import("../editor/reach");
+const { readBalanceSync } = await import("../lib/balance");
 const {
   called,
+  decide,
   LATER_KINDS,
   LIBRARY_ON_COMPUTER,
   libraryWaitLine,
+  lift,
   notePoll,
+  peersOf,
   polled,
+  rowOf,
 } = await import("./library-package");
+const { claimPictures, picturesHeldOn } = await import("./pictures");
 const {
   checkWaits,
+  freeSince,
   FRESH_MS,
   isComputer,
   last,
   resetWaitsForTest,
+  since,
   snapshots,
   status,
+  STUCK_MS,
+  stuckOn,
 } = await import("./waits");
 
 CLAIM_POLL.holdMs = 0;
@@ -852,5 +869,509 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
       text: "6 files wait for one of your computers",
       href: "/settings/devices",
     });
+  });
+
+  it("11. busy: Linux holds a 30-min proxy (no claim in that time) -> queued, never offline; picturesHeldOn counts as busy; Mac (rank 3, free, asking) and Linux (rank 2, busy) -> pick is Mac, stuck after 10 min", async () => {
+    const linux = pairDevice("tiny", "Linux box", undefined, "hw-linux-11");
+    await report(linux.token, LINUX_MACHINE, "node");
+    writeFolders("tiny", [
+      {
+        id: "fld_11",
+        name: "Share11",
+        role: "footage",
+        origin: { host: linux.device.id, path: "/mnt/footage/Share11" },
+        reach: {},
+      },
+    ]);
+
+    const vRunning = addVersion({ sourcePath: "/mnt/footage/Share11/r.mov" });
+    const vQueued = addVersion({ sourcePath: "/mnt/footage/Share11/q.mov" });
+    enqueue("lib_tiny", vRunning, "proxy");
+    const jQueued = enqueue("lib_tiny", vQueued, "proxy");
+
+    const claimed = await claimWork(linux.token, { libraryOnly: true });
+    expect(claimed.lib?.job.kind).toBe("proxy");
+
+    // 30 minutes pass with no new claim while Linux still holds the running job
+    vi.advanceTimersByTime(30 * 60_000);
+    const snap1 = status("lib_tiny");
+    expect(snap1.byJob.get(jQueued.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snap1.queuedIds).toEqual([jQueued.id]);
+    expect(snap1.waitingIds).toEqual([]);
+
+    // Release the running proxy job and verify picturesHeldOn makes the device busy
+    libraryDb().prepare("UPDATE jobs SET state = 'done', held_by = NULL WHERE id = ?").run(claimed.lib!.job.id);
+    libraryDb()
+      .prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', 'thumbs/r.jpg', 100)")
+      .run(vRunning);
+    setDeviceWork(linux.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      libraryOnly: true,
+      pictures: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+    });
+    const picPkg = await claimPictures(deviceOf(linux.device.id)!, Date.now());
+    expect(picPkg).not.toBeNull();
+    expect(picturesHeldOn(linux.device.id, Date.now())).toBe(true);
+    expect(picturesHeldOn(linux.device.id, Date.now() + 10 * 60_000)).toBe(false);
+    // Pure read did not mutate held: still true at current time
+    expect(picturesHeldOn(linux.device.id, Date.now())).toBe(true);
+
+    // While Linux holds the picture job, jQueued is in class 4 (busy -> queued), and freeSince(linux) is not set
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    const snapPic = status("lib_tiny");
+    expect(snapPic.byJob.get(jQueued.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(freeSince.has(linux.device.id)).toBe(false);
+
+    // Let picture hold expire; now test Mac (rank 3, free, asking) and Linux (rank 2, busy on another job)
+    vi.advanceTimersByTime(6 * 60_000);
+    expect(picturesHeldOn(linux.device.id, Date.now())).toBe(false);
+
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-11");
+    await report(mac.token, MAC_MACHINE);
+    await pollWait(mac.token, { blobs: true, work: 1 });
+
+    // Linux holds a running wave job (busy)
+    const vLinuxHold = addVersion({ proxy: true });
+    const jLinuxHold = enqueue("lib_tiny", vLinuxHold, "wave");
+    libraryDb()
+      .prepare("UPDATE jobs SET state = 'running', held_by = ?, started_at = ? WHERE id = ?")
+      .run(linux.device.id, Date.now(), jLinuxHold.id);
+
+    // Job whose file is on the Mac (Mac ranks 3, Linux ranks 2 via proxy)
+    libraryDb().prepare("DELETE FROM jobs WHERE id = ?").run(jQueued.id);
+    const vMac = addVersion({ fromPath: "/Users/tiny/mac11.mov", fromDevice: mac.device.id, proxy: true });
+    const jWave = enqueue("lib_tiny", vMac, "wave");
+
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    const snapBefore = status("lib_tiny");
+    expect(snapBefore.byJob.get(jWave.id)).toEqual({ wait: "queued", actor: "tiny" });
+
+    // Advance 10 min with Mac polling (free, asking) and never claiming -> stuck on Mac Studio
+    for (let m = 1; m <= 10; m++) {
+      vi.advanceTimersByTime(60_000);
+      notePoll(mac.device.id, Date.now());
+    }
+    const snapAfter = status("lib_tiny");
+    expect(snapAfter.byJob.get(jWave.id)).toEqual({
+      wait: "stuck",
+      reason: notStarted("Mac Studio"),
+      device: mac.device.id,
+      actor: "tiny",
+    });
+    expect(notStarted("Mac Studio")).toBe("Mac Studio hasn't started on these");
+  });
+
+  it("12. stuck: starter & taker notStarted, warn & libraryChanged once, balance tie & decide stub, higher-ranked peer, outside window, newer-job rule, and restart BOOT floor", async () => {
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-12");
+    await report(mac.token, MAC_MACHINE);
+
+    const v1 = addVersion({ fromPath: "/Users/tiny/12_1.mov", fromDevice: mac.device.id });
+    const v2 = addVersion({ fromPath: "/Users/tiny/12_2.mov", fromDevice: mac.device.id });
+    const v3 = addVersion({ fromPath: "/Users/tiny/12_3.mov", fromDevice: mac.device.id });
+    const j1 = enqueue("lib_tiny", v1, "proxy");
+    const j2 = enqueue("lib_tiny", v2, "proxy");
+    const j3 = enqueue("lib_tiny", v3, "proxy");
+
+    // 1) Mac polls, is told ({ work: true }) and never claims; checkWaits runs every 60 s -> no waiting row before 10 min
+    const pollRes = await pollWait(mac.token, { blobs: true, work: 1 });
+    expect(pollRes.body?.work).toBe(true);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let changedCalls = 0;
+      const runCheck = (at: number) => {
+        const before = currentSeq();
+        checkWaits(at);
+        if (currentSeq() > before) changedCalls++;
+      };
+      const t0 = Date.now();
+      runCheck(t0);
+      for (let m = 1; m <= 9; m++) {
+        const at = t0 + m * 60_000;
+        vi.setSystemTime(at);
+        notePoll(mac.device.id, at);
+        runCheck(at);
+        const snap = status("lib_tiny", at);
+        expect(snap.waitingIds).toEqual([]);
+        expect(snap.queuedIds).toEqual([j1.id, j2.id, j3.id]);
+        expect(stuckOn.get(mac.device.id)).toBeUndefined();
+      }
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(changedCalls).toBe(0);
+
+      // At 10 min, 11 min, 12 min (three checks while stuck): stuck row, console.warn once, libraryChanged once
+      for (let m = 10; m <= 12; m++) {
+        const at = t0 + m * 60_000;
+        vi.setSystemTime(at);
+        notePoll(mac.device.id, at);
+        runCheck(at);
+      }
+      const snapStuck = status("lib_tiny", Date.now());
+      for (const j of [j1, j2, j3]) {
+        expect(snapStuck.byJob.get(j.id)).toEqual({
+          wait: "stuck",
+          reason: "Mac Studio hasn't started on these",
+          device: mac.device.id,
+          actor: "tiny",
+        });
+      }
+      expect(snapStuck.waitingIds).toEqual([j1.id, j2.id, j3.id]);
+      expect(stuckOn.get(mac.device.id)).toBe("Mac Studio hasn't started on these");
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        `[library] stuck on Mac Studio: Mac Studio hasn't started on these (3 jobs, oldest ${j1.id})`,
+      );
+      expect(changedCalls).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    // 2) A taker (library, libraryAt, old at) that polls but whose worker does not start (no fresh claims) -> same line
+    const oldAt = Date.now() - 10 * 60_000;
+    setDeviceWork(mac.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      at: oldAt,
+      libraryAt: oldAt,
+      libraryKinds: LATER_KINDS,
+    });
+    notePoll(mac.device.id, Date.now());
+    vi.advanceTimersByTime(FRESH_MS);
+    notePoll(mac.device.id, Date.now());
+    const snapTakerNoClaim = status("lib_tiny");
+    expect(snapTakerNoClaim.byJob.get(j1.id)).toEqual({
+      wait: "stuck",
+      reason: "Mac Studio hasn't started on these",
+      device: mac.device.id,
+      actor: "tiny",
+    });
+
+    // 3) Mac and a free Linux box at the same rank, Linux preferred by weight -> pick is Linux; when it never takes them -> "Linux box hasn't taken these yet", never about Mac; keptFor(x) via decide stub
+    libraryDb().exec("DELETE FROM jobs;");
+    const linux = pairDevice("tiny", "Linux box", undefined, "hw-linux-12");
+    await report(linux.token, LINUX_MACHINE, "node");
+    await writeBalance("tiny", {
+      on: true,
+      weights: { [linux.device.id]: 2, [mac.device.id]: 1 },
+      libraries: {},
+      originals: {},
+    });
+    const vBoth = addVersion({ proxy: true });
+    const jBoth = enqueue("lib_tiny", vBoth, "wave");
+
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    setDeviceWork(linux.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      libraryOnly: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    notePoll(mac.device.id, Date.now());
+    expect(status("lib_tiny").byJob.get(jBoth.id)?.wait).toBe("queued");
+
+    for (let m = 1; m <= 10; m++) {
+      vi.advanceTimersByTime(60_000);
+      await report(linux.token, LINUX_MACHINE, "node");
+      await report(mac.token, MAC_MACHINE);
+      setDeviceWork(linux.device.id, {
+        v: WORK_V,
+        steps: [],
+        library: true,
+        libraryOnly: true,
+        at: Date.now(),
+        libraryAt: Date.now(),
+        libraryKinds: LATER_KINDS,
+      });
+      notePoll(mac.device.id, Date.now());
+    }
+    const snapLinuxPick = status("lib_tiny");
+    expect(snapLinuxPick.byJob.get(jBoth.id)).toEqual({
+      wait: "stuck",
+      reason: notTaking("Linux box"),
+      device: linux.device.id,
+      actor: "tiny",
+    });
+    expect(notTaking("Linux box")).toBe("Linux box hasn't taken these yet");
+
+    // keptFor(x) when decide answers balance for pick (tested by calling status with a decide stub)
+    const snapKept = status("lib_tiny", Date.now(), () => ({ skip: "balance", by: deviceOf(mac.device.id)! }));
+    expect(snapKept.byJob.get(jBoth.id)).toEqual({
+      wait: "stuck",
+      reason: keptFor("Mac Studio"),
+      device: linux.device.id,
+      actor: "tiny",
+    });
+    expect(keptFor("Mac Studio")).toBe("Load balancing gives these to Mac Studio");
+
+    // Also verify decide() directly on balance and rank
+    const rowBoth = rowOf(vBoth)!;
+    const foldersTiny = foldersOf("tiny");
+    const balTiny = readBalanceSync("tiny");
+    const liftedMac = lift(deviceOf(mac.device.id)!, Date.now());
+    const peersForMac = peersOf("tiny", liftedMac, Date.now());
+    expect(decide(liftedMac, jBoth, rowBoth, peersForMac, foldersTiny, balTiny, Date.now())).toEqual({
+      skip: "balance",
+      by: expect.objectContaining({ id: linux.device.id }),
+    });
+
+    // 4) A higher-ranked peer -> "Linux box takes these before Mac Studio"
+    writeFolders("tiny", [
+      {
+        id: "fld_12",
+        name: "Share12",
+        role: "footage",
+        origin: { host: linux.device.id, path: "/mnt/footage/Share12" },
+        reach: {},
+      },
+    ]);
+    const vShare = addVersion({ sourcePath: "/mnt/footage/Share12/s.mov" });
+    const jShare = enqueue("lib_tiny", vShare, "proxy");
+    const rowShare = rowOf(vShare)!;
+    expect(decide(liftedMac, jShare, rowShare, peersOf("tiny", liftedMac, Date.now()), foldersOf("tiny"), balTiny, Date.now())).toEqual({
+      skip: "rank",
+      by: expect.objectContaining({ id: linux.device.id }),
+    });
+    // When Linux is busy on a picture job, pick in freeAskingL is Mac Studio, while peersOf includes Linux -> aheadOf
+    libraryDb()
+      .prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', 'thumbs/s.jpg', 100)")
+      .run(vShare);
+    setDeviceWork(linux.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      libraryOnly: true,
+      pictures: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    await claimPictures(deviceOf(linux.device.id)!, Date.now());
+    // Seed since(jShare) 10 min ago while Mac has been free & asking for 10 min
+    since.set(jShare.id, Date.now() - STUCK_MS);
+    const snapAhead = status("lib_tiny", Date.now() + FRESH_MS);
+    expect(snapAhead.byJob.get(jShare.id)).toEqual({
+      wait: "stuck",
+      reason: aheadOf("Mac Studio", "Linux box"),
+      device: mac.device.id,
+      actor: "tiny",
+    });
+    expect(aheadOf("Mac Studio", "Linux box")).toBe("Linux box takes these before Mac Studio");
+
+    // 5) The job outside the window (100) -> "Mac Studio has other library work to do first"
+    await revokeDevice(linux.device.id);
+    libraryDb().exec("DELETE FROM jobs;");
+    const windowJobs: JobRow[] = [];
+    for (let i = 0; i < 101; i++) {
+      const vW = addVersion({ id: `v_win_${i}`, fromPath: `/Users/tiny/w_${i}.mov`, fromDevice: mac.device.id, described: false });
+      windowJobs.push(enqueue("lib_tiny", vW, "proxy"));
+    }
+    const outsideJob = windowJobs[100]!;
+    since.set(outsideJob.id, Date.now() - STUCK_MS);
+    freeSince.set(mac.device.id, Date.now() - STUCK_MS);
+    notePoll(mac.device.id, Date.now());
+    const snapBehind = status("lib_tiny", Date.now() + 2 * FRESH_MS);
+    expect(snapBehind.byJob.get(outsideJob.id)).toEqual({
+      wait: "stuck",
+      reason: behind("Mac Studio"),
+      device: mac.device.id,
+      actor: "tiny",
+    });
+    expect(behind("Mac Studio")).toBe("Mac Studio has other library work to do first");
+
+    // 6) A job skipped while the Mac keeps taking newer ones -> stuck after 10 min even when freeSince(Mac) < 10 min
+    libraryDb().exec("DELETE FROM jobs;");
+    resetWaitsForTest(Date.now() - 20 * 60_000);
+    const vSkip = addVersion({ fromPath: "/Users/tiny/skip1.mov", fromDevice: mac.device.id });
+    const vNewer = addVersion({ fromPath: "/Users/tiny/skip2.mov", fromDevice: mac.device.id });
+    const jSkip = enqueue("lib_tiny", vSkip, "proxy");
+    const jNewer = enqueue("lib_tiny", vNewer, "proxy");
+
+    setDeviceWork(mac.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    notePoll(mac.device.id, Date.now());
+    // First sight at t = 0 puts jSkip in since
+    expect(status("lib_tiny").byJob.get(jSkip.id)?.wait).toBe("queued");
+
+    // At t = 5 min, Mac is running jNewer (busy -> resets freeSince(mac))
+    vi.advanceTimersByTime(5 * 60_000);
+    const startedNewer = Date.now();
+    libraryDb()
+      .prepare("UPDATE jobs SET state = 'running', held_by = ?, started_at = ? WHERE id = ?")
+      .run(mac.device.id, startedNewer, jNewer.id);
+    notePoll(mac.device.id, Date.now());
+    expect(status("lib_tiny").byJob.get(jSkip.id)?.wait).toBe("queued");
+    expect(freeSince.has(mac.device.id)).toBe(false);
+
+    // At t = 8 min, jNewer finishes; Mac becomes free again (freeSince = t + 8 min)
+    vi.advanceTimersByTime(3 * 60_000);
+    libraryDb()
+      .prepare("UPDATE jobs SET state = 'done', done_at = ? WHERE id = ?")
+      .run(Date.now(), jNewer.id);
+    notePoll(mac.device.id, Date.now());
+    setDeviceWork(mac.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    expect(status("lib_tiny").byJob.get(jSkip.id)?.wait).toBe("queued");
+
+    // At t = 10 min (freeSince is only 2 min old, but since(jSkip) is 10 min old and jNewer > jSkip ran after since(jSkip)) -> stuck!
+    vi.advanceTimersByTime(2 * 60_000);
+    notePoll(mac.device.id, Date.now());
+    setDeviceWork(mac.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    const snapSkipped = status("lib_tiny");
+    expect(snapSkipped.byJob.get(jSkip.id)).toEqual({
+      wait: "stuck",
+      reason: "Mac Studio hasn't taken these yet",
+      device: mac.device.id,
+      actor: "tiny",
+    });
+
+    // 7) Process restart (BOOT = now, maps cleared) -> no stuck for 10 min
+    resetWaitsForTest(Date.now());
+    notePoll(mac.device.id, Date.now());
+    expect(status("lib_tiny").byJob.get(jSkip.id)?.wait).toBe("queued");
+    vi.advanceTimersByTime(9 * 60_000);
+    notePoll(mac.device.id, Date.now());
+    setDeviceWork(mac.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    expect(status("lib_tiny").byJob.get(jSkip.id)?.wait).toBe("queued");
+    vi.advanceTimersByTime(60_000);
+    notePoll(mac.device.id, Date.now());
+    setDeviceWork(mac.device.id, {
+      v: WORK_V,
+      steps: [],
+      library: true,
+      at: Date.now(),
+      libraryAt: Date.now(),
+      libraryKinds: LATER_KINDS,
+    });
+    expect(status("lib_tiny").byJob.get(jSkip.id)?.wait).toBe("stuck");
+  });
+
+  it("18. send: from silent Mac -> offline; Mac polling without taking -> stuck after 10 min; Mac taking it -> queued, then done", async () => {
+    const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-18");
+    await report(mac.token, MAC_MACHINE);
+
+    const vSend = addVersion({
+      sourceKey: "mac:18",
+      macPath: "/Users/tiny/send18.mov",
+      macDevice: mac.device.id,
+      described: false,
+    });
+    const jSend = enqueue("lib_tiny", vSend, "send");
+
+    // 1) Mac silent -> grey "Mac Studio is offline", not counted as queued work left
+    const snapOffline = status("lib_tiny");
+    expect(snapOffline.byJob.get(jSend.id)).toEqual({
+      wait: "offline",
+      reason: "Mac Studio is offline",
+      device: mac.device.id,
+      devices: [mac.device.id],
+      actor: "tiny",
+    });
+    expect(snapOffline.waitingIds).toEqual([jSend.id]);
+    expect(snapOffline.queuedIds).toEqual([]);
+
+    // 2) Mac polling -> queued initially, then stuck "Mac Studio hasn't started on these" after 10 min
+    await pollWait(mac.token, { blobs: true, work: 1 });
+    vi.advanceTimersByTime(FRESH_MS);
+    notePoll(mac.device.id, Date.now());
+    const snapQueued = status("lib_tiny");
+    expect(snapQueued.byJob.get(jSend.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snapQueued.queuedIds).toEqual([jSend.id]);
+    expect(snapQueued.waitingIds).toEqual([]);
+
+    for (let m = 1; m <= 10; m++) {
+      vi.advanceTimersByTime(60_000);
+      notePoll(mac.device.id, Date.now());
+    }
+    const snapStuck = status("lib_tiny");
+    expect(snapStuck.byJob.get(jSend.id)).toEqual({
+      wait: "stuck",
+      reason: "Mac Studio hasn't started on these",
+      device: mac.device.id,
+      actor: "tiny",
+    });
+    expect(snapStuck.waitingIds).toEqual([jSend.id]);
+    expect(snapStuck.queuedIds).toEqual([]);
+
+    // 3) Mac claims and finishes its send -> claimed, then done
+    const claimed = await claimWork(mac.token);
+    expect(claimed.lib?.job.id).toBe(jSend.id);
+    expect(claimed.lib?.job.kind).toBe("send");
+
+    vi.setSystemTime(Date.now() + FRESH_MS);
+    const snapWhileClaimed = status("lib_tiny");
+    // While running, jSend is no longer in waitingIds or queuedIds
+    expect(snapWhileClaimed.byJob.has(jSend.id)).toBe(false);
+    expect(snapWhileClaimed.waitingIds).toEqual([]);
+
+    const probe = {
+      duration: 10,
+      format: "mov,mp4,m4a,3gp,3g2,mj2",
+      vcodec: "h264",
+      pixFmt: "yuv420p",
+      acodec: "aac",
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      rotation: 0,
+    };
+    const doneRes = await app.request(`/api/devices/relay/work/lib/${jSend.id}/done`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${mac.token}`,
+        "content-type": "application/json",
+        "x-ct-claim": claimed.lib!.job.claim!,
+      },
+      body: JSON.stringify({
+        outcome: { ok: true },
+        files: [],
+        probe,
+        sha256: "a".repeat(64),
+        quick: "b".repeat(64),
+      }),
+    });
+    expect(doneRes.status).toBe(200);
+    expect(await doneRes.json()).toEqual({ ok: true });
+
+    const rowAfter = libraryDb().prepare("SELECT state FROM jobs WHERE id = ?").get(jSend.id) as { state: string };
+    expect(rowAfter.state).toBe("done");
+
+    vi.setSystemTime(Date.now() + FRESH_MS);
+    const snapDone = status("lib_tiny");
+    expect(snapDone.byJob.has(jSend.id)).toBe(false);
+    expect(snapDone.waitingIds).toEqual([]);
   });
 });

@@ -185,7 +185,7 @@ export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: L
 }
 
 /** The computers of `owner` that may take a library job now: `me`, and the others online, free, holding none, asking for work lately and not Off. */
-function peersOf(owner: string, me: Device, now: number): Device[] {
+export function peersOf(owner: string, me: Device, now: number): Device[] {
   const off = offOf(owner);
   return computers(owner)
     .filter((c) => c.x.id === me.id || (c.free && !holding(c.x.id) && claimsFresh(c.x, now) && !off.has(c.x.id)))
@@ -228,6 +228,47 @@ async function heldSeen(id: number, device: string, claim?: string): Promise<Job
   return undefined;
 }
 
+export type LibraryDecision = { take: true } | { skip: "rank" | "balance"; by?: Device };
+
+/** The claim's per-job placement and load-balancing decision, with no claim and no database write. */
+export function decide(
+  d: Device,
+  job: Pick<JobRow, "kind" | "actor">,
+  r: LibRow,
+  peers: Device[],
+  folders: ReturnType<typeof foldersOf>,
+  balance: Balance,
+  now = Date.now(),
+): LibraryDecision {
+  const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
+  const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
+  const top = Math.max(0, ...ranked.map((p) => p.r));
+  const workers: WorkerSeen[] = ranked
+    .filter((p) => p.r === top && p.x.report?.machine)
+    .map(({ x }) => ({ host: x.id, at: x.id === d.id ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
+  if (!mine || mine < top) {
+    const by =
+      top > 0
+        ? (ranked
+            .filter((p) => p.r === top && p.x.id !== d.id)
+            .map((p) => p.x)
+            .find((x) => mayClaim(job.kind, x.id, workers, balance, now, ONLINE_MS)) ??
+          ranked.find((p) => p.r === top && p.x.id !== d.id)?.x)
+        : undefined;
+    return { skip: "rank", ...(by ? { by } : {}) };
+  }
+  if (!mayClaim(job.kind, d.id, workers, balance, now, ONLINE_MS)) {
+    const by =
+      ranked
+        .filter((p) => p.r === top && p.x.id !== d.id)
+        .map((p) => p.x)
+        .find((x) => mayClaim(job.kind, x.id, workers, balance, now, ONLINE_MS)) ??
+      ranked.find((p) => p.r === top && p.x.id !== d.id)?.x;
+    return { skip: "balance", ...(by ? { by } : {}) };
+  }
+  return { take: true };
+}
+
 /** The library job computer `d` takes now, with its package, or null. The best-placed of its owner's computers, then load balancing, decide. */
 export async function claimLibraryForComputer(d: Device, now = Date.now()): Promise<LibraryPackage | null> {
   if (!takesLibrary(d) || offOf(d.owner).has(d.id)) return null;
@@ -240,14 +281,7 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
   for (const job of queued) {
     const r = waitsForWords(job) ? undefined : rowOf(job.version_id);
     if (!r) continue;
-    const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
-    const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
-    const top = Math.max(0, ...ranked.map((p) => p.r));
-    if (!mine || mine < top) continue;
-    const workers: WorkerSeen[] = ranked
-      .filter((p) => p.r === top && p.x.report?.machine)
-      .map(({ x }) => ({ host: x.id, at: x.id === d.id ? now : (x.lastSeen ?? 0), machine: x.report!.machine, never: [] }));
-    if (!mayClaim(job.kind, d.id, workers, balance, now, ONLINE_MS)) continue;
+    if (!("take" in decide(d, job, r, peers, folders, balance, now))) continue;
     if (!(await stillSees(job, r))) {
       failUnseen(job);
       continue;
