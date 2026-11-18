@@ -153,9 +153,10 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
       out.files[r.id] = there || r.mac_path!;
       continue;
     }
-    // under Upload none (or a setting that keeps no original) the server hands out no copy of it: a path the person's
-    // computer keeps (source_path, indexed in place) is only named, never sent; anything else is refused
-    const gate = await mayServe({ id: r.library_id, versionId: r.id }, "original");
+    // under Upload none (or a setting that keeps no original) the server hands out no copy of it, except to the owner's
+    // computer while no computer holds it (a phone's upload, held): a path the person's computer keeps (source_path,
+    // indexed in place) is only named, never sent; anything else is refused
+    const gate = await mayServe({ id: r.library_id, versionId: r.id }, "original", { toComputer: true });
     if (!gate.ok) {
       if (r.source_path) out.files[r.id] = r.source_path;
       else out.refused ??= gate;

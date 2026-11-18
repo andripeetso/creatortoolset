@@ -335,6 +335,15 @@ describe("A11: nothing streams an original under none (decision 5, R2)", () => {
   });
 
   // the play route itself needs a registered source policy (canSee); usage.test.ts covers the route end to end
+  it("an original held on the server (no computer has it yet) goes to the owner's computer under none, and to no viewer; once a computer holds it, to nobody", async () => {
+    const v = { id: "lib_none", versionId: "ver_held" };
+    expect(await mayServe(v, "original")).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused" } });
+    expect(await mayServe(v, "original", { toComputer: true })).toEqual({ ok: true });
+    expect(await mayServe(v, "proxy", { toComputer: true })).toMatchObject({ ok: false });
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state, kind) VALUES ('ver_held', 'mac-held', '/Users/tiny/Movies/held.mov', ?, 'verified', 'original')").run(Date.now());
+    expect(await mayServe(v, "original", { toComputer: true })).toMatchObject({ ok: false });
+  });
+
   it("the serve gate: under none the original is refused, pictures pass; On This Mac serves its own", async () => {
     expect(await serveGate("vs_none", "play", { key: "k", what: "original" })).toMatchObject({ ok: false, status: 409, body: { code: "upload_refused", message: REFUSED_NONE } });
     expect(await serveGate("vs_none", "source", { key: "k", what: "original" })).toMatchObject({ ok: false, status: 409 });

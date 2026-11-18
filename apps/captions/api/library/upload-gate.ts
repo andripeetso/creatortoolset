@@ -108,10 +108,19 @@ export function mayReceive(
  * Upload is all; its proxy where that is proxies or all, and under none only where the library is shared with members
  * (team proxies). Finals follow the Finals setting. On This Mac the server is the computer, so it serves its own.
  */
-export async function mayServe(version: { id: string; versionId: string }, what: "original" | "proxy"): Promise<Received> {
+export async function mayServe(
+  version: { id: string; versionId: string },
+  what: "original" | "proxy",
+  /** the owner's computer asks (its edit's media, the worker's files): an original no computer holds yet is its to take */
+  opts: { toComputer?: boolean } = {},
+): Promise<Received> {
   if (serverKind() === "local") return { ok: true };
   const upload = uploadFor(version);
   if (what === "original" ? upload === "all" : upload !== "none") return { ok: true };
   if (what === "proxy" && (await hasMembers(version.id))) return { ok: true };
+  // held until a computer has it (PLAN-final decision 1): the server hands it to a computer of the owner, and only until then
+  if (what === "original" && opts.toComputer && !libraryDb().prepare("SELECT 1 FROM version_places WHERE version_id = ? AND kind = 'original' AND state = 'verified'").get(version.versionId)) {
+    return { ok: true };
+  }
   return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
 }
