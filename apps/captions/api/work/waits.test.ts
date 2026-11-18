@@ -1623,4 +1623,28 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     expect(await waitsOf(linux.device.id)).toEqual({ line: "Linux box hasn't taken these yet", tone: "stuck" });
     stuckOn.clear();
   });
+
+  it("23. a hold on one job keeps the box's free clock; a look claim never makes a library worker busy; a description takes its transcript's class", async () => {
+    const linux = pairDevice("tiny", "Linux box", undefined, "hw-linux-23");
+    await report(linux.token, LINUX_MACHINE, "node");
+    await claimWork(linux.token, { libraryOnly: true });
+    await post(linux.token, "/api/devices/relay/editor/claim", { kinds: [LIBRARY_LOOK_KIND] }, "node");
+    expect(called.has(linux.device.id)).toBe(false);
+    writeFolders("tiny", [
+      { id: "fld_23", name: "Share23", role: "footage", origin: { host: linux.device.id, path: "/mnt/footage/Share23" }, reach: {} },
+    ]);
+    // a server-held proxy first: the box (originals off) is held noOriginals for it
+    const held = enqueue("lib_tiny", addVersion({}), "proxy");
+    const mine = enqueue("lib_tiny", addVersion({ sourcePath: "/mnt/footage/Share23/a.mov" }), "proxy");
+    const vWords = addVersion({ sourcePath: "/mnt/footage/Share23/b.mov", proxy: true, described: false });
+    const words = enqueue("lib_tiny", vWords, "transcribe");
+    const desc = enqueue("lib_tiny", vWords, "describe");
+    since.set(mine.id, Date.now() - STUCK_MS);
+    freeSince.set(linux.device.id, Date.now() - STUCK_MS);
+    const snap = status("lib_tiny");
+    expect(snap.byJob.get(held.id)?.wait).not.toBe("stuck");
+    expect(snap.byJob.get(mine.id)).toMatchObject({ wait: "stuck", device: linux.device.id });
+    expect(freeSince.get(linux.device.id)).toBe(Date.now() - STUCK_MS);
+    expect(snap.byJob.get(desc.id)).toEqual(snap.byJob.get(words.id));
+  });
 });

@@ -36,7 +36,7 @@ const app = (await import("../boot")).default;
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { MAC_WAITS } = await import("../library/shots");
-const { askVersionIn } = await import("../library/transcribe");
+const { askVersionIn, keySound } = await import("../library/transcribe");
 const { aliasDevice } = await import("../library/whereis");
 const { tick: runLibraryLane } = await import("../library/worker");
 const { lookHeldOn } = await import("../library/mac-look");
@@ -372,11 +372,11 @@ describe("G1 taker gap and reach (tests 1–9, 9b)", () => {
     expect((await pollWait(mac.token, { blobs: true, work: 1 })).body).toEqual({ work: true });
     expect((await claimWork(mac.token)).lib?.job.id).toBe(proxyJob.id);
 
-    // An editor-asked version in askVersionIn stays in queuedFor even when the default route is not on a key
+    // An editor-asked version in askVersionIn stays in queuedFor exactly when its own route is on a key (keySound, the claim's rule)
     const vAsked = addVersion({ proxy: true });
     const askedJob = enqueue("lib_tiny", vAsked, "transcribe");
     askVersionIn.set(vAsked, { by: "tiny" });
-    expect(queuedFor(deviceOf(mac.device.id)!).some((j) => j.id === askedJob.id)).toBe(true);
+    expect(queuedFor(deviceOf(mac.device.id)!).some((j) => j.id === askedJob.id)).toBe(!!keySound("tiny", vAsked));
 
     // Subcase 6b: 150 server-held proxies with no path ahead of a wave on the Linux box's share, Linux originals off -> Linux is handed the wave
     resetState();

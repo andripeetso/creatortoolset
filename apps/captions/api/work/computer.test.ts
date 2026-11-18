@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -322,6 +322,14 @@ describe("the Mac-wide turn (turn.ts, PRD 26)", () => {
     gb();
     (await c)();
     // nobody waits or holds: nothing left in the folder
+    expect(readdirSync(d)).toEqual([]);
+  });
+
+  it("an empty turn file a dead worker left (older than 5 s) is free", async () => {
+    const d = turnDir();
+    writeFileSync(path.join(d, "turn"), "");
+    utimesSync(path.join(d, "turn"), new Date(Date.now() - 10_000), new Date(Date.now() - 10_000));
+    (await takeTurn({ dir: d, pid: 104, everyMs: 5, alive: () => true }))();
     expect(readdirSync(d)).toEqual([]);
   });
 

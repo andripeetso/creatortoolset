@@ -816,7 +816,7 @@ export function checkWaits(now = Date.now()): void {
       for (const [id, c] of snap.byJob) {
         seenJobs.add(id);
         const prev = last.get(id);
-        if (prev !== c.wait) changed = true; // a new wait shows too
+        if (prev === undefined ? c.wait !== "queued" : prev !== c.wait) changed = true; // a new job shows only when it waits
         last.set(id, c.wait);
       }
       const gap = ctx.identityGaps.get(libId);
