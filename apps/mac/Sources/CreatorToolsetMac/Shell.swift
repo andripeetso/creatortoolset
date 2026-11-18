@@ -190,9 +190,10 @@ final class Shell: NSObject, ObservableObject {
                 let clip = revealAsk(ask), review = reviewRevealAsk(ask)
                 guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
                 let here = self.runsHere && self.server != nil
+                let device = DeviceVault.deviceID(for: self.base.host ?? "")
                 Task {
                     let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
-                               else { await self.client().clipPath(library: clip!.library, asset: clip!.asset) }
+                               else { await self.client().clipPath(library: clip!.library, asset: clip!.asset, device: device) }
                     done(await Reveal.answer(path, anyFile: here))
                 }
                 return
