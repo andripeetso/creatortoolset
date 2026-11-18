@@ -12,6 +12,10 @@ export const MAX_ATTEMPTS = 3;
 /** What a job left by the switch says while it waits: one a computer takes, or one only a server with video work on runs (worker.ts leftToComputers). */
 export const WAITS_FOR_COMPUTER = "Waits for one of your computers. Open Creator Toolset on your Mac";
 export const WAITS_FOR_SERVER = "Video work is off on this server";
+
+/** SQL: job `j`'s clip is out of the trash. A trashed clip's jobs wait queued, for this server and every computer (no AI
+ *  spent on it), and run again if it is restored. Its own `v` and `a` aliases stay inside the subquery. */
+export const NOT_TRASHED = "NOT EXISTS (SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = j.version_id AND a.trashed_at IS NOT NULL)";
 const BACKOFF_MS = 60_000;
 
 /** The tables these functions run on: interpolated into SQL, so never a free string. */

@@ -35,7 +35,7 @@ import { hasMembers, mayReceive, provesProxies, type Received } from "../library
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { FRAMES } from "../library/describe";
-import { claimJob, enqueueJob, extendLease, finishJob, parkJob, type JobRow } from "../library/jobs";
+import { claimJob, enqueueJob, extendLease, finishJob, NOT_TRASHED, parkJob, type JobRow } from "../library/jobs";
 import { lookHeldOn, lookReach, type PlaceRow } from "../library/mac-look";
 import { wakePictures } from "../library/pictures";
 import type { ProbeSummary } from "../library/media/probe";
@@ -350,7 +350,7 @@ export function queuedFor(d: Device, now = Date.now(), balance: Balance = readBa
   const origOk = takesOriginals(balance, d);
   const sql =
     `SELECT j.* FROM jobs j LEFT JOIN asset_versions v ON v.id = j.version_id` +
-    ` WHERE j.state = 'queued' AND j.run_after <= ? AND j.actor = ? AND j.kind IN (${KINDS.map(() => "?").join(", ")})` +
+    ` WHERE j.state = 'queued' AND j.run_after <= ? AND j.actor = ? AND j.kind IN (${KINDS.map(() => "?").join(", ")}) AND ${NOT_TRASHED}` +
     (libs ? ` AND j.library_id IN (${libs.map(() => "?").join(", ")})` : "") +
     ` AND NOT (j.kind = 'send' AND (${noReach}))` +
     (keyOn ? "" : ` AND NOT (j.kind = 'transcribe' AND (j.version_id IS NULL OR j.version_id NOT IN (SELECT value FROM json_each(?))))`) +
