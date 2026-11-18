@@ -59,7 +59,7 @@ app.use(async (c, next) => {
 app.route("/api/library", libraryApp);
 
 const d = libraryDb();
-for (const [id, upload] of [["lib_none", '"none"'], ["lib_unset", "null"], ["lib_p", '"proxies"'], ["lib_all", '"all"']] as const) {
+for (const [id, upload] of [["lib_none", '"none"'], ["lib_unset", "null"], ["lib_p", '"proxies"'], ["lib_orig", '"originals"'], ["lib_all", '"all"']] as const) {
   d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'tinyacrobatics', 'L', 'local', ?, 0)").run(
     id,
     `{"upload":${upload},"proxy":false,"describe":false,"embed":false}`,
@@ -79,8 +79,9 @@ const start = (lib: string, from?: string) =>
 
 describe("mayReceive: original bytes only where somebody chose to send them", () => {
   // local-first 11-18 decision 6: under none no original reaches the server, a browser or a phone's included
-  it("takes a person's original under proxies and all, and refuses it under none (unset reads as none)", () => {
-    for (const id of ["lib_p", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+  it("takes a person's original under originals and all, refuses it under proxies and none (unset reads as none)", () => {
+    for (const id of ["lib_orig", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+    expect(mayReceive("original", { id: "lib_p" }, "person")).toMatchObject({ ok: false, body: { message: REFUSED_PROXIES } });
     for (const id of ["lib_none", "lib_unset"]) {
       expect(mayReceive("original", { id }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
     }
@@ -108,19 +109,23 @@ describe("mayReceive: original bytes only where somebody chose to send them", ()
     expect((await start("lib_all")).status).toBe(201);
   });
 
-  it("refuses a computer's own original under none (unset reads as none), takes it under proxies and all", () => {
+  it("refuses a computer's own original under none (unset reads as none) and under proxies, takes it under originals and all", () => {
     for (const id of ["lib_none", "lib_unset"]) {
       expect(mayReceive("original", { id }, "computer")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
     }
-    expect(mayReceive("original", { id: "lib_p" }, "computer").ok).toBe(true);
+    // R-A2 + U2: a computer that proves its proxies, or not, its original is refused under proxies
+    expect(mayReceive("original", { id: "lib_p" }, "computer", { sender: null }).ok).toBe(false);
+    expect(mayReceive("original", { id: "lib_orig" }, "computer").ok).toBe(true);
     expect(mayReceive("original", { id: "lib_all" }, "computer").ok).toBe(true);
   });
 
   it("a final follows the Finals setting (all when unset); derivatives and served bytes always pass; This Mac takes its own", () => {
     expect(mayReceive("original", { id: "lib_none", collectionId: "col_fin" }, "computer").ok).toBe(true);
     for (const k of ["derivative", "serving"] as const) expect(mayReceive(k, { id: "lib_none" }, "computer").ok).toBe(true);
-    // P2: a computer's proxy under none only in a library shared with members (team proxies)
+    // P2 + U2: a computer's proxy is taken only where Hosted proxies are on (originals hosts none)
     expect(mayReceive("proxy", { id: "lib_none" }, "computer").ok).toBe(false);
+    expect(mayReceive("proxy", { id: "lib_orig" }, "computer").ok).toBe(false);
+    expect(mayReceive("proxy", { id: "lib_p" }, "computer").ok).toBe(true);
     process.env.CT_LOCAL = "1";
     try {
       expect(mayReceive("original", { id: "lib_none" }, "computer").ok).toBe(true);
@@ -211,23 +216,31 @@ const older = { work: { v: 1, steps: [], library: true as const } };
 describe("P2: proxies and the proxy proof", () => {
   beforeAll(() => void d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'proxies') WHERE id = 'lib_p'`).run());
 
-  it("an original from a computer that makes its proxies is refused under proxies; an older computer's is still taken", () => {
-    expect(mayReceive("original", { id: "lib_p" }, "computer", { sender: proving })).toEqual({
-      ok: false,
-      status: 409,
-      body: { error: REFUSED_PROXIES, code: "upload_refused", message: REFUSED_PROXIES },
-    });
-    expect(mayReceive("original", { id: "lib_p" }, "computer", { sender: older }).ok).toBe(true);
+  // U2 (UNIFIED-PRD §4.2): under proxies an original is refused whether or not the computer proves its proxies
+  it("an original from a computer is refused under proxies, proving or not; under originals and all it is taken", () => {
+    for (const sender of [proving, older, undefined]) {
+      expect(mayReceive("original", { id: "lib_p" }, "computer", { sender })).toEqual({
+        ok: false,
+        status: 409,
+        body: { error: REFUSED_PROXIES, code: "upload_refused", message: REFUSED_PROXIES },
+      });
+    }
     expect(mayReceive("original", { id: "lib_all" }, "computer", { sender: proving }).ok).toBe(true);
   });
 
-  it("a proxy with a matching proof is taken under proxies and all; under none only in a library shared with members", async () => {
+  it("a proxy with a matching proof is taken under proxies and all; under none it is refused, even in a library shared with members", async () => {
     const proof = { sha256: hex("proxy"), got: hex("proxy"), bytes: 5, original: 500 };
     for (const id of ["lib_p", "lib_all"]) expect(mayReceive("proxy", { id }, "computer", { sender: proving, proof }).ok, id).toBe(true);
+    // R-A2 (team proxies under none) is replaced by this row: Hosted proxies off is off, members or not (UNIFIED-PRD §4.2)
     expect(await hasMembers("lib_team")).toBe(true);
-    expect(await hasMembers("lib_none")).toBe(false);
-    expect(mayReceive("proxy", { id: "lib_team" }, "computer", { sender: proving, proof, team: true }).ok).toBe(true);
-    expect(mayReceive("proxy", { id: "lib_none" }, "computer", { sender: proving, proof, team: false }).ok).toBe(false);
+    expect(mayReceive("proxy", { id: "lib_team" }, "computer", { sender: proving, proof }).ok).toBe(false);
+    expect(mayReceive("proxy", { id: "lib_none" }, "computer", { sender: proving, proof }).ok).toBe(false);
+  });
+
+  it("a proxy no smaller than its original fails the proof, whether the same size or bigger (UNIFIED-PRD §4.1 rule 4)", () => {
+    const bad = (proof: object) => mayReceive("proxy", { id: "lib_p" }, "computer", { sender: proving, proof });
+    expect(bad({ sha256: hex("proxy"), got: hex("proxy"), bytes: 600, original: 500 })).toMatchObject({ ok: false, body: { message: REFUSED_PROOF } });
+    expect(bad({ sha256: hex("proxy"), got: hex("proxy"), bytes: 499, original: 500 }).ok).toBe(true);
   });
 
   it("an original labelled proxy fails the proof: other bytes than declared, or the original's own size", () => {
@@ -240,12 +253,12 @@ describe("P2: proxies and the proxy proof", () => {
   it("a computer's proxy job: declared and matching is filed; other bytes are refused and nothing of them stays", async () => {
     const { device } = pairDevice("tinyacrobatics", "Tiny Mac");
     setDeviceWork(device.id, proving.work);
-    d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_team', 'lib_team', 'video', 'Handstand', 'tinyacrobatics', 0)`).run();
+    d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_team', 'lib_p', 'video', 'Handstand', 'tinyacrobatics', 0)`).run();
     d.prepare(
       `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES ('v_team', 'a_team', 1, 'mac:v_team', 500, 'mac:x', 'tinyacrobatics', 0, 'ready')`,
     ).run();
     const job = () =>
-      Number(d.prepare(`INSERT INTO jobs (library_id, version_id, kind, state, actor, held_by) VALUES ('lib_team', 'v_team', 'proxy', 'running', 'tinyacrobatics', ?) RETURNING id`).get(device.id)!.id);
+      Number(d.prepare(`INSERT INTO jobs (library_id, version_id, kind, state, actor, held_by) VALUES ('lib_p', 'v_team', 'proxy', 'running', 'tinyacrobatics', ?) RETURNING id`).get(device.id)!.id);
     let id = job();
     const ok = await acceptLibraryFile(id, device.id, "proxy", Readable.from([Buffer.from("proxy")]), undefined, hex("proxy"));
     expect(ok).toBe(true);
@@ -259,18 +272,12 @@ describe("P2: proxies and the proxy proof", () => {
     expect(await acceptLibraryFile(id, device.id, "proxy", Readable.from([Buffer.from("proxy")]))).toMatchObject({ ok: false });
   });
 
-  it("team proxies: a video the computer holds in a library shared with members gets one proxy job, once; a library without members none", async () => {
-    const { teamProxies } = await import("./report");
+  it("R-A2 replaced: the team-proxy queue is gone, so a library under none never gets a proxy job from a computer's report", async () => {
+    const report = await import("./report");
+    expect(report).not.toHaveProperty("teamProxies");
     const { device } = pairDevice("tinyacrobatics", "Tiny Studio");
     d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_t2', 'lib_team', 'video', 'Flip', 'tinyacrobatics', 0), ('a_n2', 'lib_none', 'video', 'Flip', 'tinyacrobatics', 0)`).run();
-    for (const [v, a] of [["v_t2", "a_t2"], ["v_n2", "a_n2"]]) {
-      d.prepare(`INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, ?, 900, 'mac:y', 'tinyacrobatics', 0, 'ready')`).run(v, a, `mac:${v}`);
-      d.prepare(`INSERT INTO version_places (version_id, device, kind, folder_id, path, state) VALUES (?, ?, 'original', 'f1', '/Users/tiny/Movies/Flip.mov', 'verified')`).run(v, device.id);
-    }
-    expect(await teamProxies("lib_team", device)).toBe(1);
-    expect(await teamProxies("lib_team", device)).toBe(0);
-    expect(await teamProxies("lib_none", device)).toBe(0);
-    expect(d.prepare("SELECT kind, state, actor FROM jobs WHERE version_id = 'v_t2'").all()).toEqual([{ kind: "proxy", state: "queued", actor: "tinyacrobatics" }]);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE library_id IN ('lib_team', 'lib_none') AND kind = 'proxy'").get()).toEqual({ n: 0 });
   });
 
   it("the phone's 720p copy: the finish checks the bytes against the declared SHA-256 and keeps nothing that differs", async () => {
@@ -353,19 +360,22 @@ describe("A11: nothing streams an original under none (decision 5, R2)", () => {
     d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, ?, 'video', 'Srv', 'tinyacrobatics', 0)").run(`a_${id}`, lib);
     d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES (?, ?, 1, 'k', 900, 'x', 'tinyacrobatics', 0, 'ready')").run(id, `a_${id}`);
   };
-  it("mayServe: an original only under all; a proxy under proxies and all, and under none only in a team library", async () => {
+  it("mayServe: an original only under originals and all; a proxy only under proxies and all, never under none (team or not)", async () => {
     addVersion("vs_none", "lib_none");
     addVersion("vs_team", "lib_team");
     addVersion("vs_p", "lib_p");
     addVersion("vs_all", "lib_all");
+    addVersion("vs_orig", "lib_orig");
     const serve = (lib: string, versionId: string, what: "original" | "proxy") => mayServe({ id: lib, versionId }, what);
     expect((await serve("lib_none", "vs_none", "original")).ok).toBe(false);
     expect((await serve("lib_none", "vs_none", "proxy")).ok).toBe(false);
-    expect((await serve("lib_team", "vs_team", "proxy")).ok).toBe(true);
+    expect((await serve("lib_team", "vs_team", "proxy")).ok).toBe(false);
     expect((await serve("lib_team", "vs_team", "original")).ok).toBe(false);
     expect((await serve("lib_p", "vs_p", "original")).ok).toBe(false);
     expect((await serve("lib_p", "vs_p", "proxy")).ok).toBe(true);
     expect((await serve("lib_all", "vs_all", "original")).ok).toBe(true);
+    expect((await serve("lib_orig", "vs_orig", "original")).ok).toBe(true);
+    expect((await serve("lib_orig", "vs_orig", "proxy")).ok).toBe(false);
     // a final in a none library is served: the Finals setting (all when unset)
     addVersion("vs_fin", "lib_none");
     d.prepare("INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_fin', 'a_vs_fin', 0, 'local')").run();
