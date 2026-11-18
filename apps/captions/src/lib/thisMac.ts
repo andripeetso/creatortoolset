@@ -473,3 +473,15 @@ export async function openInEditor(ask: { edit: string; draft: string; editor: s
   const r = (await bridge.postMessage(`open-editor:${JSON.stringify(ask)}`).catch(() => null)) as unknown as { ok?: boolean; note?: string; problem?: string } | null;
   return r ?? { problem: "Could not open the draft" };
 }
+
+/**
+ * Storage › This computer: the Mac app's download cache folder. The app answers each ask with its own JSON (its path, or
+ * none when the picker was cancelled); a browser has no bridge and gets null.
+ */
+async function thisMacCall<T>(ask: string): Promise<T | null> {
+  const bridge = thisMacBridge();
+  return bridge ? ((await bridge.postMessage(ask).catch(() => null)) as unknown as T | null) : null;
+}
+export const downloadLocation = () => thisMacCall<{ path: string }>("download:location");
+export const chooseDownloadLocation = () => thisMacCall<{ path?: string }>("download:choose");
+export const showDownloadLocation = () => thisMacCall<unknown>("download:show");

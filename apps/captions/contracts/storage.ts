@@ -306,6 +306,14 @@ export interface KeptRow {
   keepDays?: number;
   /** `proxies`: one row per computer, its proxy cache as its last claim said (POST …/proxies/empty?device=<id>) */
   device?: { id: string; name: string };
+  /** `proxies`: the computer's download cache limit in bytes (work/cache.ts cacheLimit); absent = no limit */
+  limit?: number;
+}
+/** Storage › Workspaces (admin): the Media Library's bytes on this server for one workspace. */
+export interface WorkspaceStorage {
+  id: string;
+  name: string;
+  bytes: number;
 }
 export interface KeptView {
   rows: KeptRow[];

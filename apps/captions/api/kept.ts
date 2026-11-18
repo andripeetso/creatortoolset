@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { EMPTIED, KEPT_KINDS, type KeptKind, type KeptRow, type KeptView } from "../contracts/storage";
+import { EMPTIED, KEPT_KINDS, type KeptKind, type KeptRow, type KeptView, type WorkspaceStorage } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
 import type { SessionUser } from "./users";
@@ -209,9 +209,10 @@ async function measure(u: Who, stores: Stores = new Map()): Promise<Array<KeptRo
     if (kind === "library") bytes += await bucketBytes(listed.map((i) => i.id));
     if (kind === "proxies") {
       const { listDevices } = await import("./lib/devices");
+      const { cacheLimit } = await import("./work/cache");
       for (const d of listDevices((x) => x.owner === u.username && !!x.work?.cache)) {
         const cache = d.work!.cache!;
-        rows.push({ kind, bytes: cache.bytes, items: cache.versions?.length ?? 0, device: { id: d.id, name: d.name }, listed });
+        rows.push({ kind, bytes: cache.bytes, items: cache.versions?.length ?? 0, device: { id: d.id, name: d.name }, limit: cacheLimit(), listed });
       }
       continue;
     }
@@ -233,6 +234,28 @@ export async function keptView(u: Who, stores?: Stores): Promise<KeptView> {
   return { rows: (await measure(u, stores)).map(({ listed: _, ...row }) => row), here: process.env.CT_LOCAL === "1" };
 }
 
+/**
+ * Storage › Workspaces (admin, M19): what the Media Library keeps on this server for each workspace, originals and
+ * derivatives on disk and in the bucket. A library with no projectId counts under the first workspace (as hasMembers does).
+ */
+export async function workspaceStorage(): Promise<WorkspaceStorage[]> {
+  const { libraryDb } = await import("./library/db");
+  const projects = await Promise.all(
+    (await readdir(at("workshop", "projects")).catch(() => [] as string[])).filter((n) => n.endsWith(".json")).map((n) => json(at("workshop", "projects", n))),
+  );
+  const list = projects
+    .filter((p): p is Record<string, unknown> & { id: string; name: string } => typeof p?.id === "string" && typeof p.name === "string")
+    .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
+  const bytes = new Map<string, number>();
+  const libs = libraryDb().prepare("SELECT id, json_extract(settings, '$.projectId') AS ws FROM libraries").all() as { id: string; ws: string | null }[];
+  for (const l of libs) {
+    const ws = l.ws ?? list[0]?.id;
+    if (!ws) continue;
+    bytes.set(ws, (bytes.get(ws) ?? 0) + (await dirBytes(at("library", "blobs", "libraries", l.id))) + (await bucketBytes([l.id])));
+  }
+  return list.map((p) => ({ id: p.id, name: p.name, bytes: bytes.get(p.id) ?? 0 }));
+}
+
 /** Empty one kind: exactly the items its row counts go, each the way its own tool deletes it. */
 export async function emptyKept(kind: KeptKind, u: Who, device?: string): Promise<void> {
   if (kind === "proxies") return (await import("./work/offline")).emptyProxies(u.username, device);
@@ -247,6 +270,11 @@ export async function emptyKept(kind: KeptKind, u: Who, device?: string): Promis
 }
 
 keptApp.get("/", async (c) => c.json(await keptView(c.get("user"))));
+
+keptApp.get("/workspaces", async (c) => {
+  if (c.get("user").role !== "admin") return c.json({ error: "Only an admin sees this" }, 403);
+  return c.json(await workspaceStorage());
+});
 
 keptApp.post("/:kind/empty", async (c) => {
   const kind = EMPTIED.find((k) => k === c.req.param("kind"));

@@ -157,3 +157,23 @@ it("each computer's proxies are a row of their own, counted from its last claim;
   expect(deviceOf(mac.id)!.work).toMatchObject({ empty: true, cache: { bytes: 0, versions: [] } });
   expect(deviceOf(pc.id)!.work!.empty).toBeUndefined();
 });
+
+it("Storage › Workspaces (admin): a library's bytes under its workspace, one with none under the first workspace", async () => {
+  put("workshop/projects/ws-first.json", JSON.stringify({ id: "ws-first", name: "First", createdAt: 1 }));
+  put("workshop/projects/ws-other.json", JSON.stringify({ id: "ws-other", name: "Other", createdAt: 2 }));
+  const { workspaceStorage } = await import("./kept");
+  // lib_o has no projectId (9000 bytes, first); lib_t2 is in ws-other (4000); lib_t's blob was emptied above
+  expect(await workspaceStorage()).toEqual([
+    { id: "ws-first", name: "First", bytes: 9000 },
+    { id: "ws-other", name: "Other", bytes: 4000 },
+  ]);
+  const { storageApp } = await import("./devices-storage");
+  const app = new Hono<{ Variables: AuthVars }>();
+  app.use(async (c, next) => {
+    c.set("user", (c.req.header("x-who") === "admin" ? admin : tiny) as never);
+    return next();
+  });
+  app.route("/api/devices/storage", storageApp);
+  expect((await app.request("/api/devices/storage/kept/workspaces", { headers: { "x-who": "admin" } })).status).toBe(200);
+  expect((await app.request("/api/devices/storage/kept/workspaces")).status).toBe(403);
+});
