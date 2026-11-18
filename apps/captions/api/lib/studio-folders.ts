@@ -3,8 +3,8 @@ import { EVERY_WORKSPACE, type StorageFolder } from "../../contracts/storage";
 /** A hostname as a device of an account: the one place a hostname becomes a device id (the one-time import, devices-storage.ts). */
 export type HostLookup = (host: string) => { id: string; owner: string } | undefined;
 
-/** One folder, once: the same use, computer, path and workspaces. Two uses at one path stay two rows. */
-const keyOf = (f: StorageFolder) => [f.role, f.origin.host, f.origin.path, [...(f.workspaces ?? [f.workspace ?? EVERY_WORKSPACE])].sort().join(",")].join("\n");
+/** One folder, once: the same workspaces, computer and path, whatever its use (PRD decision 1). */
+const keyOf = (f: StorageFolder) => [f.origin.host, f.origin.path, [...(f.workspaces ?? [f.workspace ?? EVERY_WORKSPACE])].sort().join(",")].join("\n");
 
 /**
  * The plug-in's Settings → Folders rows (keyed by hostname) as account rows (keyed by device id), per account. A computer

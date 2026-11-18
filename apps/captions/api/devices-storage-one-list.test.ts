@@ -65,8 +65,8 @@ describe("one folder list (A1, A2)", () => {
 });
 
 describe("the plug-in's storage.json, imported once (A12)", () => {
-  // hostnames as the studio keeps them: one known computer (tiny-mac, id tiny-id), one unknown (tiny-linux), and one
-  // that duplicates a row the core list already has (same use, computer, path)
+  // hostnames as the studio keeps them: one known computer (tiny-mac, id tiny-id), one unknown (tiny-linux), and two
+  // that duplicate a row the core list already has (same computer and path; one with another use, as the MOO row had)
   const lookup = (host: string) => (host === "tiny-mac" ? { id: "dev-studio", owner: USER } : undefined);
   const file = path.join(dir, "storage-plugin.json");
   const studioFile = {
@@ -75,6 +75,7 @@ describe("the plug-in's storage.json, imported once (A12)", () => {
       folder("studio-a", "tiny-mac", "/Volumes/Tiny/FOOTAGE"),
       folder("studio-b", "tiny-linux", "/mnt/shoots"),
       folder("studio-dup", "tiny-mac", "/Volumes/Dup/Shoot"),
+      folder("studio-moo", "tiny-mac", "/Volumes/Moo/Shoot", "library"),
     ],
   };
   const coreRows = (): StorageFolder[] => (parseStorageFile(readFileSync(path.join(dir, "data", "storage", `${USER}.json`), "utf-8")).folders);
@@ -82,10 +83,10 @@ describe("the plug-in's storage.json, imported once (A12)", () => {
   it("maps the known hostname to its device id, keeps the unknown one under its name, keeps the marker's id on a duplicate, and renames the file", async () => {
     // the core list already holds the duplicate under the device id, with another id
     const st = path.join(dir, "data", "storage", `${USER}.json`);
-    writeFileSync(st, JSON.stringify({ schemaVersion: 3, folders: [folder("core-dup", "dev-studio", "/Volumes/Dup/Shoot")] }));
+    writeFileSync(st, JSON.stringify({ schemaVersion: 3, folders: [folder("core-dup", "dev-studio", "/Volumes/Dup/Shoot"), folder("44919794", "dev-studio", "/Volumes/Moo/Shoot")] }));
     writeFileSync(file, JSON.stringify(studioFile));
     const n = await importStudioFile(file, USER, (x) => x, lookup);
-    expect(n).toBe(3);
+    expect(n).toBe(4);
     expect(existsSync(file)).toBe(false);
     expect(existsSync(`${file}.migrated`)).toBe(true);
     const rows = coreRows();
@@ -94,6 +95,9 @@ describe("the plug-in's storage.json, imported once (A12)", () => {
     // the duplicate collapses into one row: the studio's id (the one its computer's marker was written with)
     expect(rows.filter((f) => f.origin.path === "/Volumes/Dup/Shoot")).toHaveLength(1);
     expect(rows.find((f) => f.origin.path === "/Volumes/Dup/Shoot")!.id).toBe("studio-dup");
+    // the MOO case: the studio's row (another use) and the hand-added core row at one computer and path are one row, the studio's id
+    expect(rows.filter((f) => f.origin.path === "/Volumes/Moo/Shoot")).toHaveLength(1);
+    expect(rows.find((f) => f.origin.path === "/Volumes/Moo/Shoot")!.id).toBe("studio-moo");
   });
 
   it("running it again changes nothing (no file left to read)", async () => {
