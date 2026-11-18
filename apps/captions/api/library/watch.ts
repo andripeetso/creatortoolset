@@ -16,7 +16,7 @@ import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { libraryPath, parseStorageFile, storageFilePath } from "../lib/storage";
-import { LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
+import { LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
@@ -326,7 +326,7 @@ watchApp.post("/import-folder", async (c) => {
   const files = all
     .filter((e) => e.isFile())
     .map((e) => path.join(e.parentPath, e.name))
-    .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
+    .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")) && !notFootage(path.relative(f.path, p)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
     const s = await stat(file).catch(() => null);
@@ -495,7 +495,7 @@ async function filesIn(root: string): Promise<string[]> {
   return all
     .filter((e) => e.isFile() && kindOf(e.name) !== "doc")
     .map((e) => path.join(e.parentPath, e.name))
-    .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
+    .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")) && !notFootage(path.relative(root, p)));
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */

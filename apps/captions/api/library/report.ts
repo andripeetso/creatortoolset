@@ -1,5 +1,5 @@
 import { FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
-import { EVERY_WORKSPACE, okFolderPath, type StorageFolder } from "../../contracts/storage";
+import { EVERY_WORKSPACE, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
 import type { Device } from "../../contracts/providers";
 import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
@@ -132,7 +132,21 @@ async function applyFolder(dev: Device, folder: StorageFolder, libs: string[], r
     if (r.scan && !scans.has(key)) scans.set(key, now);
     for (const f of r.files ?? []) {
       // only files inside the folder (its own path on this computer, or inside its container)
-      if (inside(f.path, folder.origin.path) === null && !(folder.mountPath && inside(f.path, folder.mountPath) !== null)) continue;
+      const rel = inside(f.path, folder.origin.path) ?? (folder.mountPath ? inside(f.path, folder.mountPath) : null);
+      if (rel === null) continue;
+      if (notFootage(rel)) {
+        // indexed here before this rule: the clip leaves the library (to its trash); the file on the computer stays
+        const made = d
+          .prepare(
+            `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+             WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
+               AND a.library_id IN (SELECT value FROM json_each(?))`,
+          )
+          .all(device, folder.id, f.path, inLibs) as { id: string }[];
+        for (const a of made) d.prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(now, a.id);
+        if (made.length) libs.forEach((l) => touched.add(l));
+        continue;
+      }
       const hits = d
         .prepare(
           `SELECT p.version_id, a.library_id, v.bytes AS vbytes, v.quick AS vquick, p.state, p.bytes, p.mtime, p.folder_id
