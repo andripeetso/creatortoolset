@@ -197,10 +197,10 @@ export interface MakeLibraryBody {
   disk: string;
 }
 
-/** POST /api/devices/storage/folders: use a folder for a role ("finals" takes the place of the workspace's one; "library":
+/** POST /api/devices/storage/folders: use a folder for a role ("projects" takes the place of the workspace's one; "library":
  *  the workspace's Exports folder, exactly that folder, made when missing, taken off the Exports folder that had it). */
 export interface AddFolderBody {
-  role: SourceRole | "finals" | "library";
+  role: SourceRole | "projects" | "library";
   host: string;
   path: string;
 }

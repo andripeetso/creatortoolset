@@ -15,12 +15,22 @@ export function parseStorageFile(raw: string): StorageState {
   try {
     const v = JSON.parse(raw) as Partial<StorageState> | null;
     const schema = typeof v?.schemaVersion === "number" ? v.schemaVersion : undefined;
-    const folders = Array.isArray(v?.folders) ? mediaFolders((schema ?? 0) >= 3 ? v.folders : withOwnFootage(v.folders)) : [];
+    const folders = Array.isArray(v?.folders) ? mediaFolders(finalsAsExports((schema ?? 0) >= 3 ? v.folders : withOwnFootage(v.folders))) : [];
     return { ...(schema !== undefined ? { schemaVersion: schema } : {}), folders };
   } catch (e) {
     console.warn(`[devices-storage] storage file unreadable, treated as empty: ${e instanceof Error ? e.message : e}`);
     return { folders: [] };
   }
+}
+
+/**
+ * The Finals use is gone (Finals reads Exports). A Finals folder from before becomes the workspace's Exports folder when it
+ * has none, else a Media folder (owner, 2026-11-18). Nothing is dropped and nothing is moved. Runs on every read, so it is
+ * idempotent: once written back, the list has no finals rows.
+ */
+export function finalsAsExports(folders: StorageFolder[]): StorageFolder[] {
+  const sameWs = (a: StorageFolder, b: StorageFolder) => a.workspace === b.workspace || a.workspace === EVERY_WORKSPACE || b.workspace === EVERY_WORKSPACE;
+  return folders.map((f) => (f?.role !== "finals" ? f : { ...f, role: folders.some((g) => g?.role === "library" && sameWs(g, f)) ? "footage" : "library" }));
 }
 
 /**

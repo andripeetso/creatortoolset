@@ -22,11 +22,10 @@ import { ensureLibrary } from "./library/access";
  * Settings → Folders (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
  *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1);
  *                                     ?all=1: every workspace's folders
- *   POST   /folders   {role, host, path} → use a folder you already have as a Media folder (this computer's also go on
- *                                          the Library's watch list, which the Library and the AI Editor read), as the
- *                                          workspace's Finals folder (role "finals": in place of the one it had; each
- *                                          Workshop project's subfolder is read when the project asks, workshop.ts sessionFinals),
- *                                          or as its Exports folder (role "library": exactly that folder, made when missing)
+ *   POST   /folders   {role, host, path} → use a folder as a Media folder (role "footage"; this computer's also go on the
+ *                                          Library's watch list), as the workspace's Projects folder (role "projects": in
+ *                                          place of the one it had), or as its Exports folder (role "library": exactly that
+ *                                          folder, made when missing). Finals reads Exports; "finals" is refused.
  *   PATCH  /folders/:id {workspaces} → the workspaces a Media or Exports folder is in; null = every workspace
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
@@ -350,7 +349,8 @@ storageApp.post("/folders", async (c) => {
   const user = u.username;
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
-  const role = b?.role === "finals" || b?.role === "library" ? b.role : b?.role === "music" ? "footage" : STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
+  // the three uses (Media, Projects, Exports); "music" from an older app is footage; "finals" is no use any more (Finals reads Exports)
+  const role: "footage" | "library" | "projects" | undefined = b?.role === "music" ? "footage" : b?.role === "footage" || b?.role === "library" || b?.role === "projects" ? b.role : undefined;
   // "this computer" (setup's Folders step) is the paired computer this server runs on, when there is one (schema 2)
   const asked = str(b?.host, 120);
   const host = asked === THIS_COMPUTER ? (listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id ?? asked) : asked;
@@ -372,7 +372,8 @@ storageApp.post("/folders", async (c) => {
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
-    if (role === "finals") st.folders = st.folders.filter((f) => !(here(f) && f.role === "finals"));
+    // one Projects folder per workspace: the one it had is replaced (its files stay)
+    if (role === "projects") st.folders = st.folders.filter((f) => !(here(f) && f.role === "projects"));
     // the workspace's Exports comes off the folder that had it; with no workspaces there is one Exports folder
     if (role === "library") {
       // one folder is one Exports record (one marker): another workspace's folder picked here gets this workspace too
@@ -388,7 +389,7 @@ storageApp.post("/folders", async (c) => {
     // the share its drive is on that computer, so another computer can be told how to connect it (never a password)
     const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
     // an Exports folder is made when missing (setup's default may not be there yet); the others must already exist
-    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: role === "library", createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
+    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: role !== "footage", createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });

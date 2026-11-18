@@ -61,7 +61,7 @@ const STATIC_ROWS = [
   { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
   // Folders: where each workspace's footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Exports", keywords: ["folder", "finished", "videos", "save", "output", "library", "exports", "workspace"] },
-  { section: "folders", id: "finals-folder", title: "Finals", keywords: ["folder", "final video", "finished", "project", "workshop"] },
+  { section: "folders", id: "projects-folder", title: "Projects", keywords: ["folder", "projects", "working files", "ai editor", "edit", "workshop"] },
   { section: "folders", id: "footage-folder", title: "Media", keywords: ["folder", "footage", "library", "clips", "raw", "music", "audio", "sound effects", "sfx"] },
   { section: "library", id: "library-adding", title: "Import", keywords: ["media library", "import", "copy", "in place", "keep in place", "places", "adding files"] },
   { section: "library", id: "library-look", title: "New files", keywords: ["media library", "look for new files", "rescan", "scan", "places", "network drive"] },
