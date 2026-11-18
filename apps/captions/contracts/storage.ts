@@ -236,13 +236,27 @@ export function okFolderPath(p: unknown): p is string {
 }
 
 /**
- * A file under a Media folder that is not footage, by its path below the folder: inside an AI Editor project folder
- * ("<name>_edit", its drafts, stems and motion graphics; apps/editor skips the same) or a half-written file (".tmp",
- * ".part"). Every scan leaves these out of the Media Library.
+ * The folders (by their path below a Media folder) that an AI Editor made: a "<name>_edit" folder that holds a drafts/
+ * folder in the same scan. A user's own "_edit" folder without one is footage (decision 4, 2026-11-18).
  */
-export function notFootage(rel: string): boolean {
+export function editorDirsOf(rels: string[]): Set<string> {
+  const dirs = new Set<string>();
+  for (const rel of rels) {
+    const parts = rel.split(/[\\/]/);
+    for (let i = 0; i + 2 < parts.length; i++) if (/_edit$/i.test(parts[i]!) && parts[i + 1] === "drafts") dirs.add(parts.slice(0, i + 1).join("/"));
+  }
+  return dirs;
+}
+
+/**
+ * A file under a Media folder that is not footage, by its path below the folder: inside one of `editorDirs` (see
+ * editorDirsOf; apps/editor skips the same folders) or a half-written file (".tmp", ".part": "clip.part.mp4" and
+ * "clip.tmp" are; "party.mp4" and "clip.partial.mov" are not). Every scan leaves these out of the Media Library.
+ */
+export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set()): boolean {
   const parts = rel.split(/[\\/]/);
-  return parts.slice(0, -1).some((s) => /_edit$/i.test(s)) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+  const dirs = parts.slice(0, -1);
+  return dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
 }
 
 /**

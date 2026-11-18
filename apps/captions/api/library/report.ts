@@ -1,5 +1,5 @@
 import { FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
-import { EVERY_WORKSPACE, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
+import { EVERY_WORKSPACE, editorDirsOf, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
 import type { Device } from "../../contracts/providers";
 import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
@@ -10,6 +10,7 @@ import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged } from "./access";
 import { libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
+import { setTrashedAt, trashHeld } from "./trash";
 import { hasMembers } from "./upload-gate";
 import { indexOnMac, type OnMacIndex } from "./on-mac";
 
@@ -137,7 +138,7 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
-async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>): Promise<void> {
+async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[]): Promise<void> {
   const d = db();
   const device = dev.id;
   const libs = libraries.map((l) => l.id);
@@ -153,12 +154,17 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
   } else {
     const key = `${device}|${folder.id}|${r.scan ?? ""}`;
     if (r.scan && !scans.has(key)) scans.set(key, now);
-    for (const f of r.files ?? []) {
-      // only files inside the folder (its own path on this computer, or inside its container)
+    // only files inside the folder (its own path on this computer, or inside its container)
+    const placed = (r.files ?? []).flatMap((f) => {
       const rel = inside(f.path, folder.origin.path) ?? (folder.mountPath ? inside(f.path, folder.mountPath) : null);
-      if (rel === null) continue;
-      if (notFootage(rel)) {
-        // indexed here before this rule: the clip leaves the library (to its trash); the file on the computer stays
+      return rel === null ? [] : [{ f, rel }];
+    });
+    const editorDirs = editorDirsOf(placed.map((x) => x.rel));
+    for (const { f, rel } of placed) {
+      // not footage: an AI Editor folder, a half-written file, or anything inside a Projects or Exports folder
+      if (notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
+        // indexed here before this rule: the clip leaves the library through the trash (never while in Review or shared);
+        // the file on the computer stays
         const made = d
           .prepare(
             `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
@@ -166,8 +172,15 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
                AND a.library_id IN (SELECT value FROM json_each(?))`,
           )
           .all(device, folder.id, f.path, inOwn) as { id: string }[];
-        for (const a of made) d.prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(now, a.id);
-        if (made.length) libs.forEach((l) => touched.add(l));
+        for (const a of made) {
+          const held = trashHeld(a.id, now);
+          if (held) {
+            console.log(`[library] ${dev.name}: ${f.path} stays in the library (${held}), not moved to the trash`);
+            continue;
+          }
+          setTrashedAt(a.id, now);
+          libs.forEach((l) => touched.add(l));
+        }
         continue;
       }
       const hits = d
@@ -240,12 +253,14 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   const st = await storageOf(dev.owner);
   const touched = new Set<string>();
   const libs = new Set<string>();
+  // a Projects or Exports folder of this computer is never footage, wherever it sits (even inside a Media folder)
+  const keepOut = st.folders.filter((x) => x.origin.host === dev.id && useOf(x) !== "media").map((x) => x.origin.path);
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
     for (const l of of) libs.add(l.id);
-    await applyFolder(dev, folder, of, r, now, index, touched);
+    await applyFolder(dev, folder, of, r, now, index, touched, keepOut);
   }
   for (const l of touched) libraryChanged(l);
   for (const l of libs) await teamProxies(l, dev);
