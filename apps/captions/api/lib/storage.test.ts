@@ -172,15 +172,16 @@ describe("where the files are: the library and its files", () => {
     expect(parseStorageFile(JSON.stringify({ folders: [f] }))).toEqual({ folders: [f] });
   });
 
-  it("an Exports folder's subfolders keep its reach, and it is never a Media folder", () => {
+  it("an Exports folder is never a Media folder; an older one's Footage, listed on read, keeps its reach", () => {
     const lib: StorageFolder = {
       id: "lib", role: "library", name: "Creator Toolset", origin: { host: "studio-mac", path: "~/Creator Toolset" },
       make: true, createdAt: 0, reach: { pc: { path: "/Mnt/CT", at: 1 } },
     };
     expect(sourcesOf([lib])).toEqual([]);
-    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "pc")).toBe(true);
-    expect(hostPath("/Mnt/CT/Footage/a.mp4", [lib], "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
-    expect(canReach(["/Mnt/CT/Footage/a.mp4"], [lib], "laptop")).toBe(false);
+    const read = parseStorageFile(JSON.stringify({ folders: [lib] })).folders;
+    expect(canReach(["/Mnt/CT/Footage/a.mp4"], read, "pc")).toBe(true);
+    expect(hostPath("/Mnt/CT/Footage/a.mp4", read, "studio-mac")).toBe("~/Creator Toolset/Footage/a.mp4");
+    expect(canReach(["/Mnt/CT/Footage/a.mp4"], read, "laptop")).toBe(false);
   });
 
   it("schema 3, once: a Library made before 2026-11-17 gets its Footage/ as a listed Media folder, a newer one none", () => {
