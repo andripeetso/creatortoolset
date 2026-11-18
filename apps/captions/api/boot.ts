@@ -581,14 +581,15 @@ export function exitWithParent(stdin: NodeJS.ReadableStream, exit: () => void): 
 }
 
 if (workerFor) {
-  const { cancelStep, startComputerWorker, stopForExit } = await import("./work/computer");
+  const { cancelStep, idleFor, startComputerWorker, stopForExit } = await import("./work/computer");
   // Cancel in the Mac app's menu: the running step stops (a download within a moment, its .part kept) and ends "Stopped"
   process.on("SIGUSR2", cancelStep); // SIGUSR1 is Node's debugger
   // a stop (a service restart) kills the job's ffmpeg and waits for it, up to 10 s, rather than leaving it running
   process.once("SIGTERM", () => void stopForExit().finally(() => process.exit(0)));
-  // exit 3: the server wants a newer app (the Mac app shows its update prompt); 0: ten minutes with nothing to do
-  void startComputerWorker({ server: workerFor, token: process.env.CT_DEVICE_TOKEN ?? "" }).then(
-    (why) => process.exit(why === "update" ? 3 : 0),
+  // exit 3: the server wants a newer app (the Mac app shows its update prompt); 78: its token was refused for five
+  // minutes (ct-library-worker.service does not start it again until it is added again); 0: nothing to do for a while
+  void startComputerWorker({ server: workerFor, token: process.env.CT_DEVICE_TOKEN ?? "", idleMs: idleFor(process.env) }).then(
+    (why) => process.exit(why === "update" ? 3 : why === "refused" ? 78 : 0),
     (e) => {
       console.error(e);
       process.exit(1);

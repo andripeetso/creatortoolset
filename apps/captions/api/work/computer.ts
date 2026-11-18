@@ -21,6 +21,7 @@ import { claimLook, looksHere } from "./look";
 import { machineNow } from "./machine";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
 import { runTaskJob, taskKinds } from "./tasks";
+import { takeTurn, TURN_LINE } from "./turn";
 import "./task-kinds";
 
 /**
@@ -28,7 +29,8 @@ import "./task-kinds";
  * its own account, one at a time, with the unchanged step code, against a working copy in DATA_DIR seeded from the
  * package. It claims with a long poll, beats every 10 s (5 s while downloading), and sends the edit folder's changes
  * back. A beat answered ok: false (Stop on the page, the lease lost) stops the step and sends nothing. Started by
- * api/boot.ts with CT_WORKER=<server address>; it ends after 10 minutes with nothing to do.
+ * api/boot.ts with CT_WORKER=<server address>; it ends after a while with nothing to do (idleFor), and after five
+ * minutes of its token refused (exit 78: a service does not start it again until it is added again).
  * The proxy cache (cache.ts): each claim reports it; the answer may say to empty it and lists the proxies kept offline,
  * which download one at a time while no step waits. After each step the size limit removes the least recently used.
  */
@@ -46,7 +48,31 @@ export interface WorkerOptions {
   idleMs?: number;
   /** wait after a claim that failed (server away) */
   retryMs?: number;
+  /** tests: a claim's timeout, the first wait after a refused token (it doubles), how long refusals last before it stops,
+   *  the wait between low-disk claims, and how often a worker under the Mac says it is alive */
+  claimTimeoutMs?: number;
+  refusedWaitMs?: number;
+  refusedMs?: number;
+  lowDiskMs?: number;
+  aliveMs?: number;
 }
+
+/** The longest a claim may take: the server holds one CLAIM_POLL.holdMs (25 s, work/routes.ts) when nothing waits. */
+const CLAIM_TIMEOUT_MS = 60_000;
+/** How long this computer's token may be refused before the worker stops (a server restart answers 401 a moment). */
+const REFUSED_MS = 5 * 60_000;
+
+/** How long a worker waits with nothing to do before it ends: 10 minutes under the Mac app, else a day (a Linux service). */
+export const idleFor = (e: NodeJS.ProcessEnv): number => (e.CT_EXIT_WITH_PARENT === "1" ? 10 * 60_000 : 24 * 3600_000);
+
+/** The server refused this computer's token (401): it was removed, or added again elsewhere. */
+export class Unauthorized extends Error {
+  constructor() {
+    super("This computer's token was refused");
+  }
+}
+/** The server answered a claim with an error of its own (a 4xx with `error`). */
+export class ClaimRefused extends Error {}
 
 export const STOPPED_LINE = "Creator Toolset stopped while it ran this step";
 const heldFile = () => path.join(env.dataDir, "held.json");
@@ -76,6 +102,16 @@ export const client = (o: WorkerOptions) => {
     },
   };
 };
+
+/** A claim (work/claim, editor/claim): a 401 throws Unauthorized, an `error` answer ClaimRefused, a body that is not JSON (a proxy's 502 page) an Error. */
+export async function claimPost<T>(c: ReturnType<typeof client>, p: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const res = await c.raw(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
+  if (res.status === 401) throw new Unauthorized();
+  const json = (await res.json().catch(() => null)) as (T & { error?: unknown }) | null;
+  if (json === null) throw new Error(`The server answered ${res.status}`);
+  if (typeof json.error === "string") throw new ClaimRefused(json.error);
+  return json;
+}
 
 /** A step's throw, filed as the server's runStep files it (editor/worker.ts). */
 export function classify(e: unknown, now = Date.now()): WorkOutcome {
@@ -111,40 +147,92 @@ const runsPictureModel = (): boolean => {
  */
 export const libraryOnly = () => process.env.CT_WORKER_KINDS === "library";
 
-/** Claims and runs steps until 10 minutes pass with none, or the server asks for a newer app. */
-export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "update"> {
+/**
+ * Claims and runs steps until idleMs pass with none, the server asks for a newer app, or this computer's token has been
+ * refused for REFUSED_MS. A worker under the Mac app prints `[work:alive]` every 30 s, which the app reads to replace a
+ * worker that went silent (Worker.swift).
+ */
+export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "update" | "refused"> {
+  const alive = process.env.CT_EXIT_WITH_PARENT === "1" ? setInterval(() => console.log("[work:alive]"), o.aliveMs ?? 30_000).unref() : undefined;
+  try {
+    return await claimLoop(o);
+  } finally {
+    clearInterval(alive);
+  }
+}
+
+async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused"> {
   const c = client(o);
   const only = libraryOnly();
+  const timeout = () => AbortSignal.timeout(o.claimTimeoutMs ?? CLAIM_TIMEOUT_MS);
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   await reportLeftover(o).catch((e) => console.warn("[work] leftover step:", e));
   if (only) await sweepScratch();
   let idleSince = Date.now();
+  let refusedSince: number | undefined;
+  let refusedWait = 0;
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
-    if (only && !(await scratchRoom())) {
-      console.warn("[work] too little free disk for library work; asking again in a minute");
-      await new Promise((r) => setTimeout(r, 60_000));
-      continue;
-    }
-    // a look of a file on a share this computer connects (look.ts): a Linux library worker only
-    if (looksHere() && (await claimLook(c).catch((e) => void console.warn("[work] look:", e instanceof Error ? e.message : e)))) {
-      idleSince = Date.now();
-      continue;
-    }
     let claim: WorkClaim;
     try {
-      claim = await c.post<WorkClaim>("work/claim", {
-        v: WORK_V,
-        steps: only ? [] : pluginEditorSteps().map((s) => s.id),
-        cache: cacheReport(),
-        library: true,
-        libraryKinds: LIBRARY_HERE,
-        proof: true,
-        ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
-        ...(only ? {} : { tasks: taskKinds() }),
-        machine: await machineNow(),
-      });
+      if (only && !(await scratchRoom())) {
+        console.warn("[work] too little free disk for library work; asking again in a minute");
+        // the server shows it on this computer's row; this claim takes nothing and keeps no job waiting for it
+        const told = await claimPost(c, "work/claim", { v: WORK_V, steps: [], library: true, libraryOnly: true, lowDisk: true }, timeout()).then(
+          () => true,
+          (e) => {
+            if (e instanceof Unauthorized) throw e;
+            return false;
+          },
+        );
+        if (told) refusedSince = undefined;
+        await wait(o.lowDiskMs ?? 60_000);
+        continue;
+      }
+      // a look of a file on a share this computer connects (look.ts): a Linux library worker only
+      if (
+        looksHere() &&
+        (await claimLook(c, undefined, timeout()).catch((e) => {
+          if (e instanceof Unauthorized) throw e;
+          console.warn("[work] look:", e instanceof Error ? e.message : e);
+        }))
+      ) {
+        idleSince = Date.now();
+        continue;
+      }
+      claim = await claimPost<WorkClaim>(
+        c,
+        "work/claim",
+        {
+          v: WORK_V,
+          steps: only ? [] : pluginEditorSteps().map((s) => s.id),
+          cache: cacheReport(),
+          library: true,
+          libraryKinds: LIBRARY_HERE,
+          proof: true,
+          ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
+          ...(only ? {} : { tasks: taskKinds() }),
+          machine: await machineNow(),
+        },
+        timeout(),
+      );
+      refusedSince = undefined;
     } catch (e) {
+      if (e instanceof Unauthorized) {
+        const now = Date.now();
+        if (refusedSince === undefined) {
+          console.warn("[work] this computer's token was refused: add it again in Settings → Computers");
+          refusedSince = now;
+          refusedWait = o.refusedWaitMs ?? 30_000;
+        }
+        const left = refusedSince + (o.refusedMs ?? REFUSED_MS) - now;
+        if (left <= 0) return "refused";
+        await wait(Math.min(refusedWait, left));
+        refusedWait *= 2;
+        continue;
+      }
+      if (e instanceof ClaimRefused) refusedSince = undefined;
       console.warn("[work] claim:", e instanceof Error ? e.message : e);
-      await new Promise((r) => setTimeout(r, o.retryMs ?? 5000));
+      await wait(o.retryMs ?? 5000);
       continue;
     }
     if (claim.account) setCacheAccount(claim.account);
@@ -156,8 +244,9 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
       trimCache();
       idleSince = Date.now();
     } else if (claim.lib && claim.lib.v > WORK_V) {
-      // a package newer than this worker reads: handed back, and the worker stops for an update
-      await c.post(`work/lib/${claim.lib.job.id}/fail`, { error: "This computer needs a newer Creator Toolset" }).catch(() => {});
+      // a package newer than this worker reads: handed back, and the worker stops for an update; the server keeps it on
+      // this computer's row (work.tooOld), so the next start is told to update without failing the job again
+      await c.post(`work/lib/${claim.lib.job.id}/fail`, { error: "This computer needs a newer Creator Toolset", update: true }).catch(() => {});
       return "update";
     } else if (claim.lib) {
       await runLibraryJob(claim.lib, o);
@@ -343,6 +432,7 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
   let taken = false; // a beat said the server no longer holds it
   const beat: { line?: string } & Partial<Progress> = {};
   let downloading = false;
+  let release = () => {};
   const review: { value?: WorkResult["effects"]["review"] } = {};
   writeFileSync(heldFile(), JSON.stringify({ id }));
   const name = (() => {
@@ -395,6 +485,10 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
   try {
     const step = STEPS[pkg.job.kind];
     if (!step) throw new Error(`No ${pkg.job.kind} step yet`);
+    // this Mac's other servers' work first, one job at a time (turn.ts); the step stays held and beating meanwhile
+    beat.line = TURN_LINE;
+    release = await takeTurn({ signal: ctl.signal });
+    beat.line = undefined;
     downloading = true;
     const paths = await resolveFiles(pkg, {
       folders: pkg.folders ?? [],
@@ -480,6 +574,7 @@ export async function runJob(pkg: WorkPackage, o: WorkerOptions): Promise<"done"
     if (ctl.signal.aborted) return ended("stopped", me.cancelled ? () => c.post(`work/${id}/fail`, { error: "Stopped" }) : undefined);
     return ended("failed", () => c.post(`work/${id}/fail`, { error: e instanceof Error ? e.message : String(e) }));
   } finally {
+    release();
     clearTimeout(timer);
     clearInterval(shown);
     tell("null");

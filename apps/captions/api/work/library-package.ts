@@ -24,7 +24,7 @@ import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type Library
 import { computers, either, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
 import { folderFor } from "../lib/storage";
 import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOriginals, type WorkerSeen } from "../lib/balance";
-import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
+import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDeviceWork, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
@@ -67,8 +67,9 @@ const READS_ORIGINAL = ["proxy", "probe", "thumb"];
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
 
-/** A computer whose worker reads this server's package and said it runs library jobs. */
-const takesLibrary = (d: Pick<Device, "work">): boolean => !!d.work?.library && d.work.v >= WORK_MIN;
+/** A computer whose worker reads this server's package and said it runs library jobs (none while its package is too old). */
+const takesLibrary = (d: Pick<Device, "work">): boolean =>
+  !!d.work?.library && d.work.v >= WORK_MIN && !(d.work.tooOld !== undefined && d.work.v <= d.work.tooOld);
 /** The kinds added after the first library jobs: only a computer that names them in its claim (work/library.ts LIBRARY_HERE) gets one. */
 const LATER_KINDS = ["probe", "thumb", "describe"];
 
@@ -473,11 +474,29 @@ const idOf = (c: Context): number => {
 /** Mounted at /api/devices/relay/work/lib (api/work/routes.ts), with the device's ctd_ token. */
 export const libWorkApp = new Hono();
 
-libWorkApp.post("/:id/beat", (c) => {
+/**
+ * How far each held job's transfer got, and when it last moved (memory only: after a restart the first beat renews).
+ * A download or upload that stops moving for STALL_MS keeps no lease: the job goes back to the queue (a counted try)
+ * and the computer's next beat is answered 410. A beat without progress (an encode, the server checking an upload) renews.
+ */
+const moved = new Map<number, { claim: string | null | undefined; done: number; at: number }>();
+const STALL_MS = 15 * 60_000;
+
+libWorkApp.post("/:id/beat", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = heldBy(idOf(c), d.id, claimOf(c));
-  if (!job) return GONE(c);
+  if (!job) {
+    moved.delete(idOf(c));
+    return GONE(c);
+  }
+  const b = (await c.req.json().catch(() => null)) as { done?: unknown; total?: unknown } | null;
+  if (typeof b?.done === "number" && typeof b.total === "number" && b.done < b.total) {
+    const now = Date.now();
+    const m = moved.get(job.id);
+    if (!m || m.claim !== job.claim_id || m.done !== b.done) moved.set(job.id, { claim: job.claim_id, done: b.done, at: now });
+    else if (now - m.at >= STALL_MS) return c.json({ ok: true });
+  }
   extendLease(libraryDb(), job.id, LEASE_S);
   return c.json({ ok: true });
 });
@@ -544,6 +563,7 @@ libWorkApp.post("/:id/done", async (c) => {
   const r = (await c.req.json().catch(() => null)) as LibraryResult | null;
   if (!r || typeof r !== "object" || !r.outcome || !Array.isArray(r.files)) return c.json({ error: "A library result" }, 400);
   const got = await applyLibraryResult(idOf(c), d.id, r, claimOf(c));
+  moved.delete(idOf(c));
   return got === "gone" ? GONE(c) : c.json({ ok: got === "done" });
 });
 
@@ -551,7 +571,11 @@ libWorkApp.post("/:id/fail", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = heldBy(idOf(c), d.id, claimOf(c));
+  moved.delete(idOf(c));
   if (!job) return GONE(c);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  // handed back as newer than the worker reads: its package version is kept as too old, so no library package goes to it
+  // (nor fails again) until it claims with a newer one (work/routes.ts)
+  if (b?.update === true && d.work) setDeviceWork(d.id, { ...d.work, tooOld: d.work.v });
   return c.json({ ok: failLibrary(job, typeof b?.error === "string" && b.error ? b.error.slice(0, 500) : "Your computer could not run this job") });
 });

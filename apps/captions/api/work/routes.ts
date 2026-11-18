@@ -83,11 +83,28 @@ workApp.post("/claim", async (c) => {
   // its load and shares now: load balancing scores it, and a share it has connected gives it the folders on it
   const machine = parseMachine(b?.machine);
   if (machine) noteMachine(d.id, machine);
-  // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
-  // told yet stays, and the cache it will empty counts as emptied
-  const empty = deviceOf(d.id)?.work?.empty;
+  const prev = deviceOf(d.id)?.work;
+  const now = Date.now();
+  // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
+  const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
+  // a library worker short of disk says so once a minute: noted on its row, and nothing else (no `at`, so it is no fresh
+  // taker and outranks no other computer for the jobs it can't take now); the next claim without it drops the mark
+  if (b?.lowDisk === true) {
+    setDeviceWork(d.id, { v, steps, ...prev, lowDisk: true, lowDiskAt: now });
+    return c.json({ pkg: null } satisfies WorkClaim);
+  }
+  // a package version this server found too old stays on the row until a claim comes with a newer one (work.tooOld)
+  const tooOld = prev?.tooOld !== undefined && v <= prev.tooOld ? prev.tooOld : undefined;
+  // told to update before anything is stamped: a worker restarted every 30 s is never a fresh peer
+  if (v < WORK_MIN || (libraryOnly && tooOld !== undefined)) {
+    const { lowDisk: _l, lowDiskAt: _a, ...was } = prev ?? { steps };
+    setDeviceWork(d.id, { ...was, v, tooOld: tooOld ?? v });
+    return answer({ pkg: null, update: true });
+  }
+  // kept apart from the runner's kinds. An Empty not told yet stays, and the cache it will empty counts as emptied
+  const empty = prev?.empty;
   // no report (a worker's first claim, before it knows whose cache it is): the device's last one stands, the same account's
-  const kept = cache ?? deviceOf(d.id)?.work?.cache;
+  const kept = cache ?? prev?.cache;
   setDeviceWork(d.id, {
     v,
     steps,
@@ -100,13 +117,14 @@ workApp.post("/claim", async (c) => {
     ...(tasks.length && !libraryOnly ? { tasks } : {}),
     // it declares each proxy's SHA-256 before sending it (library/upload-gate.ts provesProxies)
     ...(library && b?.proof === true ? { proof: true as const } : {}),
-    at: Date.now(),
+    // a library claim of a current package: what makes this computer a library taker (library-package.ts takesLibrary)
+    ...(library && tooOld === undefined ? { libraryAt: now } : {}),
+    // too old for library packages only: its editor steps still come
+    ...(tooOld !== undefined ? { tooOld } : {}),
+    at: now,
   });
   // the cache it reported is its proxy places (version_places kind 'proxy'): what "On this computer" and Locate read
   if (cache?.versions || empty) noteProxyCache(d.id, empty ? [] : (cache?.versions ?? []));
-  // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
-  const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
-  if (v < WORK_MIN) return answer({ pkg: null, update: true });
   const end = Date.now() + CLAIM_POLL.holdMs;
   for (;;) {
     const got = libraryOnly ? null : await claimForComputer(deviceOf(d.id)!);

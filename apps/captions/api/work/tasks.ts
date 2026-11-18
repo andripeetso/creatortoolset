@@ -14,6 +14,7 @@ import { libraryDb } from "../library/db";
 import { MAX_ATTEMPTS, WAITS_FOR_COMPUTER } from "../library/jobs";
 import type { WorkerOptions } from "./computer";
 import { mayRunHere } from "./may-run";
+import { takeTurn, TURN_LINE } from "./turn";
 import { serverKind, serverWeight, serverWorks } from "./server-work";
 
 /**
@@ -476,7 +477,12 @@ export async function runTaskJob(p: TaskPackage, c: Client, o: Pick<WorkerOption
   };
   const timer = setInterval(() => void beat(), o.beatMs ?? 10_000);
   const paths = ((p.input as { paths?: Record<string, unknown> } | null)?.paths ?? {}) as Record<string, unknown>;
+  let release = () => {};
   try {
+    // this Mac's other servers' work first, one job at a time (turn.ts); the task stays held and beating meanwhile
+    line = TURN_LINE;
+    release = await takeTurn({ signal: ac.signal });
+    line = undefined;
     const out = await def.run(p.input, {
       dir,
       where: "computer",
@@ -518,6 +524,7 @@ export async function runTaskJob(p: TaskPackage, c: Client, o: Pick<WorkerOption
     await post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e) }).catch(() => {});
     return "failed";
   } finally {
+    release();
     clearInterval(timer);
     await rm(dir, { recursive: true, force: true });
   }

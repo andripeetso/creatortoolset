@@ -871,7 +871,8 @@ final class Shell: NSObject, ObservableObject {
             onWork: { [weak self] in
                 DispatchQueue.main.sync {
                     MainActor.assumeIsolated {
-                        guard let self, self.runnerID == id, !self.worker.isRunning else { return false }
+                        // a hung worker (silent past silentAfter) is replaced; a busy one never is
+                        guard let self, self.runnerID == id, !self.worker.isRunning || self.worker.isSilent else { return false }
                         return self.worker.start(server: self.base, token: token, data: work.appendingPathComponent("work"), thisMac: self.runsHere)
                     }
                 }

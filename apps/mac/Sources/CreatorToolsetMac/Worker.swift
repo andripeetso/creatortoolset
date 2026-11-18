@@ -3,6 +3,9 @@
 // poll says when a step waits (`{"work": true}`, Relay.swift); the worker claims it itself and ends after 10 minutes with
 // nothing to do (exit 0). Exit 3: the server needs a newer app, so the update prompt shows and no worker starts again
 // until the app is updated. SIGUSR2 cancels the running step. Never two at once; none while the window shows This Mac.
+// It prints `[work:alive]` every 30 s whatever it does; one that prints nothing for `silentAfter` is hung, and the next
+// hint replaces it (its whole process group goes, then a new one starts). Jobs of all servers' workers take one Mac-wide
+// turn (CT_TURN_DIR, api/work/turn.ts), so this Mac runs one at a time.
 import AppKit
 import Foundation
 
@@ -30,6 +33,8 @@ func workerEnvironment(server: URL, token: String, data: URL, folder: URL, inher
     // the frame browser of a caption export: the one This Mac's server downloads (Server.swift), never a second copy
     env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
     env["CT_EXIT_WITH_PARENT"] = "1"
+    // one folder for every server's worker: one job at a time on this Mac
+    env["CT_TURN_DIR"] = appSupport.appendingPathComponent("work-turn").path
     env.merge(release, uniquingKeysWith: { $1 })
     env.merge(plugins, uniquingKeysWith: { $1 })
     return env
@@ -93,6 +98,11 @@ final class Worker: ObservableObject {
     let folder: URL?
     private var process: Process?
     private var input: Pipe?
+    /// A running worker that printed nothing this long is hung (it says `[work:alive]` every 30 s): twelve missed lines.
+    var silentAfter: TimeInterval = 360
+    private var lastOutput = Date()
+    /// Set while a hung worker's group is being stopped: starts its replacement once it has ended.
+    private var replacing: (() -> Void)?
 
     init(folder: URL?) {
         self.folder = folder
@@ -103,14 +113,26 @@ final class Worker: ObservableObject {
     }
 
     var isRunning: Bool { process != nil }
+    var isSilent: Bool { process != nil && Date().timeIntervalSince(lastOutput) > silentAfter }
 
     /// Starts a worker for `server` unless one runs, the app needs an update first, or the window shows This Mac (the
-    /// server here does its own steps). Whether one runs afterwards.
+    /// server here does its own steps). A silent one is replaced: this returns at once, its process group is stopped off
+    /// the main thread, and the new one starts when it has ended (never two at once). Whether one runs afterwards.
     @discardableResult
     func start(server: URL, token: String, data: URL, thisMac: Bool,
                plugins: [String: String] = pluginEnvironment(approved: PluginRecord.live.load(), paused: UserDefaults.standard.bool(forKey: pluginsPausedKey))) -> Bool {
         guard !thisMac, !needsUpdate, let folder, let program else { return isRunning }
-        guard process == nil else { return true }
+        if let old = process {
+            guard isSilent, replacing == nil else { return true }
+            AppLog.write("worker: pid \(old.processIdentifier) said nothing for \(Int(silentAfter)) s, replacing it")
+            replacing = { [weak self] in
+                self?.start(server: server, token: token, data: data, thisMac: thisMac, plugins: plugins)
+            }
+            try? input?.fileHandleForWriting.close()
+            let pid = old.processIdentifier
+            DispatchQueue.global().async { Worker.stopGroup(pid) }
+            return true
+        }
         try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
         let p = Process()
         p.executableURL = program.0
@@ -129,12 +151,13 @@ final class Worker: ObservableObject {
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil; return }
             rest.append(data)
+            Task { @MainActor in if self?.process === p { self?.lastOutput = Date() } }
             while let nl = rest.firstIndex(of: UInt8(ascii: "\n")) {
                 let line = String(decoding: rest[rest.startIndex..<nl], as: UTF8.self)
                 rest = Data(rest[rest.index(after: nl)...])
                 if let status = workStatusLine(line[...]) {
                     Task { @MainActor in if self?.process === p { self?.status = status } }
-                } else if !line.isEmpty {
+                } else if !line.isEmpty && line != "[work:alive]" {
                     AppLog.write("worker: \(line)")
                 }
             }
@@ -150,6 +173,7 @@ final class Worker: ObservableObject {
         }
         process = p
         input = stdin
+        lastOutput = Date()
         AppLog.write("worker: started pid \(p.processIdentifier) for \(server.absoluteString)")
         return true
     }
@@ -162,6 +186,7 @@ final class Worker: ObservableObject {
 
     /// With the runner and on quit, as LocalServer.stop: stdin closed, half a second, SIGTERM, up to 10 s, SIGKILL.
     func stop() {
+        replacing = nil
         guard let p = process else { return }
         process = nil
         status = nil
@@ -178,12 +203,29 @@ final class Worker: ObservableObject {
         }
     }
 
+    /// A hung worker's whole group (node and the ffmpeg it started), with stop()'s grace: half a second, SIGTERM, up to
+    /// 10 s, then SIGKILL. Process starts each child in a group of its own (pgid = pid).
+    nonisolated static func stopGroup(_ pid: pid_t) {
+        let alive = { kill(pid, 0) == 0 }
+        let grace = Date().addingTimeInterval(0.5)
+        while alive() && Date() < grace { usleep(20_000) }
+        kill(-pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(10)
+        while alive() && Date() < deadline { usleep(50_000) }
+        kill(-pid, SIGKILL)   // what is left of the group, children too
+    }
+
     private func ended(_ p: Process) {
         guard process === p else { return }   // stopped on purpose: stop() already let it go
         process = nil
         input = nil
         status = nil
         AppLog.write("worker: ended (\(p.terminationStatus))")
+        if let next = replacing {
+            replacing = nil
+            next()
+            return
+        }
         if p.terminationReason == .exit && p.terminationStatus == 3 {
             needsUpdate = true
             onNeedsUpdate?()

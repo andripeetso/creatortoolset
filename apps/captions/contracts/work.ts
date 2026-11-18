@@ -20,6 +20,8 @@
 export const WORK_V = 1;
 /** The oldest computer this server hands work to. */
 export const WORK_MIN = 1;
+/** The first Mac app whose runner sends `work` with its long poll (an older one is never told that work waits). */
+export const MAC_WORK_SINCE = "0.15.62";
 
 export interface WorkJob {
   id: number;
