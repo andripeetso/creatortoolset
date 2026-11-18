@@ -18,7 +18,7 @@ const { libraryDb } = await import("../library/db");
 const { libraryApp } = await import("../library/routes");
 const { tick } = await import("../library/worker");
 const { sha256File } = await import("../lib/uploads");
-const { deviceOf, devicesSaved, listDevices, pairDevice } = await import("../lib/devices");
+const { deviceOf, devicesSaved, listDevices, pairDevice, setDeviceWork } = await import("../lib/devices");
 const { writeBalance } = await import("../lib/balance");
 const { CLAIM_POLL, workApp } = await import("./routes");
 const { computerTakesLibrary, libraryWaitLine } = await import("./library-package");
@@ -392,3 +392,30 @@ describe("local-first P3f: a probe, a card picture and a description's stills wi
 
 /** A claim of a computer whose worker runs every library kind (work/library.ts LIBRARY_HERE). */
 const claim2 = () => claimAs(mac.token, { machine: MAC, libraryKinds: LIBRARY_HERE });
+
+describe("a computer's add before its first library claim", () => {
+  const add = async (lib: string, file: string, fromDevice: string) =>
+    post(`/api/library/${lib}/uploads`, { filename: path.basename(file), size: statSync(file).size, fromPath: file, fromDevice, quick: await quickPrint(file), send: true });
+
+  it("a freshly paired Mac (a poll's version, no library mark) sends: the file stays on it, no original bytes are taken", async () => {
+    const fresh = pairDevice("tiny", "Fresh Mac");
+    setDeviceWork(fresh.device.id, { v: WORK_V, steps: [] }); // what a poll stamps; only a claim marks a library taker
+    const file = camera("tiny-fresh.mp4", "1024x576"); // its own bytes: the same render would be a duplicate
+    const r = (await (await add("lib_p", file, fresh.device.id)).json()) as { sent?: true; versionId: string };
+    expect(r.sent).toBe(true);
+    expect(version(r.versionId)).toMatchObject({ source_key: `mac:${r.versionId}`, mac_path: file, mac_device: fresh.device.id });
+    expect(jobs(r.versionId)).toEqual(["send:queued"]);
+    // Upload none: nothing is sent and the original is refused (the Mac app indexes it in place)
+    const none = await add("lib_phone", file, fresh.device.id);
+    expect(none.status).toBe(409);
+    expect(((await none.json()) as { code: string }).code).toBe("upload_refused");
+  });
+
+  it("an unregistered client keeps today's rule: an upload under proxies, a refusal under none", async () => {
+    const file = camera("tiny-stranger.mp4", "848x480");
+    const r = await add("lib_p", file, "not-a-device");
+    expect(r.status).toBe(201);
+    expect(((await r.json()) as { sent?: true; id: string }).sent).toBeUndefined();
+    expect((await add("lib_phone", file, "not-a-device")).status).toBe(409);
+  });
+});
