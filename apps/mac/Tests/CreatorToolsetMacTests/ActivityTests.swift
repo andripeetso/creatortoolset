@@ -49,4 +49,36 @@ final class ActivityTests: XCTestCase {
         XCTAssertNil(panelLimitLine(lastError: "Claude: something else broke", rows: []))
         XCTAssertNil(panelLimitLine(lastError: nil, rows: []))
     }
+
+    func testComputerWaitsCarryTheirMarkAndTheLogSaysWhatChanged() throws {
+        let json = Data("""
+        [{"id":"library:l:stuck:files:mac","title":"Media Library","detail":"6 files","state":"working","href":"/settings/devices",
+          "reason":"Mac Studio hasn't started on these","mark":"stuck"},
+         {"id":"library:l:waits:look","title":"Media Library","detail":"14 shot descriptions","state":"working","href":"/settings/devices",
+          "reason":"Linux box is offline","mark":"waits"},
+         {"id":"library:l:computer:files","title":"Media Library","detail":"1 file","state":"ready","href":"/settings/devices",
+          "reason":"Mac Studio is Off in Load balancing","mark":"computer"}]
+        """.utf8)
+        let plugin = try JSONDecoder().decode([PluginRow].self, from: json)
+        let rows = activityRows(sessions: [], aiRunning: 0, plugin: plugin)
+        XCTAssertEqual(rows.active.map(\.mark), ["stuck", "waits"])
+        XCTAssertEqual(rows.forYou.map(\.mark), ["computer"])
+        XCTAssertEqual([rows.active[0].reasonColor, rows.active[1].reasonColor, rows.forYou[0].reasonColor], [.red, .secondary, .orange])
+        // a computer wait is not the plan's limit: the panel still says the limit on its own line
+        XCTAssertEqual(panelLimitLine(lastError: "Claude: You've hit your weekly limit · resets 5pm (Europe/Tallinn)", rows: rows.active),
+                       "Claude's weekly limit is reached · resets 5pm")
+
+        XCTAssertEqual(activityLogLines(before: [], after: plugin), [
+            "activity: library:l:computer:files computer 1 file · Mac Studio is Off in Load balancing",
+            "activity: library:l:stuck:files:mac stuck 6 files · Mac Studio hasn't started on these",
+            "activity: library:l:waits:look waits 14 shot descriptions · Linux box is offline",
+        ])
+        XCTAssertEqual(activityLogLines(before: plugin, after: plugin), [], "nothing changed, nothing logged")
+        var later = plugin
+        later[1].reason = "Linux box is short of disk space"
+        XCTAssertEqual(activityLogLines(before: plugin, after: Array(later.dropFirst())), [
+            "activity: library:l:stuck:files:mac ok",
+            "activity: library:l:waits:look waits 14 shot descriptions · Linux box is short of disk space",
+        ])
+    }
 }

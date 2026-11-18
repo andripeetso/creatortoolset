@@ -259,16 +259,17 @@ export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
 };
 
 /** "5 descriptions need an AI provider", and where to add it. */
-export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean; reason?: string; href?: string }): { text: string; href: string } {
+export function waitingLine(w: { step: LibraryStep; count: number; away?: boolean; computer?: boolean; reason?: string; href?: string }): { text: string; href: string } {
   const one = w.count === 1;
   if (w.reason) return { text: `${stepCount(w)} · ${w.reason}`, href: w.href ?? "/settings/devices" };
-  if (w.away)
+  // a shot description parked for the Mac its file is on waits for a computer too, never for an AI provider
+  if (w.away || w.computer)
     return { text: `${stepCount(w)} ${one ? "waits" : "wait"} for one of your computers`, href: w.href ?? "/settings/devices" };
   return { text: `${stepCount(w)} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: w.href ?? NEEDS[w.step].href };
 }
 
 /** "6 descriptions", "1 file". */
-function stepCount(w: { step: LibraryStep; count: number }): string {
+export function stepCount(w: { step: LibraryStep; count: number }): string {
   const [thing, things] = {
     files: ["file", "files"],
     transcript: ["transcript", "transcripts"],

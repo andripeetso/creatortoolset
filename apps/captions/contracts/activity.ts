@@ -27,6 +27,16 @@ export interface ActivityRow {
   reason?: string;
   /** What the person can do about a row that waits on them (Home's list): open a service's page, or answer the app. */
   choices?: ActivityChoice[];
+  /**
+   * Library work held for one of the person's computers (api/work/waits.ts): `stuck` a computer that could take it has not
+   * (working, red), `waits` it waits for a computer or on something only a computer changes (working, grey), `computer`
+   * only the person can unblock it (ready, Waiting on you). `reason` says which.
+   */
+  mark?: "stuck" | "computer" | "waits";
+  /** the computer the reason names */
+  device?: string;
+  /** a computer wait whose computers are all offline: each of them, so the person's own Mac can say its switch is off */
+  devices?: string[];
 }
 
 /** One of a waiting row's buttons: `url` opens a service's own https page in the browser; `post` is an app path it POSTs to. */

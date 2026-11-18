@@ -76,6 +76,29 @@ describe("activityLines", () => {
     expect(waiting.map((l) => l.key)).toEqual(["r:a1", "s:s2", "k"]);
     expect(running[1].to).toBe("/workshop/sessions/s1");
   });
+
+  it("says library work held for a computer with its own mark: stuck and waits running, a computer need waiting on you", () => {
+    const stuck = row("library:l:stuck:files", "/settings/devices", { mark: "stuck", reason: "Mac Studio hasn't started on these" });
+    const waits = row("library:l:waits:look", "/settings/devices", { mark: "waits", reason: "Linux box is offline", devices: ["linux", "mac"] });
+    const needs = row("library:l:computer:files", "/settings/devices", { state: "ready", mark: "computer", reason: "Mac Studio is Off in Load balancing" });
+    const { running, waiting } = activityLines([stuck, waits, needs], [], []);
+    expect(running.map((l) => [l.key, l.icon, l.mark])).toEqual([["library:l:stuck:files", "stuck", "stuck"], ["library:l:waits:look", "waits", "waits"]]);
+    expect(waiting.map((l) => [l.key, l.icon])).toEqual([["library:l:computer:files", "computer"]]);
+    // a computer wait leaves the tile as it was: no "waiting" chip
+    expect(runningByTile([row("s", "/library", { mark: "stuck", reason: "x" }), row("w", "/library", { mark: "waits", reason: "y" })], 0)).toEqual({});
+    expect(runningByTile([row("p", "/library", { progress: 0.4 }), row("w", "/library", { mark: "waits", reason: "y" })], 0)["/library"]?.text).toBe("40%");
+  });
+
+  it("in the Mac app, an offline wait naming this Mac with its switch off is the person's to switch on", () => {
+    const waits = row("library:l:waits:look", "/settings/devices", { mark: "waits", reason: "Linux box is offline", devices: ["linux", "mac"] });
+    const off = activityLines([waits], [], [], { aiOn: false, device: "mac", computer: "Mac Studio" });
+    expect(off.running).toEqual([]);
+    expect(off.waiting.map((l) => [l.icon, l.reason, l.to])).toEqual([["computer", "Take work from this server is off on Mac Studio", "/settings/devices#use-this-mac"]]);
+    for (const bridge of [{ aiOn: true, device: "mac" }, { aiOn: false, device: "other" }, null]) {
+      const { running, waiting } = activityLines([waits], [], [], bridge);
+      expect([running.map((l) => l.reason), waiting]).toEqual([["Linux box is offline"], []]);
+    }
+  });
 });
 
 describe("runningByTile", () => {

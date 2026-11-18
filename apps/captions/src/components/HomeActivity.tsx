@@ -2,7 +2,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Link } from "react-router";
-import { CircleAlert, Eye, Inbox, KeyRound, Loader2, MessageSquare, Pause, X, type LucideIcon } from "lucide-react";
+import { CircleAlert, Eye, Hourglass, Inbox, KeyRound, Loader2, MessageSquare, Monitor, Pause, X, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { canUse, useMe, type Me } from "@/lib/auth";
@@ -14,6 +14,8 @@ import { useWorkspace } from "@/lib/workspace";
 import { listReviewAssets, reviewApi, waitsOnYou, type ReviewAsset } from "@/lib/review";
 import { undoable } from "@/lib/undo";
 import { useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
+import { ownMacLine } from "@/lib/wording";
+import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 
 export interface TodoRow {
   key: string;
@@ -106,7 +108,9 @@ export interface Line {
   to: string;
   title: string;
   detail: string;
-  icon: "running" | "review" | "failed" | "key" | "reply";
+  icon: "running" | "review" | "failed" | "key" | "reply" | "stuck" | "computer" | "waits";
+  /** library work held for a computer (ActivityRow.mark): its reason is said in that row's own colour */
+  mark?: ActivityRow["mark"];
   progress?: number;
   reason?: string;
   /** the Review video a row waits on: it can be cleared */
@@ -118,16 +122,25 @@ export interface Line {
 /**
  * The list's two parts. Running: the server's working rows and Workshop replies being written. Waiting on you: videos to
  * review, edits that failed or need a key, Workshop replies you haven't read, then the server's ready rows. A row with
- * buttons is the menu bar's own (they start and stop things on the Mac): it is left out here. Pure.
+ * buttons is the menu bar's own (they start and stop things on the Mac): it is left out here. `bridge`: in the Mac app,
+ * this Mac's own switch; a wait for computers that are all offline, this Mac among them, is then the person's to switch
+ * on (wording.ts ownMacLine). Pure.
  */
-export function activityLines(server: ActivityRow[], sessions: SessionSummary[], todo: TodoRow[]): { running: Line[]; waiting: Line[] } {
-  const rows = server.filter((r) => !r.actions?.length);
+export function activityLines(server: ActivityRow[], sessions: SessionSummary[], todo: TodoRow[], bridge?: Parameters<typeof ownMacLine>[1]): { running: Line[]; waiting: Line[] } {
+  const rows = server
+    .filter((r) => !r.actions?.length)
+    .map((r) => {
+      // appRows gives `devices` only to a wait whose computers are all offline
+      const own = r.mark === "waits" && r.devices ? ownMacLine({ wait: "offline", devices: r.devices }, bridge) : null;
+      return own ? { ...r, state: "ready" as const, mark: "computer" as const, reason: own.reason, href: own.href } : r;
+    });
   const line = (r: ActivityRow, icon: Line["icon"]): Line => ({
     key: r.id,
     to: r.href,
     title: r.title,
     detail: r.detail,
-    icon,
+    icon: r.mark ?? icon,
+    ...(r.mark ? { mark: r.mark } : {}),
     ...(r.progress !== undefined ? { progress: r.progress } : {}),
     ...(r.reason ? { reason: r.reason } : {}),
     ...(r.choices?.length ? { choices: r.choices } : {}),
@@ -186,7 +199,8 @@ export function runningByTile(server: ActivityRow[], writing: number): Record<st
   for (const line of TILE) {
     const [, tile, verb] = line;
     // a row with buttons is the menu bar's own (a worker's Start), left out here as in the list
-    const rows = server.filter((r) => r.state === "working" && !r.actions?.length && lineOf(r.href) === line);
+    // library work held for a computer is said in the list, never on the tile: the tile stays as it was
+    const rows = server.filter((r) => r.state === "working" && !r.actions?.length && !r.mark && lineOf(r.href) === line);
     if (!rows.length) continue;
     const moving = rows.filter((r) => !r.reason);
     // the hover: what each thing is (the Media Library's one row says how far it is)
@@ -222,18 +236,36 @@ export function HomeActivity() {
   return <ActivityButton me={me} />;
 }
 
-const ICON: Record<Line["icon"], LucideIcon> = { running: Loader2, review: Eye, failed: CircleAlert, key: KeyRound, reply: MessageSquare };
-const TONE: Record<Line["icon"], string> = { running: "text-muted-foreground", review: "text-amber-500", failed: "text-red-500", key: "text-amber-400", reply: "text-emerald-500" };
+const ICON: Record<Line["icon"], LucideIcon> = {
+  running: Loader2, review: Eye, failed: CircleAlert, key: KeyRound, reply: MessageSquare, stuck: Hourglass, computer: Monitor, waits: Pause,
+};
+const TONE: Record<Line["icon"], string> = {
+  running: "text-muted-foreground", review: "text-amber-500", failed: "text-red-500", key: "text-amber-400", reply: "text-emerald-500",
+  stuck: "text-red-500", computer: "text-amber-400", waits: "text-muted-foreground",
+};
+/** A row's reason: red for work a computer has not taken, grey while it waits for a computer, amber for what needs you. */
+const REASON_TONE = (mark?: Line["mark"]) =>
+  mark === "stuck" ? "text-red-600 dark:text-red-400" : mark === "waits" ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300";
 
 function ActivityButton({ me }: { me: Me }) {
   const { edits, assets, refresh, clear } = useTodoLists(me);
   const server = useActivityRows(me);
   const sessions = useSessionSummaries() ?? [];
-  const { running, waiting } = activityLines(server.data ?? [], canUse(me, "workshop") ? sessions : [], todoRows(edits, assets));
+  const [open, setOpen] = useState(false);
+  // this Mac's switch, read while the list is open (its last answer is kept for the badge)
+  const bridge = useThisMac(open && hasThisMac());
+  const { running, waiting } = activityLines(server.data ?? [], canUse(me, "workshop") ? sessions : [], todoRows(edits, assets), bridge);
   const moving = running.some((l) => !l.reason);
   const label = ["Activity", running.length && `${running.length} running`, waiting.length && `${waiting.length} waiting on you`].filter(Boolean).join(", ");
   return (
-    <Popover onOpenChange={(open) => open && (refresh(), void server.refresh().catch(() => {}))}>
+    <Popover
+      onOpenChange={(on) => {
+        setOpen(on);
+        if (!on) return;
+        refresh();
+        void server.refresh().catch(() => {});
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           // in chat mode it stands under the chats, so Home's own bar leaves it out (index.css)
@@ -289,7 +321,7 @@ function Part({ label, lines, onClear, onChoice }: { label: string; lines: Line[
         )}
       </div>
       {lines.map((l) => {
-        const Icon = l.reason ? Pause : ICON[l.icon];
+        const Icon = l.reason && !l.mark ? Pause : ICON[l.icon];
         return (
           <div key={l.key}>
             <div className="flex items-stretch hover:bg-accent">
@@ -301,7 +333,7 @@ function Part({ label, lines, onClear, onChoice }: { label: string; lines: Line[
                     {l.detail && <span className="text-muted-foreground">{` ${l.detail}`}</span>}
                   </span>
                   {l.progress !== undefined && !l.reason && <Progress value={l.progress * 100} className="h-1" />}
-                  {l.reason && <span className="text-amber-700 dark:text-amber-300">{l.reason}</span>}
+                  {l.reason && <span className={REASON_TONE(l.mark)}>{l.reason}</span>}
                 </span>
               </Link>
               {onClear && l.asset && (

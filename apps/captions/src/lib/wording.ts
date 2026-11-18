@@ -1,15 +1,14 @@
 import type { PlaceWord } from "../../contracts/places";
 
 /**
- * The words for where a file is and what a step needs (local-first plan, decision 12). Every component and route
- * imports from here: no second wording in a page, a row or a dialog.
+ * The words for where a file is (one place: every screen and the Mac app's strings use these). Never "missing" for a
+ * file nobody has looked for: that is "Not checked yet". Also what a computer's library work waits on (api/work/waits.ts).
  */
 export const WORDS = {
   here: "On this computer",
-  found: "Found in folder",
-  /** Never "missing" for a file nobody has looked for. */
+  found: "Found, not checked yet",
   unchecked: "Not checked yet",
-  folderNotFound: "Folder not found",
+  folderNotFound: "Folder not found, re-point?",
   needsOk: "Needs your OK",
   allowOnThisMac: "Allow on this Mac",
   waits: "Waits for one of your computers.",
@@ -44,6 +43,18 @@ export const notStarted = (computer: string) => `${computer} hasn't started on t
 export const notTaking = (computer: string) => `${computer} hasn't taken these yet`;
 export const ownerKeeps = (computer?: string) =>
   `Your owner keeps its files on their computers${computer ? ` · ${offline(computer)}` : ""}`;
+
+/**
+ * The viewer's own Mac (the Mac app's bridge) with Take work from this server off: a wait whose computers are all offline
+ * and that names this Mac among them is his to change, at that switch. null for every other wait and viewer.
+ */
+export function ownMacLine(
+  entry: { wait?: string; devices?: string[] },
+  bridge?: { device?: string | null; aiOn: boolean; computer?: string } | null,
+): { reason: string; href: string } | null {
+  if (entry.wait !== "offline" || !bridge?.device || bridge.aiOn || !entry.devices?.includes(bridge.device)) return null;
+  return { reason: switchOff(bridge.computer || "this Mac"), href: "/settings/devices#use-this-mac" };
+}
 
 /** The line for a place word (contracts/places.ts placeWordOf). */
 export function placeLine(w: PlaceWord): string {

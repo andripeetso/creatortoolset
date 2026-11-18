@@ -911,7 +911,7 @@ describe("end to end (tests 37, 38)", () => {
     const b2 = addVersion({});
     for (const v of [b1, b2]) for (const k of ["proxy", "look"]) enqueue("lib_tiny", v, k);
     const { seen } = await round(mac, linux, { macWorks: false });
-    expect(seen.rows.find((r) => r.detail.includes("shot description"))).toMatchObject({ detail: "2 shot descriptions · Not made on computers yet", state: "working" });
+    expect(seen.rows.find((r) => r.detail.includes("shot description"))).toMatchObject({ detail: "2 shot descriptions", reason: "Not made on computers yet", state: "working", mark: "waits" });
     const got = await claimWork(mac.token);
     expect(got.lib?.job.kind).toBe("proxy");
     expect(got.lib?.file?.path).toBeUndefined(); // rank 1: the original is downloaded

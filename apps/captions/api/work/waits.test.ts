@@ -1412,7 +1412,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
       const b = await shown();
       expect(b.p.left).toBe(0);
       expect(b.p.waiting).toEqual([{ step: "files", count: 1, missing: WAITS_FOR_COMPUTER, away: true }]);
-      expect(b.rows.map((r) => [r.detail, r.state])).toEqual([["1 file waits for one of your computers", "working"]]);
+      expect(b.rows.map((r) => [r.detail, r.reason, r.state])).toEqual([["1 file", "Waits for one of your computers", "working"]]);
     } finally {
       leaveToComputers.status = hook;
     }
@@ -1460,9 +1460,9 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
       { step: "files", count: 2, missing: "Mac Studio is offline", away: true, wait: "offline", reason: "Mac Studio is offline", mine: true, device: mac.device.id, devices: [mac.device.id] },
       { step: "look", count: 1, missing: "Mac Studio is offline", away: true, wait: "offline", reason: "Mac Studio is offline", mine: true, device: mac.device.id, devices: [mac.device.id] },
     ]);
-    expect(off.rows.map((r) => [r.detail, r.state])).toEqual([
-      ["2 files · Mac Studio is offline", "working"],
-      ["1 shot description · Mac Studio is offline", "working"],
+    expect(off.rows.map((r) => [r.detail, r.reason, r.state, r.mark])).toEqual([
+      ["2 files", "Mac Studio is offline", "working", "waits"],
+      ["1 shot description", "Mac Studio is offline", "working", "waits"],
     ]);
     expect(off.ready).toEqual([]);
 
@@ -1486,7 +1486,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     const stuck = await shown();
     const files = stuck.p.waiting.find((w) => w.step === "files");
     expect(files).toMatchObject({ count: 2, away: true, wait: "stuck", reason: "Mac Studio hasn't started on these", mine: true, device: mac.device.id });
-    expect(stuck.rows.find((r) => r.detail.startsWith("2 files"))?.detail).toBe("2 files · Mac Studio hasn't started on these");
+    expect(stuck.rows.find((r) => r.detail === "2 files")).toMatchObject({ reason: "Mac Studio hasn't started on these", mark: "stuck", state: "working" });
     expect(stuck.ready).toEqual([]);
 
     // an old app: a grey "Update" line, still not Waiting on you
@@ -1585,7 +1585,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     expect(await waitsOf(linux.device.id)).toEqual({ line: "Add Linux box again in Settings → Computers", tone: "needs" });
     const a = await shown();
     expect(a.p.waiting).toEqual([expect.objectContaining({ wait: "offline", reason: "Add Linux box again in Settings → Computers" })]);
-    expect(a.rows.map((r) => r.detail)).toEqual(["1 file · Add Linux box again in Settings → Computers"]);
+    expect(a.rows.map((r) => [r.detail, r.reason])).toEqual([["1 file", "Add Linux box again in Settings → Computers"]]);
 
     // low disk: claims with lowDisk keep it from reading refused
     setDeviceWork(linux.device.id, { ...deviceOf(linux.device.id)!.work!, lowDisk: true, lowDiskAt: Date.now() });
