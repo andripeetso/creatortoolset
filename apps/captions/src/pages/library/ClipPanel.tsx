@@ -793,7 +793,7 @@ function WhatHappens({
       </div>
       <div className="-mx-1 flex max-h-96 flex-col gap-0.5 overflow-y-auto [scrollbar-gutter:stable]">
         {shotsByMoment(events, shots).map((g, i) => (
-          <div key={g.event ? `m${g.event.a}` : `lead${i}`} className="flex flex-col gap-0.5">
+          <div key={i} className="flex flex-col gap-0.5">
             {g.event && moment(g.event)}
             {shotsShown && g.shots.length > 0 && <div className={cn("flex flex-col gap-0.5", g.event && "pl-4")}>{g.shots.map(shot)}</div>}
           </div>

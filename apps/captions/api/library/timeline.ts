@@ -669,7 +669,10 @@ export async function watchVersion(
  * ponytail: a watch in flight when the server restarts is lost and asked again by the sweep, paid twice
  */
 export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promise<string>, actor: string | null, sent = false): Promise<void> {
-  if (!actor || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watching.size >= WATCHES_AT_ONCE) || !wantsWatch(db, versionId, actor)) return Promise.resolve();
+  if (!actor || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watching.size >= WATCHES_AT_ONCE) || !wantsWatch(db, versionId, actor)) {
+    if (!watching.has(versionId)) askedWatch.delete(versionId); // an ask this look cannot answer is not kept forever
+    return Promise.resolve();
+  }
   const run = (async () => {
     try {
       const file = await src();
@@ -684,7 +687,9 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
       return;
     }
     const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
-    if (lib && librarySetting(lib, "embed") && canEmbed(actor)) enqueueJob(db, lib, versionId, "embed", actor, true);
+    if (!lib) return;
+    libraryChanged(lib); // an open clip panel shows the new timeline
+    if (librarySetting(lib, "embed") && canEmbed(actor)) enqueueJob(db, lib, versionId, "embed", actor, true);
   })().finally(() => {
     watching.delete(versionId);
     askedWatch.delete(versionId);
