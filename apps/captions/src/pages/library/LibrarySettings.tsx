@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Folder } from "lucide-react";
 import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
@@ -83,15 +83,38 @@ interface BodyProps {
   onError: (e: string) => void;
 }
 
+type SheetProps = { open: boolean; onOpenChange: (open: boolean) => void };
+
 /** Library settings, a sheet on the right; the page's More menu opens it by that name. */
-export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & SheetProps) {
+  return (
+    <SettingsSheet open={open} onOpenChange={onOpenChange}>
+      <LibrarySettingsBody {...body} />
+    </SettingsSheet>
+  );
+}
+
+/** A member's Library settings (a workspace the owner gave them): only Keep on this computer, the rest is the owner's. */
+export function MemberLibrarySettings({ open, onOpenChange, library, onError }: Pick<BodyProps, "library" | "onError"> & SheetProps) {
+  return (
+    <SettingsSheet open={open} onOpenChange={onOpenChange}>
+      <Section title="Storage">
+        <Card>
+          <KeepOffline library={library} proxies onError={onError} />
+        </Card>
+      </Section>
+    </SettingsSheet>
+  );
+}
+
+function SettingsSheet({ open, onOpenChange, children }: SheetProps & { children: ReactNode }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-lg">
         {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
         <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
           <SheetTitle className="text-base">Library settings</SheetTitle>
-          <LibrarySettingsBody {...body} />
+          {children}
         </div>
       </SheetContent>
     </Sheet>
@@ -506,6 +529,39 @@ function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps,
 }
 
 /**
+ * Keep on this computer (api/work/offline.ts), on a computer of the person's (the Mac app). `proxies`: the server holds
+ * proxies of this library; with Upload off those are the ones its computers send for the members it is shared with.
+ */
+function KeepOffline({ library, proxies, onError }: Pick<BodyProps, "library" | "onError"> & { proxies: boolean }) {
+  const [libs, setLibs] = useState<string[] | null>(null);
+  const on = !!libs?.includes(library.id);
+  const noServerProxy = library.settings.upload === "none" && !proxies;
+  useEffect(() => {
+    if (thisMacDevice()) void fetch("/api/library/offline").then((r) => r.json() as Promise<{ libraries?: string[] }>).then((x) => setLibs(x.libraries ?? []), () => {});
+  }, []);
+  const flip = (next: boolean) =>
+    fetch("/api/library/offline", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ library: library.id, on: next }) })
+      .then(async (r) => {
+        const b = (await r.json().catch(() => ({}))) as { libraries?: string[]; error?: string };
+        if (!r.ok) throw new Error(b.error ?? `Request failed (${r.status})`);
+        setLibs(b.libraries ?? []);
+      })
+      .catch((e: unknown) => onError(message(e)));
+  if (!libs) return null;
+  return (
+    <Row
+      title="Keep on this computer"
+      description={
+        noServerProxy
+          ? "This library keeps its files on the computers they were added from; there is no proxy to keep."
+          : "Downloads a proxy of each video in this library to this computer so it plays without internet."
+      }
+      control={<Switch aria-label="Keep on this computer" checked={on} disabled={noServerProxy && !on} onCheckedChange={(x) => void flip(x)} />}
+    />
+  );
+}
+
+/**
  * What the library makes (api/library/space.ts): the proxies switch, the proxy files with what they take and Clear,
  * and the downloaded speech and search models with Clear. The person's own files are never cleared. Proxies kept in the
  * cloud (one for every video) have no switch and no Clear: both would do nothing there. `videos`: where the video files
@@ -513,20 +569,7 @@ function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps,
  */
 function SpaceRows({ library, saved, space, read, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; videos: string | null }) {
   const cloud = saved?.proxies ?? null;
-  const [offlineLibs, setOfflineLibs] = useState<string[] | null>(null);
-  const keepOffline = !!offlineLibs?.includes(library.id);
-  const noServerProxy = library.settings.upload === "none";
-  useEffect(() => {
-    if (thisMacDevice()) void fetch("/api/library/offline").then((r) => r.json() as Promise<{ libraries?: string[] }>).then((x) => setOfflineLibs(x.libraries ?? []), () => {});
-  }, []);
-  const flipOffline = (on: boolean) =>
-    fetch("/api/library/offline", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ library: library.id, on }) })
-      .then(async (r) => {
-        const b = (await r.json().catch(() => ({}))) as { libraries?: string[]; error?: string };
-        if (!r.ok) throw new Error(b.error ?? `Request failed (${r.status})`);
-        setOfflineLibs(b.libraries ?? []);
-      })
-      .catch((e: unknown) => onError(message(e)));
+  const offline = !!thisMacDevice();
   useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
@@ -544,29 +587,12 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
       .catch((e) => onError(message(e)));
   const proxyFiles = !!space && (cloud || space.proxies.files > 0);
   const models = !!space?.models && space.models.bytes > 0;
-  if (!videos && !offlineLibs && cloud && !proxyFiles && !models) return null;
+  if (!videos && !offline && cloud && !proxyFiles && !models) return null;
   return (
     <Section title="Storage">
       <Card>
         {videos && <Row title="Video files" description={videos} />}
-        {offlineLibs && (
-          <Row
-            title="Keep on this computer"
-            description={
-              noServerProxy
-                ? "This library keeps its files on the computers they were added from; there is no proxy to keep."
-                : "Downloads a proxy of each video in this library to this computer so it plays without internet."
-            }
-            control={
-              <Switch
-                aria-label="Keep on this computer"
-                checked={keepOffline}
-                disabled={noServerProxy && !keepOffline}
-                onCheckedChange={(on) => void flipOffline(on)}
-              />
-            }
-          />
-        )}
+        {offline && <KeepOffline library={library} proxies={!!space?.proxies.files} onError={onError} />}
         {!cloud && (
           <Row
             id="library-proxies"

@@ -99,7 +99,8 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   listCollections: async () => server.folders,
   listSources: async () => server.sources,
-  getWatch: async () => server.watch,
+  // null: not the owner's, so the server refuses the footage folders
+  getWatch: async () => server.watch ?? Promise.reject(new Error("Not found")),
   getProgress: async () => ({ done: 0, left: 0, clips: 0, seconds: 0, waiting: [] }),
   getLibraryStorage: async () => ({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] }),
   listTags: async () => [{ tag: "beach", count: 2 }],
@@ -334,6 +335,29 @@ describe("Media Library page", () => {
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(sheet()).toContain("Storage");
     expect(sheet()).not.toContain("Footage folders");
+  });
+
+  it("a member's Library settings, on their own computer, is only Keep on this computer", async () => {
+    server.readOnly = true;
+    server.watch = null;
+    document.documentElement.dataset.macDevice = "dev_tiny_laptop";
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
+      String(url) === "/api/library/offline" ? new Response(JSON.stringify({ versions: [], collections: [] })) : real(url, init),
+    );
+    try {
+      const host = await mount();
+      await openMore(host);
+      expect(moreItem("Library status")).toBeUndefined();
+      await act(async () => moreItem("Library settings")!.click());
+      await settle();
+      const rows = [...document.querySelectorAll('[role="dialog"] [role="switch"]')].map((x) => x.getAttribute("aria-label"));
+      expect(rows).toEqual(["Keep on this computer"]);
+      expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Footage folders");
+    } finally {
+      vi.unstubAllGlobals();
+      delete document.documentElement.dataset.macDevice;
+    }
   });
 
   it("the A-roll and B-roll tabs ask the server for that roll, so the whole library is narrowed", async () => {
