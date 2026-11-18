@@ -11,6 +11,7 @@ import { aboutTime, aboutUsd, CopyTo, folderName } from "@/components/LibraryPro
 import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
+import { thisMacDevice } from "@/lib/providers";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
@@ -500,6 +501,20 @@ function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps,
  */
 function SpaceRows({ library, saved, space, read, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; videos: string | null }) {
   const cloud = saved?.proxies ?? null;
+  const [offlineLibs, setOfflineLibs] = useState<string[] | null>(null);
+  const keepOffline = !!offlineLibs?.includes(library.id);
+  const noServerProxy = library.settings.upload === "none";
+  useEffect(() => {
+    if (thisMacDevice()) void fetch("/api/library/offline").then((r) => r.json() as Promise<{ libraries?: string[] }>).then((x) => setOfflineLibs(x.libraries ?? []), () => {});
+  }, []);
+  const flipOffline = (on: boolean) =>
+    fetch("/api/library/offline", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ library: library.id, on }) })
+      .then(async (r) => {
+        const b = (await r.json().catch(() => ({}))) as { libraries?: string[]; error?: string };
+        if (!r.ok) throw new Error(b.error ?? `Request failed (${r.status})`);
+        setOfflineLibs(b.libraries ?? []);
+      })
+      .catch((e: unknown) => onError(message(e)));
   useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
@@ -517,11 +532,29 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
       .catch((e) => onError(message(e)));
   const proxyFiles = !!space && (cloud || space.proxies.files > 0);
   const models = !!space?.models && space.models.bytes > 0;
-  if (!videos && cloud && !proxyFiles && !models) return null;
+  if (!videos && !offlineLibs && cloud && !proxyFiles && !models) return null;
   return (
     <Section title="Storage">
       <Card>
         {videos && <Row title="Video files" description={videos} />}
+        {offlineLibs && (
+          <Row
+            title="Keep on this computer"
+            description={
+              noServerProxy
+                ? "This library keeps its files on the computers they were added from; there is no proxy to keep."
+                : "Downloads a proxy of each video in this library to this computer so it plays without internet."
+            }
+            control={
+              <Switch
+                aria-label="Keep on this computer"
+                checked={keepOffline}
+                disabled={noServerProxy && !keepOffline}
+                onCheckedChange={(on) => void flipOffline(on)}
+              />
+            }
+          />
+        )}
         {!cloud && (
           <Row
             id="library-proxies"

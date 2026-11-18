@@ -39,6 +39,7 @@ const patches: unknown[] = [];
 const asked: Array<[string, string | null]> = [];
 let serverHere = false;
 let stopped: "free" | "credit" | null = null;
+let offlineLibraries: string[] = [];
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -47,6 +48,7 @@ beforeEach(() => {
   asked.length = 0;
   serverHere = false;
   stopped = null;
+  offlineLibraries = [];
   // the Mac app with the server elsewhere: every section shows
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -56,6 +58,13 @@ beforeEach(() => {
       const b = JSON.parse(String(init.body)) as { settings: object };
       patches.push(b);
       return ok({ ...library, settings: { ...library.settings, ...b.settings } });
+    }
+    if (url === "/api/library/offline") {
+      if (init?.method === "POST") {
+        const b = JSON.parse(String(init.body)) as { library: string; on: boolean };
+        offlineLibraries = b.on ? [b.library] : [];
+      }
+      return ok({ versions: [], collections: [], ...(offlineLibraries.length ? { libraries: offlineLibraries } : {}) });
     }
     if (url === "/api/library") return ok({ libraries: [library] });
     if (url.endsWith("/watch")) return ok({ ...watch, allowed: serverHere });
@@ -232,5 +241,28 @@ describe("the Media Library's settings", () => {
     await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
     expect(patches).toEqual([{ settings: { upload: "proxies" } }]);
     expect(changed.at(-1)?.settings.upload).toBe("proxies");
+  });
+
+  it("Keep on this computer in Library settings toggles library-wide offline proxies in the Mac app and is disabled when Upload is Off", async () => {
+    document.documentElement.dataset.macDevice = "dev_mac";
+    try {
+      await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+      const offSwitch = host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
+      expect(offSwitch).not.toBeNull();
+      expect(offSwitch.disabled).toBe(true);
+      expect(document.body.textContent).toContain("there is no proxy to keep.");
+
+      act(() => root!.unmount());
+      host!.remove();
+      await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, upload: "proxies" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+      const sw = () => host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
+      expect(sw().disabled).toBe(false);
+      expect(sw().getAttribute("aria-checked")).toBe("false");
+      await act(async () => sw().click());
+      expect(asked.some(([what]) => what === "POST /api/library/offline")).toBe(true);
+      expect(sw().getAttribute("aria-checked")).toBe("true");
+    } finally {
+      delete document.documentElement.dataset.macDevice;
+    }
   });
 });
