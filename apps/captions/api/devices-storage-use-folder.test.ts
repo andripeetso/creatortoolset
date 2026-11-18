@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -32,4 +32,15 @@ it("a Media folder at a volume's root gets no Projects folder: the answer says w
   });
   const r = await ensureUseFolder("ana", "ws-a", "projects", "dev-c");
   expect(r).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
+});
+
+it("with no workspace named and two of the account's, no Projects folder is picked: the answer says what to choose", async () => {
+  mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
+  for (const id of ["ws-a", "ws-b"]) writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "ana", name: id, updatedAt: 1 }));
+  await changeStorage("ana", (st) => {
+    st.folders.push({ ...media("dev-e", "/Volumes/Tiny Footage/Shoots"), id: "media-e-a" }, { ...media("dev-e", "/Volumes/Tiny Footage/Brand B/Shoots"), id: "media-e-b", workspace: "ws-b" });
+  });
+  expect(await ensureUseFolder("ana", undefined, "projects", "dev-e")).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
+  // once the workspace is named, its own computer's folder beside its own Media folder
+  expect(await ensureUseFolder("ana", "ws-b", "projects", "dev-e")).toMatchObject({ role: "projects", workspace: "ws-b", origin: { host: "dev-e", path: "/Volumes/Tiny Footage/Brand B/Projects" } });
 });

@@ -111,6 +111,8 @@ function lookupHost(host: string): { id: string; owner: string } | undefined {
  * Mac's internal disk: with no Media folder off it, the answer says what to choose (Settings → Folders).
  */
 export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string }> {
+  // no workspace named and more than one of the account's: no folder is picked for it (a workspace's folder is another client's)
+  if (!workspace && (await ownedProjects(user)).length > 1) return { error: "Choose a Projects folder in Settings → Folders." };
   const inWs = workspace ? (w?: string) => w === workspace : null;
   const st = await readStorage(user);
   const has = st.folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, inWs));
