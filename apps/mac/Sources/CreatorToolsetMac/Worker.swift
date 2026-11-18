@@ -1,8 +1,9 @@
-// The computer worker: while the window shows a server by its address, this Mac runs that server's video steps for its
-// own account in the bundled Node (api/work/computer.ts, started by api/boot.ts with CT_WORKER). The device runner's long
-// poll says when a step waits (`{"work": true}`, Relay.swift); the worker claims it itself and ends after 10 minutes with
-// nothing to do (exit 0). Exit 3: the server needs a newer app, so the update prompt shows and no worker starts again
-// until the app is updated. SIGUSR2 cancels the running step. Never two at once; none while the window shows This Mac.
+// The computer worker: for every server this Mac takes work from (Runners.swift), this Mac runs that server's video steps
+// for its own account in the bundled Node (api/work/computer.ts, started by api/boot.ts with CT_WORKER), whatever the
+// window shows. The server's device runner's long poll says when a step waits (`{"work": true}`, Relay.swift); the worker
+// claims it itself and ends after 10 minutes with nothing to do (exit 0). Exit 3: the server needs a newer app, so the
+// update prompt shows and no worker starts again for that server until the app is updated. SIGUSR2 cancels the running
+// step. One worker per server, never two; none for This Mac's own server (it does its own steps).
 // It prints `[work:alive]` every 30 s whatever it does; one that prints nothing for `silentAfter` is hung, and the next
 // hint replaces it (its whole process group goes, then a new one starts). Jobs of all servers' workers take one Mac-wide
 // turn (CT_TURN_DIR, api/work/turn.ts), so this Mac runs one at a time.
@@ -72,13 +73,14 @@ func workDetail(_ s: WorkStatus) -> String {
     return [s.line, bytes, left].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: ", ")
 }
 
-/// The Cancel button's verb on the worker's row (Shell.runAgent sends it to the worker, not to a LaunchAgent).
+/// The Cancel button's verb on a worker's row, `cancel-work:<host>` (Shell.runAgent sends it to that server's worker, not
+/// to a LaunchAgent).
 let workCancelVerb = "cancel-work"
 
-/// The menu's row for the step this Mac runs: "Working on <edit>", the bytes and time left, Cancel; it opens the edit.
-func workRow(_ s: WorkStatus) -> ActivityRow {
-    ActivityRow(id: "work", title: "Working on \(s.edit.isEmpty ? "an edit" : s.edit)", detail: workDetail(s), state: .working,
-                href: "/editor/\(s.editId)", actions: [PluginAction(id: "cancel", title: "Cancel", run: workCancelVerb, label: "")],
+/// The menu's row for the step this Mac runs for `host`: "Working on <edit>", the bytes and time left, Cancel; it opens the edit.
+func workRow(_ s: WorkStatus, host: String) -> ActivityRow {
+    ActivityRow(id: "work:\(host)", title: "Working on \(s.edit.isEmpty ? "an edit" : s.edit)", detail: workDetail(s), state: .working,
+                href: "/editor/\(s.editId)", actions: [PluginAction(id: "cancel", title: "Cancel", run: "\(workCancelVerb):\(host)", label: "")],
                 progress: s.total.flatMap { $0 > 0 ? min(1, Double(s.done ?? 0) / Double($0)) : nil })
 }
 
@@ -107,9 +109,6 @@ final class Worker: ObservableObject {
     init(folder: URL?) {
         self.folder = folder
         program = folder.map { ($0.appendingPathComponent("bin/node"), ["dist/boot.js"]) }
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stop() }
-        }
     }
 
     var isRunning: Bool { process != nil }
@@ -130,7 +129,7 @@ final class Worker: ObservableObject {
             }
             try? input?.fileHandleForWriting.close()
             let pid = old.processIdentifier
-            DispatchQueue.global().async { Worker.stopGroup(pid) }
+            DispatchQueue.global().async { Worker.stopGroups([pid]) }
             return true
         }
         try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
@@ -184,35 +183,33 @@ final class Worker: ObservableObject {
         kill(p.processIdentifier, SIGUSR2)
     }
 
-    /// With the runner and on quit, as LocalServer.stop: stdin closed, half a second, SIGTERM, up to 10 s, SIGKILL.
+    /// Stops it and waits: its stdin closed, then its whole group (stopGroups).
     func stop() {
+        if let pid = release() { Worker.stopGroups([pid]) }
+    }
+
+    /// Lets the process go without waiting: its stdin is closed (it exits with the app's pipe) and its pid is returned for
+    /// stopGroups, which the caller runs where it may wait (off the main thread, or once for all workers on quit).
+    func release() -> pid_t? {
         replacing = nil
-        guard let p = process else { return }
+        guard let p = process else { return nil }
         process = nil
         status = nil
         try? input?.fileHandleForWriting.close()
         input = nil
-        let grace = Date().addingTimeInterval(0.5)
-        while p.isRunning && Date() < grace { usleep(20_000) }
-        if p.isRunning { p.terminate() }
-        let deadline = Date().addingTimeInterval(10)
-        while p.isRunning && Date() < deadline { usleep(50_000) }
-        if p.isRunning {
-            kill(p.processIdentifier, SIGKILL)
-            p.waitUntilExit()
-        }
+        return p.processIdentifier
     }
 
-    /// A hung worker's whole group (node and the ffmpeg it started), with stop()'s grace: half a second, SIGTERM, up to
-    /// 10 s, then SIGKILL. Process starts each child in a group of its own (pgid = pid).
-    nonisolated static func stopGroup(_ pid: pid_t) {
-        let alive = { kill(pid, 0) == 0 }
-        let grace = Date().addingTimeInterval(0.5)
-        while alive() && Date() < grace { usleep(20_000) }
-        kill(-pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(10)
+    /// Workers' whole groups (node and the ffmpeg it started), all at once with one grace: half a second for them to
+    /// leave by themselves, SIGTERM, up to `grace` s, then SIGKILL. Process starts each child in a group of its own (pgid = pid).
+    nonisolated static func stopGroups(_ pids: [pid_t], grace: TimeInterval = 10) {
+        let alive = { pids.contains { kill($0, 0) == 0 } }
+        let first = Date().addingTimeInterval(0.5)
+        while alive() && Date() < first { usleep(20_000) }
+        for pid in pids { kill(-pid, SIGTERM) }
+        let deadline = Date().addingTimeInterval(grace)
         while alive() && Date() < deadline { usleep(50_000) }
-        kill(-pid, SIGKILL)   // what is left of the group, children too
+        for pid in pids { kill(-pid, SIGKILL) }   // what is left of each group, children too
     }
 
     private func ended(_ p: Process) {

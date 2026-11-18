@@ -27,9 +27,10 @@ final class Shell: NSObject, ObservableObject {
     /// The Go menu's own tools (GET /api/activity/tools, PluginMenu.swift): the server's list for this account.
     @Published private(set) var appTools: [AppToolItem] = []
     @Published internal(set) var notice: String?
-    /// This Mac as an AI device (Relay.swift): on = the person turned it on; ai = what the runner reports.
+    /// This Mac as an AI device (Relay.swift): on = the person turned it on for the window's server; ai = what that
+    /// server's runner reports. Every server this Mac is switched on for has its runner (Runners.swift).
     @Published private(set) var aiOn = false
-    @Published private(set) var ai = AIStatus()
+    var ai: AIStatus { runners.windowStatus }
     /// Opens a window by its scene id ("main", "this-mac", "guide"); the main window sets it when it appears.
     var openWindowID: ((String) -> Void)?
     /// Screen recording (Recorder.swift): started from the page, the menu bar or the Record menu.
@@ -37,10 +38,15 @@ final class Shell: NSObject, ObservableObject {
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
-    /// This Mac's worker for the server the window shows by its address (Worker.swift): started when the runner's poll
-    /// says a step waits, stopped with the runner.
-    let worker = Worker(folder: LocalServer.folder)
-    private var workerWatch: AnyCancellable?
+    /// One runner and one worker per server this Mac takes work from, whatever the window shows (Runners.swift).
+    let runners = Runners()
+    /// "Take work from this server", per server; a change starts or stops that server's runner.
+    private var switches: HostSwitches {
+        didSet {
+            aiOn = hasServer && switches.aiOn(base.host ?? "")
+            syncRunners()
+        }
+    }
     /// The files picked in the open panel for the page (rememberPicks, ThisMacBridge.swift): the page's "files" ask.
     private var pickedFiles: [URL] = []
     /// The servers added by address (Servers.swift) and the one the window shows: thisMacID, an added one's id, or nil
@@ -58,7 +64,9 @@ final class Shell: NSObject, ObservableObject {
     /// The person's account (Account.swift): first run's sign-in with Apple or Google.
     let account = Account()
     /// This Mac's tunnel to the account's broker (Connect.swift), and the account's other computers from it (Servers).
-    @Published internal(set) var accountComputers: [ServerEntry] = []
+    @Published internal(set) var accountComputers: [ServerEntry] = [] {
+        didSet { if accountComputers != oldValue { syncRunners() } }
+    }
 
     private let noteCenter = NoteCenter()
     private var timer: Timer?
@@ -66,12 +74,11 @@ final class Shell: NSObject, ObservableObject {
     private let notesAskedKey = "notificationsAsked"
     private let serversKey = "servers"
     private let currentKey = "currentServer"
-    private let aiKey = "aiOnThisMac"
     /// The page the window was on when an update relaunched the app (rememberPageForRelaunch), opened again once.
     private let pageBeforeUpdateKey = "pageBeforeUpdate"
     private var updateWatch: AnyCancellable?
-    private var runner: RelayRunner?
-    private var runnerID = UUID()
+    /// The window's server's runner.
+    var runner: RelayRunner? { runners.relay(for: base.host) as? RelayRunner }
     private let museLogin = MuseLogin()
     private let antigravityLogin = AntigravityLogin()
 
@@ -112,6 +119,9 @@ final class Shell: NSObject, ObservableObject {
         current = picked
         runsHere = picked == thisMacID
         base = Self.url(of: picked, in: list, local: server)
+        // the servers paired before the switch was per server keep the old switch's value (LocationAgents' list)
+        let paired = ([server?.url] + list.map { siteURL(from: $0.url) }).compactMap { $0?.host }
+        switches = HostSwitches(paired: paired.filter { DeviceVault.token(for: $0) != nil })
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -130,9 +140,10 @@ final class Shell: NSObject, ObservableObject {
         updateWatch = UpdateWhenIdle.shared.$held.sink { [weak view] held in
             DispatchQueue.main.async { view?.macUpdate = held }
         }
-        // the menu's "Working on" row follows the worker
-        workerWatch = worker.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
-        worker.onNeedsUpdate = { UpdateWhenIdle.shared.neededByServer() }
+        // the menu's rows and counts follow every server's runner and worker
+        runners.onChange = { [weak self] in self?.objectWillChange.send() }
+        runners.make = { [unowned self] host, url, token, id in self.startRunner(host: host, url: url, token: token, id: id) }
+        runners.windowHost = current == nil ? nil : base.host
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
@@ -150,7 +161,7 @@ final class Shell: NSObject, ObservableObject {
         Dictation.shared.languages = { [weak self] in await self?.voiceLanguages() }
         Dictation.shared.site = { [weak self] in self?.hasServer == true ? await self?.client() : nil }
         // this Mac's dictation models are its speech models on the Voice page: a change here is claimed at once
-        SpeechModels.shared.onChange = { [weak self] in self?.runner?.modelsChanged() }
+        SpeechModels.shared.onChange = { [weak self] in self?.runners.forEach { $0.modelsChanged() } }
         Dictation.shared.start()
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
@@ -248,7 +259,7 @@ final class Shell: NSObject, ObservableObject {
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             case "folder": done(self.chooseFolder())
             // Settings → Folders' "This Mac" on a server it isn't on yet (a press): paired, the AI left as it is
-            case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; done(self.thisMacState()) }
+            case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; self.syncRunners(); done(self.thisMacState()) }
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
@@ -281,7 +292,7 @@ final class Shell: NSObject, ObservableObject {
             MainActor.assumeIsolated { self?.serverChanged(state) }
         }
         server?.onReady = { [weak self] in self?.serverReady() }
-        aiOn = UserDefaults.standard.bool(forKey: aiKey)
+        aiOn = hasServer && switches.aiOn(base.host ?? "")
         pluginCount = PluginRecord.live.load().on.count
         markDevice()
         let back = UserDefaults.standard.url(forKey: pageBeforeUpdateKey).flatMap { isSite($0, base) ? $0 : nil }
@@ -293,15 +304,20 @@ final class Shell: NSObject, ObservableObject {
             if let back { webView.load(URLRequest(url: back)) } else { open("/") }
             if aiOn { startAI() }
         }
+        syncRunners()
         // here or away (Places.swift): a disk came, went, went away or came back; this Mac's report goes now (the
         // server's view of its disks), and the page checks its originals again
         Places.shared.onChange = { [weak self] in
             MainActor.assumeIsolated {
-                self?.runner?.reportNow()
+                self?.runners.forEach { $0.reportNow() }
                 self?.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-places', {detail: {at: Date.now()}}))")
             }
         }
         Places.shared.start()
+        // quitting (an update's relaunch too): every server's worker group goes, with one grace for all
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.runners.stopAll() }
+        }
         // the location agents (LocationAgent.swift): one per server this Mac is paired with, AI on or off
         LocationAgents.shared.start { [unowned self] in (self.server.map { [$0.url] } ?? []) + self.servers.compactMap { URL(string: $0.url) } }
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
@@ -335,7 +351,8 @@ final class Shell: NSObject, ObservableObject {
 
     var currentName: String? { listed.first { $0.id == current }?.name }
 
-    /// The window opens this server: This Mac starts the server here, another one stops it (one runner at a time).
+    /// The window opens this server: This Mac starts the server here, another one stops it (and This Mac's runner with it;
+    /// the other servers' runners keep running).
     func select(_ id: String?) {
         guard id != current else { return }
         current = id
@@ -380,6 +397,7 @@ final class Shell: NSObject, ObservableObject {
         servers = list
         UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: serversKey)
         markDevice()
+        syncRunners()
     }
 
     /// This Mac is a Settings section in the page (Settings → This Mac, ThisMacBridge.swift); the window keeps the rest.
@@ -503,7 +521,7 @@ final class Shell: NSObject, ObservableObject {
     /// Move… : the window shows a message while the server is stopped; the runner restarts on the new folder.
     func moveData(to dest: URL) async -> String? {
         guard let server else { return nil }
-        stopRunner()
+        runners.stop(host: server.url.host ?? "")
         webView.loadHTMLString(splashPage("Moving your data…"), baseURL: nil)
         let problem = await server.move(to: dest)
         // another server was opened during the move: the one here stays stopped, and the window stays on that server
@@ -513,9 +531,9 @@ final class Shell: NSObject, ObservableObject {
     }
 
     func useDataFolder(_ url: URL) {
-        stopRunner()
         // this Mac's device token belongs to the old folder's server: pair afresh once the new one answers
-        let host = base.host ?? ""
+        let host = server?.url.host ?? base.host ?? ""
+        runners.stop(host: host)
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
@@ -537,6 +555,8 @@ final class Shell: NSObject, ObservableObject {
             serverProblem = why
             if runsHere { webView.loadHTMLString(messagePage(why), baseURL: nil) }
         }
+        // This Mac's runner only while its server runs (the sink runs before `state` changes: the new one is passed)
+        syncRunners(localRunning: state == .running)
     }
 
     /// Try again (the window's card, This Mac): the server starts once more, with its crash count reset.
@@ -567,20 +587,22 @@ final class Shell: NSObject, ObservableObject {
     var status: MenuStatus {
         var failed = false
         if case .failed = server?.state { failed = runsHere }
-        let s = menuStatus(serverFailed: failed, serverUp: runsHere && server?.state == .running, aiOn: aiOn,
-                           aiRunning: ai.running, aiError: ai.lastError != nil, lowSpace: spaceLine != nil)
+        // the counts are every server's; the error dot is only the window's server's (another one's goes to the log)
+        let s = menuStatus(serverFailed: failed, serverUp: runsHere && server?.state == .running, aiOn: !runners.isEmpty,
+                           aiRunning: runners.running, aiError: ai.lastError != nil, lowSpace: spaceLine != nil)
         return s != .problem && !rows.active.isEmpty ? .busy : s
     }
 
     var rows: (active: [ActivityRow], forYou: [ActivityRow]) {
-        var rows = activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows, drawing: aiOn && ai.drawing)
-        if let status = worker.status { rows.active.insert(workRow(status), at: 0) }
+        var rows = activityRows(sessions: sessions, aiRunning: runners.running, plugin: pluginRows, drawing: runners.drawing)
+        rows.active.insert(contentsOf: runners.workRows, at: 0)
         return rows
     }
 
+    /// This Mac's work for every server it takes work from.
     var aiLine: String {
-        guard aiOn else { return "Taking work: off" }
-        return ai.running > 0 ? "Taking work: running \(ai.running)" : "Taking work: on"
+        guard !runners.isEmpty else { return "Taking work: off" }
+        return runners.running > 0 ? "Taking work: running \(runners.running)" : "Taking work: on"
     }
 
     /// The Mac's device is known for this site (paired once); "Remove this Mac from the account" needs it.
@@ -703,7 +725,10 @@ final class Shell: NSObject, ObservableObject {
     /// A pill row's button (LaunchAgent.swift): start, stop or restart the agent, off the main thread; a failure shows in
     /// the panel's notice, and the rows load again.
     func runAgent(_ action: PluginAction) {
-        if action.run == workCancelVerb { return worker.cancel() }
+        if action.run.hasPrefix(workCancelVerb + ":") {
+            runners.worker(for: String(action.run.dropFirst(workCancelVerb.count + 1)))?.cancel()
+            return
+        }
         Task.detached {
             let problem = LaunchAgent.run(verb: action.run, label: action.label)
             await MainActor.run { [weak self] in
@@ -718,13 +743,16 @@ final class Shell: NSObject, ObservableObject {
         if hasServer { showWindow(href: "/settings") } else { openWindowID?("this-mac"); NSApp.activate(ignoringOtherApps: true) }
     }
 
-    /// The notes and the AI runner follow the window's address.
+    /// The notes, the switch and the menu's error follow the window's address. The runners do not: every server this Mac
+    /// is switched on for keeps its own.
     private func switchTo(_ url: URL) {
         base = url
         markDevice()
         Task { await refresh() }
-        stopRunner()
-        ai = AIStatus()
+        let host = url.host ?? ""
+        runners.windowHost = hasServer ? host : nil
+        // shown again: a pairing that failed is tried again (the didSet syncs the runners and sets aiOn)
+        switches.pairFailed.remove(host)
         // a token is per site: pair again if this one has none (the server on this Mac: once it answers, serverReady)
         if aiOn && !runsHere && hasServer { startAI() }
     }
@@ -781,16 +809,12 @@ final class Shell: NSObject, ObservableObject {
 
     // MARK: this Mac for the person's AI (Relay.swift)
 
-    /// "Take work from this server": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
+    /// "Take work from this server", for the window's server only: on pairs this Mac once (signed in to the site in the
+    /// window) and starts its runner; off stops that one and keeps the pairing. Other servers' runners are untouched.
     func setAI(_ on: Bool) {
-        aiOn = on
-        UserDefaults.standard.set(on, forKey: aiKey)
-        if on {
-            startAI()
-        } else {
-            stopRunner()
-            ai = AIStatus()
-        }
+        guard hasServer else { return }
+        switches.set(base.host ?? "", on)
+        if on { startAI() }
     }
 
     private func startAI() { _ = bringUpAI() }
@@ -810,14 +834,14 @@ final class Shell: NSObject, ObservableObject {
                 do {
                     try await pairThisMac()
                 } catch {
-                    if base == site { setAIOff("Could not add this Mac: \(error.localizedDescription)") }
+                    if base == site { pairingFailed(site.host ?? "", "Could not add this Mac: \(error.localizedDescription)") }
                     return false
                 }
                 // turned off, or another server opened, while pairing: the pairing stays, no runner
                 guard aiOn, base == site else { return false }
             }
-            startRunner()
-            return runner != nil
+            syncRunners()
+            return runners.relay(for: site.host) != nil
         }
         pairing[site] = task
         return task
@@ -848,72 +872,81 @@ final class Shell: NSObject, ObservableObject {
         LocationAgents.shared.poke()
     }
 
-    private func startRunner() {
-        let host = base.host ?? ""
-        guard runner == nil, let token = DeviceVault.token(for: host) else { return }
-        let id = UUID()
-        let work = relayFolder(for: base, localData: runsHere ? server?.dataDir : nil)
-        let relay = RelayRunner(base: base, token: token, work: work,
+    /// The servers whose runner should run now, and those runners started or stopped to match (Runners.swift).
+    /// `localRunning`: whether This Mac's own server runs (passed while its state is changing).
+    func syncRunners(localRunning: Bool? = nil) {
+        let urls = listed.map { Self.url(of: $0.id, in: listed, local: server) }.filter { $0 != Self.noServer }
+        let hosts = runnerHosts(listed: urls, on: { self.switches.runs($0) }, hasToken: { DeviceVault.token(for: $0) != nil },
+                                localHost: server?.url.host, localRunning: localRunning ?? (server?.state == .running))
+        var wanted: [String: URL] = [:]
+        for url in urls { if let host = url.host, hosts.contains(host), wanted[host] == nil { wanted[host] = url } }
+        runners.sync(wanted, token: { DeviceVault.token(for: $0) })
+    }
+
+    /// One server's runner and worker (Runners.sync starts it). Its callbacks act only while it is that server's current one.
+    private func startRunner(host: String, url: URL, token: String, id: UUID) -> (HostRelay, Worker) {
+        let local = host == server?.url.host
+        let work = relayFolder(for: url, localData: local ? server?.dataDir : nil)
+        let worker = Worker(folder: LocalServer.folder)
+        worker.onNeedsUpdate = { UpdateWhenIdle.shared.neededByServer() }
+        let relay = RelayRunner(base: url, token: token, work: work,
             prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }), speech: SpeechModels.link,
             onStatus: { [weak self] status in
                 Task { @MainActor in
-                    guard let self, self.runnerID == id else { return }
-                    self.ai = status
+                    guard let self, self.runners.isCurrent(host, id) else { return }
+                    if let line = self.runners.note(status, host: host) { AppLog.write(line) }
                 }
             },
             onRevoked: { [weak self] in
-                Task { @MainActor in
-                    guard let self, self.runnerID == id else { return }
-                    self.revoked()
-                }
+                Task { @MainActor in self?.revoked(host: host, token: token) }
             },
             // from the runner's thread: whether a worker was started now (one runs already, or This Mac: no)
             onWork: { [weak self] in
                 DispatchQueue.main.sync {
                     MainActor.assumeIsolated {
                         // a hung worker (silent past silentAfter) is replaced; a busy one never is
-                        guard let self, self.runnerID == id, !self.worker.isRunning || self.worker.isSilent else { return false }
-                        return self.worker.start(server: self.base, token: token, data: work.appendingPathComponent("work"), thisMac: self.runsHere)
+                        guard let self, self.runners.isCurrent(host, id), !worker.isRunning || worker.isSilent else { return false }
+                        return worker.start(server: url, token: token, data: work.appendingPathComponent("work"), thisMac: local)
                     }
                 }
             })
-        runner = relay
-        runnerID = id
-        relay.start()
+        AppLog.write("[relay] started for \(host)")
+        return (relay, worker)
     }
 
-    private func stopRunner() {
-        runner?.stop()
-        worker.stop()
-        runner = nil
-        runnerID = UUID()
-        // what the stopped runner still finishes is no longer told here, so its count and its row would stay for good
-        ai.running = 0
-        ai.drawing = false
-    }
-
-    /// The site no longer knows this Mac (its token was revoked): drop the token and say so in the menu.
-    private func revoked() {
-        let host = base.host ?? ""
+    /// A server no longer knows this Mac (its token was refused): only when that token is still the one in the vault and
+    /// in that server's runner, drop it, stop that server's runner and say so. A late refusal from a replaced runner only syncs.
+    private func revoked(host: String, token: String) {
+        guard runners.refused(host: host, token: token, vault: DeviceVault.token(for: host)) else { return syncRunners() }
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
-        setAIOff("This Mac was removed from the account. Turn on “Take work from this server” to add this Mac again.")
+        runners.stop(host: host)
+        setAIOff(host: host, removedNotice(serverName(host)))
     }
 
-    private func setAIOff(_ message: String?) {
-        stopRunner()
-        aiOn = false
-        UserDefaults.standard.set(false, forKey: aiKey)
-        ai = AIStatus()
+    /// That server's switch goes off (its runner stops); other servers are untouched.
+    private func setAIOff(host: String, _ message: String?) {
+        switches.set(host, false)
         notice = message
+    }
+
+    /// A pairing failed: no runner for that server until the window shows it again or the app restarts; its switch stays.
+    private func pairingFailed(_ host: String, _ message: String) {
+        switches.pairFailed.insert(host)
+        notice = message
+    }
+
+    /// The name the Servers list gives a host, else the host.
+    private func serverName(_ host: String) -> String {
+        listed.first { Self.url(of: $0.id, in: listed, local: server).host == host }?.name ?? host
     }
 
     /// "Remove this Mac from the account": stops it, drops its token here and asks the site to remove the device.
     func forgetThisMac() {
         let host = base.host ?? ""
         let id = DeviceVault.deviceID(for: host)
-        setAIOff(nil)
+        setAIOff(host: host, nil)
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()

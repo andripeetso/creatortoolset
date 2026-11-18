@@ -180,26 +180,31 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     /// One line per thing a relaunch cuts off. The server's own work only counts when it runs on this Mac.
-    @MainActor static func wouldInterrupt(_ shell: Shell) -> [String] {
+    /// `countAI` false: the AI jobs are past the wait's cap (aiHoldsUpdate) and no longer count.
+    @MainActor static func wouldInterrupt(_ shell: Shell, countAI: Bool = true) -> [String] {
         var cut: [String] = []
         if shell.recorder.busy && shell.recorder.phase != .toolbar { cut.append("Your screen recording") }
-        if shell.ai.running > 0 { cut.append("\(shell.ai.running) AI request\(shell.ai.running == 1 ? "" : "s") on this Mac") }
+        let ai = countAI ? shell.runners.running : 0
+        if ai > 0 { cut.append("\(ai) AI request\(ai == 1 ? "" : "s") on this Mac") }
         if shell.runsHere { cut += shell.rows.active.filter { $0.id != "mac" }.map { "\($0.title) (\($0.detail))" } }
         return cut
     }
 
-    /// Calls `go` once no AI job runs on this Mac and nothing records; for the quiet updates also only while nobody is
-    /// at the Mac (`updateMayInstall`).
+    /// Calls `go` once no AI job of any server runs on this Mac (waiting at most 30 min for them: aiHoldsUpdate) and
+    /// nothing records; for the quiet updates also only while nobody is at the Mac (`updateMayInstall`).
     private func whenIdle(every seconds: TimeInterval, inBackground: Bool, _ go: @escaping () -> Void) {
+        let since = Date()
         Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { timer in
             MainActor.assumeIsolated {
-                guard let shell = AppDelegate.shell, shell.ai.running == 0, !shell.ai.drawing, !shell.recorder.busy else { return }
+                guard let shell = AppDelegate.shell, !shell.recorder.busy else { return }
+                let holds = aiHoldsUpdate(running: shell.runners.running, drawing: shell.runners.drawing, waited: Date().timeIntervalSince(since))
+                guard !holds else { return }
                 if inBackground {
                     let away = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-                    guard updateMayInstall(appActive: NSApp.isActive, aiJobs: shell.ai.running, recording: shell.recorder.busy,
+                    guard updateMayInstall(appActive: NSApp.isActive, aiJobs: 0, recording: shell.recorder.busy,
                                            secondsSinceInput: away) else { return }
                 } else {
-                    guard Self.wouldInterrupt(shell).isEmpty else { return }
+                    guard Self.wouldInterrupt(shell, countAI: false).isEmpty else { return }
                 }
                 timer.invalidate()
                 go()

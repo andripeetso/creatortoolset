@@ -133,7 +133,7 @@ struct ActivityPanel: View {
             empty: shell.hasServer ? "Nothing running or waiting" : "Pick a server in the window to see your work",
             warnings: [lastError.flatMap(plainLimitLine) == nil ? lastError.map { "Last AI error: \($0)" } : nil,
                        shell.notice, shell.spaceLine,
-                       shell.worker.needsUpdate ? "This server needs a newer Creator Toolset to run its steps on your Mac" : nil].compactMap { $0 },
+                       shell.runners.worker(for: shell.runners.windowHost)?.needsUpdate == true ? "This server needs a newer Creator Toolset to run its steps on your Mac" : nil].compactMap { $0 },
             open: { row in if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() } },
             run: { shell.runAgent($0) }
         ) {

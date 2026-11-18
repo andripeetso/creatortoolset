@@ -283,7 +283,7 @@ function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
       <Row
         id="use-this-mac"
         title="Take work from this server"
-        description="This Mac runs this server's jobs for your account while the app shows it: AI requests, editor steps and media library work."
+        description="This Mac runs this server's jobs for your account while Creator Toolset is open: AI requests, editor steps and media library work."
         status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
         control={
           <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Take work from this server" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
