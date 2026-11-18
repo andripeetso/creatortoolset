@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -17,6 +17,7 @@ import { type Moves, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
+import { serverWorks } from "./work/server-work";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -173,7 +174,14 @@ void mkdir(ENHANCE_DIR, { recursive: true }).catch(() => {});
 async function persist(meta: Meta): Promise<void> {
   meta.updatedAt = Date.now();
   try {
-    await writeFile(path.join(sesDir(meta.id), "meta.json"), JSON.stringify(meta));
+    // whole or not at all: two saves at once (startRun's and the task's) would leave the longer one's tail behind
+    const file = path.join(sesDir(meta.id), "meta.json");
+    const tmp = `${file}.${randomUUID()}`;
+    await writeFile(tmp, JSON.stringify(meta));
+    await rename(tmp, file).catch(async (e) => {
+      await rm(tmp, { force: true });
+      throw e;
+    });
   } catch {
     /* session may have been deleted mid-job */
   }
@@ -265,6 +273,18 @@ if (env.isProduction) {
 
 /* ---- probes & process helpers ---- */
 
+/**
+ * A plug-in engine's convert where this server may not decode: its one input goes to its output as is (a link, no copy),
+ * and the engine's own computer decodes it. shortcut: one `-i` and the output last; a step with more inputs fails.
+ */
+async function handOver(args: string[]): Promise<void> {
+  const inputs = args.filter((_, i) => args[i - 1] === "-i");
+  if (inputs.length !== 1) throw new Error("This server doesn't process video or sound, and this step needs it.");
+  const out = args.at(-1)!;
+  await rm(out, { force: true });
+  await link(inputs[0]!, out);
+}
+
 /** Spawn a command for session `id` (tracked so cancel can kill it),
  *  mapping ffmpeg -progress output onto the [lo, hi] progress slice. Only a plug-in engine calls it (enhanceHost), with
  *  its own commands for its own pass; nothing in this file runs one. */
@@ -275,6 +295,7 @@ function runStep(
   args: string[],
   progress?: { duration: number; lo: number; hi: number }
 ): Promise<void> {
+  if (cmd === "ffmpeg" && !serverWorks(meta.projectId, meta.owner ?? null)) return handOver(args);
   return new Promise((resolve, reject) => {
     const fullArgs =
       cmd === "ffmpeg"
@@ -444,12 +465,12 @@ function enqueue(meta: Meta, user: SessionUser): boolean {
 
 /**
  * The current pass: a plug-in engine's (it hands the result back itself), or the computer task from this pass on. A
- * plug-in engine's first pass waits for the task's first steps (the length, the picture check, the levelled original),
- * which hands it on (enhanceFiled, `next`).
+ * plug-in engine starts at once, even first: its computer waits for no other task, and the length, the picture check and
+ * the levelled original come with the run's last steps (finish).
  */
 function startStep(meta: Meta): void {
   const plugged = engines.get(meta.chain![meta.step ?? 0]);
-  if (plugged && (meta.step || existsSync(sourceAudio(meta.id)))) {
+  if (plugged) {
     void plugged.start(enhanceHost, meta).catch(async (e) => {
       if (active.get(meta.id) !== meta) return;
       setStatus(meta, "error");
@@ -551,7 +572,7 @@ export const finishInput = (id: string) => path.join(sesDir(id), "finish-in");
 async function finish(id: string, meta: Meta, clean: string, _duration: number, alive: () => boolean): Promise<void> {
   if (!alive()) return;
   await rename(clean, finishInput(id));
-  startRun(meta, { chain: meta.chain ?? [], step: meta.chain?.length ?? 0, source: false, finish: true });
+  startRun(meta, { chain: meta.chain ?? [], step: meta.chain?.length ?? 0, source: !existsSync(sourceAudio(id)), finish: true });
 }
 
 /** Kill a queued/running job, the Mac's included (files stay). */

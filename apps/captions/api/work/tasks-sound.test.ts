@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -32,7 +32,7 @@ const { ffmpegCommand } = await import("../ffmpeg-runtime");
 const { CLAIM_POLL } = await import("./routes");
 const { client } = await import("./computer");
 const { writeServerWork } = await import("./server-work");
-const { runTaskJob } = await import("./tasks");
+const { runTaskJob, taskFor } = await import("./tasks");
 CLAIM_POLL.holdMs = 0;
 
 const ff = (...a: string[]) => execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", ...a]);
@@ -109,13 +109,24 @@ describe("Audio Enhancer on a computer", () => {
 });
 
 // a plug-in engine: its own pass leaves a clean sound and hands it to the host's last steps
-const { registerEnhanceEngine } = await import("../enhance");
+const { enhanceHost, registerEnhanceEngine } = await import("../enhance");
 registerEnhanceEngine({
   id: "tinyclean",
   start: async (host, meta) => {
     const out = path.join(host.sesDir(meta.id), "tiny-out.wav");
     copyFileSync(isolated, out);
     await host.finish(meta.id, meta, out, meta.duration, () => true);
+  },
+});
+// a plug-in engine that runs on one of the person's computers: it converts its input for the computer, then waits for it
+registerEnhanceEngine({
+  id: "tinypark",
+  start: async (host, meta) => {
+    const input = path.join(host.sesDir(meta.id), "computer-in.wav");
+    await host.runStep(meta.id, meta, "ffmpeg", ["-i", host.stepInput(meta), "-vn", "-ac", "1", "-ar", String(host.sampleRate), "-c:a", "pcm_s16le", "-f", "wav", input]);
+    host.setStatus(meta, "queued");
+    meta.remote = { state: "waiting", at: Date.now() };
+    await host.persist(meta);
   },
 });
 
@@ -143,20 +154,30 @@ describe("the Audio Enhancer's last steps and its download at a strength, on a c
     writeServerWork({ on: false });
     await claim([]); // the computer names no kinds now: none can take a task, so each waits with the line
     const there = await upload("tinyclean");
-    // first the length and the levelled original, then the engine's pass here, then the last steps: each task waits
-    await until(() => waits(there));
-    expect(existsSync(at("enhance", there, "source.m4a"))).toBe(false);
-    await runOne("enhance");
-    await claim([]);
+    // the engine's pass starts at once; the length, the levelled original, the loudness and the remux wait as one task
     await until(async () => {
       expect(existsSync(at("enhance", there, "finish-in"))).toBe(true);
       await waits(there);
     });
-    expect(existsSync(at("enhance", there, "enhanced.m4a"))).toBe(false);
+    for (const f of ["source.m4a", "enhanced.m4a"]) expect(existsSync(at("enhance", there, f))).toBe(false);
     await runOne("enhance");
     await done(there);
     expect(existsSync(at("enhance", there, "finish-in"))).toBe(false);
-    for (const f of ["enhanced.m4a", "enhanced-video.mp4"]) expect(seconds(at("enhance", there, f))).toBe(seconds(at("enhance", here, f)));
+    for (const f of ["source.m4a", "enhanced.m4a", "enhanced-video.mp4"]) expect(seconds(at("enhance", there, f))).toBe(seconds(at("enhance", here, f)));
+  });
+
+  it("a plug-in engine that runs on a computer parks for it at once: its input is the upload as is, no task queued, nothing decoded here", async () => {
+    delete process.env.CT_LOCAL;
+    writeServerWork({ on: false });
+    const id = await upload("tinypark");
+    await until(async () => expect(await read(`/api/enhance/${id}`)).toMatchObject({ status: "queued", remote: { state: "waiting" } }));
+    // the server's convert handed the upload over (the same file), the computer decodes it
+    expect(statSync(at("enhance", id, "computer-in.wav")).ino).toBe(statSync(at("enhance", id, "original")).ino);
+    expect(taskFor("enhance", id)).toBeUndefined();
+    // two saves at once (a run's and its task's) leave one whole save
+    const meta = (await enhanceHost.readMeta(id))!;
+    await Promise.all([enhanceHost.persist({ ...meta, error: "x".repeat(5000) }), enhanceHost.persist(meta)]);
+    expect(() => JSON.parse(readFileSync(at("enhance", id, "meta.json"), "utf8"))).not.toThrow();
   });
 
   it("a blend waits with the line, nothing made on the server, and a computer's blend matches the server's", async () => {
