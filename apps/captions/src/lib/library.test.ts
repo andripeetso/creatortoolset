@@ -156,6 +156,19 @@ describe("uploadFile from the Mac app on its own server", () => {
     expect(told.at(-1)).toBe(5000); // after the in-place attempt's own 0s
   });
 
+  it("under Upload none (onMac) a Mac-app drop never posts to /uploads: in place, indexed on this Mac, or refused where its path is unknown", async () => {
+    mac(picked);
+    const fetchMock = vi.fn(async (url: string) => (url.endsWith("/in-place") ? new Response("{}", { status: 400 }) : Response.json({ assetId: "a1" })));
+    vi.stubGlobal("fetch", fetchMock);
+    // the drop's own path, the server refuses the in-place add: indexed on this Mac, nothing sent
+    expect(await uploadFile("lib_1", clip(), () => {}, undefined, "/Volumes/Card/C0001.MP4", { onMac: true })).toEqual({ assetId: "a1" });
+    // a file whose place on this Mac is unknown: refused, never uploaded
+    await expect(uploadFile("lib_1", new File([new Uint8Array(9)], "Other.MP4"), () => {}, undefined, undefined, { onMac: true })).rejects.toThrow("Not added");
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls).toEqual(["/api/library/lib_1/in-place", "/api/library/lib_1/on-mac"]);
+    expect(urls.some((url) => /\/uploads(\?|$)/.test(url))).toBe(false);
+  });
+
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "This file is 12 GB. This server takes files up to 8 GB.", code: "too_large" }), { status: 413 }));
     await expect(uploadFile("lib_1", clip(), () => {})).rejects.toMatchObject({ message: expect.stringContaining("12 GB"), code: "too_large" });

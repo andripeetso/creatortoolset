@@ -195,3 +195,37 @@ describe("with it", () => {
     expect(host.textContent).not.toContain("Could not play the file");
   });
 });
+
+// Upload none (no team shares the library): the server plays nothing of a clip this computer lacks, so no address is asked
+describe("under Upload none", () => {
+  const openNone = (a: AssetCard = card) =>
+    act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+
+  it("a 'not here' answer (the original missing) never yields a server address, and the panel says where it is", async () => {
+    answer = { state: "gone" };
+    await openNone({ ...card, onMac: undefined, placeWord: { word: "on", computer: "Studio" } });
+    expect(post).toHaveBeenCalled();
+    expect(video().getAttribute("src")).toBeNull();
+    expect(host.textContent).toContain("The original is missing on this computer");
+  });
+
+  it("an away answer with no copy on this computer: no server address, and the disk's line", async () => {
+    answer = { state: "away", root };
+    await openNone();
+    expect(video().getAttribute("src")).toBeNull();
+    expect(host.textContent).toContain("The original is on footage (office-nas), which isn't connected");
+  });
+
+  it("without the Mac app the server's address is never asked either: the place line is shown", async () => {
+    delete document.documentElement.dataset.macPlaces;
+    await openNone({ ...card, onMac: undefined, placeWord: { word: "on", computer: "Studio" } });
+    expect(video().getAttribute("src")).toBeNull();
+    expect(host.textContent).toContain("On Studio");
+  });
+
+  it("a copy this computer has still plays from here", async () => {
+    answer = { state: "here", path: "/Volumes/footage/2025/a.mov", url: "ctlocal://media/a" };
+    await openNone();
+    expect(video().getAttribute("src")).toBe("ctlocal://media/a");
+  });
+});

@@ -18,8 +18,12 @@ import { serverKind } from "../work/server-work";
 
 /** original: the file itself; proxy: a smaller copy made of it; derivative: a picture, sheet or text the Library shows; serving: bytes the server made. */
 export type ReceiveKind = "original" | "proxy" | "derivative" | "serving";
-/** person: someone chose to send it; computer: a computer sends a file it holds, nobody sent it by hand. */
-export type ReceiveOrigin = "person" | "computer";
+/**
+ * person: someone chose to send it from a browser; computer: a computer sends a file it holds, nobody sent it by hand;
+ * phone: the iPhone app sends the person's own file to their computers (`x-ct-origin: phone`, stored on the upload). A
+ * phone's original is taken under none too and held until a computer has it (local-first PLAN-final decision 1).
+ */
+export type ReceiveOrigin = "person" | "computer" | "phone";
 
 export const REFUSED_NONE = "This library keeps its files on your computers. Add them from the Mac app, or from the computer that has them.";
 export const REFUSED_PROXIES = "This library takes proxies only. Your computer makes the proxy and sends that.";
@@ -86,7 +90,7 @@ export function mayReceive(
   if (kind === "original") {
     if (upload === "all") return { ok: true };
     if (upload === "proxies") return provesProxies(opts.sender) ? refuse(REFUSED_PROXIES) : { ok: true };
-    return refuse(REFUSED_NONE);
+    return origin === "phone" ? { ok: true } : refuse(REFUSED_NONE);
   }
   // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs the setting
   if (origin === "computer" && upload === "none" && !opts.team) return refuse(REFUSED_NONE);

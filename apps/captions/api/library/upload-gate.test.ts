@@ -134,6 +134,25 @@ describe("the library upload routes ask it", () => {
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
   });
 
+  it("the iPhone app's own file (x-ct-origin: phone) is taken under none at its start, each part and the finish; a Mac's file or a browser's is not", async () => {
+    const phone = (lib: string, from?: string) =>
+      app.request(`/api/library/${lib}/uploads`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-ct-origin": "phone" },
+        body: JSON.stringify({ filename: "IMG 0001.MOV", size: 4, ...(from ? { fromPath: from, fromDevice: "mac-1" } : {}) }),
+      });
+    const r = await phone("lib_none");
+    expect(r.status).toBe(201);
+    const { id } = (await r.json()) as { id: string };
+    expect(d.prepare("SELECT origin FROM uploads WHERE id = ?").get(id)).toEqual({ origin: "phone" });
+    expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": "4" }, body: "abcd" })).status).toBe(204);
+    expect((await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" })).status).toBe(200);
+    // a phone's header on a file a Mac names is that Mac's file: refused under none like any computer's
+    expect((await phone("lib_none", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(409);
+    // no header, the browser: refused under none
+    expect((await start("lib_none")).status).toBe(409);
+  });
+
   it("a part and the finish ask again: switched to none mid-upload, they are refused and what arrived stays", async () => {
     d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'all') WHERE id = 'lib_p'`).run();
     const { id } = (await (await start("lib_p", "/Users/tiny/Movies/Handstand.mp4")).json()) as { id: string };
@@ -252,7 +271,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/library/derived.ts": "P2: the send branch reads the gate's setting (uploadFor); a phone's made proxy (parseMade) carries its SHA-256, checked by mayReceive in routes.ts",
   "apps/captions/api/lib/uploads.ts": "PASS: the helpers (appendBody, writeBody, receivePart); gated by their callers",
   "apps/captions/api/lib/incoming.ts": "PASS: requestBodyStream, a helper; gated by its callers",
-  "apps/captions/api/review.ts": "P0: uploadInit (start, also the relay), the part and finish routes and the refs route call mayReceive",
+  "apps/captions/api/review.ts": "PASS: Review uploads are the server's to take under every Upload setting (R2: reviews are served); not gated by mayReceive",
   "apps/captions/api/projects.ts": "P3a: POST /, POST /:id/clips and every /:id/clips/:clipId/original route call mayReceive (takesOriginal): a person's upload is taken, a computer's own file (?fromPath=) by the clip's library, none off This Mac without one",
   "apps/captions/api/clips.ts": "OPEN P3d: Video Notes recordings stay on the recorder's computer (decision 19)",
   "apps/captions/api/transcribe.ts": "OPEN P3f: speech for transcription",
@@ -362,7 +381,7 @@ const STREAMS: Record<string, string> = {
   "apps/captions/api/editor/media.ts": "mayServe: an export's originals (mediaPaths refuses them, 409)",
   "apps/captions/api/devices.ts": "PASS: a computer's own job reads (its footage copy, its transcript proxy, its copy file), not a viewer",
   "apps/captions/api/work/library-package.ts": "PASS: a computer's own job reads (the light proxy, the original for its proxy), not a viewer",
-  "apps/captions/api/review.ts": "PASS: a Review upload being assembled (gated at start, each part and the finish)",
+  "apps/captions/api/review.ts": "PASS: Review's own videos are served under every Upload setting (R2); its uploads are assembled, not served",
   "apps/captions/api/library/pictures.ts": "PASS: a card's picture (a derivative; pictures pass under none)",
   "apps/captions/api/library/attach.ts": "PASS: a thumbnail (a derivative)",
   "apps/captions/api/library/smart.ts": "PASS: a picture the AI reads (pictures pass under none)",

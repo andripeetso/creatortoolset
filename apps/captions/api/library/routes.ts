@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { mayReceive, mayServe, type Received } from "./upload-gate";
+import { hasMembers, mayReceive, mayServe, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -286,6 +286,8 @@ interface UploadRow {
   from_device: string | null;
   /** what the phone made of the file itself (derived.ts Made), JSON; cleared once filed */
   made: string | null;
+  /** "phone" when the iPhone app sent it to the person's computers (x-ct-origin); null otherwise */
+  origin: string | null;
 }
 
 const db = () => libraryDb();
@@ -339,7 +341,7 @@ const receives = (row: UploadRow, got?: string) => {
   const made = madeOf(row)?.proxy;
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
   const into = { id: row.library_id, collectionId: row.collection_id };
-  const origin = row.from_path ? "computer" : "person";
+  const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
   if (!made) return mayReceive("original", into, origin, { sender });
   return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got, bytes: row.size, original: made.size } : {}) } });
 };
@@ -537,7 +539,9 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
   const into = { id: libraryId, collectionId: collection };
-  const origin = from ? "computer" : "person";
+  // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
+  const phone = !from && c.req.header("x-ct-origin") === "phone";
+  const origin = from ? "computer" : phone ? "phone" : "person";
   const gate = made?.proxy
     ? mayReceive("proxy", into, origin, { sender, proof: { ...(made.proxy.sha256 ? { sha256: made.proxy.sha256 } : {}), bytes: size, original: made.proxy.size } })
     : mayReceive("original", into, origin, { sender });
@@ -558,8 +562,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -575,6 +579,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
       from,
       fromDevice,
       made ? JSON.stringify(made) : null,
+      phone ? "phone" : null,
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -782,13 +787,16 @@ libraryApp.get("/", async (c) => {
   const given = await sharedHere(user);
   if (!given) await ensureLibrary(user.username);
   const rows = await librariesHere(user.username);
-  const libraries: LibrarySummary[] = rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    storage: r.storage_kind as LibrarySummary["storage"],
-    settings: settingsOf(r.settings),
-    ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
-  }));
+  const libraries: LibrarySummary[] = await Promise.all(
+    rows.map(async (r) => ({
+      id: r.id,
+      name: r.name,
+      storage: r.storage_kind as LibrarySummary["storage"],
+      settings: settingsOf(r.settings),
+      ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
+      ...((await hasMembers(r.id)) ? { shared: true as const } : {}),
+    })),
+  );
   // uploadTakes: an upload start here takes what a phone made of a video itself (derived.ts Made)
   return c.json({ libraries, uploadTakes: UPLOAD_TAKES });
 });

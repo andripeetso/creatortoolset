@@ -392,6 +392,8 @@ export interface LibrarySummary {
   readOnly?: true;
   /** read-only all the same, but it takes this person's uploads: the owner set their Media Library to Read & write */
   canAdd?: true;
+  /** shared with members of the owner's workspace: the server serves its proxies to them under any Upload setting (team proxies, R2) */
+  shared?: true;
 }
 
 /**

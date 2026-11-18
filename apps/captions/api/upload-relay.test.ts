@@ -29,8 +29,6 @@ app.use("*", async (c, next) => {
 });
 app.route("/api/uploads/relay", uploadRelayApp);
 const RELAY = "/api/uploads/relay";
-// a Review upload is taken only where the library takes originals (the P0 gate): this owner's library does
-(await import("./library/db")).libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_owner_all', 'owner', 'L', 'local', '{\"upload\":\"all\"}', 0)").run();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const read = async (r: Response | Promise<Response>): Promise<any> => (await r).json();

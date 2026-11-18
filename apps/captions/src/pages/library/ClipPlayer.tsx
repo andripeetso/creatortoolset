@@ -40,6 +40,7 @@ export function ClipPlayer({
   onNext,
   onTime,
   fill = false,
+  serverPlays = true,
 }: {
   asset: AssetCard;
   detail: AssetDetail | null;
@@ -51,20 +52,23 @@ export function ClipPlayer({
   onTime?: (s: number) => void;
   /** in the window: the player takes the whole left side (on a phone, the top) */
   fill?: boolean;
+  /** false when the server plays nothing of this clip (Upload none, not shared with members): a copy only this computer has plays */
+  serverPlays?: boolean;
 }) {
   const [muted, setMuted] = useState(false);
   // the plain address failed: once the lighter copy is made it is asked for again, at a new address (`?r=1`) so the
   // window does not answer from what it kept of the failed one
   const [plainFailed, setPlainFailed] = useState(false);
   const retry = plainFailed && copyReady(detail);
-  const server = `/api/library/media/${a.versionId}/play${retry ? "?r=1" : ""}`;
+  // no server address where the server plays nothing: a clip this computer lacks then has no src (never a 409 request)
+  const server = serverPlays ? `/api/library/media/${a.versionId}/play${retry ? "?r=1" : ""}` : "";
   // every clip asks this computer, not only the ones the server's card flags: a folder or place row here may hold it (decision 5)
   const places = macPlaces();
   const [here, again] = useHere(places ? a.libraryId : null, [a.versionId]);
   const check = here?.[a.versionId];
   // what plays, once this computer has answered; `at` the second it starts at when it took over from another
   const [pin, setPin] = useState<Source & { at?: number }>();
-  useEffect(() => void (places && here && !pin && setPin(pickSource(check, a.versionId))), [places, here, pin, check, a.versionId]);
+  useEffect(() => void (places && here && !pin && setPin(pickSource(check, a.versionId, serverPlays))), [places, here, pin, check, a.versionId, serverPlays]);
   const onServer = !places || !!pin?.src.startsWith("/api/");
   const base = !places ? server : !pin ? "" : onServer ? server : pin.src;
   const start = pin?.at ?? startAt;
@@ -85,7 +89,7 @@ export function ClipPlayer({
   const take = (s: Source) => void (s.src !== pin?.src && setPin({ ...s, at: media.current?.currentTime }));
   // what plays stopped answering (the share or the internet went): the proxy, the cached one first, at the same second,
   // and this computer asked again. False when that is what plays already
-  const fallback = proxySource(check, a.versionId);
+  const fallback = proxySource(check, a.versionId, serverPlays);
   const leave = () => {
     if (!pin || pin.src === fallback.src) return false;
     take(fallback);
@@ -118,7 +122,10 @@ export function ClipPlayer({
   const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
   // nothing plays here: the original isn't on this computer and the server has no proxy of it
   // nothing plays here: say where the clip is (this computer's answer, else the server's place row); the server refused its copy
-  const away = phase === "failed" && places && onServer ? (awayLine(check) ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
+  // the server plays nothing of it: say where it is (inside or outside the Mac app), once this computer has answered
+  const waiting = !!places && !here;
+  // (also without the Mac app: a browser that the server refuses says it too)
+  const away = !waiting && ((phase === "failed" && onServer) || (!serverPlays && !src)) ? (awayLine(check) ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
   const note = said === "missing" || away ? null : said;
   // the library's owner, with proxies not uploaded: told why it plays only where the originals are
   const [noUpload, setNoUpload] = useState(false);
