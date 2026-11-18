@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -617,9 +617,9 @@ async function run(job: JobRow): Promise<void> {
     await makeWave(await src(), file, !!p.acodec);
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
+    // no proxy kept when it would be no smaller than the file: the lighter copy is then the original (lighter above)
     const file = out("mp4");
-    await makeProxy(await src(), file, !!p.cover || !p.vcodec);
-    await keep("proxy", file, `${base}/proxy.mp4`);
+    if (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration)) await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "sprite") {
     // after the proxies in the lane: a 4K original's frames come from its 720p copy
     const file = out("jpg");

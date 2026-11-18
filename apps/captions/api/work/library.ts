@@ -79,7 +79,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
     const files: Made["files"] = {};
     if (p.vcodec) await makeThumb(src, (files.thumb = out("thumb.jpg")), p.duration, !!p.cover, p.turn);
     await makeWave(src, (files.wave = out("wave.json")), !!p.acodec);
-    if (wantsProxy(p, lib.proxy ?? { cloud: false, on: false })) await makeProxy(src, (files.proxy = out("proxy.mp4")), !!p.cover || !p.vcodec);
+    if (wantsProxy(p, lib.proxy ?? { cloud: false, on: false }) && (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration))) files.proxy = out("proxy.mp4");
     let print: string | undefined;
     if (p.vcodec && !p.cover && !lib.music && !looksLikeSong(lib.file.title, p)) {
       // from the lighter copy, as the server's steps read it (library/worker.ts lighter)
@@ -101,7 +101,8 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
   if (kind === "thumb") return { files: { thumb: (await makeThumb(src, out("thumb.jpg"), p.duration, !!p.cover, p.turn), out("thumb.jpg")) } };
   // as a Mac's stills: cut upright from the file as it is, the clip's own turn added by the server (describe.ts)
   if (kind === "describe") return { files: Object.fromEntries((await cutStills(src, p.duration, 0, dir)).map((f, i) => [`still${i}`, f])) };
-  if (kind === "proxy") return { files: { proxy: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec), out("proxy.mp4")) } };
+  // no proxy when it is no smaller than the original: the server then keeps the original as its light copy
+  if (kind === "proxy") return { files: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration)) ? { proxy: out("proxy.mp4") } : {} };
   if (kind === "wave") return { files: { wave: (await makeWave(src, out("wave.json"), !!p.acodec), out("wave.json")) } };
   if (kind === "sprite") return { files: { sprite: (await makeSprite(src, out("sprite.jpg"), p.duration, p.turn), out("sprite.jpg")) } };
   if (kind === "fingerprint") return { files: {}, fingerprint: JSON.stringify(await fingerprint(src, p.duration, dir)) };

@@ -7,7 +7,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
-import { LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, type LibraryUpload, type LookLevel } from "../../contracts/library";
+import { LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -223,6 +223,10 @@ export function versionUpload(versionId: string): LibraryUpload {
     .get(versionId) as { lib: string; fin: number } | undefined;
   return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
 }
+
+/** The Proxy quality a library's proxies are made at (UNIFIED-PRD §4.1); absent reads as standard. */
+export const libraryProxyQuality = (libraryId: string): ProxyQuality =>
+  proxyQualityOf((libraryDb().prepare("SELECT json_extract(settings, '$.proxyQuality') AS q FROM libraries WHERE id = ?").get(libraryId) as { q: unknown } | undefined)?.q);
 
 export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFAULTS): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;
