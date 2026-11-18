@@ -122,7 +122,7 @@ const serverFirst = (job: JobRow, rows: FileRow[]): boolean =>
   serverPreferred(stepWorkspace(job.version_id), job.actor) && rows.every((r) => !r.source_key.startsWith("mac:") || !!r.proxy);
 
 /** The server may run this video step at all: its video work is on for it, and the asker has not set it to Off. */
-const serverOpen = (job: Pick<JobRow, "version_id" | "actor">): boolean => serverWorks(stepWorkspace(job.version_id), job.actor) && serverWeight(job.actor) > 0;
+export const serverOpen = (job: Pick<JobRow, "version_id" | "actor">): boolean => serverWorks(stepWorkspace(job.version_id), job.actor) && serverWeight(job.actor) > 0;
 
 /** Whether a step waits that computer `d` would be handed by a work claim now: what its device runner's long poll is told. */
 export async function workWaits(d: Device, now = Date.now()): Promise<boolean> {

@@ -14,7 +14,8 @@ import type { ProbeSummary } from "../library/media/probe";
 import type { JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
 import { readDraft, readEdit } from "./store";
-import { workWaitLine } from "../work/place";
+import { serverOpen, workWaitLine } from "../work/place";
+import { downloadsAllow } from "../work/offline";
 
 /**
  * Which of a person's computers may take an AI Editor step that reads the edit's footage: one that can get at every
@@ -68,6 +69,16 @@ export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here
   if (first) return { path: first };
   // else the server's proxy; an original the server holds is never downloaded to analyse or cut
   return lightKey(r) ? { copy: "proxy" } : null;
+}
+
+/**
+ * How `host` gets at `r` for the owner's step: a server copy only when the server won't run the step and the owner's
+ * Downloads for the library allows it (UNIFIED-PRD 4.7); a file on a computer is always read where it is.
+ */
+export function atFor(r: FileRow, host: string, folders: StorageFolder[], owner: string, serverRuns: boolean): FileAt | null {
+  const at = fileFor(r, host, folders, isThisMachine);
+  if (at && "copy" in at && (serverRuns || !downloadsAllow(owner, r.library_id))) return null;
+  return at;
 }
 
 /** How well a computer gets at all of a step's files: 3 every one on it, 2 some as the server's proxy, 0 not all. */
@@ -154,13 +165,29 @@ export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">
   const runs = computers(owner).filter((c) => (c.x.kinds ?? []).includes(job.kind));
   if (!rows.length || !runs.length) return undefined;
   const folders = foldersOf(owner);
-  const can = runs.filter((c) => rankOf(rows.map((r) => fileFor(r, c.x.id, folders, isThisMachine))) > 0);
+  const serverRuns = serverOpen({ version_id: job.version_id, actor: owner });
+  const can = runs.filter((c) => rankOf(rows.map((r) => atFor(r, c.x.id, folders, owner, serverRuns))) > 0);
   if (can.some((c) => c.free)) return undefined;
   // the files some computer can't get at: named by their folder, else by the file
-  const missing = rows.find((r) => runs.some((c) => !fileFor(r, c.x.id, folders, isThisMachine)));
+  const missing = rows.find((r) => runs.some((c) => !atFor(r, c.x.id, folders, owner, serverRuns)));
   const at = missing && (missing.mac_path ?? missing.source_path);
   const what = (at && ((folderFor(at, folders, missing.mac_device ?? undefined) ?? folderFor(at, folders))?.folder.name ?? path.basename(at))) || "this footage";
   return can.length ? `Only ${either(can.map((c) => c.x.name))} can read ${what}` : `No computer can read ${what}: add its folder to a computer in Settings → Folders`;
+}
+
+/**
+ * The library whose server copies would let a waiting step run, when Downloads is off for it (UNIFIED-PRD 4.7, S5.1):
+ * the server won't run the step, no computer of the person reads every file where it is, and a file has a copy. The
+ * chat then asks to turn Automatic downloads on (action_needed downloads). Undefined otherwise.
+ */
+export function downloadsAsk(job: Pick<JobRow, "kind" | "version_id" | "actor">): string | undefined {
+  if (!usesFootage(job.kind) || serverOpen(job)) return undefined;
+  const rows = editFiles(editOf(job));
+  const folders = foldersOf(job.actor);
+  const onDisk = (host: string) => rows.every((r) => { const f = fileFor(r, host, folders, isThisMachine); return !!f && "path" in f; });
+  const cs = computers(job.actor);
+  if (!rows.length || !cs.length || cs.some((c) => onDisk(c.x.id))) return undefined;
+  return rows.find((r) => r.library_id && lightKey(r) && !downloadsAllow(job.actor, r.library_id))?.library_id;
 }
 
 /** The same window as isOnline (lib/devices.ts). */
@@ -184,7 +211,8 @@ export async function fitsFor(d: Device, now = Date.now()): Promise<(job: JobRow
     const rows = files.get(edit)!;
     // no files left (the edit is gone): the claim fails it with its reason (worker.ts)
     if (!rows.length) return true;
-    const rank = (host: string) => rankOf(rows.map((r) => fileFor(r, host, folders, isThisMachine)));
+    const serverRuns = serverOpen(job);
+    const rank = (host: string) => rankOf(rows.map((r) => atFor(r, host, folders, d.owner, serverRuns)));
     const mine = rank(d.id);
     if (!mine) return false;
     const ranked = peers.filter((x) => x.id === d.id || (x.kinds ?? []).includes(job.kind)).map((x) => ({ x, r: x.id === d.id ? mine : rank(x.id) }));
