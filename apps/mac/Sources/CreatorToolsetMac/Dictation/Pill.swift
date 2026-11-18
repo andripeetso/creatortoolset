@@ -292,15 +292,7 @@ private struct OverlayPill: View {
                 Waveform(levels: model.levels)
                     .frame(width: 51, height: 20)
                 label("Listening")
-                if model.behind > 0 {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.18))
-                        .frame(width: 1, height: 14)
-                    ProgressView()
-                        .controlSize(.mini)
-                        .environment(\.colorScheme, .dark)
-                    label("\(model.behind) transcribing")
-                }
+                if model.behind > 0 { Backlog(count: model.behind) }
             }
         case .transcribing:
             // Always moving, with a seconds counter, so a long one reads as
@@ -336,6 +328,32 @@ private struct OverlayPill: View {
             .foregroundColor(Color(red: 235/255, green: 238/255, blue: 242/255))
             .lineLimit(1)
             .fixedSize()
+    }
+}
+
+/// Earlier dictations still being transcribed: a turning ring with how many inside.
+private struct Backlog: View {
+    let count: Int
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.18), lineWidth: 1.5)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(Color(red: 181/255, green: 209/255, blue: 255/255),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .rotationEffect(.degrees(turn * 360))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundColor(Color(red: 235/255, green: 238/255, blue: 242/255))
+            }
+            .frame(width: 18, height: 18)
+        }
+        .accessibilityElement()
+        .accessibilityLabel("\(count) still transcribing")
     }
 }
 
