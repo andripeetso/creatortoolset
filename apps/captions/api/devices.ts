@@ -33,6 +33,7 @@ import { copyFile, copyJob, copyRelayIn } from "./library/copies";
 import { env } from "./lib/env";
 import { workWaits } from "./work/place";
 import { SERVER_PLACE } from "./work/server-work";
+import { notePoll, noteRunnerCall } from "./work/library-package";
 import { workApp } from "./work/routes";
 
 /**
@@ -79,6 +80,14 @@ const jobId = (c: Context): number => {
 };
 
 // registered before the relay mount below, so these answer first (the relay's middleware is for its own routes)
+const RUNNER_CALL = /\/relay\/(?:(?:editor|job|cutout|transcribe)\/|(?!work\/)[^/]+\/(?:text|step|ask|done|fail)$)/;
+devicesApp.use("/relay/*", async (c, next) => {
+  if (RUNNER_CALL.test(c.req.path)) {
+    const d = deviceForToken(c.req.header("authorization"));
+    if (d) noteRunnerCall(d.id);
+  }
+  await next();
+});
 
 /** GET /api/devices/relay/folders → RelayFoldersAnswer: the Settings → Folders folders this computer holds, for its
  *  grants and its scans (local first, P1; library/report.ts). */
@@ -335,7 +344,13 @@ devicesApp.post("/relay/transcribe/:id/fail", async (c) => {
 });
 
 devicesApp.route("/relay/work", workApp);
-devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
+devicesApp.route(
+  "/relay",
+  relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, (device, kinds, work) => {
+    if (typeof work === "number") notePoll(device);
+    return editorWaits(device, kinds, work);
+  }),
+);
 devicesApp.route("/storage", storageApp);
 
 /** Load balancing (Settings → Devices, lib/balance.ts readBalance): each person's own computers, and the server (SERVER_PLACE). */
