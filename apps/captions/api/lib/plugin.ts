@@ -134,6 +134,9 @@ export interface ServerPlugin {
   workspaceStores?: WorkspaceStore[];
   // Files the plug-in adds to every copy of a library, and copies its own copier keeps (api/library/copies.ts).
   copySource?: CopySource;
+  // The name this server goes by, where a plug-in runs the whole service (Creator Toolset Cloud). Without one, a server is
+  // "<first admin>'s server" (api/work/server-work-routes.ts serverNameOf).
+  serverName?: string;
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
@@ -386,6 +389,7 @@ export function pluginServerWork(q: { account: string | null; workspace: string 
 }
 
 export const pluginDeviceJobs = (): DeviceJobSlot[] => loaded.flatMap((p) => p.deviceJobs ?? []);
+export const pluginServerName = (): string | undefined => loaded.find((p) => p.serverName)?.serverName;
 export const pluginCopySources = (): CopySource[] => loaded.flatMap((p) => (p.copySource ? [p.copySource] : []));
 
 /**

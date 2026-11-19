@@ -284,10 +284,12 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
     sw.writeServerWork({ on: true });
   });
 
-  it("the server's name: Creator Toolset Cloud on Cloud, none on This Mac", async () => {
+  // replaced (CEO 11-19): a hosted server with no plug-in naming it is its first admin's ("Creator Toolset Cloud" comes
+  // from the plug-in that names it, the last describe below); This Mac still has none
+  it("the server's name: a hosted server is its first admin's when no plug-in names it, none on This Mac", async () => {
     process.env.CT_MODE = "hosted";
     try {
-      expect(await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }))).toMatchObject({ kind: "hosted", serverName: "Creator Toolset Cloud" });
+      expect(await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }))).toMatchObject({ kind: "hosted", serverName: await firstAdminServer() });
     } finally {
       delete process.env.CT_MODE;
     }
@@ -389,6 +391,16 @@ describe("Creator Toolset Cloud", () => {
     } finally {
       delete process.env.CT_MODE;
     }
+  });
+
+  // replaced (CEO 11-19): "Creator Toolset Cloud" is the name the hosted plug-in gives the server (ServerPlugin.serverName)
+  it("is named by the plug-in that names it, and This Mac still has no name", async () => {
+    // the helper the route answers with: an HTTP call here would go through the replaced plug-ins' sign-in
+    const { serverNameOf } = await import("./server-work-routes");
+    mountPlugins(new Hono(), [definePlugin({ id: "cloud-name", serverName: "Creator Toolset Cloud" })]);
+    expect(serverNameOf("hosted")).toBe("Creator Toolset Cloud");
+    expect(serverNameOf("server")).toBe("Creator Toolset Cloud");
+    expect(serverNameOf("local")).toBeUndefined();
   });
 });
 
