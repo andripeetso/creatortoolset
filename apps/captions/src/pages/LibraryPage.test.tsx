@@ -53,6 +53,8 @@ const server = vi.hoisted(() => ({
   gate: undefined as Promise<void> | undefined,
   /** a test holds every upload until it lets go */
   uploading: undefined as Promise<void> | undefined,
+  /** redo asks: the kind, the clips ("all" = the library) and whether it was only a count */
+  redone: [] as { kinds: string[]; ids: string[] | "all"; count: boolean }[],
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -114,6 +116,10 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   getAsset: async (_: string, id: string) => ({ jobs: [], ...(server.items as Card[]).find((x) => x.id === id) }),
   checkUpload: async () => ({ maybe: false }),
+  redoMany: async (_: string, kinds: string[], assetIds?: string[], count?: boolean) => {
+    server.redone.push({ kinds, ids: assetIds ?? "all", count: !!count });
+    return { clips: server.items.length };
+  },
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
 }));
 
@@ -150,6 +156,7 @@ beforeEach(() => {
   server.readOnly = false;
   server.gate = undefined;
   server.uploading = undefined;
+  server.redone = [];
   localStorage.clear();
 });
 afterEach(() => {
@@ -750,5 +757,72 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(host.querySelector("[data-space-menu]")).toBeNull();
     await act(async () => dropOn(tab(host, "col_m")!, "one"));
     expect(server.changed).toEqual([]);
+  });
+});
+
+describe("Media Library redo: the ⋯ menu and the selection bar", () => {
+  const all = ["Descriptions", "Shot descriptions", "Transcripts", "Search data"];
+  const click = (el: Element, o: MouseEventInit = {}) => act(async () => void el.querySelector("button[data-state]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...o })));
+  const bar = () => document.querySelector('[role="toolbar"][aria-label="Selected clips"]')!;
+  const pointerOpen = (el: Element) => act(async () => void el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+  // the in-app dialog is not mounted here, so confirmDialog falls back to window.confirm: answered, and asked, by hand
+  let answer = true;
+  const asked: string[] = [];
+  beforeEach(() => {
+    server.items = [clip("one"), clip("two")];
+    server.settings = { describe: true, look: true, embed: true, transcribe: true };
+    answer = true;
+    asked.length = 0;
+    window.confirm = (msg?: string) => (asked.push(String(msg)), answer);
+  });
+  afterEach(() => {
+    (window as { confirm?: unknown }).confirm = undefined;
+  });
+
+  it("the owner's ⋯ menu offers the four Redo items; one asks for its clips, then runs on the whole library", async () => {
+    const host = await mount();
+    await openMore(host);
+    for (const label of all) expect(moreItem(label), label).toBeDefined();
+    await act(async () => moreItem("Transcripts")!.click());
+    await settle();
+    expect(asked[0]).toContain("For 2 clips");
+    expect(server.redone).toEqual([
+      { kinds: ["transcribe"], ids: "all", count: true },
+      { kinds: ["transcribe"], ids: "all", count: false },
+    ]);
+  });
+
+  it("a press that is not confirmed sends only the count", async () => {
+    answer = false;
+    const host = await mount();
+    await openMore(host);
+    await act(async () => moreItem("Search data")!.click());
+    await settle();
+    expect(server.redone).toEqual([{ kinds: ["embed"], ids: "all", count: true }]);
+  });
+
+  it("the owner page has no All clips group", async () => {
+    const host = await mount();
+    await openMore(host);
+    await act(async () => moreItem("Library settings")!.click());
+    await settle();
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("All clips");
+  });
+
+  it("Effort Off offers no Redo at all", async () => {
+    server.settings = { describe: false, look: false, transcribe: false, embed: false };
+    const host = await mount();
+    await openMore(host);
+    for (const label of all) expect(moreItem(label), label).toBeUndefined();
+  });
+
+  it("the selection bar's Redo runs the picked clips only, for each kind it offers", async () => {
+    const host = await mount();
+    await click(host.querySelector("main")!.querySelectorAll<HTMLElement>("[data-keep-picked]")[0], { metaKey: true });
+    await act(async () => pointerOpen(bar().querySelector('button[title="Redo"]')!));
+    for (const label of all) expect(moreItem(label), label).toBeDefined();
+    await act(async () => moreItem("Search data")!.click());
+    await settle();
+    expect(server.redone).toEqual([{ kinds: ["embed"], ids: ["one"], count: false }]);
   });
 });

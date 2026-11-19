@@ -1,14 +1,11 @@
-import { useState } from "react";
 import { FOLDER_LABELS } from "@contracts/storage";
 import { LIBRARY_WORDS, PROXY_QUALITIES, hostsOriginals, hostsProxies, levelOf, organizeOf, proxyQualityOf, uploadFrom, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
-import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status } from "@/components/settings/ui";
-import { updateLibrary, redoMany } from "@/lib/library";
+import { updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
-import { redoKinds } from "./Selection";
 import { thisComputer, storeName } from "../LibraryStorage";
 import { LibraryCopies } from "./Copies";
 import { MemberSettings, OwnerDownloads } from "./MemberSettings";
@@ -20,7 +17,7 @@ import { RadioList } from "./settings/RadioList";
 /**
  * The Media Library's settings, the owner's (UNIFIED-PRD §3.1), behind one button beside its search (the sheet) and as
  * Settings → Media Library (the same body, LibrarySettingsBody). In the order the page goes by importance: how imported
- * media behaves, Folders, Organization, Proxy workflow, Hosted media, Analysis, Models, All clips, and Copies last. A
+ * media behaves, Folders, Organization, Proxy workflow, Hosted media, Analysis, Models, and Copies last. A
  * viewer who is not the owner gets the member page (./MemberSettings.tsx). The button carries an amber dot while a
  * folder or clip is not found.
  */
@@ -103,7 +100,6 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
           <Models settings={s} save={save} />
         </Section>
       )}
-      <RedoAll library={library} onError={onError} />
       <LibraryCopies libraryId={library.id} />
     </>
   );
@@ -194,54 +190,6 @@ function Hosted({ library, watch, save }: { library: LibrarySummary; watch: Watc
         control={<Switch aria-label={FOLDER_LABELS.library} checked={finalsOn} onCheckedChange={(on) => void save({ finalsUpload: on ? (finals === "none" ? "all" : finals) : "none" })} />}
       />
     </Card>
-  );
-}
-
-/**
- * Redo for all clips: descriptions, transcripts or search data made again for the whole library, on the person's own
- * AI provider. A press asks once more in its own row, saying how many clips it is, before anything runs.
- */
-function RedoAll({ library, onError }: Pick<BodyProps, "library" | "onError">) {
-  const [asking, setAsking] = useState<{ kind: string; clips: number } | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  const ask = (kind: string) =>
-    redoMany(library.id, [kind], undefined, true).then(
-      (r) => (setDone(null), setAsking({ kind, clips: r.clips })),
-      (e: unknown) => onError(message(e)),
-    );
-  const run = (kind: string) =>
-    redoMany(library.id, [kind]).then(
-      () => (setAsking(null), setDone(kind)),
-      (e: unknown) => onError(message(e)),
-    );
-  return (
-    <Section title={LIBRARY_WORDS.redoTitle}>
-      <Card>
-        {redoKinds(library.settings).map((r) => (
-          <Row
-            key={r.kind}
-            title={r.label}
-            status={asking?.kind === r.kind ? <Status>{LIBRARY_WORDS.forClips(asking.clips)}</Status> : done === r.kind ? <Status>{LIBRARY_WORDS.started}</Status> : null}
-            control={
-              asking?.kind === r.kind ? (
-                <div className="flex gap-1.5">
-                  <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>
-                    {LIBRARY_WORDS.cancel}
-                  </Button>
-                  <Button size="sm" disabled={!asking.clips} onClick={() => void run(r.kind)}>
-                    {LIBRARY_WORDS.redoAll}
-                  </Button>
-                </div>
-              ) : (
-                <Button size="sm" variant="outline" onClick={() => void ask(r.kind)}>
-                  {LIBRARY_WORDS.redo}
-                </Button>
-              )
-            }
-          />
-        ))}
-      </Card>
-    </Section>
   );
 }
 

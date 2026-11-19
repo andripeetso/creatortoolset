@@ -88,7 +88,7 @@ async function render(el: ReactNode) {
 }
 
 /** The owner page's sections, in the order the page draws them (the §3.1 order). */
-const SECTION_TITLES = [LIBRARY_WORDS.importTitle, LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.modelsTitle, "All clips"];
+const SECTION_TITLES = [LIBRARY_WORDS.importTitle, LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.modelsTitle];
 const headings = () => [...host!.querySelectorAll("h2")].map((h) => h.textContent ?? "");
 const bodyText = () => document.body.textContent ?? "";
 /** a radio input by its label (RadioList gives each its label as aria-label) */
@@ -97,10 +97,11 @@ const toggle = (label: string) => host!.querySelector<HTMLButtonElement>(`button
 const tip = (label: string) => host!.querySelector<HTMLButtonElement>(`button[aria-label="About ${label}"]`);
 
 describe("Settings → Media Library, the owner's page", () => {
+  // replaced (UNIFIED-PRD Rulings 11-19): All clips left the owner page; its Redo is in the Library's ⋯ menu
   it("draws its sections in the §3.1 order, with Copies last", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(headings().slice(0, SECTION_TITLES.length)).toEqual(SECTION_TITLES);
-    expect(headings()[SECTION_TITLES.length - 1]).toBe("All clips");
+    expect(headings()).not.toContain("All clips");
   });
 
   it("has no description line under any row: the words of a tip stay out of the page until its ⓘ is opened", async () => {
