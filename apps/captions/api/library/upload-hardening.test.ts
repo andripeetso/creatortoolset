@@ -9,12 +9,14 @@ import type { AuthVars } from "../auth";
 // a browser's word "proxy", the chat's save to the library, the disk reserve per person, and one finish across processes
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "upload-hardening-"));
 process.env.DATA_DIR = dir;
+// the disk has 100 GB free, whatever disk the test runs on
+const GiB = 1024 ** 3;
+vi.mock("../lib/uploads", async (real) => ({ ...(await real<typeof import("../lib/uploads")>()), freeBytes: async () => 100 * 1024 ** 3 }));
 
 const { sessionCookieFor } = await import("../auth");
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { REFUSED_NONE } = await import("./upload-gate");
-const { freeBytes } = await import("../lib/uploads");
 const { librariesHere, ensureLibrary } = await import("./access");
 const { useFile } = await import("../assistant-files");
 const { createUser, findUser } = await import("../users");
@@ -91,11 +93,9 @@ describe("saving a chat file to the Media Library asks the upload gate", () => {
 });
 
 describe("the disk reserve: one person's uploads never hold everyone else's", () => {
-  const GiB = 1024 ** 3;
-  const reserve = (free: number, room: number) => void (process.env.LIBRARY_DISK_RESERVE_GB = String((free - 8 * GiB - room * GiB) / GiB));
+  // room for one 8 GB upload and `room` GB more
+  const reserve = (room: number) => void (process.env.LIBRARY_DISK_RESERVE_GB = String(100 - 8 - room));
   it("ten empty 8 GB starts hold nothing; sent to, only that person's four largest count; an hour without a byte, none", async () => {
-    const free = await freeBytes(dir);
-    if (free < 60 * GiB) return; // the test reserves around 40 GB of what is free
     const big = { size: 8 * GiB };
     const ids: string[] = [];
     for (let i = 0; i < 10; i++) {
@@ -104,17 +104,17 @@ describe("the disk reserve: one person's uploads never hold everyone else's", ()
       ids.push(((await r.json()) as { id: string }).id);
     }
     // room for ben's 8 GB and 2 GB more: ana's 80 GB declared, none of it sent, holds none of it
-    reserve(free, 2);
+    reserve(2);
     expect((await start("ben", "lib_ben", big)).status).toBe(201);
     // a byte to each of ana's ten: still only four of them count (32 GB), not all ten (80 GB)
     for (const id of ids) {
       expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "x-user": "ana", "upload-offset": "0", "content-length": "1" }, body: "w" })).status).toBe(204);
     }
     expect((await start("ben", "lib_ben", big)).status).toBe(507);
-    reserve(free, 34);
+    reserve(34);
     expect((await start("ben", "lib_ben", big)).status).toBe(201);
     // an hour without a byte: abandoned, they hold nothing
-    reserve(free, 2);
+    reserve(2);
     d.prepare("UPDATE uploads SET expires_at = ? WHERE created_by = 'ana'").run(Date.now() + 7 * 86_400_000 - 2 * 3_600_000);
     expect((await start("ben", "lib_ben", big)).status).toBe(201);
     delete process.env.LIBRARY_DISK_RESERVE_GB;
