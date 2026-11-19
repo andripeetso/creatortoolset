@@ -92,7 +92,7 @@ afterEach(() => {
 
 describe("a message sent while its video uploads", () => {
   it("is in the chat at once, waits for the last part, then runs with the video", async () => {
-    const p = await person("tia");
+    const p = await person("typed");
     const clip = await p.upload("Beach.mov");
     const r = await p.send({ text: "Caption this", files: [clip.id] });
     expect(r.status).toBe(202);
@@ -638,7 +638,7 @@ describe("an upload's X and Stop delete the server copy; nobody's upload stays",
 
 describe("a dropped file's type", () => {
   it("is a footage type, never the page type an upload named (it is served under it later)", async () => {
-    const p = await person("tia");
+    const p = await person("mimetest");
     const up = await p.upload("Clip.mp4", 4096, "text/html");
     await up.part();
     const done = (await (await up.complete()).json()) as { mime: string };

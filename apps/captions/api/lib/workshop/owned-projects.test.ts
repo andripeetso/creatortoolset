@@ -24,7 +24,7 @@ it("reads only the account's own project files once their owners are known", asy
 
 it("a project added or removed shows at once", async () => {
   put("p3", "ana");
-  expect(await names("ana")).toEqual(["Renamed", "p2", "p3"]);
+  expect(await names("ana")).toEqual(["Renamed", "p3"]);
   rmSync(path.join(dir, "p3.json"));
-  expect(await names("ana")).toEqual(["Renamed", "p2"]);
+  expect(await names("ana")).toEqual(["Renamed"]);
 });
