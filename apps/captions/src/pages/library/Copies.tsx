@@ -282,7 +282,7 @@ function AddCopy({ libraryId, onClose, onAdded }: { libraryId: string; onClose: 
                   </button>
                 )}
                 {shown.folders.length === 0 ? (
-                  <EmptyRow title="No folders" />
+                  <EmptyRow title="Nothing here yet" />
                 ) : (
                   shown.folders.map((f) => (
                     <button key={f} type="button" className="block w-full text-left hover:bg-muted/50" onClick={() => void open(computer, into(shown.at, f))}>

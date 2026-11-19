@@ -126,7 +126,7 @@ function Folders() {
       <Section title="Folders">
         {pick}
         <Card>
-          <EmptyRow title="No folders" description={<Status tone="attention">Needs a computer</Status>} />
+          <EmptyRow title="Nothing here yet" description={<Status tone="attention">Needs a computer</Status>} />
         </Card>
       </Section>
     );

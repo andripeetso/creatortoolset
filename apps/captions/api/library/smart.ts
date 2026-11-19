@@ -171,7 +171,7 @@ async function look(d: DatabaseSync, who: Who, ws: string, c: Clip, rules: Rule[
     undefined,
     (text) => {
       const o = parseJsonObject(text);
-      if (!Array.isArray(o.in)) throw new Error("No folders in the answer");
+      if (!Array.isArray(o.in)) throw new Error("The answer has no list of folders");
       return o.in as unknown[];
     },
     who,

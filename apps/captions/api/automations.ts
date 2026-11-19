@@ -139,7 +139,7 @@ export function readiness(username: string, a: Automation): Readiness {
   if (!route) return { skip: a.ai ? AI_GONE : admin ? NO_AI : NO_AI_MEMBER };
   if (route.instance.driver !== "claude") return { skip: NOT_CLAUDE };
   const url = toolsUrl();
-  if (!url) return { skip: "Needs the server's address (PUBLIC_ORIGIN, set by whoever runs the server)" };
+  if (!url) return { skip: "Needs the server's address (PUBLIC_ORIGIN, the server's own address, set in its settings)" };
   if (!isOnline(route.device)) return { wait: `${deviceName(route.device)} is offline` };
   if (a.destination !== "new_chat" && chatBusy(username, a.chat)) return { wait: "its chat is busy" };
   return { route, url };

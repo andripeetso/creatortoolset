@@ -75,7 +75,7 @@ export function LibraryWatchFolders({
   };
 
   return (
-    <Section title="Footage folders">
+    <Section title="Source media">
       <Card>
         {status?.folders.map((f) => (
           <ListRow
@@ -126,7 +126,7 @@ export function LibraryWatchFolders({
             />
           )}
           {libraryFolders.length > 0 && (
-            <SettingsSelect label="Library folder" value={into || NONE} onValueChange={(v) => setInto(v === NONE ? "" : v)} options={[{ value: NONE, label: "No folder" }, ...libraryFolders.map((c) => ({ value: c.id, label: c.name }))]} className="sm:w-auto" />
+            <SettingsSelect label="Copy into" value={into || NONE} onValueChange={(v) => setInto(v === NONE ? "" : v)} options={[{ value: NONE, label: "No folder" }, ...libraryFolders.map((c) => ({ value: c.id, label: c.name }))]} className="sm:w-auto" />
           )}
           <Button type="submit" size="sm">
             Add

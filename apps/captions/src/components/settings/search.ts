@@ -70,7 +70,7 @@ const STATIC_ROWS = [
   { section: "library", id: "finals-upload", title: "Finals", keywords: ["media library", "finals", "finals upload", "upload", "phone", "final video", "finished videos"] },
   { section: "library", id: "library-proxies", title: "Proxies", keywords: ["media library", "proxies", "generate", "playback", "4k", "storage"] },
   { section: "library", id: "library-ai", title: "Descriptions", keywords: ["media library", "descriptions", "clip descriptions", "describe", "shot", "shots", "timelines", "ai"] },
-  { section: "library", id: "library-timeline-model", title: "Timeline model", keywords: ["media library", "timelines", "gemini", "flash", "antigravity", "model", "sound"] },
+  { section: "library", id: "library-timeline-model", title: "Video breakdown", keywords: ["media library", "timelines", "gemini", "flash", "antigravity", "model", "sound"] },
   { section: "library", id: "library-search", title: "Search", keywords: ["media library", "search", "meaning", "picture", "embeddings"] },
   { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
   { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },

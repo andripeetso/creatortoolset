@@ -77,7 +77,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   transcribe: "Transcripts",
   describe: "Descriptions",
   look: "Shot descriptions",
-  timeline: "Timelines",
+  timeline: "Video breakdown",
   embed: "Search by meaning",
 };
 
