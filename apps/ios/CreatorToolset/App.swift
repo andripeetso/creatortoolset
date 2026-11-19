@@ -238,6 +238,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         Keychain.moveToSharedGroup()
         #if DEBUG
         PhoneDemo.install()
+        // screenshots with no screen capture: -SnapshotAfter 6 draws the window into Documents/snapshot.png after 6 s
+        if let after = debugArg("SnapshotAfter").flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) {
+                guard let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return }
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appending(path: "snapshot.png")
+                try? image.pngData()?.write(to: url)
+            }
+        }
         // an end-to-end run pairs the simulator with no taps: -PairNow '<pairing link>' (a launch argument, never a link)
         if let raw = debugArg("PairNow"), let target = PairingTarget.parse(raw) {
             Task { @MainActor in

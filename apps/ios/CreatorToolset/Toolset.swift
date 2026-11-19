@@ -12,7 +12,12 @@ extension API {
     typealias Failure = APIError
 
     /// The server in use on its route in use, read from the saved registry (any thread may ask); nil before one is added.
-    static var current: API? { ServerRegistry.read().current.map(API.connected) }
+    static var current: API? {
+        #if DEBUG
+        if PhoneDemo.on { return PhoneDemo.saved.current.map(API.connected) }   // the screenshots' made-up computers
+        #endif
+        return ServerRegistry.read().current.map(API.connected)
+    }
 
     /// For calls that take minutes (an upload's part, transcription, the change stream).
     static let slow: URLSession = {
