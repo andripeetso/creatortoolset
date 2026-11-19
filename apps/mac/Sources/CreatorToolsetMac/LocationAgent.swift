@@ -40,10 +40,13 @@ final class LocationAgents {
     static let shared = LocationAgents()
     private var agents: [String: LocationAgent] = [:]
     private var servers: () -> [URL] = { [] }
+    /// This Mac's own server, if it runs one: its folders are scanned there, so no agent watches them.
+    private var local: () -> URL? = { nil }
     private var started = false
 
-    func start(servers: @escaping () -> [URL]) {
+    func start(servers: @escaping () -> [URL], local: @escaping () -> URL? = { nil }) {
         self.servers = servers
+        self.local = local
         if !started {
             started = true
             NotificationCenter.default.addObserver(forName: Places.changed, object: nil, queue: .main) { _ in
@@ -59,10 +62,13 @@ final class LocationAgents {
     /// Starts an agent for each server that has a token now, stops those whose token went, and has each look again.
     func poke() {
         var next: [String: LocationAgent] = [:]
+        let own = MediaFiles.serverKey(local())
         for url in servers() {
             let key = MediaFiles.serverKey(url)
             guard let host = url.host, let token = DeviceVault.token(for: host), next[key] == nil else { continue }
-            next[key] = agents[key].flatMap { $0.token == token && !$0.isStopped ? $0 : nil } ?? LocationAgent(base: url, token: token)
+            let agent = agents[key].flatMap { $0.token == token && !$0.isStopped ? $0 : nil } ?? LocationAgent(base: url, token: token)
+            agent.watching = key != own
+            next[key] = agent
         }
         for (key, agent) in agents where next[key] !== agent { agent.stop() }
         agents = next
@@ -95,8 +101,13 @@ final class LocationAgent: @unchecked Sendable {
     private let places: Places
     private let queue = DispatchQueue(label: "creatortoolset.location", qos: .utility)
     private var events: Debounce!
+    private var watchEvents: Debounce!
+    private var watch: FolderWatch?
+    private var watchedPaths: [String] = []
     private let lock = NSLock()
     private var stopped = false
+    /// Set by LocationAgents: a server that is not this Mac's own (its own scans run there, so no watch).
+    var watching = false
 
     init(base: URL, token: String, places: Places = .shared) {
         self.base = base
@@ -105,11 +116,22 @@ final class LocationAgent: @unchecked Sendable {
         server = MediaFiles.serverKey(base)
         api = DeviceAPI(base: base, token: token)
         events = Debounce(delay: 2, queue: queue) { [weak self] in self?.pass() }
+        // a change in a listed folder: looked at 10 s after the last one (the copy of a big file is one change at a time)
+        watchEvents = Debounce(delay: 10, queue: queue) { [weak self] in
+            guard let self, !self.isStopped else { return }
+            self.pass()
+        }
         api.onRevoked = { [weak self] in self?.stop() }
     }
 
     var isStopped: Bool { lock.withLock { stopped } }
-    func stop() { lock.withLock { stopped = true } }
+    func stop() {
+        lock.withLock { stopped = true }
+        queue.async { [weak self] in
+            self?.watch?.stop()
+            self?.watch = nil
+        }
+    }
     /// A pass soon (several pokes make one; one that comes during a pass makes the next).
     func poke() { if !isStopped { events.poke() } }
 
@@ -195,6 +217,13 @@ final class LocationAgent: @unchecked Sendable {
         }
         retry = 60
         let folders = MediaFiles.setServerFolders(answered, server: server)   // an empty answer keeps the last good list
+        // the listed media folders are watched (FSEvents) while this Mac is on a server that is not its own
+        let paths = watching ? folders.filter { $0.use == "media" }.map(\.path) : []
+        if paths != watchedPaths {
+            watch?.stop()
+            watch = FolderWatch(paths: paths, queue: queue) { [weak self] in self?.watchEvents.poke() }
+            watchedPaths = paths
+        }
         var head = macReport()
         head["reportVersion"] = 2
         head["machineId"] = MachineID.value
@@ -260,6 +289,47 @@ final class LocationAgent: @unchecked Sendable {
         let at = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
         return Int64(((at?.timeIntervalSince1970 ?? 0) * 1000).rounded())
     }
+}
+
+/// FSEvents on folders: `onChange` on `queue` when anything in them changes (a file copied in, renamed or removed).
+final class FolderWatch {
+    private var stream: FSEventStreamRef?
+
+    init?(paths: [String], queue: DispatchQueue, onChange: @escaping () -> Void) {
+        guard !paths.isEmpty else { return nil }
+        let box = Unmanaged.passRetained(FolderWatchBox(onChange))
+        var context = FSEventStreamContext(version: 0, info: box.toOpaque(), retain: nil,
+                                           release: { info in if let info { Unmanaged<FolderWatchBox>.fromOpaque(info).release() } },
+                                           copyDescription: nil)
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info else { return }
+            Unmanaged<FolderWatchBox>.fromOpaque(info).takeUnretainedValue().onChange()
+        }
+        guard let s = FSEventStreamCreate(nil, callback, &context, paths as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 2,
+                                          UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)) else {
+            box.release()   // the stream never took the box, so nothing else will
+            return nil
+        }
+        FSEventStreamSetDispatchQueue(s, queue)
+        FSEventStreamStart(s)
+        stream = s
+    }
+
+    func stop() {
+        guard let s = stream else { return }
+        stream = nil
+        FSEventStreamStop(s)
+        FSEventStreamInvalidate(s)
+        FSEventStreamRelease(s)
+    }
+
+    deinit { stop() }
+}
+
+/// The callback's box: the context keeps it alive until the stream is released.
+private final class FolderWatchBox {
+    let onChange: () -> Void
+    init(_ onChange: @escaping () -> Void) { self.onChange = onChange }
 }
 
 /// The quick fingerprints read on this Mac, by path, size and modified time (a small file under Application Support).

@@ -186,3 +186,23 @@ describe("On this computer", () => {
     expect((await list("tiny", `device=${theirs.device.id}`)).some((c) => c.here)).toBe(false);
   });
 });
+
+describe("Originals downloads (UNIFIED-PRD §4.1)", () => {
+  const put = (body: unknown) =>
+    app.request("/api/library/offline/downloads", { method: "PUT", headers: { cookie: cookies.tiny!, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const setUpload = (u: string) => libraryDb().exec(`UPDATE libraries SET settings = json_set(coalesce(settings, '{}'), '$.upload', '${u}') WHERE id = 'lib_tiny'`);
+
+  it("originals are sent only to a library that hosts them, and asking for originals alone is refused", async () => {
+    setUpload("proxies");
+    expect((await put({ library: "lib_tiny", mode: "all", originals: true })).status).toBe(400);
+    expect(await (await put({ library: "lib_tiny", mode: "all", proxies: true, originals: true })).json()).toMatchObject({
+      downloads: { lib_tiny: { mode: "all", proxies: true, originals: false } },
+    });
+    expect((await claim(laptop.token)).offline!.some((f) => f.kind === "original")).toBe(false);
+    setUpload("all");
+    await put({ library: "lib_tiny", mode: "all", proxies: true, originals: true });
+    const ids = (await claim(laptop.token)).offline!.filter((f) => f.kind === "original").map((f) => f.id);
+    expect(ids).toEqual(expect.arrayContaining(["va", "vb", "vc"]));
+    expect(ids).not.toContain("vx"); // someone else's library
+  });
+});

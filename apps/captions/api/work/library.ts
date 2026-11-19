@@ -18,7 +18,7 @@ import { soundArgs } from "../library/transcribe";
 import { cutStills } from "../library/describe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
-import { proxiesDir, sizeOf } from "./cache";
+import { keepProxy, proxiesDir, sizeOf } from "./cache";
 import { machineDisks } from "./disks";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
@@ -282,6 +282,11 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
       return said;
     }, ctl.signal);
     ctl.signal.throwIfAborted();
+    // Upload off: the proxy stays in this computer's cache (kept.json) and nothing of it is sent
+    if (lib.keepProxy) {
+      if (made.files.proxy) keepProxy(lib.file.id, made.files.proxy);
+      delete made.files.proxy;
+    }
 
     const names = Object.keys(made.files) as LibraryResult["files"];
     const total = names.reduce((n, k) => n + statSync(made.files[k]!).size, 0);

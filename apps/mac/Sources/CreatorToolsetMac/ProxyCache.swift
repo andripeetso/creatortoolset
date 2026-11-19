@@ -18,7 +18,42 @@ enum DownloadLocation {
     }
 }
 
+enum ProxyCacheMoveError: Error, Equatable {
+    case noSpace(needed: Int64, free: Int64)
+}
+
+/// A Download location change (UNIFIED-PRD M15): the cache's files move to the new folder, kept ones too (a kept proxy
+/// may be the only copy). Nothing is moved unless the new disk has room for all of them.
+enum ProxyCacheMove {
+    static func freeSpace(_ folder: URL) -> Int64? {
+        (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+    }
+
+    static func move(from: URL, to: URL, free: (URL) -> Int64? = freeSpace) throws {
+        guard from.standardizedFileURL.path != to.standardizedFileURL.path else { return }
+        let fm = FileManager.default
+        let files = (fm.enumerator(at: from, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])?.allObjects as? [URL] ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        let needed = files.reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        try fm.createDirectory(at: to, withIntermediateDirectories: true)
+        let have = free(to) ?? 0
+        guard needed == 0 || have >= needed else { throw ProxyCacheMoveError.noSpace(needed: needed, free: have) }
+        for file in files {
+            let rel = String(file.path.dropFirst(from.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let target = to.appendingPathComponent(rel)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // a file already at the target is that folder's own: never overwritten
+            if !fm.fileExists(atPath: target.path) { try fm.moveItem(at: file, to: target) }
+        }
+    }
+}
+
 enum ProxyCache {
+    /// Where this server's cache is when no Download location is chosen (api/work/cache.ts: DATA_DIR/proxies).
+    static func defaultRoot(server: URL, localData: URL?) -> URL {
+        relayFolder(for: server, localData: localData).appendingPathComponent("work/proxies", isDirectory: true)
+    }
+
     /// A server's relay folder (ClaudeRequest.swift relayFolder); the tests give their own.
     static var relay: (URL) -> URL = { relayFolder(for: $0, localData: nil) }
 

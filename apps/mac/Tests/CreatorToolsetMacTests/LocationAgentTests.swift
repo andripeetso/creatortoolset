@@ -104,4 +104,15 @@ final class LocationAgentTests: XCTestCase {
         XCTAssertEqual(again.quick(f), q)
         XCTAssertNil(again.quick(ListedFile(path: f.path, bytes: f.bytes, mtime: f.mtime + 1)))   // changed since: read again
     }
+
+    /// A file copied into a watched folder is seen by its FSEvents watch (the agent then looks again, 10 s after the last).
+    func testAFileCopiedIntoAWatchedFolderIsSeen() throws {
+        let seen = expectation(description: "a change in the folder")
+        let watch = FolderWatch(paths: [footage], queue: .global()) { seen.fulfill() }
+        XCTAssertNotNil(watch)
+        try Data("copied".utf8).write(to: URL(fileURLWithPath: footage).appendingPathComponent("copied.mov"))
+        wait(for: [seen], timeout: 30)
+        watch?.stop()
+        XCTAssertNil(FolderWatch(paths: [], queue: .global()) {})   // nothing listed, nothing watched
+    }
 }

@@ -93,11 +93,11 @@ export async function mayRead(user: string, libraryId: string, assetId: string, 
  */
 export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkOffline[]> {
   const list = offlineOf(d.owner);
-  const libraries = [...new Set([...(list.libraries ?? []), ...Object.keys(list.downloads ?? {})])].filter((id) => {
-    const x = downloadsOf(list, id);
-    return x.mode === "all" && !!x.proxies;
-  });
-  if (!list.versions.length && !list.collections.length && !libraries.length) return [];
+  const all = [...new Set([...(list.libraries ?? []), ...Object.keys(list.downloads ?? {})])].filter((id) => downloadsOf(list, id).mode === "all");
+  const libraries = all.filter((id) => !!downloadsOf(list, id).proxies);
+  // Originals (UNIFIED-PRD §4.1): only in a library that hosts them; a computer gets none of a proxies-only library
+  const originals = all.filter((id) => !!downloadsOf(list, id).originals && hostsOriginals(libraryUpload(id)));
+  if (!list.versions.length && !list.collections.length && !libraries.length && !originals.length) return [];
   const rows = db()
     .prepare(
       `SELECT v.id, a.id AS asset_id, a.title, a.library_id, p.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
@@ -111,6 +111,17 @@ export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkO
     .all(d.id, d.id, JSON.stringify(list.versions), JSON.stringify(libraries), JSON.stringify(list.collections)) as { id: string; asset_id: string; title: string; library_id: string; bytes: number }[];
   const out: WorkOffline[] = [];
   for (const r of rows) if (await mayRead(d.owner, r.library_id, r.asset_id, r.id)) out.push({ id: r.id, title: r.title, bytes: r.bytes });
+  if (originals.length) {
+    const files = db()
+      .prepare(
+        `SELECT v.id, a.id AS asset_id, a.title, a.library_id, v.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         WHERE a.trashed_at IS NULL AND v.id = a.current_version_id AND v.bytes > 0 AND v.mac_path IS NULL AND v.source_key NOT LIKE 'mac:%'
+           AND a.library_id IN (SELECT value FROM json_each(?))
+           AND NOT EXISTS (SELECT 1 FROM version_places vp WHERE vp.version_id = v.id AND vp.device = ? AND vp.kind = 'original' AND vp.state IN ('verified', 'found'))`,
+      )
+      .all(JSON.stringify(originals), d.id) as { id: string; asset_id: string; title: string; library_id: string; bytes: number }[];
+    for (const r of files) if (await mayRead(d.owner, r.library_id, r.asset_id, r.id)) out.push({ id: r.id, title: r.title, bytes: r.bytes, kind: "original" });
+  }
   return out;
 }
 
@@ -173,7 +184,7 @@ offlineApp.put("/downloads", async (c) => {
   const libId = b.library;
   if (!(await readerOf(user, libId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const upload = libraryUpload(libId);
-  if (b.mode === "all" && upload === "none") return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
+  if (b.mode === "all" && !hostsProxies(upload) && !hostsOriginals(upload)) return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
   const next: Downloads =
     b.mode === "all"
       ? { mode: "all", proxies: b.proxies === true && hostsProxies(upload), originals: b.originals === true && hostsOriginals(upload) }
@@ -199,7 +210,7 @@ offlineApp.post("/", async (c) => {
   const libId = key === "versions" ? v?.library_id : key === "collections" ? (db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined)?.library_id : id;
   const ok = !!libId && (key === "versions" ? await mayRead(user, libId, v!.id, id) : !!(await readerOf(user, libId)));
   if (!ok) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (key === "libraries" && b.on && libraryUpload(id) === "none")
+  if (key === "libraries" && b.on && !hostsProxies(libraryUpload(id)) && !hostsOriginals(libraryUpload(id)))
     return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
   const list = offlineOf(user);
   const next = [...(list[key] ?? []).filter((x) => x !== id), ...(b.on ? [id] : [])];
