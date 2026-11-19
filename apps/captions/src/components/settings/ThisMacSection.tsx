@@ -36,6 +36,11 @@ export type ThisMacState = {
   /** Shared drives: the app connects the shares this Mac had when they answer, with the saved sign-in (apps/mac
    *  Places.swift); the page sets it with `thismac-shares:on|off`. Missing in older Mac apps */
   shares?: boolean;
+  /** Reach from anywhere (apps/mac Connect.swift): on the account through the connect service (null: no service set);
+   *  `account`: signed in to an account; `reach`: whether other devices reached it. Missing in older Mac apps */
+  linked?: boolean | null;
+  account?: boolean;
+  reach?: "reachable" | "unreachable" | "unknown" | "removed" | null;
   /** the app's last answer, kept on this device: it has not answered in this window yet */
   saved?: true;
 };

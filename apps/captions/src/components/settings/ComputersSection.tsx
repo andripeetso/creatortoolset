@@ -4,16 +4,16 @@ import { useNavigate, useSearchParams } from "react-router";
 import { Laptop, Monitor, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
-import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
 import { removeDevice, renameDevice, thisMacDevice, useProviders } from "@/lib/providers";
 import { devicesSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
-import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
+import { ConnectionsCard } from "./ConnectionsCard";
+import { PhonesSection } from "./SignedInClients";
 import { Button } from "@/components/ui/button";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
 import { CopyBox } from "./copy-box";
 import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
@@ -38,23 +38,16 @@ const hardware = (d: Listed): string | null => {
 };
 
 /**
- * What the phone's code opens, as the one line a person needs: a plain-http address is this computer's network address
- * (the same Wi-Fi); an https one is a tunnel or the hosted site, so the line names the address.
- */
-export function phoneLine(url: string): { wifi: boolean; host: string } {
-  const u = new URL(url);
-  return { wifi: u.protocol === "http:", host: u.host };
-}
-
-/**
  * Settings → Computers: the computers that run this account's AI, and the phones that use the app. One row per Mac (a Mac
  * that registered twice is listed once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
  * plug-ins' "computers" cards sit under the list, without a heading (the AI Editor's folded Load balancing). The ones
- * offline a day or more with no AI on them are a section of their own, open. `?add=1` opens the add-computer dialog,
- * `?phone=1` the add-phone dialog (other pages link there).
+ * offline a day or more with no AI on them are a section of their own, open. Under them this computer's connections and
+ * the Phones section (pairing links and signed-in devices). `?add=1` opens the add-computer dialog, `?phone=1` Create link
+ * (other pages link there).
  */
 export function ComputersSection() {
   const me = useAuth((s) => s.me);
+  const hosted = useAuth((s) => s.hosted);
   const [params, setParams] = useSearchParams();
   const [adding, setAdding] = useState(false);
   const [phoning, setPhoning] = useState(false);
@@ -87,20 +80,10 @@ export function ComputersSection() {
     </span>
   );
   const phones = (
-    <Section id="phones" title="Phones">
-      <Card>
-        <Row
-          id="add-phone"
-          title="Phone"
-          description="Scan a code with the Creator Toolset iPhone app, or with the phone's camera."
-          control={
-            <Button size="sm" variant="outline" onClick={() => setPhoning(true)}>
-              Add phone
-            </Button>
-          }
-        />
-      </Card>
-    </Section>
+    <>
+      {!hosted && <ConnectionsCard inMac={inMac} mac={bridge} />}
+      <PhonesSection create={phoning} onCreateChange={setPhoning} />
+    </>
   );
 
   if (error && !view) {
@@ -112,7 +95,6 @@ export function ComputersSection() {
           </Card>
         </Section>
         {phones}
-        <AddPhoneDialog open={phoning} onOpenChange={setPhoning} />
       </>
     );
   }
@@ -125,7 +107,6 @@ export function ComputersSection() {
           </Card>
         </Section>
         {phones}
-        <AddPhoneDialog open={phoning} onOpenChange={setPhoning} />
       </>
     );
   }
@@ -172,7 +153,6 @@ export function ComputersSection() {
       )}
 
       <AddComputerDialog open={adding} onOpenChange={setAdding} macApp={inMac} computers={computers} />
-      <AddPhoneDialog open={phoning} onOpenChange={setPhoning} />
     </>
   );
 }
@@ -493,120 +473,5 @@ function LinuxSteps() {
       <CopyBox text={linuxCommand(code.url, code.code)} />
       <p className="text-xs text-muted-foreground">The code {code.code} works once, for 10 minutes.</p>
     </div>
-  );
-}
-
-/** A code is one-time and lasts a minute; the server keeps one live code per account (so this runs only while the dialog is open). */
-const isCode = (c: PhoneState | undefined): c is Exclude<PhoneState, "local" | "signin" | null> => typeof c === "object" && c !== null;
-
-/** After the Mac app restarts the server for "Network access": asks again each second, 20 times at most. */
-async function afterRestart(): Promise<PhoneState> {
-  for (let tries = 1; ; tries++) {
-    const c = await mintPhoneCode();
-    if ((c !== null && c !== "local") || tries >= 20) return c;
-    await new Promise((done) => setTimeout(done, 1000));
-  }
-}
-
-/** The phone's code while the dialog is open: a new one when it runs out, a new one by the button, the Mac app's turn-on. */
-function usePhoneCode(open: boolean) {
-  const [code, setCode] = useState<PhoneState | undefined>(undefined); // undefined: making one
-  const [now, setNow] = useState(() => Date.now());
-  const [turningOn, setTurningOn] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const latest = useRef(0);
-  // a reply to an older request is dropped, so the screen shows the newest code only
-  const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode) => {
-    const mine = ++latest.current;
-    setCode(undefined);
-    void mint().then((c) => {
-      if (mine !== latest.current) return;
-      setNow(Date.now());
-      setCode(c);
-    });
-  }, []);
-  useEffect(() => {
-    if (!open) return;
-    setProblem(null);
-    fresh();
-    return () => {
-      latest.current++; // a reply that comes after the close is dropped
-    };
-  }, [open, fresh]);
-
-  const live = isCode(code) && code.expiresAt !== Infinity;
-  useEffect(() => {
-    if (!live) return;
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
-  }, [live]);
-  const expired = isCode(code) && code.expiresAt <= now;
-  useEffect(() => {
-    if (expired) fresh();
-  }, [expired, fresh]);
-
-  const turnOn = async () => {
-    setTurningOn(true);
-    setProblem(null);
-    const p = await allowOtherDevices();
-    setTurningOn(false);
-    if (p) setProblem(p);
-    else fresh(afterRestart);
-  };
-  return {
-    code,
-    now,
-    turningOn,
-    problem,
-    canTurnOn: !!thisMacBridge(),
-    retry: () => fresh(),
-    turnOn: () => void turnOn(),
-  };
-}
-
-/** Add phone: the QR code the phone's camera reads, and the one line a person needs. Every state the code can be in is shown. */
-function AddPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const p = usePhoneCode(open);
-  const { code, now } = p;
-  let body;
-  if (code === undefined || (isCode(code) && code.expiresAt <= now)) {
-    body = <Card><LoadingRow title="Creating a code…" /></Card>;
-  } else if (code === null) {
-    body = <Card><ErrorRow title="Could not create a code" detail="Check the connection, then try again." retry={p.retry} /></Card>;
-  } else if (code === "signin") {
-    body = <Status tone="attention">Needs sign-in</Status>;
-  } else if (code === "local") {
-    // titled with the switch's own name in the Mac app, where a person in a plain browser has to find it
-    body = (
-      <Card>
-        <Row
-          title="Network access"
-          description={p.canTurnOn ? "A phone reaches this computer only while it is on." : "Turn it on in the Creator Toolset Mac app."}
-          status={p.problem ? <Status tone="broken">{p.problem}</Status> : undefined}
-          control={
-            p.canTurnOn && (
-              <Button type="button" size="sm" variant="outline" disabled={p.turningOn} onClick={p.turnOn}>
-                Turn on
-              </Button>
-            )
-          }
-        />
-      </Card>
-    );
-  } else {
-    const { wifi, host } = phoneLine(code.url);
-    body = (
-      <div className="flex flex-col items-center gap-3 text-center">
-        <img src={code.qr} alt="QR code" className="size-52 rounded-lg bg-white p-2" />
-        <p className="text-sm">{wifi ? "On the same Wi-Fi as this computer, scan it in the iPhone app or with the phone's camera." : `Scan it in the iPhone app or with the phone's camera to open ${host}.`}</p>
-        {code.expiresAt !== Infinity && <p className="text-xs text-muted-foreground">The code works once and signs the phone in to this account.</p>}
-      </div>
-    );
-  }
-
-  return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title="Add phone" submitLabel="New code" cancelLabel="Close" onSubmit={p.retry}>
-      {body}
-    </FormDialog>
   );
 }

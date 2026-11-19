@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, Cloud, Copy, Link as LinkIcon, Monitor, Smartphone } from "lucide-react";
-import QRCode from "qrcode";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { useAuth } from "@/lib/auth";
-import { allowOtherDevices, connectThisMac, thisMacBridge, thisMacLinked } from "@/lib/thisMac";
+import { connectThisMac, thisMacLinked } from "@/lib/thisMac";
+import { createPairingLink, ms, revokePairingLink, STANDARD, type CreatedLink } from "@/lib/access";
+import { PairingLinkCard } from "@/components/settings/PairingLinks";
+import { useNow } from "@/components/settings/SignedInClients";
 import { cn } from "@/lib/utils";
 import { readCached, putCached } from "@/lib/local-cache";
 import { serverUrl, useComputers, type ComputerInfo } from "./computers";
@@ -19,112 +21,65 @@ export const SHOW_CONNECT_COMMAND = false;
 
 const CARD = "rounded-xl border border-border/60 bg-card/40";
 
-/** A one-time sign-in link for the phone (POST /api/auth/link: 60 s, single use), as a QR code. */
-export interface PhoneCode {
-  url: string;
-  qr: string;
-  expiresAt: number;
-}
 /**
- * What the phone row shows: a code; "local" (this server listens on this computer only); "signin" (sign in first);
- * null (no code: the server can't be reached).
+ * What the phone row shows: a pairing link made here (with its code, kept only in this page); "signin" (sign in first);
+ * "gone" (it ran out or was revoked: Create link makes another); null (no link: the server can't be reached).
  */
-export type PhoneState = PhoneCode | "local" | "signin" | null;
-const isCode = (c: PhoneState | undefined): c is PhoneCode => typeof c === "object" && c !== null;
+export type PhoneState = CreatedLink | "signin" | "gone" | null;
+const isLink = (c: PhoneState | undefined): c is CreatedLink => typeof c === "object" && c !== null;
 /**
- * The last answer in this browser (lib/local-cache.ts). `true`: a code, whose space is held while the next one is made.
- * "local": shown again at once while it is checked, since it says how this server is set up and rarely changes.
+ * The last answer in this browser (lib/local-cache.ts). `true`: a link, whose space is held while the next one is made.
  */
 const HAD_CODE = "setup/phone-code";
 /** After the phone's row in the step: not drawn while that row's height is not known yet (PhoneRowView's data-unplaced). */
 const UNDER_PHONE = "peer-data-[unplaced]/phone:hidden";
 
-/**
- * Mints a code on this server and draws it, at the address the server says a phone can reach (its tunnel, the address
- * in use, or its network address). See PhoneState for the other answers.
- */
-export async function mintPhoneCode(): Promise<PhoneState> {
+/** A Standard pairing link for the phone (Settings → Computers → Phones lists it too). See PhoneState for the other answers. */
+export async function mintPhoneLink(): Promise<PhoneState> {
   try {
-    const r = await fetch("/api/auth/link", { method: "POST" });
-    if (r.status === 401) return "signin";
-    if (!r.ok) return null;
-    const j = (await r.json()) as { url?: unknown; path?: unknown; expiresAt?: unknown };
-    if (j.url === null) return "local";
-    if (typeof j.url !== "string") return null;
-    const url = `${j.url}${typeof j.path === "string" ? j.path : ""}`;
-    const expiresAt = typeof j.expiresAt === "number" ? j.expiresAt : Infinity;
-    return { url, qr: await QRCode.toDataURL(url, { margin: 1, width: 176 }), expiresAt };
-  } catch {
-    return null;
+    return await createPairingLink({ scopes: STANDARD });
+  } catch (e) {
+    return (e as { status?: number }).status === 401 ? "signin" : null;
   }
 }
 
 /**
- * After the server restarts for a setting change: asks again each second, 20 times at most. The old server answers
- * "local" until it has stopped, so that answer is not final here either.
- */
-async function afterRestart(): Promise<PhoneState> {
-  for (let tries = 1; ; tries++) {
-    const c = await mintPhoneCode();
-    if ((c !== null && c !== "local") || tries >= 20) return c;
-    await new Promise((done) => setTimeout(done, 1000));
-  }
-}
-
-/**
- * "Add your phone": a QR code the phone's camera reads. The code is one-time and lasts about a minute, so a new one is
- * drawn when it runs out (on its own, and by the button). Only one code is live: the server ends the older ones.
+ * "Add your phone": the same pairing link card as Settings → Computers → Phones, its QR code open. One link is made when
+ * the step opens; once it runs out or is revoked, Create link makes the next.
  */
 export function PhoneRow({ wait = false }: { wait?: boolean }) {
   const user = useAuth((s) => s.me?.username);
-  const had = readCached<boolean | "local">(user, HAD_CODE);
-  const [code, setCode] = useState<PhoneState | undefined>(had === "local" ? "local" : undefined); // undefined: making one
-  const [now, setNow] = useState(() => Date.now());
-  const [turningOn, setTurningOn] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const had = readCached<boolean>(user, HAD_CODE);
+  const [code, setCode] = useState<PhoneState | undefined>(undefined); // undefined: making one
   const latest = useRef(0);
   useEffect(() => {
-    if (code !== undefined) putCached(user, HAD_CODE, isCode(code) || (code === "local" && "local"));
+    if (code !== undefined && code !== "gone") putCached(user, HAD_CODE, isLink(code));
   }, [user, code]);
-  // a reply to an older request is dropped, so the screen shows the newest code only. `keep`: what is on screen
-  // stays until the reply (the first request, which may be showing the last answer)
-  const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode, keep = false) => {
+  // a reply to an older request is dropped, so the screen shows the newest link only
+  const fresh = useCallback(() => {
     const mine = ++latest.current;
-    if (!keep) setCode(undefined);
-    void mint().then((c) => {
+    setCode(undefined);
+    void mintPhoneLink().then((c) => {
       if (mine === latest.current) setCode(c);
     });
   }, []);
-  useEffect(() => fresh(mintPhoneCode, true), [fresh]);
+  useEffect(fresh, [fresh]);
+  const now = useNow(isLink(code));
+  const expired = isLink(code) && ms(code.expiresAt) <= now;
   useEffect(() => {
-    if (!isCode(code) || code.expiresAt === Infinity) return;
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
-  }, [code]);
-  const expired = isCode(code) && code.expiresAt <= now;
-  // a code that ran out is replaced by itself: the person only scans what is on the screen
-  useEffect(() => {
-    if (expired) fresh();
-  }, [expired, fresh]);
-
-  const turnOn = async () => {
-    setTurningOn(true);
-    setProblem(null);
-    const p = await allowOtherDevices();
-    setTurningOn(false);
-    if (p) setProblem(p);
-    else fresh(afterRestart);
-  };
+    if (expired) setCode("gone");
+  }, [expired]);
   return (
     <PhoneRowView
       code={code}
       hold={had === true}
       wait={wait}
       now={now}
-      canTurnOn={!!thisMacBridge()}
-      turningOn={turningOn}
-      problem={problem}
-      onTurnOn={() => void turnOn()}
+      onCreate={fresh}
+      onRevoke={async (id) => {
+        await revokePairingLink(id);
+        setCode("gone");
+      }}
     />
   );
 }
@@ -134,61 +89,40 @@ export function PhoneRowView({
   hold = false,
   wait = false,
   now,
-  canTurnOn,
-  turningOn,
-  problem,
-  onTurnOn,
+  onCreate,
+  onRevoke,
 }: {
   code: PhoneState | undefined;
-  /** the last answer was a code: the line that says one is being made is as tall as the code, so nothing under it moves */
+  /** the last answer was a link: the line that says one is being made is as tall as the link, so nothing under it moves */
   hold?: boolean;
   /** what is above this row in the step is not known yet (a first visit): the row is not drawn until it is */
   wait?: boolean;
   now: number;
-  /** the Mac app is here to turn Network access on */
-  canTurnOn: boolean;
-  turningOn: boolean;
-  problem: string | null;
-  onTurnOn: () => void;
+  onCreate: () => void;
+  onRevoke: (id: string) => Promise<void>;
 }) {
   return (
-    // unplaced: this row is waiting, or a code is being made with no space held for it. What comes after it in the step
+    // unplaced: this row is waiting, or a link is being made with no space held for it. What comes after it in the step
     // is not drawn then (UNDER_PHONE), so nothing moves when the answer arrives
-    <div data-unplaced={wait || (code === undefined && !hold) ? "" : undefined} className={cn(CARD, "peer/phone space-y-3 px-4 py-3", wait && "hidden")}>
-      <div className="flex items-start gap-3">
+    <div data-unplaced={wait || (code === undefined && !hold) ? "" : undefined} className={cn(CARD, "peer/phone", wait && "hidden")}>
+      <div className="flex items-start gap-3 px-4 py-3">
         <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Add your phone</p>
-          <p className="text-xs text-muted-foreground">Use Creator Toolset on your phone too. Scan this with your phone's camera, on the same Wi-Fi.</p>
+          <p className="text-xs text-muted-foreground">Use Creator Toolset on your phone too. Scan the QR code with your phone's camera.</p>
         </div>
+        {(code === "gone" || code === null) && (
+          <Button size="sm" variant="outline" onClick={onCreate}>
+            Create link
+          </Button>
+        )}
       </div>
-      {code === undefined && <p className={cn("text-xs text-muted-foreground", hold && "h-44")}>Making a code…</p>}
-      {code === null && <p className="text-xs text-muted-foreground">Could not make a code. Check the connection, then reopen this step.</p>}
-      {code === "signin" && <p className="text-xs text-muted-foreground">Sign in first, then this code appears here.</p>}
-      {code === "local" && (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Your phone can't reach this computer yet.
-            {canTurnOn
-              ? " Turn on Network access, then choose this computer's password once."
-              : " In the Creator Toolset Mac app, turn on Network access and choose this computer's password, then come back here."}
-          </p>
-          {canTurnOn && (
-            <Button size="sm" variant="outline" disabled={turningOn} onClick={onTurnOn}>
-              Network access
-            </Button>
-          )}
-        </div>
-      )}
-      {problem && (
-        <p role="status" className="text-xs text-destructive">
-          {problem}
-        </p>
-      )}
-      {isCode(code) && code.expiresAt > now && (
-        <div className="flex flex-wrap items-center gap-4">
-          <img src={code.qr} alt="QR code: scan it with your phone to sign in here" width={176} height={176} className="rounded-md bg-white p-1" />
-          <p className="min-w-0 flex-1 text-xs text-muted-foreground">The code works once and runs out after a minute, then a new one appears here.</p>
+      {code === undefined && <p className={cn("px-4 pb-3 text-xs text-muted-foreground", hold && "h-52")}>Creating a link…</p>}
+      {code === null && <p className="px-4 pb-3 text-xs text-muted-foreground">Could not create a link. Check the connection, then try again.</p>}
+      {code === "signin" && <p className="px-4 pb-3 text-xs text-muted-foreground">Sign in first, then the link appears here.</p>}
+      {isLink(code) && (
+        <div className="border-t border-border/60">
+          <PairingLinkCard link={code} created={code} now={now} startOpen onRevoke={onRevoke} />
         </div>
       )}
     </div>
