@@ -665,7 +665,7 @@ const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(
  * it to end, and is dropped if that reply reads the ended work with a tool meanwhile (noteWork): it then says so in
  * its own words, once. Returns whether a card was running.
  */
-export function workEnded(username: string, idStart: string, end: WorkEnd & { say?: string; choices?: string[]; href?: string }): boolean {
+export function workEnded(username: string, idStart: string, end: WorkEnd & { say?: string; choices?: string[]; href?: string; action?: ActionNeeded }): boolean {
   const conv = load(username);
   let hit = false;
   let said = false;
@@ -680,12 +680,33 @@ export function workEnded(username: string, idStart: string, end: WorkEnd & { sa
     said = true;
     // the line carries the card it is about, so "Show me" has a page to open however far back the work was started
     const about = holders.flatMap((m) => m.work!.filter((w) => cardOf(w.id, idStart)))[0];
-    const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(about ? { work: [{ ...about }] } : {}), ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
+    const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(about ? { work: [{ ...about }] } : {}), ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}), ...(end.action ? { action: end.action } : {}) };
     const last = list.at(-1);
     // a reply being written there keeps the last word until it ends
     if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), { line, idStart }]);
     else list.push(line);
   }
+  if (hit) {
+    save(username);
+    tell(username);
+  }
+  return hit;
+}
+
+/**
+ * Work that waited for the person goes on by itself (an edit given the folder it waited for): its cards that ended
+ * with `waited` as their detail run again, so its real end is said under them (workEnded).
+ */
+export function workResumed(username: string, idStart: string, waited: string): boolean {
+  const conv = load(username);
+  let hit = false;
+  for (const list of everyChat(conv))
+    for (const w of list.flatMap((m) => m.work ?? []))
+      if (w.status !== "running" && w.detail === waited && cardOf(w.id, idStart)) {
+        w.status = "running";
+        delete w.detail;
+        hit = true;
+      }
   if (hit) {
     save(username);
     tell(username);

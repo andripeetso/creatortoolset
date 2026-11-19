@@ -1303,6 +1303,7 @@ export function Message({
           written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
       <ApprovalCards approvals={answered(m.approvals)} />
       <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
+      <ActionCard action={m.action} ask={ask} onContinue={onResume} />
       {again}
       {onFolder && (
         <button

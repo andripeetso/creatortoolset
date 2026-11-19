@@ -29,6 +29,13 @@ describe("ActionCard", () => {
     expect(html).toContain(LIBRARY_WORDS.downloadsButton);
   });
 
+  it("the Project files card names the workspace and offers its default and Choose…", () => {
+    const html = render({ kind: "projects", workspace: "ws_p", workspaceName: "Tiny Acrobatics", device: "dev-1", path: "~/Movies/Creator Toolset/Tiny Acrobatics/Project files" });
+    expect(html).toContain("Project files folder for Tiny Acrobatics");
+    expect(html).toContain("Use ~/Movies/Creator Toolset/Tiny Acrobatics/Project files");
+    expect(html).toContain("Choose…");
+  });
+
   it("shows nothing without an action", () => {
     expect(render(undefined)).toBe("");
   });
@@ -91,6 +98,26 @@ describe("ActionCard resume (happy-dom)", () => {
     await act(async () => undefined);
     expect(host.textContent).toContain("Could not turn it on. Try again.");
     expect(calls).toEqual([]);
+    act(() => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it("Use <default> adds the Project files row for that workspace and computer, and asks nothing more of the chat", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const calls: string[] = [];
+    const path = "~/Movies/Creator Toolset/Tiny Acrobatics/Project files";
+    const { root, host } = mount({ kind: "projects", workspace: "ws_p", workspaceName: "Tiny Acrobatics", device: "dev-1", path }, "edit these", (t) => calls.push(t));
+    await act(async () => (host.querySelector("button") as HTMLButtonElement).click());
+    await act(async () => undefined);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/devices/storage/folders");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["X-CT-Workspace"]).toBe("ws_p");
+    expect(JSON.parse(String(init.body))).toEqual({ role: "projects", host: "dev-1", path });
+    expect(host.textContent).toContain(LIBRARY_WORDS.projectsSet);
+    expect(calls).toEqual([]);   // the job goes on by itself: the ask is never sent again (no second edit)
     act(() => root.unmount());
     host.remove();
     vi.unstubAllGlobals();

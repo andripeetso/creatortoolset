@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, EXPORTS_NAME, PROJECTS_NAME, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, EXPORTS_NAME, PROJECTS_NAME, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
+import type { ActionNeeded } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
@@ -112,9 +113,11 @@ function lookupHost(host: string): { id: string; owner: string } | undefined {
 /**
  * The workspace's Projects or Exports folder for work on computer `device` (AI Editor working files; finished videos):
  * the one it has, else one made next to its first Media folder on that computer, written as a record. Never on the
- * Mac's internal disk: with no Media folder off it, the answer says what to choose (Settings → Folders).
+ * Mac's internal disk by itself: with no Media folder off it, the answer says what to choose (Settings → Folders), and
+ * for a named workspace's Projects folder it is a pause (`wait`): the chat's card offers the workspace's default
+ * (~/Movies/Creator Toolset/<workspace>/Project files) or Choose…, and the job goes on once the row is there.
  */
-export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string }> {
+export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string } | { wait: Extract<ActionNeeded, { kind: "projects" }> }> {
   // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
   // folders that have no workspace are its own: a workspace's folder is another client's, never picked
   const owned = workspace ? [] : await ownedProjects(user);
@@ -129,7 +132,12 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   const parent = media ? media.origin.path.replace(/\/[^/]*$/, "") : "";
   const p = `${parent}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
   // shortcut: a Media folder at a volume's root has no room beside it on that volume (its parent is /Volumes), so it is refused
-  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return { error: "Choose a Project files folder in Settings → Media Library." };
+  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) {
+    // a pause needs a workspace to name and a computer of the account's to make the folder on (the card's request)
+    if (role !== "projects" || !ws || !deviceOf(device)) return { error: "Choose a Project files folder in Settings → Media Library." };
+    const name = (await ownedProjects(user)).find((x) => x.id === ws)?.name || ws;
+    return { wait: { kind: "projects", workspace: ws, workspaceName: name, device, path: `${libraryBase(name)}/${PROJECTS_NAME}` } };
+  }
   return chained(user, async () => {
     const cur = await readStorage(user);
     const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));

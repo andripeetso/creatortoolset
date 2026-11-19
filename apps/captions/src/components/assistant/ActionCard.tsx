@@ -3,6 +3,8 @@ import { useNavigate } from "react-router";
 import { LIBRARY_SETUP_DONE, LIBRARY_WORDS, type ActionNeeded } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { useLibraryChanges } from "@/lib/library";
+import { thisMacDevice } from "@/lib/providers";
+import { chooseFolderOnMac, thisMacBridge } from "@/lib/thisMac";
 
 /** Whether any library in the list is set up (setupAt, the library page's save; GET /api/library). */
 export const setUpIn = (libraries: { settings: { setupAt?: string } }[]): boolean => libraries.some((l) => !!l.settings?.setupAt);
@@ -57,6 +59,8 @@ export function ActionCard({ action, ask, onContinue }: { action?: ActionNeeded;
     );
   }
 
+  if (action.kind === "projects") return <ProjectsCard action={action} />;
+
   const turnOn = async () => {
     setTurned("busy");
     const r = await fetch("/api/library/offline/downloads", {
@@ -81,6 +85,52 @@ export function ActionCard({ action, ask, onContinue }: { action?: ActionNeeded;
         {LIBRARY_WORDS.downloadsButton}
       </Button>
       {turned === "failed" && <p className="text-xs text-destructive">Could not turn it on. Try again.</p>}
+    </div>
+  );
+}
+
+/** The Project files row for the workspace on the computer doing the work, through Settings → Folders' own request. */
+export async function addProjectsFolder(action: Extract<ActionNeeded, { kind: "projects" }>, path: string): Promise<boolean> {
+  const r = await fetch("/api/devices/storage/folders", {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-CT-Workspace": action.workspace },
+    body: JSON.stringify({ role: "projects", host: action.device, path }),
+  }).catch(() => null);
+  // already there (a second tap, another window): what the card asked for
+  return !!r && (r.ok || /already/i.test(((await r.json().catch(() => ({}))) as { error?: string }).error ?? ""));
+}
+
+/**
+ * An edit waits for the workspace's Project files folder (contracts/library.ts ActionNeeded "projects"). Use <default>
+ * makes it; Choose… opens the Mac app's folder window when this Mac is the computer doing the work, else Settings →
+ * Folders. The waiting job is taken again once the row is there: nothing more to press.
+ */
+function ProjectsCard({ action }: { action: Extract<ActionNeeded, { kind: "projects" }> }) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<"busy" | "set" | "failed" | null>(null);
+  const use = async (path: string | null | undefined) => {
+    if (!path) return;
+    setState("busy");
+    setState((await addProjectsFolder(action, path)) ? "set" : "failed");
+  };
+  const here = !!thisMacBridge() && thisMacDevice() === action.device;
+  return (
+    <div className="my-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm">
+      <p className="w-full">{LIBRARY_WORDS.projectsCard(action.workspaceName)}</p>
+      {state === "set" ? (
+        <p className="text-xs text-muted-foreground">{LIBRARY_WORDS.projectsSet}</p>
+      ) : (
+        <>
+          <Button size="sm" disabled={state === "busy"} onClick={() => void use(action.path)} title={action.path}>
+            {LIBRARY_WORDS.projectsUse(action.path)}
+          </Button>
+          <Button size="sm" variant="outline" disabled={state === "busy"}
+            onClick={() => (here ? void chooseFolderOnMac().then(use) : navigate("/settings/folders"))}>
+            {LIBRARY_WORDS.projectsChoose}
+          </Button>
+        </>
+      )}
+      {state === "failed" && <p className="w-full text-xs text-destructive">{LIBRARY_WORDS.projectsFailed}</p>}
     </div>
   );
 }

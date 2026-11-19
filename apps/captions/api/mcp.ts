@@ -1416,6 +1416,7 @@ const downloadsWaiting = (jobs: Args[]): ActionNeeded | null => {
 const ACTION_STOP: Record<ActionNeeded["kind"], string> = {
   setup: "The Media Library of this workspace is not set up yet. Say one line that it needs setting up and end your reply: no uploads, no folder questions. The card under your reply carries on.",
   downloads: "The edit needs the files on this computer and Automatic downloads is off. Say one line and end your reply: the card under it turns them on.",
+  projects: "The edit waits for this workspace's Project files folder. Say one line and end your reply: the card under it sets the folder, and the edit carries on by itself.",
 };
 
 async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools, confirmed = false) {
