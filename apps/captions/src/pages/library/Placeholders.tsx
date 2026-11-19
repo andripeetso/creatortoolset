@@ -8,7 +8,7 @@ import type { Upload } from "./Uploads";
 /**
  * A drop's files as they go in (11-19, the way a photo library fills in): each is a card in the grid at once, a grey
  * frame with its name; working, a thin bar runs along its foot; once indexed the clip's own card takes its place. A
- * failed one has a red mark and Try again; Cancel is in its menu. Above the grid one quiet line counts them, with Cancel
+ * failed one has a red mark and Retry; Cancel is in its menu. Above the grid one quiet line counts them, with Cancel
  * all. There is no list of uploads.
  */
 
@@ -37,7 +37,7 @@ export function PlaceholderTile({ upload: u, onRetry, onCancel }: { upload: Uplo
         {failed && (
           <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <Button size="sm" variant="secondary" onClick={onRetry}>
-              Try again
+              Retry
             </Button>
           </div>
         )}

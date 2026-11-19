@@ -57,11 +57,11 @@ describe("the cards of a drop", () => {
     expect(host!.textContent).toContain("Tiny 1.mp4");
   });
 
-  it("a failed card has its red mark and Try again", () => {
+  it("a failed card has its red mark and Retry", () => {
     const retry = vi.fn();
     const el = mount(<PlaceholderTile upload={up(1, "failed", { error: "The share went away" })} onRetry={retry} onCancel={() => {}} />);
     expect(el.querySelector('[aria-label="Not added"]')).not.toBeNull();
-    act(() => [...el.querySelectorAll("button")].find((b) => b.textContent === "Try again")!.click());
+    act(() => [...el.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
     expect(retry).toHaveBeenCalledTimes(1);
   });
 });
