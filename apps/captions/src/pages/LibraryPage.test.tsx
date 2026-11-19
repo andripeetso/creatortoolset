@@ -231,7 +231,8 @@ describe("Media Library page", () => {
     expect(more(host)).not.toBeNull(); // Library settings, in the More menu
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("No clips");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Set up", "Upload files", "Upload"])); // setup owns the folders now
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Upload files", "Upload"])); // the fixture is set up: no Set up button
+    expect(buttons(host)).not.toContain("Set up");
     expect(buttons(host)).not.toContain("Choose a folder");
     expect(host.textContent).not.toContain("Copies");
     expect(buttons(host)).not.toContain("Skip");
