@@ -78,10 +78,9 @@ const start = (lib: string, from?: string) =>
   });
 
 describe("mayReceive: original bytes only where somebody chose to send them", () => {
-  // local-first 11-18 decision 6: under none no original reaches the server, a browser or a phone's included
-  it("takes a person's original under originals and all, refuses it under proxies and none (unset reads as none)", () => {
-    for (const id of ["lib_orig", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
-    expect(mayReceive("original", { id: "lib_p" }, "person")).toMatchObject({ ok: false, body: { message: REFUSED_PROXIES } });
+  // UNIFIED-PRD §4.2: under none a browser's original is refused too; under proxies a person's own file is taken as today
+  it("takes a person's original under originals, all and proxies, refuses it under none (unset reads as none)", () => {
+    for (const id of ["lib_orig", "lib_all", "lib_p"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
     for (const id of ["lib_none", "lib_unset"]) {
       expect(mayReceive("original", { id }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
     }
@@ -142,6 +141,13 @@ describe("the library upload routes ask it", () => {
     expect(await r.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
     expect((await start("lib_none")).status).toBe(409);
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
+  });
+
+  it("under proxies a Mac's original is refused at its start, and a browser's is taken (UNIFIED-PRD §4.2)", async () => {
+    const r = await start("lib_p", "/Users/tiny/Movies/Handstand.mp4");
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ error: REFUSED_PROXIES, code: "upload_refused" });
+    expect((await start("lib_p")).status).toBe(201);
   });
 
   it("the iPhone app's own file is taken under none at its start, each part and the finish; a browser's or a Mac's is not, header or no header", async () => {
@@ -248,6 +254,13 @@ describe("P2: proxies and the proxy proof", () => {
     expect(bad({ sha256: hex("proxy"), got: hex("original"), bytes: 5, original: 500 })).toMatchObject({ ok: false, body: { message: REFUSED_PROOF } });
     expect(bad({ sha256: hex("original"), got: hex("original"), bytes: 500, original: 500 })).toMatchObject({ ok: false, body: { message: REFUSED_PROOF } });
     expect(bad({ sha256: "not-a-hash" })).toMatchObject({ ok: false });
+  });
+
+  it("the size rule holds for every sender, a computer without the proof and a person's copy included", () => {
+    const sized = { bytes: 500, original: 500 };
+    expect(mayReceive("proxy", { id: "lib_p" }, "computer", { sender: older, proof: sized })).toMatchObject({ ok: false, body: { message: REFUSED_PROOF } });
+    expect(mayReceive("proxy", { id: "lib_p" }, "person", { proof: sized })).toMatchObject({ ok: false, body: { message: REFUSED_PROOF } });
+    expect(mayReceive("proxy", { id: "lib_p" }, "person", { proof: { bytes: 499, original: 500 } }).ok).toBe(true);
   });
 
   it("a computer's proxy job: declared and matching is filed; other bytes are refused and nothing of them stays", async () => {

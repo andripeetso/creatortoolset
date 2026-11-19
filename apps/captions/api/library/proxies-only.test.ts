@@ -42,10 +42,24 @@ for (const [id, upload] of [["lib_p", '"proxies"'], ["lib_all", '"all"'], ["lib_
 }
 
 /**
+ * A Mac's original, received while the library kept originals: under proxies the gate now refuses a computer's original
+ * (UNIFIED-PRD §4.2), so the file comes in first and the library's setting is put back as it was.
+ */
+async function upload(lib: string, name: string, placed = true): Promise<string> {
+  const settings = (d.prepare("SELECT settings FROM libraries WHERE id = ?").get(lib) as { settings: string }).settings;
+  d.prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', 'originals') WHERE id = ?").run(lib);
+  try {
+    return await receive(lib, name, placed);
+  } finally {
+    d.prepare("UPDATE libraries SET settings = ? WHERE id = ?").run(settings, lib);
+  }
+}
+
+/**
  * A file uploaded through the routes, sent from /Users/tiny/Movies/<name> on a Mac. Returns its version id. `placed`: that
  * Mac reports the file where it is (version_places), as its scan does.
  */
-async function upload(lib: string, name: string, placed = true): Promise<string> {
+async function receive(lib: string, name: string, placed: boolean): Promise<string> {
   const body = Buffer.from(`${lib} ${name} original`);
   const post = (url: string, init: RequestInit = {}) => app.request(url, { method: "POST", ...init });
   const init = (await (
