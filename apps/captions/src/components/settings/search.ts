@@ -88,8 +88,11 @@ const STATIC_ROWS = [
   // Devices: the computers that run your AI, and the phones
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
-  { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
-  { section: "devices", id: "add-phone", title: "Add phone", keywords: ["phone", "iphone", "qr", "pair", "camera", "scan", "code", "wifi", "same wi-fi"] },
+  { section: "devices", id: "phones", title: "Phones", description: "Pairing links and the phones, iPads and browsers signed in here", keywords: ["phone", "iphone", "ipad", "qr", "qr code", "pair", "camera", "scan", "signed in", "devices", "revoke", "sessions"] },
+  { section: "devices", id: "create-link", title: "Create link", description: "A one-time link a phone or iPad signs in with", keywords: ["phone", "iphone", "ipad", "qr", "pair", "pairing", "camera", "scan", "code", "link"] },
+  { section: "devices", id: "connections", title: "This computer", keywords: ["network", "address", "reachable", "lan", "vpn"] },
+  { section: "devices", id: "network-access", title: "Network access", description: "Other devices on your network reach this computer", keywords: ["network", "wifi", "wi-fi", "lan", "local network", "remote", "other devices"] },
+  { section: "devices", id: "reach-from-anywhere", title: "Reach from anywhere", description: "Your other devices reach this Mac through your account", keywords: ["account", "anywhere", "remote", "tunnel", "connect", "away from home"], needs: "mac" },
   { section: "devices", id: "use-this-mac", title: "Take work from this server", keywords: ["mac app", "this mac", "switch", "use this mac", "ai on this mac", "ai jobs", "take work"], needs: "mac" },
   { section: "devices", id: "shared-drives", title: "Shared drives", keywords: ["nas", "network drive", "share", "smb", "connect", "reconnect", "office"], needs: "mac" },
   // Scheduled tasks

@@ -209,6 +209,23 @@ export async function allowOtherDevices(): Promise<string | null> {
   }
 }
 
+/** Asks the Mac app something that answers with its state: the problem to show, or null when done. */
+async function macAsk(ask: string, away: string): Promise<string | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return away;
+  try {
+    return (await bridge.postMessage(ask)).problem ?? null;
+  } catch {
+    return "Could not reach the Creator Toolset Mac app. Try again.";
+  }
+}
+
+/** Settings → Computers → Network access, both ways: the Mac app restarts its server listening on the network or on this Mac only. */
+export const setNetworkAccess = (on: boolean) => macAsk(on ? "access" : "access:off", "Change Network access in the Creator Toolset Mac app.");
+
+/** Reach from anywhere: the Mac app links this Mac to the account it is signed in to (its tunnel), or unlinks it. */
+export const setReachFromAnywhere = (on: boolean) => macAsk(on ? "connect.link" : "connect.unlink", "Open Creator Toolset on this Mac to change it.");
+
 /**
  * Whether this Mac is on an account through the connect service: true or false from the Mac app, undefined in a browser
  * or from an app too old to say (setup then shows no Add this computer).
