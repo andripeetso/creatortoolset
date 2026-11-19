@@ -107,7 +107,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink }: {
+export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -126,6 +126,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   readOnly?: boolean;
   /** Relink… on a clip in the Media Pool: look for the files not found here */
   onRelink?: () => void;
+  /** in the middle of the Viewer's bar, in place of the timeline's name: a way to the edit's other timelines */
+  picker?: ReactNode;
 }) {
   const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(withKeys(initial)));
   const [saved, setSaved] = useState<NleTimeline>(hist.now);
@@ -464,7 +466,11 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                       className={cn("h-5 rounded-[3px] px-1.5 capitalize disabled:opacity-40", view === v ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{v}</button>
                   ))}
                 </span>
-                <span className="min-w-0 truncate text-zinc-500">{inSource ? source!.name : tl.timeline.name}</span>
+                {(inSource || !picker) && <span className="min-w-0 truncate text-zinc-500">{inSource ? source!.name : tl.timeline.name}</span>}
+                {/* the timeline's: in the middle, in place of its name, a way to the edit's other timelines */}
+                {picker && !inSource && (
+                  <div className="pointer-events-none absolute inset-x-0 flex justify-center"><div className="pointer-events-auto max-w-[60%]">{picker}</div></div>
+                )}
               </div>
             }>
             <NleViewer tl={inSource ? srcTl! : shown} time={T.time} playing={T.playing} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
