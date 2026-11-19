@@ -8,6 +8,8 @@ import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/work
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb } from "./db";
+import { workspaceById } from "../lib/workspaces";
+import type { ActionNeeded } from "../../contracts/library";
 import { assetRef, canSee } from "./sources";
 
 let before: Record<string, string> | null = null;
@@ -172,4 +174,34 @@ export async function versionSource(username: string, versionId: string): Promis
   const role = v ? libraryRole(username, v.library_id) : null;
   if (!v || !role || !(await canSee({ username, role }, assetRef(v.library_id, v.asset_id, versionId)))) return null;
   return blobs.localCopy(v.source_key).catch(() => null);
+}
+
+/**
+ * Whether a workspace's Media Library is set up (setupAt, on the library its owner keeps, found by the workspace's
+ * projectId: never the asker's home). No projectId: the asker's own first library. `owner`: the asker sets it up; a
+ * member is told it isn't set up, with no button.
+ */
+export function mediaReady(username: string, projectId?: string): { ready: boolean; owner: boolean; libraryId: string | null } {
+  const cols = "SELECT id, json_extract(settings, '$.setupAt') AS setupAt FROM libraries WHERE";
+  const d = libraryDb();
+  type Row = { id: string; setupAt: string | null };
+  if (projectId === undefined) {
+    const row = d.prepare(`${cols} workspace_id = ? ORDER BY created_at, id LIMIT 1`).get(homeOf(username)) as Row | undefined;
+    return { ready: !!row?.setupAt, owner: true, libraryId: row?.id ?? null };
+  }
+  const ws = workspaceById(projectId);
+  const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner");
+  const row =
+    (d.prepare(`${cols} json_extract(settings, '$.projectId') = ? ORDER BY created_at, id LIMIT 1`).get(projectId) as Row | undefined) ??
+    // a library from before workspaces kept their own: the first brand's, as librariesIn reads it
+    (ws && (d.prepare(`${cols} workspace_id = ? AND json_extract(settings, '$.projectId') IS NULL ORDER BY created_at, id LIMIT 1`).get(homeOf(ws.members.find((m) => m.role === "owner")?.username ?? "")) as Row | undefined));
+  return { ready: !!row?.setupAt, owner, libraryId: row?.id ?? null };
+}
+
+/** The chat card's setup ask for a workspace whose Media Library is not set up (ActionNeeded), or null when it is. */
+export function setupNeeded(username: string, projectId?: string): ActionNeeded | null {
+  const m = mediaReady(username, projectId);
+  if (m.ready) return null;
+  const ws = projectId === undefined ? undefined : workspaceById(projectId);
+  return { kind: "setup", workspace: projectId ?? "", workspaceName: ws?.name ?? "", owner: m.owner, href: "/library?setup=1" };
 }

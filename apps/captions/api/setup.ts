@@ -14,8 +14,7 @@ import { connectedOwn } from "./lib/providers";
 import { agyProgress, removeAgy } from "./lib/antigravity";
 import { addMcp, connectCli, installCli, localAiView, planOf, setsUp, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
-import { ensureLibrary, homeOf } from "./library/access";
-import { libraryDb } from "./library/db";
+import { ensureLibrary, mediaReady } from "./library/access";
 import { keyFor } from "./my-keys";
 import { pluginNeeds } from "./lib/plugin";
 import {
@@ -98,12 +97,8 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     have.push("instagram");
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
   await ensureLibrary(u);
-  if (
-    libraryDb()
-      .prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1")
-      .get(homeOf(u))
-  )
-    have.push("library");
+  // the Media Library counts once it is set up (setupAt), not merely made (UNIFIED-PRD 4.8)
+  if (mediaReady(u).ready) have.push("library");
   const full = (() => {
     const rec = findUser(u);
     return rec ? apiKeysOf(rec).full : null;
