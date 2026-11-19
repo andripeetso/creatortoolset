@@ -613,6 +613,9 @@ describe("a video dropped in the chat", () => {
     const { libraryDb } = await import("./library/db");
     SORT_WAIT_S.added = 0; // the line as it is the moment they are in
     const cookie = await cookieOf("ana");
+    // the library takes a person's files (Upload all); under none a chat's save is refused (upload-hardening.test.ts)
+    await (await import("./library/access")).ensureLibrary("ana");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all')`).run();
     const talk = await upload(cookie, "Talk.mp4", "video/mp4", Buffer.alloc(4096, 3));
     const sea = await upload(cookie, "Sea.mp4", "video/mp4", Buffer.alloc(4096, 4));
     const token = mintJobToken("ana", "turn-library");
@@ -638,6 +641,9 @@ describe("a video dropped in the chat", () => {
   it.skipIf(pluggedLibrary)("use_file with sound files a song in the Music folder, tagged, with no transcript queued; a second goes in the same folder", async () => {
     const { libraryDb } = await import("./library/db");
     const cookie = await cookieOf("ana");
+    // the library takes a person's files (Upload all); under none a chat's save is refused (upload-hardening.test.ts)
+    await (await import("./library/access")).ensureLibrary("ana");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all')`).run();
     const token = mintJobToken("ana", "turn-sound");
     type Added = { said: string; files: { version_id: string }[] };
     const add = async (name: string, fill: number) =>
