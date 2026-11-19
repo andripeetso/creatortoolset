@@ -38,7 +38,7 @@ export function Models({ settings, save }: { settings: LibrarySettings; save: (s
         <Row
           title={LIBRARY_WORDS.descriptions}
           tip={LIBRARY_WORDS.descriptionsTip}
-          control={<span className="text-sm text-muted-foreground">{inUse.descriptions || "Not set"}</span>}
+          control={<span className="text-sm text-muted-foreground">{inUse.descriptions || LIBRARY_WORDS.notSet}</span>}
         />
       )}
       {settings.timeline && (
@@ -65,7 +65,7 @@ export function Models({ settings, save }: { settings: LibrarySettings; save: (s
         <Row
           title={LIBRARY_WORDS.transcripts}
           tip={LIBRARY_WORDS.transcriptsTip}
-          control={<span className="text-sm text-muted-foreground">{inUse.transcripts || "Not set"}</span>}
+          control={<span className="text-sm text-muted-foreground">{inUse.transcripts || LIBRARY_WORDS.notSet}</span>}
         />
       )}
     </Card>

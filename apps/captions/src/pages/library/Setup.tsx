@@ -471,7 +471,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
             <div className="space-y-2">
               <p className="text-sm font-medium">{LIBRARY_WORDS.modelsTitle}</p>
               <Card>
-                <ModelRow title={LIBRARY_WORDS.descriptions} tip={LIBRARY_WORDS.descriptionsTip} value={inUse.descriptions || "Not set"} />
+                <ModelRow title={LIBRARY_WORDS.descriptions} tip={LIBRARY_WORDS.descriptionsTip} value={inUse.descriptions || LIBRARY_WORDS.notSet} />
                 {videoLevel && (
                   <ModelRow
                     title={LIBRARY_WORDS.videoBreakdown}
@@ -481,7 +481,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                     onPick={(v) => set({ watchModel: v })}
                   />
                 )}
-                <ModelRow title={LIBRARY_WORDS.transcripts} tip={LIBRARY_WORDS.transcriptsTip} value={inUse.transcripts || "Not set"} />
+                <ModelRow title={LIBRARY_WORDS.transcripts} tip={LIBRARY_WORDS.transcriptsTip} value={inUse.transcripts || LIBRARY_WORDS.notSet} />
               </Card>
             </div>
           )}
