@@ -15,6 +15,20 @@ import { resetWorkspacePick } from "./workspace-pick";
 // Settings → Media Library is the owner's page (UNIFIED-PRD §3.1): its sections in order, one row per setting, each
 // label's ⓘ tip (not a line under the row), and the Effort and Hosted media states.
 
+// the kit's select as a plain one, so a test can pick a value (the workspace selector is one)
+vi.mock("@/components/settings/kit-controls", async (orig) => ({
+  ...(await orig<object>()),
+  SettingsSelect: ({ label, value, options, onValueChange }: { label: string; value: string; options: { value: string; label: string }[]; onValueChange: (v: string) => void }) => (
+    <select aria-label={label} value={value} onChange={(e) => onValueChange(e.target.value)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: null };
@@ -112,7 +126,7 @@ describe("Settings → Media Library, the owner's page", () => {
   });
 
   it("Smart folders is disabled with its status while Effort is Off, and the stored choice stays", async () => {
-    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, lookLevel: "standard" } };
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, transcribe: false, lookLevel: "standard" } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(radio("Smart folders").disabled).toBe(true);
     expect(radio("Organize yourself").disabled).toBe(false);
@@ -152,7 +166,7 @@ describe("Settings → Media Library, the owner's page", () => {
   it("Models shows the three rows, and hides at Off", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(headings()).toContain(LIBRARY_WORDS.modelsTitle);
-    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, lookLevel: "standard" } };
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, transcribe: false, lookLevel: "standard" } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(headings()).not.toContain(LIBRARY_WORDS.modelsTitle);
   });
