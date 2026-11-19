@@ -14,7 +14,6 @@ import { actionCard, quickSetup, type ActionNeeded } from "../../contracts/libra
 import type { LibrarySource } from "../../contracts/library-source";
 import { libraryBase, THIS_COMPUTER } from "../../contracts/storage";
 import { isOnline, listDevices } from "../lib/devices";
-import { watchAllowed } from "./watch";
 import { assetRef, canSee, mainSource } from "./sources";
 
 let before: Record<string, string> | null = null;
@@ -253,7 +252,7 @@ export async function setupNeeded(username: string, projectId?: string): Promise
   const name = ws?.name ?? "";
   const libraryId = (m.owner && (m.libraryId ?? (await ensureLibrary(username, projectId)))) || m.libraryId || "";
   const d = listDevices((x) => x.owner === username).sort((a, b) => Number(isOnline(b.id)) - Number(isOnline(a.id)) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
-  const device = d?.id ?? (watchAllowed(username) ? THIS_COMPUTER : null);
+  const device = d?.id ?? ((await import("./watch")).watchAllowed(username) ? THIS_COMPUTER : null);
   return actionCard({
     kind: "setup", workspace: projectId ?? "", workspaceName: name, owner: m.owner, href: "/library?setup=1", libraryId, device,
     ...(d ? { deviceName: d.name } : device ? { deviceName: "this computer" } : {}),
