@@ -107,6 +107,13 @@ account but the caller's own; for an admin, every session on the server but its 
 caller may not see. Revoking a session ends its open change streams (`/api/sync/events`, `/api/auth/access/events`) at
 once; every later request with its token is 401 `SESSION_REVOKED`.
 
+An account's password change, its sign-out everywhere (a new sign-in code that signs other browsers out) and its
+deletion do the same to every session of that account, and drop its unused links, as its browsers' cookies stop working.
+
+These three routes and `POST /api/auth/pairing-links`, sent with a cookie (no `Authorization`), are refused 403 `"Sent from
+another site"` in every mode unless the body is `application/json` and an `Origin`, when sent, is this server's (or
+`PUBLIC_ORIGIN`). A device's own Bearer or DPoP token is exempt.
+
 ### `POST /oauth/token` (form-encoded, no sign-in)
 
 ```
@@ -142,6 +149,10 @@ Errors (400, `{ error, error_description }`):
 | `invalid_grant` | unknown, used, expired code; or a connect code without its key's proof | "That code is used or expired. Make a new one on the computer." |
 | `invalid_scope` | none of the requested scopes is in the grant, or an unknown scope | "That code doesn't allow what this device asked for." |
 
+A server holds at most 50 000 unexpired DPoP `jti`s. When full, a proof is refused, never let in by forgetting one:
+`/oauth/token` answers 503 `{ error: "temporarily_unavailable" }` with `Retry-After: 60`; a request on `/api/*` gets
+401 `INVALID_DPOP` (retry with a new proof). The connect service does the same with 503 `{ error: "busy" }`.
+
 ### Using a session on `/api/*`
 
 - Bearer: `Authorization: Bearer cts_…`.
@@ -160,6 +171,9 @@ Errors (400, `{ error, error_description }`):
 
 - 403 `{ error: "This device can look but not change things.", code: "SCOPE", requiredScope: "write" }` (or
   `"access"`, error "This device can't manage who has access.").
+- 403 `{ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }` on
+  `/api/admin`, `/api/workspace`, `/api/providers`, `/api/devices`, `/api/service-keys` and `/api/my-keys`, whatever
+  the session's scopes (the routes a Full AI key never reaches either).
 - `lastConnectedAt` is written at most once a minute per session. `connected` is true while a change stream of that
   session is open.
 
