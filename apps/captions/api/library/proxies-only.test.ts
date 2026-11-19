@@ -122,7 +122,8 @@ describe("a Media Library whose upload is proxies only", () => {
   // replaced: api/library/proxies-only.test.ts "makes a proxy of an uploaded video whatever the proxy switch says" (UNIFIED-PRD §4.2)
   it("a person's upload keeps its proxy, a computer's original is refused, and a library that keeps every file makes none", async () => {
     const kept = await upload("lib_p", "Handstand.mp4", true, true);
-    expect(await upload("lib_p", "Computer.mp4")).toBeUndefined();
+    // asked of the gate as it stands: upload() would flip the library to originals first, so the refusal is never tested
+    expect(await receive("lib_p", "Computer.mp4", true)).toBeUndefined();
     const all = await upload("lib_all", "Handstand.mp4");
     while (await tick(Date.now())); // every lane: the probe makes the proxy's job
     expect(jobs(kept)).toContain("proxy");
