@@ -261,7 +261,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Task { await StudioHooks.pushToken(deviceToken) }
+        Task {
+            await StudioHooks.pushToken(deviceToken)
+            await AccountPush.took(deviceToken)
+        }
     }
 }
 
