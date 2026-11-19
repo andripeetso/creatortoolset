@@ -553,6 +553,7 @@ export function ScreenRecordingEditor({
             <div ref={player.stage} className="flex h-full w-full items-center justify-center">
               <canvas
                 ref={player.canvas}
+                data-wheel="snap"
                 onClick={() => (dragged.current ? (dragged.current = false) : player.toggle())}
                 onPointerDown={grabCamera}
                 onPointerMove={(e) => {

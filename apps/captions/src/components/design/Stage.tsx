@@ -866,6 +866,7 @@ export function Stage({
       <ContextMenuTrigger asChild>
         <div
           ref={box}
+          data-wheel="snap"
           tabIndex={0}
           role="application"
           aria-label="Canvas"

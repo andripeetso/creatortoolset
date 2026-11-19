@@ -60,6 +60,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.add(self, name: "appLog")
         configuration.userContentController.add(self, name: "badge")
         configuration.userContentController.add(self, name: "signIn")
+        // the kind of place under the pointer, "snap" or "glide" (src/lib/mac-wheel.ts): no glide over a canvas
+        configuration.userContentController.add(self, name: "wheel")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
         // This Mac's AI (src/lib/thisMac.ts): "state", "start" and "access", answered with { aiOn, paired, problem };
         // "folder" (the folder picker, src/lib/thisMac.ts chooseFolderOnMac), answered with { path }
@@ -121,11 +123,12 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     private var glideLink: CADisplayLink?
     /// The newest wheel step: its place, window and held keys are reused for the frames of its glide.
     private var glideStep: CGEvent?
+    /// The pointer is over a canvas, timeline or viewer that pans and zooms by the wheel itself (the page's "wheel" message).
+    var wheelSnaps = false
 
     override func scrollWheel(with event: NSEvent) {
-        // precise: a trackpad, a Magic Mouse, or a mouse whose driver smooths already
-        guard !event.hasPreciseScrollingDeltas, event.phase.isEmpty, event.momentumPhase.isEmpty,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let step = event.cgEvent?.copy() else {
+        guard WheelGlide.glides(event, snap: wheelSnaps, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion),
+              let step = event.cgEvent?.copy() else {
             glide.stop()
             return super.scrollWheel(with: event)
         }
@@ -185,6 +188,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         if message.name == "appLog", let line = message.body as? String {
             AppLog.write(line)
             if line.hasPrefix("blank:") { onBlank?() }
+            return
+        }
+        if message.name == "wheel" {
+            wheelSnaps = message.body as? String == "snap"
             return
         }
         // The Workshop's replies waiting for you (WorkshopSidebar): the count on the Dock icon, "" clears it
