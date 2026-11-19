@@ -1,58 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// Scripts to film: the sessions that are ready or in production, newest first.
-struct ScriptsView: View {
-    @ObservedObject private var model = WorkshopModel.shared
-
-    var body: some View {
-        List {
-            if model.needsSignIn {
-                SignInAgainButton { await model.load(force: true) }.listRowSeparator(.hidden)
-            } else if let error = model.error {
-                Problem(text: error)
-            }
-            ForEach(model.sessions.filter(\.toFilm)) { session in
-                NavigationLink(value: session) { SessionRow(session: session) }
-            }
-        }
-        .overlay {
-            if model.loading && model.sessions.isEmpty {
-                ProgressView()
-            } else if !model.sessions.contains(where: \.toFilm) && model.error == nil && !model.needsSignIn {
-                ContentUnavailableView("Nothing to film", systemImage: "doc.text")
-            }
-        }
-        .navigationTitle("Scripts")
-        .task { await model.load() }
-        .refreshable { await model.load(force: true) }
-        .navigationDestination(for: WorkshopSession.self) { ScriptReaderView(session: $0) }
-    }
-}
-
-/// One session in a list: its kind letter, title, project and status.
-struct SessionRow: View {
-    let session: WorkshopSession
-    var dimmed = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(session.letter)
-                .font(.headline.monospaced())
-                .frame(width: 36, height: 36)
-                .background(Color("AccentColor").opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.title).font(.body.weight(.medium)).lineLimit(2)
-                Text([session.projectName, session.status.label].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-        .opacity(dimmed ? 0.5 : 1)
-    }
-}
-
 /// The script, read big: hooks first (numbered), then each block as a
 /// paragraph (carousel slides numbered). Under it three controls, like a camera:
 /// the slow scroll, the big record button (the camera with the script by the lens),

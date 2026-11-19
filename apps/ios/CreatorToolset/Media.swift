@@ -24,7 +24,7 @@ struct RemoteImage: View {
 
     private func load() async {
         guard let api = servers.api else { return }
-        let key = "\(api.server.absoluteString)\(path)" as NSString
+        let key = "\(api.cacheKey)\(path)" as NSString
         if let hit = Self.cache.object(forKey: key) { return image = hit }
         guard let data = try? await api.data(api.request(path)), let loaded = UIImage(data: data) else { return }
         Self.cache.setObject(loaded, forKey: key)
@@ -34,13 +34,33 @@ struct RemoteImage: View {
 
 extension API {
     /// A player for a media path. The cookie is scoped to the server's host, so a redirect to a bucket never gets it.
+    /// A DPoP session's player gets its item once its media ticket is in (`MediaTicket`): a moment later, playing if
+    /// `play()` was already asked.
     func player(_ path: String) -> AVPlayer {
+        guard needsTicket else { return AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: playerOptions))) }
+        let player = AVPlayer()
+        Task { @MainActor in
+            guard let url = try? await ticketed(path) else { return }
+            player.replaceCurrentItem(with: AVPlayerItem(asset: AVURLAsset(url: url, options: playerOptions)))
+        }
+        return player
+    }
+
+    /// The player's range requests: the cookie, and the workspace as a header (a header option is not scoped to the
+    /// host, so the cookie never rides in it).
+    var playerOptions: [String: Any] {
         var cookies: [HTTPCookie] = []
         if let cookie, let host = server.host(),
            let c = HTTPCookie(properties: [.name: "cap_auth", .value: cookie, .domain: host, .path: "/"]) {
             cookies.append(c)
         }
-        return AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: [AVURLAssetHTTPCookiesKey: cookies])))
+        var options: [String: Any] = [AVURLAssetHTTPCookiesKey: cookies]
+        var fields: [String: String] = [:]
+        // a paired route's bearer token; a DPoP session's proof is good for one request, so its players carry a ticket
+        if cookie == nil, let credential, credential.kind == .bearer { fields = credential.headers(method: "GET", url: server) }
+        if let workspace { fields[WorkspacePick.header] = workspace }
+        if !fields.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = fields }
+        return options
     }
 }
 
@@ -132,7 +152,7 @@ extension API {
     }
 }
 
-/// The server's own web app, signed in with this phone's cookie: every tool the app has no screen for.
+/// The server's own web app, signed in as this phone: every tool the app has no screen for.
 struct WebAppView: UIViewRepresentable {
     let api: API
     var path = "/"
@@ -143,11 +163,11 @@ struct WebAppView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .systemBackground
         let url = api.url(path)
-        guard let c = api.webCookie else {
+        // the cookie of a session from before pairing, or this device session's ticket (`MediaTicket`), then the page
+        Task { @MainActor in
+            _ = await api.signIn(view.configuration.websiteDataStore.httpCookieStore)
             view.load(URLRequest(url: url))
-            return view
         }
-        view.configuration.websiteDataStore.httpCookieStore.setCookie(c) { view.load(URLRequest(url: url)) }
         return view
     }
 

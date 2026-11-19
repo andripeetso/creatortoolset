@@ -1,13 +1,17 @@
 import Foundation
 
 // Compiled into the app and the Share extension: what Share → Creator Toolset sends, with the sign-in the app saved
-// (`SavedServers`, in the Keychain group both share).
+// (`ServerRegistry`, in the Keychain group both share).
 
 /// The server in use, as the Share extension reaches it: one of the person's own posts linked to its Workshop session,
 /// or a link saved to the Content Analyzer.
 struct ShareLink {
     let server: URL
     let cookie: String?
+    /// The credential of the route the app last connected over (`Authorization`, not the cookie).
+    var credential: Credential? = nil
+    /// The phone's pick of workspace on this server (`WorkspacePick`): every request names it.
+    var workspace: String? = nil
 
     struct Failure: LocalizedError {
         let status: Int   // 0 = no answer
@@ -18,8 +22,11 @@ struct ShareLink {
     }
 
     /// The server the app has in use, or nil before any is added.
-    static func saved(_ servers: SavedServers? = SavedServers.read()) -> ShareLink? {
-        servers?.current.map { ShareLink(server: $0.server.url, cookie: $0.cookie) }
+    static func saved(_ connection: (base: URL, entry: ServerEntry, credential: Credential?)? = ServerRegistry.currentConnection()) -> ShareLink? {
+        connection.map {
+            ShareLink(server: $0.base, cookie: nil, credential: $0.credential,
+                      workspace: WorkspacePick.get(server: $0.entry.key, username: $0.entry.username))
+        }
     }
 
     private static let session: URLSession = {
@@ -32,14 +39,7 @@ struct ShareLink {
 
     /// One request to this server. The answer's body, or its `{ error }` (else `fallback`) as a Failure.
     private func call(_ path: String, method: String = "POST", json: [String: Any]? = nil, fallback: String) async throws -> Data {
-        // as the app's own client builds it (`API.url`)
-        var request = URLRequest(url: URL(string: String(path.dropFirst()), relativeTo: server)?.absoluteURL ?? server)
-        request.httpMethod = method
-        if let cookie, !cookie.isEmpty { request.setValue("cap_auth=\(cookie)", forHTTPHeaderField: "Cookie") }
-        if let json {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: json)
-        }
+        let request = request(path, method: method, json: json)
         let data: Data
         let response: URLResponse
         do {
@@ -53,6 +53,20 @@ struct ShareLink {
             throw Failure(status: status, message: error ?? "\(fallback) (HTTP \(status))")
         }
         return data
+    }
+
+    /// A request to this server, as the app's own client builds it (`API.url`, `API.headers`).
+    func request(_ path: String, method: String = "POST", json: [String: Any]? = nil) -> URLRequest {
+        var request = URLRequest(url: URL(string: String(path.dropFirst()), relativeTo: server)?.absoluteURL ?? server)
+        request.httpMethod = method
+        if let cookie, !cookie.isEmpty { request.setValue("cap_auth=\(cookie)", forHTTPHeaderField: "Cookie") }
+        for (k, v) in credential?.headers(method: method, url: request.url ?? server) ?? [:] { request.setValue(v, forHTTPHeaderField: k) }
+        if let workspace { request.setValue(workspace, forHTTPHeaderField: WorkspacePick.header) }
+        if let json {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: json)
+        }
+        return request
     }
 
     /// Why a shared link is kept, the Analyzer's "Kept for" choice.

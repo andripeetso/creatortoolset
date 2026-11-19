@@ -497,6 +497,7 @@ struct ServerLibraryGrid: View {
     @State private var loaded = false
     @State private var error: String?
     @State private var open: Asset?
+    @Environment(\.libraryQuery) private var query
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -533,7 +534,11 @@ struct ServerLibraryGrid: View {
                 }
             }
         }
-        .task { await load(more: false) }
+        .task(id: query) {
+            if !query.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }   // one read when typing stops
+            guard !Task.isCancelled else { return }
+            await load(more: false)
+        }
         .refreshable { await load(more: false) }
         .sheet(item: $open) { AssetView(asset: $0) }
     }
@@ -546,6 +551,9 @@ struct ServerLibraryGrid: View {
     private func load(more: Bool) async {
         guard let api = servers.api else { return }
         defer { loaded = true }
+        #if DEBUG
+        if PhoneDemo.on { return assets = PhoneDemo.assets(query) }
+        #endif
         do {
             if libraryId == nil {
                 let libraries: ServerPlugins.Libraries = try await api.get("/api/library")
@@ -553,6 +561,8 @@ struct ServerLibraryGrid: View {
             }
             guard let libraryId else { return }
             var path = "/api/library/\(libraryId)/assets?limit=60"
+            let words = query.trimmingCharacters(in: .whitespaces)
+            if !words.isEmpty { path += "&q=\(words.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")" }
             if more, let next { path += "&cursor=\(next.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? next)" }
             let page: Page = try await api.get(path)
             assets = more ? assets + page.items : page.items

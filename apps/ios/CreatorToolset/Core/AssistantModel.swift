@@ -20,8 +20,10 @@ struct AssistantView: Decodable, Equatable {
     /// The reply starts at once and the videos go on up after it ends (a message sent with `later`). An older
     /// server sends nothing: it holds the reply until they are in, and a reply that ended (stopped) needs them no more.
     var videosLater: Bool
+    /// The workspace the chat is in (set by its first message): its calls go there.
+    var workspace: String?
 
-    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow, videosLater }
+    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow, videosLater, workspace }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -33,6 +35,7 @@ struct AssistantView: Decodable, Equatable {
         navigate = try? c.decodeIfPresent(String.self, forKey: .navigate)
         sendNow = (try? c.decode(Bool.self, forKey: .sendNow)) ?? false
         videosLater = (try? c.decode(Bool.self, forKey: .videosLater)) ?? false
+        workspace = try? c.decodeIfPresent(String.self, forKey: .workspace)
     }
 
     var connected: Bool { provider != "none" }
@@ -163,9 +166,13 @@ struct AssistantServer {
     var call: (String, String, Any?) async throws -> Data
     var uploader = AssistantOutbox.Uploader(begin: AssistantUpload.begin, send: AssistantUpload.send, handOver: AssistantUpload.handOver)
 
-    static var signedIn: AssistantServer? {
-        guard let api = ToolsetAPI.current else { return nil }
-        return AssistantServer(queue: AssistantOutbox.file(for: api.cacheKey)) { path, method, json in
+    static var signedIn: AssistantServer? { signedIn(chat: nil) }
+
+    /// In the chat's own workspace when it has one (a chat keeps its workspace), else the phone's. The outbox is the account's.
+    static func signedIn(chat workspace: String?) -> AssistantServer? {
+        guard var api = ToolsetAPI.current else { return nil }
+        if let workspace { api.workspace = workspace }
+        return AssistantServer(queue: AssistantOutbox.file(for: api.accountKey)) { path, method, json in
             var request = api.request(path, method: method, json: json)
             let turn = path == "/api/assistant/turn"
             if turn { request.timeoutInterval = 120 }   // six pictures on a slow connection
@@ -201,6 +208,7 @@ final class AssistantModel: ObservableObject {
     private var stopping: Set<String> = []
 
     init() {
+        server = { [weak self] in .signedIn(chat: self?.view?.workspace) }
         draft.changed = { [weak self] in self?.carryOn() }
         draft.handedOver = { [weak self] video, picked in
             self?.outbox.handed(video, picked)

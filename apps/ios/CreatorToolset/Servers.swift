@@ -2,90 +2,77 @@ import Foundation
 import Security
 import WebKit
 
-/// The servers added on this phone and the one in use. Every screen reads `current`.
+import Combine
+
+/// The servers added on this phone and the one in use, as the screens read them: a thin view of `Connections` (servers
+/// keyed by their own id, with routes). Every screen reads `current`; `current` stays a filter until the lists merge
+/// across servers.
 @MainActor
 final class Servers: ObservableObject {
     static let shared = Servers()
 
     @Published private(set) var list: [Server] = []
     @Published private(set) var currentId: String?
-    /// Set when the server answered 401: the cookie is gone, so the person signs in again.
+    /// Set when the server in use turned its credential away: the person pairs or signs in again.
     @Published private(set) var signedOut = false
+    private var bag = Set<AnyCancellable>()
 
-    /// Where the list and the server in use are saved (`API.current` reads them too).
-    nonisolated static let listKey = "servers"
-    nonisolated static let currentKey = "currentServer"
-    private var listKey: String { Self.listKey }
-    private var currentKey: String { Self.currentKey }
-
-    init() {
-        if let data = UserDefaults.standard.data(forKey: listKey),
-           let saved = try? JSONDecoder().decode([Server].self, from: data) {
-            list = saved
-        }
-        currentId = UserDefaults.standard.string(forKey: currentKey) ?? list.first?.id
+    init(connections: Connections? = nil) {
+        (connections ?? .shared).$saved.sink { [weak self] saved in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let list = saved.servers.map(\.server)
+                if list != self.list { self.list = list }
+                if saved.current?.key != self.currentId { self.currentId = saved.current?.key }
+            }
+        }.store(in: &bag)
         #if DEBUG
         // a server without sign-in on this Mac, for the simulator: -localServer http://localhost:43190
-        if let raw = debugArg("localServer"), let target = SignIn.parse(raw) {
+        if let raw = debugArg("localServer"), let target = SignIn.parse(raw), !list.contains(where: { $0.url == target.origin }) {
             add(Server(url: target.origin, username: "local"), cookie: nil)
         }
         #endif
-        // a phone that added its servers before the Share extension existed
-        if !list.isEmpty, SavedServers.read() == nil { SavedServers(list: list, currentId: currentId).write() }
     }
 
     var current: Server? { list.first { $0.id == currentId } }
 
     /// The client for the server in use, or nil before one is added.
-    var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id), username: $0.username) } }
+    var api: API? { Connections.shared.current.map(API.connected) }
 
+    /// A server signed in to by address (username and password, or a hosted server through the account).
     func add(_ server: Server, cookie: String?) {
-        list = Self.adding(server, to: list)
-        Keychain.set(server.id, cookie)
-        use(server.id)
-    }
-
-    /// The list with a server added, in place of the one with the same address. Signed in again by its address, a
-    /// computer keeps the name it had.
-    static func adding(_ server: Server, to list: [Server]) -> [Server] {
-        var server = server
-        if server.label == nil { server.label = list.first { $0.id == server.id }?.label }
-        return list.filter { $0.id != server.id } + [server]
+        Connections.shared.addByAddress(server.url, label: server.label, username: server.username, cookie: cookie)
+        signedOut = false
     }
 
     func use(_ id: String) {
-        currentId = id
+        Connections.shared.use(key: id)
         signedOut = false
-        save()
     }
 
-    /// A removed server stops sending this phone anything (its push is forgotten with the sign-in still in hand),
-    /// and removing the last one forgets what the in-app web pages kept.
+    /// Removed from this phone only; revoking it happens on the computer.
     func remove(_ id: String) {
-        if let server = list.first(where: { $0.id == id }) {
-            let api = API(server: server.url, cookie: Keychain.get(id), username: server.username)
-            Task { await StudioHooks.removing(api) }
-        }
-        list.removeAll { $0.id == id }
-        Keychain.set(id, nil)
-        if currentId == id { currentId = list.first?.id }
-        save()
-        if list.isEmpty {
-            WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
-        }
+        if let entry = Connections.shared.entry(key: id) { Connections.shared.remove(entry.serverId) }
     }
 
-    /// The server in use turned `refused` away. A sign-in made since (a request still on its way with the old one) stays.
-    func sessionExpired(_ refused: String?) {
-        guard let id = currentId, Keychain.get(id) == refused else { return }
-        Keychain.set(id, nil)
+    /// The server in use turned `refused` away (`code`: the 401's own). A sign-in made since (a request still on its way
+    /// with the old one) stays.
+    func sessionExpired(_ refused: String?, code: String? = nil) {
+        guard let entry = Connections.shared.current, let route = entry.activeRoute,
+              ServerRegistry.credential(entry.serverId, route: route)?.token == refused else { return }
+        if code == "SESSION_REVOKED" {
+            Connections.shared.lineRefused(entry.serverId, route: route, status: 401, code: code)
+            signedOut = true
+            return
+        }
+        if route.authorization == .account {
+            Connections.shared.refused(entry)   // a new session is minted through the account
+            return
+        }
+        // a paired token or an old cookie the server turned away is dropped: the person pairs again
+        ServerRegistry.setCredential(entry.serverId, routeId: route.id, nil)
         signedOut = true
-    }
-
-    private func save() {
-        UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: listKey)
-        UserDefaults.standard.set(currentId, forKey: currentKey)
-        SavedServers(list: list, currentId: currentId).write()
+        Connections.shared.refused(entry)
     }
 }
 
@@ -121,7 +108,7 @@ enum APIError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .signedOut: return "Signed out. Sign in again in More → Computers."
+        case .signedOut: return "Signed out. Sign in again in Tools → Computers."
         case .server(_, let message): return message
         case .offline: return "No connection to the server"
         case .refused(let line): return line
@@ -136,6 +123,13 @@ struct API {
     let cookie: String?
     /// Who is signed in, for what is kept on disk per account (`cacheKey`).
     var username: String? = nil
+    /// The route's session (`Authorization: Bearer`, or `DPoP` with a fresh proof per request), in place of the cookie.
+    var credential: Credential? = nil
+    /// The saved server this client is for (`Server.id`): its route can change, this stays.
+    var key: String? = nil
+    /// The workspace every request works in (`X-CT-Workspace`): the phone's pick on this server (`API.connected`), or
+    /// a chat's own for that chat's calls. nil: the server's own rule.
+    var workspace: String? = nil
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -154,12 +148,18 @@ struct API {
         return made
     }
 
-    var headers: [String: String] { cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? [:] }
+    /// What one request to `url` carries: the cookie or the route's `Authorization` (a DPoP proof names the method
+    /// and the URL), and the workspace.
+    func headers(method: String = "GET", url: URL) -> [String: String] {
+        var h = cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? credential?.headers(method: method, url: url) ?? [:]
+        if let workspace { h[WorkspacePick.header] = workspace }
+        return h
+    }
 
     func request(_ path: String, method: String = "GET", json: Any? = nil) -> URLRequest {
         var request = URLRequest(url: url(path))
         request.httpMethod = method
-        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        for (k, v) in headers(method: method, url: request.url ?? server) { request.setValue(v, forHTTPHeaderField: k) }
         if let json {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: json)
@@ -176,8 +176,10 @@ struct API {
         try decoder.decode(T.self, from: try await data(request(path)))
     }
 
-    /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled.
-    func data(_ request: URLRequest, session: URLSession = API.session) async throws -> Data {
+    /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled. A
+    /// DPoP proof the server couldn't check this time (`INVALID_DPOP`, its replay cache full) is sent once more with a
+    /// fresh proof.
+    func data(_ request: URLRequest, session: URLSession = API.session, again: Bool = true) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -187,8 +189,14 @@ struct API {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
+            let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? String
+            if code == "INVALID_DPOP", again, let credential, credential.kind == .dpop, let url = request.url {
+                var fresh = request
+                for (k, v) in credential.headers(method: request.httpMethod ?? "GET", url: url) { fresh.setValue(v, forHTTPHeaderField: k) }
+                return try await self.data(fresh, session: session, again: false)
+            }
             // only the server in use: an upload to another server failing must not sign this one out
-            await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired(cookie) } }
+            await MainActor.run { if Servers.shared.currentId == key ?? server.absoluteString { Servers.shared.sessionExpired(credential?.token ?? cookie, code: code) } }
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else {

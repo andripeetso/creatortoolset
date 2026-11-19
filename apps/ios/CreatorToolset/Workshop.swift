@@ -183,6 +183,9 @@ final class WorkshopModel: ObservableObject {
             return
         }
         if api.cacheKey != key { show(api) }
+        #if DEBUG
+        if PhoneDemo.on { return sessions = PhoneDemo.sessions }
+        #endif
         if !force, let checkedAt, Date().timeIntervalSince(checkedAt) < 60 { return }
         loading = sessions.isEmpty
         defer { loading = false }

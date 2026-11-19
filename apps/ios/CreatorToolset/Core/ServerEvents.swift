@@ -23,8 +23,16 @@ enum ServerEvents {
         }
     }
 
-    /// Ends when the task that reads it is cancelled (a SwiftUI `.task` does that when its screen goes).
+    /// Ends when the task that reads it is cancelled (a SwiftUI `.task` does that when its screen goes). The sync line
+    /// is the supervisor's own (`Connections.events`); a line of its own only where nothing supervises (tests).
+    @MainActor
     static func stream(_ path: String) -> AsyncStream<Event> {
+        if path == "/api/sync/events", Connections.shared.live { return Connections.shared.events() }
+        return own(path)
+    }
+
+    /// A line of its own, opened again when dropped.
+    static func own(_ path: String) -> AsyncStream<Event> {
         AsyncStream { continuation in
             let task = Task {
                 var wait = 1.0

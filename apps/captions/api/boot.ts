@@ -69,6 +69,7 @@ import { connectApp } from "./connect/routes";
 import { phoneNotifyApp } from "./connect/activity";
 import { connectPublicApp } from "./connect/mint";
 import { computerKey } from "./connect/keys";
+import { mediaTicketApp } from "./media-ticket";
 import { authClientsApp, callerOf, oauthTokenApp, scopeFor, scopeRefused, sessionRefused } from "./auth-clients";
 import { allowedPeer, descriptorApp, endpointsApp, listensEverywhere } from "./descriptor";
 import { connectState, tunnelHostname } from "./connect/state";
@@ -447,6 +448,8 @@ const sameSiteWrites: MiddlewareHandler = async (c, next) => {
 app.use("/api/auth/*", sameSiteWrites);
 app.use("/api/connect/*", sameSiteWrites);
 app.route("/api/auth", authClientsApp);
+// tickets for what cannot sign each request (players, web views, background uploads): media-ticket.ts
+app.route("/api/auth", mediaTicketApp);
 app.route("/api/auth", authApp);
 app.route("/api/server", endpointsApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)

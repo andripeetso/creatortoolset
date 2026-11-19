@@ -72,35 +72,36 @@ final class ChatsTests: XCTestCase {
     }
 
     func testARouteOpensOnItsTab() {
-        func tab(_ path: String, from current: AppTab = .chats, hasEdits: Bool = true) -> AppTab? {
-            AppRoute.from(path: path).map { AppNavigator.tab(for: $0, from: current, hasEdits: hasEdits) }
+        func tab(_ path: String, from current: AppTab = .chats) -> AppTab? {
+            AppRoute.from(path: path).map { AppNavigator.tab(for: $0, from: current) }
         }
-        // an edit and a Review video open on Edits, from a card, a link in a chat or a notification, whatever tab is in front
-        XCTAssertEqual(tab("/editor/e1"), .edits)
-        XCTAssertEqual(tab("/review/r9?v=2", from: .upload), .edits)
-        // the assistant's chats on Chats, even from Edits
-        XCTAssertEqual(tab("/?chat=c1", from: .edits), .chats)
-        XCTAssertEqual(tab("/assistant", from: .edits), .chats)
-        XCTAssertEqual(tab("/library", from: .edits), .finals)
-        // a script or a page stays on the tab it was opened from
-        XCTAssertEqual(tab("/workshop/sessions/s1", from: .edits), .edits)
+        // an edit and a Review video open on Make, from a card, a link in a chat or a notification, whatever tab is in front
+        XCTAssertEqual(tab("/editor/e1"), .make)
+        XCTAssertEqual(tab("/review/r9?v=2", from: .tools), .make)
+        // the assistant's chats on Chats, even from Make
+        XCTAssertEqual(tab("/?chat=c1", from: .make), .chats)
+        XCTAssertEqual(tab("/assistant", from: .make), .chats)
+        XCTAssertEqual(tab("/library", from: .make), .distribute)
+        // a script stays on a tab with screens of its own (over a chat it came from), else opens on Plan
+        XCTAssertEqual(tab("/workshop/sessions/s1", from: .make), .make)
         XCTAssertEqual(tab("/workshop/sessions/s1", from: .chats), .chats)
-        XCTAssertEqual(tab("/settings", from: .more), .chats)
+        XCTAssertEqual(tab("/workshop/sessions/s1", from: .distribute), .plan)
+        XCTAssertEqual(tab("/settings", from: .tools), .chats)
+        XCTAssertEqual(tab("/settings", from: .plan), .plan)
         // each tab keeps its own screens
         let nav = AppNavigator()
+        nav.makeSide = .media
         nav.open(href: "/review/r9?v=2")
-        XCTAssertEqual(nav.tab, .edits)
-        XCTAssertEqual(nav.edits, [.review("r9", version: 2)])
+        XCTAssertEqual(nav.tab, .make)
+        XCTAssertEqual(nav.makeSide, .edits)   // a video opens over the edits
+        XCTAssertEqual(nav.make, [.review("r9", version: 2)])
         nav.open(href: "/?chat=c1")
         XCTAssertEqual(nav.tab, .chats)
         XCTAssertEqual(nav.chats, [.chat("c1")])
-        XCTAssertEqual(nav.edits, [.review("r9", version: 2)])
-        // an account without the Edits tab opens them on Chats
-        nav.hasEdits = false
-        nav.open(.edit("e1"))
-        XCTAssertEqual(nav.tab, .chats)
-        XCTAssertEqual(nav.chats, [.chat("c1"), .edit("e1")])
-        XCTAssertEqual(tab("/workshop/sessions/s1", from: .edits, hasEdits: false), .chats)
+        XCTAssertEqual(nav.make, [.review("r9", version: 2)])
+        nav.tab = .plan
+        nav.open(.session("s1"))
+        XCTAssertEqual(nav.plan, [.session("s1")])
     }
 
     func testAFinishedRowSaysDoneUntilItIsOpened() {

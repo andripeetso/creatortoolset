@@ -3,9 +3,11 @@ import Foundation
 // The phone's New edits in Chats: one row each, from Start until its first cut in Review has been opened.
 
 extension PhoneEdits {
-    /// The New edits of the server in use, each with how far it is.
+    /// The New edits of the server and workspace in use, each with how far it is.
     var here: [(edit: PhoneEdit, state: EditState)] {
-        list.filter { $0.server == Servers.shared.currentId }.map { ($0, state($0)) }
+        let api = Servers.shared.api
+        return list.filter { $0.server == Servers.shared.currentId && ($0.workspace == nil || $0.workspace == api?.workspace) }
+            .map { ($0, state($0)) }
     }
 }
 

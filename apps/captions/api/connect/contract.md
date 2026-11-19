@@ -249,6 +249,33 @@ When the server listens on every interface (`HOST` = `0.0.0.0` or `::`) and is n
 whose peer is not loopback, private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local (169.254/16, fe80::/10) or
 100.64.0.0/10.
 
+## Media tickets (`api/media-ticket.ts`)
+
+What can't sign each request itself (a video player's range requests, a web view's page and its own calls, an upload the
+phone's background transfer service sends minutes or hours later) carries a **media ticket** instead of the session's
+token. A DPoP session needs one for each of those (a proof is good for one request, ±300 s); a Bearer session needs one
+for web views (a page's own calls can't add a header).
+
+### `POST /api/auth/media-ticket` (a device session's own signed request; a cookie gets 400)
+
+Request `{ "path": "/api/…", "write"?: boolean }`. Response 200 `{ "ticket": "ctm_…43", "path", "write", "expiresAt" }`,
+`Cache-Control: no-store`.
+
+- `path` is a prefix: the ticket opens that path and what is below it (`/api/library/media/v1` opens `…/v1/play`, never
+  `…/v12`). It must start with `/api/`, have no `..`, `?` or `#`, and never be `/api/auth/*` or a path that needs
+  `access` (400 `"Bad path"`).
+- `write: false` (the default) opens `GET`/`HEAD` only and needs the session's `read`; `write: true` opens every method
+  and needs `write` (else 403 `SCOPE`). The session's own scopes still apply on each request.
+- Life: 1 hour, never past its session's expiry. A revoked or expired session ends its tickets at once. Kept in memory
+  only: a server restart ends them (the phone asks again).
+
+### Using one
+
+`?ct_ticket=<ticket>` on the URL, or a cookie `ct_ticket=<ticket>` (what a phone's web view sets, `SameSite=Strict`).
+Read after an `Authorization` token and before the browser cookie. A ticket that doesn't fit (unknown, expired, another
+path, a write on a read ticket) is ignored, so the request is answered as if it had none. `GET /api/auth/check` counts a
+ticket on its path as signed in, so the web app in a phone's web view opens signed in as the session's account.
+
 ## Phone notifications
 
 `GET /api/connect/notifications` → `{ linked, on }` · `POST /api/connect/notifications { on: boolean }` → the same
