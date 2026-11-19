@@ -187,7 +187,8 @@ struct AccountClient {
         var request = URLRequest(url: URL(string: "/api/account/token", relativeTo: server)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["code": code, "verifier": verifier])
+        // `app`: the server keeps which app a binding is (signing the phones out leaves the Mac's)
+        request.httpBody = try JSONEncoder().encode(["code": code, "verifier": verifier].merging(key == nil ? [:] : ["app": "mac"]) { a, _ in a })
         if let key, let url = request.url { request.setValue(try DPoP.proof(method: "POST", url: url, key: key), forHTTPHeaderField: "DPoP") }
         struct Reply: Decodable { let token: String; let bound: Bool? }
         let data = try await sendData(request)
@@ -210,8 +211,8 @@ struct AccountClient {
     enum Binding { case bound, refused, later }
 
     /// POST /api/account/bind: a plain token from an app before binding is bound to this Mac's key, once. `refused`:
-    /// the server no longer takes plain tokens (403), so the person signs in again; `later`: offline, an older server,
-    /// or no key here, and the token stays plain.
+    /// the server no longer takes plain tokens (403) or this token (401), so the person signs in again; `later`:
+    /// offline, an older server, or no key here, and the token stays plain.
     func bind(_ token: String) async -> Binding {
         guard let key else { return .later }
         var request = URLRequest(url: URL(string: "/api/account/bind", relativeTo: server)!)
@@ -224,7 +225,7 @@ struct AccountClient {
         guard let (_, response) = try? await session.data(for: request) else { return .later }
         switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
         case 200..<300: BoundTokens.add(token); return .bound
-        case 403: return .refused
+        case 401, 403: return .refused   // 401: the server no longer knows it (ended, or bound by someone else first)
         default: return .later
         }
     }
@@ -414,14 +415,19 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
                 if let up = try? await offered(client) { signedIn["providers"] = up.joined(separator: ",") }
                 return signedIn
             } catch AccountError.signedOut {
-                DeviceVault.remove(for: host, service: Self.vault)
+                ended()
             } catch {
                 if let profile { return reply(profile) }   // offline: the account it had
             }
         }
         do {
             let up = try await offered(client)
-            return up.isEmpty ? ["state": "notSetUp", "server": host] : ["state": "signedOut", "providers": up.joined(separator: ",")]
+            if up.isEmpty { return ["state": "notSetUp", "server": host] }
+            // the sign-in ended on the account's side, not by a press here: said until the person signs in again
+            if UserDefaults.standard.bool(forKey: endedKey) {
+                return ["state": "error", "message": "Your sign-in ended. Sign in again.", "providers": up.joined(separator: ",")]
+            }
+            return ["state": "signedOut", "providers": up.joined(separator: ",")]
         } catch {
             return unreachable(error)
         }
@@ -433,9 +439,21 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         server?.absoluteString == defaultAccountServer.absoluteString ? accountLive : try await client.offeredProviders()
     }
 
+    private var endedKey: String { "accountEnded.\(host)" }
+
+    /// The account server ended this Mac's token (it no longer takes it, or a copy of it was used elsewhere): it goes
+    /// from here, and the account step says "Sign in again" until the person does.
+    private func ended() {
+        AppLog.write("the account server ended this Mac's sign-in: it asks to sign in again")
+        DeviceVault.remove(for: host, service: Self.vault)
+        UserDefaults.standard.removeObject(forKey: profileKey)
+        UserDefaults.standard.removeObject(forKey: providerKey)
+        UserDefaults.standard.set(true, forKey: endedKey)
+    }
+
     /// The stored token. One from an app before binding is bound to this Mac's key first, quietly, once a launch.
-    /// A server that no longer takes plain tokens (403) ends the sign-in here, so the app asks for it again once.
-    /// Offline or an older server: it stays plain and is tried again next launch.
+    /// A server that no longer takes plain tokens, or no longer knows this one, ends the sign-in here, so the app asks
+    /// for it again. Offline or an older server: it stays plain and is tried again next launch.
     func token() async -> String? {
         guard let server, let token = DeviceVault.token(for: host, service: Self.vault) else { return nil }
         guard !bindTried, !BoundTokens.contains(token), DPoPKey.shared != nil else { return token }
@@ -443,17 +461,13 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         switch await AccountClient(server: server, key: DPoPKey.shared).bind(token) {
         case .bound, .later: return token
         case .refused:
-            AppLog.write("the account server wants this Mac's sign-in made again: signed out until then")
-            DeviceVault.remove(for: host, service: Self.vault)
-            UserDefaults.standard.removeObject(forKey: profileKey)
-            UserDefaults.standard.removeObject(forKey: providerKey)
+            ended()
             return nil
         }
     }
 
     /// Sign out: the token leaves the Keychain and the kept name and email go with it. The name this Mac's own server
     /// shows stays as it is. Answers as `status` does for a signed-out person.
-    /// ponytail: the token is only forgotten here; call the account server's revoke when it has one.
     func signOut() async -> AccountReply {
         session?.cancel()
         session = nil
@@ -467,6 +481,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         DeviceVault.remove(for: host, service: Self.vault)
         UserDefaults.standard.removeObject(forKey: profileKey)
         UserDefaults.standard.removeObject(forKey: providerKey)
+        UserDefaults.standard.removeObject(forKey: endedKey)
         return await status()
     }
 
@@ -595,6 +610,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
                 return answer(["state": "error", "message": "The Keychain didn't keep the sign-in."])
             }
             UserDefaults.standard.set(signingInWith, forKey: providerKey)
+            UserDefaults.standard.removeObject(forKey: endedKey)
             keep(profile)
             return answer(reply(profile))
         } catch {
