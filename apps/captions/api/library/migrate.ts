@@ -271,6 +271,9 @@ export async function migrateOnce(opts: { dryRun?: boolean; now?: string } = {})
   if (!opts.dryRun) {
     mkdirSync(path.dirname(markFile()), { recursive: true });
     writeFileSync(markFile(), JSON.stringify({ [MARK]: nowIso }));
+    // boot discards the result, so what the hand-off needs goes to the log
+    for (const o of out.outside) console.warn(`[library] migration: a ${o.device} file outside every Source media row: ${o.path} (${o.libraryId})`);
+    for (const n of out.notes) console.log(`[library] migration: ${n}`);
   }
   return out;
 }
