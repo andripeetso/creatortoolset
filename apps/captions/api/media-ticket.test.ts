@@ -92,6 +92,8 @@ describe("media tickets", () => {
     }
     const wide = ((await (await ask(token, { path: "/api/" })).json()) as { ticket: string }).ticket;
     expect((await call("GET", `/api/auth/access?ct_ticket=${wide}`)).status).toBe(401);
+    // what a device session may never open, a ticket of one may not either
+    for (const p of ["/api/providers", "/api/my-keys", "/api/admin/users"]) expect((await call("GET", `${p}?ct_ticket=${wide}`)).status).toBe(403);
   });
 
   it("a write ticket opens every method there, only for a session that may write", async () => {

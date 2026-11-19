@@ -4,7 +4,7 @@ import { getCookie } from "hono/cookie";
 import { sessionOf } from "./auth";
 import { callerOf, scopeFor, scopeRefused, sessionRefused, type Caller } from "./auth-clients";
 import { env } from "./lib/env";
-import type { SessionRow } from "./lib/clients";
+import { sessionById, type SessionRow } from "./lib/clients";
 import { LOCAL_USER, findUser, type SessionUser } from "./users";
 
 /**
@@ -21,7 +21,7 @@ export const TICKET_PARAM = "ct_ticket";
 const TICKET_RE = /^ctm_[A-Za-z0-9_-]{43}$/;
 
 interface Ticket {
-  row: SessionRow;
+  sessionId: string;
   prefix: string;
   write: boolean;
   expiresAt: number;
@@ -38,14 +38,16 @@ const under = (path: string, prefix: string) => path === prefix || path.startsWi
 const closed = (path: string) => /^\/api\/auth(?:\/|$)/.test(path) || scopeFor("GET", path) === "access";
 
 /** The live ticket this request carries (query or cookie) and its account, or null. */
-function carried(c: Context, now: number): { t: Ticket; user: SessionUser } | null {
+function carried(c: Context, now: number): { t: Ticket; row: SessionRow; user: SessionUser } | null {
   const raw = c.req.query(TICKET_PARAM) ?? getCookie(c, TICKET_PARAM);
   if (!raw || !TICKET_RE.test(raw)) return null;
   const t = tickets.get(sha(raw));
-  if (!t || t.expiresAt <= now || t.row.revokedAt || t.row.expiresAt <= now) return null;
-  const record = env.appSecret ? findUser(t.row.subject) : null;
+  // the session as it is now (a revoke, an expiry, a password change all end it), never a copy kept at issue
+  const row = t && t.expiresAt > now ? sessionById(t.sessionId) : undefined;
+  if (!t || !row || row.revokedAt || row.expiresAt <= now) return null;
+  const record = env.appSecret ? findUser(row.subject) : null;
   const user = env.appSecret ? (record ? sessionOf(record) : null) : LOCAL_USER;
-  return user ? { t, user } : null;
+  return user ? { t, row, user } : null;
 }
 
 /** The session a ticket on this request stands for, as a token caller; null when there is none or it doesn't fit. */
@@ -55,7 +57,7 @@ export function ticketCaller(c: Context, now = Date.now()): Caller | null {
   const path = c.req.path;
   if (closed(path) || !under(path, found.t.prefix)) return null;
   if (!found.t.write && c.req.method !== "GET" && c.req.method !== "HEAD") return null;
-  return { kind: "token", user: found.user, row: found.t.row };
+  return { kind: "token", user: found.user, row: found.row };
 }
 
 /** Who a live ticket signs in as, whatever its path: `/api/auth/check` only, so a web view's page opens signed in. */
@@ -82,7 +84,7 @@ mediaTicketApp.post("/media-ticket", async (c) => {
   for (const [h, t] of tickets) if (t.expiresAt <= now) tickets.delete(h);
   const ticket = `ctm_${randomBytes(32).toString("base64url")}`;
   const expiresAt = Math.min(now + TICKET_TTL_MS, k.row.expiresAt);
-  tickets.set(sha(ticket), { row: k.row, prefix, write, expiresAt });
+  tickets.set(sha(ticket), { sessionId: k.row.id, prefix, write, expiresAt });
   c.header("Cache-Control", "no-store");
   return c.json({ ticket, path: prefix, write, expiresAt: new Date(expiresAt).toISOString() });
 });
