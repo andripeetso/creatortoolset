@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http';
 import { createCloudflare } from '../src/cloudflare.ts';
 import { signJwt, TYP, verifyJwt } from '../src/connect.ts';
 import { openDb } from '../src/db.ts';
-import { jwkThumbprint } from '../src/dpop.ts';
+import { jwkThumbprint, MAX_JTIS } from '../src/dpop.ts';
 import { loadSigningKey, publicKeyB64 } from '../src/keys.ts';
 import { freeLimit } from '../src/limits.ts';
 import { handle, type Deps } from '../src/server.ts';
@@ -216,6 +216,19 @@ test('link: a computer linked before keys were kept gets its key from its next s
 });
 
 // --- the phone's DPoP token ---
+
+test('dpop token: a full proof-id table refuses new proofs with 503 busy, and makes room once old ones expire', async () => {
+  const add = deps.db.prepare('INSERT INTO dpop_jti (jkt, jti, expires_at) VALUES (?, ?, ?)');
+  deps.db.exec('BEGIN');
+  for (let i = 0; i < MAX_JTIS; i++) add.run('flood', `j${i}`, clock + 600);
+  deps.db.exec('COMMIT');
+  const p = phone();
+  const r = await exchange(acct(), p.proof('POST', `${SELF}/v1/client/dpop-token`));
+  assert.equal(r.status, 503);
+  assert.equal(r.json.error, 'busy');
+  clock += 601; // the flood's proofs could no longer pass: they go, and a new proof is taken
+  assert.equal((await exchange(acct(), p.proof('POST', `${SELF}/v1/client/dpop-token`))).status, 200);
+});
 
 test('dpop token: an account token and a proof give a 30-minute token bound to the phone key', async () => {
   const p = phone();

@@ -289,6 +289,10 @@ oauthTokenApp.post("/oauth/token", async (c) => {
   const proof = c.req.header("dpop");
   if (proof !== undefined) {
     const v = verifyDpop({ proof, method: "POST", url: requestUrl(c) });
+    if (!v.ok && v.code === "busy") {
+      c.header("Retry-After", "60");
+      return c.json({ error: "temporarily_unavailable", error_description: "Too many sign-ins at once. Try again in a minute." }, 503);
+    }
     if (!v.ok) return refuse("invalid_dpop_proof");
     jkt = v.jkt;
   }

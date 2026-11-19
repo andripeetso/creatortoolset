@@ -353,6 +353,8 @@ app.use("/api/*", async (c, next) => {
   const client = callerOf(c);
   if (client.kind === "error") return sessionRefused(c, client.code);
   if (client.kind === "token") {
+    // a device's session is never the account's keys, AI settings, computers or admin, whatever its scopes
+    if (FULL_KEY_NEVER.test(c.req.path)) return c.json({ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }, 403);
     const need = scopeFor(c.req.method, c.req.path);
     if (!client.row.scopes.includes(need)) return scopeRefused(c, need);
     c.set("clientSession", client.row.id);
@@ -432,6 +434,16 @@ app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
+// who has access is changed by a browser's cookie in every mode, so a page from another site never reaches it: the
+// browser must say it came from here and send JSON (which no plain form can). A device's own token is exempt.
+const ACCESS_WRITE = /^\/api\/auth\/(?:pairing-links|clients)(?:\/|$)/;
+app.use("/api/auth/*", async (c, next) => {
+  if (c.req.method !== "POST" || !ACCESS_WRITE.test(c.req.path) || c.req.header("authorization")) return next();
+  if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), undefined) || !/^application\/json\b/i.test(c.req.header("content-type") ?? "")) {
+    return c.json({ error: "Sent from another site" }, 403);
+  }
+  return next();
+});
 app.route("/api/auth", authClientsApp);
 // tickets for what cannot sign each request (players, web views, background uploads): media-ticket.ts
 app.route("/api/auth", mediaTicketApp);

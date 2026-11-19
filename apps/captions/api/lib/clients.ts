@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "./env";
 
@@ -243,34 +243,86 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const iso = (ms: number) => new Date(ms).toISOString();
 const file = () => path.join(env.dataDir, "clients.json");
 let store: Store | null = null;
+let readAs = ""; // the file as `store` was read from it: inode, mtime, size (a write by another process changes them)
 
+const fileStamp = () => {
+  try {
+    const st = statSync(file());
+    return `${st.ino}:${st.mtimeMs}:${st.size}`;
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * The store as the file holds it now. Two servers can run on one data dir for a moment (the no-downtime swap), so a
+ * change written by the other is read here at the next request.
+ */
 function load(): Store {
-  if (store) return store;
+  const now = fileStamp();
+  if (store && now === readAs) return store;
   try {
     const s = JSON.parse(readFileSync(file(), "utf8")) as Partial<Store>;
     store = { grants: s.grants ?? [], sessions: s.sessions ?? [] };
   } catch {
     store = { grants: [], sessions: [] };
   }
+  readAs = now;
   return store;
 }
 
-function save(): void {
-  const s = load();
-  const now = Date.now();
-  // expired links go; a session goes once it expired and nothing holds a line open on it (a revoked one stays marked
-  // until then, so its token is answered "signed out on the computer", not "unknown")
-  s.grants = s.grants.filter((g) => g.expiresAt > now);
-  s.sessions = s.sessions.filter((r) => r.expiresAt > now || (lines.get(r.id)?.size ?? 0) > 0);
+export const LOCK_STALE_MS = 10_000;
+const pause = new Int32Array(new SharedArrayBuffer(4));
+
+/** Runs `fn` holding DATA_DIR/clients.json.lock (made with O_EXCL), so a change by one server never undoes another's. */
+function locked<T>(fn: () => T): T {
   mkdirSync(env.dataDir, { recursive: true });
-  const tmp = `${file()}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
-  renameSync(tmp, file());
+  const lock = `${file()}.lock`;
+  for (let tries = 0; ; tries++) {
+    try {
+      closeSync(openSync(lock, "wx", 0o600));
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      // a write takes milliseconds: a lock this old was left by a server that died holding it
+      // shortcut: two waiters can both clear one stale lock; fine while a holder dying mid-write is the only way to leave one
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { force: true });
+      } catch { /* gone already */ }
+      if (tries >= 1000) throw new Error("clients.json stayed locked");
+      Atomics.wait(pause, 0, 0, 5);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    rmSync(lock, { force: true });
+  }
+}
+
+/** One change: under the lock, on the file as it is now, written back whole (temp file + rename). */
+function change<T>(fn: (s: Store) => T): T {
+  return locked(() => {
+    store = null;
+    const s = load();
+    const out = fn(s);
+    const now = Date.now();
+    // expired links go; a session goes once it expired and nothing holds a line open on it (a revoked one stays marked
+    // until then, so its token is answered "signed out on the computer", not "unknown")
+    s.grants = s.grants.filter((g) => g.expiresAt > now);
+    s.sessions = s.sessions.filter((r) => r.expiresAt > now || (lines.get(r.id)?.size ?? 0) > 0);
+    const tmp = `${file()}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
+    renameSync(tmp, file());
+    readAs = fileStamp();
+    return out;
+  });
 }
 
 /** Forget the store in memory (tests that swap DATA_DIR). */
 export const resetClientsForTest = () => {
   store = null;
+  readAs = "";
   lines.clear();
   listeners.clear();
 };
@@ -322,7 +374,6 @@ const linkOf = (g: GrantRow): PairingLink => ({
 
 export function createGrant(o: { kind: "pairing" | "connect"; subject: string; scopes: readonly Scope[]; label?: string; jkt?: string; deviceType?: DeviceType; ttlMs?: number; now?: number }): { link: PairingLink; credential: string } {
   const now = o.now ?? Date.now();
-  const s = load();
   const credential = newCredential();
   const row: GrantRow = {
     id: `pl_${randomUUID()}`,
@@ -336,8 +387,7 @@ export function createGrant(o: { kind: "pairing" | "connect"; subject: string; s
     createdAt: now,
     expiresAt: now + (o.ttlMs ?? (o.kind === "connect" ? CONNECT_TTL_MS : PAIRING_TTL_MS)),
   };
-  s.grants.push(row);
-  save();
+  change((s) => s.grants.push(row));
   // connect grants are the connect service's, made and spent within seconds: the access list shows pairing links only
   if (o.kind === "pairing") emit({ type: "pairingLinkUpserted", link: linkOf(row) });
   return { link: linkOf(row), credential };
@@ -353,33 +403,33 @@ export function redeemGrant(credential: string, o: { jkt?: string; requested?: S
   const now = o.now ?? Date.now();
   const c = normalizeCredential(credential);
   if (!c) return { ok: false, error: "invalid_grant" };
-  const s = load();
   const hash = sha(c);
-  const i = s.grants.findIndex((g) => g.hash === hash);
-  if (i < 0) return { ok: false, error: "invalid_grant" };
-  const g = s.grants[i];
-  if (g.expiresAt <= now) {
+  // looked at and spent under one lock: two servers on one file never both spend a code
+  const { result, gone } = change((s): { result: RedeemResult; gone?: GrantRow } => {
+    const i = s.grants.findIndex((g) => g.hash === hash);
+    if (i < 0) return { result: { ok: false, error: "invalid_grant" } };
+    const g = s.grants[i];
+    if (g.expiresAt <= now) {
+      s.grants.splice(i, 1);
+      return { result: { ok: false, error: "invalid_grant" }, gone: g };
+    }
+    if (g.jkt && g.jkt !== o.jkt) return { result: { ok: false, error: "invalid_grant" } };
+    const scopes = o.requested ? g.scopes.filter((x) => o.requested!.includes(x)) : g.scopes;
+    if (scopes.length === 0) return { result: { ok: false, error: "invalid_scope" } };
     s.grants.splice(i, 1);
-    save();
-    if (g.kind === "pairing") emit({ type: "pairingLinkRemoved", id: g.id, subject: g.subject });
-    return { ok: false, error: "invalid_grant" };
-  }
-  if (g.jkt && g.jkt !== o.jkt) return { ok: false, error: "invalid_grant" };
-  const scopes = o.requested ? g.scopes.filter((x) => o.requested!.includes(x)) : g.scopes;
-  if (scopes.length === 0) return { ok: false, error: "invalid_scope" };
-  s.grants.splice(i, 1);
-  save();
-  if (g.kind === "pairing") emit({ type: "pairingLinkRemoved", id: g.id, subject: g.subject });
-  const { hash: _h, ...grant } = g;
-  return { ok: true, grant, scopes };
+    const { hash: _h, ...grant } = g;
+    return { result: { ok: true, grant, scopes }, gone: g };
+  });
+  if (gone?.kind === "pairing") emit({ type: "pairingLinkRemoved", id: gone.id, subject: gone.subject });
+  return result;
 }
 
 export function revokeLink(id: string, may: (subject: string) => boolean): boolean {
-  const s = load();
-  const i = s.grants.findIndex((g) => g.id === id && g.kind === "pairing" && may(g.subject));
-  if (i < 0) return false;
-  const [g] = s.grants.splice(i, 1);
-  save();
+  const g = change((s) => {
+    const i = s.grants.findIndex((x) => x.id === id && x.kind === "pairing" && may(x.subject));
+    return i < 0 ? null : s.grants.splice(i, 1)[0];
+  });
+  if (!g) return false;
   emit({ type: "pairingLinkRemoved", id: g.id, subject: g.subject });
   return true;
 }
@@ -402,8 +452,7 @@ export function issueSession(o: { subject: string; scopes: Scope[]; jkt?: string
     lastConnectedAt: null,
     revokedAt: null,
   };
-  load().sessions.push(row);
-  save();
+  change((s) => s.sessions.push(row));
   emit({ type: "clientUpserted", row });
   return { token, row };
 }
@@ -427,8 +476,12 @@ export function resolveToken(token: string, now = Date.now()): ResolveResult {
 export function touchSession(row: SessionRow, now = Date.now()): void {
   if (row.lastConnectedAt !== null && now - row.lastConnectedAt < TOUCH_EVERY_MS) return;
   row.lastConnectedAt = now;
-  save();
-  emit({ type: "clientUpserted", row });
+  const fresh = change((s) => {
+    const r = s.sessions.find((x) => x.id === row.id);
+    if (r) r.lastConnectedAt = now;
+    return r;
+  });
+  if (fresh) emit({ type: "clientUpserted", row: fresh });
 }
 
 // open change streams per session: `connected`, and how a revoke ends them at once
@@ -454,28 +507,37 @@ export function holdLine(sessionId: string, end: () => void): () => void {
 
 export const isConnected = (sessionId: string) => (lines.get(sessionId)?.size ?? 0) > 0;
 
-function revokeRow(r: SessionRow, now: number) {
-  r.revokedAt = now;
-  for (const end of [...(lines.get(r.id) ?? [])]) end();
-  lines.delete(r.id);
-  emit({ type: "clientRemoved", sessionId: r.id, subject: r.subject });
-}
-
-export function revokeSession(id: string, may: (subject: string) => boolean, now = Date.now()): boolean {
-  const r = load().sessions.find((x) => x.id === id && !x.revokedAt && may(x.subject));
-  if (!r) return false;
-  revokeRow(r, now);
-  save();
-  return true;
-}
-
-/** Every live session the caller may see, but `keep`. */
-export function revokeOthers(keep: string | undefined, may: (subject: string) => boolean, now = Date.now()): number {
-  const hit = load().sessions.filter((r) => r.id !== keep && !r.revokedAt && may(r.subject));
-  for (const r of hit) revokeRow(r, now);
-  if (hit.length) save();
+/** Marks every matching live session revoked (one write), then ends their open lines. */
+function revokeWhere(match: (r: SessionRow) => boolean, now: number, alsoGrants?: (g: GrantRow) => boolean): number {
+  const { hit, links } = change((s) => {
+    const hit = s.sessions.filter((r) => !r.revokedAt && match(r));
+    for (const r of hit) r.revokedAt = now;
+    const links = alsoGrants ? s.grants.filter(alsoGrants) : [];
+    if (alsoGrants) s.grants = s.grants.filter((g) => !alsoGrants(g));
+    return { hit, links };
+  });
+  for (const r of hit) {
+    for (const end of [...(lines.get(r.id) ?? [])]) end();
+    lines.delete(r.id);
+    emit({ type: "clientRemoved", sessionId: r.id, subject: r.subject });
+  }
+  for (const g of links) if (g.kind === "pairing") emit({ type: "pairingLinkRemoved", id: g.id, subject: g.subject });
   return hit.length;
 }
+
+export const revokeSession = (id: string, may: (subject: string) => boolean, now = Date.now()): boolean =>
+  revokeWhere((r) => r.id === id && may(r.subject), now) > 0;
+
+/** Every live session the caller may see, but `keep`. */
+export const revokeOthers = (keep: string | undefined, may: (subject: string) => boolean, now = Date.now()): number =>
+  revokeWhere((r) => r.id !== keep && may(r.subject), now);
+
+/**
+ * An account's password changed, it signed out everywhere or it was deleted (users.ts): every device of it is signed
+ * out and its unused links and codes go, as its browsers' cookies stop working.
+ */
+export const revokeAccount = (subject: string, now = Date.now()): number =>
+  revokeWhere((r) => r.subject === subject, now, (g) => g.subject === subject);
 
 // ---- listing --------------------------------------------------------------------------------------------------------
 

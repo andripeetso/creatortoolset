@@ -6,6 +6,7 @@ import { env } from "./lib/env";
 import { TOOLS, isPluginGateId, isRetiredAppId, isTool, type PluginGateId, type Tool } from "../contracts/tools";
 import { pluginDefaultOff } from "./lib/plugin";
 import { announce } from "./lib/sync";
+import { revokeAccount } from "./lib/clients";
 
 export { isTool, type Tool };
 
@@ -307,6 +308,7 @@ export function setPassword(user: UserRecord, password: string): void {
   user.salt = randomBytes(16).toString("hex");
   user.hash = hashPassword(password, user.salt); // also rotates auth cookies
   persist();
+  revokeAccount(user.username); // and signs out its phones
 }
 
 /** The sign-in code on (`code`) or off (null). `signOut`: a new session stamp, so every other browser signs in again. */
@@ -315,6 +317,7 @@ export function setSignInCode(user: UserRecord, code: SignInCode | null, signOut
   else delete user.code;
   if (signOut) user.session = randomBytes(16).toString("hex");
   persist();
+  if (signOut) revokeAccount(user.username);
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -344,6 +347,7 @@ export function deleteUser(username: string): boolean {
   if (i < 0) return false;
   users.splice(i, 1);
   persist();
+  revokeAccount(username);
   return true;
 }
 
