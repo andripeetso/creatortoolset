@@ -61,7 +61,7 @@ async function pair(scopes: string[] = ["read", "write", "access"], withKey = fa
 }
 const ask = async (token: string, body: unknown, dpopKey = false, use = "media") => {
   const url = `/api/auth/media-ticket/${use}`;
-  const headers = dpopKey ? { authorization: `DPoP ${token}`, dpop: dpop("POST", `http://localhost${url}`, token) } : { authorization: `Bearer ${token}` };
+  const headers: Record<string, string> = dpopKey ? { authorization: `DPoP ${token}`, dpop: dpop("POST", `http://localhost${url}`, token) } : { authorization: `Bearer ${token}` };
   return call("POST", url, { headers, body });
 };
 const mint = async (token: string, path: string, use = "media") =>
