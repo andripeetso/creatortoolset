@@ -207,6 +207,10 @@ test('a computer that allowed the app ahead: sign in, pick it, and requests pass
   assert.equal((await c.allow('ChatGPT')).status, 200);
   assert.equal((await info()).computers[0]!.ready, true);
   assert.equal((await post('/oauth/authorize/info', { req: s.req })).status, 401);
+  // an app's relay token (it names the app's key) never approves an AI app: only the site's own tokens do
+  const bound = mintAccountToken(SECRET, 'acct-1', clock, 'app-key-thumbprint');
+  assert.equal((await post('/oauth/authorize/info', { req: s.req }, bound)).status, 403);
+  assert.equal((await post('/oauth/authorize/approve', { req: s.req, computer_id: c.id, approve: true }, bound)).status, 403);
 
   const a = await approve(s.req, c.id);
   const back = new URL(a.json.redirect!);

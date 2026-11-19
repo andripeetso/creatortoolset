@@ -70,6 +70,8 @@ final class Shell: NSObject, ObservableObject {
     /// Reach from anywhere's state for the page (Connect.swift refreshReach), and when the link was last tried by itself.
     var reach: Reach = .signedOut
     var lastReachTry: Date?
+    /// The relay token and the account's computers, kept between refreshes (Connect.swift BrokerCache).
+    var broker = BrokerCache()
 
     private let noteCenter = NoteCenter()
     private var timer: Timer?
@@ -290,7 +292,7 @@ final class Shell: NSObject, ObservableObject {
         account.leaving = { [weak self] old, new in await self?.leaveAccount(oldToken: old, newToken: new) }
         account.signedIn = { [weak self] profile in
             self?.ownerProfile(profile)
-            Task { await self?.refreshReach() }   // signed in: this Mac joins the account by itself while the switch is on
+            Task { await self?.refreshReach(force: true) }   // signed in: this Mac joins the account by itself while the switch is on
         }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }

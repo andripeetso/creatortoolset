@@ -49,12 +49,21 @@ func isPlainHostname(_ host: String) -> Bool {
 struct BrokerClient {
     let base: URL
     var session: URLSession = .shared
+    /// This Mac's key: a relay token minted from its bound account token names it, and the broker takes such a token
+    /// only with this key's proof on each request. A token that names no key ignores the proof.
+    var key: DPoPKey? = nil
+
+    private func authorize(_ request: inout URLRequest, _ token: String) throws {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let key, let url = request.url else { return }
+        request.setValue(try DPoP.proof(method: request.httpMethod ?? "GET", url: url, accessToken: token, key: key), forHTTPHeaderField: "DPoP")
+    }
 
     func computers(token: String) async throws -> [BrokerComputer] {
         var request = URLRequest(url: URL(string: "/v1/computers", relativeTo: base)!)
         request.timeoutInterval = 15
         request.httpShouldHandleCookies = false
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         let (data, response) = try await session.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw BrokerError.status((response as? HTTPURLResponse)?.statusCode ?? 0) }
         struct Reply: Decodable { let computers: [BrokerComputer] }
@@ -67,7 +76,7 @@ struct BrokerClient {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.httpShouldHandleCookies = false
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
         let (data, response) = try await session.data(for: request)
@@ -81,7 +90,7 @@ struct BrokerClient {
         request.httpMethod = "DELETE"
         request.timeoutInterval = 30
         request.httpShouldHandleCookies = false
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         let (_, response) = try await session.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 204 || code == 404 else { throw BrokerError.status(code) }
@@ -117,6 +126,48 @@ struct BrokerClient {
         var config = answer.filter { ["owner", "computerId", "hostname", "tunnelToken", "brokerKey", "brokerKid"].contains($0.key) }
         config["brokerUrl"] = relayUrl
         _ = try await local("/api/connect/relay-config", config)
+    }
+}
+
+/// What this Mac keeps from the connect service between refreshes (every 30 s): the relay token until a minute before
+/// it ends, and the account's computers for 60 s; both for one account token only, so another sign-in asks again.
+struct BrokerCache {
+    static let listFor: TimeInterval = 60
+    private var account: String?
+    private var relay: (token: String, until: Date)?
+    private var list: (at: Date, computers: [BrokerComputer])?
+
+    /// The kept relay token for this account token, or nil: none, another account's, or within a minute of its end.
+    func relayToken(for account: String, now: Date = Date()) -> String? {
+        guard account == self.account, let relay, now < relay.until else { return nil }
+        return relay.token
+    }
+
+    /// `expiresIn`: the token's life as the account server said it (300 s when it didn't).
+    mutating func keep(relayToken token: String, expiresIn: TimeInterval?, for account: String, now: Date = Date()) {
+        use(account)
+        relay = (token, now.addingTimeInterval((expiresIn ?? 300) - 60))
+    }
+
+    /// The account's computers fetched less than 60 s ago for this account token, or nil.
+    func list(for account: String, now: Date = Date()) -> [BrokerComputer]? {
+        guard account == self.account, let list, now.timeIntervalSince(list.at) < Self.listFor else { return nil }
+        return list.computers
+    }
+
+    mutating func keep(list computers: [BrokerComputer], for account: String, now: Date = Date()) {
+        use(account)
+        list = (now, computers)
+    }
+
+    /// The connect service turned the relay token down (401): the next call mints a new one.
+    mutating func failed(_ error: Error) {
+        if case BrokerError.status(401) = error { relay = nil }
+    }
+
+    /// Another account token: nothing kept for the last one counts.
+    private mutating func use(_ account: String) {
+        if account != self.account { self = BrokerCache(); self.account = account }
     }
 }
 
@@ -184,21 +235,25 @@ extension Shell {
     /// Whether this Mac is on an account already (its server's connect.json, written once a link finishes).
     var linkedHere: Bool { linkedConfig != nil }
 
-    /// The broker account token, minted by the account server from this Mac's sign-in. Nil: signed out, no service, or
-    /// the account server did not answer.
+    /// The broker account token, minted by the account server from this Mac's sign-in and kept until a minute before it
+    /// ends. Nil: signed out, no service, or the account server did not answer.
     private func relayToken() async -> String? {
-        guard let accountServer = account.server, let host = accountServer.host, connectService != nil,
-              let token = DeviceVault.token(for: host, service: Account.vault) else { return nil }
-        return try? await AccountClient(server: accountServer).relayToken(token)
+        guard let accountServer = account.server, connectService != nil, let token = await account.token() else { return nil }
+        if let kept = broker.relayToken(for: token) { return kept }
+        guard let minted = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(token) else { return nil }
+        broker.keep(relayToken: minted.token, expiresIn: minted.expiresIn, for: token)
+        return minted.token
     }
 
     /// Every refresh: the account's other computers, the switch's state, and the link made by itself when the switch is
     /// on and the Mac app is signed in. The account dropping this Mac turns the switch off and forgets the link here.
-    func refreshReach() async {
+    /// The list is asked for at most once a minute; `force`: now (the person changed something, or signed in).
+    func refreshReach(force: Bool = false) async {
         let signedIn = account.profile != nil
         var list: [BrokerComputer]?
-        if signedIn, let base = connectService, let token = await relayToken() {
-            list = try? await BrokerClient(base: base).computers(token: token)
+        if signedIn, connectService != nil {
+            if !force, let token = await account.token() { list = broker.list(for: token) }
+            if list == nil { list = try? await refreshedList() }
         }
         let mine = linkedConfig?.computerId
         accountComputers = accountServers(list ?? [], thisComputer: mine)
@@ -221,24 +276,34 @@ extension Shell {
 
     /// Account.leaving: this Mac leaves the account it is linked to before the Mac app's sign-in becomes another one (or
     /// none), using the old sign-in while it still has it. A Mac linked here then joins the new account by itself.
+    /// It mints with the two tokens it is given, never from the cache, which it empties: the sign-in is changing.
     func leaveAccount(oldToken: String, newToken: String?) async {
+        broker = BrokerCache()
         guard let id = linkedConfig?.computerId, let base = connectService, let accountServer = account.server,
-              let old = try? await AccountClient(server: accountServer).relayToken(oldToken) else { return }
+              let old = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(oldToken).token else { return }
         var new: String?
         if let newToken {
-            new = try? await AccountClient(server: accountServer).relayToken(newToken)
+            new = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(newToken).token
             if new == nil { return }
         }
-        if await BrokerClient(base: base).leave(id, oldToken: old, newToken: new) {
+        if await BrokerClient(base: base, key: DPoPKey.shared).leave(id, oldToken: old, newToken: new) {
             try? await client().delete("/api/connect/relay-config")
         } else if new == nil {
             AppLog.write("this Mac stays on the account it was signed in to: the connect service couldn't be reached")
         }
     }
 
+    /// The account's computers from the connect service now, kept for the next minute's refreshes.
     private func refreshedList() async throws -> [BrokerComputer]? {
-        guard let base = connectService, let token = await relayToken() else { return nil }
-        return try await BrokerClient(base: base).computers(token: token)
+        guard let base = connectService, let accountToken = await account.token(), let token = await relayToken() else { return nil }
+        do {
+            let list = try await BrokerClient(base: base, key: DPoPKey.shared).computers(token: token)
+            broker.keep(list: list, for: accountToken)
+            return list
+        } catch {
+            broker.failed(error)
+            throw error
+        }
     }
 
     /// The page's connect.link / connect.unlink (Settings → Computers → Reach from anywhere). Returns the problem, or nil.
@@ -246,7 +311,7 @@ extension Shell {
         reachSwitch = on
         if on { UserDefaults.standard.removeObject(forKey: reachRemovedKey) }
         let problem = on ? (linkedHere ? nil : await linkThisComputer()) : await unlinkThisComputer()
-        await refreshReach()
+        await refreshReach(force: true)
         return problem
     }
 
@@ -257,7 +322,7 @@ extension Shell {
         UserDefaults.standard.removeObject(forKey: reachRemovedKey)
         let problem = await linkThisComputer()
         notice = problem.map { "This Mac was not added: \($0)" } ?? "This Mac is on your account"
-        await refreshReach()
+        await refreshReach(force: true)
         return problem
     }
 
@@ -266,11 +331,12 @@ extension Shell {
         guard let base = connectService else { return "this Mac has no connect service set" }
         guard account.profile != nil, let token = await relayToken() else { return Reach.signedOut.text }
         do {
-            try await BrokerClient(base: base).link(token: token) { path, body in try await self.client().postData(path, body) }
+            try await BrokerClient(base: base, key: DPoPKey.shared).link(token: token) { path, body in try await self.client().postData(path, body) }
             return nil
         } catch BrokerError.status(403) {
             return "your account has as many computers as it can have. Remove one first"
         } catch {
+            broker.failed(error)
             AppLog.write("this Mac was not added to the account: \(error.localizedDescription)")
             return "try again"
         }
@@ -282,8 +348,9 @@ extension Shell {
         guard let id = linkedConfig?.computerId else { return nil }
         guard let base = connectService, let token = await relayToken() else { return Reach.signedOut.text }
         do {
-            try await BrokerClient(base: base).unlink(id, token: token)
+            try await BrokerClient(base: base, key: DPoPKey.shared).unlink(id, token: token)
         } catch {
+            broker.failed(error)
             return "The connect service couldn't be reached. Try again."
         }
         try? await client().delete("/api/connect/relay-config")

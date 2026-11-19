@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dpopVectors } from "../../../relay/test/dpop-vectors";
 import { MAX_JTIS_PER_KEY, dpopReplayForTest, htuOf, jwkThumbprint, resetDpopReplay, spendJti, tokenHash, verifyDpop } from "./dpop";
 
+// a data folder of this file's own: spent proofs are kept on disk there too
+const DATA = await vi.hoisted(async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  return (process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "dpop-jti-")));
+});
+
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const keyPair = () => {
   const k = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -104,6 +112,45 @@ describe("the proof-id cache", () => {
     expect(spendJti(v.jkt, v.jti)).toBe("ok");
     expect(spendJti(v.jkt, v.jti)).toBe("replay");
     expect(verifyDpop({ proof: p, method: "POST", url: URL_ })).toEqual({ ok: false, code: "replay" });
+  });
+
+  it("refuses a proof spent before a restart, or by the other process of a no-downtime swap", async () => {
+    const p = proofBy(phone, { htm: "POST", htu: URL_ });
+    expect(verifyDpop({ proof: p, method: "POST", url: URL_ }).ok).toBe(true);
+    dpopReplayForTest().clear(); // a restart: what was in memory is gone
+    expect(verifyDpop({ proof: p, method: "POST", url: URL_ })).toEqual({ ok: false, code: "replay" });
+    // the other process spent this one: its row is in the same file
+    const { DatabaseSync } = await import("node:sqlite");
+    const other = new DatabaseSync(`${DATA}/dpop-jti.db`);
+    other.prepare("INSERT INTO spent (jkt, jti, until) VALUES (?, ?, ?)").run(jwkThumbprint(phone.jwk as never), "spent-elsewhere", Date.now() / 1000 + 600);
+    other.close();
+    const q = proofBy(phone, { htm: "POST", htu: URL_, jti: "spent-elsewhere" });
+    expect(verifyDpop({ proof: q, method: "POST", url: URL_ })).toEqual({ ok: false, code: "replay" });
+  });
+
+  it("tries the file again a minute after it failed to open, with one log line per try", async () => {
+    const { existsSync, rmSync, writeFileSync } = await import("node:fs");
+    const blocker = `${DATA}-blocker`;
+    writeFileSync(blocker, ""); // a file where the data folder's parent should be: it can't be made
+    process.env.DATA_DIR = `${blocker}/data`;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.resetModules();
+      const d = await import("./dpop");
+      const t = Date.now();
+      expect(d.spendJti("k", "a", t)).toBe("ok"); // in memory only
+      expect(d.spendJti("k", "b", t + 30_000)).toBe("ok");
+      expect(errors).toHaveBeenCalledTimes(1); // not tried again within the minute
+      expect(d.spendJti("k", "c", t + 61_000)).toBe("ok");
+      expect(errors).toHaveBeenCalledTimes(2); // tried again, still failing: one more line
+      rmSync(blocker);
+      expect(d.spendJti("k", "d", t + 122_000)).toBe("ok");
+      expect(existsSync(`${blocker}/data/dpop-jti.db`)).toBe(true);
+      expect(errors).toHaveBeenCalledTimes(2);
+    } finally {
+      errors.mockRestore();
+      process.env.DATA_DIR = DATA;
+    }
   });
 
   it("forgets expired ids on a timer that never keeps the process alive", async () => {

@@ -7,6 +7,48 @@ final class ConnectTests: XCTestCase {
         BrokerComputer(id: id, name: name, hostname: host, status: status)
     }
 
+    func testTheRelayTokenIsKeptForItsAccountUntilAMinuteBeforeItEnds() {
+        var cache = BrokerCache()
+        let t0 = Date()
+        cache.keep(relayToken: "relay-1", expiresIn: 600, for: "cta_a", now: t0)
+        XCTAssertEqual(cache.relayToken(for: "cta_a", now: t0.addingTimeInterval(539)), "relay-1")
+        XCTAssertNil(cache.relayToken(for: "cta_a", now: t0.addingTimeInterval(540)))
+        XCTAssertNil(cache.relayToken(for: "cta_b", now: t0))   // another sign-in mints its own
+        // no life in the answer: 300 s
+        cache.keep(relayToken: "relay-2", expiresIn: nil, for: "cta_a", now: t0)
+        XCTAssertEqual(cache.relayToken(for: "cta_a", now: t0.addingTimeInterval(239)), "relay-2")
+        XCTAssertNil(cache.relayToken(for: "cta_a", now: t0.addingTimeInterval(240)))
+        // another account's token drops everything kept for the last one
+        cache.keep(list: [computer("aaaa", "Studio", "a.example.com")], for: "cta_a", now: t0)
+        cache.keep(relayToken: "relay-b", expiresIn: 600, for: "cta_b", now: t0)
+        XCTAssertNil(cache.relayToken(for: "cta_a", now: t0))
+        XCTAssertNil(cache.list(for: "cta_a", now: t0))
+        XCTAssertNil(cache.list(for: "cta_b", now: t0))
+    }
+
+    func testAConnectServiceThatTurnsTheRelayTokenDownGetsANewOneNextTime() {
+        var cache = BrokerCache()
+        let t0 = Date()
+        cache.keep(relayToken: "relay-1", expiresIn: 600, for: "cta_a", now: t0)
+        cache.keep(list: [], for: "cta_a", now: t0)
+        cache.failed(BrokerError.status(500))   // the service, not the token
+        XCTAssertEqual(cache.relayToken(for: "cta_a", now: t0), "relay-1")
+        cache.failed(BrokerError.status(401))
+        XCTAssertNil(cache.relayToken(for: "cta_a", now: t0))
+        XCTAssertEqual(cache.list(for: "cta_a", now: t0), [])   // what was listed stays for its minute
+    }
+
+    func testTheComputersAreAskedForAtMostOnceAMinute() {
+        var cache = BrokerCache()
+        let t0 = Date()
+        let list = [computer("aaaa", "Studio", "a.example.com")]
+        XCTAssertNil(cache.list(for: "cta_a", now: t0))
+        cache.keep(list: list, for: "cta_a", now: t0)
+        XCTAssertEqual(cache.list(for: "cta_a", now: t0.addingTimeInterval(30)), list)    // the next 30 s refresh reuses it
+        XCTAssertNil(cache.list(for: "cta_a", now: t0.addingTimeInterval(60)))           // the one after asks again
+        XCTAssertNil(cache.list(for: "cta_b", now: t0.addingTimeInterval(1)))
+    }
+
     func testThereIsNoConnectServiceUntilOneIsSet() {
         // none until one is set: the menu item that needs it is hidden, and nothing calls a service that isn't there
         XCTAssertEqual(connectBrokerURL(nil), defaultConnectService)

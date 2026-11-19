@@ -125,6 +125,18 @@ enum AccountError: LocalizedError, Equatable {
 struct AccountClient {
     let server: URL
     var session: URLSession = .shared
+    /// This Mac's key (`DPoPKey.shared` in the app): a sign-in binds the token to it, and a token bound to it goes out
+    /// as `DPoP` with its proof. Nil: plain Bearer tokens, as before binding.
+    var key: DPoPKey? = nil
+
+    /// The token on a request: `DPoP` with this key's proof once it is bound to it, else a plain Bearer.
+    private func authorize(_ request: inout URLRequest, _ token: String) throws {
+        guard let key, BoundTokens.contains(token), let url = request.url else {
+            return request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("DPoP \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(try DPoP.proof(method: request.httpMethod ?? "GET", url: url, accessToken: token, key: key), forHTTPHeaderField: "DPoP")
+    }
 
     /// `link`: a ticket from linkStart, so this sign-in joins the account that asked for it.
     func loginURL(_ provider: String, challenge: String, link: String? = nil) -> URL {
@@ -136,7 +148,7 @@ struct AccountClient {
     func linkStart(_ token: String) async throws -> String {
         var request = URLRequest(url: URL(string: "/api/account/link-start", relativeTo: server)!)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         struct Reply: Decodable { let link: String }
         let reply: Reply = try await send(request)
         return reply.link
@@ -146,7 +158,7 @@ struct AccountClient {
     func unlink(_ provider: String, token: String) async throws -> AccountProfile {
         var request = URLRequest(url: URL(string: "/api/account/logins/\(provider)", relativeTo: server)!)
         request.httpMethod = "DELETE"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         return try await send(request)
     }
 
@@ -175,28 +187,66 @@ struct AccountClient {
         var request = URLRequest(url: URL(string: "/api/account/token", relativeTo: server)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["code": code, "verifier": verifier])
-        struct Reply: Decodable { let token: String }
+        // `app`: the server keeps which app a binding is (signing the phones out leaves the Mac's)
+        request.httpBody = try JSONEncoder().encode(["code": code, "verifier": verifier].merging(key == nil ? [:] : ["app": "mac"]) { a, _ in a })
+        if let key, let url = request.url { request.setValue(try DPoP.proof(method: "POST", url: url, key: key), forHTTPHeaderField: "DPoP") }
+        struct Reply: Decodable { let token: String; let bound: Bool? }
         let data = try await sendData(request)
-        return (try JSONDecoder().decode(Reply.self, from: data).token, try JSONDecoder().decode(AccountProfile.self, from: data))
+        let reply = try JSONDecoder().decode(Reply.self, from: data)
+        // only the server says it bound the token: one from before binding ignores the proof and keeps it plain
+        if key != nil, reply.bound == true { BoundTokens.add(reply.token) }
+        return (reply.token, try JSONDecoder().decode(AccountProfile.self, from: data))
+    }
+
+    /// POST /api/account/sign-out with the token: the server ends it. Best effort, no answer.
+    func signOut(_ token: String) async {
+        var request = URLRequest(url: URL(string: "/api/account/sign-out", relativeTo: server)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpShouldHandleCookies = false
+        guard (try? authorize(&request, token)) != nil else { return }
+        _ = try? await session.data(for: request)
+    }
+
+    enum Binding { case bound, refused, later }
+
+    /// POST /api/account/bind: a plain token from an app before binding is bound to this Mac's key, once. `refused`:
+    /// the server no longer takes plain tokens (403) or this token (401), so the person signs in again; `later`:
+    /// offline, an older server, or no key here, and the token stays plain.
+    func bind(_ token: String) async -> Binding {
+        guard let key else { return .later }
+        var request = URLRequest(url: URL(string: "/api/account/bind", relativeTo: server)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpShouldHandleCookies = false
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let proof = try? DPoP.proof(method: "POST", url: request.url!, accessToken: token, key: key) else { return .later }
+        request.setValue(proof, forHTTPHeaderField: "DPoP")
+        guard let (_, response) = try? await session.data(for: request) else { return .later }
+        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 200..<300: BoundTokens.add(token); return .bound
+        case 401, 403: return .refused   // 401: the server no longer knows it (ended, or bound by someone else first)
+        default: return .later
+        }
     }
 
     /// GET /api/account/me with the token: who it signs in as. 401 = the token no longer works.
     func me(_ token: String) async throws -> AccountProfile {
         var request = URLRequest(url: URL(string: "/api/account/me", relativeTo: server)!)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         return try await send(request)
     }
 
     /// POST /api/account/relay-token with the token: a short token the connect service (the broker) trusts for this
-    /// account. The account server mints it; this Mac's own token never goes to the broker.
-    func relayToken(_ token: String) async throws -> String {
+    /// account, and its life in seconds when the server says. The account server mints it; this Mac's own token never
+    /// goes to the broker.
+    func relayToken(_ token: String) async throws -> (token: String, expiresIn: TimeInterval?) {
         var request = URLRequest(url: URL(string: "/api/account/relay-token", relativeTo: server)!)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        struct Reply: Decodable { let token: String }
+        try authorize(&request, token)
+        struct Reply: Decodable { let token: String; let expiresIn: TimeInterval? }
         let reply: Reply = try await send(request)
-        return reply.token
+        return (reply.token, reply.expiresIn)
     }
 
     /// POST a pack to the community catalog on this account server, as the account the token signs in as (`body` is
@@ -205,7 +255,7 @@ struct AccountClient {
         var request = URLRequest(url: URL(string: "/api/pack-catalog/submit", relativeTo: server)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         request.httpBody = body
         struct Reply: Decodable { let status: String }
         let _: Reply = try await send(request)
@@ -314,6 +364,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var pkce: Pkce?
     /// The provider of the sign-in in flight, kept with the account once it goes through.
     private var signingInWith = ""
+    private var bindTried = false
 
     var server: URL? { accountServerURL(UserDefaults.standard.string(forKey: serverKey)) }
     /// The text This Mac shows ("" when off).
@@ -355,8 +406,8 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     /// Signed in (the token checked with the server when it answers), signed out, or why there is no sign-in.
     func status() async -> AccountReply {
         guard let server else { return ["state": "off"] }
-        let client = AccountClient(server: server)
-        if let token = DeviceVault.token(for: host, service: Self.vault) {
+        let client = AccountClient(server: server, key: DPoPKey.shared)
+        if let token = await token() {
             do {
                 let fresh = try await client.me(token)
                 keep(fresh)
@@ -365,14 +416,19 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
                 if let up = try? await offered(client) { signedIn["providers"] = up.joined(separator: ",") }
                 return signedIn
             } catch AccountError.signedOut {
-                DeviceVault.remove(for: host, service: Self.vault)
+                ended()
             } catch {
                 if let profile { return reply(profile) }   // offline: the account it had
             }
         }
         do {
             let up = try await offered(client)
-            return up.isEmpty ? ["state": "notSetUp", "server": host] : ["state": "signedOut", "providers": up.joined(separator: ",")]
+            if up.isEmpty { return ["state": "notSetUp", "server": host] }
+            // the sign-in ended on the account's side, not by a press here: said until the person signs in again
+            if UserDefaults.standard.bool(forKey: endedKey) {
+                return ["state": "error", "message": "Your sign-in ended. Sign in again.", "providers": up.joined(separator: ",")]
+            }
+            return ["state": "signedOut", "providers": up.joined(separator: ",")]
         } catch {
             return unreachable(error)
         }
@@ -384,18 +440,49 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         server?.absoluteString == defaultAccountServer.absoluteString ? accountLive : try await client.offeredProviders()
     }
 
+    private var endedKey: String { "accountEnded.\(host)" }
+
+    /// The account server ended this Mac's token (it no longer takes it, or a copy of it was used elsewhere): it goes
+    /// from here, and the account step says "Sign in again" until the person does.
+    private func ended() {
+        AppLog.write("the account server ended this Mac's sign-in: it asks to sign in again")
+        DeviceVault.remove(for: host, service: Self.vault)
+        UserDefaults.standard.removeObject(forKey: profileKey)
+        UserDefaults.standard.removeObject(forKey: providerKey)
+        UserDefaults.standard.set(true, forKey: endedKey)
+    }
+
+    /// The stored token. One from an app before binding is bound to this Mac's key first, quietly, once a launch.
+    /// A server that no longer takes plain tokens, or no longer knows this one, ends the sign-in here, so the app asks
+    /// for it again. Offline or an older server: it stays plain and is tried again next launch.
+    func token() async -> String? {
+        guard let server, let token = DeviceVault.token(for: host, service: Self.vault) else { return nil }
+        guard !bindTried, !BoundTokens.contains(token), DPoPKey.shared != nil else { return token }
+        bindTried = true
+        switch await AccountClient(server: server, key: DPoPKey.shared).bind(token) {
+        case .bound, .later: return token
+        case .refused:
+            ended()
+            return nil
+        }
+    }
+
     /// Sign out: the token leaves the Keychain and the kept name and email go with it. The name this Mac's own server
     /// shows stays as it is. Answers as `status` does for a signed-out person.
-    /// ponytail: the token is only forgotten here; call the account server's revoke when it has one.
     func signOut() async -> AccountReply {
         session?.cancel()
         session = nil
         answer(["state": "cancelled"])
         pkce = nil
-        if let old = DeviceVault.token(for: host, service: Self.vault) { await leaving(old, nil) }
+        if let old = DeviceVault.token(for: host, service: Self.vault) {
+            await leaving(old, nil)
+            // the account server forgets the token too (best effort: offline, it is still gone from this Mac)
+            if let server { await AccountClient(server: server, key: DPoPKey.shared).signOut(old) }
+        }
         DeviceVault.remove(for: host, service: Self.vault)
         UserDefaults.standard.removeObject(forKey: profileKey)
         UserDefaults.standard.removeObject(forKey: providerKey)
+        UserDefaults.standard.removeObject(forKey: endedKey)
         return await status()
     }
 
@@ -404,7 +491,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         guard let server else { return ["state": "off"] }
         guard let token = DeviceVault.token(for: host, service: Self.vault) else { return ["state": "signedOut"] }
         do {
-            let fresh = try await AccountClient(server: server).unlink(provider, token: token)
+            let fresh = try await AccountClient(server: server, key: DPoPKey.shared).unlink(provider, token: token)
             keep(fresh)
             return reply(fresh)
         } catch {
@@ -428,7 +515,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         let pair = Pkce.make()
         pkce = pair
         Task { () -> Void in
-            let client = AccountClient(server: server)
+            let client = AccountClient(server: server, key: DPoPKey.shared)
             var ticket: String?
             // a later sign-in or a sign-out during the checks took this one's place and answered it: nothing more from here
             let current = { self.pkce?.verifier == pair.verifier }
@@ -478,12 +565,12 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             guard response == .alertSecondButtonReturn else { return done(["state": "cancelled"]) }
             Task { @MainActor in
                 do {
-                    try await AccountClient(server: server).submit(pack.body, token: token)
+                    try await AccountClient(server: server, key: DPoPKey.shared).submit(pack.body, token: token)
                     done(["state": "sent"])
                 } catch AccountError.signedOut {
                     // the token still signs in: it is the catalog that doesn't take packs from the app (a site from
                     // before it could), not a sign-out
-                    if (try? await AccountClient(server: server).me(token)) != nil {
+                    if (try? await AccountClient(server: server, key: DPoPKey.shared).me(token)) != nil {
                         done(["state": "error", "message": "\(self.host) doesn't take packs from the app yet. Download the file and send it on the catalog's site."])
                     } else {
                         done(["state": "signedOut"])
@@ -518,12 +605,13 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         guard let pair = pkce else { return answer(["state": "error", "message": "No sign-in is in progress. Sign in from the app."]) }
         pkce = nil   // one try per sign-in: the server burns the code on a wrong verifier anyway
         do {
-            let (token, profile) = try await AccountClient(server: server).exchange(code, verifier: pair.verifier)
+            let (token, profile) = try await AccountClient(server: server, key: DPoPKey.shared).exchange(code, verifier: pair.verifier)
             if let old = DeviceVault.token(for: host, service: Self.vault), old != token { await leaving(old, token) }
             guard DeviceVault.save(token, for: host, service: Self.vault) else {
                 return answer(["state": "error", "message": "The Keychain didn't keep the sign-in."])
             }
             UserDefaults.standard.set(signingInWith, forKey: providerKey)
+            UserDefaults.standard.removeObject(forKey: endedKey)
             keep(profile)
             return answer(reply(profile))
         } catch {
