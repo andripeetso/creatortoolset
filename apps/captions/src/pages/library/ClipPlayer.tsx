@@ -70,7 +70,10 @@ export function ClipPlayer({
   const [pin, setPin] = useState<Source & { at?: number }>();
   useEffect(() => void (places && here && !pin && setPin(pickSource(check, a.versionId, serverPlays))), [places, here, pin, check, a.versionId, serverPlays]);
   const onServer = !places || !!pin?.src.startsWith("/api/");
-  const base = !places ? server : !pin ? "" : onServer ? server : pin.src;
+  // the original asked for again (`tries`, a new address so the window does not answer from the failed one)
+  const [tries, setTries] = useState(0);
+  const local = pin && !onServer ? (tries ? `${pin.src}${pin.src.includes("?") ? "&" : "?"}try=${tries}` : pin.src) : "";
+  const base = !places ? server : !pin ? "" : onServer ? server : local;
   const start = pin?.at ?? startAt;
   const src = base && `${base}${start ? `#t=${start}` : ""}`;
   // what the element at `src` last said; a new address starts as loading
@@ -90,8 +93,20 @@ export function ClipPlayer({
   // what plays stopped answering (the share or the internet went): the proxy, the cached one first, at the same second,
   // and this computer asked again. False when that is what plays already
   const fallback = proxySource(check, a.versionId, serverPlays);
+  // no proxy anywhere (none cached here, and the server plays nothing of this library): the original is all there is, so
+  // it is never left for nothing. A network share that was asleep answers late: this computer is asked again and the
+  // original tried again, a little later each time; after the last try it says so, with Try again
+  const nowhere = !fallback.src;
+  const retryLater = useRef(0);
+  useEffect(() => () => clearTimeout(retryLater.current), []);
   const leave = () => {
     if (!pin || pin.src === fallback.src) return false;
+    if (nowhere) {
+      if (pin.badge !== "Original" || tries >= ORIGINAL_TRIES) return false;
+      clearTimeout(retryLater.current);
+      retryLater.current = window.setTimeout(() => void again().then(() => setTries((n) => n + 1)), 1500 * (tries + 1));
+      return true;
+    }
     take(fallback);
     void again();
     return true;
@@ -150,10 +165,12 @@ export function ClipPlayer({
   const noCopy = failedOnServer && !!upload && hostsProxies(upload.upload) ? "This clip isn't on the server." : null;
   const away =
     !waiting && (failedOnServer || (!serverPlays && !src)) ? (awayLine(check) ?? noCopy ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
-  const note = said === "missing" || away ? null : said;
+  // the original here didn't open after its tries, and there is nothing else to play: said, with Try again
+  const stuck = phase === "failed" && pin?.badge === "Original" && nowhere;
+  const note = stuck || said === "missing" || away ? null : said;
   // the owner, with no proxies and no originals hosted: told why it plays only where the files are
   const noUpload = !!upload?.owner && !hostsProxies(upload.upload) && !hostsOriginals(upload.upload);
-  const awayNote = away && <Away line={away} noUpload={noUpload} />;
+  const awayNote = stuck ? <Stuck onTry={() => void again().then(() => setTries((n) => n + 1))} /> : away && <Away line={away} noUpload={noUpload} />;
 
   // the original is here in a folder the page may not play from yet, or on a share that needs its login: one button
   const [busy, setBusy] = useState(false);
@@ -216,7 +233,8 @@ export function ClipPlayer({
     onWaiting: () => {
       to("loading");
       clearTimeout(stall.current);
-      if (pin && pin.src !== fallback.src) stall.current = window.setTimeout(leave, 3000);
+      // a slow original with nothing else to play keeps loading: a stall is waited out, never left
+      if (pin && pin.src !== fallback.src && !nowhere) stall.current = window.setTimeout(leave, 3000);
     },
     onCanPlay: () => clearTimeout(stall.current),
     onSeeking: () => setSeekingAt(src),
@@ -336,6 +354,8 @@ export function ClipPlayer({
 
 /** Frames the filmstrip shows across: every other frame of the strip, so each is big enough to make out. */
 const CELLS = 10;
+/** How often an original on this computer is tried again before the player says it didn't open (with no proxy to play). */
+const ORIGINAL_TRIES = 3;
 
 /**
  * The clip's strip of frames under its player. A mouse over it shows the frame there and its time, a thin line marks
@@ -457,6 +477,18 @@ function Away({ line, noUpload }: { line: string; noUpload: boolean }) {
     <div className="flex max-w-sm flex-col items-center gap-1.5 text-sm">
       <p>{line}</p>
       {noUpload && <p className="text-xs opacity-70">Proxies aren't uploaded for this library, so it plays only where the originals are.</p>}
+    </div>
+  );
+}
+
+/** The original on this computer didn't open, after its tries (a share that didn't answer): one line and Try again. */
+function Stuck({ onTry }: { onTry: () => void }) {
+  return (
+    <div className="flex max-w-sm flex-col items-center gap-2 text-sm">
+      <p>The original on this computer didn't open.</p>
+      <Button size="sm" variant="secondary" onClick={onTry}>
+        Try again
+      </Button>
     </div>
   );
 }

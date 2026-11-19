@@ -234,6 +234,35 @@ describe("under Upload none", () => {
     await openNone();
     expect(video().getAttribute("src")).toBe("ctlocal://media/a");
   });
+
+  // 11-19: an original on a NAS share that answered late was left for a proxy that doesn't exist ("Proxies aren't uploaded")
+  it("with no proxy anywhere, a slow original is waited out, never left", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await openNone();
+    await fire("waiting");
+    await act(async () => void vi.advanceTimersByTime(10_000));
+    expect(video().getAttribute("src")).toBe("ctlocal://media/a");
+    expect(badge()).toBe("Original");
+    expect(host.textContent).not.toContain("Proxies aren't uploaded");
+  });
+
+  it("with no proxy anywhere, an original that errors is asked for again (this computer asked too), then said, with Try again", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await openNone();
+    const asked = post.mock.calls.length;
+    for (let n = 1; n <= 3; n++) {
+      await fire("error");
+      await act(async () => void (await vi.advanceTimersByTimeAsync(1500 * n)));
+      expect(video().getAttribute("src")).toBe(`ctlocal://media/a?try=${n}`);
+    }
+    expect(post.mock.calls.length).toBeGreaterThan(asked);
+    await fire("error"); // the last try failed too
+    expect(host.textContent).toContain("The original on this computer didn't open.");
+    expect(host.textContent).not.toContain("Proxies aren't uploaded");
+    await act(async () => void button("Try again")!.click());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(video().getAttribute("src")).toBe("ctlocal://media/a?try=4");
+  });
 });
 
 describe("where a clip is, when this Mac cannot play it (decision 5, A4/A5)", () => {

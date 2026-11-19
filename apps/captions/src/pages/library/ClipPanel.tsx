@@ -186,6 +186,10 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
   // the description, shot lines and tags are edited where they are (owner, 2026-11-17: no separate edit mode); not in the trash
   const fixed = inTrash || !!readOnly;
   // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
+  const file = original(a, detail);
+  const path = detail?.sourcePath;
+  // the file is on this Mac and Finder can show it: that is the clip's main button, and Download goes in the menu
+  const inFinder = a.state !== "missing" && !!path && revealsHere(placeWord);
   const more = !inTrash && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -194,6 +198,14 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {inFinder && (
+          <DropdownMenuItem asChild>
+            <a href={file.href} download={file.name}>
+              <Download className="h-4 w-4" />
+              Download
+            </a>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={() => setSharing(true)}>
           <Share2 className="h-4 w-4" />
           Share
@@ -230,9 +242,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
       </DropdownMenuContent>
     </DropdownMenu>
   );
-  const file = original(a, detail);
   const inFolders = detail?.collections ?? [];
-  const path = detail?.sourcePath;
   const copyPath = () =>
     path &&
     void navigator.clipboard?.writeText(path).then(() => {
@@ -271,14 +281,8 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
         </dl>
       )}
       {path && (
-        // the file on this computer (the admin, on a server that has it): its folder in Finder in the Mac app, its path anywhere
+        // the file on this computer (the admin, on a server that has it): its path (Show in Finder is the main button)
         <div className="-ml-2 -mt-2 flex flex-wrap items-center">
-          {revealsHere(placeWord) && (
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" onClick={reveal}>
-              <FolderOpen className="h-3.5 w-3.5" />
-              Show in Finder
-            </Button>
-          )}
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" title={path} onClick={copyPath}>
             <Copy className="h-3.5 w-3.5" />
             {copiedPath ? "Copied" : "Copy path"}
@@ -309,13 +313,20 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
         )
       ) : (
         <>
-          {a.state !== "missing" && (
-            <Button size="sm" variant="outline" asChild>
-              <a href={file.href} download={file.name}>
-                <Download className="h-4 w-4" />
-                Download
-              </a>
+          {inFinder ? (
+            <Button size="sm" variant="outline" onClick={reveal}>
+              <FolderOpen className="h-4 w-4" />
+              Show in Finder
             </Button>
+          ) : (
+            a.state !== "missing" && (
+              <Button size="sm" variant="outline" asChild>
+                <a href={file.href} download={file.name}>
+                  <Download className="h-4 w-4" />
+                  Download
+                </a>
+              </Button>
+            )
           )}
           {moveTo.length > 0 && !readOnly && (
             <DropdownMenu>
