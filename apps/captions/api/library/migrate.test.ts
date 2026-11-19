@@ -99,6 +99,11 @@ const row = (id: string, host: string, p: string, ws: string) => ({ id, role: "f
 const listFile = path.join(dir, "storage", "tinyacrobatics.json");
 writeFileSync(listFile, JSON.stringify({ schemaVersion: 3, folders: [row("f-shoots", "mac_laptop", "/Users/tiny/Movies/Shoots", "ws_a"), row("f-c", "mac_studio", "/Volumes/Tiny Footage/Projects", "ws_c")] }));
 
+// the Workshop projects are the workspaces the usage tally names: libraryWorkspaceId maps a library to one of them
+mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
+for (const id of ["ws_a", "ws_b", "ws_c"])
+  writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "tinyacrobatics", name: id, audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt: 1 }));
+
 const libRow = (id: string) => JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = ?").get(id) as { settings: string }).settings) as Record<string, unknown>;
 const folders = () => (JSON.parse(readFileSync(listFile, "utf-8")) as { folders: { origin: { host: string; path: string }; workspace?: string }[] }).folders;
 
@@ -122,6 +127,8 @@ describe("§4.6 the one-time Media Library migration", () => {
       ["lib_b", "folder", "Source media on Computer not found: /Users/tiny/Movies/Gone"],
       ["(new library in ws_c)", "setupAt", NOW],
       ["lib_a", "setupAt", NOW],
+      // no stored cap: the default 20 applies, and ws_a spent 50 on describe in the last 30 days: 1.5 × 50
+      ["lib_a", "lookBudget", 75],
       ["lib_b", "setupAt", NOW],
       ["lib_b", "upload", "proxies"],
       ["lib_b", "lookBudget", 27],
@@ -139,7 +146,7 @@ describe("§4.6 the one-time Media Library migration", () => {
 
   it("a real run writes the rows (copy root first), setup, proxies and the cap, and keeps the Finals entry and server-work.json", async () => {
     const r = await migrateOnce({ now: NOW });
-    expect(r.changes.length).toBe(10);
+    expect(r.changes.length).toBe(11);
     // the copy roots lead, the rows already there keep their place, and the new ones follow
     expect(folders().map((f) => [f.origin.host, f.origin.path, f.workspace])).toEqual([
       ["mac_studio", "/Volumes/Tiny Footage/Copies", "ws_a"],
@@ -151,9 +158,8 @@ describe("§4.6 the one-time Media Library migration", () => {
       ["not-found", "/Users/tiny/Movies/Gone", "ws_b"],
     ]);
     expect((libRow("lib_a").watch as unknown[]).length).toBe(3);
-    expect(libRow("lib_a")).toMatchObject({ upload: "none", setupAt: NOW });
+    expect(libRow("lib_a")).toMatchObject({ upload: "none", setupAt: NOW, lookBudget: 75 });
     expect(libRow("lib_b")).toMatchObject({ upload: "proxies", setupAt: NOW, lookBudget: 27 });
-    expect(libRow("lib_a")).not.toHaveProperty("lookBudget");
     expect(readFileSync(path.join(dir, "server-work.json"), "utf-8")).toBe('{"on":true}');
     expect(existsSync(path.join(dir, "library", "migrated.json"))).toBe(true);
     const made = d.prepare("SELECT id, settings FROM libraries WHERE settings LIKE '%ws_c%'").get() as { id: string; settings: string };
