@@ -39,8 +39,16 @@ vi.mock("@/lib/auth", () => ({
   useAuth: (sel: (s: { hosted: boolean }) => unknown) => sel({ hosted: h.hosted }),
   useMe: () => ({ username: "tiny", name: "Tiny" }),
 }));
-// the Models rows show the model in use, the same source as the owner page (settings/Models.tsx)
-vi.mock("./settings/Models", async (orig) => ({ ...(await orig<typeof import("./settings/Models")>()), useModelsInUse: () => ({ descriptions: "Gemini 3.8 Flash", transcripts: "Whisper Base" }) }));
+// the Models rows read the model in use from the AI and Voice pages, as the owner page does (settings/Models.tsx)
+vi.mock("@/lib/providers", async (orig) => ({
+  ...(await orig<typeof import("@/lib/providers")>()),
+  useProviders: () => ({ set: () => {}, data: { workspace: null, own: { instances: [{ id: "gem", driver: "gemini", name: "Gemini", enabled: true, model: "gemini-3.8-flash" }], default: { instance: "gem", model: "gemini-3.8-flash", effort: "high" }, jobs: {} }, using: "own", devices: [], checks: {}, models: {}, usage: [], limits: [] } }),
+}));
+vi.mock("@/lib/voice", async (orig) => ({
+  ...(await orig<typeof import("@/lib/voice")>()),
+  useVoice: () => ({ set: () => {}, data: { languages: [], stt: { default: { engine: "local" }, per: {} }, resolved: [], resolvedDefault: { use: "default", engine: "local", model: "whisper-base" }, available: [], availableFor: {}, computers: [] } }),
+}));
+vi.mock("@/components/settings/MyKeysSection", () => ({ useMyKeys: () => ({ data: [] }) }));
 vi.mock("@/lib/workspace", () => ({
   currentProject: () => ({ id: "ws_1", name: "Tiny Acrobatics" }),
   useWorkspace: (sel: (s: object) => unknown) => sel({}),
@@ -328,16 +336,17 @@ describe("Media Library setup: proxies, analysis and organization details", () =
     expect(smart().getAttribute("aria-checked")).toBe("true");
   });
 
+  // replaced (UNIFIED-PRD Rulings 11-19): Video breakdown is one shared row, its options a radio list (input), and the test reads the model in use from the AI and Voice pages.
   it("the Models rows show at High and above; Video breakdown's pick is saved as the library's model", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next();
     expect(document.body.textContent).toContain("Descriptions");
     expect(document.body.textContent).toContain("Transcripts");
     expect(document.body.textContent).toContain("Gemini 3.8 Flash");
-    expect(document.body.textContent).toContain("Whisper Base");
+    expect(document.body.textContent).toContain("Whisper base");
     expect(document.body.textContent).not.toContain("Set in Settings");
-    await press([...document.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((b) => b.textContent?.includes("Video breakdown")));
-    await press([...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Gemini 3.5 Flash-Lite")));
+    await press(document.querySelector<HTMLButtonElement>('button[aria-label="Video breakdown"]') ?? undefined);
+    await press(document.querySelector<HTMLInputElement>('input[aria-label="Gemini 3.5 Flash-Lite"]') ?? undefined);
     await press(button("Done"));
     expect(h.updates[0]!.settings).toMatchObject({ timelineModel: "gemini-3.5-flash-lite" });
   });

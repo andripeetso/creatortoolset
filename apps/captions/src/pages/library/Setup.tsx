@@ -11,7 +11,7 @@ import { call, STORAGE_API } from "@/components/settings/StorageRows";
 import { updateLibrary } from "@/lib/library";
 import { useAuth, useMe } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
-import { useModelsInUse } from "./settings/Models";
+import { ModelRows } from "./settings/Models";
 import { cn } from "@/lib/utils";
 import {
   ANALYSIS_DEFAULT,
@@ -174,36 +174,6 @@ function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; 
   );
 }
 
-/** A model row (SCREENS-COPY §1 Models): the value in use; with options, a click shows them as a radio list. */
-function ModelRow({ title, tip, value, options, onPick }: { title: string; tip: string; value: string; options?: { value: string; label: string; note: string }[]; onPick?: (v: WatchModel) => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="border-b py-2.5 last:border-0">
-      <div className="flex items-center gap-2">
-        {options ? (
-          <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)]">
-            <span className="block text-sm font-medium">{title}</span>
-            <span className="block text-xs text-muted-foreground">{value}</span>
-          </button>
-        ) : (
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">{title}</p>
-            <p className="text-xs text-muted-foreground">{value}</p>
-          </div>
-        )}
-        <InfoTip text={tip} label={title} />
-      </div>
-      {options && open && (
-        <div role="radiogroup" aria-label={title} className="mt-2 space-y-2">
-          {options.map((o) => (
-            <Pick key={o.value} on={value === o.label} label={o.label} status={o.note} onPick={() => onPick?.(o.value as WatchModel)} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** The computer → server picture for Hosted media (SCREENS-COPY §4 step 5): the current state is highlighted. */
 function HostedPicture({ state }: { state: "off" | "proxies" | "originals" }) {
   const captions: [typeof state, string][] = [
@@ -270,7 +240,6 @@ function FolderRow({ title, tip, paths, button, submit, onAdd }: { title: string
  * The setup sheet. `watchAllowed`: the server reads this computer's folders (This Mac). `onDone` gets the saved library.
  */
 export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { library: LibrarySummary; watchAllowed: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
-  const inUse = useModelsInUse();
   const hosted = useAuth((s) => s.hosted);
   const me = useMe();
   const project = useWorkspace((s) => currentProject(s));
@@ -471,17 +440,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
             <div className="space-y-2">
               <p className="text-sm font-medium">{LIBRARY_WORDS.modelsTitle}</p>
               <Card>
-                <ModelRow title={LIBRARY_WORDS.descriptions} tip={LIBRARY_WORDS.descriptionsTip} value={inUse.descriptions || LIBRARY_WORDS.notSet} />
-                {videoLevel && (
-                  <ModelRow
-                    title={LIBRARY_WORDS.videoBreakdown}
-                    tip={LIBRARY_WORDS.videoBreakdownTip}
-                    value={WATCH_MODELS.find((m) => m.value === a.watchModel)?.label ?? ""}
-                    options={WATCH_MODELS.map((m) => ({ value: m.value, label: m.label, note: m.note }))}
-                    onPick={(v) => set({ watchModel: v })}
-                  />
-                )}
-                <ModelRow title={LIBRARY_WORDS.transcripts} tip={LIBRARY_WORDS.transcriptsTip} value={inUse.transcripts || LIBRARY_WORDS.notSet} />
+                <ModelRows level={a.effort} timeline={videoLevel} transcribe video={a.watchModel} onVideo={(v) => set({ watchModel: v })} />
               </Card>
             </div>
           )}
