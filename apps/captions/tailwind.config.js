@@ -45,17 +45,16 @@ const themed = (() => {
       for (const n of [800, 900, 950]) v[`--s-violet-${n}`] = pick(n, mirror[n])
       base[`${sel}[data-tint="${h}"]`] = v
     }
-  // In chat mode the chats keep one colour, the person's own (Settings → Appearance), whatever workspace the page beside
-  // them wears (owner, 11-14): <html data-own-tint> (useRootTint) points the chat side's violet back at it
-  for (const [sel, isDark] of [[":root", false], [".dark", true]])
-    for (const h of ["violet", ...tints]) {
-      const v = {}
-      const pick = (n, m) => rgb(colors[h][isDark ? n : m])
-      for (const n of shades) v[`--violet-${n}`] = pick(n, n)
-      for (const n of [50, 100, 200, 300, 400]) v[`--t-violet-${n}`] = pick(n, mirror[n])
-      for (const n of [800, 900, 950]) v[`--s-violet-${n}`] = pick(n, mirror[n])
-      base[`${sel}[data-own-tint="${h}"] ${CHAT_SIDE}`] = v
-    }
+  // The chat side in chat mode wears neutral greys, never a colour, whatever the workspace or the person's own colour
+  // (owner, 11-19: a violet chat beside a green workspace clashed)
+  for (const [sel, isDark] of [[":root", false], [".dark", true]]) {
+    const v = {}
+    const pick = (n, m) => rgb(colors.zinc[isDark ? n : m])
+    for (const n of shades) v[`--violet-${n}`] = pick(n, n)
+    for (const n of [50, 100, 200, 300, 400]) v[`--t-violet-${n}`] = pick(n, mirror[n])
+    for (const n of [800, 900, 950]) v[`--s-violet-${n}`] = pick(n, mirror[n])
+    base[`${sel} ${CHAT_SIDE}`] = v
+  }
   return { ...out, base }
 })()
 
