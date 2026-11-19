@@ -112,6 +112,7 @@ struct AssistantReply: View {
             // the ones still waiting sit over the message box (AssistantChatView.bottomBar); answered, they come back here
             ForEach((message.approvals ?? []).filter { $0.status != "waiting" }) { AssistantApprovalCard(approval: $0) }
             ForEach((message.confirms ?? []).filter { $0.status != "waiting" }) { AssistantConfirmCard(confirm: $0) }
+            if let action = message.action { AssistantActionCard(action: action) }
             if let retry {
                 WideButton(title: "Try again", systemImage: "arrow.clockwise", kind: .plain, action: retry)
             }
@@ -353,6 +354,24 @@ struct AssistantConfirmCard: View {
         Task {
             await AssistantModel.shared.answer(confirm: confirm.id, yes: yes)
             pressed = nil
+        }
+    }
+}
+
+/// What a tool needs the person to do first, as information: the button opens the website's page for it and sends
+/// nothing, so the chat goes on as it would without the card.
+struct AssistantActionCard: View {
+    let action: AssistantAction
+
+    var body: some View {
+        if let card = action.card {
+            AskCard(eyebrow: "Needed first", title: card.title, detail: card.line) {
+                if let page = card.page {
+                    WideButton(title: "Open on the computer", systemImage: "desktopcomputer", kind: .plain) {
+                        AppNavigator.shared.open(.page(page))
+                    }
+                }
+            }
         }
     }
 }

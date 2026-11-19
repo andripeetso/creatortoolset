@@ -80,6 +80,8 @@ struct AssistantMessage: Decodable, Equatable, Identifiable {
     var folders: [String]?
     /// A scheduled task's run: its prompt, posted as the person's message.
     var task: Named?
+    /// Something a tool needs the person to do first (a newer server).
+    var action: AssistantAction?
 
     struct Named: Decodable, Equatable, Identifiable {
         var id: String
@@ -146,6 +148,50 @@ struct AssistantConfirm: Decodable, Equatable, Identifiable {
         at = (try? c.decode(Double.self, forKey: .at)) ?? 0
         status = (try? c.decode(String.self, forKey: .status)) ?? ""
         result = try? c.decodeIfPresent(String.self, forKey: .result)
+    }
+}
+
+/// Something a tool needs the person to do before it can go on (the server's ActionNeeded, contracts/library.ts):
+/// "setup", "downloads" or "projects". The phone only says what to do and opens the website's page for it; the
+/// ask carries on wherever it is done. Never fails to decode: a kind this app doesn't know shows nothing.
+/// shortcut: information only, until the server sends a card with its own buttons.
+struct AssistantAction: Decodable, Equatable {
+    var kind = ""
+    var workspaceName = ""
+    var owner = true
+    var path = ""
+    var href: String?
+
+    enum CodingKeys: String, CodingKey { case kind, workspaceName, owner, path, href }
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        func text(_ key: CodingKeys) -> String? { (try? c?.decodeIfPresent(String.self, forKey: key)) ?? nil }
+        kind = text(.kind) ?? ""
+        workspaceName = text(.workspaceName) ?? ""
+        owner = ((try? c?.decodeIfPresent(Bool.self, forKey: .owner)) ?? nil) ?? true
+        path = text(.path) ?? ""
+        href = text(.href)
+    }
+
+    /// The card's title and line, and the website page that does it (nil: no button). Nil for an unknown kind.
+    var card: (title: String, line: String?, page: String?)? {
+        let whose = workspaceName.isEmpty ? "this workspace's" : "\(workspaceName)'s"
+        switch kind {
+        case "setup":
+            return owner
+                ? ("Set up \(whose) Media Library on your computer", nil, href ?? "/settings/library")
+                : ("This Media Library isn't set up yet.", "Its owner sets it up.", nil)
+        case "downloads":
+            return ("Turn on Automatic downloads on your computer",
+                    "This edit needs the files on your computer: Settings → Media Library → Downloads.", "/settings/library")
+        case "projects":
+            let line = "Choose where \(whose) project files go, on the computer doing the edit: Settings → Folders."
+            return (workspaceName.isEmpty ? "Project files folder" : "Project files folder for \(workspaceName)",
+                    path.isEmpty ? line : "\(line) Suggested: \(path)", "/settings/folders")
+        default:
+            return nil
+        }
     }
 }
 

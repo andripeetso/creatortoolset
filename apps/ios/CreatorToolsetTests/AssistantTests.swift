@@ -1128,4 +1128,41 @@ final class AssistantTests: XCTestCase {
         }
         XCTAssertEqual(AssistantUpload.partCount(total: 0, partSize: part), 0)
     }
+
+    // the server's ActionNeeded (contracts/library.ts) on a reply: each kind, an unknown one, and a broken one
+    private func action(_ json: String) throws -> AssistantAction? {
+        try JSONDecoder().decode(AssistantMessage.self, from: Data(#"{"id":"a1","role":"assistant","text":"First this.","at":1,"status":"done","action":\#(json)}"#.utf8)).action
+    }
+
+    func testAnActionIsDecodedForEachKind() throws {
+        let setup = try XCTUnwrap(action(#"{"kind":"setup","workspace":"ws_p","workspaceName":"Tiny Acrobatics","owner":true,"href":"/library?setup=1"}"#))
+        XCTAssertEqual(setup.card?.title, "Set up Tiny Acrobatics's Media Library on your computer")
+        XCTAssertNil(setup.card?.line)
+        XCTAssertEqual(setup.card?.page, "/library?setup=1")
+
+        let member = try XCTUnwrap(action(#"{"kind":"setup","workspace":"ws_p","workspaceName":"Tiny Acrobatics","owner":false,"href":"/library?setup=1"}"#))
+        XCTAssertEqual(member.card?.title, "This Media Library isn't set up yet.")
+        XCTAssertNil(member.card?.page)
+
+        let downloads = try XCTUnwrap(action(#"{"kind":"downloads","libraryId":"lib_1","workspace":"ws_p"}"#))
+        XCTAssertEqual(downloads.card?.title, "Turn on Automatic downloads on your computer")
+        XCTAssertEqual(downloads.card?.page, "/settings/library")
+
+        let projects = try XCTUnwrap(action(#"{"kind":"projects","workspace":"ws_p","workspaceName":"Tiny Acrobatics","device":"dev_1","path":"/Users/tiny/Creator Toolset/Tiny Acrobatics/Project files"}"#))
+        XCTAssertEqual(projects.card?.title, "Project files folder for Tiny Acrobatics")
+        XCTAssertEqual(projects.card?.line, "Choose where Tiny Acrobatics's project files go, on the computer doing the edit: Settings → Folders. Suggested: /Users/tiny/Creator Toolset/Tiny Acrobatics/Project files")
+        XCTAssertEqual(projects.card?.page, "/settings/folders")
+    }
+
+    func testAnUnknownOrBrokenActionNeverStopsTheMessage() throws {
+        let later = try XCTUnwrap(action(#"{"kind":"pick-folder","folders":[1,2],"extra":{"a":true}}"#))
+        XCTAssertEqual(later.kind, "pick-folder")
+        XCTAssertNil(later.card)
+        XCTAssertNil(try action(#"null"#))
+        XCTAssertNil(try XCTUnwrap(action(#""setup""#)).card)
+        // a field of the wrong type is dropped, the rest stays
+        let odd = try XCTUnwrap(action(#"{"kind":"setup","workspaceName":7,"owner":"yes"}"#))
+        XCTAssertEqual(odd.card?.title, "Set up this workspace's Media Library on your computer")
+        XCTAssertEqual(odd.card?.page, "/settings/library")
+    }
 }
