@@ -42,7 +42,8 @@ const { pairDevice, setDeviceWork } = await import("../lib/devices");
 const { createUser } = await import("../users");
 const { Readable } = await import("node:stream");
 const { callerOf } = await import("../auth-clients");
-const { issueSession } = await import("../lib/clients");
+const { createGrant, issueSession } = await import("../lib/clients");
+const { oauthTokenApp } = await import("../auth-clients");
 const { jwkThumbprint, tokenHash } = await import("../lib/dpop");
 
 createUser("tinyacrobatics", "secret-tiny-acrobatics");
@@ -64,6 +65,7 @@ app.use(async (c, next) => {
   return next();
 });
 app.route("/api/library", libraryApp);
+app.route("/", oauthTokenApp);
 
 const d = libraryDb();
 for (const [id, upload] of [["lib_none", '"none"'], ["lib_unset", "null"], ["lib_p", '"proxies"'], ["lib_all", '"all"']] as const) {
@@ -199,8 +201,10 @@ describe("the library upload routes ask it", () => {
     const { id } = (await dpopPhone.json()) as { id: string };
     expect(d.prepare("SELECT origin FROM uploads WHERE id = ?").get(id)).toEqual({ origin: "phone" });
     expect((await send({ authorization: bearer("mobile"), "x-ct-origin": "phone" })).status).toBe(201);
+    // the iPhone app on an iPad is the phone too
+    expect((await send({ authorization: bearer("tablet"), "x-ct-origin": "phone" })).status).toBe(201);
     // every other kind of device, header or not
-    for (const kind of ["desktop", "tablet", "bot", "unknown"] as const) {
+    for (const kind of ["desktop", "bot", "unknown"] as const) {
       const r = await send({ authorization: bearer(kind), "x-ct-origin": "phone" });
       expect(r.status, kind).toBe(409);
       expect(await r.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
@@ -212,6 +216,35 @@ describe("the library upload routes ask it", () => {
     // a browser's cookie with the header stays refused, and the app's own cookie is still taken
     expect((await send({ cookie: sessionCookieFor("tinyacrobatics", false)!, "x-ct-origin": "phone" })).status).toBe(409);
     expect((await send({ cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).status).toBe(201);
+  });
+
+  it("the kind comes from the link: a link made for a Mac stays a Mac's though the device says phone, and a phone's link is the phone", async () => {
+    const redeem = async (deviceType: "desktop" | "mobile") => {
+      const { credential } = createGrant({ kind: "pairing", subject: "tinyacrobatics", scopes: ["read", "write"], deviceType });
+      const r = await app.request("/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token: credential,
+          subject_token_type: "urn:creatortoolset:params:oauth:token-type:server-bootstrap",
+          requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          client_device_type: "mobile",
+        }).toString(),
+      });
+      expect(r.status).toBe(200);
+      return ((await r.json()) as { access_token: string }).access_token;
+    };
+    const send = (token: string) =>
+      app.request("/api/library/lib_none/uploads", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-ct-origin": "phone" },
+        body: JSON.stringify({ filename: "IMG 0003.MOV", size: 4 }),
+      });
+    const mac = await send(await redeem("desktop"));
+    expect(mac.status).toBe(409);
+    expect(await mac.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
+    expect((await send(await redeem("mobile"))).status).toBe(201);
   });
 
   it("a part and the finish ask again: switched to none mid-upload, they are refused and what arrived stays", async () => {

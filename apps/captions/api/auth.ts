@@ -374,15 +374,15 @@ export const isAppSession = (cookieHeader: string | undefined, username: string)
 };
 
 /**
- * Whether the request is the iPhone app's own: a client session paired as a phone (`client_device_type=mobile` at
- * /oauth/token, auth-clients.ts), or else the app's marked cookie. A request with a client session is decided by it
- * alone, as the account gate answers it, so a Mac's, a tablet's or a bot's token never counts, whatever cookie it sends.
+ * Whether the request is the iPhone app's own: a client session whose link was made for a phone or a tablet (the
+ * link's kind, auth-clients.ts), or else the app's marked cookie. A request with a client session is decided by it
+ * alone, as the account gate answers it, so a Mac's, a bot's or an unknown device's token never counts, whatever cookie it sends.
  */
 export const isPhoneSession = (c: Context<{ Variables: AuthVars }>, username: string): boolean => {
   const id = c.get("clientSession");
   if (!id) return isAppSession(c.req.header("cookie"), username);
   const row = sessionById(id);
-  return row?.subject === username && row.client.deviceType === "mobile";
+  return row?.subject === username && (row.client.deviceType === "mobile" || row.client.deviceType === "tablet");
 };
 
 /**
