@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Film, Loader2, Magnet, MousePointer2, Music, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { Loader2, Magnet, MousePointer2, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
@@ -11,12 +11,13 @@ import { NleInspector } from "./NleInspector";
 import { nleAudio } from "@/lib/nle/audio";
 import type { NleFile } from "./NlePlayer";
 import { NleLayout, Panel } from "./NleLayout";
+import { NleMediaPool, SOURCE_MIME } from "./NleMediaPool";
 import { NleViewer } from "./NleViewer";
 
 export type { NleFile };
 import { NleTracks as Timeline, type Tool } from "./NleTracks";
 
-// A non-linear editor for one timeline, laid out as editors are (NleLayout): Media on the left (the timeline's own
+// A non-linear editor for one timeline, laid out as editors are (NleLayout): the Media Pool on the left (the timeline's own
 // sources, then the page's media bin), the viewer in the middle playing the timeline live from its files, the inspector
 // on the right, the timeline across the bottom. It fills the box it is put in. The page gives the timeline, where its
 // files play from and what Save does; everything else (edits, undo, keys, playback) is here.
@@ -39,11 +40,9 @@ export interface NleControl {
 }
 
 let clipboard: { track: string; item: NleItem }[] = [];
-/** A drag of one of the timeline's own sources (Media → In this timeline): its key. */
-const SOURCE_MIME = "application/x-ct-nle-source";
 
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly }: {
+export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -60,6 +59,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   /** what the inspector's Timeline tab says besides the timeline's settings */
   notes?: ReactNode;
   readOnly?: boolean;
+  /** Relink… on a clip in the Media Pool: look for the files not found here */
+  onRelink?: () => void;
 }) {
   const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(withKeys(initial)));
   const [saved, setSaved] = useState<NleTimeline>(hist.now);
@@ -290,11 +291,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     <>
       <NleLayout
         media={
-          <Panel title="Media" className="flex-1">
-            <Sources tl={tl} nameOf={nameOfSrc} here={urlFor} bin={!!bin}
-              onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
-            {bin && <div className="flex min-h-0 flex-1 flex-col p-2">{bin}</div>}
-          </Panel>
+          <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink}
+            onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
         }
         viewer={
           <Panel title="Viewer" className="flex-1" bar={<span className="min-w-0 truncate text-zinc-500">{tl.timeline.name}</span>}>
@@ -389,54 +387,5 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         </div>
       )}
     </>
-  );
-}
-
-/** Media → In this timeline: the sources its clips play, each with how often it is used; a click selects its clips,
- *  a drag lays it on a track. One with no file here has an amber mark. */
-function Sources({ tl, nameOf, here, bin, onPick }: {
-  tl: NleTimeline; nameOf: (src: string) => string; here: (src: string) => NleFile | null; bin: boolean; onPick: (src: string) => void;
-}) {
-  const [open, setOpen] = useState(true);
-  const uses = new Map<string, { n: number; video: boolean }>();
-  for (const [id, t] of Object.entries(tl.tracks)) for (const i of t.items) {
-    const u = uses.get(i.src) ?? { n: 0, video: false };
-    u.n++;
-    u.video ||= isVideo(id);
-    uses.set(i.src, u);
-  }
-  const list = [...uses.entries()].sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])));
-  return (
-    <div className={cn("flex min-h-0 flex-col border-b border-black/60", bin ? "max-h-[45%] shrink-0" : "flex-1")}>
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
-        className="flex h-7 shrink-0 items-center gap-1.5 px-2 text-[11px] font-medium text-zinc-300 hover:bg-white/[0.03]">
-        {open ? <ChevronDown className="size-3.5 text-zinc-500" /> : <ChevronRight className="size-3.5 text-zinc-500" />}
-        In this timeline <span className="tabular-nums text-zinc-500">{list.length}</span>
-      </button>
-      {open && (
-        <ul aria-label="In this timeline" className="min-h-0 overflow-x-hidden overflow-y-scroll pb-1">
-          {list.map(([src, u]) => {
-            const away = !here(src);
-            return (
-              <li key={src}>
-                <button type="button" draggable={!!tl.sources[src]?.path} title={String(tl.sources[src]?.path ?? src)}
-                  onDragStart={(e) => { e.dataTransfer.setData(SOURCE_MIME, src); e.dataTransfer.effectAllowed = "copy"; }}
-                  onClick={() => onPick(src)}
-                  className="flex h-7 w-full min-w-0 items-center gap-2 px-2 text-left text-[12px] text-zinc-300 hover:bg-white/[0.05]">
-                  <span className="relative shrink-0 text-zinc-500">
-                    {u.video ? <Film className="size-3.5" /> : <Music className="size-3.5" />}
-                    {away && <span title="Not found here" className="absolute -top-1 -right-1 size-1.5 rounded-full bg-amber-400" />}
-                  </span>
-                  <span className={cn("min-w-0 flex-1 truncate", away && "text-zinc-500")}>{nameOf(src)}</span>
-                  <span className="shrink-0 tabular-nums text-[11px] text-zinc-500" title={`Used ${u.n} time${u.n === 1 ? "" : "s"}`}>{u.n}</span>
-                </button>
-              </li>
-            );
-          })}
-          {!list.length && <li className="px-2 py-3 text-[12px] text-zinc-500">Empty</li>}
-        </ul>
-      )}
-      {bin && <div className="flex h-7 shrink-0 items-center border-t border-black/60 px-2 text-[11px] font-medium text-zinc-300">Library</div>}
-    </div>
   );
 }
