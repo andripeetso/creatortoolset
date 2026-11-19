@@ -17,11 +17,11 @@ import { libraryChanged, libraryRole } from "./access";
 import { libraryLookLevel, librarySetting } from "./db";
 import { WORKSPACE_MAX, workspaceIdOf } from "./describe";
 import { canEmbed } from "./embed";
-import { enqueueJob } from "./jobs";
+import { enqueueJob, firstClips } from "./jobs";
 import { clock, RULE } from "./look";
 import { hasSound } from "./media/probe";
 import { ffmpeg } from "./media/run";
-import { LOOK_LABEL, WATCH_LABEL } from "./shots";
+import { LOOK_LABEL, lookBudgetWaits, WATCH_LABEL } from "./shots";
 
 /**
  * Timelines: Gemini watches a video with its sound and says what happens when (contracts TimelineEvent), on top of the
@@ -675,6 +675,8 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
   }
   const run = (async () => {
     try {
+      // a watch counts in the library's monthly budget: held (sweepWatch asks again), never spent past it (UNIFIED-PRD §4.5)
+      if (await lookBudgetWaits(db, versionId, firstClips())) return;
       const file = await src();
       // the key's credit ran out on this watch and its owner picked Antigravity until then: watched there at once
       const r = await watchVersion(db, versionId, file, actor, sent).catch((e: unknown) => {

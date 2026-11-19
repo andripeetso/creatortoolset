@@ -24,7 +24,7 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { keySound, NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
-import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
+import { BUDGET_WAITS, BudgetSpent, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
 import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
@@ -84,8 +84,7 @@ const EXTRA = new Set(["transcribe", "describe", "look", "fingerprint", "embed",
 /** The steps that ask the person's AI: a usage limit or a Mac that is off holds them, never fails them. */
 const ON_AI = ["describe", "look"];
 
-/** A look held for its library's monthly budget (shots.ts lookBudgetWaits): it waits, saying so, and asks again in BUDGET_RETRY_S. */
-class BudgetSpent extends Error {}
+/** A look or a listen held for its library's monthly budget (shots.ts BudgetSpent): it waits, saying so, and asks again in BUDGET_RETRY_S. */
 const BUDGET_RETRY_S = 10 * 60;
 
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
@@ -345,7 +344,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
     // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
     // one made on the person's computer waits for one with its model to be on, saying so
-    const wait = ON_AI.includes(job.kind) ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
+    const wait = ON_AI.includes(job.kind) || e instanceof BudgetSpent ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
@@ -456,10 +455,14 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
     .prepare(
       `SELECT v.source_key, a.library_id, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
-       WHERE v.id = ? AND a.kind = 'video' AND v.from_path IS NOT NULL AND v.mac_path IS NULL AND v.source_path IS NULL
-         -- the computer it came from still holds it: else the original waits on the server
-         -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
-         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified')
+       WHERE v.id = ? AND a.kind = 'video' AND v.mac_path IS NULL AND v.source_path IS NULL
+         AND (
+           -- a browser's original (no computer, no phone) is the person's own file: dropped once its proxy is made
+           (v.from_path IS NULL AND IFNULL(v.origin, '') != 'phone')
+           -- a computer's: the computer it came from still holds it, else the original waits on the server
+           -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
+           OR (v.from_path IS NOT NULL AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified'))
+         )
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
@@ -503,9 +506,11 @@ export async function afterProbe(
   want("wave");
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
-  const upload = versionUpload(v.id);
-  const onlyProxy = v.kind === "video" && !!v.from_path && hostsProxies(upload) && !hostsOriginals(upload);
-  if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") && !keepsOnlyOriginals(v.library_id) })) want("proxy");
+  // (a person's own upload under proxies too: the server keeps its proxy, UNIFIED-PRD §4.2)
+  const onlyProxy = v.kind === "video" && versionUpload(v.id) === "proxies";
+  // Originals only keeps no proxy on the server, not even one in a bucket (UNIFIED-PRD §4.2)
+  const originalsOnly = keepsOnlyOriginals(v.library_id);
+  if (v.kind !== "image" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
@@ -534,6 +539,8 @@ async function run(job: JobRow): Promise<void> {
   if (!v) throw new Error("Version not found");
   // a look runs as its uploader, queued long before: one who may no longer see the clip gets nothing read or asked (shots.ts lookAllowed)
   if (job.kind === "look" && !(await lookAllowed(db, v.id, job.actor))) throw new NeedsKey(NO_ACCESS);
+  // a description counts in the library's monthly budget too (UNIFIED-PRD §4.5); an edit's own ask is never held
+  if (job.kind === "describe") await budgetCheck(db, v.id);
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
   // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
@@ -621,8 +628,9 @@ async function run(job: JobRow): Promise<void> {
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
     // no proxy kept when it would be no smaller than the file: the lighter copy is then the original (lighter above)
+    // an Originals only library keeps none, whatever asked for one (a backfill queued before the setting changed)
     const file = out("mp4");
-    if (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration)) await keep("proxy", file, `${base}/proxy.mp4`);
+    if (!keepsOnlyOriginals(v.library_id) && (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration))) await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "sprite") {
     // after the proxies in the lane: a 4K original's frames come from its 720p copy
     const file = out("jpg");
@@ -698,6 +706,8 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
  * what follows a description: its first one gets shot descriptions, new words get search by meaning. The caller drops the stills.
  */
 export async function describeFromStills(db: ReturnType<typeof libraryDb>, libraryId: string, versionId: string, actor: string | null, stills: string[], duration?: number): Promise<void> {
+  // held by the monthly budget here too: a computer's stills are described on the server's key the same way (UNIFIED-PRD §4.5)
+  await budgetCheck(db, versionId);
   const fresh = !described(versionId);
   const p = JSON.parse((db.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null;
   await describeVersion(db, versionId, "", duration ?? p?.duration ?? 0, actor, scratch(), stills);

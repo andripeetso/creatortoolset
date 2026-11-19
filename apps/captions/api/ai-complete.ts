@@ -6,7 +6,7 @@ import {
 } from "./credits";
 import { DRIVERS, type JobId, type Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacErrorKind, type MacOpts, type MacUsage } from "./lib/mac-claude";
-import { instanceIn, limitFallbacks, routeFor, runFields } from "./lib/providers";
+import { instanceIn, limitFallbacks, ownSettings, routeFor, runFields } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
 import { hostedMode } from "./lib/env";
 import { addSpend, budgetLeft } from "./lib/workspaces";
@@ -123,7 +123,11 @@ export function onApiKey(name: string, job: JobId, label: string): ProviderOpts 
   const k = keyFor(name, "ANTHROPIC_API_KEY");
   if (!k.key) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
-  return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
+  // the Media Library's Descriptions model, when the person chose a Claude one there (UNIFIED-PRD §4.8); other picks stay on the default
+  const own = job === "library" ? ownSettings(name) : null;
+  const pick = own?.jobs.library;
+  const claude = pick && own?.instances.find((i) => i.id === pick.instance)?.driver === "claude";
+  return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label }, ...(pick && claude ? { model: pick.model, effort: pick.effort } : {}) };
 }
 
 /**

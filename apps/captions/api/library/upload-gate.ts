@@ -92,8 +92,9 @@ export function mayReceive(
   const upload = uploadFor(library);
   // a person's own file is refused under proxies too (UNIFIED-PRD §4.2): nothing drops it yet, so the server would keep it
   if (kind === "original") {
-    if (hostsOriginals(upload) || origin === "phone") return { ok: true };
-    return refuse(hostsProxies(upload) ? REFUSED_PROXIES : REFUSED_NONE);
+    // a person's own file (browser or phone) is theirs to send under proxies too: the server keeps its proxy (UNIFIED-PRD §4.2)
+    if (hostsOriginals(upload) || origin === "phone" || (origin === "person" && upload === "proxies")) return { ok: true };
+    return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
   }
   // the iPhone app's 720p copy is the one proxy every library takes (held as its original is); any other needs Hosted proxies
   if (origin !== "phone" && !hostsProxies(upload)) {

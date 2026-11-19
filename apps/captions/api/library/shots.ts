@@ -11,7 +11,7 @@ import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { mayRead } from "../work/offline";
 import { stampOf } from "../lib/workshop/context";
 import { blobs, libraryLookBudget, libraryLookLevel, librarySetting } from "./db";
-import { libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
+import { DESCRIBE_LABEL, libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CUTS_BY_MODEL } from "./cuts";
 import { clock, FRAME_H, FRAME_W, lookPrompt, parseRated, pictureHash, readPicture, SHEET_STRETCHES, shotsOf, STRETCH_COLS, STRETCH_FRAMES, stretchSheet, type RatedLine } from "./look";
@@ -48,8 +48,17 @@ export const SHEETS_PER_CALL = 6;
 export const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
 /** Why a look of a file kept on a Mac waits (estimate.ts progress tells these apart by it). */
 export const MAC_WAITS = "Waits for the Mac this file is on to read its picture";
-/** Why a look waits for its library's monthly budget (lookBudgetWaits; estimate.ts progress shows it, worker.ts holds it). */
-export const BUDGET_WAITS = "This month's budget for shot descriptions is spent. Raise it in the Media Library's settings, or they continue next month.";
+/** Why a description or look waits for its library's monthly budget (lookBudgetWaits; worker.ts holds it, estimate.ts shows budgetPause). */
+export const BUDGET_WAITS = "monthly budget reached";
+/** Work held for its library's monthly budget: its job waits, saying so, and asks again later (worker.ts). */
+export class BudgetSpent extends Error {}
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The progress line while the budget is spent: analysis resumes on the first of next month (UTC, the budget's month). */
+export const budgetPause = (now = Date.now()): string => {
+  const n = new Date(now);
+  const next = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 1, 1));
+  return `Paused until ${next.getUTCDate()} ${MONTHS[next.getUTCMonth()]}: ${BUDGET_WAITS}`;
+};
 /** Why a look parks when the account it runs as may no longer see the clip (lookAllowed): the sweep queues it again once they may. */
 export const NO_ACCESS = "The person this runs as no longer sees this clip";
 
@@ -96,25 +105,29 @@ interface KeptSheets {
  * Queues a look for `versionId` when it gets one: a video (not a talking take, by the library's roll and the AI's own
  * answer) longer than LOOK_MIN_S, in a library with shot descriptions on. True when queued. `again`: a look that is done
  * runs again (from its kept sheets, only the lines written under another stamp: the AI Editor's gate asks this).
+ * `asked`: an edit asks for it, so the library's Shot descriptions switch does not stop it.
  */
-export function queueLook(db: DatabaseSync, versionId: string, actor: string | null, again = false): boolean {
-  const libraryId = lookable(db, versionId);
+export function queueLook(db: DatabaseSync, versionId: string, actor: string | null, again = false, asked = false): boolean {
+  const libraryId = lookable(db, versionId, asked);
   if (!libraryId) return false;
   enqueueJob(db, libraryId, versionId, "look", actor, again);
   return true;
 }
 
 /** The library of `versionId` when it gets shot descriptions (queueLook's test), else null. */
-export function lookable(db: DatabaseSync, versionId: string): string | null {
+export function lookable(db: DatabaseSync, versionId: string, asked = false): string | null {
   const r = db
     .prepare(
-      `SELECT a.library_id, a.kind, a.roll, v.probe, (SELECT roll FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS ai
-       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
+      `SELECT a.library_id, a.kind, a.roll, v.probe, (SELECT roll FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS ai,
+         IFNULL(json_extract(l.settings, '$.lookTalking'), 0) AS talking
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`,
     )
-    .get(versionId) as { library_id: string; kind: string; roll: string | null; probe: string | null; ai: string | null } | undefined;
-  if (!r || r.kind !== "video" || r.roll !== "b" || r.ai === "a") return null;
+    .get(versionId) as { library_id: string; kind: string; roll: string | null; probe: string | null; ai: string | null; talking: number } | undefined;
+  // talking takes get a look only at Max (lookTalking, the flags' Max marker)
+  if (!r || r.kind !== "video" || !(r.roll === "b" || (r.roll === "a" && r.talking)) || (r.ai === "a" && !r.talking)) return null;
   const duration = Number((JSON.parse(r.probe ?? "null") as ProbeSummary | null)?.duration) || 0;
-  return duration <= LOOK_MIN_S || !librarySetting(r.library_id, "look") ? null : r.library_id;
+  // an edit's own ask (asked) gets its shot descriptions whatever the library's Shot descriptions switch says (UNIFIED-PRD §4.4)
+  return duration <= LOOK_MIN_S || (!asked && !librarySetting(r.library_id, "look")) ? null : r.library_id;
 }
 
 /** When the sweep may look at a version again (ms), by version: one it queued that parked again waits ten minutes. */
@@ -135,7 +148,8 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
     .prepare(
       `SELECT v.id, v.created_by AS actor, j.state FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN libraries l ON l.id = a.library_id LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'look'
-       WHERE a.trashed_at IS NULL AND a.kind = 'video' AND a.roll = 'b' AND v.created_by IS NOT NULL
+       WHERE a.trashed_at IS NULL AND a.kind = 'video' AND v.created_by IS NOT NULL
+         AND (a.roll = 'b' OR (a.roll = 'a' AND IFNULL(json_extract(l.settings, '$.lookTalking'), 0)))
          AND IFNULL(json_extract(l.settings, '$.look'), 1) AND IFNULL(json_extract(v.probe, '$.duration'), 0) > ?
          AND (j.id IS NULL OR (j.state = 'needs_key' AND IFNULL(j.error, '') != ?))
          AND NOT EXISTS (SELECT 1 FROM jobs p WHERE p.version_id = v.id AND p.state IN ('queued', 'running'))
@@ -162,7 +176,7 @@ const monthStart = (now = Date.now()) => {
 export async function lookSpent(workspace: string | undefined, now = Date.now()): Promise<number> {
   let usd = 0;
   for (const labels of Object.values(await macUsageSince(monthStart(now))))
-    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL]) {
+    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL, DESCRIBE_LABEL, `${DESCRIBE_LABEL} (API)`]) {
       const t = labels[label];
       usd += (workspace ? t?.ws?.[workspace]?.costUsd : t?.costUsd) ?? 0;
     }
@@ -187,7 +201,7 @@ export async function lookBudgetWaits(db: DatabaseSync, versionId: string, first
 
 /** The library's budget for shot descriptions was raised or taken off: the looks held for it (worker.ts) run again at once. */
 export function releaseBudget(db: DatabaseSync, libraryId: string): void {
-  db.prepare("UPDATE jobs SET error = NULL, run_after = 0 WHERE library_id = ? AND kind = 'look' AND state = 'queued' AND error = ?").run(libraryId, BUDGET_WAITS);
+  db.prepare("UPDATE jobs SET error = NULL, run_after = 0 WHERE library_id = ? AND kind IN ('look', 'describe') AND state = 'queued' AND error = ?").run(libraryId, BUDGET_WAITS);
 }
 
 /** Shot description calls in flight per account, and the ones waiting for a turn (callTurn). */

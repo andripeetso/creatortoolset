@@ -114,7 +114,7 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
  * on its way.
  */
 export function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
-  const want = { cloud: proxiesInCloud(libraryId), on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
+  const want = { cloud: !keepsOnlyOriginals(libraryId) && proxiesInCloud(libraryId), on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
