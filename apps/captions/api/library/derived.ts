@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { libraryChanged } from "./access";
 import { blobs, libraryDb } from "./db";
+import { hostsOriginals, hostsProxies } from "../../contracts/library";
 import { uploadFor } from "./upload-gate";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
@@ -127,8 +128,10 @@ export function sendLater(
 }
 
 /** Whether a file of this name, sent to `libraryId` (into `collectionId`), goes the computer's way (sendLater) rather than as its original. */
-export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null): boolean =>
-  kindOf(filename) === "video" && uploadFor({ id: libraryId, collectionId }) !== "none";
+export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null): boolean => {
+  const upload = uploadFor({ id: libraryId, collectionId });
+  return kindOf(filename) === "video" && (hostsOriginals(upload) || hostsProxies(upload));
+};
 
 /**
  * What a phone made of a video itself and sends with the upload start (phase 6, 6D; the iPhone's PhoneMade.swift), so this

@@ -14,7 +14,7 @@ import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError, usageIn, wakeEditorPolls } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
-import { SOUNDS } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, SOUNDS } from "../../contracts/library";
 import { tagSoundType } from "./sfx-type";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
 import { makeSprite } from "./media/sprite";
@@ -463,7 +463,8 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
-  if (!v || v.source_key === v.proxy || versionUpload(versionId) !== "proxies") return false;
+  const upload = versionUpload(versionId);
+  if (!v || v.source_key === v.proxy || !hostsProxies(upload) || hostsOriginals(upload)) return false;
   // the rows first: a delete that fails leaves an unread file behind, never a version pointing at nothing
   db.prepare("UPDATE asset_versions SET source_key = ?, mac_path = from_path, mac_device = from_device WHERE id = ?").run(v.proxy, versionId);
   await blobs.delete(v.source_key);
@@ -502,7 +503,8 @@ export async function afterProbe(
   want("wave");
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
-  const onlyProxy = v.kind === "video" && !!v.from_path && versionUpload(v.id) === "proxies";
+  const upload = versionUpload(v.id);
+  const onlyProxy = v.kind === "video" && !!v.from_path && hostsProxies(upload) && !hostsOriginals(upload);
   if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") && !keepsOnlyOriginals(v.library_id) })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { DeviceFootage } from "../../contracts/devices";
+import { hostsOriginals } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
 import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
@@ -141,7 +142,7 @@ export function heldCopy(device: string, jobId: number, versionId: string, origi
   const job = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(jobId, device) as Pick<JobRow, "version_id"> | undefined;
   const r = job && jobFiles(job).find((f) => f.id === versionId);
   if (!r) return null;
-  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && libraryUpload(r.library_id) === "all") return r.source_key;
+  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && hostsOriginals(libraryUpload(r.library_id))) return r.source_key;
   return lightKey(r);
 }
 
