@@ -71,9 +71,10 @@ afterEach(() => {
 
 describe("with the sign-in service named", () => {
   it("says so in its descriptor", async () => {
-    expect((await (await app.request("/.well-known/creator-toolset/server")).json()).capabilities.account).toBe(false);
+    const account = async () => ((await (await app.request("/.well-known/creator-toolset/server")).json()) as { capabilities: { account: boolean } }).capabilities.account;
+    expect(await account()).toBe(false);
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
-    expect((await (await app.request("/.well-known/creator-toolset/server")).json()).capabilities.account).toBe(true);
+    expect(await account()).toBe(true);
   });
 
   it("a ticket for this server and this phone's key opens a Standard session bound to that key, as the account's person", async () => {
