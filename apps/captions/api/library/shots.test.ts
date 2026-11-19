@@ -386,7 +386,8 @@ describe("the background index", () => {
     d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.look', json('false')) WHERE id = 'lib_s'`).run();
     expect(queueLook(d, v, "local")).toBe(false);
     expect(queueLook(d, v, "local", false, true)).toBe(true);
-    d.prepare(`UPDATE libraries SET settings = '{}' WHERE id = 'lib_s'`).run();
+    // only the switch goes back: a '{}' here would bring back the default budget for the tests after this one
+    d.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.look') WHERE id = 'lib_s'`).run();
   });
 
   it("a file's calls run side by side, two at once on an AI provider", async () => {
