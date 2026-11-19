@@ -29,7 +29,9 @@ async function send<T>(url: string, body?: unknown): Promise<T> {
   return out;
 }
 
-export const createPairingLink = (input: { label?: string; scopes: AccessScope[] }) => send<CreatedLink>("/api/auth/pairing-links", input);
+// every link made here is for the iPhone app: the server keeps the kind and gives the session it (the upload gate reads it)
+export const createPairingLink = (input: { label?: string; scopes: AccessScope[] }) =>
+  send<CreatedLink>("/api/auth/pairing-links", { ...input, deviceType: "mobile" });
 export const revokePairingLink = (id: string) => send("/api/auth/pairing-links/revoke", { id });
 export const revokeClient = (sessionId: string) => send("/api/auth/clients/revoke", { sessionId });
 export const revokeOtherClients = () => send("/api/auth/clients/revoke-others", {});

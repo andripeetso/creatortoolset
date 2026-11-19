@@ -159,7 +159,7 @@ it("creates a Read only link with its name, and shows its card with the QR code 
   click([...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((r) => r.textContent?.includes("Read only"))!);
   click(button("Create link", document.querySelector('[role="dialog"]')!));
   await flush();
-  expect(calls.find((c) => c.url === "/api/auth/pairing-links")).toEqual({ method: "POST", url: "/api/auth/pairing-links", body: { label: "Living room iPad", scopes: ["read"] } });
+  expect(calls.find((c) => c.url === "/api/auth/pairing-links")).toEqual({ method: "POST", url: "/api/auth/pairing-links", body: { label: "Living room iPad", scopes: ["read"], deviceType: "mobile" } });
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   const card = document.querySelector('[data-pairing-link="pl-new"]')!;
   expect(card.textContent).toContain("Living room iPad");
