@@ -43,6 +43,7 @@ const { libraryApp } = await import("./routes");
 const { collectionApp } = await import("./collections");
 const { indexAsset } = await import("./query");
 const { clipText, fileSmart, isSorting, parseWays } = await import("./smart");
+const { fileUnfiled } = await import("./organize");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -161,5 +162,18 @@ describe("smart folders", () => {
   it("the judge reads the picture as it is watched: a clip turned on its side is portrait", () => {
     const c = { id: "x", version: "x-v1", title: "x", kind: "video", what: null, description: null, tags: null, duration: 10, width: 1920, height: 1080, rotation: 90, turn: null };
     expect(clipText(c)).toContain("1080×1920 (1:1.78, portrait");
+  });
+});
+
+describe("organize with rules: a sound or picture goes to the rule folder it fits", () => {
+  it("fileUnfiled files an unfiled picture into the smart folder whose rule it fits, not into Graphics", async () => {
+    const mobile = await data(call("POST", "/api/library/lib_s/collections", { name: "Mobile", rule: "Gameplay recorded on a phone" }));
+    await sorted(mobile.id);
+    seed("pic1", "A phone screen recording of a puzzle game.");
+    libraryDb().prepare("UPDATE assets SET kind = 'image' WHERE id = 'pic1'").run();
+    await fileUnfiled(libraryDb(), "lib_s", { username: "owner-s", role: "member" } as never);
+    expect(inFolder(mobile.id)).toContain("pic1*");
+    const plain = libraryDb().prepare("SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = 'pic1' AND c.kind = 'manual'").get();
+    expect(plain).toBeUndefined();
   });
 });
