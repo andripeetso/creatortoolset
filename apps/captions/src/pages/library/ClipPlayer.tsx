@@ -9,7 +9,7 @@ import { askMediaFolder } from "@/lib/local-files";
 import { macPlaces, placesConnect } from "@/lib/thisMac";
 import { placeLine } from "@/lib/wording";
 import { cn } from "@/lib/utils";
-import { across, clock, frameAt, frameStyle } from "./ClipCards";
+import { across, clock, frameAt, frameStyle, useStrip } from "./ClipCards";
 import { copyReady, original, playerNote, type PlayerNote } from "./clip";
 
 /**
@@ -381,6 +381,7 @@ function Filmstrip({
   const [target, setTarget] = useState<number | null>(null);
   useEffect(() => void (!seeking && setTarget(null)), [seeking]);
   const [hover, setHover] = useState<number | null>(null);
+  const cell = useStrip(url) ?? 16 / 9; // nothing shows before the strip is here, so the guess never shows
   const seek = (frac: number) => {
     const v = media.current;
     if (!v) return;
@@ -405,7 +406,7 @@ function Filmstrip({
       onPointerLeave={() => setHover(null)}
     >
       {Array.from({ length: CELLS }, (_, i) => (
-        <div key={i} className="aspect-video min-w-0 flex-1" style={frameStyle(url, Math.floor(((i + 0.5) * SPRITE_FRAMES) / CELLS))} />
+        <div key={i} className="aspect-video min-w-0 flex-1" style={frameStyle(url, Math.floor(((i + 0.5) * SPRITE_FRAMES) / CELLS), cell, 16 / 9)} />
       ))}
       {fetched.map(([a, b]) => (
         <div key={a} className="pointer-events-none absolute bottom-0 h-1 bg-white/60" style={{ left: `${a * 100}%`, width: `${(b - a) * 100}%` }} />
@@ -421,7 +422,7 @@ function Filmstrip({
           // kept inside the strip's width, so it never hangs over the window's edge
           style={{ left: `clamp(80px, ${hover * 100}%, calc(100% - 80px))` }}
         >
-          <div className="h-[90px] w-[160px] rounded shadow-lg ring-1 ring-white/30" style={frameStyle(url, frameAt(hover))} />
+          <div className="h-[90px] w-[160px] rounded shadow-lg ring-1 ring-white/30" style={frameStyle(url, frameAt(hover), cell, 16 / 9)} />
           <span className="rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white">{clock(hover * duration)}</span>
         </div>
       )}

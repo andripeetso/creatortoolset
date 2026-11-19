@@ -1,6 +1,5 @@
-import { PICTURE_FILE } from "@contracts/library";
-import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type LibraryUpload } from "@contracts/library";
-import { importThumb, thisMacBridge } from "@/lib/thisMac";
+import { hostsOriginals, hostsProxies, PICTURE_FILE, SPRITE_FRAMES, SPRITE_SIDE, type LibraryUpload } from "@contracts/library";
+import { importThumb, macMediaUrl, thisMacBridge } from "@/lib/thisMac";
 
 /**
  * A file indexed where it is on this Mac, for a server that is not on it (api/library/on-mac.ts). The Mac app's window
@@ -176,12 +175,15 @@ export async function readIndex(file: File | MacFile, signal?: AbortSignal, path
       const sh = el.videoHeight;
       await at(duration * 0.1);
       const thumb = await toB64(draw(el, sw, sh, 480));
+      // each frame in the clip's own shape, as the server makes them (api/library/media/sprite.ts)
+      const k = SPRITE_SIDE / Math.max(sw, sh, 1);
+      const [cw, ch] = [sw, sh].map((n) => Math.max(2, Math.round((n * k) / 2) * 2));
       const strip = document.createElement("canvas");
-      strip.width = 160 * SPRITE_FRAMES;
-      strip.height = 90;
+      strip.width = cw * SPRITE_FRAMES;
+      strip.height = ch;
       for (let i = 0; i < SPRITE_FRAMES; i++) {
         await at(frameAt(i, SPRITE_FRAMES, duration));
-        strip.getContext("2d")!.drawImage(draw(el, sw, sh, 160, 90), i * 160, 0);
+        strip.getContext("2d")!.drawImage(draw(el, sw, sh, cw, ch), i * cw, 0);
       }
       const frames: string[] = [];
       for (let i = 0; i < STILLS; i++) {
@@ -289,4 +291,25 @@ export async function repairPictures(libraryId: string, signal?: AbortSignal): P
     if (put?.ok) filled++;
   }
   return filled;
+}
+
+/**
+ * Videos whose old 16:9 strip isn't their shape (an upright clip's), made again here from the file on this Mac with the
+ * same read as an index (readIndex) and handed in: the card shows the old strip until the new one lands. Returns how many.
+ */
+export async function repairStrips(libraryId: string, signal?: AbortSignal): Promise<number> {
+  const device = await deviceHere();
+  if (!device) return 0;
+  const r = await fetch(`/api/library/${libraryId}/stray-strips?device=${encodeURIComponent(device)}`).catch(() => null);
+  if (!r?.ok) return 0;
+  const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
+  let made = 0;
+  for (const v of versions) {
+    signal?.throwIfAborted();
+    const { sprite } = await readIndex({ url: macMediaUrl(v.path), name: v.path.split("/").pop() ?? "", size: 0, quick: "" }, signal, v.path);
+    if (!sprite) continue;
+    const put = await fetch(`/api/library/${libraryId}/versions/${v.versionId}/sprite`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ sprite }) }).catch(() => null);
+    if (put?.ok) made++;
+  }
+  return made;
 }

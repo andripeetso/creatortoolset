@@ -40,7 +40,7 @@ import { buildAssetQuery, indexAsset, macPlace, markHere, pageOf, parseSearch, t
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
-import { indexOnMac, noPicture, parseOnMac, putThumb } from "./on-mac";
+import { indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
@@ -813,6 +813,29 @@ libraryApp.put("/:id/versions/:versionId/thumb", async (c) => {
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const b = (await c.req.json().catch(() => null)) as { thumb?: unknown } | null;
   if (!(await putThumb(libraryId, c.req.param("versionId"), b?.thumb))) return c.json({ error: "Not a picture of this library's (a JPEG under 1 MB)", code: "invalid" }, 400);
+  libraryChanged(libraryId);
+  return c.json({ ok: true });
+});
+
+// GET /api/library/:id/stray-strips?device= → { versions: [{ versionId, path }] }: videos whose old 16:9 strip isn't their
+// shape and whose file that computer has; it makes each strip again from the file and PUTs it (below). The owner, for a
+// computer of theirs.
+libraryApp.get("/:id/stray-strips", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const device = c.req.query("device") ?? "";
+  if (!libraryRole(user.username, libraryId) || deviceOf(device)?.owner !== user.username) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json({ versions: strayStrips(libraryId, device) });
+});
+
+// PUT /api/library/:id/versions/:versionId/sprite { sprite: base64 JPEG } → { ok }: a video's strip of frames made again on
+// the computer that has it, in the clip's own shape. The old one is served until this lands. The owner only.
+libraryApp.put("/:id/versions/:versionId/sprite", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as { sprite?: unknown } | null;
+  if (!(await putSprite(libraryId, c.req.param("versionId"), b?.sprite))) return c.json({ error: "Not a strip of this library's videos (a JPEG under 2 MB)", code: "invalid" }, 400);
   libraryChanged(libraryId);
   return c.json({ ok: true });
 });

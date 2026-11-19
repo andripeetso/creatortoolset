@@ -1,4 +1,4 @@
-import { Fragment, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { AudioLines, FileText, Image as ImageIcon, Laptop, Video } from "lucide-react";
 import { SPRITE_FRAMES, type AssetCard, type AssetKind } from "@contracts/library";
 import { ClipStage } from "@/components/LibraryProcessing";
@@ -65,12 +65,57 @@ export function TileFrame({ columns }: { columns?: CSSProperties }) {
 /** The frame of a clip's strip (`spriteUrl`) at `frac` (0 to 1) across it. */
 export const frameAt = (frac: number) => Math.min(SPRITE_FRAMES - 1, Math.max(0, Math.floor(frac * SPRITE_FRAMES)));
 
-/** Frame `i` of a strip, as the background of a box of the frame's shape (16:9): one picture, no request per frame. */
-export const frameStyle = (url: string, i: number): CSSProperties => ({
-  backgroundImage: `url("${url}")`,
-  backgroundSize: `${SPRITE_FRAMES * 100}% 100%`,
-  backgroundPosition: `${(i / (SPRITE_FRAMES - 1)) * 100}% 0`,
-});
+/**
+ * Frame `i` of a strip as the background of a box, filling it the way object-cover does, never stretched: one picture, no
+ * request per frame. `cell`: a frame's width / height (useStrip); `box`: the box's.
+ */
+export const frameStyle = (url: string, i: number, cell: number, box: number): CSSProperties => {
+  const backgroundImage = `url("${url}")`;
+  // the frame wider than the box: the strip as tall as the box, frame i's middle at the box's middle
+  if (cell >= box) return { backgroundImage, backgroundSize: "auto 100%", backgroundPosition: `${((box / 2 - (i + 0.5) * cell) / (box - SPRITE_FRAMES * cell)) * 100}% 0` };
+  return { backgroundImage, backgroundSize: `${SPRITE_FRAMES * 100}% auto`, backgroundPosition: `${(i / (SPRITE_FRAMES - 1)) * 100}% 50%` };
+};
+
+const cells = new Map<string, number>();
+/**
+ * A strip's frame shape (width / height) once its picture is here, null before. With `near` the picture loads once that
+ * element comes within a screen of view, so a card's first hover shows frames at once; without it, at once.
+ */
+export function useStrip(url: string | undefined, near?: RefObject<Element | null>): number | null {
+  const [cell, setCell] = useState<number | null>(null);
+  useEffect(() => {
+    setCell(url ? (cells.get(url) ?? null) : null);
+    if (!url || cells.has(url)) return;
+    let img: HTMLImageElement | null = null;
+    const load = () => {
+      img = new Image();
+      img.onload = () => {
+        const c = img!.naturalWidth / SPRITE_FRAMES / img!.naturalHeight;
+        cells.set(url, c);
+        setCell(c);
+      };
+      img.src = url;
+    };
+    const el = near?.current;
+    let io: IntersectionObserver | undefined;
+    if (el && typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver(
+        (es) => {
+          if (!es.some((e) => e.isIntersecting)) return;
+          io?.disconnect();
+          load();
+        },
+        { rootMargin: "100%" },
+      );
+      io.observe(el);
+    } else load();
+    return () => {
+      io?.disconnect();
+      if (img) img.onload = null;
+    };
+  }, [url, near]);
+  return cell;
+}
 
 /** Where the pointer is across `el`, 0 to 1. */
 export const across = (e: { clientX: number; currentTarget: Element }) => {
@@ -92,6 +137,8 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
   // the pointer's place across the picture while a mouse is over it (touch never scrubs)
   const [at, setAt] = useState<number | null>(null);
   const strip = a.kind === "video" ? a.spriteUrl : undefined;
+  const picture = useRef<HTMLDivElement>(null);
+  const cell = useStrip(strip, picture);
   const scrub = strip
     ? {
         onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => e.pointerType === "mouse" && setAt(across(e)),
@@ -102,6 +149,7 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
   return (
     <button type="button" onClick={onOpen} data-state={a.state} {...drag} className="group flex w-full min-w-0 flex-col gap-1.5 text-left">
       <div
+        ref={picture}
         {...scrub}
         // in its own proportions the picture sets the height once it is there (`auto`: the file's own, should it be turned)
         style={ownShape && !a.thumbUrl ? { aspectRatio: shape } : undefined}
@@ -123,9 +171,10 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
             {noPictureYet(a) && <NoPictureChip />}
           </div>
         )}
-        {strip && at !== null && (
+        {/* the picture stays until the strip is here */}
+        {strip && cell && at !== null && (
           <>
-            <div aria-hidden data-scrub className="absolute inset-0" style={frameStyle(strip, frameAt(at))} />
+            <div aria-hidden data-scrub className="absolute inset-0" style={frameStyle(strip, frameAt(at), cell, ownShape ? (a.width || 4) / (a.height || 3) : 16 / 9)} />
             <div aria-hidden className="absolute bottom-0 left-0 h-0.5 bg-white/90" style={{ width: `${at * 100}%` }} />
           </>
         )}

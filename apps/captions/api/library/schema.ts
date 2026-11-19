@@ -668,4 +668,6 @@ export const MIGRATIONS: string[] = [
   // a folder Smart folders made for one shoot (shoots.ts): JSON {label, country, place, name}, name = the name it was given,
   // so one the person renamed is never renamed again
   `ALTER TABLE collections ADD COLUMN shoot TEXT;`,
+  // a strip's frame size (media/sprite.ts noteStrip): frames keep the clip's shape since 2026-11-19; none noted = an old 160 × 90 strip
+  `ALTER TABLE derivatives ADD COLUMN cell_w INTEGER; ALTER TABLE derivatives ADD COLUMN cell_h INTEGER;`,
 ];
