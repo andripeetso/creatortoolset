@@ -6,7 +6,7 @@ import { writeFileSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { env, hostedMode } from "./lib/env";
 import { escHtml, plainPage } from "./lib/plain-page";
-import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, listUsers, refreshPicture, type SignInProvider } from "./users";
+import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, listUsers, refreshPicture, type SignInProvider, type UserRecord } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
@@ -310,6 +310,54 @@ signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) =
     return fail("Sign-in failed");
   }
 });
+
+/**
+ * The host account tickets are for: this server's PUBLIC_ORIGIN, never the request's Host header. Null (no tickets)
+ * unless this is a hosted server that names a sign-in service and its own address.
+ */
+export function accountTicketHost(): string | null {
+  if (!hostedMode() || !signinService()) return null;
+  try {
+    return new URL(process.env.PUBLIC_ORIGIN ?? "").host.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A phone already signed in to its account at the sign-in service gets in here with no second sign-in
+ * (POST /oauth/token with an account ticket, auth-clients.ts). The service gave the phone a ticket for this server's
+ * host and the phone's DPoP key, under the phone's PKCE challenge; this server collects it from the service like a
+ * sign-in's ticket, once. The person needs an account here already, found by any sign-in the account has: no
+ * account is made this way. Null when it doesn't check out (the reason is logged, never who it was).
+ */
+export async function accountTicketUser(o: { ticket: string; verifier: string; jkt: string }): Promise<UserRecord | null> {
+  const host = accountTicketHost();
+  if (!host) return null;
+  try {
+    const res = await fetch(`${signinService()}/api/account-signin/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticket: o.ticket, verifier: o.verifier }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const w = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    // a sign-in's own ticket carries no key and no host: it never opens a phone session
+    if (!res.ok || w.jkt !== o.jkt || str(w.host).toLowerCase() !== host) throw new Error(`the sign-in service answered ${res.status} for another key or server`);
+    const ids = [w, ...(Array.isArray(w.identities) ? w.identities : [])] as Record<string, unknown>[];
+    const users = new Set(
+      ids.flatMap((i) => (isSignInProvider(str(i?.provider)) && typeof i.sub === "string" && i.sub && i.sub.length <= 255 ? [findByIdentity(i.provider as Kind, i.sub)] : [])).filter((u): u is UserRecord => !!u),
+    );
+    // the account's sign-ins belong to two people here: no guess
+    if (users.size !== 1) throw new Error(users.size ? "the account's sign-ins belong to more than one person here" : "no account here for that sign-in");
+    const [user] = users;
+    bumpUsage(user.username, { logins: 1 });
+    return user;
+  } catch (e) {
+    console.error("[sign-in] an account ticket from a phone was refused:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
 
 /** The press on a link's page above: the link is made, and the person goes back to the app (its window reloads on focus). */
 signInCallbackApp.post("/link-confirm", async (c) => {

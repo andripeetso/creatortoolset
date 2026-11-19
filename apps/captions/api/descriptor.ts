@@ -4,6 +4,7 @@ import { routeAddress, type AuthVars } from "./auth";
 import { computerKey } from "./connect/keys";
 import { connectState } from "./connect/state";
 import { hostedMode } from "./lib/env";
+import { accountTicketHost } from "./sign-in";
 import type { ServerDescriptor, ServerEndpoint } from "./lib/clients";
 
 /** Who this server is, for a phone to check before it sends a code or a token. Public: it holds nothing secret. */
@@ -20,7 +21,7 @@ export function descriptor(): ServerDescriptor {
     platform: hostedMode() ? "hosted" : process.platform === "darwin" ? "mac" : "linux",
     version: process.env.CT_VERSION ?? "",
     protocol: 1,
-    capabilities: { pairing: true, dpop: true, connect: !!connectState() },
+    capabilities: { pairing: true, dpop: true, connect: !!connectState(), account: !!accountTicketHost() },
   };
 }
 

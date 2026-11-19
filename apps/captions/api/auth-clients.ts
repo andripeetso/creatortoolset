@@ -9,6 +9,7 @@ import { spendJti, verifyDpop } from "./lib/dpop";
 import { ticketCaller } from "./media-ticket";
 import {
   ACCESS_TOKEN_TYPE,
+  ACCOUNT_TICKET_TOKEN_TYPE,
   BOOTSTRAP_TOKEN_TYPE,
   SCOPES,
   STANDARD,
@@ -40,6 +41,7 @@ import {
   type TokenError,
 } from "./lib/clients";
 import { LOCAL_USER, findUser, type SessionUser } from "./users";
+import { accountTicketUser } from "./sign-in";
 
 /**
  * Phones and other apps signed in to this server with a client session (api/connect/contract.md): pairing links, the
@@ -275,6 +277,29 @@ const DEVICE_TYPES: readonly DeviceType[] = ["desktop", "mobile", "tablet", "bot
 
 export const oauthTokenApp = new Hono();
 
+const ACCOUNT_TICKET_SCOPES: readonly Scope[] = ["read", "write"];
+
+/** At most `max` takes per key in a sliding minute; past 10 000 keys the oldest is forgotten. */
+export function perMinute(max: number) {
+  const hits = new Map<string, number[]>();
+  return {
+    take(key: string, now = Date.now()): boolean {
+      const recent = (hits.get(key) ?? []).filter((t) => now - t < 60_000);
+      hits.delete(key);
+      if (hits.size >= 10_000) hits.delete(hits.keys().next().value!);
+      if (recent.length >= max) {
+        hits.set(key, recent);
+        return false;
+      }
+      hits.set(key, [...recent, now]);
+      return true;
+    },
+    clear: () => hits.clear(),
+  };
+}
+/** Account tickets tried at /oauth/token, per address. */
+export const ticketTries = perMinute(10);
+
 oauthTokenApp.post("/oauth/token", async (c) => {
   c.header("Cache-Control", "no-store");
   c.header("Pragma", "no-cache");
@@ -285,7 +310,8 @@ oauthTokenApp.post("/oauth/token", async (c) => {
   const field = (k: string) => form.get(k)?.trim().slice(0, 200) || undefined;
   if (field("grant_type") !== TOKEN_EXCHANGE_GRANT) return refuse("unsupported_grant_type");
   const credential = field("subject_token");
-  if (!credential || field("subject_token_type") !== BOOTSTRAP_TOKEN_TYPE || field("requested_token_type") !== ACCESS_TOKEN_TYPE) return refuse("invalid_request");
+  const type = field("subject_token_type");
+  if (!credential || (type !== BOOTSTRAP_TOKEN_TYPE && type !== ACCOUNT_TICKET_TOKEN_TYPE) || field("requested_token_type") !== ACCESS_TOKEN_TYPE) return refuse("invalid_request");
   // checked for shape only: the session's kind is the one its link was made for, whatever the device says
   const claimed = (field("client_device_type") ?? "unknown") as DeviceType;
   if (!DEVICE_TYPES.includes(claimed)) return refuse("invalid_request");
@@ -303,7 +329,24 @@ oauthTokenApp.post("/oauth/token", async (c) => {
     checked = v;
   }
   const jkt = checked?.jkt;
-  const r = redeemGrant(credential, { jkt, ...(requested ? { requested } : {}) });
+  let r: { ok: true; grant: { kind: string; subject: string; label?: string; deviceType?: DeviceType }; scopes: Scope[] } | { ok: false; error: TokenError };
+  if (type === ACCOUNT_TICKET_TOKEN_TYPE) {
+    // a phone signed in to its account (sign-in.ts accountTicketUser): bound to its key, read and write only (never
+    // `access`: such a session can't make pairing links or manage sessions)
+    const scopes = requested ? ACCOUNT_TICKET_SCOPES.filter((s) => requested.includes(s)) : [...ACCOUNT_TICKET_SCOPES];
+    if (!scopes.length) return refuse("invalid_scope");
+    const verifier = field("code_verifier");
+    if (!jkt || !verifier) return refuse("invalid_grant");
+    // each one waits on the sign-in service (up to 20 s): a few a minute from one address
+    if (!ticketTries.take(clientAddress(c))) {
+      c.header("Retry-After", "60");
+      return c.json({ error: "temporarily_unavailable", error_description: "Too many sign-ins at once. Try again in a minute." }, 429);
+    }
+    const user = await accountTicketUser({ ticket: credential, verifier, jkt });
+    r = user ? { ok: true, grant: { kind: "account", subject: user.username, deviceType: claimed }, scopes } : { ok: false, error: "invalid_grant" };
+  } else {
+    r = redeemGrant(credential, { jkt, ...(requested ? { requested } : {}) });
+  }
   if (!r.ok) return refuse(r.error);
   const spent = checked ? spendJti(checked.jkt, checked.jti) : "ok";
   if (spent === "busy") {

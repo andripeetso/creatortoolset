@@ -11,19 +11,27 @@ struct ServerDescriptor: Codable, Equatable {
     let platform: String?
     let version: String?
     let protocolVersion: Int
+    var capabilities: Capabilities?
+
+    /// `account`: a hosted server that takes the account's ticket, so the phone opens it with no sign-in of its own.
+    struct Capabilities: Codable, Equatable { var account: Bool? }
 
     enum CodingKeys: String, CodingKey {
-        case serverId, label, platform, version
+        case serverId, label, platform, version, capabilities
         case protocolVersion = "protocol"
     }
 
-    init(serverId: String, label: String, platform: String? = nil, version: String? = nil, protocolVersion: Int = supportedProtocol) {
+    init(serverId: String, label: String, platform: String? = nil, version: String? = nil, protocolVersion: Int = supportedProtocol,
+         capabilities: Capabilities? = nil) {
         self.serverId = serverId
         self.label = label
         self.platform = platform
         self.version = version
         self.protocolVersion = protocolVersion
+        self.capabilities = capabilities
     }
+
+    var takesAccount: Bool { platform == "hosted" && capabilities?.account == true }
 
     /// No redirects followed and nothing cached: a cached answer would speak for a host that can't be reached.
     static let session: URLSession = {
@@ -114,6 +122,8 @@ enum Pairing {
     static let grantType = "urn:ietf:params:oauth:grant-type:token-exchange"
     static let bootstrapType = "urn:creatortoolset:params:oauth:token-type:server-bootstrap"
     static let accessType = "urn:ietf:params:oauth:token-type:access_token"
+    /// A ticket from the account's sign-in service for a hosted server (with `code_verifier` and a DPoP proof).
+    static let accountTicketType = "urn:creatortoolset:params:oauth:token-type:account-ticket"
 
     /// Checked before the one-time code is redeemed, so a wrong link is not spent. `expected`: the server a new
     /// route is added to. A server this app is too old for is refused; an older server is still saved (to update).
@@ -153,13 +163,13 @@ enum Pairing {
     /// The token exchange: a pairing code (Bearer, 30 days) or an account's connect credential (with `dpop`, bound
     /// to this phone's key, 1 hour). An invalid code is said in the server's words.
     static func exchange(_ base: URL, credential: String, dpop: Bool, metadata: [String: String],
-                         session: URLSession = API.session) async throws -> Credential {
+                         tokenType: String = bootstrapType, session: URLSession = API.session) async throws -> Credential {
         var request = URLRequest(url: API(server: base, cookie: nil).url("/oauth/token"))
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         if dpop { request.setValue(try DPoP.proof(method: "POST", url: request.url!), forHTTPHeaderField: "DPoP") }
-        var fields = ["grant_type": grantType, "subject_token": credential, "subject_token_type": bootstrapType,
+        var fields = ["grant_type": grantType, "subject_token": credential, "subject_token_type": tokenType,
                       "requested_token_type": accessType]
         fields.merge(metadata.filter { !$0.value.isEmpty }) { a, _ in a }
         request.httpBody = Data(form(fields).utf8)

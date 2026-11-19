@@ -35,10 +35,14 @@ final class AccountServers: ObservableObject {
     /// Hosted servers the account signed in to (signed in with the same Apple, Google or GitHub).
     @Published private(set) var hosted: [Computer] = []
     @Published private(set) var loading = false
+    /// Set only when nothing at all can be listed; a failed list with servers known keeps them and retries quietly.
     @Published private(set) var problem: String?
     @Published private(set) var traceId: String?
 
     private var relay: Credential?
+    /// Lists that failed in a row, and the quiet retry after the last one.
+    private var failures = 0
+    private var retry: Task<Void, Never>?
 
     init() {
         #if DEBUG
@@ -132,10 +136,11 @@ final class AccountServers: ObservableObject {
         if ConnectionDemo.on { return }
         #endif
         loading = true
-        problem = nil
-        traceId = nil
         defer { loading = false }
-        hosted = (try? await Account.shared.hosted()) ?? hosted
+        if let listed = try? await Account.shared.hosted() {
+            await adoptHosted(listed)
+            hosted = listed
+        }
         do {
             let listed = try JSONDecoder().decode(Listed.self, from: try await call("/v1/computers"))
             computers = listed.computers.compactMap { one in
@@ -146,10 +151,18 @@ final class AccountServers: ObservableObject {
                                        linkedAt: one.created_at)
             }
         } catch {
-            problem = "Could not load your computers"
-            traceId = (error as? APIError).map { "\($0.status)" }
+            failures += 1
+            traceId = Self.trace(error)
+            if computers.isEmpty { computers = known() }
+            // the servers already known stay shown; the warning is for a list with nothing at all in it
+            problem = computers.isEmpty && hosted.isEmpty ? "Could not load your computers" : nil
+            retryLater()
             return
         }
+        failures = 0
+        retry?.cancel()
+        problem = nil
+        traceId = nil
         adopt()
         await withTaskGroup(of: (String, Health?).self) { group in
             for computer in computers {
@@ -168,6 +181,37 @@ final class AccountServers: ObservableObject {
         }
     }
 
+    /// After a failed list: again by itself, later each time (5 s, 15 s, 45 s, 2 min, then every 5 min) while signed in.
+    nonisolated static func backoff(_ failures: Int) -> TimeInterval {
+        [5, 15, 45, 120, 300][min(max(failures, 1), 5) - 1]
+    }
+
+    private func retryLater() {
+        retry?.cancel()
+        let wait = Self.backoff(failures)
+        retry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, Account.shared.profile != nil else { return }
+            await self?.refresh()
+        }
+    }
+
+    /// What a failed list said, for the trace under Details: the status and the service's code ("404 not_found").
+    nonisolated static func trace(_ error: Error) -> String {
+        switch error {
+        case APIError.server(let status, let message): return "\(status) \(message)"
+        default: return error.localizedDescription
+        }
+    }
+
+    /// The account's computers this phone already has, while the connect service can't list them.
+    private func known() -> [AccountComputer] {
+        Connections.shared.servers.compactMap { entry in
+            guard entry.platform != "hosted", let route = entry.routes.first(where: { $0.id == Route.accountId }) else { return nil }
+            return AccountComputer(id: entry.serverId, name: entry.label, endpoint: route.url)
+        }
+    }
+
     // MARK: connecting
 
     struct Minted: Decodable {
@@ -178,6 +222,10 @@ final class AccountServers: ObservableObject {
     /// A session on a linked computer: the connect service asks the computer for a one-time credential bound to this
     /// phone's key, the phone checks the computer's descriptor, then trades the credential for a DPoP session (1 h).
     func session(for computerId: String) async throws -> (URL, Credential) {
+        if let entry = Connections.shared.entry(computerId), entry.platform == "hosted",
+           let url = entry.routes.first(where: { $0.id == Route.accountId })?.url {
+            return (url, try await hostedSession(url))
+        }
         let data: Data
         do {
             data = try await call("/v1/computers/\(computerId)/connect", method: "POST",
@@ -209,6 +257,55 @@ final class AccountServers: ObservableObject {
             return (endpoint, credential)
         } catch let error as PairingError {
             throw ConnectionFailure(reason: .authentication, detail: error.localizedDescription, hop: .server, via: .account)
+        }
+    }
+
+    /// A hosted server the account signed in to: the account's sign-in service gives a one-time ticket for it, bound to
+    /// this phone's key and a fresh verifier, and the server trades it for a DPoP session (1 h). No sheet, no password.
+    func hostedSession(_ url: URL) async throws -> Credential {
+        let pkce = Pkce.make()
+        do {
+            let ticket = try await Account.shared.serverTicket(host: Self.host(url), challenge: pkce.challenge)
+            var fields = Pairing.clientMetadata()
+            fields["code_verifier"] = pkce.verifier
+            return try await Pairing.exchange(url, credential: ticket, dpop: true, metadata: fields, tokenType: Pairing.accountTicketType)
+        } catch let error as PairingError {
+            throw ConnectionFailure(reason: .authentication, detail: error.localizedDescription, hop: .server, via: .account)
+        } catch APIError.server(let status, let words) {
+            // the account's site refused the ticket (403: this account never signed in there, or took it off the list)
+            throw ConnectionFailure(reason: status == 403 ? .authentication : .relayUnavailable, detail: words, hop: .account, via: .account,
+                                    httpStatus: status)
+        } catch let error as AccountError {
+            throw ConnectionFailure(reason: error == .signedOut ? .authentication : .relayUnavailable, detail: error.localizedDescription,
+                                    hop: .account, via: .account)
+        } catch let error as URLError {
+            throw ConnectionFailure.from(error, route: .account(url))
+        }
+    }
+
+    /// The host a ticket is for: the name, and the port when there is one.
+    nonisolated static func host(_ url: URL) -> String {
+        (url.host(percentEncoded: false) ?? "").lowercased() + (url.port.map { ":\($0)" } ?? "")
+    }
+
+    /// The account's hosted servers that take its ticket are on this phone with no sign-in, like its computers; one
+    /// already here (signed in by address before) stays as it is, and one that can't is left for Sign in.
+    private func adoptHosted(_ list: [Computer]) async {
+        // a token from before binding gets no tickets: those servers keep Sign in until the next account sign-in
+        guard Account.shared.bound else { return }
+        let here = Set(Connections.shared.servers.flatMap { $0.routes.map(\.origin) })
+        let new = list.filter { !here.contains(Routes.origin($0.url)) }
+        let found = await withTaskGroup(of: (Computer, ServerDescriptor?).self) { group in
+            for server in new {
+                group.addTask { (server, try? await ServerDescriptor.fetch(server.url, timeout: ConnectionTiming.probeRemote)) }
+            }
+            var out: [(Computer, ServerDescriptor)] = []
+            for await (server, d) in group { if let d, d.takesAccount { out.append((server, d)) } }
+            return out
+        }
+        for (server, d) in found {
+            Connections.shared.add(serverId: d.serverId, label: d.label, route: .account(server.url), credential: nil, username: nil,
+                                   descriptor: d, shown: false)
         }
     }
 
@@ -294,6 +391,9 @@ final class AccountServers: ObservableObject {
 
     /// Signed out: the account's routes go; a computer still reachable another way stays saved.
     func signedOut() {
+        retry?.cancel()
+        failures = 0
+        problem = nil
         relay = nil
         computers = []
         hosted = []
