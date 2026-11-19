@@ -183,7 +183,7 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect(e.jobs.filter((j) => j.state === "queued").map((j) => [j.kind, j.variant])).toEqual([["post", "v1"]]);
     const d = readDraft(id, "v1")!;
     expect(d.timeline.tracks.V1.items.map((i) => [i.rec, i.len, i.in])).toEqual([[0, 30, 0], [30, 20, 210]]);
-    expect(d.notes).toEqual(["A note the draft step wrote", "Cut by hand in Review: 2 timeline edits on version 2"]);
+    expect(d.notes).toEqual(["A note the draft step wrote", "Cut by hand in Review: 2 timeline edits on version 2 (Second line on V1: taken out with its voice, what follows moves up; Third line on V1: 10 f off the start)"]);
     // while that version is being made, a second cut waits
     expect(await json(cut({ asset: "rev-1", n: 2, edits }))).toMatchObject({ code: "conflict", error: "This version is still being made" });
     await call("maker", "POST", `/api/editor/${id}/stop`);
@@ -378,13 +378,13 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     expect(queued(e)).toEqual([["post", "v1"]]);
     const after = readDraft(id, "v1")!;
     expect(after.timeline.tracks.V1.items.map((i) => i.rec)).toEqual([0]);
-    expect(after.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit"]);
+    expect(after.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit (Second line on V1: taken out with its voice, what follows moves up)"]);
     expect(await json(cut({ edits: [] }))).toMatchObject({ error: "This version is still being made" });
     await stopAll(id);
     // changed since Review: no edits renders it as it is, with no new revision
     expect((await draft()).filed).toBeNull();
     expect(queued(await json<Edit>(cut({ edits: [] })))).toEqual([["post", "v1"]]);
-    expect(readDraft(id, "v1")!.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit"]);
+    expect(readDraft(id, "v1")!.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit (Second line on V1: taken out with its voice, what follows moves up)"]);
     await stopAll(id);
   });
 

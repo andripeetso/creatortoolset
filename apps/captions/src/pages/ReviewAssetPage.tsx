@@ -1520,6 +1520,13 @@ function Header({
             <Download className="h-4 w-4" />
           </a>
         )}
+        {manage && version.status !== "error" && !version.removed && (version.edit || version.draft) && (
+          // a version an AI Editor cut: its timeline, to edit by hand (the chat sees what is changed there)
+          <Button asChild size="sm" variant="outline" className="h-7 border-zinc-800 bg-transparent text-xs" title="Open this version's timeline in the Editor">
+            <Link to={version.edit ? `/editor/${encodeURIComponent(version.edit.project)}/${encodeURIComponent(version.edit.draft)}`
+              : `/editor/${encodeURIComponent(version.draft!.edit)}/${encodeURIComponent(version.draft!.name)}`}>Open in Editor</Link>
+          </Button>
+        )}
         {manage && version.status !== "error" && !version.removed &&
           (version.captioned ? (
             <CaptionedPair asset={asset} n={n} />

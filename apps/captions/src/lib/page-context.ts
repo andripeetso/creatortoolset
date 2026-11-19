@@ -1,3 +1,4 @@
+import { create } from "zustand";
 import { thisMacBridge } from "./thisMac";
 import { useFeedback } from "./review-feedback";
 import type { AssistantContext, AssistantImage } from "@contracts/assistant";
@@ -7,6 +8,9 @@ import type { AssistantContext, AssistantImage } from "@contracts/assistant";
  * and (in the Mac app) a picture of it. Never a form field's value: text inside inputs, textareas and selects is
  * skipped, so a password or a half-typed draft can't leak into the chat.
  */
+
+/** A line the page on screen says about itself that its headings can't: the editor's open timeline and its unsaved edits. */
+export const usePageNote = create<{ note: string | null }>(() => ({ note: null }));
 
 /** The dock's own card: its headings and text aren't "the page". */
 export const DOCK = 'section[aria-label="Assistant"]';
@@ -63,6 +67,8 @@ export function pageContext(): AssistantContext {
   // a Review video beside the chats: its comments column is hidden, so say they are there to read (lib/review-feedback)
   const notes = useFeedback.getState().count;
   if (notes !== null) headings.unshift(`Feedback list: ${notes} timecoded comment${notes === 1 ? "" : "s"} on this Review video (get_review reads them)`);
+  const note = usePageNote.getState().note;
+  if (note) headings.unshift(note);
   // only chats (chat mode with the page not drawn): nothing of the page is what the person is looking at
   const visible = document.documentElement.dataset.chatMode === "full" ? "Only the chats are on screen: this page is not shown." : describePage({ crumb: crumbEl ? textOf(crumbEl) : undefined, dialog, headings });
   return { path: location.pathname + location.search, title: document.title, ...(visible ? { visible } : {}), ...(thisMacBridge() ? { mac: true } : {}), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
