@@ -315,12 +315,22 @@ afterAll(async () => {
 describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port, the computers' workers claiming from it", () => {
   let bos = "";
   let anas = "";
+  // A person's Load balancing weight for the server (PRD 4.7). The teammates' server is at 0, so their computers do the
+  // video steps and fetch their own copies; above 0 the server takes every step a computer lacks the files for.
+  const setBalance = (user: string, weights: Record<string, number>) => {
+    mkdirSync(path.join(S, "balance"), { recursive: true });
+    writeFileSync(path.join(S, "balance", `${user}.json`), JSON.stringify({ on: true, weights }));
+  };
+  beforeAll(() => {
+    setBalance("bo", { server: 0 });
+    setBalance("ana", { server: 0 });
+  });
 
   it("no computer online: the step waits with the one line; with one online the server's loop leaves it and that computer takes it (PRD 3)", async () => {
     answers.plan = JSON.stringify({ plans: [{ kind: "hard edit", lead: "sources", shots: [{ src: "S1", in: 0, dur: 1 }, { src: "S2", in: 1, dur: 1 }, { src: "S1", in: 2.5, dur: 1 }] }] });
     bos = await newEdit("bo", 1);
     expect(await lineOf("bo", bos, "script")).toBe("Waits for one of your computers. Open Creator Toolset on your Mac");
-    // phase 4: with none online the server would still take it (the switch is phase 7); a computer comes online first
+    // the server's weight is 0 for bo: a computer that lacks the files takes the step only once it is online
     const worker = work(boMac);
     await until("Bo Mac online", () => srv.isOnline(boMac.id));
     const script = srv.libraryDb().prepare("SELECT * FROM edit_jobs WHERE edit_id = ? AND kind = 'script'").get(bos) as never;
@@ -459,8 +469,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
   it("a computer set to Off takes nothing while the other can (PRD 2)", async () => {
     const at = mark();
     const from = at.hits;
-    mkdirSync(path.join(S, "balance"), { recursive: true });
-    writeFileSync(path.join(S, "balance", "ana.json"), JSON.stringify({ on: true, weights: { [studio.id]: 0 } }));
+    setBalance("ana", { server: 0, [studio.id]: 0 });
     try {
       const n = review(anas).v1!.n;
       expect((await call("ana", "POST", `/api/editor/${anas}/drafts/v1/review`, {})).status).toBe(200);
@@ -471,7 +480,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       await stopLoop();
       await finish([studio, laptop], workers);
     } finally {
-      rmSync(path.join(S, "balance", "ana.json"));
+      setBalance("ana", { server: 0 });
     }
     expect(ranBy(anas, "preview", at)).toEqual(["ana-laptop"]);
     expect(hits.slice(from).filter((h) => h.who === "studio-mac" && !h.path.endsWith("/work/claim"))).toEqual([]);
