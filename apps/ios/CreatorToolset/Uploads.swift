@@ -129,7 +129,8 @@ struct UploadItem: Codable, Identifiable, Hashable {
     }
 }
 
-/// The uploads, saved as JSON next to their files.
+/// The uploads, saved as JSON next to their files. A change of how far a clip got is written at most once a
+/// `throttle`, any other change at once; the file is written off the main actor, in order.
 @MainActor
 final class UploadStore: ObservableObject {
     @Published private(set) var items: [UploadItem] = [] {
@@ -140,9 +141,15 @@ final class UploadStore: ObservableObject {
     /// The newest upload of each camera-roll clip, per server (`key(asset:server:)`).
     private(set) var byAsset: [String: UploadItem] = [:]
 
-    private let file = AppFiles.root.appendingPathComponent("uploads.json")
+    private let file: URL
+    var throttle: TimeInterval = 1
+    private var due: Task<Void, Never>?
+    /// Writes handed to `disk` so far (the tests count them).
+    private(set) var writes = 0
+    static let disk = DispatchQueue(label: "uploads.json", qos: .utility)
 
-    init() {
+    init(file: URL = AppFiles.root.appendingPathComponent("uploads.json")) {
+        self.file = file
         if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([UploadItem].self, from: data) {
             items = saved
         }
@@ -171,8 +178,9 @@ final class UploadStore: ObservableObject {
 
     func update(_ id: UUID, _ change: (inout UploadItem) -> Void) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        let before = items[i]
         change(&items[i])
-        save()
+        save(soon: Self.onlyProgress(before, items[i]))
     }
 
     /// The one way an upload changes state, and only along `UploadItem.State.moves`; `change` sets what goes with the
@@ -188,24 +196,60 @@ final class UploadStore: ObservableObject {
             assert(!item.isWorking, "an upload on its way has no move from \(item.state) to \(next)")
             return false
         }
+        let before = item
         item.state = next
         change(&item)
         items[i] = item
-        save()
+        save(soon: Self.onlyProgress(before, item))
         return true
     }
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CreatorToolset", category: "uploads")
 
-    func remove(_ id: UUID) {
-        items.removeAll { $0.id == id }
-        liveBytes[id] = nil
-        try? FileManager.default.removeItem(at: AppFiles.upload(id))
+    func remove(_ id: UUID) { remove([id]) }
+
+    func remove(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        items.removeAll { ids.contains($0.id) }
+        for id in ids {
+            liveBytes[id] = nil
+            try? FileManager.default.removeItem(at: AppFiles.upload(id))
+        }
         save()
     }
 
-    private func save() {
-        try? JSONEncoder().encode(items).write(to: file, options: .atomic)
+    /// Only how far it got changed (and its note): lost in a crash, the upload asks its server where it stands.
+    nonisolated static func onlyProgress(_ a: UploadItem, _ b: UploadItem) -> Bool {
+        func bare(_ item: UploadItem) -> UploadItem {
+            var item = item
+            item.sent = 0
+            item.note = nil
+            item.attempts = 0
+            item.nextAttemptAt = nil
+            item.direct?.etags = [:]
+            return item
+        }
+        return bare(a) == bare(b)
+    }
+
+    private func save(soon: Bool = false) {
+        guard soon else { return write() }
+        guard due == nil else { return }
+        due = Task { [weak self, throttle] in
+            try? await Task.sleep(for: .seconds(throttle))
+            if !Task.isCancelled { self?.write() }
+        }
+    }
+
+    /// The progress held back, written now (the app goes to the background).
+    func flush() { if due != nil { write() } }
+
+    private func write() {
+        due?.cancel()
+        due = nil
+        writes += 1
+        let items = items, file = file
+        Self.disk.async { try? JSONEncoder().encode(items).write(to: file, options: .atomic) }
     }
 }
 

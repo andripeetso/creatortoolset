@@ -185,7 +185,7 @@ export function LibraryStorageSettings({
   // a library holding files keeps where its originals are; its proxies may go anywhere
   const fixed = !!s?.locked && cloud !== "proxies";
   // so what its cloud copy cannot be switched to: originals here stay here, originals in a bucket stay there
-  const off: LibraryUpload[] = s?.locked ? (s.kind === "local" ? ["all"] : ["none", "proxies"]) : [];
+  const off: LibraryUpload[] = s?.locked ? (s.kind === "local" ? ["all", "originals"] : ["none", "proxies"]) : [];
   const inCloud = !onThisComputer || cloud !== "none";
   const ownLocked = fixed; // a library with files keeps its bucket; only the keys and region can change
   // nothing until it is known what can change, so no choice shows and then goes

@@ -25,7 +25,9 @@ const APP_SECRET = "screens-secret-123";
 const require = createRequire(path.join(app, "package.json"));
 const { chromium } = require("playwright-chromium");
 
-execFileSync("npx", ["vite-node", "e2e/media-library-screens/seed.ts"], { cwd: app, env: { ...process.env, SEED_DATA_DIR: data, APP_SECRET }, stdio: ["ignore", "inherit", "inherit"] });
+const seeded = JSON.parse(
+  execFileSync("npx", ["vite-node", "e2e/media-library-screens/seed.ts"], { cwd: app, env: { ...process.env, SEED_DATA_DIR: data, APP_SECRET }, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim().split("\n").pop(),
+);
 
 const server = spawn("npx", ["vite", "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"], {
   cwd: app,
@@ -55,6 +57,12 @@ const SKIP_APP_SETUP = () => {
     localStorage.setItem("ct-intro-seen", "1");
   } catch { /* blocked: the screens still draw */ }
 };
+/** The member's current workspace: the shared one, through the workspace switch the app's own picker uses. */
+async function switchMember(ctx, id) {
+  const r = await ctx.request.patch(BASE + "/api/workshop/workspace", { data: { currentProjectId: id }, timeout: 180_000 });
+  if (r.status() !== 200) throw new Error(`switch the member's workspace failed: ${r.status()} ${await r.text()}`);
+}
+
 const shot = async (page, name, theme) => {
   await page.screenshot({ path: path.join(out, `${name}-${theme}.png`), fullPage: true });
 };
@@ -98,7 +106,7 @@ async function login(ctx, who) {
 }
 
 async function go(page, route) {
-  await page.goto(BASE + route, { waitUntil: "networkidle" });
+  await page.goto(BASE + route, { waitUntil: "networkidle", timeout: 120_000 });
   await page.waitForTimeout(800);
 }
 
@@ -138,6 +146,7 @@ try {
     // Member: its own page (no setup, no owner sections).
     const member = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
     await login(member, MEMBER);
+    await switchMember(member, seeded.shared);
     const mp = await member.newPage();
     await mp.addInitScript(SKIP_APP_SETUP);
     await go(mp, "/settings/library");

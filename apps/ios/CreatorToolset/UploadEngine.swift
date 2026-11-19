@@ -15,18 +15,31 @@ import UIKit
 final class UploadEngine: ObservableObject {
     static let shared = UploadEngine()
 
-    let store = UploadStore()
+    let store: UploadStore
     let transfers: Transfers
+    /// Camera-roll clips holding a copy on the phone at once (exported, or on their way): the rest wait in Photos as
+    /// references, so a pick of 40 clips never fills the phone.
+    static let copiesAtOnce = 3
+    /// The clip being copied out of Photos right now.
+    private var exporting: Set<UUID> = []
+    /// A camera-roll clip (`PHAsset.localIdentifier`) copied into the file; nil when Photos no longer has it. A test
+    /// gives its own.
+    var copyOut: (String, URL) async throws -> (size: Int64, filename: String)? = { assetId, file in
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetId], options: nil).firstObject else { return nil }
+        return try await Exporter.export(asset, to: file)
+    }
     private var reconciling = false
     private var reconcileAgain = false
     private var timer: Timer?
     /// The server's chunks are 32 MB; never send more in one request.
     private let maxChunk: Int64 = 32 << 20
 
-    /// (a test gives its own transfers, so nothing leaves the phone)
-    init(transfers: Transfers = .shared) {
+    /// (a test gives its own transfers and queue, so nothing leaves the phone)
+    init(transfers: Transfers = .shared, store: UploadStore? = nil) {
         self.transfers = transfers
+        self.store = store ?? UploadStore()
         transfers.engine = self
+        clearDone()
         // a piece saved into Photos from a server is never offered back as footage
         SaveToPhotos.added = { ids in LibraryIndex.shared.markInLibrary(ids, server: Servers.shared.currentId) }
     }
@@ -73,8 +86,19 @@ final class UploadEngine: ObservableObject {
         }
     }
 
-    func clearDone() {
-        for item in store.items where item.state == .done && item.edit == nil { store.remove(item.id) }
+    /// Finished clips leave the saved queue: per server the 30 newest of the last day stay, for Activity's Recently
+    /// uploaded (the camera roll's green check is `LibraryIndex`'s). On launch, and once nothing is on its way, so a
+    /// batch's "Uploading 5 · 2 left" still counts the ones that landed.
+    func clearDone(now: Date = Date()) {
+        let done = store.items.filter { $0.state == .done && $0.edit == nil }
+            .sorted { ($0.finishedAt ?? .distantPast) > ($1.finishedAt ?? .distantPast) }
+        var kept: [String: Int] = [:]
+        var gone: Set<UUID> = []
+        for item in done {
+            kept[item.server, default: 0] += 1
+            if kept[item.server]! > 30 || (item.finishedAt ?? .distantPast) < now.addingTimeInterval(-86_400) { gone.insert(item.id) }
+        }
+        store.remove(gone)
     }
 
     /// A New edit's clips: each one's upload made on the server, its bytes not sent yet. The upload ids in the order
@@ -170,11 +194,18 @@ final class UploadEngine: ObservableObject {
             if !FileManager.default.fileExists(atPath: AppFiles.upload(id).path) {
                 // a file from Files or a New edit clip has nothing to copy it again from
                 guard let assetId = item.assetId else { return fail(id, "The copy on the phone is gone: pick the file again") }
-                guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetId], options: nil).firstObject else {
-                    return fail(id, "This clip is no longer in Photos")
+                // its turn comes when a clip holding a copy lands or fails (both kick the queue)
+                guard copiesHeld(besides: id) < Self.copiesAtOnce else {
+                    let waiting = "Waiting for the clips before it"
+                    if item.note != waiting { note(id, waiting) }
+                    return
                 }
                 note(id, "Getting it from Photos…")
-                let exported = try await Exporter.export(asset, to: AppFiles.upload(id))
+                exporting.insert(id)
+                defer { exporting.remove(id) }
+                guard let exported = try await copyOut(assetId, AppFiles.upload(id)) else {
+                    return fail(id, "This clip is no longer in Photos")
+                }
                 store.update(id) {
                     $0.size = exported.size
                     $0.filename = exported.filename
@@ -202,6 +233,14 @@ final class UploadEngine: ObservableObject {
             // offline, or Photos couldn't hand it over yet (an iCloud download, low space): later
             perform(.retryLater(error.localizedDescription), id)
         }
+    }
+
+    /// Clips on their way with a copy on the phone, or being copied out of Photos now.
+    func copiesHeld(besides id: UUID) -> Int {
+        store.items.filter { item in
+            item.id != id && (exporting.contains(item.id)
+                || item.isWorking && FileManager.default.fileExists(atPath: AppFiles.upload(item.id).path))
+        }.count
     }
 
     /// A New edit's clips go to the server's own library; the Upload tab's to a plug-in's library when the server's
@@ -550,10 +589,17 @@ final class UploadEngine: ObservableObject {
         try? FileManager.default.removeItem(at: AppFiles.upload(id))
         AppFiles.removeSlices(of: id)
         if let asset = item.assetId { LibraryIndex.shared.markInLibrary([asset], server: item.server) }
+        if store.items.contains(where: \.isWorking) { kick() } else { clearDone() }
     }
 
     func fail(_ id: UUID, _ why: String) {
-        store.move(id, to: .failed) { $0.note = why }
+        guard store.move(id, to: .failed, { $0.note = why }) else { return }
+        // a camera-roll clip's copy goes with it: Try again copies it out of Photos again (`prepare`)
+        if let item = store.item(id), item.assetId != nil, item.edit == nil {
+            try? FileManager.default.removeItem(at: AppFiles.upload(id))
+            AppFiles.removeSlices(of: id)
+        }
+        kick() // a clip waiting for its turn gets one
     }
 }
 
@@ -662,6 +708,8 @@ final class Transfers: NSObject, URLSessionDataDelegate {
         _ = MainActor.assumeIsolated {
             Task {
                 await UploadEngine.shared.reconcile()
+                // iOS suspends the app soon after: progress held back by the throttle is written first
+                UploadEngine.shared.store.flush()
                 completion?()
             }
         }

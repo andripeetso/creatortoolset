@@ -11,6 +11,7 @@ import { call, STORAGE_API } from "@/components/settings/StorageRows";
 import { updateLibrary } from "@/lib/library";
 import { useAuth, useMe } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
+import { useModelsInUse } from "./settings/Models";
 import { cn } from "@/lib/utils";
 import {
   ANALYSIS_DEFAULT,
@@ -269,6 +270,7 @@ function FolderRow({ title, tip, paths, button, submit, onAdd }: { title: string
  * The setup sheet. `watchAllowed`: the server reads this computer's folders (This Mac). `onDone` gets the saved library.
  */
 export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { library: LibrarySummary; watchAllowed: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
+  const inUse = useModelsInUse();
   const hosted = useAuth((s) => s.hosted);
   const me = useMe();
   const project = useWorkspace((s) => currentProject(s));
@@ -469,7 +471,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
             <div className="space-y-2">
               <p className="text-sm font-medium">{LIBRARY_WORDS.modelsTitle}</p>
               <Card>
-                <ModelRow title={LIBRARY_WORDS.descriptions} tip={LIBRARY_WORDS.descriptionsTip} value="Set in Settings → AI" />
+                <ModelRow title={LIBRARY_WORDS.descriptions} tip={LIBRARY_WORDS.descriptionsTip} value={inUse.descriptions || LIBRARY_WORDS.notSet} />
                 {videoLevel && (
                   <ModelRow
                     title={LIBRARY_WORDS.videoBreakdown}
@@ -479,7 +481,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                     onPick={(v) => set({ watchModel: v })}
                   />
                 )}
-                <ModelRow title={LIBRARY_WORDS.transcripts} tip={LIBRARY_WORDS.transcriptsTip} value="Set in Settings → Voice" />
+                <ModelRow title={LIBRARY_WORDS.transcripts} tip={LIBRARY_WORDS.transcriptsTip} value={inUse.transcripts || LIBRARY_WORDS.notSet} />
               </Card>
             </div>
           )}
