@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -65,33 +65,19 @@ describe("copying a folder into the library folder", () => {
     expect(await copyTarget(card, footage, data)).toBe(footage);
   });
 
-  it("a watched folder with a copy: the clip is read from the copy, and the folder is fine once its card is out", async () => {
-    const r = await app.request("/api/library/watch/folder", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: card, libraryId: "lib_c", copyTo: footage }),
-    });
-    expect(r.status).toBe(200);
+  it("a Source media row of this computer is read in place, and the folder shows as not found once its card is out", async () => {
+    mkdirSync(path.join(dir, "data", "storage"), { recursive: true });
+    const row = { id: "c1", role: "footage", name: "Card 1", origin: { host: "this-computer", path: card }, make: true, createdAt: 0, reach: {} };
+    writeFileSync(path.join(dir, "data", "storage", "owner-c.json"), JSON.stringify({ schemaVersion: 3, folders: [row] }));
+    const src = path.join(card, "Day 2", "Jump.mp4");
     const t0 = Date.now();
-    utimesSync(path.join(card, "Day 2", "Jump.mp4"), new Date(t0), new Date(t0));
+    utimesSync(src, new Date(t0), new Date(t0));
     await scanWatchFolders(t0);
     expect(await scanWatchFolders(t0 + SETTLE_MS)).toBe(1);
     const v = libraryDb().prepare("SELECT source_path FROM asset_versions").get() as { source_path: string };
-    expect(v.source_path).toBe(path.join(footage, "Card 1", "Day 2", "Jump.mp4"));
+    expect(v.source_path).toBe(src);
     rmSync(card, { recursive: true }); // the card is taken out
-    const status = (await (await app.request("/api/library/lib_c/watch")).json()) as { folders: { found: boolean; copyTo?: string }[]; copyTo?: string };
-    expect(status.folders[0]).toMatchObject({ found: true, copyTo: footage });
-    expect(status.copyTo).toMatch(/Creator Toolset\/Footage$/); // the default for the next folder
-    expect(existsSync(v.source_path)).toBe(true);
-    // the list saves again with the card out (another folder added beside it)
-    const more = path.join(dir, "More");
-    mkdirSync(more);
-    const saved = await app.request("/api/library/lib_c/watch", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ folders: [{ path: card, mode: "reference", copyTo: footage }, { path: more, mode: "reference" }] }),
-    });
-    expect(saved.status).toBe(200);
-    expect(((await saved.json()) as { folders: { path: string }[] }).folders.map((f) => f.path)).toEqual([card, more]);
+    const status = (await (await app.request("/api/library/lib_c/watch")).json()) as { folders: { path: string; found: boolean }[] };
+    expect(status.folders.map((f) => [f.path, f.found])).toEqual([[card, false]]);
   });
 });

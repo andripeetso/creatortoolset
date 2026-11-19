@@ -766,6 +766,7 @@ export interface WhereAnswer {
  * (UNIFIED-PRD §2, SCREENS-COPY.md). Folder labels live in contracts/storage.ts (FOLDER_LABELS).
  */
 export const LIBRARY_WORDS = {
+  notFootage: "Inside Source media: not imported as footage",
   importTitle: "How should imported media behave?",
   importCopy: { label: "Copy into Source media", tip: "Imported files are copied into your Source media folder. The file you imported stays where it was." },
   importInPlace: { label: "Use files where they are", tip: "Imported files stay where you imported them from. Import from Downloads, and the clip keeps using that file." },

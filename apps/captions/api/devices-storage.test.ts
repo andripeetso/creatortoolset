@@ -278,12 +278,14 @@ describe("each workspace", () => {
     expect((await all()).find((f) => f.id === id)!.workspace).toBe("ws-b");
     expect((await all()).filter((f) => f.id !== id).every((f) => f.workspace === "ws-a")).toBe(true);
     // the Library of each workspace that lists a folder on this computer reads it (the one from before is the first brand's)
-    const watchedIn = (ws: string) =>
-      (libraryDb().prepare("SELECT json_extract(settings, '$.projectId') AS ws, json_extract(settings, '$.watch') AS w FROM libraries WHERE workspace_id = ?").all(USER) as { ws: string | null; w: string | null }[])
-        .filter((r) => (r.ws ?? "ws-a") === ws)
-        .flatMap((r) => (JSON.parse(r.w ?? "[]") as { path: string }[]).map((f) => f.path));
-    expect(watchedIn("ws-b")).toEqual([music]);
-    expect(watchedIn("ws-a")).not.toContain(music);
+    const watchedIn = async (ws: string) => {
+      const libs = (libraryDb().prepare("SELECT id, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE workspace_id = ?").all(USER) as { id: string; ws: string | null }[]).filter((r) => (r.ws ?? "ws-a") === ws);
+      const out: string[] = [];
+      for (const l of libs) out.push(...((await (await app.request(`/api/library/${l.id}/watch`)).json()) as { folders: { path: string }[] }).folders.map((f) => f.path));
+      return out;
+    };
+    expect(await watchedIn("ws-b")).toEqual([music]);
+    expect(await watchedIn("ws-a")).not.toContain(music);
     // a folder is moved and forgotten by its id, whatever workspace the window is in
     const move = (workspace: string | null) =>
       app.request(`/api/devices/storage/folders/${id}`, { method: "PATCH", headers: { "content-type": "application/json", "x-ct-workspace": "ws-a" }, body: JSON.stringify({ workspace }) });
@@ -292,8 +294,8 @@ describe("each workspace", () => {
     expect(await list("ws-b")).toEqual([]);
     expect(await foldersNote(USER, "ws-b")).toBe("");
     expect(await foldersNote(USER, "ws-a")).toContain(`- Footage: ${music}`);
-    expect(watchedIn("ws-a")).toContain(music);
-    expect(watchedIn("ws-b")).toEqual([]);
+    expect(await watchedIn("ws-a")).toContain(music);
+    expect(await watchedIn("ws-b")).toEqual([]);
     // every workspace: in each one's list, its chats' line and its Library's watch list
     expect((await move(null)).status).toBe(200);
     expect((await all()).find((f) => f.id === id)!.workspace).toBe("*");
@@ -301,8 +303,8 @@ describe("each workspace", () => {
     expect((await list("ws-a")).map((f) => f.id)).toContain(id);
     expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Footage: ${music} (on Tiny Studio Mac)`); // schema 2: the setup folder is now on the computer this server runs on
     expect(await foldersNote(USER, "ws-a")).toContain(`- Footage: ${music}`);
-    expect(watchedIn("ws-a")).toContain(music);
-    expect(watchedIn("ws-b")).toEqual([music]);
+    expect(await watchedIn("ws-a")).toContain(music);
+    expect(await watchedIn("ws-b")).toEqual([music]);
     // it is in every workspace already: the same folder is not added to one again
     const again = await app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" }, body: JSON.stringify({ role: "music", host: "this-computer", path: music }) });
     expect(again.status).toBe(400);
@@ -315,8 +317,8 @@ describe("each workspace", () => {
     expect((await all()).find((f) => f.id === id)).toMatchObject({ workspace: "ws-a", workspaces: ["ws-a", "ws-b"] });
     expect((await list("ws-b")).map((f) => f.id)).toEqual([id]);
     expect((await list("ws-a")).map((f) => f.id)).toContain(id);
-    expect(watchedIn("ws-a")).toContain(music);
-    expect(watchedIn("ws-b")).toEqual([music]);
+    expect(await watchedIn("ws-a")).toContain(music);
+    expect(await watchedIn("ws-b")).toEqual([music]);
     const { workspaceStorageFolders } = await import("./devices-storage");
     const gone = await workspaceStorageFolders(USER, (ws) => ws === "ws-b");
     expect(gone.n).toBe(0);
@@ -326,8 +328,8 @@ describe("each workspace", () => {
     // back to one workspace: the other's Library stops reading it
     expect((await move("ws-b")).status).toBe(200);
     expect((await all()).find((f) => f.id === id)!.workspaces).toBeUndefined();
-    expect(watchedIn("ws-a")).not.toContain(music);
-    expect(watchedIn("ws-b")).toEqual([music]);
+    expect(await watchedIn("ws-a")).not.toContain(music);
+    expect(await watchedIn("ws-b")).toEqual([music]);
     // Exports is the exact folder picked, and one per workspace: giving it to a workspace takes it off the one that had it
     const exportsTo = (ws: string, p: string) => app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": ws }, body: JSON.stringify({ role: "library", host: "this-computer", path: p }) });
     const exportsA = path.join(dir, "Exports A");
@@ -360,7 +362,7 @@ describe("each workspace", () => {
     expect(exportsOf(st.filter((f) => folderIn(f, (own) => own === "ws-b")))?.origin.path).toBe(exportsB);
     expect((await app.request(`/api/devices/storage/folders/${libB.id}`, { method: "DELETE" })).status).toBe(200);
     expect((await app.request(`/api/devices/storage/folders/${id}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-a" } })).status).toBe(200);
-    expect(watchedIn("ws-b")).toEqual([]);
+    expect(await watchedIn("ws-b")).toEqual([]);
     expect((await all()).some((f) => f.id === id)).toBe(false);
   });
 
