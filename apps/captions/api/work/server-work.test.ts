@@ -3,6 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// the studio suite runs hosted (CT_MODE=hosted), where a server does video work only by a plug-in's grant (serverWorks):
+// this file's server is its own, so the mode is cleared here and put back after
+const hostedWas = process.env.CT_MODE;
+delete process.env.CT_MODE;
 import { WORK_V } from "../../contracts/work";
 import type { JobRow } from "../library/jobs";
 
@@ -116,7 +121,9 @@ async function serverTick(): Promise<{ took: boolean; read: string[] }> {
 
 afterAll(async () => {
   await devicesSaved();
-  for (const [k, v] of Object.entries(modeWas)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  if (modeWas.CT_LOCAL !== undefined) process.env.CT_LOCAL = modeWas.CT_LOCAL;
+  if (hostedWas !== undefined) process.env.CT_MODE = hostedWas;
+  else delete process.env.CT_MODE;
   rmSync(dir, { recursive: true, force: true });
 });
 

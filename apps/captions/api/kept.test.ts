@@ -8,7 +8,14 @@ import type { KeptView } from "../contracts/storage";
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "kept-"));
 process.env.DATA_DIR = dataDir;
-afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
+// the studio suite runs hosted (CT_MODE=hosted), where the admin's workspace storage is off (kept.ts workspaceStorageAllowed);
+// this file tests a server that is not Cloud, so the mode is cleared here and put back after
+const hostedWas = process.env.CT_MODE;
+delete process.env.CT_MODE;
+afterAll(() => {
+  if (hostedWas !== undefined) process.env.CT_MODE = hostedWas;
+  rmSync(dataDir, { recursive: true, force: true });
+});
 
 const at = (rel: string) => path.join(dataDir, rel);
 const put = (rel: string, data: string | number) => {

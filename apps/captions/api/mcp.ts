@@ -1063,6 +1063,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       };
     },
     media_import_folder: async (a) => {
+      // the library's own answer first: a person it refuses (a plug-in's permission) is told that, not the setup card
+      await api("/api/library");
       const gate = await libraryGate(user, jobTurn(auth.get("authorization") ?? undefined));
       if (gate) return { [ACTION_NEEDED]: gate };
       const by = Date.now() + ANSWER_BY_S * 1000; // the route itself may take 40 s
