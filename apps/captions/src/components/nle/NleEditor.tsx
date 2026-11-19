@@ -4,7 +4,7 @@ import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Repeat, Save
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipAt, clipOfPart, clipsFrom, copyOf, duplicate, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
-  loopNext, loopPart, markedPart, move, NO_MARKS, paste, place, remove, removeTrack, rippleToPlayhead, setItems, setMark, setTrack, sourceTimeline,
+  loopNext, loopPart, markedPart, move, NO_MARKS, paste, place, remove, rippleToPlayhead, setItems, setMark, setTrack, sourceTimeline,
   timecode, toSaved, unlink, withKeys, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { dragging, type Dragged } from "@/lib/nle/drag";
@@ -499,7 +499,6 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
             onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
-            onRemoveTrack={(id) => commit(removeTrack(tl, id))}
             onDrop={readOnly ? undefined : dropOn}
             tools={
               <>

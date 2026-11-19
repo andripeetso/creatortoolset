@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, removeTrack, roll,
+  addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, deleteTrack, roll,
   fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
   NO_MARKS, clipOfPart, editTracks, loopNext, loopPart, markedPart, setMark, sourceTimeline, type Marks,
 } from "./model";
@@ -197,15 +197,15 @@ describe("nle model", () => {
     const tl = setTrack(reel(), "V2", { locked: true });
     expect(move(tl, [key(tl, "V2", 90)], 10)).toBe(tl);
     expect(setItems(tl, [key(tl, "V2", 90)], { zoom: 2 })).toBe(tl);
-    expect(removeTrack(tl, "V2")).toBe(tl);
+    expect(deleteTrack(tl, "V2")).toBe(tl);
   });
 
   it("adds and removes tracks, finds a free one, and names a source once", () => {
     const tl = reel();
     const v3 = addTrack(tl, "V");
     expect(v3.id).toBe("V3");
-    expect(removeTrack(v3.tl, "V3").tracks.V3).toBeUndefined();
-    expect(removeTrack(tl, "V1")).toBe(tl);
+    expect(deleteTrack(v3.tl, "V3").tracks.V3).toBeUndefined();
+    expect(deleteTrack(tl, "V1")).toBe(tl);
     expect(freeTrack(tl, "A", 0, 10, 2).id).toBe("A3");
     expect(freeTrack(tl, "V", 0, 10, 2).id).toBe("V2");
     const s = addSource(tl, { path: "/m/new/cam.mp4", fps: 25 });

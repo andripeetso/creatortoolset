@@ -3,7 +3,7 @@ import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, 
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
-import { boxPick, canDeleteTrack, canMoveTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, endOf, find, insertTrack, isVideo, keepLooks, lengthOf, lookOn, move, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { addTrack, addTrackAt, boxPick, canDeleteTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, endOf, find, isVideo, keepLooks, lengthOf, lookOn, move, moveTarget, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
 import { dragging } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
 import { drawWave, levels, type Levels } from "@/lib/waveform";
@@ -106,8 +106,6 @@ export const NleTracks = memo(function NleTracks({
   onDrop?: (dt: DataTransfer, at: { track: string; frame: number }) => void;
   onMenu: (at: { x: number; y: number }, key: string) => void;
   onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
-  /** unused: the header's ✕ and the track menu delete a track as Resolve does (lib/nle/model deleteTrack) */
-  onRemoveTrack?: (id: string) => void;
   nameOf: (it: NleItem) => string;
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
@@ -577,7 +575,16 @@ export const NleTracks = memo(function NleTracks({
         <div key={i} ref={g} data-ghost className="pointer-events-none absolute z-[16] hidden truncate rounded-[3px] border border-white/70 bg-white/20 px-1 text-[10px] leading-4 text-white" />
       ))}
     </TimelineFrame>
-    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack} />}
+    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack}
+      onSwap={(a, b) => setHeights((all) => {
+        // a moved track takes its height with it
+        const next = { ...all };
+        delete next[a];
+        delete next[b];
+        if (all[a] !== undefined) next[b] = all[a];
+        if (all[b] !== undefined) next[a] = all[b];
+        return next;
+      })} />}
     </Panel>
   );
 });
@@ -586,30 +593,40 @@ const MENU = "rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl";
 const MENU_ROW = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** Resolve's track menu: add a track (above or below this one, or at the ends of its kind), move, delete, lock, hide or mute. */
-function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack }: {
+function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap }: {
   tl: NleTimeline; x: number; y: number;
   /** the track right-clicked, null: the empty part of the header column */
   id: string | null;
   onClose: () => void; onCommit: (tl: NleTimeline) => void; onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
+  /** two tracks that traded numbers (Move Track): their heights trade too */
+  onSwap: (a: string, b: string) => void;
 }) {
   const t = id ? tl.tracks[id] : null;
-  const ofKind = (k: "V" | "A") => Object.keys(tl.tracks).filter((x) => x[0] === k && trackNo(x) >= 1).sort((a, b) => trackNo(a) - trackNo(b));
-  // this track's place among its kind from 1 (0: another kind), and how many there are
-  const pos = (k: "V" | "A") => (id?.[0] === k ? ofKind(k).indexOf(id) + 1 : 0);
-  const [pv, pa, nV, nA] = [pos("V"), pos("A"), ofKind("V").length, ofKind("A").length];
-  const add = (k: "V" | "A", at: number) => () => onCommit(insertTrack(tl, k, at).tl);
-  const adds: [string, () => void][] = [
-    ["Video Track Above", add("V", pv ? pv + 1 : nV + 1)],
-    ["Video Track Below", add("V", pv || 1)],
-    ["Audio Track Above", add("A", pa || 1)],
-    ["Audio Track Below", add("A", pa ? pa + 1 : nA + 1)],
+  // a track keeps its number (the AI Editor reads tracks by number): a new one goes on top / at the bottom, or right
+  // above / below this one when that number is free
+  const n = id ? trackNo(id) : 0;
+  const at = (k: "V" | "A", no: number) => {
+    const got = id?.[0] === k ? addTrackAt(tl, k, no) : null;
+    return got ? () => onCommit(got.tl) : null;
+  };
+  const adds: [string, (() => void) | null][] = [
+    ["Video Track", () => onCommit(addTrack(tl, "V").tl)],
+    ["Audio Track", () => onCommit(addTrack(tl, "A").tl)],
+    ["Video Track Above", at("V", n + 1)],
+    ["Video Track Below", at("V", n - 1)],
+    ["Audio Track Above", at("A", n - 1)],
+    ["Audio Track Below", at("A", n + 1)],
   ];
+  const moveRow = (label: string, up: boolean): [string, (() => void) | null] => {
+    const other = id ? moveTarget(tl, id, up) : null;
+    return [label, other ? () => { onCommit(moveTrack(tl, id!, up)); onSwap(id!, other); } : null];
+  };
   const empties = deleteEmptyTracks(tl);
   const v = !!id && isVideo(id);
   const rows: ([string, (() => void) | null] | null)[] = [
     null,
-    ["Move Track Up", id && canMoveTrack(tl, id, true) ? () => onCommit(moveTrack(tl, id, true)) : null],
-    ["Move Track Down", id && canMoveTrack(tl, id, false) ? () => onCommit(moveTrack(tl, id, false)) : null],
+    moveRow("Move Track Up", true),
+    moveRow("Move Track Down", false),
     null,
     ["Delete Track", id && canDeleteTrack(tl, id) ? () => onCommit(deleteTrack(tl, id)) : null],
     ["Delete Empty Tracks", empties !== tl ? () => onCommit(empties) : null],
@@ -628,7 +645,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack }: {
         <div className="group/sub relative">
           <button type="button" role="menuitem" aria-haspopup="menu" className={MENU_ROW}><span>Add Track</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
           <div role="menu" aria-label="Add Track" className={cn("absolute -top-1 left-full hidden w-48 group-focus-within/sub:block group-hover/sub:block", MENU)}>
-            {adds.map(([l, fn]) => <button key={l} type="button" role="menuitem" className={MENU_ROW} onClick={run(fn)}>{l}</button>)}
+            {adds.map(([l, fn]) => <button key={l} type="button" role="menuitem" disabled={!fn} className={MENU_ROW} onClick={fn ? run(fn) : undefined}>{l}</button>)}
           </div>
         </div>
         {rows.map((r, i) => (r ? (

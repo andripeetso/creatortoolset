@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxPick, canDeleteTrack, canMoveTrack, deleteEmptyTracks, deleteTrack, dropPlan, insertTrack, keepLooks, lookOn, move, moveTrack, trackOrder, withKeys, type NleTimeline } from "./model";
+import { boxPick, addTrackAt, canDeleteTrack, deleteEmptyTracks, deleteTrack, dropPlan, keepLooks, lookOn, move, moveTarget, moveTrack, setMark, trackOrder, withKeys, type NleTimeline } from "./model";
 import { placement } from "./picture";
 
 // A Tiny Acrobatics reel, 1080×1920: the talk on V1 with its voice on A1 (linked), a wide B-roll shot on V3 (a track
@@ -52,22 +52,21 @@ describe("a clip keeps its look on another track", () => {
   });
 });
 
-describe("the track menu", () => {
-  it("adds a track at a number, moving the ones from there up, names and looks with them", () => {
-    const { tl, id } = insertTrack(reel(), "V", 3);
-    expect(id).toBe("V3");
-    expect(tl.tracks.V3.items).toEqual([]);
-    expect(tl.tracks.V4.name).toBe("V4");
-    // V4 fits like V3 did: the zoom is unchanged
-    expect(tl.tracks.V4.items[0].zoom).toBe(1.5);
-    expect(insertTrack(reel(), "A", 1).tl.tracks.A2.items[0].src).toBe("cam");
-    expect(insertTrack(reel(), "A", 99).id).toBe("A4");
+describe("the track menu: a track keeps its number (the AI Editor reads tracks by number)", () => {
+  it("adds a track only at a free number, the others untouched", () => {
+    expect(addTrackAt(reel(), "V", 3)).toBeNull(); // V3 is taken
+    expect(addTrackAt(reel(), "V", 0)).toBeNull();
+    const got = addTrackAt(reel(), "V", 4)!;
+    expect(got.id).toBe("V4");
+    expect(got.tl.tracks.V4.items).toEqual([]);
+    expect(got.tl.tracks.V3.items[0].zoom).toBe(1.5);
   });
 
-  it("moves a track up or down among its kind, never past the end or a locked one", () => {
+  it("moves a track by trading numbers with its neighbour, never past the end or a locked one", () => {
     const tl = reel();
-    expect(canMoveTrack(tl, "V1", true)).toBe(false); // V2 above it is locked
-    expect(canMoveTrack(tl, "V3", true)).toBe(false); // the top
+    expect(moveTarget(tl, "V1", true)).toBeNull(); // V2 above it is locked
+    expect(moveTarget(tl, "V3", true)).toBeNull(); // the top
+    expect(moveTarget(tl, "A1", false)).toBe("A2");
     const a = moveTrack(tl, "A1", false);
     expect(a.tracks.A2.items[0].link).toBe(1);
     expect(a.tracks.A1.items[0].src).toBe("song");
@@ -75,20 +74,29 @@ describe("the track menu", () => {
     expect(trackOrder(a)).toEqual(trackOrder(tl));
   });
 
-  it("deletes a track with its clips, numbering the rest again; never a locked one or the last of its kind", () => {
+  it("deletes a track with its clips and leaves the other numbers; never a locked one, V1 or A1", () => {
     const tl = reel();
-    const out = deleteTrack(tl, "A1");
-    expect(Object.keys(out.tracks).filter((t) => t[0] === "A").sort()).toEqual(["A1", "A2"]);
-    expect(out.tracks.A1.items[0].src).toBe("song");
+    const out = deleteTrack(tl, "A2");
+    expect(Object.keys(out.tracks).filter((t) => t[0] === "A").sort()).toEqual(["A1", "A3"]);
     expect(canDeleteTrack(tl, "V2")).toBe(false);
-    const one = deleteTrack(deleteTrack(tl, "A3"), "A2");
-    expect(canDeleteTrack(one, "A1")).toBe(false);
+    expect(canDeleteTrack(tl, "V1")).toBe(false);
+    expect(canDeleteTrack(tl, "A1")).toBe(false);
   });
 
-  it("deletes the empty tracks and keeps V1 and A1 when everything is empty", () => {
+  it("deletes the empty tracks, numbers kept: a gap stays a gap", () => {
+    const gaps = withKeys({ timeline: { fps: 25 }, sources: {}, tracks: {
+      V1: { items: [] }, V2: { items: [] }, V3: { items: [{ src: "x", rec: 0, len: 5, in: 0 }] }, A1: { items: [] }, A2: { items: [] }, A4: { items: [{ src: "x", rec: 0, len: 5, in: 0 }] },
+    } } as unknown as NleTimeline);
+    expect(Object.keys(deleteEmptyTracks(gaps).tracks).sort()).toEqual(["A1", "A4", "V1", "V3"]);
     expect(Object.keys(deleteEmptyTracks(reel()).tracks).sort()).toEqual(["A1", "A2", "V1", "V2", "V3"]);
-    const empty = withKeys({ timeline: { fps: 25 }, sources: {}, tracks: { V1: { items: [] }, V2: { items: [] }, A1: { items: [] }, A2: { items: [] } } } as unknown as NleTimeline);
-    expect(Object.keys(deleteEmptyTracks(empty).tracks).sort()).toEqual(["A1", "V1"]);
+  });
+});
+
+describe("marks", () => {
+  it("In and Out on one frame mark that one frame", () => {
+    expect(setMark(setMark([null, null], "in", 10), "out", 10)).toEqual([10, 10]);
+    expect(setMark(setMark([null, null], "out", 10), "in", 10)).toEqual([10, 10]);
+    expect(setMark([10, 20], "in", 25)).toEqual([25, null]);
   });
 });
 

@@ -451,14 +451,6 @@ export function addTrack(tl: NleTimeline, kind: "V" | "A"): { tl: NleTimeline; i
   return { tl: out, id };
 }
 
-/** A track taken off with what is on it (V1 and A1 stay: a timeline always has somewhere to put a clip). */
-export function removeTrack(tl: NleTimeline, id: string): NleTimeline {
-  if (!tl.tracks[id] || id === "V1" || id === "A1" || tl.tracks[id].locked) return tl;
-  const out = clone(tl);
-  delete out.tracks[id];
-  return out;
-}
-
 /** A source for a file, or the one that already plays it. Returns its key. */
 export function addSource(tl: NleTimeline, s: NleSource & { path: string }): { tl: NleTimeline; src: string } {
   const had = Object.keys(tl.sources).find((k) => tl.sources[k].path === s.path);
@@ -589,8 +581,8 @@ export const NO_MARKS: Marks = [null, null];
 export function setMark(m: Marks, what: "in" | "out" | "clearIn" | "clearOut" | "clear", f: number): Marks {
   const [i, o] = m;
   switch (what) {
-    case "in": return [f, o !== null && o > f ? o : null];
-    case "out": return [i !== null && i < f ? i : null, f];
+    case "in": return [f, o !== null && o >= f ? o : null];
+    case "out": return [i !== null && i <= f ? i : null, f];
     case "clearIn": return [null, o];
     case "clearOut": return [i, null];
     case "clear": return NO_MARKS;
@@ -688,66 +680,57 @@ export function keepLooks(before: NleTimeline, after: NleTimeline): NleTimeline 
 const kindOrder = (tl: NleTimeline, kind: "V" | "A") =>
   Object.keys(tl.tracks).filter((t) => t[0] === kind && trackNo(t) >= 1).sort((a, b) => trackNo(a) - trackNo(b));
 
-/** The tracks of a kind numbered again in this order from 1 (null: a new empty one there), as Resolve keeps them. A
- *  name that was only its id goes with the number; the clips keep their look (lookOn). */
-function renumber(tl: NleTimeline, kind: "V" | "A", order: (string | null)[]): NleTimeline {
+// A track keeps its number for good: the AI Editor reads the tracks by number (V1 the talent, V3 motion graphics, A1 the
+// voice…), so adding or deleting one never numbers the others again. Only Move Track changes what is on a number.
+
+/** A new empty track with number `n` (1 = V1 / A1), when that number is free. */
+export function addTrackAt(tl: NleTimeline, kind: "V" | "A", n: number): { tl: NleTimeline; id: string } | null {
+  const id = `${kind}${Math.round(n)}`;
+  if (n < 1 || tl.tracks[id]) return null;
   const out = clone(tl);
-  for (const id of kindOrder(tl, kind)) delete out.tracks[id];
-  order.forEach((old, n) => {
-    const id = `${kind}${n + 1}`;
-    if (old === null) return void (out.tracks[id] = { name: id, items: [] });
-    const t = clone(tl.tracks[old]);
-    if (t.name === old) t.name = id;
-    if (old !== id) t.items = t.items.map((i) => lookOn(tl, i, old, id));
-    out.tracks[id] = t;
-  });
-  return out;
+  out.tracks[id] = { name: id, items: [] };
+  return { tl: out, id };
 }
 
-/** A new empty track of a kind that takes number `at` (1 = V1 / A1); the ones from there on move up a number. */
-export function insertTrack(tl: NleTimeline, kind: "V" | "A", at: number): { tl: NleTimeline; id: string } {
-  const order: (string | null)[] = kindOrder(tl, kind);
-  const n = Math.max(1, Math.min(order.length + 1, Math.round(at)));
-  order.splice(n - 1, 0, null);
-  return { tl: renumber(tl, kind, order), id: `${kind}${n}` };
-}
-
-/** Where a track can go one place up or down on screen among its kind (video tracks count up the screen, sound tracks
- *  down it): null at the end, or when it or the one it would swap with is locked. */
-function swapWith(tl: NleTimeline, id: string, up: boolean): string | null {
+/** The track a track trades places with one step up or down on screen among its kind (video tracks count up the
+ *  screen, sound tracks down it): null at the end, or when it or that one is locked. */
+export function moveTarget(tl: NleTimeline, id: string, up: boolean): string | null {
   const order = kindOrder(tl, id[0] as "V" | "A");
   const i = order.indexOf(id);
   const other = order[i + ((id[0] === "V") === up ? 1 : -1)];
   return i >= 0 && other && !tl.tracks[id].locked && !tl.tracks[other].locked ? other : null;
 }
-export const canMoveTrack = (tl: NleTimeline, id: string, up: boolean) => swapWith(tl, id, up) !== null;
 
-/** A track moved one place up or down on screen among its kind, with its clips. */
+/** A track moved one place up or down on screen among its kind: it and its neighbour trade numbers, each with its
+ *  name, switches and clips (the clips keeping their look, lookOn). */
 export function moveTrack(tl: NleTimeline, id: string, up: boolean): NleTimeline {
-  const other = swapWith(tl, id, up);
+  const other = moveTarget(tl, id, up);
   if (!other) return tl;
-  return renumber(tl, id[0] as "V" | "A", kindOrder(tl, id[0] as "V" | "A").map((t) => (t === id ? other : t === other ? id : t)));
+  const out = clone(tl);
+  const onto = (from: string, to: string) => ({ ...clone(tl.tracks[from]), items: tl.tracks[from].items.map((i) => lookOn(tl, i, from, to)) });
+  out.tracks[other] = onto(id, other);
+  out.tracks[id] = onto(other, id);
+  return out;
 }
 
-/** A track can go: not locked, and not the last of its kind (Resolve always keeps a video and an audio track). */
+/** A track can go: not locked, and not V1 or A1 (a timeline always has the talent's tracks to put a clip on). */
 export const canDeleteTrack = (tl: NleTimeline, id: string) =>
-  !!tl.tracks[id] && !tl.tracks[id].locked && trackNo(id) >= 1 && kindOrder(tl, id[0] as "V" | "A").length > 1;
+  !!tl.tracks[id] && !tl.tracks[id].locked && trackNo(id) >= 1 && id !== "V1" && id !== "A1";
 
-/** A track taken off with its clips; the ones after it move down a number. */
+/** A track taken off with its clips; the others keep their numbers. */
 export function deleteTrack(tl: NleTimeline, id: string): NleTimeline {
   if (!canDeleteTrack(tl, id)) return tl;
-  return renumber(tl, id[0] as "V" | "A", kindOrder(tl, id[0] as "V" | "A").filter((t) => t !== id));
+  const out = clone(tl);
+  delete out.tracks[id];
+  return out;
 }
 
-/** Every empty track taken off (not locked ones), each kind keeping at least its first; the rest numbered again. */
+/** Every empty track taken off (not locked ones, not V1 or A1); the others keep their numbers. */
 export function deleteEmptyTracks(tl: NleTimeline): NleTimeline {
-  let out = tl;
-  for (const kind of ["V", "A"] as const) {
-    const order = kindOrder(tl, kind);
-    let keep = order.filter((t) => tl.tracks[t].items.length || tl.tracks[t].locked);
-    if (!keep.length) keep = order.slice(0, 1);
-    if (keep.length < order.length) out = renumber(out, kind, keep);
-  }
+  const gone = Object.keys(tl.tracks).filter((t) => canDeleteTrack(tl, t) && !tl.tracks[t].items.length);
+  if (!gone.length) return tl;
+  const out = clone(tl);
+  for (const t of gone) delete out.tracks[t];
   return out;
 }
 

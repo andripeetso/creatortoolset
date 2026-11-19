@@ -26,7 +26,7 @@ const mount = async (props: Partial<Parameters<typeof NleTracks>[0]> = {}) => {
   const onSelect = vi.fn();
   await act(async () => root.render(
     <NleTracks tl={tl} time={0} selected={[]} tool="select" snap={false} marks={[null, null]} onSeek={() => {}} onSelect={onSelect}
-      onLive={onLive} onCommit={onCommit} onBlade={() => {}} onMenu={() => {}} onTrack={() => {}} onRemoveTrack={() => {}}
+      onLive={onLive} onCommit={onCommit} onBlade={() => {}} onMenu={() => {}} onTrack={() => {}}
       nameOf={(i) => i.src} zoomKeys={{ current: null }} fileOf={(src) => (src === "a" ? { url: "" } : null)} {...props} />,
   ));
   const pointer = (el: Element, type: string, clientX: number, altKey = false, more: PointerEventInit = {}) =>
