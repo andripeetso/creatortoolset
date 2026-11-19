@@ -61,6 +61,13 @@ describe.skipIf(!ffmpegHere)("makeProxy: never bigger than its source, at every 
     expect(probeOf(out, "stream=index", "a").split("\n")).toHaveLength(2);
   }, 60_000);
 
+  it.each(["low", "standard", "high"] as const)("a 4K HEVC clip at %s: its proxy is kept and smaller than the source", async (quality) => {
+    const src = clip(`uhd-${quality}.mp4`, "3840x2160", "libx265", 6000);
+    const out = path.join(dir, `uhd-${quality}-proxy.mp4`);
+    expect(await makeProxy(src, out, false, quality, 2)).toBe(true);
+    expect(statSync(out).size).toBeLessThan(statSync(src).size);
+  }, 120_000);
+
   it("a proxy's short side is the quality's cap, never upscaled", async () => {
     const src = clip("wide.mp4", "1920x1080", "libx264", 12000);
     const out = path.join(dir, "wide-low.mp4");

@@ -17,7 +17,8 @@ vi.mock("./media/probe", async (real) => ({
 
 const { blobs, libraryDb } = await import("./db");
 const { libraryApp, mediaFile } = await import("./routes");
-const { dropOriginal, tick, LANES } = await import("./worker");
+const { afterProbe, dropOriginal, tick, LANES } = await import("./worker");
+const { recordDerived } = await import("./derived");
 const { measurable, readable } = await import("../editor/media");
 const { localFiles, onlyProxy } = await import("../editor/preview");
 
@@ -34,7 +35,7 @@ app.use(async (c, next) => {
 app.route("/api/library", libraryApp);
 
 const d = libraryDb();
-for (const [id, upload] of [["lib_p", '"proxies"'], ["lib_all", '"all"'], ["lib_none", '"none"'], ["lib_old", "true"]] as const) {
+for (const [id, upload] of [["lib_p", '"proxies"'], ["lib_all", '"all"'], ["lib_none", '"none"'], ["lib_old", "true"], ["lib_orig", '"originals"']] as const) {
   d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'owner-a', 'L', 'local', ?, 0)").run(
     id,
     `{"upload":${upload},"proxy":false,"describe":false,"embed":false}`,
@@ -185,5 +186,34 @@ describe("a Media Library whose upload is proxies only", () => {
       expect(existsSync(await blobs.localCopy(original))).toBe(true);
       expect(version(id).mac_path).toBeNull();
     }
+  });
+});
+
+describe("a Media Library whose Hosted media is originals only", () => {
+  /** A version as the worker reads it when its probe is in (afterProbe's input). */
+  const shape = (id: string) => ({
+    id,
+    ...(d.prepare("SELECT a.library_id, a.kind, a.title, v.source_path, v.from_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as {
+      library_id: string;
+      kind: string;
+      title: string;
+      source_path: string | null;
+      from_path: string | null;
+    }),
+  });
+  it("keeps no proxy: none queued or stored for a clip that needs one, though the proxy switch is on; a computer's proxy is dropped", async () => {
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.proxy', json('true')) WHERE id = 'lib_orig'`).run();
+    const needs = { duration: 5, width: 3840, height: 2160, fps: 30, rotation: 0, format: "mp4", vcodec: "hevc", pixFmt: "yuv420p", acodec: "" };
+    const id = await upload("lib_orig", "Handstand.mp4");
+    await afterProbe(d, shape(id), needs, "owner-a");
+    expect(jobs(id)).not.toContain("proxy");
+    // a control: the same clip in a library that keeps its proxies queues one
+    const kept = await upload("lib_p", "Handstand.mp4");
+    await afterProbe(d, shape(kept), needs, "owner-a");
+    expect(jobs(kept)).toContain("proxy");
+    const sent = path.join(dir, "computer-proxy.mp4");
+    writeFileSync(sent, "a proxy a computer sent");
+    await recordDerived(id, { files: { proxy: sent } } as never, "owner-a");
+    expect(d.prepare("SELECT 1 FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(id)).toBeUndefined();
   });
 });

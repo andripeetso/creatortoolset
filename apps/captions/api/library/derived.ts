@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { libraryChanged } from "./access";
-import { blobs, libraryDb } from "./db";
+import { blobs, keepsOnlyOriginals, libraryDb } from "./db";
 import { uploadFor } from "./upload-gate";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
@@ -47,7 +47,10 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
     .get(versionId) as { id: string; library_id: string; kind: string; title: string; source_key: string; source_path: string | null; from_path: string | null; probe: string | null } | undefined;
   if (!v) throw new Error("Version not found");
   const base = `libraries/${v.library_id}/v/${v.id}`;
+  // an Originals only library keeps no proxy, whatever a computer sent (UNIFIED-PRD §4.2)
+  const noProxy = keepsOnlyOriginals(v.library_id);
   for (const [name, file] of Object.entries(x.files) as [DerivedFile, string][]) {
+    if (name === "proxy" && noProxy) continue;
     if (name === "original") {
       if (!v.source_key.startsWith("mac:")) continue; // the server has its original already
       const key = `${base}/source`;
@@ -61,7 +64,7 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, name, key, bytes);
   }
   // only the proxy came: it is all this server keeps of the file (as once dropOriginal let an uploaded original go)
-  if (v.source_key.startsWith("mac:") && x.files.proxy) {
+  if (v.source_key.startsWith("mac:") && x.files.proxy && !noProxy) {
     db.prepare("UPDATE asset_versions SET source_key = ? WHERE id = ?").run(`${base}/${NAMES.proxy}`, v.id);
   }
   if (x.fingerprint) db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, x.fingerprint, Buffer.byteLength(x.fingerprint));

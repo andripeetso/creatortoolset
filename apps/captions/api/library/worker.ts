@@ -503,7 +503,9 @@ export async function afterProbe(
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
   const onlyProxy = v.kind === "video" && !!v.from_path && versionUpload(v.id) === "proxies";
-  if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") && !keepsOnlyOriginals(v.library_id) })) want("proxy");
+  // Originals only keeps no proxy on the server, not even one in a bucket (UNIFIED-PRD §4.2)
+  const originalsOnly = keepsOnlyOriginals(v.library_id);
+  if (v.kind !== "image" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
@@ -532,6 +534,8 @@ async function run(job: JobRow): Promise<void> {
   if (!v) throw new Error("Version not found");
   // a look runs as its uploader, queued long before: one who may no longer see the clip gets nothing read or asked (shots.ts lookAllowed)
   if (job.kind === "look" && !(await lookAllowed(db, v.id, job.actor))) throw new NeedsKey(NO_ACCESS);
+  // a description counts in the library's monthly budget too (UNIFIED-PRD §4.5); an edit's own ask is never held
+  if (job.kind === "describe") await budgetCheck(db, v.id);
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
   // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
@@ -619,8 +623,9 @@ async function run(job: JobRow): Promise<void> {
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
     // no proxy kept when it would be no smaller than the file: the lighter copy is then the original (lighter above)
+    // an Originals only library keeps none, whatever asked for one (a backfill queued before the setting changed)
     const file = out("mp4");
-    if (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration)) await keep("proxy", file, `${base}/proxy.mp4`);
+    if (!keepsOnlyOriginals(v.library_id) && (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration))) await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "sprite") {
     // after the proxies in the lane: a 4K original's frames come from its 720p copy
     const file = out("jpg");
