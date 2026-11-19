@@ -46,7 +46,7 @@ beforeEach(async () => {
   redirectTarget = { server: target, url: await listen(target), hits: 0 };
   deps = {
     db: openDb(':memory:'),
-    cf: createCloudflare({ accountId: 'acc', zoneId: 'zone', token: 't', baseUrl: `${fake.url}/client/v4` }),
+    cf: createCloudflare({ accountId: 'acc', zoneId: 'zone', token: 'test-token', baseUrl: `${fake.url}/client/v4` }),
     now: () => clock,
     limitFor: freeLimit(3),
     tunnelDomain: ZONE,
@@ -230,8 +230,8 @@ test('dpop proof: wrong method, wrong URL, stale or future iat, a replayed jti, 
   await refused(p.proof('POST', url, { header: { jwk: { ...p.jwk, d: 'secret' } } }));
   const good = p.proof('POST', url);
   await refused(good.slice(0, -4) + (good.endsWith('AAAA') ? 'BBBB' : 'AAAA'));
-  // a query string does not change what the proof names
-  assert.equal((await exchange(acct(), p.proof('POST', `${url}?x=1`))).status, 200);
+  // the proof names the URL without its query
+  await refused(p.proof('POST', `${url}?x=1`));
   const once = p.proof('POST', url, { jti: 'same-jti' });
   assert.equal((await exchange(acct(), once)).status, 200);
   await refused(once);
@@ -331,7 +331,10 @@ test('status: a computer that does not answer is offline, with the reason; a red
   assert.equal((await status(p, token, id)).json.endpointFailure, 'origin_unreachable');
   pc.answer = () => ({ status: 200, body: 'not json' });
   assert.equal((await status(p, token, id)).json.endpointFailure, 'invalid_response');
-  deps.originOf = () => 'http://127.0.0.1:1';
+  const closed = createServer();
+  const gone = await listen(closed);
+  await new Promise<void>((r) => closed.close(() => r()));
+  deps.originOf = () => gone;
   assert.equal((await status(p, token, id)).json.endpointFailure, 'refused');
   // a computer that hangs: the broker gives up (the fetch's own timeout fires as a TimeoutError)
   deps.fetch = (async () => {

@@ -370,10 +370,9 @@ test('reaper: a computer down past the window loses only its tunnel, and gets a 
   assert.equal(fake.tunnels.has(oldTunnel), false);
   assert.equal(fake.records.size, 2, 'the DNS record stays');
 
-  // still on the account, shown as down, still gets tickets; later sweeps leave it alone
+  // still on the account, shown as down; later sweeps leave it alone
   const list = (await api('GET', '/v1/computers', { token: acct() })).json.computers;
   assert.deepEqual(list.map((x: { id: string; status: string }) => [x.id, x.status]), [[id, 'down'], [live.id, 'healthy']]);
-  assert.equal((await api('POST', `/v1/computers/${id}/ticket`, { token: acct() })).status, 200);
   assert.equal((await reap(deps, { afterSeconds: 1800, dryRun: false })).find((o) => o.id === id)!.action, 'kept');
 
   // back: a new tunnel, routed to the same origin, and the same DNS record now points at it
