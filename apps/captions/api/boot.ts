@@ -228,6 +228,8 @@ const KEY_ROUTES: [string, RegExp][] = [["GET", REVIEW], ["PATCH", REVIEW_COMMEN
 const FULL_KEY_NEVER = /^\/api\/(?:admin|workspace|providers|devices|service-keys|my-keys)(?:\/|$)/;
 // a phone's session reaches none of those, nor this computer's own connect settings (its link, tunnel and AI key)
 const CLIENT_NEVER = /^\/api\/(?:admin|workspace|providers|devices|service-keys|my-keys|connect)(?:\/|$)/;
+// but a chat card's two folder routes (D14): browse one of the account's own computers, and add the folder picked there
+const clientCard = (method: string, p: string) => (method === "GET" && /^\/api\/devices\/[^/]+\/browse$/.test(p)) || (method === "POST" && p === "/api/devices/storage/folders");
 const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
   routes.some(([m, r]) => m === method && r.test(p));
 
@@ -359,7 +361,7 @@ app.use("/api/*", async (c, next) => {
   if (client.kind === "error") return sessionRefused(c, client.code);
   if (client.kind === "token") {
     // a device's session is never the account's keys, AI settings, computers or admin, whatever its scopes
-    if (CLIENT_NEVER.test(c.req.path)) return c.json({ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }, 403);
+    if (CLIENT_NEVER.test(c.req.path) && !clientCard(c.req.method, c.req.path)) return c.json({ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }, 403);
     const need = scopeFor(c.req.method, c.req.path);
     if (!client.row.scopes.includes(need)) return scopeRefused(c, need);
     c.set("clientSession", client.row.id);

@@ -232,12 +232,15 @@ describe("the iPhone app's own session", () => {
     const { token } = issueSession({ subject: "jon", scopes: ["read", "write"], client: { deviceType: "mobile" } });
     const lib = (await ensureLibrary("jon"))!;
     const h = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-    const at = (method: string, url: string, body?: unknown) => app.request(url, { method, headers: h, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.status);
+    const at = async (method: string, url: string, body?: unknown) => (await app.request(url, { method, headers: h, ...(body ? { body: JSON.stringify(body) } : {}) })).status;
     // each answers as the route itself would, never the session gate's 401 or 403
     expect(await at("GET", `/api/devices/${p.mac}/browse?path=~`)).toBe(501);   // its app never said it takes folder-browse
     expect(await at("GET", "/api/assistant/action/no-such-message")).toBe(404);
     expect(await at("PUT", "/api/library/offline/downloads", { library: lib, mode: "needed" })).toBe(200);
     expect(await at("POST", "/api/devices/storage/folders", { role: "projects", host: p.mac, path: "~/Movies/Creator Toolset/Jon/Project files", make: true })).toBe(200);
     expect(await at("POST", `/api/library/${lib}/setup/quick`, { device: p.mac })).toBe(200);
+    // the rest of /api/devices stays closed to a phone's session
+    expect(await at("GET", "/api/devices")).toBe(403);
+    expect(await at("POST", "/api/devices/storage/kept", {})).toBe(403);
   });
 });
