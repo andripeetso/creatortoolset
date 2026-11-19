@@ -21,8 +21,8 @@ it("a Projects folder is made per computer: the same computer gets its one, anot
   const a = await ensureUseFolder("ana", "ws-a", "projects", "dev-a");
   const b = await ensureUseFolder("ana", "ws-a", "projects", "dev-b");
   const again = await ensureUseFolder("ana", "ws-a", "projects", "dev-a");
-  expect(a).toMatchObject({ role: "projects", origin: { host: "dev-a", path: "/Volumes/Tiny Footage/Projects" } });
-  expect(b).toMatchObject({ role: "projects", origin: { host: "dev-b", path: "/Volumes/Other Drive/Projects" } });
+  expect(a).toMatchObject({ role: "projects", origin: { host: "dev-a", path: "/Volumes/Tiny Footage/Project files" } });
+  expect(b).toMatchObject({ role: "projects", origin: { host: "dev-b", path: "/Volumes/Other Drive/Project files" } });
   expect((again as { id: string }).id).toBe((a as { id: string }).id);
 });
 
@@ -31,7 +31,7 @@ it("a Media folder at a volume's root gets no Projects folder: the answer says w
     st.folders.push({ ...media("dev-c", "/Volumes/MONOLITH"), id: "media-root" });
   });
   const r = await ensureUseFolder("ana", "ws-a", "projects", "dev-c");
-  expect(r).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
+  expect(r).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
 });
 
 it("with no workspace named and two of the account's, no Projects folder is picked: the answer says what to choose", async () => {
@@ -40,9 +40,9 @@ it("with no workspace named and two of the account's, no Projects folder is pick
   await changeStorage("ana", (st) => {
     st.folders.push({ ...media("dev-e", "/Volumes/Tiny Footage/Shoots"), id: "media-e-a" }, { ...media("dev-e", "/Volumes/Tiny Footage/Brand B/Shoots"), id: "media-e-b", workspace: "ws-b" });
   });
-  expect(await ensureUseFolder("ana", undefined, "projects", "dev-e")).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
+  expect(await ensureUseFolder("ana", undefined, "projects", "dev-e")).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
   // once the workspace is named, its own computer's folder beside its own Media folder
-  expect(await ensureUseFolder("ana", "ws-b", "projects", "dev-e")).toMatchObject({ role: "projects", workspace: "ws-b", origin: { host: "dev-e", path: "/Volumes/Tiny Footage/Brand B/Projects" } });
+  expect(await ensureUseFolder("ana", "ws-b", "projects", "dev-e")).toMatchObject({ role: "projects", workspace: "ws-b", origin: { host: "dev-e", path: "/Volumes/Tiny Footage/Brand B/Project files" } });
 });
 
 it("with no workspace named, a single owned workspace is the job's; with two and no name, no other workspace's folder is picked", async () => {
@@ -51,8 +51,8 @@ it("with no workspace named, a single owned workspace is the job's; with two and
   await changeStorage("eve", (st) => {
     st.folders.push({ ...media("dev-g", "/Volumes/Tiny Footage/Shoots"), id: "media-g", workspace: "ws-solo" });
   });
-  expect(await ensureUseFolder("eve", undefined, "projects", "dev-g")).toMatchObject({ role: "projects", workspace: "ws-solo", origin: { host: "dev-g", path: "/Volumes/Tiny Footage/Projects" } });
+  expect(await ensureUseFolder("eve", undefined, "projects", "dev-g")).toMatchObject({ role: "projects", workspace: "ws-solo", origin: { host: "dev-g", path: "/Volumes/Tiny Footage/Project files" } });
   // a second owned workspace makes the name required, and the first one's folder is not handed to a job without one
   writeFileSync(path.join(dir, "workshop", "projects", "ws-other.json"), JSON.stringify({ id: "ws-other", owner: "eve", name: "other", updatedAt: 1 }));
-  expect(await ensureUseFolder("eve", undefined, "projects", "dev-g")).toEqual({ error: "Choose a Projects folder in Settings → Folders." });
+  expect(await ensureUseFolder("eve", undefined, "projects", "dev-g")).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
 });

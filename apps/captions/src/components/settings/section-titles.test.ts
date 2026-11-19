@@ -23,6 +23,8 @@ const ALLOWED: Record<string, string[]> = {
   Sources: ["plugins/baby-acrobatics/web/pages/EditorDesignPage.tsx", "src/components/settings/SoundEffectsSection.tsx"],
   // Community: installed, and the catalog
   "Plug-ins": ["src/components/community/PacksInstalled.tsx", "src/components/community/PluginsCatalog.tsx"],
+  // a member's Media Library page (its Downloads, the same title as the owner's card), and the hosted admin board
+  Downloads: ["plugins/hosted/web/AdminBoard.tsx", "src/pages/library/MemberSettings.tsx"],
   // Settings → Appearance, and Settings → Media Library
   "Media Library": ["src/components/settings/AppearanceSection.tsx", "src/components/settings/MediaLibrarySection.tsx"],
   // the studio's Folders screen replaces the app's (replacementFor "storage"): never both; a member's Media Library page has its own

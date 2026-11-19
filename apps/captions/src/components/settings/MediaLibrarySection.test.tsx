@@ -213,8 +213,8 @@ describe("Settings → Media Library, the owner's page", () => {
     const given: LibrarySummary = { ...library, readOnly: true };
     await render(<LibrarySettingsBody library={given} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(headings()).not.toContain(LIBRARY_WORDS.importTitle);
-    // until the member page lands, the placeholder keeps the "No library" row rather than a blank section
-    expect(bodyText()).toContain("No library");
+    // the member page (UNIFIED-PRD §3.2): the workspace's settings, read only
+    expect(headings()).toContain("Workspace settings");
   });
 
   it("the workspace picked in the header is the one its requests name, and the window stays in its own", async () => {
