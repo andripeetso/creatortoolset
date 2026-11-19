@@ -50,7 +50,8 @@ const DAY = 86_400_000;
 const SPEND = [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL, DESCRIBE_LABEL, `${DESCRIBE_LABEL} (API)`];
 
 /** The settings as stored: the library's own fields, plus `watch` and `projectId`, which the type does not list */
-type Raw = Partial<LibrarySettings> & { watch?: WatchFolder[]; projectId?: string };
+// the removed settings (copyTo, places) are read here from the stored JSON only, by this one-time migration (UNIFIED-PRD §4.6)
+type Raw = Partial<LibrarySettings> & { watch?: WatchFolder[]; projectId?: string; copyTo?: string; places?: { path: string; mode: string }[] };
 interface Seen {
   versionId: string;
   device: string;

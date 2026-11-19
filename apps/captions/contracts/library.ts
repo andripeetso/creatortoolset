@@ -176,10 +176,6 @@ export interface LibrarySettings {
   /** How should imported media behave? copied into the first Source media folder, or used where they are. Absent: in place
    *  (libraries from before setup); setup stores "copy" by default. */
   importMode?: ImportMode;
-  /** @deprecated read only by the one-time migration (UNIFIED-PRD §4.6); removed from the type at integrate */
-  copyTo?: string;
-  /** @deprecated read only by the one-time migration (UNIFIED-PRD §4.6); removed from the type at integrate */
-  places?: ImportPlace[];
   /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
   organize?: Organize;
   /** a big folder came in and the AI organizing was offered (once, either answer) */
@@ -269,13 +265,6 @@ export function levelOf(s: Partial<AnalysisFlags>): AnalysisLevel {
 }
 /** in-place: the files stay where they are and are read there; copy: copied into the library's folder first, then read there */
 export type ImportMode = "in-place" | "copy";
-export interface ImportPlace {
-  path: string; // absolute, on the computer the files are on
-  mode: ImportMode;
-}
-/** The place `path` is in (the deepest one), or undefined: a new place, so the add asks again. */
-export const placeOf = (places: readonly ImportPlace[] | undefined, path: string): ImportPlace | undefined =>
-  (places ?? []).filter((p) => path === p.path || path.startsWith(p.path.endsWith("/") ? p.path : `${p.path}/`)).sort((a, b) => b.path.length - a.path.length)[0];
 
 /** Organization: "ai" Smart folders (the default for new libraries), "own" Organize yourself. "default" is a stored value
  *  from before (Default folders), read as "own" by organizeOf. */

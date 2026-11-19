@@ -833,8 +833,6 @@ const settingsOf = (json: string): LibrarySettings => {
     upload: uploadOf(s.upload),
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
-    ...(typeof s.copyTo === "string" && s.copyTo ? { copyTo: s.copyTo } : {}),
-    ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
     lookLevel: lookLevelOf(s.lookLevel),
