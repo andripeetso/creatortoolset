@@ -150,8 +150,8 @@ it("each computer's proxies are a row of their own, counted from its last claim;
   setDeviceWork(pc.id, { v: 1, steps: [], cache: { bytes: 50, versions: ["va"] } });
   const proxies = async () => (await keptView(tiny)).rows.filter((r) => r.kind === "proxies");
   expect(await proxies()).toEqual([
-    { kind: "proxies", bytes: 900, items: 2, device: { id: mac.id, name: "Studio Mac" } },
-    { kind: "proxies", bytes: 50, items: 1, device: { id: pc.id, name: "Edit PC" } },
+    { kind: "proxies", bytes: 900, items: 2, device: { id: mac.id, name: "Studio Mac" }, limit: 25 * 1024 ** 3 },
+    { kind: "proxies", bytes: 50, items: 1, device: { id: pc.id, name: "Edit PC" }, limit: 25 * 1024 ** 3 },
   ]);
   await emptyKept("proxies", tiny, mac.id);
   expect(deviceOf(mac.id)!.work).toMatchObject({ empty: true, cache: { bytes: 0, versions: [] } });
