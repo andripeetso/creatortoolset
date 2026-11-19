@@ -418,12 +418,12 @@ export function ProjectForm({
       {!setup && (
         <Row
           id="workspace-language"
-          title={<label htmlFor="project-language">Video language</label>}
+          title={<label htmlFor="project-language">Video languages</label>}
           control={
             <LanguageSelect
               id="project-language"
-              value={f.languages?.[0] ?? ""}
-              onChange={(code) => setF((cur) => ({ ...cur, languages: code ? [code] : [] }))}
+              values={f.languages ?? []}
+              onValuesChange={(languages) => setF((cur) => ({ ...cur, languages }))}
               disabled={locked}
               className="h-8 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:w-64"
             />

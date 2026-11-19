@@ -16,4 +16,8 @@ describe("LanguageSelect", () => {
   it("a picked language shows its name", () => {
     expect(renderToStaticMarkup(<LanguageSelect value="et" onChange={() => {}} placeholder="Other…" />)).toContain(">Estonian</span>");
   });
+
+  it("several picked languages are all named", () => {
+    expect(renderToStaticMarkup(<LanguageSelect values={["et", "en"]} onValuesChange={() => {}} />)).toContain(">Estonian, English</span>");
+  });
 });

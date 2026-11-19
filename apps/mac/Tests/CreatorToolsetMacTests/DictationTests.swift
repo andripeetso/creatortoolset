@@ -324,10 +324,52 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(c.state, .recording, "the new recording keeps going")
     }
 
+    func testAnEarlierTranscriptionEndingLeavesThePillOnTheNewRecording() async {
+        struct Plain: Error {}
+        let pill = DictationPill()
+        var now = DictationController.State.recording
+        pill.current = { now }
+        pill.show(.recording)
+        await waitFor { pill.state == .recording }
+        pill.dictationFailed(Plain())
+        XCTAssertEqual(pill.state, .recording)
+        now = .transcribing
+        pill.showCurrent()
+        XCTAssertEqual(pill.state, .transcribing)
+        now = .idle
+        pill.dictationFailed(Plain())
+        XCTAssertEqual(pill.state, .hidden)
+    }
+
+    func testAHideRightAfterTheFirstShowLeavesThePillHidden() async {
+        let pill = DictationPill()
+        pill.show(.recording)
+        pill.hide()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(pill.state, .hidden, "a press and release in the same moment never leaves Listening up")
+    }
+
+    func testThePillShowsEarlierTranscriptionsBehindANewRecording() async {
+        let pill = DictationPill()
+        var queued = 1
+        pill.current = { .recording }
+        pill.transcribing = { queued }
+        pill.dictationStarted()
+        await waitFor { pill.state == .recording }
+        XCTAssertEqual(pill.behind, 1)
+        queued = 0
+        pill.dictationFinished()
+        XCTAssertEqual(pill.state, .recording, "the earlier one pasting leaves Listening up")
+        XCTAssertEqual(pill.behind, 0)
+    }
+
     func testHistoryKeepsTheNewestOnly() {
         let recordings = DictationRecordings(directory: dir)
         recordings.keep = 2
-        for i in 0..<3 { _ = recordings.save([0.1], at: Date(timeIntervalSince1970: 1_800_000_000 + Double(i) * 60)) }
+        for i in 0..<3 {
+            let wav = recordings.save([0.1], at: Date(timeIntervalSince1970: 1_800_000_000 + Double(i) * 60))!
+            recordings.saveTranscript("take \(i)", for: wav)
+        }
         XCTAssertEqual(recordings.recent().count, 2)
         // two in the same second both stay
         recordings.keep = 10
@@ -382,7 +424,7 @@ final class SpeechServerTests: XCTestCase {
         func dictationStarted() { events.append("listening") }
         func dictationTranscribing() { events.append("transcribing") }
         func dictationWaitingForModel() { events.append("getting the model ready") }
-        func dictationFinished(_ result: DictationResult) { events.append("done") }
+        func dictationFinished() { events.append("done") }
         func dictationFailed(_ error: Error) { events.append("failed: \(DictationPill.message(for: error) ?? "")") }
     }
 

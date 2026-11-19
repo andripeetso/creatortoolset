@@ -105,7 +105,7 @@ const STATIC_ROWS = [
   { section: "workspace", id: "workspace-name", title: "Name", keywords: ["workspace", "rename", "brand"] },
   { section: "workspace", id: "workspace-colour", title: "Colour", keywords: ["workspace", "color", "dot"] },
   { section: "workspace", id: "workspace-instructions", title: "Instructions", keywords: ["workspace", "prompt", "audience", "voice", "cta", "notes", "write it for me"] },
-  { section: "workspace", id: "workspace-language", title: "Video language", keywords: ["workspace", "language", "spoken", "speech", "transcribe", "estonian", "english"] },
+  { section: "workspace", id: "workspace-language", title: "Video languages", keywords: ["workspace", "language", "spoken", "speech", "transcribe", "estonian", "english"] },
   { section: "workspace", id: "workspace-files", title: "Context files", keywords: ["workspace", "knowledge", "files", "documents", "pdf", "folder", "context"] },
   // Social accounts: the accounts the person signs in to, one row each (the section is the page: every workspace's, or one's)
   { section: "connectors", id: "social-platforms", title: "Social accounts", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "sign in", "login", "add account", "workspace", "move", "disconnect"] },

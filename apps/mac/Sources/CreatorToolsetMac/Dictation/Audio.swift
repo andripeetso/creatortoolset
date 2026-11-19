@@ -20,34 +20,23 @@ final class AudioCapture {
         interleaved: false
     )!
 
-    /// Called for every audio buffer with the buffer's RMS level (0…~1).
+    /// Called about every `levelInterval` of audio with its RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     var onLevel: ((Float) -> Void)?
 
 
-    /// Counts and timings of the last finished capture, including press to
-    /// first sample. Nil until one finishes.
-    private(set) var lastStats: CaptureBuffer.Stats?
 
-    /// Buffers any input delivered while no recording was open. Stays 0
-    /// unless an input ran between presses.
-    var buffersWhileStopped: Int { buffer.buffersWhileClosed }
+    /// Samples at the target rate per level report: ~33 ms, about the
+    /// meter's frame rate, instead of one report per input buffer.
+    static let levelInterval = 528
 
-    /// The recording so far, for callers that wait on the first sample.
-    var currentStats: CaptureBuffer.Stats { buffer.currentStats }
-
-    private let input: CaptureInput
+    private let input = HALInput()
     private var recording = false
     private var device = InputDevice(sampleRate: 0, channels: 0)
     private var delivered = InputDevice(sampleRate: 0, channels: 0)
     private var startDelay: TimeInterval = 0
     private let converters = ConverterCache(targetFormat: AudioCapture.targetFormat)
     private let buffer = CaptureBuffer()
-
-    init() {
-        self.input = HALInput(keepsPrepared: false)
-        input.prepareIdle()
-    }
 
     /// Begin recording. Idempotent — calling while already recording is a no-op.
     /// Throws `CaptureError`; on a throw nothing is left running.
@@ -101,8 +90,8 @@ final class AudioCapture {
     }
 
     /// Stop recording, stop the input, and return the captured samples.
-    /// Throws `CaptureError.routeChanged` instead of returning a partial
-    /// capture if the input route changed mid-recording.
+    /// Throws `CaptureError.routeChanged`, carrying the partial capture, if
+    /// the input went away mid-recording.
     func finish() throws -> [Float] {
         guard recording else { return [] }
         recording = false
@@ -110,21 +99,23 @@ final class AudioCapture {
 
         // The input has stopped; flush what the resampler still holds.
         converters.drain { buffer.appendTail($0) }
-        let stats = buffer.currentStats
-        lastStats = stats
-        logStats(stats)
+        logStats(buffer.currentStats)
         return try buffer.finish()
     }
 
     /// The body of an input callback: note when the buffer's first sample,
     /// and its first non-zero sample, were captured, then convert to 16 kHz
     /// and append. `firstFrame` and `now` are `HostClock` nanoseconds. A
-    /// buffer outside a recording is counted and dropped.
+    /// buffer outside a recording is dropped. `onLevel` gets the RMS of each
+    /// `levelInterval` samples.
     static func inputHandler(
         buffer: CaptureBuffer,
         converters: ConverterCache,
         onLevel: ((Float) -> Void)?
     ) -> (_ pcm: AVAudioPCMBuffer, _ firstFrame: UInt64, _ now: UInt64) -> Void {
+        // Only the input's one callback thread touches these.
+        var power: Double = 0
+        var counted = 0
         return { pcm, firstFrame, now in
             guard buffer.admit() else { return }
             var firstSound: UInt64?
@@ -134,7 +125,13 @@ final class AudioCapture {
             buffer.noteInput(firstFrameAt: firstFrame, firstSoundAt: firstSound)
             let converted = converters.convert(pcm) { chunk in
                 buffer.append(chunk, inputFrames: Int(pcm.frameLength), at: now)
-                onLevel?(computeRMS(chunk))
+                guard let onLevel else { return }
+                for s in chunk { power += Double(s * s) }
+                counted += chunk.count
+                guard counted >= levelInterval else { return }
+                onLevel(Float((power / Double(counted)).squareRoot()))
+                power = 0
+                counted = 0
             }
             if !converted { buffer.recordConversionFailure() }
         }
@@ -244,28 +241,6 @@ struct InputSink {
     var inputFailed: () -> Void
 }
 
-/// One way of running the microphone for a single recording. `AudioCapture`
-/// owns the checks before it and the conversion and bookkeeping after it.
-///
-/// `start` and `stop` are called in pairs on one thread. Between them the
-/// input delivers to the sink; after `stop` returns it delivers nothing and
-/// the device is no longer running for this process.
-protocol CaptureInput: AnyObject {
-    /// Starts the input on `device` (already validated). Throws
-    /// `CaptureError`; on a throw nothing is left running. Returns the
-    /// format the input delivers.
-    func start(device: InputDevice, sink: InputSink) throws -> InputDevice
-    /// Stops the input. Safe to call when not started.
-    func stop()
-    /// Does whatever setup can happen before a press without running the
-    /// device. Best effort: `start` redoes whatever this could not.
-    func prepareIdle()
-}
-
-extension CaptureInput {
-    func prepareIdle() {}
-}
-
 /// What one recording has captured so far. The audio thread appends to it;
 /// `AudioCapture.stop()` reads it once. It holds no engine, so the rules
 /// about what a stop returns are testable without hardware.
@@ -297,7 +272,9 @@ final class CaptureBuffer: @unchecked Sendable {
     private var routeChanged = false
     private var startedAt: UInt64 = 0
     private var isOpen = false
-    private var closedBuffers = 0
+    /// Ten minutes at 16 kHz, reserved once so appends on the audio thread
+    /// don't regrow and copy the array; untouched pages cost no memory.
+    static let reservedSamples = 10 * 60 * 16_000
 
     /// Clears everything for a new recording that started at `startedAt`
     /// (`HostClock` nanoseconds).
@@ -305,27 +282,19 @@ final class CaptureBuffer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         samples.removeAll(keepingCapacity: true)
+        samples.reserveCapacity(Self.reservedSamples)
         stats = Stats()
         routeChanged = false
         self.startedAt = startedAt
         isOpen = true
     }
 
-    /// True while a recording is open. A buffer arriving outside one is
-    /// counted and must be dropped: it means the input ran between presses.
+    /// True while a recording is open. A buffer arriving outside one must be
+    /// dropped: it means the input ran between presses.
     func admit() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        if !isOpen { closedBuffers += 1 }
         return isOpen
-    }
-
-    /// Buffers that arrived while no recording was open, over this buffer's
-    /// lifetime. Zero unless an input ran between presses.
-    var buffersWhileClosed: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return closedBuffers
     }
 
     func recordInputFailure() {
@@ -397,8 +366,8 @@ final class CaptureBuffer: @unchecked Sendable {
     }
 
     /// Ends the recording and returns its samples. If the route changed at
-    /// any point, the partial capture is discarded and this throws
-    /// `CaptureError.routeChanged`, so it is never delivered as a success.
+    /// any point, this throws `CaptureError.routeChanged` with the partial
+    /// capture, so it can be kept but is never delivered as a success.
     /// Either way the buffer is empty afterwards.
     func finish() throws -> [Float] {
         lock.lock()
@@ -408,7 +377,7 @@ final class CaptureBuffer: @unchecked Sendable {
         routeChanged = false
         isOpen = false
         lock.unlock()
-        if changed { throw CaptureError.routeChanged }
+        if changed { throw CaptureError.routeChanged(captured: captured) }
         return captured
     }
 }
@@ -439,13 +408,6 @@ final class ConverterCache: @unchecked Sendable {
 
     init(targetFormat: AVAudioFormat) {
         self.targetFormat = targetFormat
-    }
-
-    /// Converters built so far, one per distinct input format.
-    var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return entries.count
     }
 
     /// Clears each converter's internal state (resampler history), so a new
@@ -525,6 +487,8 @@ final class ConverterCache: @unchecked Sendable {
         guard let converter = AVAudioConverter(from: format, to: targetFormat),
               let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 4096)
         else { return nil }
+        // Mix every channel into the mono target; by default only the first is kept.
+        converter.downmix = true
         let entry = Entry(format: format, converter: converter, output: output)
         entries.append(entry)
         return entry
@@ -551,21 +515,6 @@ struct InputDevice: Equatable {
         let device = InputDevice(sampleRate: nominalSampleRate(id), channels: inputChannels(id), id: id)
         try validate(sampleRate: device.sampleRate, channels: device.channels)
         return device
-    }
-
-    /// The device's name as the Sound settings show it, or nil.
-    static func name(of id: AudioDeviceID) -> String? {
-        var name: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &name) == noErr,
-              let value = name?.takeRetainedValue()
-        else { return nil }
-        return value as String
     }
 
     /// Throws `CaptureError.invalidInputFormat` unless both are positive.
@@ -705,9 +654,9 @@ enum CaptureError: Error, UserFacingError, CustomStringConvertible {
     case invalidInputFormat(sampleRate: Double, channels: UInt32)
     /// `AVAudioEngine.start()` threw.
     case engineStartFailed(Error)
-    /// The input route changed mid-recording (a device was connected or
-    /// removed, or its format changed). The partial capture was discarded.
-    case routeChanged
+    /// The input went away mid-recording, or its new format could not be
+    /// followed. `captured` is what was recorded until then.
+    case routeChanged(captured: [Float])
 
     var userMessage: String {
         switch self {
@@ -720,7 +669,7 @@ enum CaptureError: Error, UserFacingError, CustomStringConvertible {
         case .engineStartFailed:
             return "microphone failed to start: try again, or check System Settings → Sound"
         case .routeChanged:
-            return "microphone changed while recording: nothing captured, try again"
+            return "microphone went away while recording"
         }
     }
 

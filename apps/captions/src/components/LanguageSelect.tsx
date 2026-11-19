@@ -9,16 +9,20 @@ import { cn } from "@/lib/utils";
 /**
  * The language spoken in a workspace's or an edit's videos: one code, or "" for the person's own languages (Settings →
  * Voice; none there = English, as api/transcribe.ts hears it), or for `fallback`. Saved as `languages: [code]` (none: []). A short
- * list you can type into, so 30 languages never fill the screen.
+ * list you can type into, so 30 languages never fill the screen. With `values` it ticks several (a workspace whose videos
+ * mix languages): each pick turns one on or off and the list stays open; the default row clears them.
  */
-export function LanguageSelect({ id, value, onChange, disabled, className, placeholder, fallback }: {
+export function LanguageSelect({ id, value, onChange, values, onValuesChange, disabled, className, placeholder, fallback }: {
   id?: string;
   /** The languages "" stands for when they are not the person's own: an edit's is its workspace's language, when that has one. */
   fallback?: string[];
   /** The label of "" in place of the person's own languages (a question's "Other…"): every language is then listed. */
   placeholder?: string;
-  value: string;
-  onChange: (code: string) => void;
+  value?: string;
+  onChange?: (code: string) => void;
+  /** Several languages in place of `value`: the max the server keeps is 5. */
+  values?: string[];
+  onValuesChange?: (codes: string[]) => void;
   disabled?: boolean;
   className?: string;
 }) {
@@ -28,11 +32,17 @@ export function LanguageSelect({ id, value, onChange, disabled, className, place
   const usual = placeholder ?? (mine.length ? mine.map(languageName).join(", ") : "English");
   // the default already names a single language: it is not listed twice
   const one = !placeholder && mine.length <= 1 ? (mine[0] ?? "en") : null;
-  const rest = SPOKEN_LANGUAGES.filter((c) => c !== one);
-  const isDefault = !value || value === one;
+  // several: a ticked language is listed even when it is the default's one
+  const rest = SPOKEN_LANGUAGES.filter((c) => c !== one || (values?.includes(c) ?? false));
+  const many = values !== undefined;
+  const isDefault = many ? !values.length : !value || value === one;
+  const ticked = (c: string) => (many ? values.includes(c) : value === c);
   const pick = (code: string) => {
-    onChange(code);
-    setOpen(false);
+    if (!many) {
+      onChange?.(code);
+      setOpen(false);
+    } else if (!code) onValuesChange?.([]);
+    else onValuesChange?.(values.includes(code) ? values.filter((c) => c !== code) : [...values, code].slice(0, 5));
   };
   return (
     // modal: inside a window (the Projects one) the window's scroll lock would eat the list's wheel; the popover's own
@@ -40,7 +50,7 @@ export function LanguageSelect({ id, value, onChange, disabled, className, place
     <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild disabled={disabled}>
         <button id={id} type="button" role="combobox" aria-expanded={open} className={cn("flex items-center justify-between gap-2 text-left", className)}>
-          <span className="truncate">{isDefault ? usual : languageName(value)}</span>
+          <span className="truncate">{isDefault ? usual : many ? values.map(languageName).join(", ") : languageName(value!)}</span>
           <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
@@ -56,7 +66,7 @@ export function LanguageSelect({ id, value, onChange, disabled, className, place
             </CommandItem>
             {rest.map((c) => (
               <CommandItem key={c} value={languageName(c)} onSelect={() => pick(c)}>
-                <Check className={cn("size-3.5", value === c ? "" : "opacity-0")} />
+                <Check className={cn("size-3.5", ticked(c) ? "" : "opacity-0")} />
                 {languageName(c)}
               </CommandItem>
             ))}

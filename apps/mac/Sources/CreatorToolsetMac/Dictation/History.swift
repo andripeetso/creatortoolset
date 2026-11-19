@@ -23,21 +23,26 @@ final class DictationRecordings: @unchecked Sendable {
     func save(_ samples: [Float], at date: Date = Date()) -> URL? {
         let formatter = DateFormatter()
         formatter.dateFormat = Self.nameFormat
-        var url = directory.appendingPathComponent("\(formatter.string(from: date)).wav")
-        // two in the same second (a dropped file and a dictation): the second gets a suffix
-        var n = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = directory.appendingPathComponent("\(formatter.string(from: date))-\(n).wav")
-            n += 1
-        }
+        let stamp = formatter.string(from: date)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
-            try WAVWriter.data(samples: samples, sampleRate: Int(AudioCapture.targetSampleRate)).write(to: url)
-            DictationLog.info("  saved \(url.lastPathComponent)")
-            prune()
-            notify()
-            return url
+            let data = try WAVWriter.data(samples: samples, sampleRate: Int(AudioCapture.targetSampleRate))
+            // two in the same second (a dropped file and a dictation): the second gets a suffix, never the first's file
+            var n = 1
+            while true {
+                let url = directory.appendingPathComponent(n == 1 ? "\(stamp).wav" : "\(stamp)-\(n).wav")
+                do {
+                    try data.write(to: url, options: .withoutOverwriting)
+                } catch CocoaError.fileWriteFileExists {
+                    n += 1
+                    continue
+                }
+                DictationLog.info("  saved \(url.lastPathComponent)")
+                prune()
+                notify()
+                return url
+            }
         } catch {
             DictationLog.error("  recording save failed: \(error)")
             return nil
@@ -48,8 +53,11 @@ final class DictationRecordings: @unchecked Sendable {
         wav.deletingPathExtension().appendingPathExtension("txt")
     }
 
+    /// Nothing is written once the recording itself is gone (History was cleared meanwhile).
     func saveTranscript(_ text: String, for wav: URL) {
+        guard FileManager.default.fileExists(atPath: wav.path) else { return }
         try? text.write(to: Self.transcriptURL(for: wav), atomically: true, encoding: .utf8)
+        prune()
         notify()
     }
 
@@ -73,9 +81,10 @@ final class DictationRecordings: @unchecked Sendable {
             .map { ($0, try? String(contentsOf: Self.transcriptURL(for: $0), encoding: .utf8)) }
     }
 
-    /// Keeps only the newest `keep` recordings (and their transcripts).
+    /// Keeps only the newest `keep` transcribed recordings (and their transcripts). One without a transcript, failed
+    /// or still transcribing, stays until it has one or History is cleared.
     func prune() {
-        let old = recent().dropFirst(max(1, keep))
+        let old = recent().filter { $0.text != nil }.dropFirst(max(1, keep))
         for (wav, _) in old {
             try? FileManager.default.removeItem(at: wav)
             try? FileManager.default.removeItem(at: Self.transcriptURL(for: wav))
@@ -545,31 +554,5 @@ final class DictationSounds: DictationObserver {
         guard enabled, let sound else { return }
         sound.stop()
         sound.play()
-    }
-}
-
-/// When a transcription fails, says the audio is safe and offers History.
-@MainActor
-final class FailureAlert: DictationObserver {
-    func dictationFailed(_ error: Error) {
-        guard let failure = error as? TranscriptionFailed else { return }
-        // After this turn, so the overlay and menu bar settle first.
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Transcription failed"
-            alert.alertStyle = .warning
-            guard failure.saved != nil else {
-                alert.informativeText = "\(failure.underlying.localizedDescription)\n\nThe recording could not be saved."
-                alert.runModal()
-                return
-            }
-            alert.informativeText = "\(failure.underlying.localizedDescription)\n\nThe recording is saved in History, where you can transcribe it again."
-            alert.addButton(withTitle: "Open History")
-            alert.addButton(withTitle: "OK")
-            NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn {
-                DictationHistory.show()
-            }
-        }
     }
 }

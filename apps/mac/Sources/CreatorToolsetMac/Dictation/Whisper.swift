@@ -9,6 +9,8 @@ actor WhisperKitTranscriber: Transcriber {
     private var pipeline: WhisperKit?
     /// Set by `unload`: this transcriber was replaced and loads nothing more.
     private var retired = false
+    /// Transcriptions handed to it and not done yet; a retired one keeps its model until the last ends.
+    private var users = 0
 
     init(model: TranscriptionModel, tuning: WhisperTuning = .standard) {
         self.modelID = model.id
@@ -21,9 +23,10 @@ actor WhisperKitTranscriber: Transcriber {
     /// disk is loaded as it is, with no network call. `progress` gets the
     /// download's fraction done, 0 to 1, when there is anything to download.
     func warmUp(progress: (@Sendable (Double) -> Void)? = nil) async throws {
-        if pipeline != nil || retired { return }
+        if pipeline != nil { return }
         // one load at a time: a second caller (the first dictation, while the launch's load runs) waits for it
         if let loading { return try await loading.value }
+        if retired { return }
         let task = Task { try await self.load(progress: progress) }
         loading = task
         defer { loading = nil }
@@ -68,8 +71,8 @@ actor WhisperKitTranscriber: Transcriber {
             download: false
         )
         let loaded = try await WhisperKit(config)
-        // Replaced while loading (a model change): drop it.
-        if retired {
+        // Replaced while loading (a model change), with no transcription waiting for it: drop it.
+        if retired && users == 0 {
             await loaded.unloadModels()
             return
         }
@@ -83,20 +86,53 @@ actor WhisperKitTranscriber: Transcriber {
     /// Whether a complete copy is on this Mac, so loading it downloads nothing.
     nonisolated var onDisk: Bool { model.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }
 
-    /// Frees the model after a swap to another one. A load still running
-    /// finishes and is dropped, and a later `warmUp` returns at once.
+    /// Frees the model after a swap to another one, once the transcriptions
+    /// already handed to it are done. A load still running finishes and is
+    /// dropped unless one waits for it, and a later `warmUp` returns at once.
     func unload() async {
         retired = true
-        guard let pipeline else { return }
+        await freeIfUnused()
+    }
+
+    private func freeIfUnused() async {
+        guard retired, users == 0, let pipeline else { return }
         self.pipeline = nil
         await pipeline.unloadModels()
+    }
+
+    /// The loaded model for one transcription, counted until `done`.
+    private func hold() async throws -> WhisperKit {
+        users += 1
+        do {
+            if pipeline == nil { try await warmUp() }
+            guard let pipeline else { throw TranscriberError.notLoaded }
+            return pipeline
+        } catch {
+            await done()
+            throw error
+        }
+    }
+
+    private func done() async {
+        users -= 1
+        await freeIfUnused()
     }
 
     /// Uses `context.language`, or with none (Automatic) detects one among
     /// `context.spokenLanguages`; see `SpokenLanguage`.
     func transcribe(_ audio: [Float], context: TranscriptionContext) async throws -> Transcript {
-        if pipeline == nil { try await warmUp() }
-        guard let pipeline else { throw TranscriberError.notLoaded }
+        let pipeline = try await hold()
+        do {
+            let transcript = try await transcribe(audio, context: context, pipeline: pipeline)
+            await done()
+            return transcript
+        } catch {
+            await done()
+            throw error
+        }
+    }
+
+    private func transcribe(_ audio: [Float], context: TranscriptionContext, pipeline: WhisperKit) async throws -> Transcript {
 
         let started = CFAbsoluteTimeGetCurrent()
         let input = tuning.prepare(audio)
@@ -130,8 +166,18 @@ actor WhisperKitTranscriber: Transcriber {
     /// audio's first sample, and the language heard. Among `languages` when given, else among every language the model
     /// knows. The audio is used as it is, never trimmed or padded, so the times are the recording's own.
     func words(_ audio: [Float], languages: [String]) async throws -> (words: [HeardWord], language: String?) {
-        if pipeline == nil { try await warmUp() }
-        guard let pipeline else { throw TranscriberError.notLoaded }
+        let pipeline = try await hold()
+        do {
+            let heard = try await words(audio, languages: languages, pipeline: pipeline)
+            await done()
+            return heard
+        } catch {
+            await done()
+            throw error
+        }
+    }
+
+    private func words(_ audio: [Float], languages: [String], pipeline: WhisperKit) async throws -> (words: [HeardWord], language: String?) {
         let (language, _) = await chooseLanguage(audio, setting: nil, spoken: languages, pipeline: pipeline)
         var options = tuning.decodingOptions(language: language, promptTokens: nil, audioSeconds: Double(audio.count) / Double(WhisperKit.sampleRate))
         options.wordTimestamps = true
@@ -205,22 +251,25 @@ actor WhisperKitTranscriber: Transcriber {
         return out
     }
 
-    /// Strip Whisper's non-speech bracket tokens ([BLANK_AUDIO], [MUSIC],
-    /// (silence), <|nospeech|>, etc.) and collapse whitespace. When the model
-    /// hears silence it emits these literally; we don't want to paste them.
+    /// Strip Whisper's non-speech tokens ([BLANK_AUDIO], [MUSIC],
+    /// <|nospeech|>, etc.) and collapse whitespace. When the model hears
+    /// silence it emits these literally; we don't want to paste them.
+    /// (silence) and *background noise* go only when they are all there is:
+    /// inside speech, brackets and stars are the person's own words.
     static func sanitize(_ text: String) -> String {
         let patterns = [
             #"\[[^\]]*\]"#,        // [BLANK_AUDIO], [MUSIC], [Applause]
-            #"\([^)]*\)"#,          // (silence), (music playing)
             #"<\|[^|]*\|>"#,        // <|nospeech|>, <|endoftext|>
-            #"\*[^*]*\*"#,          // *background noise*
         ]
         var out = text
         for p in patterns {
             out = out.replacingOccurrences(of: p, with: " ", options: .regularExpression)
         }
         out = out.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+        out = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        // (silence), (music playing), *background noise*, alone or a few in a row
+        let onlyLabels = #"^(\([^)]*\)|\*[^*]*\*)( ?(\([^)]*\)|\*[^*]*\*))*$"#
+        return out.range(of: onlyLabels, options: .regularExpression) != nil ? "" : out
     }
 }
 
@@ -231,7 +280,7 @@ enum TranscriberError: Error {
 
 /// Where the Whisper models run and how they decode. `standard` is what the
 /// app uses; each choice in it was measured against WhisperKit's defaults
-/// (`baseline`) on Apple silicon.
+/// (`WhisperTuning()`) on Apple silicon.
 struct WhisperTuning: Equatable, @unchecked Sendable {
     var melCompute: MLComputeUnits = .cpuAndGPU
     var encoderCompute: MLComputeUnits = .cpuAndNeuralEngine
@@ -246,9 +295,6 @@ struct WhisperTuning: Equatable, @unchecked Sendable {
     var leadPadding: Double = 0
     /// Seconds of silence put after the audio after the trim.
     var trailPadding: Double = 0
-
-    /// WhisperKit's defaults.
-    static let baseline = WhisperTuning()
 
     /// A transcript with word times (TranscribeJob.swift): the compute units of `standard`, with nothing cut or added.
     static let words = WhisperTuning(melCompute: .cpuOnly)
@@ -553,9 +599,6 @@ struct HeardWord: Equatable, Sendable {
 }
 
 struct TranscriberTimings: Equatable, Sendable {
-    /// No time spent, for a transcription the engine did not time.
-    static let zero = TranscriberTimings()
-
     /// Seconds of audio handed to the model, after any trimming.
     var audioSeconds: TimeInterval = 0
     /// Silence trimming, padding the window, and the log-mel spectrogram.

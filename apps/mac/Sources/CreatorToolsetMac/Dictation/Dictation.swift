@@ -293,6 +293,8 @@ final class Dictation: ObservableObject {
     private var spokenAt = Date.distantPast
 
     private var router = TalkRouter()
+    /// Counts presses, so a quiet start's delayed announce only shows its own.
+    private var presses = 0
     private let monitor = HotkeyMonitor()
     private var monitorOn = false
     private var carbonKeys: [EventHotKeyRef] = []
@@ -576,9 +578,12 @@ final class Dictation: ObservableObject {
         case .start(let quiet):
             refreshLanguages()
             controller.press(announce: !quiet)
+            presses += 1
             if quiet {
+                let press = presses
                 DispatchQueue.main.asyncAfter(deadline: .now() + Gesture.minimumHold) { [weak self] in
-                    guard let self, self.router.source == .hold else { return }
+                    // a later press (a double tap of fn) waits for its own hold
+                    guard let self, self.presses == press, self.router.source == .hold else { return }
                     controller.announce()
                 }
             }
@@ -606,12 +611,14 @@ final class Dictation: ObservableObject {
         let made = DictationController(
             capture: capture,
             transcriber: engineTranscriber(),
-            observers: [pill, sounds, PhaseObserver(), FailureAlert()],
-            delivery: UnlessEarlierApp(TextDelivery(mode: .paste)),
+            observers: [pill, sounds, PhaseObserver()],
+            delivery: UnlessEarlierApp(TextDelivery()),
             recordings: Self.recordings,
             context: { [weak self] in TranscriptionContext(spokenLanguages: self?.prefs.languages ?? self?.spoken ?? []) }
         )
         made.remote = prefs.engine == .thisMac ? speechServer : nil
+        pill.current = { [weak made] in made?.state ?? .idle }
+        pill.transcribing = { [weak made] in made?.transcribing ?? 0 }
         controllerStore = made
         return made
     }
@@ -804,14 +811,7 @@ final class Dictation: ObservableObject {
         guard AXIsProcessTrusted() else {
             needs = "Turn on Creator Toolset under Accessibility"
             showSetup()
-            if askedAccessibility {
-                openPane("Privacy_Accessibility")
-            } else {
-                // the system's own sheet, which adds this app to the list and opens the pane
-                askedAccessibility = true
-                _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-            }
-            watchTrust()
+            allowAccessibility()
             return
         }
         needs = nil
@@ -929,7 +929,7 @@ final class Dictation: ObservableObject {
             "paused": earlierAppOpen ? "Off while your earlier dictation app is open" : NSNull(),
             // the setup page was gone through and everything it asks for is here: the site's mic then makes way for the keys
             "setUp": UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided) && ready,
-            "engine": DictationEngine.serverWired ? prefs.engine.rawValue : NSNull(),
+            "engine": prefs.engine.rawValue,
             "model": model.id,
             "models": ModelRegistry.shared.map { m -> [String: Any] in
                 let here = m.onDisk
@@ -1005,6 +1005,6 @@ enum DictationSetupError: LocalizedError {
 private final class PhaseObserver: DictationObserver {
     func dictationStarted() { Dictation.shared.sync() }
     func dictationTranscribing() { Dictation.shared.sync() }
-    func dictationFinished(_ result: DictationResult) { Dictation.shared.sync() }
+    func dictationFinished() { Dictation.shared.sync() }
     func dictationFailed(_ error: Error) { Dictation.shared.sync() }
 }
