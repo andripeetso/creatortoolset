@@ -58,7 +58,8 @@ import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret
 export const authApp = new Hono();
 
 /** Hono context vars set by the auth middleware in boot.ts. */
-export type AuthVars = { user: SessionUser };
+/** `clientSession`: the client session id when the request came with a phone's token (auth-clients.ts). */
+export type AuthVars = { user: SessionUser; clientSession?: string };
 
 const COOKIE = "cap_auth";
 const MAX_AGE = 180 * 24 * 3600; // ~6 months
@@ -474,7 +475,7 @@ export async function phoneOrigin(c: Context): Promise<string | null> {
  * virtual adapter may come first. A UDP socket connects without sending a packet, so the system picks the address.
  * Null when there is no route.
  */
-function routeAddress(): Promise<string | null> {
+export function routeAddress(): Promise<string | null> {
   return new Promise((resolve) => {
     const s = createSocket("udp4");
     const done = (a: string | null) => {
@@ -488,6 +489,7 @@ function routeAddress(): Promise<string | null> {
 const LINK_TTL = 60_000;
 const links = new Map<string, { username: string; hash: string; expiresAt: number }>();
 
+// deprecated (connect/contract.md): pairing links and /oauth/token replace it; removed once the phone app has switched
 authApp.post("/link", async (c) => {
   // no sign-in on this server: anyone who can reach it is in, so the address alone is the code
   if (!env.appSecret) return c.json({ url: await phoneOrigin(c), path: null, expiresAt: null });
@@ -564,6 +566,8 @@ authApp.post("/app", async (c) => {
  * proves the account and the computer; the computer's own password is still asked, once per browser. A ticket
  * works once: it is spent before the password is checked, so a wrong password needs a new ticket.
  */
+// deprecated (connect/contract.md): /api/connect/mint and /oauth/token with DPoP replace it; removed once the phone and
+// the connect service have switched
 authApp.post("/ticket", async (c) => {
   const s = connectState();
   if (!s || hostOf(c) !== s.hostname.toLowerCase()) {

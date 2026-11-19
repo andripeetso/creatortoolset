@@ -48,7 +48,7 @@ import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
 import { reportCrash, startTelemetry, telemetryApp } from "./lib/telemetry";
 import { transcribeApp } from "./transcribe";
-import { authApp, getApiKeyUser, getSessionUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
+import { authApp, getApiKeyUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
 import { adminApp } from "./admin";
 import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
@@ -66,6 +66,10 @@ import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerify
 import { ownerProfileApp } from "./owner-profile";
 import { devicePairApp, devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
+import { connectPublicApp } from "./connect/mint";
+import { computerKey } from "./connect/keys";
+import { authClientsApp, callerOf, oauthTokenApp, scopeFor, scopeRefused, sessionRefused } from "./auth-clients";
+import { allowedPeer, descriptorApp, endpointsApp, listensEverywhere } from "./descriptor";
 import { connectState, tunnelHostname } from "./connect/state";
 import { startConnector } from "./connect/connector";
 import { deviceForToken } from "./lib/devices";
@@ -323,6 +327,11 @@ app.route("/api/devices/pair", devicePairApp);
 app.route("/api/connectors", connectorsCallbackApp);
 // an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access
 app.route("/", oauthApp);
+// phones (auth-clients.ts, connect/mint.ts): who this server is, a code swapped for a session, and the connect
+// service's signed health and mint requests through the tunnel; each checks its own credential
+app.route("/", descriptorApp);
+app.route("/", oauthTokenApp);
+app.route("/api/connect", connectPublicApp);
 // a picture or video in a card an AI app shows (mcp-cards.ts): a signed link, since the card's frame has no sign-in
 app.route("/", cardApp((path, init) => Promise.resolve(app.request(path, init))));
 
@@ -338,7 +347,15 @@ app.use("/api/*", async (c, next) => {
   // except AI settings, paired Macs and keys; /api/auth reads only cookies, so a key never makes keys
   // The assistant's job token (auth.ts) opens /api/mcp only; the tools' own calls run as its account (innerCall), and
   // FULL_KEY_NEVER still refuses them the provider, device and key routes.
-  const signedIn = getSessionUser(c.req.header("cookie")) ??
+  // a phone's client session (auth-clients.ts): read before the cookie, and a request with one is answered by it alone
+  const client = callerOf(c);
+  if (client.kind === "error") return sessionRefused(c, client.code);
+  if (client.kind === "token") {
+    const need = scopeFor(c.req.method, c.req.path);
+    if (!client.row.scopes.includes(need)) return scopeRefused(c, need);
+    c.set("clientSession", client.row.id);
+  }
+  const signedIn = client.kind === "token" || client.kind === "cookie" ? client.user :
     (FULL_KEY_NEVER.test(c.req.path)
       ? null
       : getApiKeyUser(c.req.header("authorization"), "full", c.req.path) ??
@@ -413,7 +430,9 @@ app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
+app.route("/api/auth", authClientsApp);
 app.route("/api/auth", authApp);
+app.route("/api/server", endpointsApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)
 app.route("/api/service-keys", serviceKeysApp);
 // Settings → API keys: each account's own keys for the paid services (never through an AI key)
@@ -613,6 +632,7 @@ if (workerFor) {
   const port = parseInt(process.env.PORT || "3000");
   // HOST: the interface to listen on (the Mac app passes 127.0.0.1); unset = every interface, as in Docker
   const host = process.env.HOST || undefined;
+  computerKey(); // every server has its id (the descriptor's serverId) from its first start, linked or not
   const server = serve(
     {
       fetch: app.fetch,
@@ -629,6 +649,8 @@ if (workerFor) {
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
+  // listening on every interface on someone's own computer: only its own networks may connect (descriptor.ts)
+  if (host && listensEverywhere(host) && !hostedMode()) server.on("connection", (sock) => void (allowedPeer(sock.remoteAddress) || sock.destroy()));
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
   // The requests held open (the change stream, the computers' and workers' long polls) end at once and their callers

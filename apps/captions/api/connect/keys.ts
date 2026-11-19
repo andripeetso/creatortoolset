@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
@@ -33,4 +33,29 @@ export function parseRelayKey(b64: string): KeyObject {
   const key = createPublicKey({ key: Buffer.from(b64, "base64"), format: "der", type: "spki" });
   if (key.asymmetricKeyType !== "ed25519") throw new Error("not an Ed25519 key");
   return key;
+}
+
+/** This computer's public key as base64 SPKI DER (what the connect service stores at link). */
+export const publicKeyB64 = (k: KeyObject = computerKey().publicKey) => k.export({ type: "spki", format: "der" }).toString("base64");
+
+/** A compact JWS, EdDSA, signed by this computer's key. */
+export function signJws(typ: string, payload: object, key: KeyObject = computerKey().privateKey): string {
+  const h = Buffer.from(JSON.stringify({ alg: "EdDSA", typ })).toString("base64url");
+  const p = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${h}.${p}.${sign(null, Buffer.from(`${h}.${p}`), key).toString("base64url")}`;
+}
+
+/** The payload of a compact EdDSA JWS of this `typ` signed by `key`, or null for anything else. */
+export function verifyJws(token: string, typ: string, key: KeyObject): Record<string, unknown> | null {
+  const parts = typeof token === "string" ? token.split(".") : [];
+  if (parts.length !== 3 || !parts.every((x) => /^[A-Za-z0-9_-]+$/.test(x))) return null;
+  try {
+    const h = JSON.parse(Buffer.from(parts[0], "base64url").toString()) as Record<string, unknown>;
+    if (h.alg !== "EdDSA" || h.typ !== typ) return null;
+    if (!verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], "base64url"))) return null;
+    const p = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as unknown;
+    return p && typeof p === "object" && !Array.isArray(p) ? (p as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }

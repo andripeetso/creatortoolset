@@ -1,11 +1,14 @@
 import { Hono } from "hono";
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { env } from "../lib/env";
 import { dropAiKey, findUser, newAiKey, type SessionUser } from "../users";
 import type { AuthVars } from "../auth";
 import { BrokerError, accountOfToken, linkThisComputer, pollDeviceGrant, sendAiGrant, startDeviceGrant } from "./broker";
-import { startConnector } from "./connector";
-import { connectState } from "./state";
+import { startConnector, stopConnector, unlinkConnector } from "./connector";
+import { computerKey, keyId, parseRelayKey, publicKeyB64, signJws } from "./keys";
+import { connectState, saveConnectState } from "./state";
+import type { LinkProofAnswer, RelayConfigInput } from "../lib/clients";
 
 // Settings → Connect: this server joins the account on the broker. Only the owner's signed-in admin may link it.
 // The device code waits in memory (one pending link at a time): restarting the server cancels it, which is fine.
@@ -108,5 +111,76 @@ connectApp.post("/ai", async (c) => {
     if (e instanceof BrokerError && e.status === 404) return c.json({ error: "The Connect service doesn't take AI apps yet." }, 502);
     return c.json({ error: "The Connect service couldn't take it right now. Try again." }, 502);
   }
+  return c.json({ ok: true });
+});
+
+// ---- Link with the Mac app's own account sign-in (contract.md): the Mac asks the connect service for a challenge,
+// this computer signs it, the service links and answers, and the Mac hands that answer back here.
+
+const loopbackOnly = (url: string, header: (h: string) => string | undefined) =>
+  /^(127\.0\.0\.1|localhost|\[::1\])$/.test(new URL(url).hostname) && header("x-forwarded-host") === undefined && header("x-forwarded-proto") === undefined;
+const localOrigin = () => `http://127.0.0.1:${process.env.PORT || "3000"}`;
+
+connectApp.post("/link-proof", async (c) => {
+  // the proof names this computer's loopback origin: only a request made on this computer may ask for it
+  if (!loopbackOnly(c.req.url, (h) => c.req.header(h))) return c.json({ error: "Only from this computer" }, 403);
+  const b = (await c.req.json().catch(() => null)) as { challenge?: unknown; relayUrl?: unknown } | null;
+  const challenge = typeof b?.challenge === "string" && b.challenge.length > 0 && b.challenge.length <= 512 ? b.challenge : null;
+  let aud: string | null = null;
+  try {
+    aud = typeof b?.relayUrl === "string" ? new URL(b.relayUrl).origin : null;
+  } catch {
+    aud = null;
+  }
+  if (!challenge || !aud || aud === "null") return c.json({ error: "Bad request" }, 400);
+  const { id } = computerKey();
+  const now = Math.floor(Date.now() / 1000);
+  const name = hostname();
+  const publicKey = publicKeyB64();
+  const proof = signJws("ct-link-proof+jwt", { iss: `ct-computer:${id}`, aud, sub: id, jti: randomUUID(), iat: now, exp: now + 300, challenge, publicKey, origin: localOrigin(), name });
+  c.header("Cache-Control", "no-store");
+  return c.json({ proof, computerId: id, publicKey, origin: localOrigin(), name } satisfies LinkProofAnswer);
+});
+
+const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+
+connectApp.post("/relay-config", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as Partial<Record<keyof RelayConfigInput, unknown>> | null;
+  const str = (v: unknown) => (typeof v === "string" && v.length > 0 && v.length <= 4096 ? v : null);
+  const brokerUrl = str(b?.brokerUrl);
+  const owner = str(b?.owner);
+  const computerId = str(b?.computerId);
+  const host = str(b?.hostname);
+  const tunnelToken = str(b?.tunnelToken);
+  const brokerKey = str(b?.brokerKey);
+  let key;
+  try {
+    key = brokerKey ? parseRelayKey(brokerKey) : null;
+    if (brokerUrl && !/^https?:$/.test(new URL(brokerUrl).protocol)) throw new Error("scheme");
+  } catch {
+    key = null;
+  }
+  if (!brokerUrl || !owner || !computerId || !host || !HOSTNAME.test(host) || !tunnelToken || !brokerKey || !key) return c.json({ error: "Bad request" }, 400);
+  if (computerId !== computerKey().id) return c.json({ error: "That link is for another computer" }, 400);
+  await stopConnector(); // a relink brings a new tunnel token: the old tunnel stops first
+  saveConnectState({
+    brokerUrl,
+    owner,
+    localUser: c.get("user").username,
+    computerId,
+    name: hostname(),
+    origin: localOrigin(),
+    hostname: host.toLowerCase(),
+    tunnelToken,
+    relayKid: str(b?.brokerKid) ?? keyId(key),
+    relayPublicKey: brokerKey,
+    usedJti: connectState()?.usedJti ?? {},
+  });
+  startConnector();
+  return c.json({ ok: true, hostname: host.toLowerCase() });
+});
+
+connectApp.delete("/relay-config", async (c) => {
+  await unlinkConnector();
   return c.json({ ok: true });
 });
