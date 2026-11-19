@@ -13,6 +13,7 @@ export const ms = (t: When | null | undefined): number => (t == null ? NaN : new
 
 export interface PairingLink {
   id: string;
+  subject?: string;
   label?: string | null;
   scopes: AccessScope[];
   createdAt?: When;
@@ -29,15 +30,17 @@ export interface CreatedLink extends PairingLink {
 export interface ClientSession {
   sessionId: string;
   subject?: string;
+  label?: string | null;
   scopes: AccessScope[];
   method?: string;
   client: {
     label?: string | null;
     deviceType?: "desktop" | "mobile" | "tablet" | "bot" | "unknown";
     os?: string | null;
-    deviceModel?: string | null;
+    model?: string | null;
     appVersion?: string | null;
-    browser?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
   };
   issuedAt?: When;
   expiresAt?: When;
@@ -114,8 +117,9 @@ export function useAccess(on = true) {
     for (const type of EVENTS) {
       source.addEventListener(type, (e) => {
         try {
-          const data = JSON.parse((e as MessageEvent<string>).data);
-          setView((v) => applyAccessEvent(v, type, data));
+          // each event's data is { version, revision, type, payload }
+          const { payload } = JSON.parse((e as MessageEvent<string>).data) as { payload: unknown };
+          setView((v) => applyAccessEvent(v, type, payload));
           setError(null);
         } catch {
           // a line this page can't read: the next snapshot puts the list right

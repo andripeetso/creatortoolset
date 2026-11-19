@@ -25,7 +25,7 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
   const [revoking, setRevoking] = useState(false);
   const { client } = session;
   const Icon = ICONS[client.deviceType ?? "unknown"] ?? Monitor;
-  const about = [client.os, client.appVersion ?? client.browser, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
+  const about = [client.os, client.appVersion, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
   const revoke = async () => {
     setRevoking(true);
     await onRevoke(session.sessionId).catch((e: Error) => toast.error("Could not revoke it", { description: e.message }));
@@ -36,7 +36,7 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
       icon={<Icon />}
       title={
         <span className="flex items-center gap-1.5">
-          <span className="truncate">{client.label || [client.os, client.browser].filter(Boolean).join(" · ") || session.subject || "Device"}</span>
+          <span className="truncate">{client.label || session.label || client.model || client.os || session.subject || "Device"}</span>
           {session.current && <span className="shrink-0 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-[10px] font-normal text-muted-foreground">This device</span>}
         </span>
       }

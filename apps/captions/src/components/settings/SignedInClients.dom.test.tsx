@@ -19,15 +19,15 @@ const phone: ClientSession = {
   sessionId: "s-phone",
   scopes: ["read", "write", "access"],
   client: { label: "Tiny iPhone", deviceType: "mobile", os: "iOS 26", appVersion: "1.4.0" },
-  lastConnectedAt: NOW - 3 * 60_000,
+  lastConnectedAt: new Date(NOW - 3 * 60_000).toISOString(),
   connected: true,
   current: false,
 };
 const browser: ClientSession = {
   sessionId: "s-here",
   scopes: ["read", "write", "access"],
-  client: { deviceType: "desktop", os: "macOS", browser: "Safari" },
-  lastConnectedAt: NOW - 60 * 60_000,
+  client: { deviceType: "desktop", os: "macOS", userAgent: "Safari" },
+  lastConnectedAt: new Date(NOW - 60 * 60_000).toISOString(),
   connected: true,
   current: true,
 };
@@ -44,6 +44,7 @@ const ipad: ClientSession = {
 class FakeSource {
   static last: FakeSource | null = null;
   listeners = new Map<string, (e: MessageEvent) => void>();
+  revision = 0;
   constructor() {
     FakeSource.last = this;
   }
@@ -52,7 +53,7 @@ class FakeSource {
   }
   close() {}
   send(type: string, data: unknown) {
-    act(() => this.listeners.get(type)?.(new MessageEvent(type, { data: JSON.stringify(data) })));
+    act(() => this.listeners.get(type)?.(new MessageEvent(type, { data: JSON.stringify({ version: 1, revision: ++this.revision, type, payload: data }) })));
   }
 }
 
@@ -67,7 +68,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   calls = [];
   view = { pairingLinks: [], clientSessions: [phone, browser] };
-  created = { id: "pl-new", credential: "AAAABBBBCCCC", label: "Living room iPad", scopes: ["read"], expiresAt: NOW + 5 * 60_000, urls: [
+  created = { id: "pl-new", credential: "AAAABBBBCCCC", label: "Living room iPad", scopes: ["read"], createdAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 5 * 60_000).toISOString(), urls: [
     { kind: "lan", url: "http://tiny-mac.local:3773/#token=AAAABBBBCCCC" },
     { kind: "tailnet", url: "http://tiny-mac.vpn.example:3773/#token=AAAABBBBCCCC" },
   ] };
