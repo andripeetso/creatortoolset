@@ -1,5 +1,5 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./lib/env";
@@ -156,10 +156,11 @@ const emptyUsage = (): UserUsage => ({
   lastActiveAt: 0,
 });
 
-function load(): UserRecord[] {
+/** users.json as it is now; null when it can't be read (none yet, or half a file). */
+function readUsers(): UserRecord[] | null {
   try {
     const parsed = JSON.parse(readFileSync(USERS_FILE, "utf-8"));
-    if (!Array.isArray(parsed.users)) return [];
+    if (!Array.isArray(parsed.users)) return null;
     return parsed.users.map((u: UserRecord & { enhance?: boolean }) => {
       // unknown ids stay: a plug-in's gate keeps its switch while the plug-in is not loaded, and a retired app id keeps its switch
       const user = { ...u, off: (u.off ?? []).filter((t) => isTool(t) || isPluginGateId(t) || isRetiredAppId(t)), usage: { ...emptyUsage(), ...(u.usage ?? {}) } };
@@ -167,19 +168,56 @@ function load(): UserRecord[] {
       return applyRole(user, u.role);
     });
   } catch {
-    return [];
+    return null;
   }
 }
 
-const users: UserRecord[] = load();
+const users: UserRecord[] = readUsers() ?? [];
+
+/** Each account as this process last read or wrote it: a field that differs from it was changed here. */
+let seen = new Map<string, UserRecord>(users.map((u) => [u.username, structuredClone(u)]));
+
+const GONE_DIR = path.join(env.dataDir, "users-deleted");
+/** Whether this account was deleted here (deleteUser leaves the mark): an account merely unknown to a process is not. */
+export const wasDeleted = (username: string): boolean => existsSync(path.join(GONE_DIR, path.basename(username)));
+
+/**
+ * Two server processes share users.json while one takes over from the other (the no-downtime swap). Before each
+ * write the file is read again: accounts made there come in, a deleted one (its mark) goes, and of an account both
+ * know, only the fields this process changed itself are written over what is in the file.
+ */
+function mergeFromFile(): void {
+  const disk = readUsers();
+  if (!disk) return;
+  const onDisk = new Map(disk.map((u) => [u.username, u]));
+  for (let i = users.length - 1; i >= 0; i--) {
+    const mine = users[i]! as unknown as Record<string, unknown>;
+    const theirs = onDisk.get(mine.username as string) as unknown as Record<string, unknown> | undefined;
+    const base = seen.get(mine.username as string) as unknown as Record<string, unknown> | undefined;
+    if (!theirs) {
+      if (wasDeleted(mine.username as string)) users.splice(i, 1);
+      continue;
+    }
+    if (!base) continue; // made here, never written yet
+    for (const k of new Set([...Object.keys(mine), ...Object.keys(theirs), ...Object.keys(base)])) {
+      if (JSON.stringify(mine[k]) !== JSON.stringify(base[k])) continue;
+      if (k in theirs) mine[k] = theirs[k];
+      else delete mine[k];
+    }
+  }
+  for (const u of disk) if (!seen.has(u.username) && !wasDeleted(u.username) && !users.some((x) => x.username === u.username)) users.push(u);
+}
 
 // serialize writes so concurrent bumps can't interleave the tmp file
 let writeChain: Promise<void> = Promise.resolve();
 
 function persist(): void {
-  const snapshot = JSON.stringify({ users }, null, 2);
   writeChain = writeChain.then(async () => {
     try {
+      // read, merged and taken at once: nothing changes the accounts in between
+      mergeFromFile();
+      const snapshot = JSON.stringify({ users }, null, 2);
+      seen = new Map((JSON.parse(snapshot) as { users: UserRecord[] }).users.map((u) => [u.username, u]));
       await mkdir(env.dataDir, { recursive: true });
       const tmp = USERS_FILE + ".tmp";
       await writeFile(tmp, snapshot);
@@ -294,6 +332,7 @@ export function createUser(
     role,
   );
   users.push(user);
+  rmSync(path.join(GONE_DIR, name), { force: true }); // a name used again is a new account
   persist();
   return user;
 }
@@ -346,6 +385,9 @@ export function deleteUser(username: string): boolean {
   const i = users.findIndex((u) => u.username === username);
   if (i < 0) return false;
   users.splice(i, 1);
+  // the mark that lets the other process, and the sweep (retention.ts), tell deleted from not known yet
+  mkdirSync(GONE_DIR, { recursive: true });
+  writeFileSync(path.join(GONE_DIR, path.basename(username)), String(Date.now()));
   persist();
   revokeAccount(username);
   return true;

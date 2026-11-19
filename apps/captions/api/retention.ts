@@ -3,12 +3,12 @@ import path from "node:path";
 import { purgeExpiredProjects } from "./projects";
 import { purgeExpiredReview } from "./review";
 import { env } from "./lib/env";
-import { adminCount, findUser } from "./users";
+import { adminCount, findUser, wasDeleted } from "./users";
 
 /**
  * What happens to accounts' files. Each account keeps its own work and clears it itself (Settings → Storage lists what
  * it keeps, api/kept.ts): nothing is deleted for its age. Deleting an account deletes everything it owned right away,
- * and anything still owned by an account that no longer exists goes on the next sweep.
+ * and anything still owned by a deleted account (deleteUser's mark) goes on the next sweep.
  * A server that wants an age limit sets CONTENT_EXPIRES=1: then Caption Studio projects (originals included), Review
  * videos and their folders, Audio Enhancer sessions and guides that haven't changed for 14 days (plain `user`) or
  * 28 days (team) are deleted for good. Admins keep theirs. Video Notes (clips) are shared links, and Review videos are
@@ -27,7 +27,8 @@ export function retentionRule(now = Date.now()): Expired {
   return (owner, at) => {
     if (!owner) return false; // pre-account saves are the admin's
     const user = findUser(owner);
-    if (!user) return true;
+    // only a deleted one: an account made on the other server process during a swap isn't known here yet
+    if (!user) return wasDeleted(owner);
     const days = keepDaysFor(user.role);
     return days !== undefined && at < now - days * 86_400_000;
   };
@@ -90,7 +91,7 @@ export const deleteUserContent = (username: string) => purge((owner) => owner ==
 export async function sweepUserContent(): Promise<void> {
   // users.json unread = every owner would look deleted
   if (adminCount() === 0) return;
-  await purge(retentionRule(), (owner) => !!owner && !findUser(owner));
+  await purge(retentionRule(), (owner) => !!owner && !findUser(owner) && wasDeleted(owner));
 }
 
 // production only: dev servers share ~/.caption-studio with test data

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -669,6 +669,13 @@ describe("a file on this computer, by its path", () => {
     delete process.env.CT_LOCAL;
     expect((await toolOf(token, "use_file", { path: clip, to: "review" })).text).toMatch(/isn't on your computer/);
     process.env.CT_LOCAL = "1";
+    // the Mac's server, but not the Mac's own account: another account there never reads its disk
+    expect((await toolOf(token, "use_file", { path: clip, to: "review" })).text).toMatch(/isn't on your computer/);
+    process.env.LIBRARY_WATCH_FOLDERS = "1";
+    // never the app's own data (another account's files live there), through a link to it either
+    const theirs = path.join(process.env.DATA_DIR!, "users.json");
+    symlinkSync(theirs, path.join(dir, "theirs.mov"));
+    expect((await toolOf(token, "use_file", { path: path.join(dir, "theirs.mov"), to: "review" })).text).toMatch(/app's own data/);
     expect((await toolOf(token, "use_file", { path: path.join(dir, "notes.txt"), to: "review" })).text).toMatch(/isn't a video/);
     expect((await toolOf(token, "use_file", { path: "Movies/x.mov", to: "review" })).text).toMatch(/full path/);
     const made = JSON.parse((await toolOf(token, "use_file", { path: clip, to: "review" })).text) as { href: string; name: string };
@@ -686,6 +693,7 @@ describe("a file on this computer, by its path", () => {
     expect(taken.needs).toBeUndefined();
     expect(taken.href).toMatch(/^\//);
     delete process.env.CT_LOCAL;
+    delete process.env.LIBRARY_WATCH_FOLDERS;
     revokeJobTokens("turn-path");
   });
 });
