@@ -1,14 +1,13 @@
 /**
  * Whether this server takes a file's bytes into a library: the one rule, asked by every upload route (the route table is
- * upload-gate.test.ts). A library's Upload setting (none / proxies / all) says what its computers send. An original is
- * taken only under all (proxies: the P0 rule still takes it from an older computer), and under none no original is taken
- * from anyone, a browser or phone included (local-first 11-18, decision 6): the file stays on the person's computers.
- * A proxy a computer made of a file it holds is taken under proxies and all, and under none in a library its owner
- * shares with members (team proxies); its bytes must hash to the SHA-256 the computer declared before sending, and must
- * not be the original's size. On This Mac the server and the computer are one, so its own files are always taken.
+ * upload-gate.test.ts). A library's Hosted media (hostsOriginals / hostsProxies, UNIFIED-PRD §4.2) says what the server
+ * keeps. An original is taken only under originals or all; under proxies and none no original is taken from anyone, a browser or
+ * a computer included (local-first 11-18, decision 6), except the iPhone app's own file, held until a computer has it. A proxy a computer made of a file it holds is taken only under proxies or all; its bytes must hash to
+ * the SHA-256 the computer declared and must be smaller than the original. On This Mac the server and the computer are
+ * one, so its own files are always taken.
  */
 import { finalsUpload, isFinalsCollection, libraryDb, libraryUpload, versionUpload } from "./db";
-import type { LibraryUpload } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
 import { accountOf } from "./access";
 import { workspaceOf } from "../lib/workspaces";
@@ -25,8 +24,10 @@ export type ReceiveKind = "original" | "proxy" | "derivative" | "serving";
  */
 export type ReceiveOrigin = "person" | "computer" | "phone";
 
-export const REFUSED_NONE = "Upload is off for this workspace. Add footage in the Mac app.";
+export const REFUSED_NONE = "Upload is off for this workspace. Add footage in the Mac app, or turn on Originals in Settings → Media Library.";
+export const REFUSED_COMPUTER_OFF = "Upload is off for this workspace, so files can't be added from this computer.";
 export const REFUSED_PROXIES = "This library takes proxies only. Your computer makes the proxy and sends that.";
+export const REFUSED_NO_PROXY = "This library keeps no proxies on the server.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
 
 export type Received = { ok: true } | { ok: false; status: 409; body: { error: string; code: "upload_refused"; message: string } };
@@ -82,24 +83,24 @@ export function mayReceive(
   kind: ReceiveKind,
   library: ReceiveInto,
   origin: ReceiveOrigin,
-  /** team: the library is shared with members (hasMembers), asked by the caller for a computer's proxy under none */
-  opts: { sender?: Pick<Device, "work"> | null; proof?: ProxyProof; team?: boolean } = {},
+  opts: { sender?: Pick<Device, "work"> | null; proof?: ProxyProof } = {},
 ): Received {
   if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
   const upload = uploadFor(library);
+  // under proxies an original is refused with or without the computer's proof: only the proxy is kept (UNIFIED-PRD §4.2)
+  // the phone's own file is the one original no computer holds yet: taken under proxies and none alike (a computer makes its proxy)
   if (kind === "original") {
-    if (upload === "all") return { ok: true };
-    if (upload === "proxies") return provesProxies(opts.sender) ? refuse(REFUSED_PROXIES) : { ok: true };
-    return origin === "phone" ? { ok: true } : refuse(REFUSED_NONE);
+    if (hostsOriginals(upload) || origin === "phone") return { ok: true };
+    return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
   }
-  // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs the setting
-  if (origin === "computer" && upload === "none" && !opts.team) return refuse(REFUSED_NONE);
+  // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs Hosted proxies
+  if (origin === "computer" && !hostsProxies(upload)) return refuse(upload === "none" ? REFUSED_COMPUTER_OFF : REFUSED_NO_PROXY);
   const p = opts.proof;
   if (!p) return { ok: true };
   if (p.sha256 !== undefined && !HEX.test(p.sha256)) return refuse(REFUSED_PROOF);
   if (p.got !== undefined && p.sha256 !== undefined && p.got !== p.sha256) return refuse(REFUSED_PROOF);
-  // the original under a proxy's name: the same size as the file it was made from
-  if (p.bytes !== undefined && p.original !== undefined && p.bytes === p.original) return refuse(REFUSED_PROOF);
+  // a proxy no smaller than its original is not kept (UNIFIED-PRD §4.1 rule 4)
+  if (p.bytes !== undefined && p.original !== undefined && p.bytes >= p.original) return refuse(REFUSED_PROOF);
   return { ok: true };
 }
 
@@ -116,8 +117,7 @@ export async function mayServe(
 ): Promise<Received> {
   if (serverKind() === "local") return { ok: true };
   const upload = uploadFor(version);
-  if (what === "original" ? upload === "all" : upload !== "none") return { ok: true };
-  if (what === "proxy" && (await hasMembers(version.id))) return { ok: true };
+  if (what === "original" ? hostsOriginals(upload) : hostsProxies(upload)) return { ok: true };
   // held until a computer has it (PLAN-final decision 1): the server hands it to a computer of the owner, and only until then
   // only the iPhone app's own file (asset_versions.origin): any other original under none is refused, held or not
   if (what === "original" && opts.toComputer && libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ? AND origin = 'phone'").get(version.versionId) && !libraryDb().prepare("SELECT 1 FROM version_places WHERE version_id = ? AND kind = 'original' AND state = 'verified'").get(version.versionId)) {

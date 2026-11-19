@@ -290,7 +290,6 @@ export const organizeOf = (v: unknown): "ai" | "own" | undefined => (v === "ai" 
 export const DEFAULT_FOLDERS: readonly { name: string; roll?: "a" | "b" }[] = [
   { name: "A-roll", roll: "a" },
   { name: "B-roll", roll: "b" },
-  { name: "Music" },
   { name: "Sound effects" },
   { name: "Graphics" },
   { name: "Examples" },

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { DEFAULT_FOLDERS, SOUNDS, type Organize, type Sound } from "../../contracts/library";
+import { SOUNDS, type Organize, type Sound } from "../../contracts/library";
 import { libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { indexAsset } from "./query";
 
 /**
- * How a library is organized (its setting `organize`, chosen on the Media Library's first run): "default" makes
- * DEFAULT_FOLDERS (missing ones only, when chosen: a folder deleted later is not made again). "ai" makes no folder up
+ * How a library is organized (its setting `organize`, chosen on the Media Library's first run): "default" makes no folder
+ * up front (UNIFIED-PRD §4.9: the folders are the person's own). "ai" makes no folder up
  * front and never an empty one: every file that comes in and is in no folder yet is filed, and a folder is made the
  * first time a file goes into it. A video is filed by its description (describe.ts: the AI sees what the footage is and
  * names one of the library's plain top-level folders, or a new one while there are fewer than MAX_AI_FOLDERS); a sound
@@ -55,16 +55,6 @@ function topFolder(d: DatabaseSync, libraryId: string, name: string): string | n
     | { id: string }
     | undefined;
   return r?.id ?? null;
-}
-
-/** Makes the DEFAULT_FOLDERS the library does not have yet, in their order. */
-export function ensureDefaultFolders(d: DatabaseSync, libraryId: string, by: string): void {
-  const now = Date.now();
-  DEFAULT_FOLDERS.forEach((f, i) => {
-    if (f.roll) return void smartFolder(d, libraryId, f.name, JSON.stringify({ roll: f.roll }), by, now + i);
-    if (topFolder(d, libraryId, f.name)) return;
-    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?)").run(id(), libraryId, f.name, now + i, by);
-  });
 }
 
 /** The plain top-level folders a clip may be filed in by the describe AI: never Finals (it has its own tool), nor a smart folder. */

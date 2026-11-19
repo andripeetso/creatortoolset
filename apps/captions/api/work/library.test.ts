@@ -15,6 +15,11 @@ process.env.LIBRARY_DISK_RESERVE_GB = "0";
 
 const { ffmpegCommand } = await import("../ffmpeg-runtime");
 const { libraryDb } = await import("../library/db");
+const { createUser } = await import("../users");
+const { sessionCookieFor } = await import("../auth");
+createUser("tiny", "secret-tiny-acrobatics");
+/** The iPhone app's own upload: its header and its session (routes.ts isAppSession), which a browser's lacks. */
+const PHONE = () => ({ "x-ct-origin": "phone", cookie: sessionCookieFor("tiny", true)! });
 const { libraryApp } = await import("../library/routes");
 const { tick } = await import("../library/worker");
 const { sha256File } = await import("../lib/uploads");
@@ -187,7 +192,7 @@ describe("library work on the computer that has the file", () => {
     // over 1080 on its short side: it needs a proxy; uploaded from a phone, so no computer has it
     const file = camera("tiny-phone.mp4", "1440x1280");
     const size = statSync(file).size;
-    const start = (await (await post("/api/library/lib_phone/uploads", { filename: "tiny-phone.mp4", size })).json()) as { id: string };
+    const start = (await (await post("/api/library/lib_phone/uploads", { filename: "tiny-phone.mp4", size }, PHONE())).json()) as { id: string };
     await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
     const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
     expect(await tick(Date.now(), ["probe"])).toBe(true);
@@ -236,7 +241,7 @@ describe("library work on the computer that has the file", () => {
 
     const file = camera("tiny-phone-2.mp4", "1600x1280");
     const size = statSync(file).size;
-    const start = (await (await post("/api/library/lib_phone/uploads", { filename: "tiny-phone-2.mp4", size })).json()) as { id: string };
+    const start = (await (await post("/api/library/lib_phone/uploads", { filename: "tiny-phone-2.mp4", size }, PHONE())).json()) as { id: string };
     await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
     const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
     expect(await tick(Date.now(), ["probe"])).toBe(true);
@@ -270,17 +275,17 @@ describe("library work on the computer that has the file", () => {
     await claimAs(mac.token, { machine: { ...MAC, disks: [{ ...SHARE, path: "/Volumes/TINY FOOTAGE" }] } });
     mkdirSync(path.join(dir, "storage"), { recursive: true });
     writeFileSync(path.join(dir, "storage", "tiny.json"), JSON.stringify({ folders: [{ id: "shoots", role: "footage", name: "SHOOTS", origin: { host: mac.device.id, path: "/Volumes/TINY FOOTAGE/SHOOTS" }, make: false, createdAt: 0, reach: {} }] }));
-    const file = camera("tiny-share.mp4", "1280x720");
+    const file = camera("tiny-share.mp4", "1152x648"); // not the bytes of the other 1280x720 clips here (a duplicate would not be made)
     const onShare = path.join(mnt, "SHOOTS", "day 1", "tiny-share.mp4");
     mkdirSync(path.dirname(onShare), { recursive: true });
     copyFileSync(file, onShare);
     const size = statSync(file).size;
-    const start = (await (await post("/api/library/lib_p/uploads", { filename: "tiny-share.mp4", size, fromPath: "/Volumes/TINY FOOTAGE/SHOOTS/day 1/tiny-share.mp4", fromDevice: mac.device.id, quick: await quickPrint(file) })).json()) as { id: string };
+    const start = (await (await post("/api/library/lib_all/uploads", { filename: "tiny-share.mp4", size, fromPath: "/Volumes/TINY FOOTAGE/SHOOTS/day 1/tiny-share.mp4", fromDevice: mac.device.id, quick: await quickPrint(file) })).json()) as { id: string };
     await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
     const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
     expect(await tick(Date.now(), ["probe"])).toBe(true);
     const others = Object.fromEntries(listDevices((x) => x.owner === "tiny" && x.id !== box.device.id).map((x) => [x.id, 0]));
-    await writeBalance("tiny", { on: true, weights: others, libraries: { [box.device.id]: ["lib_p"] } });
+    await writeBalance("tiny", { on: true, weights: others, libraries: { [box.device.id]: ["lib_all"] } });
     const wave = () => d.prepare("SELECT * FROM jobs WHERE version_id = ? AND kind = 'wave'").get(versionId) as unknown as JobRow;
 
     // no share on it: nothing it can take, and the wait line names the folder and the share to connect
@@ -341,7 +346,7 @@ describe("library work on the computer that has the file", () => {
 /** A phone's upload of `file` to `lib`: the server holds the original, no computer has it. */
 async function phoneUpload(lib: string, file: string): Promise<string> {
   const size = statSync(file).size;
-  const start = (await (await post(`/api/library/${lib}/uploads`, { filename: path.basename(file), size })).json()) as { id: string };
+  const start = (await (await post(`/api/library/${lib}/uploads`, { filename: path.basename(file), size }, lib === "lib_phone" ? PHONE() : {})).json()) as { id: string };
   await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
   return ((await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string }).versionId;
 }
@@ -412,11 +417,9 @@ describe("a computer's add before its first library claim", () => {
     expect(((await none.json()) as { code: string }).code).toBe("upload_refused");
   });
 
-  it("an unregistered client keeps today's rule: an upload under proxies, a refusal under none", async () => {
+  it("an unregistered client's original is refused under proxies and under none (UNIFIED-PRD §4.2)", async () => {
     const file = camera("tiny-stranger.mp4", "848x480");
-    const r = await add("lib_p", file, "not-a-device");
-    expect(r.status).toBe(201);
-    expect(((await r.json()) as { sent?: true; id: string }).sent).toBeUndefined();
+    expect((await add("lib_p", file, "not-a-device")).status).toBe(409);
     expect((await add("lib_none", file, "not-a-device")).status).toBe(409);
   });
 });

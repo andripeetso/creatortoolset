@@ -18,7 +18,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { SOUNDS } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, SOUNDS } from "../../contracts/library";
 import { isWindowsPath } from "../../contracts/places";
 import type { Balance, Device } from "../../contracts/providers";
 import { sourcesOf } from "../../contracts/storage";
@@ -30,8 +30,8 @@ import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOrig
 import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDeviceWork, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
-import { libraryDb, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
-import { hasMembers, mayReceive, provesProxies, type Received } from "../library/upload-gate";
+import { keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
+import { mayReceive, provesProxies, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { FRAMES } from "../library/describe";
@@ -66,7 +66,8 @@ const SENDS: Record<string, string[]> = {
   describe: STILLS,
 };
 /** The file each kind must send back; a job without it fails (retried), never finishes empty. */
-const REQUIRED: Record<string, string> = { thumb: "thumb", proxy: "proxy", wave: "wave", sprite: "sprite", describe: "still0" };
+// a proxy is not required: a clip whose proxy would be no smaller than it has none (media/proxy.ts makeProxy)
+const REQUIRED: Record<string, string> = { thumb: "thumb", wave: "wave", sprite: "sprite", describe: "still0" };
 /** The kinds that may download the original of a file only the server has: the proxy, and the probe and card picture it has no lighter copy for. */
 export const READS_ORIGINAL = ["proxy", "probe", "thumb"];
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
@@ -386,7 +387,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(r.proxy && !["proxy", "probe", "send"].includes(job.kind) ? { proxy: { bytes: r.proxy_bytes ?? 0 } } : {}),
   };
   const upload = versionUpload(r.id);
-  const send = job.kind === "send" && upload !== "none";
+  const send = job.kind === "send" && (hostsOriginals(upload) || hostsProxies(upload));
   return {
     v: WORK_V,
     job: { id: job.id, kind: job.kind, versionId: r.id, libraryId: r.library_id, actor: job.actor ?? d.owner, ...(job.claim_id ? { claim: job.claim_id } : {}) },
@@ -401,14 +402,17 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(send
       ? {
           // older workers read only "proxies" | "all": Originals only is sent as "all" with no proxy (UNIFIED-PRD §4.2, E9)
-          upload: upload === "originals" ? "all" : upload,
+          upload: keepsOnlyOriginals(r.library_id) ? "all" : upload,
           // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
-          proxy: { cloud: proxiesInCloud(r.library_id) || upload === "proxies", on: upload !== "originals" && librarySetting(r.library_id, "proxy") },
+          // Hosted proxies: every video is made here and sent, and the switch reads on (UNIFIED-PRD §4.1, §4.2)
+          proxy: { cloud: proxiesInCloud(r.library_id) || hostsProxies(upload), on: hostsProxies(upload) || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
           music: !!libraryDb()
             .prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map(() => "?").join(", ")})`)
             .get(r.id, ...Object.values(SOUNDS).map((s) => s.tag)),
         }
       : {}),
+    // a proxy job encodes at the library's Proxy quality (media/proxy.ts makeProxy)
+    ...(job.kind === "proxy" ? { proxy: { cloud: false, on: false, quality: libraryProxyQuality(r.library_id) } } : {}),
   };
 }
 
@@ -526,8 +530,7 @@ export async function acceptLibraryFile(
   const sender = deviceOf(deviceId);
   const into = { id: job.library_id, versionId: job.version_id };
   const must = provesProxies(sender) && kind === "proxy";
-  const team = kind === "proxy" && (await hasMembers(job.library_id));
-  const before = mayReceive(kind, into, "computer", { sender, team, ...(must ? { proof: { sha256: declared ?? "" } } : {}) });
+  const before = mayReceive(kind, into, "computer", { sender, ...(must ? { proof: { sha256: declared ?? "" } } : {}) });
   if (!before.ok) return before;
   const cap = name === "original" ? (r?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
   await mkdir(incoming(jobId), { recursive: true });
@@ -548,7 +551,7 @@ export async function acceptLibraryFile(
     return false;
   }
   if (kind === "proxy") {
-    const after = mayReceive("proxy", into, "computer", { sender, team, proof: { ...(declared ? { sha256: declared } : {}), got: hash.digest("hex"), bytes, original: r?.bytes } });
+    const after = mayReceive("proxy", into, "computer", { sender, proof: { ...(declared ? { sha256: declared } : {}), got: hash.digest("hex"), bytes, original: r?.bytes } });
     if (!after.ok) {
       await rm(out, { force: true }); // not the proxy it said: nothing of it is kept
       return after;

@@ -7,7 +7,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
-import { LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, type LibraryUpload, type LookLevel } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -198,7 +198,7 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  * big upload says first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts),
  * search by picture where this server makes picture vectors (pictures.ts).
  */
-export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true } as const;
+export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true, transcribe: true } as const;
 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
@@ -223,6 +223,16 @@ export function versionUpload(versionId: string): LibraryUpload {
     .get(versionId) as { lib: string; fin: number } | undefined;
   return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
 }
+
+/** The Proxy quality a library's proxies are made at (UNIFIED-PRD §4.1); absent reads as standard. */
+/** Originals only: the server keeps no proxy of a library's clips (UNIFIED-PRD §4.2); a computer's proxy is refused there. */
+export const keepsOnlyOriginals = (libraryId: string): boolean => {
+  const u = libraryUpload(libraryId);
+  return hostsOriginals(u) && !hostsProxies(u);
+};
+
+export const libraryProxyQuality = (libraryId: string): ProxyQuality =>
+  proxyQualityOf((libraryDb().prepare("SELECT json_extract(settings, '$.proxyQuality') AS q FROM libraries WHERE id = ?").get(libraryId) as { q: unknown } | undefined)?.q);
 
 export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFAULTS): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;

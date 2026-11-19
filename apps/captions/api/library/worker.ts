@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -493,7 +493,7 @@ export async function afterProbe(
   if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
   music ||= song;
   // every sound is music or a sound effect (sound-kind.ts); Gemini listens only when nothing else tells, and only to a file here
-  const sound = await settleSoundKind(db, v.id, { song, seconds: p.duration, listen: file && (async () => listen(db, v.id, v.library_id, await file(), p.duration, actor)) });
+  const sound = await settleSoundKind(db, v.id, { song, seconds: p.duration, listen: file && librarySetting(v.library_id, "timeline") && (async () => listen(db, v.id, v.library_id, await file(), p.duration, actor)) });
   // a sound effect gets its type from its name and length (sfx-type.ts): no AI, and nothing when it has one already
   if (v.kind === "audio") tagSoundType(db, v.id, v.title, p.duration);
   // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
@@ -503,8 +503,9 @@ export async function afterProbe(
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
   const onlyProxy = v.kind === "video" && !!v.from_path && versionUpload(v.id) === "proxies";
-  if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") })) want("proxy");
-  if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
+  if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") && !keepsOnlyOriginals(v.library_id) })) want("proxy");
+  // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
+  if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
   if (video && !music && v.kind !== "image") want("fingerprint");
   // a photo is probed as a one-frame video: only a video asset gets a strip
@@ -617,9 +618,9 @@ async function run(job: JobRow): Promise<void> {
     await makeWave(await src(), file, !!p.acodec);
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
+    // no proxy kept when it would be no smaller than the file: the lighter copy is then the original (lighter above)
     const file = out("mp4");
-    await makeProxy(await src(), file, !!p.cover || !p.vcodec);
-    await keep("proxy", file, `${base}/proxy.mp4`);
+    if (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration)) await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "sprite") {
     // after the proxies in the lane: a 4K original's frames come from its 720p copy
     const file = out("jpg");

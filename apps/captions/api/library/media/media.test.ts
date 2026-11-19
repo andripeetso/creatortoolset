@@ -214,9 +214,9 @@ describe("proxy", () => {
     const src = await probe(hevc);
     expect(needsProxy(src)).toBe(true);
     const out = path.join(dir, "proxy.mp4");
-    await makeProxy(hevc, out);
-    const p = await probe(out);
-    expect(p).toMatchObject({ vcodec: "h264", height: 240, width: 320 });
+    // the 320x240 fixture's H.264 copy is no smaller than its HEVC source, so no proxy is kept (UNIFIED-PRD §4.1 rule 3)
+    expect(await makeProxy(hevc, out)).toBe(false);
+    expect(existsSync(out)).toBe(false);
   });
 });
 

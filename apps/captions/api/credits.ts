@@ -124,7 +124,7 @@ function choicesOf(name: MyKeyEnv, choice: CreditChoice | undefined, antigravity
 /** What a key's row says: what stopped, or what runs instead since its owner picked it. */
 const detailOf = (g: { name: MyKeyEnv; stopped: string }, choice: CreditChoice | undefined) =>
   choice === "antigravity"
-    ? "Timelines are made on Antigravity, picture only, until it is topped up"
+    ? "Video breakdowns are made on Antigravity, picture only, until it is topped up"
     : g.name === "GEMINI_API_KEY"
       ? `${g.stopped} wait · the rest carries on without Gemini`
       : `${g.stopped} stopped · top up at ${TOP_UP[g.name] ?? "the service's site"}`;

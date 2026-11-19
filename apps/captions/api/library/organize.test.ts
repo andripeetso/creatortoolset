@@ -158,7 +158,7 @@ describe("organize", () => {
     expect(folderOf("vid-kept")).toEqual(["Graphics"]);
   });
 
-  it("a sound under 20 s is a sound effect, a longer one music; a picture goes to Graphics; Default folders files nothing", async () => {
+  it("a sound under 20 s is a sound effect, a longer one music; a picture goes to Graphics; Default folders make and file nothing", async () => {
     await probed("lib_ai", "snd-short", "audio", media("short.m4a"));
     await probed("lib_ai", "snd-long", "audio", media("long.m4a"));
     await probed("lib_ai", "pic", "image", media("still.jpg"));
@@ -166,7 +166,7 @@ describe("organize", () => {
     expect(libraryDb().prepare("SELECT tag, source FROM asset_tags WHERE asset_id = 'snd-short'").all()).toEqual([{ tag: "sound effect", source: "ai" }]);
 
     await organize("lib_def", { organize: "default" });
-    expect(folders("lib_def")).toHaveLength(6);
+    expect(folders("lib_def")).toHaveLength(0); // Default folders make no folder up front (UNIFIED-PRD §4.9)
     await probed("lib_def", "snd-def", "audio", media("short.m4a"));
     expect(folderOf("snd-def")).toEqual([]);
     // filed in no folder, a sound is still known as one (sound-kind.ts)

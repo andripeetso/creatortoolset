@@ -14,15 +14,15 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { blobs, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound, type WhereAnswer } from "../../contracts/library";
+import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
-import { ensureDefaultFolders, fileUnfiled, organizeOf } from "./organize";
+import { fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
@@ -114,7 +114,7 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
  * on its way.
  */
 export function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
-  const want = { cloud: proxiesInCloud(libraryId), on: librarySetting(libraryId, "proxy") };
+  const want = { cloud: proxiesInCloud(libraryId), on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
@@ -868,12 +868,15 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures", "transcribe", "lookTalking"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
   if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
+  // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
+  if (typeof s.setupAt === "string" && s.setupAt.length < 40) put("setupAt", s.setupAt);
   // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
   // (All clips → Shot descriptions), or an edit asks for its files
   if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
@@ -904,8 +907,8 @@ libraryApp.patch("/:id", async (c) => {
     const was = organizeOf(libraryId, db());
     const set = (key: string, value: string) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(value, libraryId);
     set("organize", JSON.stringify(organize));
+    // shortcut: the AI organize still forces describe on (filing reads the description); drop it with Smart folders (UNIFIED-PRD §4.9)
     if (organize === "ai") set("describe", "true");
-    if (organize === "default") ensureDefaultFolders(db(), libraryId, user.username);
     if (organize === "ai" && was !== "ai") fileUnfiled(db(), libraryId, user.username);
     libraryChanged(libraryId); // the folders: other open pages read them again
   }
