@@ -115,7 +115,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker }: {
+export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -123,6 +123,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   urlOf: (src: string, tl: NleTimeline) => NleFile | null;
   /** Save (⌘S): the timeline as it is saved; resolves once it is kept */
   onSave: (tl: NleTimeline) => Promise<void>;
+  /** each edit and save: the timeline as it is now and as it was last saved (the page tells the chat what changed) */
+  onChange?: (now: NleTimeline, saved: NleTimeline) => void;
   saving?: { line: string; done?: number } | null;
   bin?: ReactNode;
   readDrop?: (dt: DataTransfer) => Promise<NleDrop | null>;
@@ -337,6 +339,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       // not saved: the page says why, and the timeline stays as it is to save again
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- on a change of the timeline only
+  useEffect(() => onChange?.(tl, saved), [tl, saved]);
 
   // the edit points, for ↑ and ↓
   const points = useMemo(() => [...new Set([0, ...Object.values(tl.tracks).flatMap((t) => t.items.flatMap((i) => [i.rec, endOf(i)]))])].sort((a, b) => a - b), [tl]);
