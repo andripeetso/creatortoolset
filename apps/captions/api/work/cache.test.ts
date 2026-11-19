@@ -8,7 +8,7 @@ import type { WorkClaim, WorkPackage } from "../../contracts/work";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-cache-"));
 process.env.DATA_DIR = dir;
 
-const { cacheReport, emptyCache, keptOffline, proxiesDir, proxyPath, partPath, setCacheAccount, setKeptOffline, touchProxy, trimCache } = await import("./cache");
+const { cacheReport, dropProxies, emptyCache, keepProxy, keptOffline, keptProxies, moveFile, proxiesDir, proxyPath, partPath, setCacheAccount, setKeptOffline, touchProxy, trimCache, trimOnFirstClaim } = await import("./cache");
 const { keepOffline, startComputerWorker } = await import("./computer");
 const { STEPS } = await import("../editor/worker");
 
@@ -70,6 +70,57 @@ describe("the proxy cache", () => {
     expect(cached()).toEqual(["va"]);
     expect(existsSync(partPath("vc"))).toBe(false);
     expect(existsSync(partPath("va"))).toBe(true);
+  });
+
+  it("a proxy kept here (Upload off) is moved into the cache, listed in kept.json, and never trimmed or emptied", () => {
+    mkdirSync(dir, { recursive: true });
+    const made = path.join(dir, "made-proxy.mp4");
+    writeFileSync(made, Buffer.alloc(10, 1));
+    keepProxy("vk", made);
+    expect(existsSync(made)).toBe(false);
+    expect(existsSync(proxyPath("vk"))).toBe(true);
+    expect(keptProxies()).toEqual(["vk"]);
+    proxy("vo", 10, 500);
+    process.env.CT_PROXY_LIMIT = "5";
+    expect(trimCache()).toEqual(["vo"]);
+    proxy("vo2", 10, 500);
+    emptyCache();
+    expect(cached()).toEqual(["vk"]);
+  });
+
+  it("the first claim after the update trims over the limit, sparing what is kept offline or here", () => {
+    setCacheAccount("tinyfirst");
+    proxy("fk", 10, 400);
+    proxy("fo", 10, 300);
+    proxy("fa", 10, 200);
+    proxy("fb", 10, 100);
+    setKeptOffline(["fo"]);
+    mkdirSync(proxiesDir(), { recursive: true });
+    writeFileSync(path.join(proxiesDir(), "kept.json"), JSON.stringify(["fk"]));
+    process.env.CT_PROXY_LIMIT = "35";
+    expect(trimOnFirstClaim()).toEqual(["fa"]);
+    expect(trimOnFirstClaim()).toEqual([]);
+    expect(cached()).toEqual(["fb", "fk", "fo"]);
+    setCacheAccount("tinyacrobatics");
+  });
+
+  it("dropping a version removes its kept proxy and its kept.json entry", () => {
+    mkdirSync(dir, { recursive: true });
+    const made = path.join(dir, "made-drop.mp4");
+    writeFileSync(made, Buffer.alloc(3, 1));
+    keepProxy("vd", made);
+    dropProxies(["vd"]);
+    expect(existsSync(proxyPath("vd"))).toBe(false);
+    expect(keptProxies()).toEqual([]);
+  });
+
+  it("a Download location move keeps every file, the kept ones too", () => {
+    proxy("mv", 4, 0);
+    const to = path.join(dir, "moved");
+    mkdirSync(to, { recursive: true });
+    moveFile(proxyPath("mv"), path.join(to, "mv.mp4"));
+    expect(existsSync(proxyPath("mv"))).toBe(false);
+    expect(existsSync(path.join(to, "mv.mp4"))).toBe(true);
   });
 });
 

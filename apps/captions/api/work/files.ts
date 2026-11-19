@@ -131,22 +131,25 @@ export async function resolveFiles(pkg: Pick<WorkPackage, "files">, o: ResolveOp
   };
   o.progress?.({ done, total });
   await mkdir(proxiesDir(), { recursive: true });
-  for (const f of fetch) out[f.id] = await downloadProxy(f, o, moved);
+  for (const f of fetch) out[f.id] = await downloadInto(f.id, f.title, f.proxy!.bytes, proxyPath(f.id), o, moved);
   return out;
 }
 
-/** Downloads one proxy into the cache, resuming its `.part` with Range. An abort stops it at once and keeps the `.part`. */
-async function downloadProxy(f: WorkFile, o: ResolveOptions, moved: (n: number) => void): Promise<string> {
-  const part = partPath(f.id);
-  const want = f.proxy!.bytes;
+/**
+ * Downloads one file into the cache at `final`, resuming its `.part` with Range. An abort stops it at once and keeps the
+ * `.part`. `want` is the size it must come to (0: unknown).
+ */
+export async function downloadInto(id: string, title: string, want: number, final: string, o: ResolveOptions, moved: (n: number) => void = () => {}): Promise<string> {
+  const part = `${final}.part`;
+  await mkdir(path.dirname(final), { recursive: true });
   let have = sizeOf(part) ?? 0;
   if (want && have > want) {
     moved(-have);
     have = 0;
   }
   if (!want || have < want) {
-    const res = await o.get(f.id, { headers: have ? { range: `bytes=${have}-` } : {}, signal: o.signal });
-    if (!res.ok || !res.body) throw new Error(`Could not download the proxy of ${f.title} (${res.status})`);
+    const res = await o.get(id, { headers: have ? { range: `bytes=${have}-` } : {}, signal: o.signal });
+    if (!res.ok || !res.body) throw new Error(`Could not download ${title} (${res.status})`);
     const append = res.status === 206;
     if (!append && have) moved(-have); // the server sent it whole: start over
     const h = await open(part, append ? "a" : "w");
@@ -167,7 +170,7 @@ async function downloadProxy(f: WorkFile, o: ResolveOptions, moved: (n: number) 
       await h.close();
     }
   }
-  if (want && sizeOf(part) !== want) throw new Error(`The proxy of ${f.title} came incomplete`);
-  await rename(part, proxyPath(f.id));
-  return proxyPath(f.id);
+  if (want && sizeOf(part) !== want) throw new Error(`${title} came incomplete`);
+  await rename(part, final);
+  return final;
 }

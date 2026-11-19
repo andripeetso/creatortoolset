@@ -167,6 +167,15 @@ workApp.get("/offline/:version", async (c) => {
   return libraryMedia(c, d.owner, version, "proxy");
 });
 
+/** The original of a file the computer keeps offline (Originals downloads, a library that hosts them): never another. */
+workApp.get("/offline/:version/original", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const version = c.req.param("version");
+  if (!(await offlineFor(d)).some((f) => f.id === version && f.kind === "original")) return c.json({ error: "Not found" }, 404);
+  return libraryMedia(c, d.owner, version, "source");
+});
+
 workApp.post("/:id/beat", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);

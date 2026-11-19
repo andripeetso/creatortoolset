@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, libraryDb, librarySetting } from "./db";
+import { blobs, libraryDb, libraryUpload, librarySetting } from "./db";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
+import { wantsProxy } from "./media/proxy";
 import { looksLikeSong, type ProbeSummary } from "./media/probe";
 import { organizeOnProbe } from "./organize";
 import { tagSoundType } from "./sfx-type";
@@ -157,6 +158,9 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
   // Analysis effort: Off makes no transcript on import (UNIFIED-PRD §4.4)
   if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
+  // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy)
+  if (kind === "video" && mine && libraryUpload(libraryId) === "none" && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
+    enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     const dir = framesDir(versionId);
     await mkdir(dir, { recursive: true });

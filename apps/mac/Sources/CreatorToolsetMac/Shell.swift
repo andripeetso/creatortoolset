@@ -330,7 +330,8 @@ final class Shell: NSObject, ObservableObject {
             MainActor.assumeIsolated { self?.runners.stopAll() }
         }
         // the location agents (LocationAgent.swift): one per server this Mac is paired with, AI on or off
-        LocationAgents.shared.start { [unowned self] in (self.server.map { [$0.url] } ?? []) + self.servers.compactMap { URL(string: $0.url) } }
+        LocationAgents.shared.start(servers: { [unowned self] in (self.server.map { [$0.url] } ?? []) + self.servers.compactMap { URL(string: $0.url) } },
+                                    local: { [unowned self] in self.server?.url })
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.runner?.reportNow() }

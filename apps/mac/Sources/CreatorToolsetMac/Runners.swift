@@ -129,6 +129,14 @@ final class Runners {
         onChange()
     }
 
+    /// A Download location change: each idle worker is let go, so its next step starts one with the new folder
+    /// (CT_PROXY_DIR). A worker in a step keeps the folder it started with until that step ends.
+    func restartIdleWorkers() {
+        for h in handles.values where h.worker.status == nil {
+            if let pid = h.worker.release() { DispatchQueue.global().async { Worker.stopGroups([pid]) } }
+        }
+    }
+
     /// Stops one server's runner and its worker (the worker's group off the main thread).
     func stop(host: String) {
         guard let h = handles.removeValue(forKey: host) else { return }

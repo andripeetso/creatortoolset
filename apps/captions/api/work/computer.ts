@@ -13,8 +13,8 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
-import { resolveFiles, type Progress } from "./files";
+import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { downloadInto, resolveFiles, type Progress } from "./files";
 import { cancelLibraryJob, LIBRARY_HERE, runLibraryJob, runPictureJob, scratchRoom, stopLibraryJob, sweepScratch } from "./library";
 import { processesGone } from "../library/media/run";
 import { claimLook, looksHere } from "./look";
@@ -237,6 +237,7 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
     }
     if (claim.account) setCacheAccount(claim.account);
     if (claim.offline) setKeptOffline(claim.offline.map((f) => f.id));
+    trimOnFirstClaim();
     if (claim.empty) emptyCache();
     if (claim.drop) dropProxies(claim.drop);
     if (claim.pkg) {
@@ -270,16 +271,17 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
  * so a step never waits for more than one. Cancel (the menu) stops it and keeps the `.part`. True when it downloaded one.
  */
 export async function keepOffline(list: WorkOffline[], o: WorkerOptions): Promise<boolean> {
-  const f = list.find((x) => x.bytes > 0 && sizeOf(proxyPath(x.id)) !== x.bytes);
+  const f = list.find((x) => x.bytes > 0 && sizeOf(keptPath(x)) !== x.bytes);
   if (!f) return false;
   const c = client(o);
   const ctl = new AbortController();
   current = { ctl, cancelled: false };
   try {
-    await resolveFiles(
-      { files: [{ id: f.id, title: f.title, bytes: 0, proxy: { bytes: f.bytes } }] },
-      { folders: [], get: (v, init) => c.raw(`work/offline/${encodeURIComponent(v)}`, init), signal: ctl.signal },
-    );
+    await downloadInto(f.id, f.title, f.bytes, keptPath(f), {
+      folders: [],
+      get: (v, init) => c.raw(`work/offline/${encodeURIComponent(v)}${f.kind === "original" ? "/original" : ""}`, init),
+      signal: ctl.signal,
+    });
     return true;
   } catch (e) {
     if (!ctl.signal.aborted) console.warn(`[work] keeping ${f.title} offline:`, e instanceof Error ? e.message : e);

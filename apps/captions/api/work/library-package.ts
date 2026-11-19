@@ -413,6 +413,8 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
       : {}),
     // a proxy job encodes at the library's Proxy quality (media/proxy.ts makeProxy)
     ...(job.kind === "proxy" ? { proxy: { cloud: false, on: false, quality: libraryProxyQuality(r.library_id) } } : {}),
+    // Upload off: a proxy is made here and kept in this computer's cache, never sent (cache.ts keepProxy)
+    ...(job.kind === "proxy" && upload === "none" ? { keepProxy: true } : {}),
   };
 }
 

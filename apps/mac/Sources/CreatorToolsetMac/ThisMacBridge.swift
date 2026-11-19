@@ -161,8 +161,24 @@ extension Shell {
         open.canCreateDirectories = true
         open.prompt = "Choose"
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        // the cache's files come along first (a kept proxy may be the only copy); the new folder is kept only once they are there
+        let from = DownloadLocation.path().map { [URL(fileURLWithPath: $0)] } ?? cacheRoots()
+        do {
+            for root in from { try ProxyCacheMove.move(from: root, to: url) }
+        } catch ProxyCacheMoveError.noSpace(let needed, let free) {
+            return ["path": NSNull(), "error": "That disk has \(workBytes(free)) free; the downloads need \(workBytes(needed))."]
+        } catch {
+            return ["path": NSNull(), "error": error.localizedDescription]
+        }
         UserDefaults.standard.set(url.path, forKey: DownloadLocation.key)
+        runners.restartIdleWorkers()
         return ["path": url.path]
+    }
+
+    /// The cache folders a Download location change moves from when none was chosen: one per server (ProxyCache.defaultRoot).
+    @MainActor private func cacheRoots() -> [URL] {
+        let local = server.map { ProxyCache.defaultRoot(server: $0.url, localData: $0.dataDir) }
+        return [local].compactMap { $0 } + servers.compactMap { URL(string: $0.url) }.map { ProxyCache.defaultRoot(server: $0, localData: nil) }
     }
 
     /// The owner's new password for other devices, typed in a sheet of this app (nil: cancelled or too short).

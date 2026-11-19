@@ -159,4 +159,26 @@ final class ProxyCacheTests: XCTestCase {
         _ = await places.answerCheck(library: "lib1", versions: ["v1"], site: mac, device: "dev1")
         XCTAssertFalse(site.requests.contains { $0.path == "/api/auth/check" })
     }
+
+    /// A Download location change moves every file of the cache (kept ones too) and only onto a disk with room for them.
+    func testTheCacheMovesWithItsFilesOnlyOntoADiskWithRoom() throws {
+        let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+        let work = base.appendingPathComponent("proxy-move-tests/\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let old = work.appendingPathComponent("old/tinyacrobatics", isDirectory: true)
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try Data("kept".utf8).write(to: old.appendingPathComponent("vk.mp4"))
+        try Data("kept-list".utf8).write(to: old.appendingPathComponent("kept.json"))
+        let new = work.appendingPathComponent("new", isDirectory: true)
+
+        XCTAssertThrowsError(try ProxyCacheMove.move(from: work.appendingPathComponent("old"), to: new, free: { _ in 3 })) { error in
+            XCTAssertEqual(error as? ProxyCacheMoveError, .noSpace(needed: 13, free: 3))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: old.appendingPathComponent("vk.mp4").path))
+
+        try ProxyCacheMove.move(from: work.appendingPathComponent("old"), to: new, free: { _ in 100 })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: new.appendingPathComponent("tinyacrobatics/vk.mp4").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: new.appendingPathComponent("tinyacrobatics/kept.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.appendingPathComponent("vk.mp4").path))
+    }
 }

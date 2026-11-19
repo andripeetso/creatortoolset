@@ -96,11 +96,13 @@ export interface WorkClaimBody {
   pictures?: true;
 }
 
-/** A proxy a person keeps on their computers (Available offline): its version id, the clip's name and the proxy's size. */
+/** A file a person keeps on their computers (Available offline): its version id, the clip's name and the file's size. */
 export interface WorkOffline {
   id: string;
   title: string;
   bytes: number;
+  /** "original": the file itself (Originals downloads, the library hosts them); else its proxy */
+  kind?: "original";
 }
 
 /**
