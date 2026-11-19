@@ -1,10 +1,11 @@
 /**
  * Whether this server takes a file's bytes into a library: the one rule, asked by every upload route (the route table is
  * upload-gate.test.ts). A library's Hosted media (hostsOriginals / hostsProxies, UNIFIED-PRD §4.2) says what the server
- * keeps. An original is taken only under originals or all; under proxies and none no original is taken from anyone, a browser or
- * a computer included (local-first 11-18, decision 6), except the iPhone app's own file, held until a computer has it. A proxy a computer made of a file it holds is taken only under proxies or all; its bytes must hash to
- * the SHA-256 the computer declared and must be smaller than the original. On This Mac the server and the computer are
- * one, so its own files are always taken.
+ * keeps. A computer's original is taken only under originals or all: under proxies and none it is refused, with or without
+ * the computer's proof. A person's own file (browser) is taken under proxies too, as today (the server keeps its proxy),
+ * but never under none; the iPhone app's own file is taken under none, held until a computer has it. A computer's proxy is
+ * taken only under proxies or all, its bytes must hash to the SHA-256 it declared, and from every sender a proxy no smaller
+ * than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
  */
 import { finalsUpload, isFinalsCollection, libraryDb, libraryUpload, versionUpload } from "./db";
 import { hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
@@ -87,19 +88,18 @@ export function mayReceive(
 ): Received {
   if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
   const upload = uploadFor(library);
-  // under proxies an original is refused with or without the computer's proof: only the proxy is kept (UNIFIED-PRD §4.2)
-  // the phone's own file is the one original no computer holds yet: taken under proxies and none alike (a computer makes its proxy)
   if (kind === "original") {
     if (hostsOriginals(upload) || origin === "phone") return { ok: true };
+    // a person's own file under proxies is taken as today; a computer's is refused with or without its proof (UNIFIED-PRD §4.2)
+    if (origin === "person" && upload === "proxies") return { ok: true };
     return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
   }
   // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs Hosted proxies
   if (origin === "computer" && !hostsProxies(upload)) return refuse(upload === "none" ? REFUSED_COMPUTER_OFF : REFUSED_NO_PROXY);
-  const p = opts.proof;
-  if (!p) return { ok: true };
+  const p = opts.proof ?? {};
   if (p.sha256 !== undefined && !HEX.test(p.sha256)) return refuse(REFUSED_PROOF);
   if (p.got !== undefined && p.sha256 !== undefined && p.got !== p.sha256) return refuse(REFUSED_PROOF);
-  // a proxy no smaller than its original is not kept (UNIFIED-PRD §4.1 rule 4)
+  // a proxy no smaller than its original is not kept, from every sender (UNIFIED-PRD §4.1 rule 4); no proof needed
   if (p.bytes !== undefined && p.original !== undefined && p.bytes >= p.original) return refuse(REFUSED_PROOF);
   return { ok: true };
 }

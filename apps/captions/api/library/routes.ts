@@ -345,7 +345,8 @@ const receives = (row: UploadRow, got?: string) => {
   const into = { id: row.library_id, collectionId: row.collection_id };
   const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
   if (!made) return mayReceive("original", into, origin, { sender });
-  return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got, bytes: row.size, original: made.size } : {}) } });
+  // the size check runs for every sender, a computer without the proof included (UNIFIED-PRD §4.1 rule 4)
+  return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got } : {}), bytes: row.size, original: made.size } });
 };
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
