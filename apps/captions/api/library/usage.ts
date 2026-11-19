@@ -11,6 +11,7 @@ import { libraryChanged, libraryRole } from "./access";
 import { libraryDb, placeOf, proxyPlace, serverBucket, type BunnyConfig, type ProxyPlace, type StorageConfig } from "./db";
 import { enqueueJob } from "./jobs";
 import { unproxied } from "./routes";
+import { footageIn } from "./watch";
 import { clearProxies } from "./space";
 import { bunnyBlobs, createBunnyZone } from "./storage/bunny";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
@@ -255,7 +256,7 @@ storageApp.put("/:id/storage", async (c) => {
   const body = (await c.req.json().catch(() => null)) as (Partial<LibraryStorageInput> & Record<string, unknown>) | null;
   const conflict = (error: string) => c.json({ error, code: "conflict" }, 409);
   const moving = "This library holds files, so where they live can't change. A new library can use the other storage.";
-  const watch = (JSON.parse(r.settings || "{}") as { watch?: { mode: string }[] }).watch ?? [];
+  const watch = await footageIn(libraryId);
   const inPlace = "A bucket can't hold files left in their folders: remove the watch folders that do that first";
 
   // a platform admin runs the server: they may point it at their own network

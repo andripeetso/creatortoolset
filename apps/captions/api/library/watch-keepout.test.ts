@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import type { AuthVars } from "../auth";
 
 // Amendment b: a Projects or Exports folder is never indexed by the watcher, even nested inside a watched Media folder
 const dir = realpathSync(mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "watch-keepout-")));
@@ -56,9 +57,30 @@ describe("the watcher keeps Projects and Exports folders out (Amendment b)", () 
   });
 });
 
+describe("the import-folder route refuses a Projects or Exports folder: it is not footage", () => {
+  it("answers 400 with the shared words, not an empty list", async () => {
+    const { Hono } = await import("hono");
+    const { watchApp } = await import("./watch");
+    libraryDb().prepare("INSERT OR IGNORE INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_k', ?, 'K', 'local', 0)").run(USER);
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use(async (c, next) => {
+      c.set("user", { username: USER, role: "member" } as never);
+      return next();
+    });
+    app.route("/api/library", watchApp);
+    const r = await app.request("/api/library/import-folder", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: exports, libraryId: "lib_k" }),
+    });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe("Inside Source media: not imported as footage");
+  });
+});
+
 describe("the server's own scan of Source media never takes a nested Projects or Exports folder", () => {
   it("imports the footage of the Source media row only, nothing of the Exports folder nested in it", async () => {
-    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_k', ?, 'K', 'local', 0)").run(USER);
+    libraryDb().prepare("INSERT OR IGNORE INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_k', ?, 'K', 'local', 0)").run(USER);
     const t0 = 1_000_000_000_000;
     expect(await scanWatchFolders(t0)).toBe(0);
     expect(await scanWatchFolders(t0 + SETTLE_MS)).toBe(1);

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -113,7 +113,7 @@ describe("watch folder scan", () => {
     expect(versions()).toHaveLength(1);
   });
 
-  it("waits while a file is still growing, then copies it in", async () => {
+  it("reads a file that is still growing in place, once it has settled", async () => {
     const big = path.join(copied, "Cartwheel.mov");
     const t1 = t0 + 100 * SETTLE_MS;
     writeFileSync(big, "part one");
@@ -252,6 +252,42 @@ describe("a folder chosen from the Media Library card", () => {
     mkdirSync(other, { recursive: true });
     expect((await post("owner-w", { path: other, libraryId: "lib_nope" })).status).toBe(400); // not a library of theirs
     expect(await listed()).toEqual(before);
+  });
+});
+
+describe("the watch list is the account's Source media rows", () => {
+  const newer = path.join(dir, "Newer footage");
+  const put2 = (folders: unknown[]) => put("owner-w", folders);
+  const rowsOnDisk = () => (JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "storage", "owner-w.json"), "utf-8")) as { folders: { origin: { path: string } }[] }).folders.map((f) => f.origin.path);
+
+  it("a folder put on the list is a row, read by the next scan; one taken off is removed, and the scan stops", async () => {
+    mkdirSync(newer, { recursive: true });
+    writeFileSync(path.join(newer, "Flip.mp4"), "flip");
+    expect((await put2([{ path: watched }, { path: copied }, { path: newer }])).status).toBe(200);
+    expect(rowsOnDisk()).toContain(newer);
+    expect(await scanWatchFolders(Date.now())).toBe(0);
+    expect(await scanWatchFolders(Date.now() + SETTLE_MS)).toBe(1);
+    expect(versions().some((v) => v.source_path === path.join(newer, "Flip.mp4"))).toBe(true);
+    // taken off: the row goes, and nothing in it is scanned again
+    expect((await put2([{ path: watched }, { path: copied }])).status).toBe(200);
+    expect(rowsOnDisk()).not.toContain(newer);
+    writeFileSync(path.join(newer, "Later.mp4"), "later");
+    expect(await scanWatchFolders(Date.now() + 10 * SETTLE_MS)).toBe(0);
+    expect(versions().some((v) => v.source_path === path.join(newer, "Later.mp4"))).toBe(false);
+  });
+
+  it("refuses a copy (copyTo, or mode copy): not on yet, and nothing is written", async () => {
+    const before = rowsOnDisk();
+    expect((await put2([{ path: watched }, { path: copied }, { path: newer, mode: "copy" }])).status).toBe(400);
+    expect((await put2([{ path: watched }, { path: copied }, { path: newer, copyTo: dir }])).status).toBe(400);
+    expect(rowsOnDisk()).toEqual(before);
+  });
+
+  it("a server that may not watch shows no folders", async () => {
+    process.env.LIBRARY_WATCH_FOLDERS = "0";
+    const s = (await (await app.request("/api/library/lib_w/watch", { headers: { "x-user": "owner-w" } })).json()) as { allowed: boolean; folders: unknown[] };
+    process.env.LIBRARY_WATCH_FOLDERS = "1";
+    expect(s).toMatchObject({ allowed: false, folders: [] });
   });
 });
 

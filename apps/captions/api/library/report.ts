@@ -1,6 +1,7 @@
 import { FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
 import { EVERY_WORKSPACE, editorDirsOf, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
 import type { Device } from "../../contracts/providers";
+import { LIBRARY_WORDS } from "../../contracts/library";
 import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
 import { projectOf } from "../lib/project-of";
@@ -56,16 +57,18 @@ export type FolderLibrary = { id: string; locate: boolean };
 
 /** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". A member
  *  never gets a library of a workspace they were given: the owner's one is used, locate only. */
-export async function librariesOf(owner: string, f: StorageFolder): Promise<FolderLibrary[]> {
+export async function librariesOf(owner: string, f: StorageFolder, make = true): Promise<FolderLibrary[]> {
   const ws = await workspacesOf(owner, f);
   const owned = await ownedProjects(owner);
   const ids = ws === "*" ? owned.map((p) => p.id) : ws;
   const given = new Map((await sharedProjects(owner)).map((p) => [p.id, p.owner]));
   const member = isTeamMember(owner);
+  // make=false (a read, a GET): the libraries that exist, none made
+  const libraryFor = (id?: string) => (make ? ensureLibrary(owner, id) : librariesHere(owner, id ?? "").then((l) => l[0]?.id ?? null));
   // an account with no workspaces: its one library. A member given workspaces but none of their own makes none (theirs are the owner's)
   if (!ids.length) {
     if (member && given.size) return [];
-    const one = await ensureLibrary(owner);
+    const one = await libraryFor();
     return one ? [{ id: one, locate: false }] : [];
   }
   const out: FolderLibrary[] = [];
@@ -78,7 +81,7 @@ export async function librariesOf(owner: string, f: StorageFolder): Promise<Fold
       const lib = (await librariesHere(from, id))[0]?.id;
       if (lib) add(lib, true);
     } else if (!member || owned.some((p) => p.id === id)) {
-      const lib = await ensureLibrary(owner, id);
+      const lib = await libraryFor(id);
       if (lib) add(lib, false);
     }
     // a member's workspace not given to them: no library made in their home
@@ -304,7 +307,7 @@ export async function indexForDevice(dev: Device, folderId: string, x: OnMacInde
   if (!folder || useOf(folder) !== "media") return "Not one of this computer's folders";
   if (inside(nfc(x.path), folder.origin.path) === null && !(folder.mountPath && inside(nfc(x.path), folder.mountPath) !== null)) return "Not inside that folder";
   // a file of a Projects or Exports folder is never footage, even when a computer sends it (applyFolder keeps them out too)
-  if (keptOut(st, dev.id).some((k) => inside(nfc(x.path), k) !== null)) return "Inside a Projects or Exports folder: not footage";
+  if (keptOut(st, dev.id).some((k) => inside(nfc(x.path), k) !== null)) return LIBRARY_WORDS.notFootage;
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
   for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
     // a member's workspace is only located, never indexed into (applyFolder answers no file for it)

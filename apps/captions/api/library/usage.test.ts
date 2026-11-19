@@ -234,13 +234,22 @@ describe("library storage choice", () => {
     }
   });
 
+  // a workspace of owner-a's: a Source media row carries its workspace, so the folder lands in that library only
+  const workspace = (id: string, library: string) => {
+    mkdirSync(path.join(process.env.DATA_DIR!, "workshop", "projects"), { recursive: true });
+    writeFileSync(path.join(process.env.DATA_DIR!, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "owner-a", name: id, updatedAt: 1 }));
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.projectId', ?) WHERE id = ?").run(id, library);
+  };
+
   it("a bucket library refuses watch folders that leave files in place, and the other way round", async () => {
     const folder = path.join(dir, "Footage");
     mkdirSync(folder, { recursive: true });
     const ref = await call("owner-a", "PUT", "/api/library/lib_a/watch", { folders: [{ path: folder, mode: "reference" }] });
     expect(ref.status).toBe(400);
-    expect((await call("owner-a", "PUT", "/api/library/lib_a/watch", { folders: [{ path: folder, mode: "copy" }] })).status).toBe(200);
+    // copying into Source media is not on yet: refused, nothing written
+    expect((await call("owner-a", "PUT", "/api/library/lib_a/watch", { folders: [{ path: folder, mode: "copy" }] })).status).toBe(400);
 
+    workspace("ws_b", "lib_b");
     expect((await call("owner-a", "PUT", "/api/library/lib_b/watch", { folders: [{ path: folder, mode: "reference" }] })).status).toBe(200);
     expect((await call("owner-a", "PUT", "/api/library/lib_b/storage", own)).status).toBe(409);
   });
@@ -267,6 +276,7 @@ describe("library storage choice", () => {
     d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('v_4k', 'proxy', 'libraries/lib_p/v/v_4k/proxy.mp4', 9)").run();
     const folder = path.join(dir, "Footage P");
     mkdirSync(folder, { recursive: true });
+    workspace("ws_p", "lib_p");
     expect((await call("owner-a", "PUT", "/api/library/lib_p/watch", { folders: [{ path: folder, mode: "reference" }] })).status).toBe(200);
 
     // the originals can't move (files, folders read in place), the proxies can

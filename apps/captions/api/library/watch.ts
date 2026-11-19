@@ -5,7 +5,7 @@ import { constants, copyFile, link, mkdir, readdir, readFile, realpath, rename, 
 import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "../auth";
-import type { WatchFolder, WatchStatus } from "../../contracts/library";
+import { LIBRARY_WORDS, type WatchFolder, type WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
@@ -18,12 +18,16 @@ import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage } from "../devices-storage";
-import { editorDirsOf, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
+import { editorDirsOf, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
+
+// shortcut: copying files into Source media (copyTo) is not read from the rows yet; it refuses until the copy task lands
+const IN_PLACE_ONLY = "Only folders read where they are can be added for now: copying into Source media is not on yet";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
  * library. Only where the server runs on the user's own computer: a hosted server cannot see the user's folders
- * (watchAllowed). The workspace owner sets them in `settings.watch`; files come in as that owner's.
+ * (watchAllowed). A folder is a Source media row of the account's computer (its storage file, the one folder list);
+ * files come in as that owner's. Finals watches stay in `settings.watch`.
  *
  * Every 30 s (fs.watch misses changes on external drives) each folder is walked, and at once when a folder is added
  * (scanSoon). A file is imported once its size and mtime have stayed the same across scans: for 60 s when it was
@@ -72,27 +76,43 @@ const foldersOf = (libraryId: string): WatchFolder[] => {
 /** The Finals folders of a library (settings.watch entries with projects, written by watchFinals): the only ones read from there. */
 const finalsOf = (libraryId: string): WatchFolder[] => foldersOf(libraryId).filter((f) => f.projects);
 
+const onThisComputer = (f: StorageFolder) => f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host);
+
+/** The device id this computer's rows are stored under (as the storage routes write them), else THIS_COMPUTER. */
+const hostHere = (username: string) => listDevices((d) => d.owner === username && isThisMachine(d.id))[0]?.id ?? THIS_COMPUTER;
+
 /**
- * The Source media rows on this server's own computer, by the library each one fills (the list of the account that made
- * it; a member's locate-only library gets none). Read in place, as mode "reference".
+ * One account's Source media rows on this computer, by the library each one fills (a member's locate-only library gets
+ * none). Read in place, as mode "reference". `make`: the scan may make a workspace's library; a read (a GET) does not.
  */
-async function footageByLibrary(): Promise<Map<string, WatchFolder[]>> {
+async function footageOf(username: string, make: boolean): Promise<Map<string, WatchFolder[]>> {
+  const out = new Map<string, WatchFolder[]>();
+  if (!watchAllowed(username)) return out;
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
+  for (const f of st.folders) {
+    if (f.role !== "footage" || !onThisComputer(f)) continue;
+    for (const lib of await librariesOf(username, f, make)) {
+      if (lib.locate) continue;
+      out.set(lib.id, [...(out.get(lib.id) ?? []), { path: expandHome(f.origin.path), mode: "reference", addedBy: username }]);
+    }
+  }
+  return out;
+}
+
+/** Every account's Source media rows on this server's computer, by library: what the scan reads. */
+async function footageByLibrary(make: boolean): Promise<Map<string, WatchFolder[]>> {
   const out = new Map<string, WatchFolder[]>();
   if (!watchAllowed()) return out;
   const files = await readdir(path.join(env.dataDir, "storage")).catch(() => [] as string[]);
   for (const file of files.filter((n) => n.endsWith(".json"))) {
-    const user = file.slice(0, -".json".length);
-    const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, user), "utf-8").catch(() => "{}"));
-    for (const f of st.folders) {
-      if (f.role !== "footage" || !(f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))) continue;
-      for (const lib of await librariesOf(user, f)) {
-        if (lib.locate) continue;
-        const row: WatchFolder = { path: expandHome(f.origin.path), mode: "reference", addedBy: user };
-        out.set(lib.id, [...(out.get(lib.id) ?? []), row]);
-      }
-    }
+    for (const [id, list] of await footageOf(file.slice(0, -".json".length), make)) out.set(id, [...(out.get(id) ?? []), ...list]);
   }
   return out;
+}
+
+/** The library's folders read in place, of every account (usage.ts: a bucket can't keep them). */
+export async function footageIn(libraryId: string): Promise<WatchFolder[]> {
+  return (await footageByLibrary(false)).get(libraryId) ?? [];
 }
 
 const inside = (child: string, parent: string) => {
@@ -148,9 +168,9 @@ export async function copyTarget(source: string, to: string, data: string): Prom
   return dest;
 }
 
-async function status(libraryId: string): Promise<WatchStatus> {
+async function status(libraryId: string, username: string): Promise<WatchStatus> {
   // a Finals folder is not one of the library's footage folders (Settings → Folders has it): not listed here
-  const folders = ((await footageByLibrary()).get(libraryId) ?? []).map((f) => ({
+  const folders = ((await footageOf(username, false)).get(libraryId) ?? []).map((f) => ({
     ...f,
     found: false,
     ...(walked.get(`${libraryId}\0${f.path}`) ?? { files: 0, adding: 0 }),
@@ -189,7 +209,7 @@ export async function defaultCopyTo(username: string): Promise<string> {
 watchApp.get("/:id/watch", async (c) => {
   const role = libraryRole(c.get("user").username, c.req.param("id"));
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const s = await withFound(await status(c.req.param("id")));
+  const s = await withFound(await status(c.req.param("id"), c.get("user").username));
   // a copy goes in a folder on this computer: offered where the server reads it, to a library that keeps files here
   const local = (db().prepare("SELECT storage_kind FROM libraries WHERE id = ?").get(c.req.param("id")) as { storage_kind: string }).storage_kind === "local";
   return c.json(watchAllowed(c.get("user").username) && local ? { ...s, copyTo: await defaultCopyTo(c.get("user").username) } : s);
@@ -246,24 +266,25 @@ watchApp.put("/:id/watch", async (c) => {
   }
   const body = (await c.req.json().catch(() => null)) as { folders?: unknown } | null;
   if (!Array.isArray(body?.folders) || body.folders.length > MAX_FOLDERS) return c.json({ error: `A list of up to ${MAX_FOLDERS} folders`, code: "invalid" }, 400);
-  const stored = foldersOf(libraryId);
-  // the Finals folder is not on the list the page sends (status): it stays as it is
-  const folders: WatchFolder[] = stored.filter((g) => g.projects);
+  const current = (await footageOf(user.username, false)).get(libraryId) ?? [];
+  const want: WatchFolder[] = [];
   for (const raw of body.folders) {
-    // a folder already on the list, unchanged, stays as it is: a copied camera card that was taken out is not refused
-    const r = (raw ?? {}) as Partial<WatchFolder>;
-    const same = stored.find((g) => g.path === r.path && g.mode === (r.mode ?? "reference") && g.copyTo === r.copyTo && g.collectionId === r.collectionId);
+    // a folder already listed stays as it is: a copied camera card that was taken out is not refused
+    const r = (raw ?? {}) as Partial<WatchFolder> & { copyTo?: unknown; collectionId?: unknown };
+    const same = current.find((g) => g.path === r.path);
     if (same) {
-      if (!folders.some((g) => g.path === same.path)) folders.push(same);
+      if (!want.some((g) => g.path === same.path)) want.push(same);
       continue;
     }
+    if (r.mode === "copy" || r.copyTo || r.collectionId) return c.json({ error: IN_PLACE_ONLY, code: "invalid" }, 400);
     const f = await checkFolder(libraryId, raw, user.username);
     if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
-    if (!folders.some((g) => g.path === f.path)) folders.push(f);
+    if (!want.some((g) => g.path === f.path)) want.push(f);
   }
-  writeWatch(libraryId, folders);
+  for (const g of want) if (!current.some((o) => o.path === g.path)) await addSourceRow(user.username, g.path, libraryId);
+  await dropRows(user.username, current.filter((g) => !want.some((w) => w.path === g.path)).map((g) => g.path), (ids) => ids.some((id) => id !== libraryId));
   scanSoon();
-  return c.json(await withFound(await status(libraryId)));
+  return c.json(await withFound(await status(libraryId, user.username)));
 });
 
 // POST /api/library/watch/folder { path, libraryId? } → { ok }. Adds one folder to a watch list: the "Where are your
@@ -279,7 +300,6 @@ watchApp.post("/watch/folder", async (c) => {
   const copyTo = typeof body?.copyTo === "string" && body.copyTo.trim() ? body.copyTo : undefined;
   const refused = await addWatchFolder(user.username, folder, libraryId, copyTo);
   if (refused) return c.json({ error: refused, code: "invalid" }, 400);
-  await addSourceRow(user.username, folder, libraryId);
   return c.json({ ok: true });
 });
 
@@ -350,6 +370,8 @@ watchApp.post("/import-folder", async (c) => {
   if (await wholeDisk(f.path)) {
     return c.json({ error: `${f.path} is a whole disk or home folder: name the folder the files are in`, code: "invalid" }, 400);
   }
+  const keep = await keepOutOf(user.username);
+  if (keep.some((k) => inside(f.path, k))) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   const since = typeof body.since === "number" && Number.isFinite(body.since) ? body.since : 0;
   const all = await readdir(f.path, { recursive: true, withFileTypes: true });
   const seen = all
@@ -357,7 +379,6 @@ watchApp.post("/import-folder", async (c) => {
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(f.path, p)));
-  const keep = await keepOutOf(user.username);
   const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => inside(p, k)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
@@ -415,17 +436,35 @@ export async function wholeDisk(real: string, drive = false): Promise<boolean> {
 }
 
 /**
- * The folder a Library card or the Mac picker chose, as this account's Source media row on this computer (the one folder
- * list the scan reads), in the library's workspace. A row already there is kept as it is.
+ * Adds a folder to this account's Source media rows on this computer, in the library's workspace (the one folder list the
+ * scan reads). A row already there for that workspace is kept as it is; the same folder in another workspace is its own row.
  */
-async function addSourceRow(username: string, folderPath: string, libraryId?: string): Promise<void> {
+async function addSourceRow(username: string, folderPath: string, libraryId: string): Promise<void> {
   // the path as the storage routes keep it (not resolved): Projects and Exports rows are compared with it
   const real = expandHome(folderPath).replace(/(.)\/+$/, "$1");
-  const ws = libraryId ? (db().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws : null;
+  const ws = (db().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws ?? undefined;
   await changeStorage(username, (st) => {
-    if (st.folders.some((g) => g.role === "footage" && g.origin.host === THIS_COMPUTER && g.origin.path === real)) return "keep";
-    st.folders.push({ id: randomUUID(), role: "footage", name: path.basename(real), origin: { host: THIS_COMPUTER, path: real }, make: false, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) });
+    if (st.folders.some((g) => g.role === "footage" && onThisComputer(g) && g.origin.path === real && g.workspace === ws)) return "keep";
+    st.folders.push({ id: randomUUID(), role: "footage", name: path.basename(real), origin: { host: hostHere(username), path: real }, make: false, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) });
   });
+}
+
+/**
+ * Takes this account's Source media rows on this computer at `paths` out of storage, unless `keepRow` says a library the
+ * row fills still needs it (a row fills the libraries of its workspace, so it goes only when none of them keeps it).
+ */
+async function dropRows(username: string, paths: string[], keepRow: (libraryIds: string[]) => boolean): Promise<void> {
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
+  const gone = new Set<string>();
+  for (const f of st.folders) {
+    if (f.role !== "footage" || !onThisComputer(f) || !paths.includes(expandHome(f.origin.path))) continue;
+    if (!keepRow((await librariesOf(username, f, false)).map((l) => l.id))) gone.add(f.id);
+  }
+  if (gone.size) {
+    await changeStorage(username, (s) => {
+      s.folders = s.folders.filter((f) => !gone.has(f.id));
+    });
+  }
 }
 
 /** Only the watch key: other settings (transcription and the rest) are written by other code. */
@@ -436,22 +475,23 @@ const writeWatch = (libraryId: string, folders: WatchFolder[]) => {
 const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
 
 /**
- * Adds one folder to the account's own Library watch list, read in place. The Library and the AI Editor both read that
- * list, so setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or null when it is
- * in the list (already there counts as added). `libraryId` is the library the person is looking at (default: their own
- * in the workspace this request works in). `copyTo`: its files are copied into a folder there first (checkFolder).
+ * Adds one folder to the account's Library footage folders, read in place. The Library and the AI Editor both read that
+ * list, so the Library card, setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or
+ * null when it is in the list (already there counts as added). `libraryId` is the library the person is looking at
+ * (default: their own in the workspace this request works in).
  */
 export async function addWatchFolder(username: string, folderPath: string, libraryId?: string, copyTo?: string): Promise<string | null> {
   if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
   const target = libraryId ?? (await ensureLibrary(username));
   if (!target) return "No library: try again later";
   if (!libraryRole(username, target)) return "Only the library's owner can add a folder";
-  const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference", copyTo }, username);
+  if (copyTo) return IN_PLACE_ONLY;
+  const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference" }, username);
   if (typeof f === "string") return f;
-  const current = foldersOf(target);
+  const current = (await footageOf(username, false)).get(target) ?? [];
   if (current.some((g) => g.path === f.path)) return null;
   if (current.length >= MAX_FOLDERS) return `A library has up to ${MAX_FOLDERS} footage folders: remove one first`;
-  writeWatch(target, [...current, f]);
+  await addSourceRow(username, f.path, target);
   libraryChanged(target);
   scanSoon();
   return null;
@@ -490,6 +530,7 @@ export async function watchFinals(username: string, libraryId: string, root: str
   const current = foldersOf(libraryId);
   const had = current.find((g) => g.path === real);
   if (had && !had.projects) return refused("it is a footage folder of this library");
+  if ((await footageOf(username, false)).get(libraryId)?.some((g) => g.path === real)) return refused("it is a footage folder of this library");
   if (had?.projects?.[dir] !== session) {
     let entry = had;
     if (!entry) {
@@ -507,12 +548,8 @@ export async function watchFinals(username: string, libraryId: string, root: str
 export async function removeWatchFolder(username: string, folderPath: string, keep?: ReadonlySet<string>): Promise<void> {
   const p = expandHome(folderPath);
   const real = await realpath(p).catch(() => p);
-  for (const { id } of await librariesHere(username, "")) {
-    // a Library that still lists the folder keeps its entry as it is (its copy-to and Library folder too)
-    if (keep?.has(id)) continue;
-    const current = foldersOf(id);
-    if (current.some((g) => g.path === real || g.path === p)) writeWatch(id, current.filter((g) => g.path !== real && g.path !== p));
-  }
+  // a Library that still lists the folder keeps its row (the row fills it too)
+  await dropRows(username, [real, p], (ids) => ids.some((id) => !!keep?.has(id)));
 }
 
 // ---- the scan ----------------------------------------------------------------------------------------------------
@@ -791,7 +828,7 @@ async function refreshMissing(): Promise<void> {
 /** One scan of every library's watch folders, then the missing check. Returns how many files came in. */
 export async function scanWatchFolders(now = Date.now()): Promise<number> {
   if (!watchAllowed()) return 0;
-  const footage = await footageByLibrary();
+  const footage = await footageByLibrary(true);
   const lists = new Map((db().prepare("SELECT id FROM libraries").all() as { id: string }[]).map((l) => [l.id, [...(footage.get(l.id) ?? []), ...finalsOf(l.id)]]));
   watchedFolders.clear();
   for (const [id, list] of lists) watchedFolders.set(id, new Set(list.map((f) => f.path)));
