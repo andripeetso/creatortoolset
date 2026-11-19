@@ -135,6 +135,7 @@ vi.mock("./library/api", () => ({
 }));
 
 const { default: LibraryPage } = await import("./LibraryPage");
+const { resetImportQueue } = await import("@/lib/import-queue");
 const { undoLatest } = await import("@/lib/undo");
 
 let root: Root | null = null;
@@ -163,6 +164,7 @@ afterEach(() => {
   act(() => root?.unmount());
   document.body.innerHTML = "";
   root = null;
+  resetImportQueue(); // the queue is the app's: it outlives the page, so each test starts with none
 });
 
 /** The address the page is at, for the tests to read. */
@@ -619,6 +621,31 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await settle();
     await settle();
     expect(host.textContent).not.toContain("Adding 2 clips");
+  });
+
+  // CEO 11-19 import-queue: the import is the app's, not the page's
+  it("leaving the Library and coming back keeps the drop going: its cards, the count and Cancel all", async () => {
+    server.settings = { organize: "own" };
+    const host = await mount();
+    let letGo = () => {};
+    server.uploading = new Promise((r) => (letGo = r));
+    const files = ["Tiny one.mp4", "Tiny two.mp4", "Tiny three.mp4"].map((n) => new File(["x"], n, { type: "video/mp4" }));
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files, items: files.map(() => ({ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) })) } });
+    await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await settle();
+    expect(host.querySelectorAll("[data-placeholder]").length).toBe(3);
+    // another tool: the page goes away, the files don't
+    act(() => root!.unmount());
+    document.body.innerHTML = "";
+    const back = await mount();
+    await settle();
+    expect(back.querySelectorAll("[data-placeholder]").length).toBe(3);
+    expect(back.querySelector('[role="status"]')?.textContent).toContain("Adding 3 clips · 0 done");
+    await act(async () => void [...back.querySelectorAll("button")].find((b) => b.textContent === "Cancel all")!.click());
+    expect(back.querySelectorAll("[data-placeholder]").length).toBe(0);
+    expect(back.textContent).not.toContain("Adding 3 clips");
+    letGo();
   });
 });
 

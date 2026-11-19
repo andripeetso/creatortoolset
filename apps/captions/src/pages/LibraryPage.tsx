@@ -36,26 +36,22 @@ import {
   searchLibrary,
   setTrashed,
   emptyTrash,
-  uploadFile,
-  audioOf,
   libraryZipUrl,
   listTags,
   redoMany,
   updateAsset,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
-import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
-import { addRefused, checkUpload, getEstimate } from "@/lib/library";
+import { thisMacBridge } from "@/lib/thisMac";
+import { addRefused } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
-import { quickPrint } from "@/lib/onMac";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
 import { AssetRow, AssetTile, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
-import { alreadyThere, type Upload as UploadItem } from "./library/Uploads";
 import { ImportSummary, PlaceholderTile, going, placeholderShown, summaryLine } from "./library/Placeholders";
-import { importGates, volumeOf } from "./library/import-pool";
+import { addImports, cancelImports, onImported, retryImport, useImportQueue } from "@/lib/import-queue";
 import { ClipView } from "./library/ClipView";
 import { FoundInClips } from "./library/FoundInClips";
 import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
@@ -115,11 +111,9 @@ export default function LibraryPage() {
   const [roll, setRoll] = useState<Roll | null>(null);
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
   const [filters, setFilters] = useState<LibraryFilters>({}); // tags, when, where (./library/Filters.tsx)
-  const [uploads, setUploads] = useState<UploadItem[]>([]);
-  // a drop's files go in side by side, each stage bounded (./library/import-pool.ts); one line counts them from `importStart`
-  const importGatesRef = useRef(importGates());
-  const [importStart, setImportStart] = useState(0);
-  const [importUsd, setImportUsd] = useState<number | null>(null);
+  // a drop's files, going in side by side: the app's own queue (lib/import-queue.ts), so leaving this page keeps them
+  // going and coming back shows their cards and the line as they are
+  const queue = useImportQueue();
   const [sharing, setSharing] = useState<AssetCard | null>(null); // the clip whose share box is open (right-click Share…)
   const [ruling, setRuling] = useState<Collection | null>(null); // the folder whose "What goes here…" is open (smart folders)
   const [reorganizing, setReorganizing] = useState(false);
@@ -142,12 +136,11 @@ export default function LibraryPage() {
   const seq = useRef(0);
   const loading = useRef<string | null>(null); // the cursor of the page on its way
   const loc = useLocation();
-  const keys = useRef(0);
-  const controllers = useRef(new Map<number, AbortController>());
-  const cancelled = useRef(new Set<number>());
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
+  // this library's files on their way in (the queue is the whole app's)
+  const uploads = queue.items.filter((u) => u.libraryId === libId);
   /** a workspace given to this person by its owner, or the Media Library on Read for them: to look at and download from,
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
@@ -380,8 +373,6 @@ export default function LibraryPage() {
   };
   const endOfList = useEndOfList(loadMore, next);
 
-  const patch = (key: number, change: Partial<UploadItem>) =>
-    setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, ...change } : u)));
 
   // the Mac app with the server elsewhere: files are indexed where they are, never uploaded, unless the library's
   // upload setting says so (Library settings and Settings → Media Library, UploadSelect). A ref: an add's own answer
@@ -390,78 +381,6 @@ export default function LibraryPage() {
   upload.current = library?.settings.upload ?? "none";
   const macRemote = !!thisMacBridge() && !watch?.allowed;
   const onMac = macRemote && !hostsOriginals(upload.current) && !hostsProxies(upload.current);
-  // `retry`: Retry sends a cancelled file; its key stays in `cancelled`, so the queue below never starts it a second time
-  const send = async (u: UploadItem, retry = false) => {
-    if (!libId || (cancelled.current.has(u.key) && !retry)) return;
-    // on its way already (Retry pressed twice)
-    if (controllers.current.get(u.key)?.signal.aborted === false) return;
-    const ctl = new AbortController();
-    controllers.current.set(u.key, ctl);
-    // a cancelled run still finishing never writes over the Retry that came after it
-    const mine = () => controllers.current.get(u.key) === ctl;
-    try {
-      const mac = macRemote && !hostsOriginals(upload.current) && !hostsProxies(upload.current);
-      let here = u.path ?? (await pathOnMac(u.file));
-      // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks
-      // too). Indexed on the Mac it is matched there by its first and last MiB, so no gigabytes are hashed here; one to
-      // copy first is matched the same way, so no copy is made of a file the library has
-      const g = importGatesRef.current;
-      // each stage waits only for its own room (./library/import-pool.ts): a full stage never holds another file's other stage
-      const dup = mac
-        ? u.copyTo
-          ? await g.server(async () => (await checkUpload(libId, u.file.size, `mac:${await quickPrint(u.file)}`).catch(() => null))?.duplicateOf ?? null)
-          : null
-        : await g.server(() => alreadyThere(libId, u.file, () => ctl.signal.aborted || patch(u.key, { status: "checking", error: undefined })).catch(() => null));
-      ctl.signal.throwIfAborted();
-      if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
-      // copied into the library's folder on this Mac first (the Mac app does it), then taken in from there
-      if (u.copyTo && here) {
-        const from = here;
-        here = await g.copy(volumeOf(u.copyTo), () => (ctl.signal.throwIfAborted(), copyFirst(u, from, ctl.signal)));
-        patch(u.key, { path: here, copyTo: undefined });
-      }
-      const at = here;
-      const r = await g.index(() => {
-        ctl.signal.throwIfAborted();
-        patch(u.key, { status: "uploading", sent: 0, error: undefined });
-        return uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: mac });
-      });
-      patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size, assetId: r.assetId });
-      reload();
-      if (u.folderId) reloadFolders(); // the folder's count
-    } catch (e) {
-      if (ctl.signal.aborted) {
-        if (mine()) patch(u.key, { status: "cancelled", error: undefined });
-      } else patch(u.key, { status: "failed", error: message(e), final: ["too_large", "not_uploaded"].includes((e as { code?: string }).code ?? "") });
-    } finally {
-      if (mine()) controllers.current.delete(u.key);
-    }
-  };
-  // one file's copy, its bytes counted in the tray; Cancel stops it and the Mac removes the part written
-  const copyFirst = async (u: UploadItem, from: string, signal: AbortSignal): Promise<string> => {
-    const id = `copy-${u.key}-${Date.now()}`;
-    patch(u.key, { status: "copying", sent: 0, error: undefined });
-    const tick = setInterval(() => void importProgress(id).then((p) => patch(u.key, { sent: p.bytes }), () => {}), 500);
-    const stop = () => void importCancel(id).catch(() => {});
-    signal.addEventListener("abort", stop, { once: true });
-    try {
-      const r = await importCopy(id, [{ from, to: u.copyTo! }]);
-      signal.throwIfAborted();
-      if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Could not copy the file");
-      return r.copied[0].to;
-    } finally {
-      clearInterval(tick);
-      signal.removeEventListener("abort", stop);
-    }
-  };
-  // Cancel: the file stops (what reached the server is deleted) and never starts again by itself; Retry starts it
-  const cancel = (keys: number[]) => {
-    for (const k of keys) {
-      cancelled.current.add(k);
-      controllers.current.get(k)?.abort();
-    }
-    setUploads((prev) => prev.map((u) => (keys.includes(u.key) && (u.status === "waiting" || u.status === "checking" || u.status === "copying" || u.status === "uploading") ? { ...u, status: "cancelled", error: undefined } : u)));
-  };
 
   // a big upload says first what preparing it takes (time, and money on whose AI and keys); the first add, or one from a
   // new place, asks how the files come in (./library/Import.tsx)
@@ -478,25 +397,22 @@ export default function LibraryPage() {
     void importQ.answer(look, all).then((copies) => copies && start(all, here, look.paths, copies));
   };
 
-  // every file starts at once and waits only where its stage is full (./library/import-pool.ts); each has its card at once
+  // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
   const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
-    const folderId = into ?? undefined;
-    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: paths ? paths.has(file) : here, path: paths?.get(file), copyTo: copies?.get(file) }));
-    setUploads((prev) => {
-      // a new batch (nothing going): the count, the pace and the cost start again
-      if (!prev.some(going)) {
-        setImportStart(Date.now());
-        setImportUsd(null);
-      }
-      return [...prev.filter((u) => going(u) || u.status === "failed"), ...added];
-    });
-    if (libId && levelOf(library?.settings ?? {}) !== "off")
-      void getEstimate(libId, { clips: files.length, bytes: files.reduce((n, f) => n + f.size, 0), ...audioOf(files) }).then(
-        (e) => setImportUsd((was) => (was ?? 0) + e.steps.reduce((n, x) => n + x.usd, 0)),
-        () => {},
-      );
-    for (const u of added) void send(u);
+    if (!libId) return;
+    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
+  // a file of this library went in: its clips (and the folder's count) read again
+  useEffect(
+    () =>
+      onImported((lib, folderId) => {
+        if (lib !== libId) return;
+        reload();
+        if (folderId) reloadFolders();
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload and reloadFolders read the page's current lists
+    [libId],
+  );
 
   const saved = (l: LibrarySummary) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
   const organize = useOrganize({
@@ -934,8 +850,8 @@ export default function LibraryPage() {
       ? []
       : uploads
           .filter((u) => placeholderShown(u, onPage) && (u.folderId ?? null) === (into ?? null))
-          .map((u) => <PlaceholderTile key={`up-${u.key}`} upload={u} onRetry={() => void send(u, true)} onCancel={() => cancel([u.key])} />);
-  const importLine = summaryLine(uploads, importStart, Date.now(), importUsd);
+          .map((u) => <PlaceholderTile key={`up-${u.key}`} upload={u} onRetry={() => retryImport(u.key)} onCancel={() => cancelImports([u.key])} />);
+  const importLine = summaryLine(uploads, queue.startedAt, Date.now(), queue.usd);
   const tile = (a: AssetCard) => (
     <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
       <AssetTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} ownShape={kind === "image"} />
@@ -1124,7 +1040,7 @@ export default function LibraryPage() {
                 {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
 
                 {/* one line while a drop goes in; the library's own progress line otherwise */}
-                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancel(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
+                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
                 <FoldersToAllow />
                 {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
 
