@@ -2,27 +2,26 @@ import AuthenticationServices
 import CryptoKit
 import SwiftUI
 
-/// The person's Creator Toolset account on this phone: one Sign in with Apple or Google, and the phone knows their
-/// computers, so none needs an address typed or a code scanned. The account server is asked nothing before a press on
+/// The person's Creator Toolset account on this phone: one Sign in with Apple, Google or GitHub, and the phone knows
+/// their computers, so none needs an address typed or a code scanned. The account server is asked nothing before a press on
 /// a sign-in button. Its token is kept in the Keychain and goes only to the account server.
 @MainActor
 final class Account: ObservableObject {
     static let shared = Account()
     static let site = URL(string: "https://creatortoolset.com/")!
-    /// The connect service: it lists the computers added to the account and gives a ticket for one.
+    /// The connect service: it lists the computers linked to the account and connects this phone to one.
     static let connectService = URL(string: "https://connect.creatortoolset.com/")!
-    static let providers = ["apple", "google"]
+    static let providers = ["apple", "google", "github"]
 
     struct Profile: Codable, Equatable {
         var name: String
         var email: String
-        /// "apple" or "google": a hosted server is signed in to with the same one.
+        /// "apple", "google" or "github": a hosted server is signed in to with the same one.
         var provider: String
         var title: String { !name.isEmpty ? name : !email.isEmpty ? email : "\(provider.capitalized) account" }
     }
 
     @Published private(set) var profile: Profile?
-    private static let addedDidntLoad = "Your other computers didn't load. Pull down to try again."
     private let key = "account"
     private var token: String? { Keychain.get(key) }
 
@@ -60,34 +59,20 @@ final class Account: ObservableObject {
         return true
     }
 
-    /// Forgets the account on this phone. The computers already connected stay as they are.
+    /// Forgets the account on this phone. A computer reached only through the account goes with it; one still
+    /// reachable another way stays saved.
     func signOut() {
         Keychain.set(key, nil)
         UserDefaults.standard.removeObject(forKey: key)
         profile = nil
+        AccountServers.shared.signedOut()
     }
 
-    /// The account's computers: the hosted servers it signed in to, then the computers added to it. `problem` is said
-    /// when the added computers could not be read; the hosted servers still show.
-    func computers() async throws -> (list: [Computer], problem: String?) {
-        #if DEBUG
-        if Self.demo == "partly" { return (Array(Computer.demo.prefix(1)), Self.addedDidntLoad) }
-        if let demo = Self.demo { return (demo == "none" ? [] : Computer.demo, nil) }
-        #endif
+    /// The hosted servers this account signed in to.
+    func hosted() async throws -> [Computer] {
         let me = try JSONDecoder().decode(AccountMe.self, from: try await ask("/api/account/me"))
         keep(Profile(name: me.name ?? "", email: me.email ?? "", provider: profile?.provider ?? ""))
-        var added: [AddedComputers.One] = []
-        var problem: String?
-        do {
-            if let relay = try await relayToken(orNone: true) {
-                added = try JSONDecoder().decode(AddedComputers.self, from: try await Self.connect("/v1/computers", bearer: relay)).computers
-            }
-        } catch AccountError.signedOut {
-            throw AccountError.signedOut
-        } catch {
-            problem = Self.addedDidntLoad
-        }
-        return (Computer.list(hosted: me.servers?.map(\.host) ?? [], added: added), problem)
+        return Computer.list(hosted: me.servers?.map(\.host) ?? [], added: [])
     }
 
     /// A hosted server, signed in to with the account's own Apple or Google in a second sheet (the sheets share the
@@ -102,20 +87,6 @@ final class Account: ObservableObject {
               try await Self.redirects(start) else { return .needsPassword }
         guard let code = try await WebSheet.shared.open(start, ends: "signin") else { return nil }
         return try await Self.reaching(computer.url) { try await SignIn.app(computer.url, code: code, verifier: pkce.verifier) }
-    }
-
-    /// A computer added to the account: a ticket from the connect service (it works once, for two minutes, so each try
-    /// gets a new one), then the computer's own password.
-    func signIn(to computer: Computer, password: String) async throws -> SignIn.Outcome {
-        guard let id = computer.addedId, let relay = try await relayToken() else { throw AccountError.signedOut }
-        let ticket: String
-        do {
-            let data = try await Self.connect("/v1/computers/\(id)/ticket", method: "POST", bearer: relay)
-            ticket = try JSONDecoder().decode(ComputerTicket.self, from: data).ticket
-        } catch APIError.server(404, _) {
-            throw AccountError.refused("\(computer.name) is no longer on your account")
-        }
-        return try await Self.reaching(computer.url) { try await SignIn.ticket(computer.url, ticket: ticket, password: password) }
     }
 
     /// Takes a hosted server off the account's list. The phone's own sign-in to it stays.
@@ -145,7 +116,7 @@ final class Account: ObservableObject {
 
     /// A short token the connect service trusts for this account: the account's own token never goes there.
     /// `orNone`: nil when the account server has no connect service (503), which is nothing to report.
-    private func relayToken(orNone: Bool = false) async throws -> String? {
+    func relayToken(orNone: Bool = false) async throws -> String? {
         do {
             return try JSONDecoder().decode(RelayToken.self, from: try await ask("/api/account/relay-token", method: "POST")).token
         } catch APIError.server(503, _) where orNone {
@@ -176,15 +147,6 @@ final class Account: ObservableObject {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw APIError.server(status, API.message(data, status: status)) }
         return data
-    }
-
-    /// The connect service answers with codes, not words: what went wrong is said as its status.
-    private static func connect(_ path: String, method: String = "GET", bearer: String) async throws -> Data {
-        do {
-            return try await send(connectService, path, method: method, bearer: bearer)
-        } catch APIError.server(let status, _) {
-            throw APIError.server(status, "the connect service answered \(status)")
-        }
     }
 
     /// No connection, or the server does not answer: said with the server's name.
@@ -221,9 +183,6 @@ struct AccountToken: Decodable {
 
 /// POST /api/account/relay-token → the short token for the connect service.
 struct RelayToken: Decodable { let token: String }
-
-/// POST /v1/computers/<id>/ticket on the connect service → the ticket a computer added to the account takes.
-struct ComputerTicket: Decodable { let ticket: String }
 
 /// GET /api/account/me. `servers` are the hosted servers this account signed in to; an older account server sends none.
 struct AccountMe: Decodable {
@@ -393,8 +352,8 @@ final class WebSheet: NSObject, ASWebAuthenticationPresentationContextProviding 
     }
 }
 
-/// A sign-in button that fills its row, which gives it the row's own shape: the system's Sign in with Apple button,
-/// and a plain one in the same colours for Google.
+/// A sign-in button that fills its row, which gives it the row's own shape: the system's Continue with Apple button,
+/// and plain ones in the same colours for Google and GitHub.
 struct SignInButton: View {
     let provider: String
     let press: () -> Void
@@ -406,7 +365,7 @@ struct SignInButton: View {
             AppleButton(dark: scheme == .dark, press: press).frame(height: 52).id(scheme)
         } else {
             Button(action: press) {
-                Text("Sign in with \(provider.capitalized)")
+                Text("Continue with \(provider == "github" ? "GitHub" : provider.capitalized)")
                     .font(.system(size: 20.5, weight: .medium))   // the size the system's button draws at this height
                     .foregroundStyle(Color(.systemBackground))
                     .frame(maxWidth: .infinity, minHeight: 52)
@@ -423,7 +382,7 @@ private struct AppleButton: UIViewRepresentable {
     let press: () -> Void
 
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
-        let button = ASAuthorizationAppleIDButton(type: .signIn, style: dark ? .white : .black)
+        let button = ASAuthorizationAppleIDButton(type: .continue, style: dark ? .white : .black)
         button.cornerRadius = 0   // the row rounds it, the same as the Google one
         button.addTarget(context.coordinator, action: #selector(Coordinator.pressed), for: .touchUpInside)
         return button

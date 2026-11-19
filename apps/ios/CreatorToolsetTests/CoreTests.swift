@@ -38,11 +38,12 @@ final class CoreTests: XCTestCase {
         let server = Server(url: URL(string: "https://stale.example.test/")!, username: "sam")
         Servers.shared.add(server, cookie: "new")
         defer { Servers.shared.remove(server.id) }
+        let saved = { ServerRegistry.read().servers.first { $0.key == server.id }.flatMap { e in ServerRegistry.credential(e.serverId, route: e.routes[0]) } }
         Servers.shared.sessionExpired("old")
-        XCTAssertEqual(Keychain.get(server.id), "new")
+        XCTAssertEqual(saved()?.token, "new")
         XCTAssertFalse(Servers.shared.signedOut)
         Servers.shared.sessionExpired("new")
-        XCTAssertNil(Keychain.get(server.id))
+        XCTAssertNil(saved())
         XCTAssertTrue(Servers.shared.signedOut)
     }
 

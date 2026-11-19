@@ -11,6 +11,9 @@ struct CreatorToolsetApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                // the connection's line, once a state has lasted 800 ms (nothing while every computer is connected)
+                .safeAreaInset(edge: .top, spacing: 0) { ConnectionHeaderStatus() }
+                .modifier(AccountSetupPresenter())
                 .environmentObject(Servers.shared)
                 .environmentObject(UploadEngine.shared)
                 .environmentObject(UploadEngine.shared.store)
@@ -85,7 +88,7 @@ struct RootView: View {
 
     var body: some View {
         if servers.list.isEmpty {
-            NavigationStack { AddServerView(first: true) }
+            NavigationStack { FirstRunView() }
         } else {
             TabView(selection: $nav.tab) {
                 ChatsTab()

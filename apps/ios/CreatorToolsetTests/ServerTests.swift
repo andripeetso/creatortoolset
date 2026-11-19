@@ -81,7 +81,7 @@ final class ServerTests: XCTestCase {
             return XCTFail("the password didn't ask for the code")
         }
         XCTAssertFalse(Servers.shared.signedOut)
-        XCTAssertEqual(Keychain.get(origin.absoluteString), own)
+        XCTAssertEqual(Self.savedCookie(origin), own)
 
         // a wrong code says so and the step stays good; the next code signs in
         let right = Self.totp(key, ahead: 1)
@@ -112,7 +112,12 @@ final class ServerTests: XCTestCase {
             XCTAssertEqual(expired.localizedDescription, "That sign-in expired. Sign in again.")
         }
         XCTAssertFalse(Servers.shared.signedOut)
-        XCTAssertEqual(Keychain.get(origin.absoluteString), own)
+        XCTAssertEqual(Self.savedCookie(origin), own)
+    }
+
+    /// The sign-in the phone keeps for a server saved by address.
+    static func savedCookie(_ origin: URL) -> String? {
+        ServerRegistry.read().servers.first { $0.key == origin.absoluteString }.flatMap { ServerRegistry.credential($0.serverId, route: $0.routes[0])?.token }
     }
 
     /// An authenticator app's code, as the server counts it: HMAC-SHA1, 30-second steps, six digits; `ahead` steps on.

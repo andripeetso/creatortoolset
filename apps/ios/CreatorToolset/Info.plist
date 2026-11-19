@@ -11,6 +11,8 @@
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).refresh</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Creator Toolset reaches your computer directly on your home network, which is faster than going through the internet.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
