@@ -49,10 +49,15 @@ describe("a picture not ready yet", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
     // never loads here: the <video> stays without a frame
     vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(0);
+    vi.spyOn(HTMLMediaElement.prototype, "src", "set").mockImplementation(() => {});
+    // the frames run by hand: 30 of them, half a second at 60 Hz
+    let next: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => ((next = cb), 1));
+    vi.stubGlobal("cancelAnimationFrame", () => void (next = null));
     const urlOf = (): NleFile => ({ url: "/tiny/opening.mp4" });
     const root = createRoot(document.body.appendChild(document.createElement("div")));
     await act(async () => root.render(<NlePlayer tl={tl} time={0} playing={false} rate={1} urlOf={urlOf} nameOf={() => "opening.mp4"} />));
-    await act(() => new Promise((done) => setTimeout(done, 150)));
+    for (let i = 0; i < 30; i++) next?.(i * 16);
     expect(fills).toBe(1); // the first frame only (nothing to keep yet)
     act(() => root.unmount());
   });

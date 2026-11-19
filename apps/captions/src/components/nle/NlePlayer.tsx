@@ -38,8 +38,6 @@ export async function whyNot(url: string): Promise<string | undefined> {
   return url.startsWith("ctlocal://media/") ? pathLine(await localFileState(url)) : undefined;
 }
 
-/** frames (about a second) the last picture is kept while one on screen isn't ready; then drawn without it */
-const HOLD = 60;
 const SEQ_AHEAD = 8;
 const isImage = (url: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url);
 type Drawable = { el: CanvasImageSource; w: number; h: number };
@@ -69,7 +67,7 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
   useEffect(() => {
     let raf = 0;
     let tick = 0;
-    let painted = 0;
+    let painted = false;
     // drawn at the size shown (CSS px × the screen's), never the timeline's 8 MP when it is shown small
     let px = 1;
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(([e]) => void (px = drawScale(e.contentRect.width, devicePixelRatio, W)));
@@ -205,7 +203,7 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
       if (cv.width !== cw || cv.height !== ch) {
         Object.assign(cv, { width: cw, height: ch });
         Object.assign(layer, { width: cw, height: ch });
-        painted = 0;
+        painted = false;
       }
       // what is on screen now: each picture's file and frame (a shot's other pictures too), before anything is drawn
       const pics = on.map(({ item, track }) => {
@@ -234,10 +232,10 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
         }
         return { item, track, key, k, m, d, got };
       });
-      // one not ready (opening, a move landing): the last frame stays on screen, as it was
-      const waiting = pics.some((p) => p.m && !p.m.bad && !p.d);
-      if (!waiting || !painted || tick - painted >= HOLD) {
-        painted = tick;
+      // one not ready (a file opening, a move landing): the last frame stays on screen until it is, never black (a file
+      // that can't play errors, and is drawn as Media Offline)
+      if (!painted || !pics.some((p) => p.m && !p.m.bad && !p.d)) {
+        painted = true;
         const flashes: number[] = [];
         ctx.setTransform(px, 0, 0, px, 0, 0);
         ctx.globalAlpha = 1;
