@@ -256,3 +256,15 @@ describe("where a clip is, when this Mac cannot play it (decision 5, A4/A5)", ()
     expect(video().getAttribute("src")).not.toMatch(/\/api\/library\/media\/.*\/play/);
   });
 });
+
+// Hosted originals: the server plays the original, so a file this window cannot play is not sent to a place
+describe("under Originals hosted", () => {
+  it("a failed server original is not 'away': the player keeps to its own note, and nothing asks for a place", async () => {
+    answer = { state: "away", root };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: { upload: "originals" } }] })));
+    await open();
+    await fire("error");
+    expect(host.textContent).not.toContain("The original is on footage (office-nas), which isn't connected");
+    expect(host.textContent).not.toContain("Proxies aren't uploaded");
+  });
+});

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-react";
-import { SPRITE_FRAMES, type AssetCard, type AssetDetail } from "@contracts/library";
+import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type AssetCard, type AssetDetail, type LibraryUpload } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { awayLine, pickSource, proxySource, useHere, type Source } from "@/lib/here";
@@ -125,21 +125,26 @@ export function ClipPlayer({
   // the server plays nothing of it: say where it is (inside or outside the Mac app), once this computer has answered
   const waiting = !!places && !here;
   // (also without the Mac app: a browser that the server refuses says it too)
-  const away = !waiting && ((phase === "failed" && onServer) || (!serverPlays && !src)) ? (awayLine(check) ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
-  const note = said === "missing" || away ? null : said;
-  // the library's owner, with proxies not uploaded: told why it plays only where the originals are
-  const [noUpload, setNoUpload] = useState(false);
+  // the library's Hosted media, read once it is needed: under Originals the server plays an original, so a file it cannot
+  // play is "Can't play this format here" with Download, not a place to go to
+  const [upload, setUpload] = useState<{ upload: LibraryUpload; owner: boolean }>();
   useEffect(() => {
-    if (!away) return;
+    if (phase !== "failed" && serverPlays) return;
     let gone = false;
     listLibraries().then((ls) => {
       const l = ls.find((x) => x.id === a.libraryId);
-      if (!gone) setNoUpload(!!l && !l.readOnly && l.settings.upload === "none");
+      if (!gone && l) setUpload({ upload: l.settings.upload, owner: !l.readOnly });
     }, () => {});
     return () => {
       gone = true;
     };
-  }, [!!away, a.libraryId]); // eslint-disable-line react-hooks/exhaustive-deps -- once it shows
+  }, [phase, serverPlays, a.libraryId]);
+  const serverOriginals = !!upload && hostsOriginals(upload.upload);
+  const away =
+    !waiting && ((phase === "failed" && onServer && !serverOriginals) || (!serverPlays && !src)) ? (awayLine(check) ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
+  const note = said === "missing" || away ? null : said;
+  // the owner, with no proxies and no originals hosted: told why it plays only where the files are
+  const noUpload = !!upload?.owner && !hostsProxies(upload.upload) && !hostsOriginals(upload.upload);
   const awayNote = away && <Away line={away} noUpload={noUpload} />;
 
   // the original is here in a folder the page may not play from yet, or on a share that needs its login: one button
@@ -459,7 +464,7 @@ function Note({ note, file }: { note: PlayerNote; file: { href: string; name: st
     );
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="text-sm">Could not play the file</p>
+      <p className="text-sm">Can't play this format here</p>
       <Button size="sm" variant="secondary" asChild>
         <a href={file.href} download={file.name}>
           <Download className="h-4 w-4" />
