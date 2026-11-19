@@ -1,3 +1,4 @@
+import { ImportIndicator } from "./ImportIndicator";
 import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { Check, ChevronDown, ChevronRight, House } from "lucide-react";
@@ -83,6 +84,7 @@ export function AppBar({
         {/* the pill sits on the account button's corner on a phone, so it never takes the bar's room (PlanLimitPill) */}
         {account && (
           <span className="relative flex items-center gap-1.5 sm:gap-2">
+            <ImportIndicator />
             <ConnectionPill />
             <PlanLimitPill />
             <UserMenu />
