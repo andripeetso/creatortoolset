@@ -129,6 +129,48 @@ struct BrokerClient {
     }
 }
 
+/// What this Mac keeps from the connect service between refreshes (every 30 s): the relay token until a minute before
+/// it ends, and the account's computers for 60 s; both for one account token only, so another sign-in asks again.
+struct BrokerCache {
+    static let listFor: TimeInterval = 60
+    private var account: String?
+    private var relay: (token: String, until: Date)?
+    private var list: (at: Date, computers: [BrokerComputer])?
+
+    /// The kept relay token for this account token, or nil: none, another account's, or within a minute of its end.
+    func relayToken(for account: String, now: Date = Date()) -> String? {
+        guard account == self.account, let relay, now < relay.until else { return nil }
+        return relay.token
+    }
+
+    /// `expiresIn`: the token's life as the account server said it (300 s when it didn't).
+    mutating func keep(relayToken token: String, expiresIn: TimeInterval?, for account: String, now: Date = Date()) {
+        use(account)
+        relay = (token, now.addingTimeInterval((expiresIn ?? 300) - 60))
+    }
+
+    /// The account's computers fetched less than 60 s ago for this account token, or nil.
+    func list(for account: String, now: Date = Date()) -> [BrokerComputer]? {
+        guard account == self.account, let list, now.timeIntervalSince(list.at) < Self.listFor else { return nil }
+        return list.computers
+    }
+
+    mutating func keep(list computers: [BrokerComputer], for account: String, now: Date = Date()) {
+        use(account)
+        list = (now, computers)
+    }
+
+    /// The connect service turned the relay token down (401): the next call mints a new one.
+    mutating func failed(_ error: Error) {
+        if case BrokerError.status(401) = error { relay = nil }
+    }
+
+    /// Another account token: nothing kept for the last one counts.
+    private mutating func use(_ account: String) {
+        if account != self.account { self = BrokerCache(); self.account = account }
+    }
+}
+
 /// Reach from anywhere (Settings → Computers): this Mac on the account. On by itself once the Mac app is signed in;
 /// turned off by the person, or when the account no longer has this Mac.
 enum Reach: String {
@@ -193,20 +235,25 @@ extension Shell {
     /// Whether this Mac is on an account already (its server's connect.json, written once a link finishes).
     var linkedHere: Bool { linkedConfig != nil }
 
-    /// The broker account token, minted by the account server from this Mac's sign-in. Nil: signed out, no service, or
-    /// the account server did not answer.
+    /// The broker account token, minted by the account server from this Mac's sign-in and kept until a minute before it
+    /// ends. Nil: signed out, no service, or the account server did not answer.
     private func relayToken() async -> String? {
         guard let accountServer = account.server, connectService != nil, let token = await account.token() else { return nil }
-        return try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(token)
+        if let kept = broker.relayToken(for: token) { return kept }
+        guard let minted = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(token) else { return nil }
+        broker.keep(relayToken: minted.token, expiresIn: minted.expiresIn, for: token)
+        return minted.token
     }
 
     /// Every refresh: the account's other computers, the switch's state, and the link made by itself when the switch is
     /// on and the Mac app is signed in. The account dropping this Mac turns the switch off and forgets the link here.
-    func refreshReach() async {
+    /// The list is asked for at most once a minute; `force`: now (the person changed something, or signed in).
+    func refreshReach(force: Bool = false) async {
         let signedIn = account.profile != nil
         var list: [BrokerComputer]?
-        if signedIn, let base = connectService, let token = await relayToken() {
-            list = try? await BrokerClient(base: base, key: DPoPKey.shared).computers(token: token)
+        if signedIn, connectService != nil {
+            if !force, let token = await account.token() { list = broker.list(for: token) }
+            if list == nil { list = try? await refreshedList() }
         }
         let mine = linkedConfig?.computerId
         accountComputers = accountServers(list ?? [], thisComputer: mine)
@@ -229,12 +276,14 @@ extension Shell {
 
     /// Account.leaving: this Mac leaves the account it is linked to before the Mac app's sign-in becomes another one (or
     /// none), using the old sign-in while it still has it. A Mac linked here then joins the new account by itself.
+    /// It mints with the two tokens it is given, never from the cache, which it empties: the sign-in is changing.
     func leaveAccount(oldToken: String, newToken: String?) async {
+        broker = BrokerCache()
         guard let id = linkedConfig?.computerId, let base = connectService, let accountServer = account.server,
-              let old = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(oldToken) else { return }
+              let old = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(oldToken).token else { return }
         var new: String?
         if let newToken {
-            new = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(newToken)
+            new = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(newToken).token
             if new == nil { return }
         }
         if await BrokerClient(base: base, key: DPoPKey.shared).leave(id, oldToken: old, newToken: new) {
@@ -244,9 +293,17 @@ extension Shell {
         }
     }
 
+    /// The account's computers from the connect service now, kept for the next minute's refreshes.
     private func refreshedList() async throws -> [BrokerComputer]? {
-        guard let base = connectService, let token = await relayToken() else { return nil }
-        return try await BrokerClient(base: base, key: DPoPKey.shared).computers(token: token)
+        guard let base = connectService, let accountToken = await account.token(), let token = await relayToken() else { return nil }
+        do {
+            let list = try await BrokerClient(base: base, key: DPoPKey.shared).computers(token: token)
+            broker.keep(list: list, for: accountToken)
+            return list
+        } catch {
+            broker.failed(error)
+            throw error
+        }
     }
 
     /// The page's connect.link / connect.unlink (Settings → Computers → Reach from anywhere). Returns the problem, or nil.
@@ -254,7 +311,7 @@ extension Shell {
         reachSwitch = on
         if on { UserDefaults.standard.removeObject(forKey: reachRemovedKey) }
         let problem = on ? (linkedHere ? nil : await linkThisComputer()) : await unlinkThisComputer()
-        await refreshReach()
+        await refreshReach(force: true)
         return problem
     }
 
@@ -265,7 +322,7 @@ extension Shell {
         UserDefaults.standard.removeObject(forKey: reachRemovedKey)
         let problem = await linkThisComputer()
         notice = problem.map { "This Mac was not added: \($0)" } ?? "This Mac is on your account"
-        await refreshReach()
+        await refreshReach(force: true)
         return problem
     }
 
@@ -279,6 +336,7 @@ extension Shell {
         } catch BrokerError.status(403) {
             return "your account has as many computers as it can have. Remove one first"
         } catch {
+            broker.failed(error)
             AppLog.write("this Mac was not added to the account: \(error.localizedDescription)")
             return "try again"
         }
@@ -292,6 +350,7 @@ extension Shell {
         do {
             try await BrokerClient(base: base, key: DPoPKey.shared).unlink(id, token: token)
         } catch {
+            broker.failed(error)
             return "The connect service couldn't be reached. Try again."
         }
         try? await client().delete("/api/connect/relay-config")

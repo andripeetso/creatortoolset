@@ -62,8 +62,9 @@ final class AccountTests: XCTestCase {
 
     func testRelayTokenIsMintedFromTheSignIn() async throws {
         StubServer.routes["/api/account/relay-token"] = (200, #"{"token":"relay-1","expiresIn":3600}"#)
-        let token = try await client.relayToken("cta_tok")
-        XCTAssertEqual(token, "relay-1")
+        let minted = try await client.relayToken("cta_tok")
+        XCTAssertEqual(minted.token, "relay-1")
+        XCTAssertEqual(minted.expiresIn, 3600)
         let sent = StubServer.seen.last!
         XCTAssertEqual(sent.httpMethod, "POST")
         XCTAssertEqual(sent.value(forHTTPHeaderField: "Authorization"), "Bearer cta_tok")

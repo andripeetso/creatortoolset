@@ -238,14 +238,15 @@ struct AccountClient {
     }
 
     /// POST /api/account/relay-token with the token: a short token the connect service (the broker) trusts for this
-    /// account. The account server mints it; this Mac's own token never goes to the broker.
-    func relayToken(_ token: String) async throws -> String {
+    /// account, and its life in seconds when the server says. The account server mints it; this Mac's own token never
+    /// goes to the broker.
+    func relayToken(_ token: String) async throws -> (token: String, expiresIn: TimeInterval?) {
         var request = URLRequest(url: URL(string: "/api/account/relay-token", relativeTo: server)!)
         request.httpMethod = "POST"
         try authorize(&request, token)
-        struct Reply: Decodable { let token: String }
+        struct Reply: Decodable { let token: String; let expiresIn: TimeInterval? }
         let reply: Reply = try await send(request)
-        return reply.token
+        return (reply.token, reply.expiresIn)
     }
 
     /// POST a pack to the community catalog on this account server, as the account the token signs in as (`body` is
