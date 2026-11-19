@@ -251,7 +251,7 @@ describe("Media Library setup: analysis and organization", () => {
 
 describe("rowsOf", () => {
   it("names the scratch folders for the workspace and puts the others beside the first Source media folder", () => {
-    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", defaults: true, sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", budget: null, organize: "ai", upload: false, originals: false, proxies: false, finals: true };
+    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", defaults: true, sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", upload: false, originals: false, proxies: false, finals: true };
     expect(rowsOf(base, "Moo/Classic")).toEqual([
       { role: "footage", path: "~/Movies/Creator Toolset/Moo-Classic/Source media" },
       { role: "projects", path: "~/Movies/Creator Toolset/Moo-Classic/Project files" },
