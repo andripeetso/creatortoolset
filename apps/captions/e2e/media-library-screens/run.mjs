@@ -25,7 +25,9 @@ const APP_SECRET = "screens-secret-123";
 const require = createRequire(path.join(app, "package.json"));
 const { chromium } = require("playwright-chromium");
 
-execFileSync("npx", ["vite-node", "e2e/media-library-screens/seed.ts"], { cwd: app, env: { ...process.env, SEED_DATA_DIR: data, APP_SECRET }, stdio: ["ignore", "inherit", "inherit"] });
+const seeded = JSON.parse(
+  execFileSync("npx", ["vite-node", "e2e/media-library-screens/seed.ts"], { cwd: app, env: { ...process.env, SEED_DATA_DIR: data, APP_SECRET }, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim().split("\n").pop(),
+);
 
 const server = spawn("npx", ["vite", "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"], {
   cwd: app,
@@ -55,21 +57,6 @@ const SKIP_APP_SETUP = () => {
     localStorage.setItem("ct-intro-seen", "1");
   } catch { /* blocked: the screens still draw */ }
 };
-/**
- * The owner makes the shared "Tiny Acrobatics" workspace (a Workshop project: the owner's oldest, so the seeded libraries
- * fall in it), shares it with the member (Settings → Team), and the member switches to it. Each step is the app's own route.
- */
-async function shareWorkspace(browser) {
-  const ownerCtx = await browser.newContext();
-  await login(ownerCtx, OWNER);
-  const made = await ownerCtx.request.post(BASE + "/api/workshop/projects", { data: { name: "Tiny Acrobatics" }, timeout: 180_000 });
-  if (made.status() !== 201) throw new Error(`create the shared workspace failed: ${made.status()}`);
-  const { id } = await made.json();
-  const shared = await ownerCtx.request.patch(BASE + `/api/workspace/members/${MEMBER.username}`, { data: { workspaces: [id] }, timeout: 180_000 });
-  if (shared.status() !== 200) throw new Error(`share the workspace failed: ${shared.status()} ${await shared.text()}`);
-  await ownerCtx.close();
-  return id;
-}
 /** The member's current workspace: the shared one, through the workspace switch the app's own picker uses. */
 async function switchMember(ctx, id) {
   const r = await ctx.request.patch(BASE + "/api/workshop/workspace", { data: { currentProjectId: id }, timeout: 180_000 });
@@ -142,7 +129,6 @@ async function setupSteps(page, theme) {
 try {
   await up();
   const browser = await chromium.launch();
-  const sharedId = await shareWorkspace(browser);
   for (const theme of ["light", "dark"]) {
     // Owner: the setup dialog opens itself on the fresh library; then the owner page and the empty Library.
     const owner = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
@@ -160,7 +146,7 @@ try {
     // Member: its own page (no setup, no owner sections).
     const member = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
     await login(member, MEMBER);
-    await switchMember(member, sharedId);
+    await switchMember(member, seeded.shared);
     const mp = await member.newPage();
     await mp.addInitScript(SKIP_APP_SETUP);
     await go(mp, "/settings/library");

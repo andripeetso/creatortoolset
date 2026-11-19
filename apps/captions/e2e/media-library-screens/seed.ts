@@ -2,7 +2,8 @@
 // member, one library with no setupAt (the setup dialog opens itself), and one set up with a few synthetic clips.
 // Run by run.mjs with SEED_DATA_DIR set: `npx vite-node e2e/media-library-screens/seed.ts`. Never touches real footage.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 export const OWNER = { username: "owner", password: "owner-pass-1" };
@@ -16,7 +17,7 @@ process.env.APP_SECRET = process.env.APP_SECRET || "screens-secret-123";
 mkdirSync(data, { recursive: true });
 
 const { createUser, findUser } = await import("../../api/users");
-const { workspaceOf, renameWorkspace, addMember } = await import("../../api/lib/workspaces");
+const { workspaceOf, renameWorkspace, addMember, updateMember } = await import("../../api/lib/workspaces");
 const { libraryDb, blobs } = await import("../../api/library/db");
 const { probe } = await import("../../api/library/media/probe");
 const { indexAsset } = await import("../../api/library/query");
@@ -27,6 +28,14 @@ const w = workspaceOf(OWNER.username);
 if (!w) throw new Error("the owner has no workspace: check how a new account gets one (api/lib/workspaces.ts)");
 renameWorkspace(w, WORKSPACE_NAME);
 addMember(w, MEMBER.username);
+// The shared workspace: the owner's Workshop project (the Settings → Team row the app writes), given to the member. The
+// workspace routes exist only on a hosted server, so the seed writes them with the app's own modules; the member then
+// switches to it through the app's workspace route (run.mjs).
+const shared = randomUUID();
+const now = Date.now();
+mkdirSync(path.join(data, "workshop", "projects"), { recursive: true });
+writeFileSync(path.join(data, "workshop", "projects", `${shared}.json`), JSON.stringify({ id: shared, owner: OWNER.username, name: WORKSPACE_NAME, audience: "", voice: "", cta: "", notes: "", knowledge: [], createdAt: now, updatedAt: now }));
+updateMember(w, MEMBER.username, "owner", { workspaces: [shared] });
 
 const d = libraryDb();
 // Library 1: never set up. Library 2: set up, with three synthetic clips (ffmpeg test pattern, 4 s each).
@@ -48,4 +57,4 @@ if (!d.prepare("SELECT 1 FROM assets WHERE id = 'ast_clip1'").get()) {
     indexAsset(d, `ast_clip${n}`);
   }
 }
-console.log(JSON.stringify({ seeded: data, workspace: w.id, owner: OWNER.username, member: MEMBER.username }));
+console.log(JSON.stringify({ seeded: data, workspace: w.id, shared, owner: OWNER.username, member: MEMBER.username }));
