@@ -128,7 +128,14 @@ describe("a cut whose faces aren't blurred yet", () => {
     expect(await render({ ...view, asset: { ...view.asset, owner: "owner", versions: [{ ...version, notBlurred: true }] } })).toContain("Not blurred yet");
   });
 
-  it("shows no chip on a blurred cut", async () => {
-    expect(await render(view)).not.toContain("Not blurred yet");
+  it("warns on a share link that is already on, and leaves it on", async () => {
+    const share = { token: "t1", enabled: true, download: true };
+    await render({ ...view, asset: { ...view.asset, owner: "owner", share, versions: [{ ...version, notBlurred: true }] } });
+    expect(host!.querySelector('[title="This link shows a cut whose faces aren\'t blurred yet"]')).not.toBeNull();
+  });
+
+  it("shows no chip and no warning on a blurred cut", async () => {
+    expect(await render({ ...view, asset: { ...view.asset, owner: "owner", share: { token: "t1", enabled: true, download: true } } })).not.toContain("Not blurred yet");
+    expect(host!.querySelector('[title="This link shows a cut whose faces aren\'t blurred yet"]')).toBeNull();
   });
 });
