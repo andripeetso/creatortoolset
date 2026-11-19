@@ -118,7 +118,7 @@ export function facetClauses(picked: Record<string, string[]>): { sql: string; p
  */
 export class SourceRefusal extends Error {}
 
-/** The plug-in source that is the install's Media Library, when one says so (LibrarySource.main). */
+/** The plug-in source that is the install's Media Library, when one says so (LibrarySource.main), server-wide. Per workspace: access.ts mainSourceFor. */
 export const mainSource = (): LibrarySource | undefined => [...sources.values()].find((s) => s.main);
 
 /** Test seam: forget every plug-in's registrations, leaving the built-in source and its owner-only policy. */

@@ -5,12 +5,11 @@ import { Hono, type Context } from "hono";
 import type { MadeVoice, Voice, VoicesView } from "../../contracts/editor";
 import type { AuthVars } from "../auth";
 import { creditBack, creditOut, isOutOfCredits } from "../credits";
-import { ensureLibrary } from "../library/access";
+import { ensureLibrary, mainSourceFor } from "../library/access";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { resolveProjectId } from "../lib/workshop/workspace";
 import { saveToLibrary } from "../library/routes";
-import { mainSource } from "../library/sources";
 import { keyFor } from "../my-keys";
 import { change, read } from "./styles";
 
@@ -112,9 +111,9 @@ export async function makeVoice(
   /** edit: the edit to make from the voice (POST /api/editor's body, no sources), when its save waits for a computer */
   input: { text: string; voice?: string; name?: string; edit?: Record<string, unknown>; projectId?: string },
 ): Promise<MadeVoice | VoiceWaits> {
-  // where a plug-in's source is the Media Library, the storage library is never shown: nothing goes where nobody looks
-  const main = mainSource();
-  if (main) throw new VoiceError(`On this server the Media Library is the ${main.label}: a voice cannot be added to it`);
+  // in a workspace whose Media Library is a plug-in's source, the storage library is never shown: nothing goes where nobody looks
+  const main = await mainSourceFor(user.username);
+  if (main) throw new VoiceError(`In this workspace the Media Library is the ${main.label}: a voice cannot be added to it`);
   const text = input.text.trim();
   if (!text) throw new VoiceError("Give the text the voice says.");
   if (text.length > MAX_VOICE_CHARS) throw new VoiceError(`The text is ${text.length.toLocaleString("en-US")} characters, and one voice recording takes up to ${MAX_VOICE_CHARS.toLocaleString("en-US")}: shorten it, or make it in parts.`);

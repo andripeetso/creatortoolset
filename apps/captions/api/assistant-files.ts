@@ -12,7 +12,7 @@ import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
-import { ensureLibrary, librariesHere, servedByPlugin } from "./library/access";
+import { ensureLibrary, librariesHere, mainSourceFor } from "./library/access";
 import { mayReceive } from "./library/upload-gate";
 import { libraryDb, libraryUpload } from "./library/db";
 import { saveToLibrary } from "./library/routes";
@@ -309,7 +309,7 @@ export async function useFile(
     // a workspace a plug-in serves itself (its uploadsTo) keeps its media in that plug-in's store: the file goes there as
     // this person, and the store's own checks decide. Asked per workspace: every other one's goes to its own library below
     const fileName = path.extname(title) ? title : `${title}${path.extname(meta.name)}`;
-    if (sound && (await servedByPlugin(user.username))) throw new Error("Songs and sound effects aren't kept in this workspace's Media Library.");
+    if (sound && (await mainSourceFor(user.username))) throw new Error("Songs and sound effects aren't kept in this workspace's Media Library.");
     const taken = sound ? null : await pluginReceiveFile(user, { path: file, name: fileName, mime: meta.mime, size: meta.size });
     if (taken && "error" in taken) throw new Error(taken.error);
     if (taken) return { to, id: taken.id, name: title, href: taken.href, store: taken.where, ...(taken.duplicate ? { note: `Already in ${taken.where}` } : {}) };

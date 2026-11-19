@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
-import { pluginUploadsTo } from "../lib/plugin";
+import { pluginMainSource, pluginUploadsTo } from "../lib/plugin";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
 import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
@@ -11,7 +11,8 @@ import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } 
 import { blobs, libraryDb, newLibrarySettings } from "./db";
 import { workspaceById } from "../lib/workspaces";
 import type { ActionNeeded } from "../../contracts/library";
-import { assetRef, canSee } from "./sources";
+import type { LibrarySource } from "../../contracts/library-source";
+import { assetRef, canSee, mainSource } from "./sources";
 
 let before: Record<string, string> | null = null;
 /**
@@ -218,6 +219,24 @@ export async function servedByPlugin(username: string, projectId?: string): Prom
     return !!(await (projectId ? workspaceScope.run({ id: projectId }, ask) : ask()));
   } catch {
     return false;
+  }
+}
+
+/**
+ * The plug-in source that is this workspace's Media Library (LibrarySource.main): only in a workspace its plug-in serves
+ * itself (its uploadsTo, as servedByPlugin asks), undefined in every other one, whose Media Library is its own. With no
+ * workspace named: the request's, else the person's current one. A person with no workspace, or a plug-in that fails to
+ * answer, gets the server-wide answer (mainSource).
+ */
+export async function mainSourceFor(username: string, projectId?: string): Promise<LibrarySource | undefined> {
+  const scoped = workspaceScope.getStore()?.id;
+  const id = projectId ?? scoped ?? (await currentWorkspaceId({ username } as SessionUser));
+  if (!id) return mainSource();
+  const ask = () => pluginMainSource(username);
+  try {
+    return await (id === scoped ? ask() : workspaceScope.run({ id }, ask));
+  } catch {
+    return mainSource();
   }
 }
 
