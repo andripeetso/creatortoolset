@@ -31,10 +31,12 @@ addMember(w, MEMBER.username);
 // The shared workspace: the owner's Workshop project (the Settings → Team row the app writes), given to the member. The
 // workspace routes exist only on a hosted server, so the seed writes them with the app's own modules; the member then
 // switches to it through the app's workspace route (run.mjs).
+// the workspace's own owner (the server's admin account may own it, the seeded owner is a member): sharedWith reads the owner by it
+const wsOwner = w.members.find((m) => m.role === "owner")!.username;
 const shared = randomUUID();
 const now = Date.now();
 mkdirSync(path.join(data, "workshop", "projects"), { recursive: true });
-writeFileSync(path.join(data, "workshop", "projects", `${shared}.json`), JSON.stringify({ id: shared, owner: OWNER.username, name: WORKSPACE_NAME, audience: "", voice: "", cta: "", notes: "", knowledge: [], createdAt: now, updatedAt: now }));
+writeFileSync(path.join(data, "workshop", "projects", `${shared}.json`), JSON.stringify({ id: shared, owner: wsOwner, name: WORKSPACE_NAME, audience: "", voice: "", cta: "", notes: "", knowledge: [], createdAt: now, updatedAt: now }));
 updateMember(w, MEMBER.username, "owner", { workspaces: [shared] });
 
 const d = libraryDb();
