@@ -173,7 +173,8 @@ describe("organize with rules: a sound or picture goes to the rule folder it fit
     libraryDb().prepare("UPDATE assets SET kind = 'image' WHERE id = 'pic1'").run();
     await fileUnfiled(libraryDb(), "lib_s", { username: "owner-s", role: "member" } as never);
     expect(inFolder(mobile.id)).toContain("pic1*");
-    const plain = libraryDb().prepare("SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = 'pic1' AND c.kind = 'manual'").get();
+    // a rule folder is a manual folder too: the check is for a plain folder (no rule), such as Graphics
+    const plain = libraryDb().prepare("SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = 'pic1' AND c.kind = 'manual' AND c.rule IS NULL").get();
     expect(plain).toBeUndefined();
   });
 });

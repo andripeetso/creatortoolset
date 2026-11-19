@@ -177,18 +177,20 @@ describe("organize", () => {
 
 describe("organize: folders the AI makes", () => {
   it("a folder the AI makes is a smart folder named by its own rule, the same one again in any case, and none past MAX_AI_FOLDERS", async () => {
-    await seed("lib_ai", "aim", "video", media("clip.mp4"), JSON.stringify({ duration: 2 }));
-    const a = { id: "aim", library_id: "lib_ai", kind: "video", created_by: "local" };
+    // its own library: the test above fills lib_ai to the cap
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_aim', 'local', 'Aim', 'local', 0)").run();
+    await seed("lib_aim", "aim", "video", media("clip.mp4"), JSON.stringify({ duration: 2 }));
+    const a = { id: "aim", library_id: "lib_aim", kind: "video", created_by: "local" };
     const d = libraryDb();
     expect(fileInto(d, a, "Desert", true)).toBe(true);
-    expect(d.prepare("SELECT rule FROM collections WHERE library_id = 'lib_ai' AND name = 'Desert'").get()).toEqual({ rule: "Desert" });
+    expect(d.prepare("SELECT rule FROM collections WHERE library_id = 'lib_aim' AND name = 'Desert'").get()).toEqual({ rule: "Desert" });
     expect(fileInto(d, a, "desert", true)).toBe(true);
-    expect(folders("lib_ai").filter((f) => f.name.toLowerCase() === "desert")).toHaveLength(1);
-    const have = (d.prepare("SELECT COUNT(DISTINCT name) AS n FROM collections WHERE library_id = 'lib_ai' AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get() as { n: number }).n;
+    expect(folders("lib_aim").filter((f) => f.name.toLowerCase() === "desert")).toHaveLength(1);
+    const have = (d.prepare("SELECT COUNT(DISTINCT name) AS n FROM collections WHERE library_id = 'lib_aim' AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get() as { n: number }).n;
     for (let i = have; i < MAX_AI_FOLDERS; i++)
-      d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, 'lib_ai', NULL, ?, 'manual', 0, 'local')").run(`cap-${i}`, `Cap ${i}`);
+      d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, 'lib_aim', NULL, ?, 'manual', 0, 'local')").run(`cap-${i}`, `Cap ${i}`);
     expect(fileInto(d, a, "Over the cap", true)).toBe(false);
-    expect(folders("lib_ai").some((f) => f.name === "Over the cap")).toBe(false);
+    expect(folders("lib_aim").some((f) => f.name === "Over the cap")).toBe(false);
     // only the AI's new folders are capped: a folder the person names still goes in
     expect(fileInto(d, a, "Plain")).toBe(true);
   });

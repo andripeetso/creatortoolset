@@ -501,7 +501,7 @@ describe("U2 §4.6 library migration: set up what has clips; a shared library ke
 describe("a member's add (UNIFIED-PRD §4.3)", () => {
   const member = new Hono<{ Variables: AuthVars }>();
   member.use(async (c, next) => {
-    c.set("user", { username: "sam", role: "user" } as never);
+    c.set("user", { username: "sam", role: "user", off: [], read: [] } as never);
     return next();
   });
   member.route("/api/library", libraryApp);
