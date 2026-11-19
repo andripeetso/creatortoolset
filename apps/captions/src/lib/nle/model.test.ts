@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addSource, addTrack, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, removeTrack, roll,
+  addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFade, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, removeTrack, roll,
   setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
 } from "./model";
 
@@ -250,5 +250,30 @@ describe("nle keys", () => {
     expect(spans(extendTo(tl, key(tl, "V1", 0), 70), "V1")).toEqual([[0, 70, 100], [70, 80, 395]]);
     expect(spans(extendTo(tl, key(tl, "V2", 90), 120), "V2")).toEqual([[90, 30, 0]]);
     expect(spans(extendTo(tl, key(tl, "V2", 90), 140), "V2")).toEqual([[90, 50, 0]]);
+  });
+
+  it("fades: whole frames, never longer than the clip less its other fade, 0 takes it off", () => {
+    const tl = reel();
+    const k = key(tl, "V1", 0);
+    const a = setFade(tl, [k], "in", 12.4);
+    expect(find(a, k)!.item.fade_in).toBe(12);
+    const b = setFade(a, [k], "out", 500);
+    expect(find(b, k)!.item.fade_out).toBe(63);
+    expect(find(setFade(b, [k], "in", 0), k)!.item.fade_in).toBeUndefined();
+  });
+
+  it("a section turned off and on again gets its values back, speed included", () => {
+    const tl = reel();
+    const k = key(tl, "V2", 90);
+    const fields = ["zoom", "rot", "speed"];
+    const set = setSpeed(setItems(tl, [k], { zoom: 1.5, rot: 10 }), [k], 2);
+    expect(isPlain(set, [k], fields)).toBe(false);
+    const parked = partsOf(set, [k], fields);
+    const off = resetFields(set, [k], fields);
+    expect(isPlain(off, [k], fields)).toBe(true);
+    expect(find(off, k)!.item.speed).toBeUndefined();
+    const back = putParts(off, parked);
+    expect(find(back, k)!.item).toMatchObject({ zoom: 1.5, rot: 10, speed: 2 });
+    expect(isPlain(setItems(tl, [k], { zoom: 1, crop: [0, 0, 0, 0] }), [k], ["zoom", "crop"])).toBe(true);
   });
 });

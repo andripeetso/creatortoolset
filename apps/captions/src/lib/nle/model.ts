@@ -42,6 +42,9 @@ export interface NleItem {
   opacity?: number;
   speed?: number;
   gain_db?: number;
+  /** a fade from black / silence at the clip's start, and to it at its end, in timeline frames */
+  fade_in?: number;
+  fade_out?: number;
   enabled?: boolean;
   /** this editor's own handle on the clip while it is open (stripped on save) */
   _k?: string;
@@ -510,4 +513,54 @@ export function extendTo(tl: NleTimeline, key: string, f: number): NleTimeline {
   if (tail) return items.some((x) => x.rec === endOf(it)) ? roll(tl, key, d) : trim(tl, key, "tail", d);
   const prev = items.find((x) => endOf(x) === it.rec);
   return prev ? roll(tl, prev._k!, d) : trim(tl, key, "head", d);
+}
+
+/** What each clip field is when it does nothing (crop: all zero; flip: none). */
+const PLAIN: Record<string, unknown> = { zoom: 1, pan: 0, tilt: 0, rot: 0, opacity: 1, speed: 1, gain_db: 0, fade_in: 0, fade_out: 0 };
+const plainField = (f: string, v: unknown) =>
+  v === undefined || v === PLAIN[f] || (f === "crop" && Array.isArray(v) && v.every((x) => !x));
+
+/** Whether clips' fields all do nothing (an inspector section left as it was). */
+export const isPlain = (tl: NleTimeline, keys: string[], fields: string[]): boolean =>
+  keys.every((k) => {
+    const it = find(tl, k)?.item;
+    return !it || fields.every((f) => plainField(f, it[f]));
+  });
+
+/** Clips' fields as they are now, each clip's own (`undefined` = not set), for `putParts` to put back. */
+export function partsOf(tl: NleTimeline, keys: string[], fields: string[]): Record<string, Partial<NleItem>> {
+  const out: Record<string, Partial<NleItem>> = {};
+  for (const k of keys) {
+    const it = find(tl, k)?.item;
+    if (it) out[k] = Object.fromEntries(fields.map((f) => [f, it[f]])) as Partial<NleItem>;
+  }
+  return out;
+}
+
+/** Each clip's fields set to `parts[key]`; `speed` through setSpeed (a clip never runs past its source). */
+export function putParts(tl: NleTimeline, parts: Record<string, Partial<NleItem>>): NleTimeline {
+  let out = tl;
+  for (const [k, p] of Object.entries(parts)) {
+    const { speed, ...rest } = p;
+    if (Object.keys(rest).length) out = setItems(out, [k], rest);
+    if ("speed" in p) out = setSpeed(out, [k], speed ?? 1);
+  }
+  return out;
+}
+
+/** Clips' fields back to doing nothing. */
+export const resetFields = (tl: NleTimeline, keys: string[], fields: string[]): NleTimeline =>
+  putParts(tl, Object.fromEntries(keys.map((k) => [k, Object.fromEntries(fields.map((f) => [f, undefined]))])));
+
+/** A fade at clips' start ("in") or end ("out") in timeline frames: whole frames, at most the clip less its other fade. */
+export function setFade(tl: NleTimeline, keys: string[], edge: "in" | "out", frames: number): NleTimeline {
+  let out = tl;
+  for (const k of keys) {
+    const it = find(tl, k)?.item;
+    if (!it) continue;
+    const other = (edge === "in" ? it.fade_out : it.fade_in) ?? 0;
+    const f = Math.max(0, Math.min(Math.round(frames), it.len - other));
+    out = setItems(out, [k], { [edge === "in" ? "fade_in" : "fade_out"]: f || undefined });
+  }
+  return out;
 }
