@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
@@ -30,6 +30,26 @@ const readHeight = () => {
     return 1;
   }
 };
+/** Each track's own height in px (a drag on its lower edge), before the height slider scales them all. */
+const HEIGHTS_KEY = "ct-nle-track-heights";
+const readHeights = (): Record<string, number> => {
+  try {
+    const v = JSON.parse(localStorage.getItem(HEIGHTS_KEY) ?? "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+};
+const keep = (k: string, v: unknown) => {
+  try {
+    localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v));
+  } catch {
+    // not kept for next time
+  }
+};
+/** A sound clip cut from a video file shows its waveform when the file is at most this big (the file is read whole). */
+// shortcut: whole-file decode, capped; a server-made peaks file would lift the cap for long camera files
+const VIDEO_SOUND_BYTES = 300e6;
 const EDGE_PX = 6;
 const DAY = 24 * 3600;
 const MAX_PPS = 600;
@@ -93,15 +113,23 @@ export const NleTracks = memo(function NleTracks({
   useEffect(() => axis.follow(time), [time]);
   const [hover, setHover] = useState<string | null>(null);
   const [scale, setScale] = useState(readHeight);
-  const laneH = (id: string) => Math.round((isVideo(id) ? 42 : 32) * scale);
+  const [heights, setHeights] = useState(readHeights);
+  const laneH = (id: string) => Math.round((heights[id] ?? (isVideo(id) ? 42 : 32)) * scale);
   const keepHeight = (v: number) => {
     setScale(v);
-    try {
-      localStorage.setItem(HEIGHT_KEY, String(v));
-    } catch {
-      // not kept for next time
-    }
+    keep(HEIGHT_KEY, String(v));
   };
+  // a drag on a track's lower edge sets its height; a double click puts it back
+  const sizing = useRef<{ id: string; y0: number; h0: number } | null>(null);
+  const sizeTrack = (id: string, h: number | null) => setHeights((all) => {
+    const next = { ...all };
+    if (h === null) delete next[id];
+    else next[id] = Math.max(18, Math.min(400, h / scale));
+    return next;
+  });
+  useEffect(() => keep(HEIGHTS_KEY, heights), [heights]);
+  // the middle button drags the view, left and right and up and down
+  const pan = useRef<{ x0: number; y0: number; left0: number; top0: number } | null>(null);
   const order = trackOrder(tl);
   const picked = new Set(selected);
 
@@ -138,6 +166,13 @@ export const NleTracks = memo(function NleTracks({
   };
 
   const moveTo = (e: ReactPointerEvent) => {
+    const p = pan.current;
+    const el = scroller.current;
+    if (p && el) {
+      el.scrollLeft = p.left0 - (e.clientX - p.x0);
+      el.scrollTop = p.top0 - (e.clientY - p.y0);
+      return;
+    }
     const d = drag.current;
     if (!d) return;
     const px = e.clientX - d.x0;
@@ -169,6 +204,7 @@ export const NleTracks = memo(function NleTracks({
   };
 
   const up = () => {
+    pan.current = null;
     const d = drag.current;
     drag.current = null;
     if (!d?.moved) return;
@@ -221,7 +257,16 @@ export const NleTracks = memo(function NleTracks({
           </div>
         </>
       }
-      content={{ onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up, className: cn("flex min-h-full flex-col", cursor) }}>
+      content={{
+        onPointerDown: (e) => {
+          const el = scroller.current;
+          if (e.button !== 1 || !el) return;
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          pan.current = { x0: e.clientX, y0: e.clientY, left0: el.scrollLeft, top0: el.scrollTop };
+        },
+        onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up, className: cn("flex min-h-full flex-col", cursor),
+      }}>
       {order.map((id) => {
         const t = tl.tracks[id];
         const v = isVideo(id);
@@ -247,6 +292,21 @@ export const NleTracks = memo(function NleTracks({
                 className={cn("rounded p-0.5 hover:bg-zinc-800", t.locked ? "text-amber-400" : "text-zinc-500")}>
                 {t.locked ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
               </button>
+              <span role="separator" aria-orientation="horizontal" aria-label={`${id} height`} title="Drag: this track's height · double click: back to the usual"
+                className="absolute inset-x-0 -bottom-px z-10 h-1.5 cursor-row-resize hover:bg-violet-400/60"
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  sizing.current = { id, y0: e.clientY, h0: laneH(id) };
+                }}
+                onPointerMove={(e) => {
+                  const s = sizing.current;
+                  if (s) sizeTrack(s.id, s.h0 + e.clientY - s.y0);
+                }}
+                onPointerUp={() => void (sizing.current = null)}
+                onDoubleClick={() => sizeTrack(id, null)} />
             </div>
             <div data-lane={id} className={cn("relative flex-1", t.locked && "bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(255,255,255,0.03)_6px_12px)]")}
               onPointerDown={(e) => e.button === 0 && tool !== "blade" && !e.shiftKey && onSelect([])}
@@ -277,7 +337,14 @@ export const NleTracks = memo(function NleTracks({
                       (it.enabled === false || off) && "opacity-40",
                       tool === "select" ? "cursor-grab" : tool === "trim" ? "cursor-ew-resize" : "")}
                     style={{ left: (it.rec / fps) * pps, width: Math.max(2, w) }}>
-                    {fileOf && w > 8 && <ClipLook it={it} tl={tl} video={v} file={fileOf(it.src)} width={w} height={laneH(id) - 8} />}
+                    {fileOf && w > 8 && (() => {
+                      // plain values only: the page hands a new file object every render, and a waveform redrawn
+                      // for every clip on every frame of playback is what made the timeline lag
+                      const file = fileOf(it.src);
+                      const sfps = tl.sources[it.src]?.fps || fps;
+                      return <ClipLook path={String(tl.sources[it.src]?.path ?? "")} from={it.in / sfps} to={it.in / sfps + (it.len / fps) * (it.speed || 1)}
+                        video={v} url={file?.url ?? null} still={!!file?.frame} width={w} height={laneH(id) - 8} />;
+                    })()}
                     {w > 24 && <span className="relative block truncate [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">{nameOf(it)}</span>}
                     {w > 60 && isVideo(id) && <span className="relative block truncate text-[9px] text-sky-200/70 [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">{(it.len / fps).toFixed(2)} s</span>}
                     <span className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
@@ -307,26 +374,22 @@ const loudestIn = (d: Float32Array) => {
 };
 
 /** Under a clip's name: a sound clip's waveform from its sound file, a video clip's pictures along it (a picture a second). */
-const ClipLook = memo(function ClipLook({ it, tl, video, file, width, height }: {
-  it: NleItem; tl: NleTimeline; video: boolean; file: NleFile | null; width: number; height: number;
+const ClipLook = memo(function ClipLook({ path, from, to, video, url, still, width, height }: {
+  /** the source's file; `from` and `to`: the seconds of it the clip plays */
+  path: string; from: number; to: number; video: boolean; url: string | null; still: boolean; width: number; height: number;
 }) {
-  const path = String(tl.sources[it.src]?.path ?? "");
-  const fps = tl.timeline.fps;
-  const sfps = tl.sources[it.src]?.fps || fps;
-  const from = it.in / sfps;
-  const to = from + (it.len / fps) * (it.speed || 1);
-  const url = file?.url ?? null;
   const [wave, setWave] = useState<Float32Array | null>(null);
-  // sound files only: a camera file would be decoded whole for its sound
-  const sound = !video && !!url && SOUND_FILE.test(path);
+  const sound = !video && !!url;
   useEffect(() => {
     if (!sound || !url) return void setWave(null);
     let gone = false;
-    peaks(url).then((d) => !gone && setWave(d), () => {});
+    // a video file's sound too, unless it is too big to read whole
+    peaks(url, SOUND_FILE.test(path) ? undefined : VIDEO_SOUND_BYTES).then((d) => !gone && setWave(d), () => {});
     return () => void (gone = true);
-  }, [sound, url]);
+  }, [sound, url, path]);
+  const wavePath_ = useMemo(() => wave && wavePath(wave, from, to, loudestIn(wave)), [wave, from, to]);
   const strip = useRef<HTMLCanvasElement>(null);
-  const pictures = video && !!url && !file?.frame && !/\.(png|jpe?g|webp|gif)$/i.test(path);
+  const pictures = video && !!url && !still && !/\.(png|jpe?g|webp|gif)$/i.test(path);
   useEffect(() => {
     const c = strip.current;
     if (!pictures || !url || !c) return;
@@ -351,8 +414,8 @@ const ClipLook = memo(function ClipLook({ it, tl, video, file, width, height }: 
     return () => void (gone = true);
   }, [pictures, url, from, to, width, height]);
   if (pictures) return <canvas ref={strip} width={Math.min(Math.ceil(width), 4000)} height={height} className="pointer-events-none absolute inset-0 h-full opacity-60" style={{ width: Math.min(Math.ceil(width), 4000) }} />;
-  if (!wave) return null;
-  const path_ = wavePath(wave, from, to, loudestIn(wave));
+  if (!wavePath_) return null;
+  const path_ = wavePath_;
   return (
     <svg className="pointer-events-none absolute inset-0 size-full text-emerald-300/50" viewBox={`0 -1 ${path_.n} 2`} preserveAspectRatio="none">
       <path d={path_.d} fill="currentColor" />

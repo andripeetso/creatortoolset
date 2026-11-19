@@ -6,13 +6,19 @@ export const PEAKS_PER_SECOND = 100;
 
 const cache = new Map<string, Promise<Float32Array>>();
 
-export function peaks(url: string): Promise<Float32Array> {
+/** `maxBytes`: a file bigger than this (or of no known size) is not fetched whole for its sound (a long camera file). */
+export function peaks(url: string, maxBytes?: number): Promise<Float32Array> {
   let p = cache.get(url);
   if (!p) {
     p = (async () => {
+      const stop = new AbortController();
       // the Mac app's local files answer any page (Access-Control-Allow-Origin *), which WebKit refuses with credentials
-      const res = await fetch(url, { credentials: url.startsWith("ctlocal:") ? "omit" : "include" });
+      const res = await fetch(url, { credentials: url.startsWith("ctlocal:") ? "omit" : "include", signal: stop.signal });
       if (!res.ok) throw new Error(`${res.status}`);
+      if (maxBytes && !(Number(res.headers.get("content-length")) <= maxBytes)) {
+        stop.abort();
+        throw new Error("too big");
+      }
       const audio = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(await res.arrayBuffer());
       return peaksOf(Array.from({ length: audio.numberOfChannels }, (_, c) => audio.getChannelData(c)), audio.sampleRate);
     })();

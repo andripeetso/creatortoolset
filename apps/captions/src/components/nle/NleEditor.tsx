@@ -3,8 +3,8 @@ import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Film, Loader2, Magnet, MousePointer2, Music, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
-  addSource, addTrack, blade, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, paste, place, remove,
-  removeTrack, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
+  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
+  place, remove, removeTrack, rippleToPlayhead, setItems, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
 import { NleInspector } from "./NleInspector";
@@ -212,9 +212,17 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       const k = e.key.toLowerCase();
       const mod = e.metaKey || e.ctrlKey;
       const f = Math.round(time * fps);
-      if (mod && k === "s") void save();
+      // Y / ⌘Y: the clips from the playhead on / before it, all tracks; with ⌥ only the track under the pointer (or the
+      // picked clips' tracks), as Resolve has them
+      const pickFrom = (dir: 1 | -1) => {
+        const over = document.querySelector<HTMLElement>("[data-lane]:hover")?.dataset.lane;
+        const tracks = !e.altKey ? undefined : over ? [over] : sel.length ? [...new Set(sel.map((s) => find(tl, s)!.track))] : ["V1"];
+        setSelected(clipsFrom(tl, f, dir, tracks));
+      };
+      if (e.code === "KeyY" && !e.shiftKey) pickFrom(mod ? -1 : 1);
+      else if (mod && k === "s") void save();
       else if (mod && k === "z") setHist(e.shiftKey ? histRedo : histUndo);
-      else if (mod && k === "y") setHist(histRedo);
+      else if (mod && e.key === "\\") act.blade();
       else if (mod && k === "c") act.copy();
       else if (mod && k === "x") act.cut();
       else if (mod && k === "v") act.paste();
@@ -233,11 +241,21 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       else if (k === "t") setTool("trim");
       else if (k === "b") setTool("blade");
       else if (k === "n") setSnap((s) => !s);
+      // Q / W: ripple-trim the clip under the playhead's start / end to it; E: the picked clip's nearer end to it
+      else if (k === "q" && !readOnly) {
+        const h = clipAt(tl, f, sel);
+        const next = rippleToPlayhead(tl, f, "head", sel);
+        commit(next);
+        if (h && next !== tl) seek(h.item.rec / fps); // the playhead goes to the cut, where the next shot now starts
+      } else if (k === "w" && !readOnly) commit(rippleToPlayhead(tl, f, "tail", sel));
+      else if (k === "e" && sel.length) commit(extendTo(tl, sel[0], f));
+      else if (k === "d" && sel.length) commit(setItems(tl, sel, { enabled: find(tl, sel[0])!.item.enabled === false ? undefined : false }));
+      else if ((e.key === "," || e.key === "<" || e.key === "." || e.key === ">") && sel.length) commit(move(tl, sel, (e.key === "," || e.key === "<" ? -1 : 1) * (e.shiftKey ? 5 : 1)));
       else if (e.key === "Delete" || e.key === "Backspace") act.delete(e.shiftKey);
       else if (e.key === "Escape") setSelected([]);
       else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         play(false);
-        seek(time + ((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 10 : 1)) / fps);
+        seek(time + ((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? fps : 1)) / fps);
       } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         play(false);
         const p = e.key === "ArrowUp" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);

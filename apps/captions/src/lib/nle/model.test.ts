@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addSource, addTrack, blade, copyOf, duplicate, endOf, find, freeTrack, lengthOf, move, paste, place, remove, removeTrack, roll,
+  addSource, addTrack, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, removeTrack, roll,
   setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
 } from "./model";
 
@@ -223,5 +223,32 @@ describe("nle model", () => {
     expect(find(setSpeed(tl, [k], 2), k)!.item).toMatchObject({ speed: 2, len: 40 });
     expect(find(setSpeed(tl, [k], 8), k)!.item).toMatchObject({ speed: 8, len: 25 });
     expect(find(setSpeed(setSpeed(tl, [k], 2), [k], 1), k)!.item.speed).toBeUndefined();
+  });
+});
+
+describe("nle keys", () => {
+  it("Y picks the clips from the playhead on, ⌥Y on one track, ⌘Y the ones before", () => {
+    const tl = reel();
+    expect(clipsFrom(tl, 80, 1).length).toBe(4); // V1 + A1 second shots, the B-roll, the song under the playhead
+    expect(clipsFrom(tl, 80, 1, ["V1"])).toEqual([key(tl, "V1", 75)]);
+    expect(clipsFrom(tl, 80, -1, ["V1", "V2"])).toEqual([key(tl, "V1", 0), key(tl, "V1", 75)]);
+  });
+
+  it("Q and W ripple the V1 clip under the playhead to it, what follows moves up", () => {
+    const tl = reel();
+    const q = rippleToPlayhead(tl, 85, "head", []);
+    expect(spans(q, "V1")).toEqual([[0, 75, 100], [75, 65, 410]]);
+    expect(spans(q, "A1")).toEqual([[0, 75, 100], [75, 65, 410]]);
+    expect(spans(q, "V2")).toEqual([[80, 40, 0]]);
+    const w = rippleToPlayhead(tl, 60, "tail", []);
+    expect(spans(w, "V1")).toEqual([[0, 60, 100], [60, 75, 400]]);
+    expect(rippleToPlayhead(tl, 200, "head", [])).toBe(tl);
+  });
+
+  it("E rolls a cut to the playhead, or trims a free end", () => {
+    const tl = reel();
+    expect(spans(extendTo(tl, key(tl, "V1", 0), 70), "V1")).toEqual([[0, 70, 100], [70, 80, 395]]);
+    expect(spans(extendTo(tl, key(tl, "V2", 90), 120), "V2")).toEqual([[90, 30, 0]]);
+    expect(spans(extendTo(tl, key(tl, "V2", 90), 140), "V2")).toEqual([[90, 50, 0]]);
   });
 });
