@@ -233,7 +233,7 @@ beforeAll(async () => {
   // ana's footage: uploaded originals with their proxies; the Studio Mac has the originals on its disk (the index's path)
   const db = srv.libraryDb();
   // search by picture off: its work (work/pictures.ts) would fetch the real model here
-  db.exec(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_t', 't', 'Footage', 'local', '{"projectId":"${FIRST}","pictures":false}', 0)`);
+  db.exec(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_t', 't', 'Footage', 'local', '{"projectId":"${FIRST}","pictures":false,"upload":"proxies"}', 0)`);
   const gen = path.join(S, "gen");
   mkdirSync(gen);
   mkdirSync(path.join(studio.dir, "Footage"));
