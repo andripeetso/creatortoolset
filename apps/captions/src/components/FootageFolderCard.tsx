@@ -9,7 +9,7 @@ import { useCachedLoad } from "@/lib/local-cache";
  * /library?setup=1, and Upload files; a member gets Upload files only. Upload files is the library's own picker (or
  * `onUpload`). No folder picker and no Copies card here: setup owns the folders. Also shown by the AI Editor's page.
  */
-export function FootageFolderCard({ libraryId, onUpload, page = false }: { libraryId: string; onUpload?: () => void; page?: boolean }) {
+export function FootageFolderCard({ libraryId, onUpload, page = false, needsSetup = true }: { libraryId: string; onUpload?: () => void; page?: boolean; needsSetup?: boolean }) {
   const navigate = useNavigate();
   // only the owner gets the watch status: its presence is what makes this person the owner
   const live = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => getWatch(libraryId));
@@ -25,12 +25,12 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
     <section aria-label="Empty library" className={box}>
       {page && <p className="text-sm text-zinc-500">No clips</p>}
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {owner && (
+        {owner && needsSetup && (
           <Button size={size} onClick={() => navigate("/library?setup=1")}>
             Set up
           </Button>
         )}
-        <Button size={size} variant={owner ? "outline" : "default"} onClick={() => (onUpload ? onUpload() : navigate("/library"))}>
+        <Button size={size} variant={owner && needsSetup ? "outline" : "default"} onClick={() => (onUpload ? onUpload() : navigate("/library"))}>
           Upload files
         </Button>
       </div>

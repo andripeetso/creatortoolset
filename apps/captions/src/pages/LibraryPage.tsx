@@ -1134,7 +1134,7 @@ export default function LibraryPage() {
                   )
                 )}
 
-                {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} />}
+                {firstScreen && <FootageFolderCard page libraryId={library.id} needsSetup={!library.settings.setupAt} onUpload={chooseFiles} />}
                 {setupOpen && library && <LibrarySetup library={library} watchAllowed={!!watch?.allowed} onDone={(l) => (saved(l), closeSetup())} onClose={closeSetup} />}
 
                 {next &&

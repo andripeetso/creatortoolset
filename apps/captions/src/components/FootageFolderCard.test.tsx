@@ -40,7 +40,7 @@ function Where() {
   return null;
 }
 
-async function render(props: { onUpload?: () => void; page?: boolean } = {}) {
+async function render(props: { onUpload?: () => void; page?: boolean; needsSetup?: boolean } = {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -85,6 +85,11 @@ describe("the empty Media Library", () => {
     expect(buttons()).toEqual(["Upload files"]);
     await click("Upload files");
     expect(onUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("an owner whose library is already set up gets Upload files only: Set up is for a library not set up yet", async () => {
+    await render({ page: true, needsSetup: false });
+    expect(buttons()).toEqual(["Upload files"]);
   });
 
   it("draws nothing until the owner's status is known or refused", async () => {

@@ -367,6 +367,14 @@ storageApp.post("/folders", async (c) => {
   // a folder inside one of this workspace's Media folders is in the Media Library already
   const outer = role === "footage" && (await readStorage(user)).folders.find((f) => here(f) && f.role === "footage" && f.origin.host === host && !!inside(p, f.origin.path));
   if (outer) return c.json({ error: `That folder is already in ${outer.name}` }, 400);
+  // setup's scratch default is made here, before its row is checked; only under ~/Movies/Creator Toolset on this computer
+  if (role === "footage" && b?.make === true && local && !!inside(p, path.join(os.homedir(), "Movies", "Creator Toolset"))) {
+    try {
+      await mkdir(p, { recursive: true });
+    } catch {
+      return c.json({ error: "That folder could not be made on this computer" }, 400);
+    }
+  }
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there.
   // A Finals folder is not footage: only its projects' subfolders are read, into Finals (library/watch.ts watchFinals)
   if (role === "footage" && (asked === THIS_COMPUTER || readHere(user, host))) {

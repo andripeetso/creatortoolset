@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   calls: [] as { url: string; body: Record<string, unknown>; workspace?: string | null }[],
   updates: [] as { id: string; settings: Record<string, unknown> }[],
   events: [] as CustomEvent[],
+  failMake: false,
 }));
 
 vi.mock("@/components/settings/ThisMacSection", () => ({ hasThisMac: () => h.mac }));
@@ -24,6 +25,7 @@ vi.mock("@/components/settings/StorageRows", () => ({
   STORAGE_API: "/api/devices/storage",
   call: async (url: string, _method: string, body: Record<string, unknown>, workspace?: string | null) => {
     h.calls.push({ url, body, workspace });
+    if (h.failMake && body.make) throw new Error("That folder could not be made on this computer");
     return {};
   },
 }));
@@ -55,6 +57,7 @@ beforeEach(() => {
   h.calls = [];
   h.updates = [];
   h.events = [];
+  h.failMake = false;
   onDone.mockReset();
   onClose.mockReset();
   window.addEventListener(LIBRARY_SETUP_DONE, onEvent);
@@ -258,5 +261,104 @@ describe("rowsOf", () => {
       { role: "projects", path: "/Volumes/NAS/Media/Project files" },
       { role: "library", path: "/Volumes/NAS/Media/Final exports" },
     ]);
+  });
+});
+
+describe("Media Library setup: the scratch folder is made before its row", () => {
+  it("the Source media row asks the server to make it; Project files and Final exports are made with their rows", async () => {
+    await mount("mac");
+    await next();
+    await next();
+    await next();
+    await press(button("Done"));
+    expect(h.calls.map((c) => [c.body.role, c.body.make])).toEqual([
+      ["footage", true],
+      ["projects", undefined],
+      ["library", undefined],
+    ]);
+  });
+
+  it("a folder that cannot be made shows the error and saves nothing, so setup is not marked done", async () => {
+    h.failMake = true;
+    await mount("mac");
+    for (let i = 0; i < 3; i++) await next();
+    await press(button("Done"));
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("could not be made");
+    expect(h.updates).toEqual([]);
+    expect(h.events).toEqual([]);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});
+
+describe("Media Library setup: proxies, analysis and organization details", () => {
+  it("Hosted media's Proxies holds the proxy switch on and disabled, and a Back trip cannot switch it off", async () => {
+    await mount("server");
+    for (let i = 0; i < 4; i++) await next(); // to Hosted media
+    await toggle("Upload to server"); // Proxies is on with it
+    await press(button("Back"));
+    await press(button("Back")); // proxy workflow
+    const proxy = document.querySelector<HTMLButtonElement>('button[aria-label="Generate proxies for imported media"]')!;
+    expect(proxy.getAttribute("aria-checked")).toBe("true");
+    expect(proxy.disabled).toBe(true);
+    expect(document.body.textContent).toContain("On while proxies are hosted");
+    await press(button("Continue"));
+    await press(button("Continue")); // to hosted, where Done is
+    await press(button("Done"));
+    expect(h.updates[0]!.settings).toMatchObject({ upload: "proxies", proxy: true });
+  });
+
+  it("Effort Off leaves Smart folders unavailable, and Effort back up picks it again", async () => {
+    await mount("mac");
+    for (let i = 0; i < 3; i++) await next();
+    const effort = document.querySelector<HTMLInputElement>('input[aria-label="Effort"]')!;
+    const setEffort = async (v: string) => {
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(effort, v);
+        effort.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flush();
+    };
+    const smart = () => [...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Smart folders"))!;
+    await setEffort("0");
+    expect(smart().disabled).toBe(true);
+    await setEffort("3");
+    expect(smart().disabled).toBe(false);
+    expect(smart().getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("the Models rows show at High and above; Video breakdown's pick is saved as the library's model", async () => {
+    await mount("mac");
+    for (let i = 0; i < 3; i++) await next();
+    expect(document.body.textContent).toContain("Descriptions");
+    expect(document.body.textContent).toContain("Transcripts");
+    await press([...document.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((b) => b.textContent?.includes("Video breakdown")));
+    await press([...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Gemini 3.5 Flash-Lite")));
+    await press(button("Done"));
+    expect(h.updates[0]!.settings).toMatchObject({ timelineModel: "gemini-3.5-flash-lite" });
+  });
+
+  it("Models are hidden at Effort Off, and the budget reads No limit until one is set", async () => {
+    await mount("mac");
+    for (let i = 0; i < 3; i++) await next();
+    expect(document.body.textContent).toContain("Monthly budget: No limit");
+    const effort = document.querySelector<HTMLInputElement>('input[aria-label="Effort"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(effort, "0");
+      effort.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    expect(document.body.textContent).not.toContain("Descriptions");
+  });
+});
+
+describe("Media Library setup: the browser path", () => {
+  it("a browser with no Mac app names the Mac app and offers its download", async () => {
+    h.mac = false;
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    await mount("server");
+    await next();
+    await press(button("Download the Mac app"));
+    expect(open).toHaveBeenCalledWith("https://creatortoolset.com/download", "_blank", "noopener");
+    open.mockRestore();
   });
 });

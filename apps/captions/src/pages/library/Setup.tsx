@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from "react";
+import { Cloud, FolderOpen, Gauge, Laptop, ScanSearch, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Card, InfoTip, Row } from "@/components/settings/kit-rows";
 import { hasThisMac } from "@/components/settings/ThisMacSection";
 import { call, STORAGE_API } from "@/components/settings/StorageRows";
@@ -17,12 +19,14 @@ import {
   LIBRARY_WORDS,
   LOOK_BUDGET_DEFAULT,
   PROXY_QUALITIES,
+  WATCH_MODELS,
   flagsOf,
   uploadFrom,
   type AnalysisLevel,
   type LibrarySettings,
   type LibrarySummary,
   type ProxyQuality,
+  type WatchModel,
 } from "@contracts/library";
 import { EXPORTS_NAME, LIBRARY_NAME, LIBRARY_SUBFOLDERS, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
 
@@ -50,6 +54,8 @@ interface Answers {
   proxy: boolean;
   proxyQuality: ProxyQuality;
   effort: AnalysisLevel;
+  /** the Video breakdown model (shown at High and above) */
+  watchModel: WatchModel;
   /** dollars a month; null: No limit (the default for a new library) */
   budget: number | null;
   organize: "ai" | "own";
@@ -69,6 +75,7 @@ const START: Answers = {
   proxy: true,
   proxyQuality: "standard",
   effort: ANALYSIS_DEFAULT,
+  watchModel: WATCH_MODELS[0]!.value,
   budget: null,
   organize: "ai",
   upload: false,
@@ -87,14 +94,23 @@ const TITLE: Record<Step, string> = {
   hosted: "Hosted media",
 };
 
+const ICON: Record<Step, LucideIcon> = { start: FolderOpen, folders: FolderOpen, proxy: Gauge, analysis: ScanSearch, hosted: Cloud };
+
 // the words only this sheet shows (the folder labels and their tips are not on any other surface yet)
 const SOURCE_TIP = "Where your media is kept, with all its subfolders. Files you add in the app are saved to the first folder.";
 const PROJECTS_TIP = "Where project work is saved: edits, renders and test renders.";
 const EXPORTS_TIP = "Where finished, clean exports are saved.";
 const NEXT_TO_SOURCE = "Project files and Final exports are made next to your first Source media folder.";
 const BUDGET_TIP = "Analysis waits until next month once this workspace's library has spent this.";
+const DESCRIPTIONS_TIP = "Writes what each clip and each shot shows, with tags. Your choice, in every workspace.";
+const VIDEO_TIP = "Watches each video with its sound and lists what happens, with times. Set for this workspace.";
+const TRANSCRIPTS_TIP = "Turns speech into text, with times. Your choice, in every workspace.";
+const MAC_DOWNLOAD = "https://creatortoolset.com/download";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Hosted media's Proxies forces the proxy switch on (SCREENS-COPY §1): the answer is kept, and only read here. */
+const proxiesHosted = (a: Answers): boolean => a.upload && a.proxies;
 
 /** The folders the answers name, as rows of the one folder list (the scratch paths sit in ~/Movies/Creator Toolset/<workspace>). */
 export function rowsOf(a: Answers, workspace: string): { role: StorageRole; path: string }[] {
@@ -119,8 +135,30 @@ const folderOk = (a: Answers): boolean => {
   return a.sources.length > 0 && (a.defaults || (!!a.projects && !!a.exports));
 };
 
-/** A radio option: the name, its ⓘ tip, and a status line when it says why it is off. */
-function Pick({ on, disabled, label, tip, status, onPick }: { on: boolean; disabled?: boolean; label: string; tip?: string; status?: string; onPick: () => void }) {
+/** The small picture of a Smart folders / Organize yourself option (decoration, read by no one). */
+function OrganizeArt({ smart }: { smart: boolean }) {
+  return (
+    <svg aria-hidden viewBox="0 0 56 40" className="h-10 w-14 shrink-0 text-foreground/60">
+      {smart ? (
+        <>
+          <rect x="4" y="8" width="20" height="24" rx="3" fill="currentColor" opacity=".25" />
+          <rect x="32" y="8" width="20" height="24" rx="3" fill="currentColor" opacity=".25" />
+          <circle cx="14" cy="20" r="3" fill="currentColor" />
+          <circle cx="42" cy="20" r="3" fill="currentColor" />
+        </>
+      ) : (
+        <>
+          <rect x="6" y="6" width="44" height="6" rx="2" fill="currentColor" opacity=".35" />
+          <rect x="6" y="17" width="34" height="6" rx="2" fill="currentColor" opacity=".35" />
+          <rect x="6" y="28" width="40" height="6" rx="2" fill="currentColor" opacity=".35" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** A radio option: the name, its ⓘ tip, a status line when it says why it is off, and an optional picture. */
+function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; disabled?: boolean; label: string; tip?: string; status?: string; art?: ReactNode; onPick: () => void }) {
   return (
     <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5", on ? "border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_7%,transparent)]" : "border-border/70")}>
       <button
@@ -132,12 +170,68 @@ function Pick({ on, disabled, label, tip, status, onPick }: { on: boolean; disab
         className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-50"
       >
         <span className={cn("size-4 shrink-0 rounded-full border", on ? "border-[var(--tint)] bg-[var(--tint)] shadow-[inset_0_0_0_3px_var(--background)]" : "border-foreground/25")} />
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium text-foreground">{label}</span>
           {status && <span className="block text-xs text-muted-foreground">{status}</span>}
         </span>
+        {art}
       </button>
       {tip && <InfoTip text={tip} label={label} />}
+    </div>
+  );
+}
+
+/** A model row (SCREENS-COPY §1 Models): the value in use; with options, a click shows them as a radio list. */
+function ModelRow({ title, tip, value, options, onPick }: { title: string; tip: string; value: string; options?: { value: string; label: string; note: string }[]; onPick?: (v: WatchModel) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b py-2.5 last:border-0">
+      <div className="flex items-center gap-2">
+        {options ? (
+          <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)]">
+            <span className="block text-sm font-medium">{title}</span>
+            <span className="block text-xs text-muted-foreground">{value}</span>
+          </button>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{title}</p>
+            <p className="text-xs text-muted-foreground">{value}</p>
+          </div>
+        )}
+        <InfoTip text={tip} label={title} />
+      </div>
+      {options && open && (
+        <div role="radiogroup" aria-label={title} className="mt-2 space-y-2">
+          {options.map((o) => (
+            <Pick key={o.value} on={value === o.label} label={o.label} status={o.note} onPick={() => onPick?.(o.value as WatchModel)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The computer → server picture for Hosted media (SCREENS-COPY §4 step 5): the current state is highlighted. */
+function HostedPicture({ state }: { state: "off" | "proxies" | "originals" }) {
+  const captions: [typeof state, string][] = [
+    ["off", "Off: media stays on your computers."],
+    ["proxies", "Proxies: the team plays every clip from the server."],
+    ["originals", "Originals: the full files are on the server too."],
+  ];
+  return (
+    <div className="flex items-center gap-3">
+      <div aria-hidden className="flex shrink-0 items-center gap-1 text-foreground/60">
+        <Laptop className="size-5" />
+        <span className="text-xs">→</span>
+        <Cloud className="size-5" />
+      </div>
+      <ul className="min-w-0 space-y-0.5 text-xs">
+        {captions.map(([s, text]) => (
+          <li key={s} className={s === state ? "font-medium text-foreground" : "text-muted-foreground"} aria-current={s === state ? "true" : undefined}>
+            {text}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -199,10 +293,12 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
   const last = at === steps.length - 1;
   // without the Mac app no folder can be added here (the step says so), so it does not hold Continue
   const ok = step !== "folders" || !hasThisMac() || folderOk(a);
+  const levelIdx = ANALYSIS_LEVELS.findIndex((l) => l.value === a.effort);
+  const videoLevel = levelIdx >= ANALYSIS_LEVELS.findIndex((l) => l.value === "high");
 
-  const addRow = (role: StorageRole, path: string) =>
-    call(`${STORAGE_API}/folders`, "POST", { role, host: THIS_COMPUTER, path }, workspace.id || undefined).catch((e: unknown) => {
-      // a folder already in the list is what the person wanted
+  // a row the folder list refuses because it is already there is what the person wanted; the scratch default is made first
+  const addRow = (role: StorageRole, path: string, make: boolean) =>
+    call(`${STORAGE_API}/folders`, "POST", { role, host: THIS_COMPUTER, path, ...(make ? { make: true } : {}) }, workspace.id || undefined).catch((e: unknown) => {
       if (!/already/i.test(message(e))) throw e;
     });
 
@@ -211,13 +307,18 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
     setError(null);
     try {
       // the folders are rows of the one list; without the Mac app there is no computer to add them on
-      if (hasThisMac()) for (const r of rowsOf(a, workspace.name)) await addRow(r.role, r.path);
+      if (hasThisMac()) {
+        const made = a.start === "scratch" && a.defaults;
+        for (const r of rowsOf(a, workspace.name)) await addRow(r.role, r.path, made && r.role === "footage");
+      }
       const settings: Partial<LibrarySettings> = {
         importMode: a.copy ? "copy" : "in-place",
-        organize: a.organize,
-        proxy: a.proxy,
+        // Smart folders need Analysis: with it off the answer is Organize yourself, kept as chosen while the pick is off
+        organize: a.effort === "off" ? "own" : a.organize,
+        proxy: a.proxy || proxiesHosted(a),
         proxyQuality: a.proxyQuality,
         ...flagsOf(a.effort),
+        timelineModel: a.watchModel,
         lookBudget: a.budget,
         defaultFolders: a.defaults,
         setupAt: new Date().toISOString(),
@@ -235,6 +336,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
   };
 
   const next = () => (last ? void finish() : setAt(at + 1));
+  const hostedState = !a.upload ? "off" : a.originals ? "originals" : "proxies";
 
   const body = (): ReactNode => {
     if (step === "start")
@@ -246,15 +348,16 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
       );
 
     if (step === "folders") {
-      if (!hasThisMac())
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Folders are added in the Mac app.</p>
-          </div>
-        );
       return (
         <div className="space-y-5">
-          {a.start === "scratch" ? (
+          {!hasThisMac() ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">Folders are added in the Mac app.</p>
+              <Button variant="outline" onClick={() => window.open(MAC_DOWNLOAD, "_blank", "noopener")}>
+                Download the Mac app
+              </Button>
+            </div>
+          ) : a.start === "scratch" ? (
             <Card>
               <Row title={LIBRARY_WORDS.defaultFolders.label} tip={LIBRARY_WORDS.defaultFolders.tip} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
               {!a.defaults && (
@@ -271,7 +374,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 <FolderRow title="Source media" tip={SOURCE_TIP} paths={a.sources} button="Add folder…" submit="Add" onAdd={(p) => set({ sources: [...a.sources, p] })} />
               </Card>
               <Card>
-                <Row title={LIBRARY_WORDS.defaultFolders.label} tip={NEXT_TO_SOURCE} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
+                <Row title="Project files and Final exports" tip={NEXT_TO_SOURCE} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
                 {!a.defaults && (
                   <>
                     <FolderRow title="Project files" tip={PROJECTS_TIP} paths={a.projects ? [a.projects] : []} button="Set…" submit="Set" onAdd={(p) => set({ projects: p })} />
@@ -292,11 +395,17 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
       );
     }
 
-    if (step === "proxy")
+    if (step === "proxy") {
+      const hosted = proxiesHosted(a);
       return (
         <Card>
-          <Row title={LIBRARY_WORDS.generateProxies.label} tip={LIBRARY_WORDS.generateProxies.tip} control={<Switch aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy} onCheckedChange={(v) => set({ proxy: v })} />} />
-          {a.proxy && (
+          <Row
+            title={LIBRARY_WORDS.generateProxies.label}
+            tip={LIBRARY_WORDS.generateProxies.tip}
+            status={hosted ? "On while proxies are hosted" : undefined}
+            control={<Switch aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy || hosted} disabled={hosted} onCheckedChange={(v) => set({ proxy: v })} />}
+          />
+          {(a.proxy || hosted) && (
             <Row title={LIBRARY_WORDS.proxyQuality.label} tip={LIBRARY_WORDS.proxyQuality.tip}>
               <div role="radiogroup" aria-label={LIBRARY_WORDS.proxyQuality.label} className="space-y-2">
                 {PROXY_QUALITIES.map((q) => (
@@ -307,9 +416,9 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
           )}
         </Card>
       );
+    }
 
-    if (step === "analysis") {
-      const idx = ANALYSIS_LEVELS.findIndex((l) => l.value === a.effort);
+    if (step === "analysis")
       return (
         <div className="space-y-5">
           <Card>
@@ -319,13 +428,9 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 min={0}
                 max={ANALYSIS_LEVELS.length - 1}
                 step={1}
-                value={idx}
+                value={levelIdx}
                 aria-label={LIBRARY_WORDS.effort}
-                onChange={(e) => {
-                  const level = ANALYSIS_LEVELS[Number(e.target.value)]!.value;
-                  // Smart folders sort by descriptions, so with Analysis off they are Organize yourself
-                  set(level === "off" ? { effort: level, organize: "own" } : { effort: level });
-                }}
+                onChange={(e) => set({ effort: ANALYSIS_LEVELS[Number(e.target.value)]!.value })}
                 className="w-full accent-[var(--tint)]"
               />
               <div className="mt-1 grid grid-cols-6 text-center text-xs text-muted-foreground">
@@ -337,28 +442,55 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 ))}
               </div>
             </Row>
-            <Row
-              title="Monthly budget"
-              tip={BUDGET_TIP}
-              control={
+          </Card>
+          <div className="text-center">
+            <Popover>
+              <PopoverTrigger className="text-sm text-muted-foreground underline-offset-4 outline-none hover:underline focus-visible:underline">
+                {a.budget === null ? "Monthly budget: No limit" : `Monthly budget: $${a.budget}`}
+              </PopoverTrigger>
+              <PopoverContent className="w-72 space-y-3">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  Monthly budget
+                  <InfoTip text={BUDGET_TIP} label="Monthly budget" />
+                </p>
+                <div className="flex items-center gap-2 text-sm">
+                  $
+                  <Input
+                    type="number"
+                    min={0}
+                    aria-label="Monthly budget in dollars"
+                    value={a.budget ?? ""}
+                    disabled={a.budget === null}
+                    onChange={(e) => set({ budget: Math.max(0, Number(e.target.value) || 0) })}
+                    className="w-24"
+                  />
+                  a month
+                </div>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" aria-label="No limit" checked={a.budget === null} onChange={(e) => set({ budget: e.target.checked ? null : LOOK_BUDGET_DEFAULT })} />
                   No limit
                 </label>
-              }
-            >
-              {a.budget !== null && (
-                <Input
-                  type="number"
-                  min={0}
-                  aria-label="Monthly budget in dollars"
-                  value={a.budget}
-                  onChange={(e) => set({ budget: Math.max(0, Number(e.target.value) || 0) })}
-                  className="w-32"
-                />
-              )}
-            </Row>
-          </Card>
+              </PopoverContent>
+            </Popover>
+          </div>
+          {a.effort !== "off" && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">{LIBRARY_WORDS.modelsTitle}</p>
+              <Card>
+                <ModelRow title="Descriptions" tip={DESCRIPTIONS_TIP} value="Set in Settings → AI" />
+                {videoLevel && (
+                  <ModelRow
+                    title="Video breakdown"
+                    tip={VIDEO_TIP}
+                    value={WATCH_MODELS.find((m) => m.value === a.watchModel)?.label ?? ""}
+                    options={WATCH_MODELS.map((m) => ({ value: m.value, label: m.label, note: m.note }))}
+                    onPick={(v) => set({ watchModel: v })}
+                  />
+                )}
+                <ModelRow title="Transcripts" tip={TRANSCRIPTS_TIP} value="Set in Settings → Voice" />
+              </Card>
+            </div>
+          )}
           <div className="space-y-2">
             <p className="text-sm font-medium">{LIBRARY_WORDS.organizationTitle}</p>
             <div role="radiogroup" aria-label={LIBRARY_WORDS.organizationTitle} className="space-y-2">
@@ -367,31 +499,41 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 disabled={a.effort === "off"}
                 label={LIBRARY_WORDS.smartFolders.label}
                 tip={LIBRARY_WORDS.smartFolders.tip}
-                status={a.effort === "off" ? "Analysis is Off" : undefined}
+                status={a.effort === "off" ? "Analysis is Off" : "Clips filed into folders by what they show."}
+                art={<OrganizeArt smart />}
                 onPick={() => set({ organize: "ai" })}
               />
-              <Pick on={a.organize === "own"} label={LIBRARY_WORDS.organizeYourself.label} tip={LIBRARY_WORDS.organizeYourself.tip} onPick={() => set({ organize: "own" })} />
+              <Pick
+                on={a.organize === "own"}
+                label={LIBRARY_WORDS.organizeYourself.label}
+                tip={LIBRARY_WORDS.organizeYourself.tip}
+                status="Every clip in one list, newest first."
+                art={<OrganizeArt smart={false} />}
+                onPick={() => set({ organize: "own" })}
+              />
             </div>
           </div>
         </div>
       );
-    }
 
     // hosted: only on a server or Cloud
     return (
-      <Card>
-        <Row
-          title={LIBRARY_WORDS.uploadToServer}
-          control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={a.upload} onCheckedChange={(v) => set({ upload: v, ...(v ? { proxies: true, proxy: true } : {}) })} />}
-        />
-        {a.upload && (
-          <>
-            <Row title={LIBRARY_WORDS.originals} control={<Switch aria-label={LIBRARY_WORDS.originals} checked={a.originals} onCheckedChange={(v) => set({ originals: v })} />} />
-            <Row title={LIBRARY_WORDS.proxies} control={<Switch aria-label={LIBRARY_WORDS.proxies} checked={a.proxies} onCheckedChange={(v) => set({ proxies: v, ...(v ? { proxy: true } : {}) })} />} />
-          </>
-        )}
-        <Row title={LIBRARY_WORDS.finalExportsUpload.label} tip={LIBRARY_WORDS.finalExportsUpload.tip} control={<Switch aria-label={LIBRARY_WORDS.finalExportsUpload.label} checked={a.finals} onCheckedChange={(v) => set({ finals: v })} />} />
-      </Card>
+      <div className="space-y-5">
+        <Card>
+          <Row
+            title={LIBRARY_WORDS.uploadToServer}
+            control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={a.upload} onCheckedChange={(v) => set({ upload: v, ...(v ? { proxies: true, proxy: true } : { proxies: false, originals: false }) })} />}
+          />
+          {a.upload && (
+            <>
+              <Row title={LIBRARY_WORDS.originals} control={<Switch aria-label={LIBRARY_WORDS.originals} checked={a.originals} onCheckedChange={(v) => set({ originals: v })} />} />
+              <Row title={LIBRARY_WORDS.proxies} control={<Switch aria-label={LIBRARY_WORDS.proxies} checked={a.proxies} onCheckedChange={(v) => set({ proxies: v, ...(v ? { proxy: true } : {}) })} />} />
+            </>
+          )}
+          <Row title={LIBRARY_WORDS.finalExportsUpload.label} tip={LIBRARY_WORDS.finalExportsUpload.tip} control={<Switch aria-label={LIBRARY_WORDS.finalExportsUpload.label} checked={a.finals} onCheckedChange={(v) => set({ finals: v })} />} />
+        </Card>
+        <HostedPicture state={hostedState} />
+      </div>
     );
   };
 
@@ -405,11 +547,15 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
           : step === "analysis"
             ? "Clips are described and tagged so you can search by what's in them. Higher effort looks closer and costs more."
             : `Choose what goes to ${serverName}, so your team can play it.`;
+  const Icon = ICON[step];
 
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <DialogContent className="flex h-[min(38rem,calc(100dvh-2rem))] w-[min(36rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
-        <div className="space-y-1 px-6 pb-3 pt-6">
+        <div className="space-y-2 px-6 pb-3 pt-6">
+          <span aria-hidden className="grid size-11 place-items-center rounded-2xl bg-[color-mix(in_srgb,var(--tint)_12%,transparent)] text-[var(--tint)]">
+            <Icon className="size-5" />
+          </span>
           <DialogTitle className="text-xl font-semibold">{TITLE[step]}</DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground">{lead}</DialogDescription>
         </div>

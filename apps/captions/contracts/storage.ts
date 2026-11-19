@@ -206,6 +206,8 @@ export interface AddFolderBody {
   role: SourceRole | "projects" | "library";
   host: string;
   path: string;
+  /** Setup's scratch default: a footage folder under ~/Movies/Creator Toolset on this computer is made when missing */
+  make?: boolean;
 }
 
 /** `workspaces`: the ones it is in (one or more), null = every workspace. `workspace`: one id or null, from before.
