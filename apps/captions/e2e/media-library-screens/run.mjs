@@ -4,7 +4,8 @@
 // kind), drives the owner and the member through Playwright in light and dark, and writes <outDir>/<screen>-<theme>.png
 // plus <outDir>/screens.json: the visible text, every ⓘ tooltip and the disabled controls of each screen.
 // Removes the scratch data and stops its own server by pid when done. The 11-19 sign-off screens (B2…D1 of the design
-// page) are named by their letter: B2-folded, B2-unrolled, B3, B5, B6, B7, B8, C1, C2, C4-closed, C4-open, D1, D1-unrolled.
+// page) are named by their letter: B2-folded, B2-unrolled, B3, B5, B6, B7, B8, C1, C2, C4-closed, C4-open, D1, D1-unrolled;
+// the list's columns and the From/To days: L1-list, L1-list-sorted, S-dates-empty, S-dates-set.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -238,12 +239,30 @@ try {
     await op.getByRole("combobox", { name: "Library" }).selectOption({ label: "Tiny Acrobatics library" }).catch(() => {});
     await op.waitForTimeout(1500);
     await capture(op, "C4-closed", theme);
-    const sortBy = op.locator('button[aria-label^="Sort by"]');
+    const sortBy = op.locator('button[aria-label^="Sort by"]').first();
     if (await sortBy.count()) {
       await sortBy.click();
       await op.waitForTimeout(400);
       await capture(op, "C4-open", theme);
       await op.keyboard.press("Escape");
+    }
+    // The list view's columns (11-19): as it opens, then sorted by a header (Name); the From/To days empty, then one set
+    await op.locator('button[title^="View:"]').click();
+    await op.getByRole("button", { name: "List", exact: true }).click();
+    await op.keyboard.press("Escape");
+    await op.waitForTimeout(800);
+    await capture(op, "L1-list", theme);
+    await op.getByRole("button", { name: "Sort by Name", exact: true }).last().click();
+    await op.waitForTimeout(800);
+    await capture(op, "L1-list-sorted", theme);
+    const fromDay = op.locator('input[aria-label="From date"]').first();
+    if (await fromDay.count()) {
+      await capture(op, "S-dates-empty", theme, fromDay);
+      await fromDay.fill("2026-01-01");
+      await op.waitForTimeout(800);
+      await capture(op, "S-dates-set", theme, fromDay);
+      await op.getByRole("button", { name: "Clear From date" }).click();
+      await op.waitForTimeout(500);
     }
     // C2 in the Gallery (tall clips, a cell each): seven files dropped beside the three portrait clips. Their sends are
     // held (never answered), so four are on their way and two wait for a turn; the first is refused, so it failed. The
