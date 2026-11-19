@@ -5,7 +5,7 @@ import { HomeActivity } from "@/components/HomeActivity";
 import { HomeLink } from "@/components/HomeLink";
 import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
-import { LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, previewChatWidth, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
+import { LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, chatWidthAt, dragChatEdge, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./ChatList";
 import { ChatModeButton } from "./ChatModeButton";
@@ -199,15 +199,20 @@ export function ChatEdge() {
         e.currentTarget.setPointerCapture(e.pointerId);
         setDrag(true);
       }}
-      onPointerMove={(e) => drag && previewChatWidth(e.clientX)}
+      onPointerMove={(e) => drag && dragChatEdge(e.clientX)}
       onPointerUp={(e) => {
         if (!drag) return;
         setDrag(false);
+        dragChatEdge(null);
         const { set } = useChatMode.getState();
         const win = document.documentElement.clientWidth || window.innerWidth;
         if (e.clientX < 200) washTo({ on: false }, e.currentTarget);
         else if (e.clientX > win - MIN_PAGE / 2) washTo({ page: false }, e.currentTarget);
-        else set({ w: previewChatWidth(e.clientX) });
+        else set({ w: chatWidthAt(e.clientX) });
+      }}
+      onLostPointerCapture={() => {
+        setDrag(false);
+        dragChatEdge(null);
       }}
       onDoubleClick={() => useChatMode.getState().set({ w: 0 })}
       className="group absolute inset-y-0 right-0 z-10 w-2 cursor-col-resize touch-none"
