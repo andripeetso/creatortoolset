@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { SOUNDS, type Organize, type Sound } from "../../contracts/library";
-import { libraryDb } from "./db";
+import type { SessionUser } from "../users";
+import { libraryDb, librarySetting } from "./db";
+import { workspaceOf } from "./describe";
 import { enqueueJob } from "./jobs";
 import { indexAsset } from "./query";
+import { lookBudgetWaits } from "./shots";
+import { fileSmart } from "./smart";
+
+type Who = Pick<SessionUser, "username" | "role">;
 
 /**
  * How a library is organized (its setting `organize`, chosen on the Media Library's first run): "default" makes no folder
@@ -51,7 +57,7 @@ export function smartFolder(d: DatabaseSync, libraryId: string, name: string, qu
 
 /** A plain top-level folder by name (the oldest when two share it), or null. */
 function topFolder(d: DatabaseSync, libraryId: string, name: string): string | null {
-  const r = d.prepare("SELECT id FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name = ? ORDER BY created_at, id LIMIT 1").get(libraryId, name) as
+  const r = d.prepare("SELECT id FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name = ? COLLATE NOCASE ORDER BY created_at, id LIMIT 1").get(libraryId, name) as
     | { id: string }
     | undefined;
   return r?.id ?? null;
@@ -65,6 +71,10 @@ export function plainFolders(d: DatabaseSync, libraryId: string): string[] {
   }[];
   return [...new Set(rows.map((r) => r.name))];
 }
+
+/** The top-level folders the cap counts: plain or smart, never Finals (a smart folder the AI made is one of them too). */
+export const topCount = (d: DatabaseSync, libraryId: string): number =>
+  (d.prepare("SELECT COUNT(DISTINCT name COLLATE NOCASE) AS n FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get(libraryId) as { n: number }).n;
 
 interface Asset {
   id: string;
@@ -86,17 +96,27 @@ export function toFile(d: DatabaseSync, versionId: string): Asset | null {
 
 /**
  * Puts the asset in the plain top-level folder `name`, made when the library has none by that name (a name differing only
- * in case is the same folder), with the sound tag a sound folder carries. Returns whether it did.
+ * in case is the same folder), with the sound tag a sound folder carries. Returns whether it did. A folder the AI makes
+ * (`aiMade`) is made with a rule of its own name, so it is a smart folder and fills itself (UNIFIED-PRD §4.9), and only
+ * while the library has fewer than MAX_AI_FOLDERS top-level folders.
  */
-export function fileInto(d: DatabaseSync, a: Asset, name: string): boolean {
+export function fileInto(d: DatabaseSync, a: Asset, name: string, aiMade = false): boolean {
   name = name.replace(/\s+/g, " ").trim().slice(0, 40);
   if (!name || name.toLowerCase() === "finals") return false;
   const same = plainFolders(d, a.library_id).find((f) => f.toLowerCase() === name.toLowerCase());
   if (same) name = same;
   let folder = topFolder(d, a.library_id, name);
   if (!folder) {
+    if (aiMade && topCount(d, a.library_id) >= MAX_AI_FOLDERS) return false;
     folder = id();
-    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?)").run(folder, a.library_id, name, Date.now(), a.created_by);
+    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, rule, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?, ?)").run(
+      folder,
+      a.library_id,
+      name,
+      aiMade ? name : null,
+      Date.now(),
+      a.created_by,
+    );
   }
   d.prepare(
     `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
@@ -122,10 +142,13 @@ export function organizeOnProbe(d: DatabaseSync, versionId: string, sound: Sound
 }
 
 /**
- * A library just set to "ai": what is in no folder yet is filed now. Sounds and pictures at once; videos get their
- * description again (it names the folder), on the person who chose it. Trashed files are left alone.
+ * A library just set to "ai": what is in no folder yet is filed now. Videos get their description again, on the person
+ * who chose it: describe.ts judges the smart folders first, then names a plain folder. A sound or picture goes to the
+ * smart folders that fit it (smart.ts), else to its kind's folder. A judge call is a model call, so with describe off or
+ * the look budget spent (UNIFIED-PRD §4.4–4.5) those files take their kind's folder only. Trashed files are left alone.
  */
-export function fileUnfiled(d: DatabaseSync, libraryId: string, by: string): void {
+export async function fileUnfiled(d: DatabaseSync, libraryId: string, who: Who): Promise<void> {
+  const by = who.username;
   const rows = d
     .prepare(
       `SELECT a.id, a.library_id, a.kind, a.created_by, v.id AS version,
@@ -135,9 +158,13 @@ export function fileUnfiled(d: DatabaseSync, libraryId: string, by: string): voi
          AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')`,
     )
     .all(SOUNDS.music.tag, SOUNDS.effect.tag, libraryId) as unknown as (Asset & { version: string; sound: string | null })[];
+  for (const r of rows) if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
+  // one at a time: each judge call is a model call (shortcut: not batched as sortFolder is, fine while the sweep is once per library, upgrade if a large library stalls)
   for (const r of rows) {
-    if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
+    if (r.kind === "video") continue;
+    const judge = librarySetting(libraryId, "describe") && !(await lookBudgetWaits(d, r.version));
+    if (judge && ((await fileSmart(d, r.version, who, await workspaceOf(d, r.version)).catch(() => 0)) ?? 0)) continue;
     // a sound by its kind's tag (sound-kind.ts, since its probe): one with none (taken off, someone talking) stays where it is
-    else organizeOnProbe(d, r.version, r.sound === SOUNDS.music.tag ? "music" : r.sound === SOUNDS.effect.tag ? "effect" : null);
+    organizeOnProbe(d, r.version, r.sound === SOUNDS.music.tag ? "music" : r.sound === SOUNDS.effect.tag ? "effect" : null);
   }
 }

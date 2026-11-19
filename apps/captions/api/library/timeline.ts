@@ -489,7 +489,7 @@ async function askPart(key: string, model: GeminiModel, f: { uri: string; mimeTy
       if (r.status === 402 || DEPLETED.test(e.message)) {
         const said = `${CREDIT_GONE}: ${e.message}`;
         parked.set(key, { until: Date.now() + RETRY_MS, said });
-        creditOut("GEMINI_API_KEY", key, "Media Library timelines");
+        creditOut("GEMINI_API_KEY", key, "Media Library video breakdowns");
         throw new Error(said);
       }
       // a quota that asks for a longer wait than ours (measured: a free key's 20 calls a day, "retry in 4h") is not

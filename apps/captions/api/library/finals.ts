@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { homeOf, libraryRole, mayWrite } from "./access";
-import { libraryDb } from "./db";
+import { libraryDb, newLibrarySettings } from "./db";
 import { addExternalItem, externalCanSee, externalRefFor } from "./refs";
 import { saveToLibrary } from "./routes";
 import { pluginFinalsAdded, pluginFinalsRefusal } from "../lib/plugin";
@@ -54,7 +54,7 @@ export function libraryOf(owner: string): string {
   const found = d.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(home) as { id: string } | undefined;
   if (found) return found.id;
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)").run(id, home, Date.now());
+  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'Library', 'local', ?, ?)").run(id, home, newLibrarySettings(), Date.now());
   return id;
 }
 

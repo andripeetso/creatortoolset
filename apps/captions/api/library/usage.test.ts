@@ -297,12 +297,12 @@ describe("library storage choice", () => {
     expect((await call("owner-a", "GET", "/api/library/media/v_hd/play")).status).toBe(409);
     expect((await call("owner-a", "GET", "/api/library/media/v_4k/play")).status).toBe(302);
 
-    // nothing in the cloud: the proxies leave the bucket, and come back here only where the window needs one
+    // nothing in the cloud: the proxies leave the bucket, and come back here; under Hosted proxies every video wants one (UNIFIED-PRD §4.1)
     await call("owner-a", "PATCH", "/api/library/lib_p", { settings: { proxy: true } });
     const back = await call("owner-a", "PUT", "/api/library/lib_p/storage", { kind: "local" });
     expect(await back.json()).not.toHaveProperty("proxies");
     expect(s3.objects.has("libraries/lib_p/v/v_4k/proxy.mp4")).toBe(false);
     expect(stored("lib_p")).toBe(0);
-    expect(d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued' ORDER BY version_id").all()).toEqual([{ version_id: "v_4k" }, { version_id: "v_wav" }]);
+    expect(d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued' ORDER BY version_id").all()).toEqual([{ version_id: "v_4k" }, { version_id: "v_hd" }, { version_id: "v_wav" }]);
   });
 });

@@ -20,7 +20,7 @@ import { stretchesOf } from "./stretches";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
-import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile } from "./organize";
+import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile, topCount } from "./organize";
 import { fileSmart } from "./smart";
 import { asTurn, turned, turnVersion } from "./turn";
 
@@ -399,7 +399,8 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
     const filing = toFile(db, versionId);
     const folders = filing ? plainFolders(db, filing.library_id) : undefined;
-    const newFolder = !!folders && folders.length < MAX_AI_FOLDERS;
+    // the cap counts smart folders too (fileInto's count): one the AI made with a rule is still a folder it made
+    const newFolder = !!filing && topCount(db, filing.library_id) < MAX_AI_FOLDERS;
     const workspace = await workspaceOf(db, versionId);
     const { system, user } = describePrompt({
       title,
@@ -416,9 +417,9 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     if (value.turn) await turnVersion(db, versionId, base + value.turn);
     // the library's smart folders judge it first (smart.ts); one it went in is where it is filed
     const smart = (await fileSmart(db, versionId, who, workspace).catch(() => 0)) ?? 0;
-    // a new name only while the library may get one; fileInto makes the folder with its first file
+    // a new name only while the library may get one; fileInto makes the folder with its first file, with its name as its rule
     const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
-    if (!smart && filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);
+    if (!smart && filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder, !known);
   } finally {
     if (!made) await Promise.all(files.map((f) => rm(f, { force: true })));
   }

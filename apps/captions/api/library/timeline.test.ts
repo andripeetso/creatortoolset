@@ -308,7 +308,7 @@ describe("a quota", () => {
       expect(calls.filter((c) => c.url.endsWith("/upload/v1beta/files")).length).toBe(uploads);
       expect(parked.get("gk-test")!.until).toBeGreaterThan(Date.now() + RETRY_MS - 60_000);
       expect(watchStopped(libraryDb(), "lib_t")).toBe("credit");
-      expect([...creditGone.values()]).toMatchObject([{ name: "GEMINI_API_KEY", stopped: "Media Library timelines", owners: ["local"] }]);
+      expect([...creditGone.values()]).toMatchObject([{ name: "GEMINI_API_KEY", stopped: "Media Library video breakdowns", owners: ["local"] }]);
       // queued, tried again later
       expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
       // topped up: the next try works, the warning goes

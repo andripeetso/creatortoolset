@@ -28,6 +28,7 @@ delete process.env.ANTHROPIC_API_KEY;
 const { blobs, libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { enqueueJob } = await import("./jobs");
+const { fileInto, MAX_AI_FOLDERS } = await import("./organize");
 const { tick } = await import("./worker");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -85,7 +86,7 @@ beforeAll(() => {
 });
 
 describe("organize", () => {
-  it("AI organizes: no folder up front, the descriptions on; what is already there is filed", async () => {
+  it("AI organizes: no folder up front, describe is not forced on; what is already there is filed", async () => {
     const d = libraryDb();
     libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.describe', json('false')) WHERE id = 'lib_ai'`).run();
     // a described video and a picture from before the choice, in no folder
@@ -96,9 +97,9 @@ describe("organize", () => {
     d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ?").run(old);
     const r = await organize("lib_ai", { organize: "ai" });
     expect(r.status).toBe(200);
-    expect(((await r.json()) as { settings: unknown }).settings).toMatchObject({ organize: "ai", describe: true });
+    expect(((await r.json()) as { settings: unknown }).settings).toMatchObject({ organize: "ai", describe: false });
+    await vi.waitFor(() => expect(folderOf("pic-old")).toEqual(["Graphics"])); // filed after the rule check, which runs in the background
     expect(folders("lib_ai")).toEqual([{ name: "Graphics", kind: "manual", query: null }]); // made with its first file, nothing empty
-    expect(folderOf("pic-old")).toEqual(["Graphics"]);
     expect(job(old, "describe")?.state).toBe("queued"); // described again: the answer names its folder
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(old);
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'vid-old'").run();
@@ -131,6 +132,8 @@ describe("organize", () => {
     await run("vid-game2", "gameplay");
     await run("vid-finals", "Finals");
     expect(folderOf("vid-game")).toEqual(["Gameplay"]);
+    // the AI-made folder is a smart folder named by its own rule (fileInto aiMade)
+    expect(libraryDb().prepare("SELECT rule FROM collections WHERE library_id = 'lib_ai' AND name = 'Gameplay'").get()).toEqual({ rule: "Gameplay" });
     expect(folderOf("vid-game2")).toEqual(["Gameplay"]);
     expect(folderOf("vid-finals")).toEqual([]);
     expect(folders("lib_ai").map((f) => f.name)).toEqual(["Finals", "Graphics", "Gameplay"]);
@@ -171,5 +174,26 @@ describe("organize", () => {
     expect(folderOf("snd-def")).toEqual([]);
     // filed in no folder, a sound is still known as one (sound-kind.ts)
     expect(libraryDb().prepare("SELECT tag, source FROM asset_tags WHERE asset_id = 'snd-def'").all()).toEqual([{ tag: "sound effect", source: "ai" }]);
+  });
+});
+
+describe("organize: folders the AI makes", () => {
+  it("a folder the AI makes is a smart folder named by its own rule, the same one again in any case, and none past MAX_AI_FOLDERS", async () => {
+    // its own library: the test above fills lib_ai to the cap
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_aim', 'local', 'Aim', 'local', 0)").run();
+    await seed("lib_aim", "aim", "video", media("clip.mp4"), JSON.stringify({ duration: 2 }));
+    const a = { id: "aim", library_id: "lib_aim", kind: "video", created_by: "local" };
+    const d = libraryDb();
+    expect(fileInto(d, a, "Desert", true)).toBe(true);
+    expect(d.prepare("SELECT rule FROM collections WHERE library_id = 'lib_aim' AND name = 'Desert'").get()).toEqual({ rule: "Desert" });
+    expect(fileInto(d, a, "desert", true)).toBe(true);
+    expect(folders("lib_aim").filter((f) => f.name.toLowerCase() === "desert")).toHaveLength(1);
+    const have = (d.prepare("SELECT COUNT(DISTINCT name) AS n FROM collections WHERE library_id = 'lib_aim' AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get() as { n: number }).n;
+    for (let i = have; i < MAX_AI_FOLDERS; i++)
+      d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, 'lib_aim', NULL, ?, 'manual', 0, 'local')").run(`cap-${i}`, `Cap ${i}`);
+    expect(fileInto(d, a, "Over the cap", true)).toBe(false);
+    expect(folders("lib_aim").some((f) => f.name === "Over the cap")).toBe(false);
+    // only the AI's new folders are capped: a folder the person names still goes in
+    expect(fileInto(d, a, "Plain")).toBe(true);
   });
 });

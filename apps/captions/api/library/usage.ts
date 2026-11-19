@@ -6,9 +6,9 @@ import path from "node:path";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { CreateBucketCommand, GetBucketCorsCommand, HeadBucketCommand, PutBucketCorsCommand } from "@aws-sdk/client-s3";
-import { BUNNY_REGIONS, type LibraryStorage, type LibraryStorageInput } from "../../contracts/library";
+import { BUNNY_REGIONS, hostsProxies, type LibraryStorage, type LibraryStorageInput } from "../../contracts/library";
 import { libraryChanged, libraryRole } from "./access";
-import { libraryDb, placeOf, proxyPlace, serverBucket, type BunnyConfig, type ProxyPlace, type StorageConfig } from "./db";
+import { libraryDb, libraryUpload, placeOf, proxyPlace, serverBucket, type BunnyConfig, type ProxyPlace, type StorageConfig } from "./db";
 import { enqueueJob } from "./jobs";
 import { unproxied } from "./routes";
 import { clearProxies } from "./space";
@@ -232,7 +232,7 @@ export async function moveProxies(libraryId: string, next: ProxyPlace | null): P
     db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
   }
   db().prepare("UPDATE libraries SET storage_config = ? WHERE id = ?").run(next ? JSON.stringify({ proxies: next }) : null, libraryId);
-  for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);
+  for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUpload(libraryId)))) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);
   libraryChanged(libraryId);
 }
 

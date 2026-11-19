@@ -1,4 +1,4 @@
-import { DEFAULT_FOLDERS, type Collection, type LibrarySummary, type Organize } from "@contracts/library";
+import { type Collection, type LibrarySummary, type Organize } from "@contracts/library";
 import { listCollections, updateLibrary } from "@/lib/library";
 
 /**
@@ -6,8 +6,8 @@ import { listCollections, updateLibrary } from "@/lib/library";
  * folder (BigUploadDialog), and kept in Library settings. The folders are the library's own: files on disk never move.
  */
 
-/** The default folders' names, in their order: the folders "Standard" makes. */
-export const FOLDER_NAMES = DEFAULT_FOLDERS.map((f) => f.name).join(", ");
+/** The default folders' names, in their order: the folders "Standard" makes (the list DEFAULT_FOLDERS held before its removal). U3 drops this option. */
+export const FOLDER_NAMES = "A-roll, B-roll, Sound effects, Graphics, Examples";
 
 /** The three choices by name, the same wherever they are offered (this dialog, Library settings). A name says what the choice does. */
 export const ORGANIZE_NAME: Record<Organize, string> = { default: "Standard", ai: "Automatic", own: "None" };

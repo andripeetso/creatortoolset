@@ -282,18 +282,6 @@ export const placeOf = (places: readonly ImportPlace[] | undefined, path: string
 export type Organize = "default" | "ai" | "own";
 export const organizeOf = (v: unknown): "ai" | "own" | undefined => (v === "ai" ? "ai" : v === "own" || v === "default" ? "own" : undefined);
 
-/**
- * The folders "Default folders" and "AI organizes" make, in this order. A-roll and B-roll are smart folders over the roll
- * the app sorts (api/library/roll.ts); the rest are plain top-level folders, found by name (Music and Sound effects are
- * the names songs and sound effects are filed under).
- */
-export const DEFAULT_FOLDERS: readonly { name: string; roll?: "a" | "b" }[] = [
-  { name: "A-roll", roll: "a" },
-  { name: "B-roll", roll: "b" },
-  { name: "Sound effects" },
-  { name: "Graphics" },
-  { name: "Examples" },
-];
 
 /** GET /api/library/:id/space: what the library's own made files take (the person's own files are not in it). */
 export interface LibrarySpace {

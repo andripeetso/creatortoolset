@@ -7,18 +7,18 @@ import type { DatabaseSync } from "node:sqlite";
 import { isAppSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { hasMembers, mayReceive, mayServe, type Received } from "./upload-gate";
+import { hasMembers, mayReceive, mayServe, REFUSED_COMPUTER_OFF, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
 import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { blobs, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound, type WhereAnswer } from "../../contracts/library";
+import { hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -111,10 +111,12 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
 
 /**
  * The library's read videos (or `versionId` alone) that want a proxy (media/proxy.ts wantsProxy) and have none, nor one
- * on its way.
+ * on its way. `hosted`: the switch was just turned on under Hosted proxies, so every video wants one (UNIFIED-PRD §4.1).
  */
-export function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
-  const want = { cloud: !keepsOnlyOriginals(libraryId) && proxiesInCloud(libraryId), on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
+export function unproxied(libraryId: string, versionId?: string, hosted = false): { id: string; created_by: string }[] {
+  // a library that keeps only originals gets none (UNIFIED-PRD §4.2)
+  const keeps = keepsOnlyOriginals(libraryId);
+  const want = { cloud: !keeps && (proxiesInCloud(libraryId) || hosted), on: librarySetting(libraryId, "proxy") && !keeps };
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
@@ -504,6 +506,11 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   // with a workspace named, only that workspace's libraries (a cross-brand id is refused); with none, as before
   if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  // a member's add is an upload, taken only where Hosted media takes it (UNIFIED-PRD §4.3, the §3.2 line under Off)
+  const collectionOf = typeof body?.collectionId === "string" ? body.collectionId : null;
+  if (!libraryRole(user.username, libraryId) && uploadFor({ id: libraryId, collectionId: collectionOf }) === "none") {
+    return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
+  }
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
   // the largest upload holds only where an upload is the only way in: on the person's own computer the disk is the limit.
@@ -521,7 +528,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     if (!target || !(await mayWrite(user.username, libraryId, replaces, target.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
-  const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
+  const collection = collectionOf;
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
@@ -654,10 +661,17 @@ libraryApp.post("/:id/in-place", async (c) => {
  * server that is not on it (the Mac app's drop): indexed where it is, with what the Mac made; its bytes never come here
  * (on-mac.ts). Any member may add, as with an upload; a manual folder or the A-roll folder may take it.
  */
+const MEMBER_NOT_INDEXED = "Footage on a member's computer is added by upload, not read from its folders.";
 libraryApp.post("/:id/on-mac", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  // a member's rows only locate (UNIFIED-PRD §4.3): what a member adds from a folder is uploaded, never indexed from it
+  if (!libraryRole(user.username, libraryId)) {
+    if (uploadFor({ id: libraryId }) === "none") return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
+    // the app sends a member's file by upload where Hosted media takes it; this path is never a member's folder
+    return c.json({ error: MEMBER_NOT_INDEXED, code: "forbidden" }, 403);
+  }
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   if (x.collectionId) {
@@ -855,10 +869,10 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
-// the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
-// organize "default" makes the default folders it is missing (organize.ts); "ai" makes none, turns the descriptions on
-// (a video is filed by its description) and files what is in no folder yet
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, importMode?, organize?, … } } → LibrarySummary;
+// the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one (or all, when proxies are
+// hosted) and have none get one. organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
+// copyTo and places are read only by the one-time migration (§4.6), so nothing writes them.
 libraryApp.patch("/:id", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -869,15 +883,20 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures", "transcribe", "lookTalking"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "pictures", "transcribe", "lookTalking"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
-  if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  // true/false: the upload switch's older values (db.ts uploadOf), kept so a stored boolean still maps the same way
+  const upload = s.upload === true ? "all" : s.upload === false ? "none" : s.upload;
+  if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
+  if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
   // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
-  if (typeof s.setupAt === "string" && s.setupAt.length < 40) put("setupAt", s.setupAt);
+  if (typeof s.setupAt === "string" && s.setupAt.length < 40 && Number.isFinite(Date.parse(s.setupAt))) {
+    db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.setupAt', json(?)) WHERE id = ? AND json_extract(settings, '$.setupAt') IS NULL`).run(JSON.stringify(s.setupAt), libraryId);
+  }
   // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
   // (All clips → Shot descriptions), or an edit asks for its files
   if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
@@ -888,29 +907,22 @@ libraryApp.patch("/:id", async (c) => {
     releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
     libraryChanged(libraryId);
   }
-  if (s.finalsUpload !== undefined) put("finalsUpload", uploadOf(s.finalsUpload));
+  if (LIBRARY_UPLOADS.includes(s.finalsUpload as LibraryUpload)) put("finalsUpload", s.finalsUpload);
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
-  if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
-  if (Array.isArray(s.places)) {
-    const places: ImportPlace[] = s.places
-      .filter((p): p is ImportPlace => !!p && typeof (p as ImportPlace).path === "string" && (p as ImportPlace).path.startsWith("/") && ((p as ImportPlace).mode === "in-place" || (p as ImportPlace).mode === "copy"))
-      .slice(0, 200)
-      .map((p) => ({ path: p.path.slice(0, 1024), mode: p.mode }));
-    put("places", places);
-  }
-  const proxy = b?.settings?.proxy;
+  // Hosted proxies: the switch stays on and every video gets a proxy (UNIFIED-PRD §3.1, §4.1), whatever the request says
+  const hosted = hostsProxies(libraryUpload(libraryId));
+  const proxy = hosted ? true : b?.settings?.proxy;
+  if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
   if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
-  if (proxy === true) for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  if (proxy === true) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
     const was = organizeOf(libraryId, db());
     const set = (key: string, value: string) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(value, libraryId);
-    set("organize", JSON.stringify(organize));
-    // shortcut: the AI organize still forces describe on (filing reads the description); drop it with Smart folders (UNIFIED-PRD §4.9)
-    if (organize === "ai") set("describe", "true");
-    if (organize === "ai" && was !== "ai") fileUnfiled(db(), libraryId, user.username);
+    set("organize", JSON.stringify(organize === "default" ? "own" : organize)); // Standard is gone (UNIFIED-PRD M4)
+    if (organize === "ai" && was !== "ai") void fileUnfiled(db(), libraryId, user).catch((e) => console.error("[library] filing:", e));
     libraryChanged(libraryId); // the folders: other open pages read them again
   }
   if (b?.settings?.organizeOffered === true) db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.organizeOffered', json('true')) WHERE id = ?`).run(libraryId);
@@ -933,7 +945,7 @@ libraryApp.post("/", async (c) => {
   const ws = await currentWorkspaceId(user);
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
-    .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
+    .run(id, homeOf(user.username), name, newLibrarySettings(ws ? { projectId: ws } : {}), Date.now());
   const created: LibrarySummary = { id, name, storage: "local", settings: settingsOf("{}") };
   return c.json(created, 201);
 });
