@@ -28,7 +28,7 @@ import { BUDGET_WAITS, BudgetSpent, lookAllowed, lookBudgetWaits, lookFromSheets
 import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
-import { organizeOnProbe } from "./organize";
+import { organizeOnProbe, refileAllShoots } from "./organize";
 import { dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
@@ -375,7 +375,8 @@ export function startLibraryWorker(): () => void {
   const stopCatchUp = startEmbedCatchUp();
   const stopPictures = startPictureCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
-  void placeUnplaced(); // clips from before the country was kept, from their location tag
+  // clips from before the country was kept, from their location tag; then Smart folders by shoot (once: organize.ts refileShoots)
+  void placeUnplaced().then(() => refileAllShoots()).catch((e) => console.error("[library] shoots:", e));
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {

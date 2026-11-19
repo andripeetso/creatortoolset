@@ -7,10 +7,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
-// A library's first-run choice (organize.ts): Default folders makes the six folders; AI organizes makes none and files
-// what comes in, making a folder with its first file: a video by its description's answer, a sound by its kind, a
-// picture into Graphics. Through the PATCH
-// route and the worker, with the AI stubbed.
+// A library's first-run choice (organize.ts): Default folders makes no folder; Smart folders ("ai") makes none up front
+// and files what comes in, making a folder with its first file: a video or a camera photo into its shoot (shoots.ts),
+// a sound by its kind, a graphic into Graphics. Through the PATCH route and the worker, with the AI stubbed.
 
 vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
@@ -28,7 +27,7 @@ delete process.env.ANTHROPIC_API_KEY;
 const { blobs, libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { enqueueJob } = await import("./jobs");
-const { fileInto, MAX_AI_FOLDERS } = await import("./organize");
+const { fileInto, organizeOnProbe } = await import("./organize");
 const { tick } = await import("./worker");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -108,8 +107,10 @@ describe("organize", () => {
     expect(r.status).toBe(200);
     expect(((await r.json()) as { settings: unknown }).settings).toMatchObject({ organize: "ai", describe: false });
     await vi.waitFor(() => expect(folderOf("pic-old")).toEqual(["Graphics"])); // filed after the rule check, which runs in the background
-    expect(folders("lib_ai")).toEqual([{ name: "Graphics", kind: "manual", query: null }]); // made with its first file, nothing empty
-    expect(job(old, "describe")?.state).toBe("queued"); // described again: the answer names its folder
+    // the video into its shoot, with no AI call: never described again for a folder
+    expect(folderOf("vid-old")).toHaveLength(1);
+    expect(folders("lib_ai").map((f) => f.name).sort()).toEqual(["Graphics", folderOf("vid-old")[0]!].sort()); // made with their first file, nothing empty
+    expect(job(old, "describe")?.state).toBe("done");
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(old);
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'vid-old'").run();
     await organize("lib_ai", { organize: "ai" }); // the same choice again files nothing again
@@ -117,42 +118,26 @@ describe("organize", () => {
     // replaced (CEO 11-19: organize offer dropped; Organization is chosen in setup step 4 and Library settings only): no organizeOffered
   });
 
-  it("a video is filed by what the footage is: a new folder with its first file, the same one again in any case; never Finals", async () => {
+  it("a video goes into its shoot when probed; its description is asked no folder, and the place it names names the shoot; never Finals", async () => {
     const d = libraryDb();
     d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at) VALUES ('col_finals', 'lib_ai', NULL, 'Finals', 'manual', 9)").run();
-    const answer = (folder: string, check?: (user: string) => void) => {
-      vi.mocked(aiFor).mockReturnValue({ only: ["mac"] } as never);
-      vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, user, _i, _c, parse) => {
-        check?.(user as string);
-        return { value: parse(JSON.stringify({ description: "A character fights in a game.", tags: [], roll: "b", folder })), provider: "test" } as never;
-      });
-    };
-    const run = async (id: string, folder: string, check?: (user: string) => void) => {
-      const v = await seed("lib_ai", id, "video", media("clip.mp4"), JSON.stringify({ duration: 2, vcodec: "h264" }));
-      answer(folder, check);
-      enqueueJob(d, "lib_ai", v, "describe", "local");
-      await tick();
-      expect(job(v, "describe")?.state).toBe("done");
-    };
-    await run("vid-game", "Gameplay", (user) => {
-      expect(user).toContain('["Graphics"]');
-      expect(user).toContain("new folder");
+    const at = Date.UTC(2025, 2, 3, 12, 0);
+    const v = await seed("lib_ai", "vid-lisbon", "video", media("clip.mp4"), JSON.stringify({ duration: 2, vcodec: "h264", capturedAt: at, tz: 0, country: "PT" }));
+    d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(v);
+    organizeOnProbe(d, v, null);
+    expect(folderOf("vid-lisbon")).toEqual(["3 Mar 2025 · Portugal"]);
+    vi.mocked(aiFor).mockReturnValue({ only: ["mac"] } as never);
+    vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, user, _i, _c, parse) => {
+      expect(user).not.toContain('"folder"');
+      expect(user).toContain("place is the town");
+      return { value: parse(JSON.stringify({ description: "A tram climbs a hill.", tags: ["tram"], roll: "b", place: "Lisbon", folder: "Trams" })), provider: "test" } as never;
     });
-    await run("vid-game2", "gameplay");
-    await run("vid-finals", "Finals");
-    expect(folderOf("vid-game")).toEqual(["Gameplay"]);
-    // the AI-made folder is a smart folder named by its own rule (fileInto aiMade)
-    expect(libraryDb().prepare("SELECT rule FROM collections WHERE library_id = 'lib_ai' AND name = 'Gameplay'").get()).toEqual({ rule: "Gameplay" });
-    expect(folderOf("vid-game2")).toEqual(["Gameplay"]);
-    expect(folderOf("vid-finals")).toEqual([]);
-    expect(folders("lib_ai").map((f) => f.name)).toEqual(["Finals", "Graphics", "Gameplay"]);
-
-    // at MAX_AI_FOLDERS the AI only picks among the folders there are
-    const { MAX_AI_FOLDERS } = await import("./organize");
-    for (let i = folders("lib_ai").length - 1; i < MAX_AI_FOLDERS; i++)
-      d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at) VALUES (?, 'lib_ai', NULL, ?, 'manual', 20)").run(`col_f${i}`, `Folder ${i}`);
-    await run("vid-full", "Holidays", (user) => expect(user).not.toContain("new folder"));
-    expect(folderOf("vid-full")).toEqual([]);
+    enqueueJob(d, "lib_ai", v, "describe", "local");
+    await tick();
+    expect(job(v, "describe")?.state).toBe("done");
+    expect(folderOf("vid-lisbon")).toEqual(["3 Mar 2025 · Lisbon"]);
+    expect(folders("lib_ai").some((f) => f.name === "Trams")).toBe(false); // a topic is a tag, never a folder
+    expect(folderOf("vid-lisbon")).not.toContain("Finals");
   });
 
   it("a video already in a folder (dropped in one) is not asked about or moved", async () => {
@@ -186,23 +171,16 @@ describe("organize", () => {
   });
 });
 
-describe("organize: folders the AI makes", () => {
-  it("a folder the AI makes is a smart folder named by its own rule, the same one again in any case, and none past MAX_AI_FOLDERS", async () => {
-    // its own library: the test above fills lib_ai to the cap
+describe("organize: kind folders", () => {
+  it("fileInto makes the folder with its first file, the same one again in any case, never Finals", async () => {
     libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_aim', 'local', 'Aim', 'local', 0)").run();
     await seed("lib_aim", "aim", "video", media("clip.mp4"), JSON.stringify({ duration: 2 }));
     const a = { id: "aim", library_id: "lib_aim", kind: "video", created_by: "local" };
     const d = libraryDb();
-    expect(fileInto(d, a, "Desert", true)).toBe(true);
-    expect(d.prepare("SELECT rule FROM collections WHERE library_id = 'lib_aim' AND name = 'Desert'").get()).toEqual({ rule: "Desert" });
-    expect(fileInto(d, a, "desert", true)).toBe(true);
-    expect(folders("lib_aim").filter((f) => f.name.toLowerCase() === "desert")).toHaveLength(1);
-    const have = (d.prepare("SELECT COUNT(DISTINCT name) AS n FROM collections WHERE library_id = 'lib_aim' AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get() as { n: number }).n;
-    for (let i = have; i < MAX_AI_FOLDERS; i++)
-      d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, 'lib_aim', NULL, ?, 'manual', 0, 'local')").run(`cap-${i}`, `Cap ${i}`);
-    expect(fileInto(d, a, "Over the cap", true)).toBe(false);
-    expect(folders("lib_aim").some((f) => f.name === "Over the cap")).toBe(false);
-    // only the AI's new folders are capped: a folder the person names still goes in
-    expect(fileInto(d, a, "Plain")).toBe(true);
+    expect(fileInto(d, a, "Graphics")).toBe(true);
+    expect(fileInto(d, a, "graphics")).toBe(true);
+    expect(folders("lib_aim")).toEqual([{ name: "Graphics", kind: "manual", query: null }]);
+    expect(d.prepare("SELECT rule FROM collections WHERE library_id = 'lib_aim'").get()).toEqual({ rule: null }); // never a self-filling folder
+    expect(fileInto(d, a, "Finals")).toBe(false);
   });
 });

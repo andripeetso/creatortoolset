@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import CreatorToolsetMac
@@ -114,5 +115,23 @@ final class LocationAgentTests: XCTestCase {
         wait(for: [seen], timeout: 30)
         watch?.stop()
         XCTAssertNil(FolderWatch(paths: [], queue: .global()) {})   // nothing listed, nothing watched
+    }
+
+    /// The index says when and where a file was filmed (the server files it into its shoot): the offset from the file's own text.
+    func testFilmedOffsetAndAPictureWithoutEXIF() throws {
+        XCTAssertEqual(MacIndex.offset("2026-11-12T08:00:00-0600"), -360)
+        XCTAssertEqual(MacIndex.offset("+05:30"), 330)
+        XCTAssertNil(MacIndex.offset("2026-11-12T08:00:00Z"))
+        XCTAssertNil(MacIndex.offset(nil))
+        // a picture no camera made (here a PNG drawn on this Mac): camera false, and no time or place made up
+        let url = root.appendingPathComponent("drawn.png")
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                   isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        try rep.representation(using: .png, properties: [:])!.write(to: url)
+        let f = MacIndex.photoFilmed(url)
+        XCTAssertEqual(f["camera"] as? Bool, false)
+        XCTAssertEqual(f["alpha"] as? Bool, true)
+        XCTAssertNil(f["capturedAt"])
+        XCTAssertNil(f["location"])
     }
 }

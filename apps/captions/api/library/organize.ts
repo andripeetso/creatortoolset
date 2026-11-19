@@ -4,25 +4,23 @@ import { SOUNDS, type Organize, type Sound } from "../../contracts/library";
 import type { SessionUser } from "../users";
 import { libraryDb, librarySetting } from "./db";
 import { workspaceOf } from "./describe";
-import { enqueueJob } from "./jobs";
 import { indexAsset } from "./query";
 import { lookBudgetWaits } from "./shots";
 import { fileSmart } from "./smart";
+import { FILMED, fileShoot, isGraphic, readHere, type Asset } from "./shoots";
+import type { ProbeSummary } from "./media/probe";
 
 type Who = Pick<SessionUser, "username" | "role">;
 
 /**
  * How a library is organized (its setting `organize`, chosen on the Media Library's first run): "default" makes no folder
- * up front (UNIFIED-PRD §4.9: the folders are the person's own). "ai" makes no folder up
- * front and never an empty one: every file that comes in and is in no folder yet is filed, and a folder is made the
- * first time a file goes into it. A video is filed by its description (describe.ts: the AI sees what the footage is and
- * names one of the library's plain top-level folders, or a new one while there are fewer than MAX_AI_FOLDERS); a sound
- * by its kind (sound-kind.ts: its tag, folders, length, or a listen); a picture goes to Graphics. Never into Finals. Choosing "ai" files what is already
- * there too (fileUnfiled).
+ * up front (UNIFIED-PRD §4.9: the folders are the person's own). "ai" (Smart folders) makes no folder up front and never
+ * an empty one: every file that comes in and is in no folder yet is filed as soon as it is probed, and a folder is made
+ * the first time a file goes into it. A video or a camera photo goes into its shoot's folder (shoots.ts: by when and where
+ * it was filmed, never by topic: topics are tags); a sound by its kind (sound-kind.ts: its tag, folders, length, or a
+ * listen); a graphic (a logo, a screenshot, an export: shoots.ts isGraphic) to Graphics. Never into Finals. Choosing
+ * "ai" files what is already there too (fileUnfiled).
  */
-
-/** Past this many plain top-level folders the AI only files into the ones there are. */
-export const MAX_AI_FOLDERS = 12;
 
 const id = () => `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
@@ -63,24 +61,12 @@ function topFolder(d: DatabaseSync, libraryId: string, name: string): string | n
   return r?.id ?? null;
 }
 
-/** The plain top-level folders a clip may be filed in by the describe AI: never Finals (it has its own tool), nor a smart folder. */
-export function plainFolders(d: DatabaseSync, libraryId: string): string[] {
-  // a smart folder (smart.ts) is filed by its own rule, never by a guess from its name
+/** The plain top-level folders: never Finals, nor a smart folder (smart.ts: filed by its own rule). */
+function plainFolders(d: DatabaseSync, libraryId: string): string[] {
   const rows = d.prepare("SELECT name FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND rule IS NULL AND name <> 'Finals' ORDER BY created_at, id").all(libraryId) as {
     name: string;
   }[];
   return [...new Set(rows.map((r) => r.name))];
-}
-
-/** The top-level folders the cap counts: plain or smart, never Finals (a smart folder the AI made is one of them too). */
-export const topCount = (d: DatabaseSync, libraryId: string): number =>
-  (d.prepare("SELECT COUNT(DISTINCT name COLLATE NOCASE) AS n FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get(libraryId) as { n: number }).n;
-
-interface Asset {
-  id: string;
-  library_id: string;
-  kind: string;
-  created_by: string;
 }
 
 const assetOf = (d: DatabaseSync, versionId: string) =>
@@ -96,27 +82,17 @@ export function toFile(d: DatabaseSync, versionId: string): Asset | null {
 
 /**
  * Puts the asset in the plain top-level folder `name`, made when the library has none by that name (a name differing only
- * in case is the same folder), with the sound tag a sound folder carries. Returns whether it did. A folder the AI makes
- * (`aiMade`) is made with a rule of its own name, so it is a smart folder and fills itself (UNIFIED-PRD §4.9), and only
- * while the library has fewer than MAX_AI_FOLDERS top-level folders.
+ * in case is the same folder), with the sound tag a sound folder carries. Returns whether it did.
  */
-export function fileInto(d: DatabaseSync, a: Asset, name: string, aiMade = false): boolean {
+export function fileInto(d: DatabaseSync, a: Asset, name: string): boolean {
   name = name.replace(/\s+/g, " ").trim().slice(0, 40);
   if (!name || name.toLowerCase() === "finals") return false;
   const same = plainFolders(d, a.library_id).find((f) => f.toLowerCase() === name.toLowerCase());
   if (same) name = same;
   let folder = topFolder(d, a.library_id, name);
   if (!folder) {
-    if (aiMade && topCount(d, a.library_id) >= MAX_AI_FOLDERS) return false;
     folder = id();
-    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, rule, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?, ?)").run(
-      folder,
-      a.library_id,
-      name,
-      aiMade ? name : null,
-      Date.now(),
-      a.created_by,
-    );
+    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?)").run(folder, a.library_id, name, Date.now(), a.created_by);
   }
   d.prepare(
     `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
@@ -131,40 +107,126 @@ export function fileInto(d: DatabaseSync, a: Asset, name: string, aiMade = false
   return true;
 }
 
-/**
- * After the probe: a sound (by its kind, sound-kind.ts), a song's video or a picture in a library the AI organizes goes
- * to its folder (other videos wait for their description).
- */
-export function organizeOnProbe(d: DatabaseSync, versionId: string, sound: Sound | null): void {
-  const a = toFile(d, versionId);
-  if (a && sound) fileInto(d, a, SOUNDS[sound].folder);
-  else if (a?.kind === "image") fileInto(d, a, "Graphics");
+/** Whether a version's picture is a graphic (shoots.ts isGraphic), from its probe and its file's name. */
+function graphic(d: DatabaseSync, versionId: string): boolean {
+  const r = d.prepare("SELECT probe, COALESCE(mac_path, source_path, from_path) AS file FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null; file: string | null } | undefined;
+  return isGraphic(r?.probe ? (JSON.parse(r.probe) as ProbeSummary) : null, r?.file);
 }
 
 /**
- * A library just set to "ai": what is in no folder yet is filed now. Videos get their description again, on the person
- * who chose it: describe.ts judges the smart folders first, then names a plain folder. A sound or picture goes to the
- * smart folders that fit it (smart.ts), else to its kind's folder. A judge call is a model call, so with describe off or
- * the look budget spent (UNIFIED-PRD §4.4–4.5) those files take their kind's folder only. Trashed files are left alone.
+ * After the probe, in a library the AI organizes and a file in no folder yet: a sound (by its kind, sound-kind.ts) or a
+ * song's video to its kind's folder, a graphic to Graphics, a video or a camera photo into its shoot (shoots.ts).
  */
-export async function fileUnfiled(d: DatabaseSync, libraryId: string, who: Who): Promise<void> {
-  const by = who.username;
-  const rows = d
+export function organizeOnProbe(d: DatabaseSync, versionId: string, sound: Sound | null): void {
+  const a = toFile(d, versionId);
+  if (!a) return;
+  if (sound) fileInto(d, a, SOUNDS[sound].folder);
+  else if (a.kind === "image" && graphic(d, versionId)) fileInto(d, a, "Graphics");
+  else if (a.kind === "video" || a.kind === "image") fileShoot(d, a);
+}
+
+/** The library's files in no folder yet, ready and not in the trash, in the order they were filmed (a shoot is named by its first day). */
+function unfiled(d: DatabaseSync, libraryId: string) {
+  return d
     .prepare(
       `SELECT a.id, a.library_id, a.kind, a.created_by, v.id AS version,
          (SELECT tag FROM asset_tags t WHERE t.asset_id = a.id AND t.tag IN (?, ?) ORDER BY t.source = 'user' DESC LIMIT 1) AS sound
        FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
        WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'ready'
-         AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')`,
+         AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')
+       ORDER BY ${FILMED}, a.id`,
     )
     .all(SOUNDS.music.tag, SOUNDS.effect.tag, libraryId) as unknown as (Asset & { version: string; sound: string | null })[];
-  for (const r of rows) if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
+}
+
+const soundOf = (tag: string | null): Sound | null => (tag === SOUNDS.music.tag ? "music" : tag === SOUNDS.effect.tag ? "effect" : null);
+
+/**
+ * A library just set to "ai": what is in no folder yet is filed now. A video goes into its shoot (no AI call: shoots.ts).
+ * A sound or picture goes to the smart folders that fit it (smart.ts), else to its kind's folder or its shoot. A judge
+ * call is a model call, so with describe off or the look budget spent (UNIFIED-PRD §4.4–4.5) those files take their
+ * kind's folder or shoot only. Trashed files are left alone.
+ */
+export async function fileUnfiled(d: DatabaseSync, libraryId: string, who: Who): Promise<void> {
   // one at a time: each judge call is a model call (shortcut: not batched as sortFolder is, fine while the sweep is once per library, upgrade if a large library stalls)
-  for (const r of rows) {
-    if (r.kind === "video") continue;
-    const judge = librarySetting(libraryId, "describe") && !(await lookBudgetWaits(d, r.version));
-    if (judge && ((await fileSmart(d, r.version, who, await workspaceOf(d, r.version)).catch(() => 0)) ?? 0)) continue;
+  for (const r of unfiled(d, libraryId)) {
+    if (r.kind !== "video") {
+      const judge = librarySetting(libraryId, "describe") && !(await lookBudgetWaits(d, r.version));
+      if (judge && ((await fileSmart(d, r.version, who, await workspaceOf(d, r.version)).catch(() => 0)) ?? 0)) continue;
+    }
     // a sound by its kind's tag (sound-kind.ts, since its probe): one with none (taken off, someone talking) stays where it is
-    organizeOnProbe(d, r.version, r.sound === SOUNDS.music.tag ? "music" : r.sound === SOUNDS.effect.tag ? "effect" : null);
+    organizeOnProbe(d, r.version, soundOf(r.sound));
+  }
+}
+
+/**
+ * Once for a library the AI organized before shoots (11-19), and harmless every start after: the folders the AI named by
+ * topic (a rule of their own name, fileInto's old aiMade) give their clips back and go, and the camera photos in Graphics
+ * leave it; then everything in no folder is filed by shoot. A topic folder the person renamed, gave a rule, a folder
+ * inside, a share or a Finals piece is theirs and is left as it is, and so is every other folder. Returns how many
+ * files it filed. Smart folders live in the library only: no file on disk moves.
+ */
+export async function refileShoots(d: DatabaseSync, libraryId: string): Promise<number> {
+  if (organizeOf(libraryId, d) !== "ai") return 0;
+  const topics = d
+    .prepare(
+      `SELECT id FROM collections c WHERE library_id = ? AND kind = 'manual' AND shoot IS NULL AND rule IS NOT NULL AND rule = name
+         AND NOT EXISTS (SELECT 1 FROM collections k WHERE k.parent_id = c.id) AND NOT EXISTS (SELECT 1 FROM library_grants g WHERE g.collection_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM pieces p WHERE p.collection_id = c.id)`,
+    )
+    .all(libraryId) as { id: string }[];
+  const photos = d
+    .prepare(
+      `SELECT c.id AS folder, i.asset_id AS asset, v.id AS version FROM collections c JOIN collection_items i ON i.collection_id = c.id
+         JOIN assets a ON a.id = i.asset_id JOIN asset_versions v ON v.id = a.current_version_id
+       WHERE c.library_id = ? AND c.parent_id IS NULL AND c.name = 'Graphics' AND c.rule IS NULL AND c.shoot IS NULL AND a.kind = 'image'`,
+    )
+    .all(libraryId) as { folder: string; asset: string; version: string }[];
+  inTx(d, () => {
+    for (const t of topics) {
+      d.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(t.id);
+      d.prepare("DELETE FROM folder_out WHERE collection_id = ?").run(t.id);
+      d.prepare("DELETE FROM collections WHERE id = ?").run(t.id);
+    }
+    for (const p of photos) if (!graphic(d, p.version)) d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?").run(p.folder, p.asset);
+  });
+  const rows = unfiled(d, libraryId);
+  // a file indexed on this very Mac whose header was never read here: when it was filmed, before it is filed
+  const macs = d.prepare("SELECT id, mac_path FROM asset_versions WHERE id = ? AND mac_path IS NOT NULL AND json_type(probe, '$.camera') IS NULL");
+  for (const r of rows) {
+    const m = macs.get(r.version) as { id: string; mac_path: string } | undefined;
+    if (m) await readHere(d, m.id, m.mac_path, r.kind);
+  }
+  let n = 0;
+  inTx(d, () => {
+    for (const r of unfiled(d, libraryId)) {
+      organizeOnProbe(d, r.version, soundOf(r.sound));
+      n += toFile(d, r.version) ? 0 : 1;
+    }
+  });
+  return n;
+}
+
+function inTx(d: DatabaseSync, f: () => void): void {
+  d.exec("BEGIN");
+  try {
+    f();
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+}
+
+/** refileShoots for every library the AI organizes: at the worker's start. */
+export async function refileAllShoots(d = libraryDb()): Promise<void> {
+  const libs = d.prepare("SELECT id FROM libraries WHERE json_extract(settings, '$.organize') = 'ai'").all() as { id: string }[];
+  const { libraryChanged } = await import("./access"); // the open pages' folders refetch
+  for (const l of libs) {
+    try {
+      if (await refileShoots(d, l.id)) libraryChanged(l.id);
+    } catch (e) {
+      console.error("[library] shoots:", l.id, e);
+    }
   }
 }

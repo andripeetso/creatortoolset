@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Foundation
+import ImageIO
 
 // The location agent (local first, P1; contracts/places.ts): this Mac tells each server it is paired with which files
 // its Settings → Folders folders hold, and the server records where each version is. One agent per paired server (per
@@ -12,7 +13,8 @@ import Foundation
 //   GET  /api/devices/relay/folders  → this Mac's folders with their workspaces: the grants of that server (MediaFiles)
 //   POST /api/devices/relay/report   {reportVersion: 2, machineId, …macReport, folders: [{id, state, disk?, scan?, complete?,
 //                                    files: [{path, bytes, mtime, quick?}], unreadable?}]} → {index: [{folder, path}]}
-//   POST /api/devices/relay/index    {folder, name, path, size, quick, duration?, width?, height?, thumb?, sprite?, frames}
+//   POST /api/devices/relay/index    {folder, name, path, size, quick, duration?, width?, height?, thumb?, sprite?, frames,
+//                                     capturedAt?, tz?, location?, camera?, alpha?}
 // - A folder this Mac has not been allowed to read is "needs_ok" and is not opened (no prompt opens by itself: the
 //   person presses Allow on this Mac in Settings → Folders). A folder on a drive that is not connected is "disk_away"
 //   with the drive's name; a folder missing on a mounted drive is "not_found".
@@ -388,6 +390,7 @@ enum MacIndex {
         if pictures.contains(url.pathExtension.lowercased()) {
             guard let image = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return ["frames": [String]()] }
             return ["width": image.width, "height": image.height, "thumb": jpeg(scaled(image, width: 480), 0.8) as Any, "frames": [String]()]
+                .merging(photoFilmed(url)) { a, _ in a }
         }
         let asset = AVURLAsset(url: url)
         guard let (duration, size) = wait({ () async throws -> (Double, CGSize?) in
@@ -403,7 +406,7 @@ enum MacIndex {
         generator.maximumSize = CGSize(width: 640, height: 640)
         let at = { (t: Double) in wait { try await generator.image(at: CMTime(seconds: min(max(0, t), max(0, duration - 0.05)), preferredTimescale: 600)).image } }
         let frameAt = { (i: Int, n: Int) in (Double(i) + 0.5) * duration / Double(n) }
-        var out: [String: Any] = ["duration": duration, "width": Int(size.width), "height": Int(size.height)]
+        var out: [String: Any] = ["duration": duration, "width": Int(size.width), "height": Int(size.height)].merging(videoFilmed(asset)) { a, _ in a }
         if let first = at(duration * 0.1) { out["thumb"] = jpeg(scaled(first, width: 480), 0.8) }
         let strip = CGContext(data: nil, width: 160 * spriteFrames, height: 90, bitsPerComponent: 8, bytesPerRow: 0,
                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
@@ -419,6 +422,65 @@ enum MacIndex {
         if let image = strip?.makeImage() { out["sprite"] = jpeg(image, 0.7) }
         out["frames"] = (0..<stills).compactMap { i in at(frameAt(i, stills)).flatMap { jpeg(scaled($0, width: 512), 0.7) } }
         return out
+    }
+
+    /// When and where a video was filmed, as its file says: the server files it into its shoot (library/shoots.ts). The
+    /// minutes east of UTC are the file's own (an iPhone writes "…-0600"), else this Mac's at that date.
+    static func videoFilmed(_ asset: AVURLAsset) -> [String: Any] {
+        var out: [String: Any] = [:]
+        if let (date, text) = wait({ () async throws -> (Date?, String?) in
+            guard let item = try await asset.load(.creationDate) else { return (nil, nil) }
+            return (try await item.load(.dateValue), try await item.load(.stringValue))
+        }), let date {
+            out["capturedAt"] = Int64((date.timeIntervalSince1970 * 1000).rounded())
+            out["tz"] = offset(text) ?? TimeZone.current.secondsFromGMT(for: date) / 60
+        }
+        if let place = wait({ () async throws -> String? in
+            let items = try await asset.load(.metadata)
+            let found = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: .quickTimeMetadataLocationISO6709).first
+                ?? AVMetadataItem.metadataItems(from: items, filteredByIdentifier: .commonIdentifierLocation).first
+            return try await found?.load(.stringValue)
+        }) ?? nil, place.count <= 64 { out["location"] = place }
+        return out
+    }
+
+    /// A picture's EXIF: whether a camera made it (make or model), its alpha channel, when (its own offset, else this
+    /// Mac's) and where (as ISO 6709; the server keeps only the country).
+    static func photoFilmed(_ url: URL) -> [String: Any] {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return [:] }
+        let tiff = p[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+        let exif = p[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
+        let gps = p[kCGImagePropertyGPSDictionary] as? [CFString: Any] ?? [:]
+        let named = { (k: CFString) in !((tiff[k] as? String) ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+        var out: [String: Any] = ["camera": named(kCGImagePropertyTIFFMake) || named(kCGImagePropertyTIFFModel),
+                                  "alpha": (p[kCGImagePropertyHasAlpha] as? Bool) ?? false]
+        if let taken = exif[kCGImagePropertyExifDateTimeOriginal] as? String {
+            let tz = offset(exif[kCGImagePropertyExifOffsetTimeOriginal] as? String)
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyy:MM:dd HH:mm:ss"
+            f.timeZone = tz.map { TimeZone(secondsFromGMT: $0 * 60) } ?? TimeZone.current
+            if let date = f.date(from: String(taken.prefix(19))) {
+                out["capturedAt"] = Int64((date.timeIntervalSince1970 * 1000).rounded())
+                out["tz"] = tz ?? TimeZone.current.secondsFromGMT(for: date) / 60
+            }
+        }
+        if let lat = gps[kCGImagePropertyGPSLatitude] as? Double, let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
+            let s = (gps[kCGImagePropertyGPSLatitudeRef] as? String) == "S" ? -1.0 : 1.0
+            let w = (gps[kCGImagePropertyGPSLongitudeRef] as? String) == "W" ? -1.0 : 1.0
+            out["location"] = String(format: "%+08.4f%+09.4f/", lat * s, lon * w)
+        }
+        return out
+    }
+
+    /// Minutes east of UTC from "-06:00" or "-0600" at the end of a string; nil when it has none.
+    static func offset(_ text: String?) -> Int? {
+        guard let text, let r = text.range(of: #"[+-]\d\d:?\d\d$"#, options: .regularExpression) else { return nil }
+        let digits = text[r].filter(\.isNumber)
+        guard digits.count == 4, let h = Int(digits.prefix(2)), let m = Int(digits.suffix(2)) else { return nil }
+        let minutes = (h * 60 + m) * (text[r].first == "-" ? -1 : 1)
+        return abs(minutes) <= 14 * 60 ? minutes : nil
     }
 
     private static func scaled(_ image: CGImage, width: Int) -> CGImage {
