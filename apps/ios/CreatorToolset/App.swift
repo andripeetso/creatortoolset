@@ -22,7 +22,10 @@ struct CreatorToolsetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             UploadEngine.shared.setActive(phase == .active)
-            if phase == .background { BackgroundRefresh.schedule() }
+            if phase == .background {
+                UploadEngine.shared.store.flush()
+                BackgroundRefresh.schedule()
+            }
             if phase == .active {
                 Task {
                     await ToolsetAccess.shared.refresh()
