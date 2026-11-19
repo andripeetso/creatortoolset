@@ -66,6 +66,8 @@ export interface AssistantMessage {
   files?: Array<{ id: string; name: string; uploading?: true }>;
   /** Videos dropped in the Mac app with a user message: their paths on the user's computer (nothing uploaded). */
   localFiles?: string[];
+  /** Media Library clips dragged into a user message: already in the library, nothing uploaded; the tools take versionId. */
+  clips?: AssistantClip[];
   /**
    * A reply that carries on once a file on the user's computer is on the server (a tool needs it there): the dock that
    * still has that file uploads it, then names the upload (`id`). `to` is the tool's name ("Review").
@@ -195,12 +197,21 @@ export interface AssistantTurnInput {
   localFiles?: string[];
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
   paths?: string[];
+  /** Media Library clips dragged in, by version id: only the chat's workspace's library's (400 otherwise); nothing uploads. */
+  clips?: string[];
   context?: AssistantContext;
   /** The workspace picked for a new chat; a chat that has one keeps it (AssistantChat.workspace). */
   workspace?: string;
   /** The AI this chat is sent to from now on, one of the person's own (400 when it isn't, or can't run); null = back to
    *  their default. Absent: the chat keeps what it has. */
   ai?: Selection | null;
+}
+
+/** A Media Library clip with a user message: the asset, the version the tools take (editor_create sources), its title. */
+export interface AssistantClip {
+  id: string;
+  versionId: string;
+  title: string;
 }
 
 /** A video or recording dropped in the chat, uploaded in parts while the message goes (api/assistant-files.ts; kept 7 days). */

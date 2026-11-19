@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, CornerDownLeft, FileText, Film, Folder, GitFork, KeyRound, MessageCircle, PanelRight, PanelRightClose, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Clapperboard, CornerDownLeft, FileText, Film, Folder, GitFork, KeyRound, MessageCircle, PanelRight, PanelRightClose, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import type { Selection } from "@contracts/providers";
@@ -36,6 +36,7 @@ import { whenSaid } from "@/lib/when-said";
 import { Composer } from "./Composer";
 import { ChatPicture } from "@/components/chat/ChatPicture";
 import { AiPicker } from "./AiPicker";
+import { CLIP_CARDS, readClips, withClips, type DraggedClip } from "@/lib/chat-clips";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, draftEmpty, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, removeUpload, startUploads, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
@@ -77,7 +78,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; chat?: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; quote?: string; ai?: Selection | null };
+export type Queued = { id: string; chat?: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; clips?: DraggedClip[]; quote?: string; ai?: Selection | null };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -363,12 +364,7 @@ export function AssistantDock() {
     setBusy(true);
     setError(null);
     const input = {
-      text: it.text,
-      ...(it.images?.length ? { images: it.images } : {}),
-      ...(it.pasted?.length ? { pasted: it.pasted } : {}),
-      ...(it.files?.length ? { files: it.files.map((f) => f.id) } : {}),
-      ...(it.local?.length ? { localFiles: it.local } : {}),
-      ...(it.folders?.length ? { paths: it.folders } : {}),
+      ...turnOf(it),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
       // a new chat is filed in the workspace picked for it (a chat that has one keeps it)
       ...(useWorkspace.getState().currentProjectId ? { workspace: useWorkspace.getState().currentProjectId! } : {}),
@@ -437,7 +433,7 @@ export function AssistantDock() {
 
   // Pictures and long pastes: dropped on the card, pasted, picked with the paperclip, or handed over from
   // elsewhere in the app (a screenshot of this screen). Each one is shrunk here to stay well under the server's cap.
-  const [dropping, setDropping] = useState(false);
+  const [dropping, setDropping] = useState<false | "files" | "clips">(false);
   const addPictures = useCallback((imgs: AssistantImage[]) => {
     setDraft((d) => {
       if (d.images.length + imgs.length > MAX_PICTURES) setError(`Send up to ${MAX_PICTURES} pictures at a time`);
@@ -589,9 +585,10 @@ export function AssistantDock() {
         ...(it.local ?? []).map((p) => ({ key: p, name: folderName(p), size: 0, pct: 100, done: true, path: p })),
       ],
       folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
+      clips: withClips(cur.clips, it.clips ?? []),
   });
   // the pending highlighted text goes with this message and leaves the box
-  const submit = ({ files, folders, ...d }: Draft) => {
+  const submit = ({ files, folders, clips, ...d }: Draft) => {
     follow();
     const it: Queued = {
       id: `${Date.now()}-${queue.length}`,
@@ -600,6 +597,7 @@ export function AssistantDock() {
       ...(files.some((f) => !f.path) ? { files: files.filter((f) => !f.path).map((f) => ({ id: f.id!, name: f.name })) } : {}),
       ...(files.some((f) => f.path) ? { local: files.flatMap((f) => (f.path ? [f.path] : [])) } : {}),
       ...(folders.length ? { folders } : {}),
+      ...(clips.length ? { clips } : {}),
       ...(quote ? { quote } : {}),
       ...(view?.id && view.id in picks ? { ai: picks[view.id] } : {}),
     };
@@ -690,6 +688,8 @@ export function AssistantDock() {
             openAssistant();
           }}
           aria-label={asking ? "Open the assistant: needs an answer" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
+          // opening the chat keeps the clips picked in the Media Library: they are what gets dragged in next
+          data-keep-picked
           style={tint}
           title="Assistant · drag to move"
           data-assistant-dock
@@ -794,6 +794,7 @@ export function AssistantDock() {
       ref={cardRef}
       aria-label="Assistant"
       data-assistant-dock
+      data-keep-picked
       // where the open card stands, for what else stands at the window's edges (a toast keeps clear of it, index.css)
       data-corner={chatMode ? "chats" : place.mode === "dock" ? "dock" : place.corner}
       data-chat-panel={chatMode || undefined}
@@ -820,13 +821,23 @@ export function AssistantDock() {
       // --chat-w is the layout's width on <html> (lib/chat-mode.ts): the panel follows a drag of its edge at once
       style={chatMode ? { ...tint, width: "var(--chat-w)" } : place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
       onDragOver={(e) => {
-        if (!connectedNow || !e.dataTransfer.types.includes("Files")) return;
+        // the Media Library's clips (only the type list is readable while dragging) or files from the computer
+        const clips = e.dataTransfer.types.includes(CLIP_CARDS);
+        if (!connectedNow || (!clips && !e.dataTransfer.types.includes("Files"))) return;
         e.preventDefault();
-        setDropping(true);
+        if (clips) e.dataTransfer.dropEffect = "copy";
+        setDropping(clips ? "clips" : "files");
       }}
       onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
       onDrop={(e) => {
         setDropping(false);
+        const clips = connectedNow ? readClips(e.dataTransfer) : [];
+        if (clips.length) {
+          // by their ids: the clips stay in the library, nothing uploads
+          e.preventDefault();
+          setDraft((cur) => ({ ...cur, clips: withClips(cur.clips, clips) }));
+          return;
+        }
         if (!connectedNow || !e.dataTransfer.files.length) return;
         e.preventDefault();
         droppedFiles(e.dataTransfer, droppedOnMac).then(
@@ -840,7 +851,7 @@ export function AssistantDock() {
     >
       {dropping && (
         <div className="pointer-events-none absolute inset-1.5 z-10 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_10%,transparent)] text-sm font-medium text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in">
-          Drop pictures, videos or a folder
+          {dropping === "clips" ? "Drop clips to add them to the message" : "Drop pictures, videos or a folder"}
         </div>
       )}
       {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} layout={layout} />}
@@ -1102,9 +1113,23 @@ export function AssistantDock() {
   );
 }
 
+/**
+ * A queued message as POST /turn takes it, before its page context: the words and what came with them. Uploaded videos by
+ * their upload ids, Mac files and folders by path, library clips by version id (they never upload).
+ */
+export const turnOf = (it: Omit<Queued, "id">) => ({
+  text: it.text,
+  ...(it.images?.length ? { images: it.images } : {}),
+  ...(it.pasted?.length ? { pasted: it.pasted } : {}),
+  ...(it.files?.length ? { files: it.files.map((f) => f.id) } : {}),
+  ...(it.local?.length ? { localFiles: it.local } : {}),
+  ...(it.folders?.length ? { paths: it.folders } : {}),
+  ...(it.clips?.length ? { clips: it.clips.map((k) => k.versionId) } : {}),
+});
+
 /** "2 pictures, Pasted text": what a queued message carries besides its words. */
 const attachmentsLabel = (it: Queued) =>
-  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name), ...(it.local ?? []).map(folderName), ...(it.folders ?? []).map(folderName)].filter(Boolean).join(", ");
+  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name), ...(it.local ?? []).map(folderName), ...(it.folders ?? []).map(folderName), ...(it.clips ?? []).map((k) => k.title)].filter(Boolean).join(", ");
 
 /** The header's "OpenCode · no app tools", only for an AI that truly has none of the app's tools. */
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
@@ -1168,7 +1193,7 @@ export function Message({
             «{m.quote}»
           </p>
         )}
-        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length || !!m.localFiles?.length) && (
+        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length || !!m.localFiles?.length || !!m.clips?.length) && (
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
               <ChatPicture key={im.id} src={`/api/assistant/images/${encodeURIComponent(im.id)}`} name={im.name} />
@@ -1184,6 +1209,12 @@ export function Message({
               <span key={p} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={p}>
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{folderName(p)}</span>
+              </span>
+            ))}
+            {m.clips?.map((k) => (
+              <span key={k.versionId} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={k.title}>
+                <Clapperboard className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
+                <span className="truncate">{k.title}</span>
               </span>
             ))}
             {m.folders?.map((p) => (
