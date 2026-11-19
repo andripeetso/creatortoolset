@@ -15,6 +15,7 @@ export interface Upload {
   copyTo?: string; // copied here first (the library's folder on this Mac), then taken in from there
   final?: boolean; // refused for good (too large for this server): no Retry
   assetId?: string; // the clip it became: its card takes the placeholder's place once it is on the page
+  aspect?: number; // its width / height once read (lib/onMac.ts shapeOf): its card's shape
 }
 
 /** A file's SHA-256 off the page's thread (hash.worker.ts), one worker per file: at most the server-call gate's few at once (./import-pool.ts). */

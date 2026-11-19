@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LIBRARY_SETUP_DONE } from "@contracts/library";
+import { ANALYSIS_LEVELS, LIBRARY_SETUP_DONE, flagsOf } from "@contracts/library";
 import { LibrarySetup, rowsOf, type Kind } from "./Setup";
 
 // The owner's setup sheet, per path (scratch / existing folders) and per server kind (This Mac / own server / Cloud).
@@ -157,6 +157,11 @@ const toggle = (label: string) => press(sw(label) ?? undefined);
 const shown = () => (document.body.textContent ?? "").replace(/\u200b/g, "");
 const dots = () => document.querySelector('[aria-label="Steps"]')?.children.length ?? 0;
 const folderPaths = () => h.calls.map((c) => c.body.path);
+/** the box's summary, a line per folder ("Source media: FOOTAGE"), and its ⋯ */
+const summary = () => [...document.querySelectorAll('[aria-label="The folders"] > div')].map((d) => `${d.querySelector("dt")?.textContent}: ${d.querySelector("dd")?.textContent}`);
+const unroll = () => document.querySelector<HTMLButtonElement>('button[aria-label="Choose each folder"]');
+/** one of Effort's six stops */
+const stop = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Effort"] [role="radio"]')].find((b) => b.textContent === label);
 
 describe("Media Library setup: scratch, This Mac", () => {
   it("makes the three default folders as rows and saves the answers with setupAt, then says it is done", async () => {
@@ -198,15 +203,23 @@ describe("Media Library setup: scratch, This Mac", () => {
   // replaced (Andri 11-19): folders are picked in the Mac app's folder window, never typed; no Use default folders switch
   // replaced (CEO 11-19, Andri's test on ap vlogs): one Library folder holds the three; a picked Source media folder no longer
   // puts the others beside it. Its folders are found by their usual names in any case; only the missing ones are made
+  // replaced (Andri 13:00 sign-off: B2/B3, no Found badges; a folder that has them opens unrolled, a missing one says Will be created)
   it("Change… picks the Library folder: FOOTAGE and exports are found as they are named, only Project files is made", async () => {
     await mount("mac");
     await next(); // scratch: to Folders, the default Library folder shown
     expect(shown()).toContain("~/Movies/Creator Toolset/Tiny Acrobatics");
     expect(document.querySelector('input[type="text"], input:not([type])')).toBeNull(); // nothing to type
+    expect(shown()).toContain("These folders will be created:");
+    expect(unroll()?.getAttribute("aria-expanded")).toBe("false");
     h.picks = [{ path: "/Volumes/Tiny/Lib", children: ["FOOTAGE", "exports", "Notes"] }];
     await press(buttons("Change…")[0]);
-    const inside = () => [...document.querySelectorAll('[aria-label="Inside the Library folder"] li')].map((li) => (li.textContent ?? "").replace(/\u200b/g, ""));
-    expect(inside()).toEqual(["Source media/Volumes/Tiny/Lib/FOOTAGE· Found", "Project files/Volumes/Tiny/Lib/Project files· Will be created", "Final exports/Volumes/Tiny/Lib/exports· Found"]);
+    // a folder that has them opens on its rows, and the summary says what it uses
+    expect(shown()).toContain("Using the folders already in it:");
+    expect(unroll()?.getAttribute("aria-expanded")).toBe("true");
+    expect(summary()).toEqual(["Source media: FOOTAGE", "Project files: Project files · Will be created", "Final exports: exports"]);
+    expect(shown()).toContain("/Volumes/Tiny/Lib/FOOTAGE");
+    expect(shown()).toContain("/Volumes/Tiny/Lib/Project files · Will be created");
+    expect(shown()).not.toContain("Found");
     await next(); // proxy
     await next(); // analysis
     await press(button("Done"));
@@ -216,21 +229,28 @@ describe("Media Library setup: scratch, This Mac", () => {
     expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: true });
   });
 
-  it("Choose each folder: the Library folder reads Custom and each folder is picked in the folder window, nothing made", async () => {
+  // replaced (Andri 13:00 sign-off: B2, no Custom mode; ⋯ unrolls the three into rows with Change… each and folds them back)
+  it("⋯ unrolls the three into rows with Change… each and folds them back; a folder picked in its row is used, only the rest made", async () => {
     await mount("mac");
     await next();
-    await press(button("Choose each folder"));
-    expect(shown()).toContain("Custom");
-    expect(button("Choose each folder")).toBeUndefined();
+    expect(summary()).toEqual(["Source media: Source media", "Project files: Project files", "Final exports: Final exports"]);
+    const rows = () => buttons("Change…")[1]!.closest("[inert]"); // the rows' part, out of reach while folded
+    expect(rows()).not.toBeNull();
+    await press(unroll() ?? undefined);
+    expect(unroll()?.getAttribute("aria-expanded")).toBe("true");
+    expect(rows()).toBeNull();
+    expect(document.querySelector('[aria-label="The folders"]')!.closest("[inert]")).not.toBeNull();
     h.picks = ["/Volumes/NAS/Media"];
     await press(buttons("Change…")[1]); // Source media (the first Change… is the Library folder's)
     h.picks = ["/Volumes/NAS/Exports"];
     await press(buttons("Change…")[3]); // Final exports
+    await press(unroll() ?? undefined);
+    expect(unroll()?.getAttribute("aria-expanded")).toBe("false");
+    expect(summary()).toEqual(["Source media: /Volumes/NAS/Media", "Project files: Project files", "Final exports: /Volumes/NAS/Exports"]);
     await next();
     await next();
     await press(button("Done"));
     expect(folderPaths()).toEqual(["/Volumes/NAS/Media", "~/Movies/Creator Toolset/Tiny Acrobatics/Project files", "/Volumes/NAS/Exports"]);
-    expect(h.makes).toEqual([]);
     expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: false });
   });
 
@@ -270,14 +290,15 @@ describe("Media Library setup: existing folders", () => {
     expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: true, importMode: "copy" });
   });
 
+  // replaced (Andri 13:00 sign-off: B3, no Found badges; the box beside Source media names what it uses)
   it("Moo's layout: PROJECTS and EXPORTS beside the picked FOOTAGE are found and used as they are, nothing made", async () => {
     await mount("mac");
     await press(button("Use my existing folders"));
     await next();
     h.picks = [{ path: "/Volumes/Tiny/MOO/FOOTAGE", children: [], siblings: ["EXPORTS", "FOOTAGE", "PROJECTS"] }];
     await press(button("Add folder…"));
-    expect(shown()).toContain("/Volumes/Tiny/MOO/PROJECTS · Found");
-    expect(shown()).toContain("/Volumes/Tiny/MOO/EXPORTS · Found");
+    expect(summary()).toEqual(["Project files: PROJECTS", "Final exports: EXPORTS"]);
+    expect(shown()).not.toContain("Will be created");
     await next();
     await next();
     await press(button("Done"));
@@ -395,15 +416,11 @@ describe("Media Library setup: own server and Cloud", () => {
 });
 
 describe("Media Library setup: analysis and organization", () => {
+  // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
   it("Analysis Off makes Smart folders unavailable and files as Organize yourself", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next(); // to Analysis and organization
-    const effort = document.querySelector<HTMLInputElement>('input[aria-label="Effort"]')!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(effort, "0");
-      effort.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await flush();
+    await press(stop("Off"));
     expect(document.body.textContent).toContain("Analysis is Off");
     await press(button("Done"));
     expect(h.updates[0]!.settings).toMatchObject({ organize: "own", describe: false, transcribe: false });
@@ -412,7 +429,7 @@ describe("Media Library setup: analysis and organization", () => {
 
 describe("rowsOf", () => {
   it("names the scratch folders for the workspace and puts the others beside the first Source media folder", () => {
-    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", base: "", custom: false, sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", hosted: { finals: true, proxies: false, originals: false } };
+    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", base: "", sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", hosted: { finals: true, proxies: false, originals: false } };
     expect(rowsOf(base, "Moo/Classic")).toEqual([
       { role: "footage", path: "~/Movies/Creator Toolset/Moo-Classic/Source media" },
       { role: "projects", path: "~/Movies/Creator Toolset/Moo-Classic/Project files" },
@@ -469,21 +486,14 @@ describe("Media Library setup: proxies, analysis and organization details", () =
     expect(h.updates[0]!.settings).toMatchObject({ upload: "proxies", proxy: true });
   });
 
+  // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
   it("Effort Off leaves Smart folders unavailable, and Effort back up picks it again", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next();
-    const effort = document.querySelector<HTMLInputElement>('input[aria-label="Effort"]')!;
-    const setEffort = async (v: string) => {
-      act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(effort, v);
-        effort.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await flush();
-    };
     const smart = () => [...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Smart folders"))!;
-    await setEffort("0");
+    await press(stop("Off"));
     expect(smart().disabled).toBe(true);
-    await setEffort("3");
+    await press(stop("High"));
     expect(smart().disabled).toBe(false);
     expect(smart().getAttribute("aria-checked")).toBe("true");
   });
@@ -503,16 +513,26 @@ describe("Media Library setup: proxies, analysis and organization details", () =
     expect(h.updates[0]!.settings).toMatchObject({ timelineModel: "gemini-3.5-flash-lite" });
   });
 
+  // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
+  it("Effort is six stops, High picked to start; each stop saves the same flags the slider's step did", async () => {
+    await mount("mac");
+    for (let i = 0; i < 3; i++) await next();
+    expect([...document.querySelectorAll('[role="radiogroup"][aria-label="Effort"] [role="radio"]')].map((b) => b.textContent)).toEqual(ANALYSIS_LEVELS.map((l) => l.label));
+    expect(stop("High")?.getAttribute("aria-checked")).toBe("true");
+    for (const l of ANALYSIS_LEVELS) {
+      await press(stop(l.label));
+      expect(stop(l.label)?.getAttribute("aria-checked")).toBe("true");
+    }
+    await press(stop("Low"));
+    await press(button("Done"));
+    expect(h.updates[0]!.settings).toMatchObject(flagsOf("low"));
+  });
+
   it("Models are hidden at Effort Off, and the budget reads No limit until one is set", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next();
     expect(document.body.textContent).toContain("Monthly budget: No limit");
-    const effort = document.querySelector<HTMLInputElement>('input[aria-label="Effort"]')!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(effort, "0");
-      effort.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await flush();
+    await press(stop("Off"));
     expect(document.body.textContent).not.toContain("Descriptions");
   });
 });

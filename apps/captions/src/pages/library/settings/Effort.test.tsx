@@ -74,14 +74,33 @@ describe("EffortCost: About $N on the Effort row", () => {
   });
 });
 
-describe("OwnerFolders: Source media's Add folder… follows Use default folders", () => {
+describe("OwnerFolders: the Library folder box (11-19 sign-off D1)", () => {
   const owner = (defaultFolders: boolean): LibrarySummary => ({ ...library, settings: { ...SETTINGS, defaultFolders } });
 
-  it("with Use default folders on and no folder made (no computer here), Source media has no Add folder… button", async () => {
+  // replaced (Andri 13:00 sign-off: D1, the owner page has the setup's box; no Use default folders mode hides Set…)
+  it("with no folder made yet, every folder's row has Set…, Use default folders on or off, and the Library folder Change…", async () => {
     storageFolders = [];
     await render(<OwnerFolders library={owner(true)} workspace={null} onChange={() => {}} onError={() => {}} />);
+    expect(buttons(LIBRARY_WORDS.setFolder)).toHaveLength(3);
     expect(buttons("Add folder…")).toHaveLength(0);
-    expect(buttons("Set…")).toHaveLength(0);
+    expect(buttons(LIBRARY_WORDS.changeFolder)).toHaveLength(1);
+  });
+
+  it("the three in one folder: the Library folder is it, the summary names each, and ⋯ unrolls their rows and folds them back", async () => {
+    storageFolders = (["footage", "projects", "library"] as const).map((role, i) => {
+      const name = ["FOOTAGE", "Project files", "EXPORTS"][i]!;
+      return { id: `f${i}`, role, name, origin: { host: "mac-1", path: `/Volumes/Tiny/Lib/${name}` }, make: false, createdAt: 1, folderState: "ok", checkedAt: 1, workspace: "*" };
+    });
+    await render(<OwnerFolders library={owner(true)} workspace={null} onChange={() => {}} onError={() => {}} />);
+    expect(host!.textContent?.replace(/\u200b/g, "")).toContain("/Volumes/Tiny/Lib");
+    expect([...host!.querySelectorAll('[aria-label="The folders"] dd')].map((d) => d.textContent)).toEqual(["FOOTAGE", "Project files", "EXPORTS"]);
+    const dots = host!.querySelector<HTMLButtonElement>('button[aria-label="Choose each folder"]')!;
+    expect(buttons("Add folder…")[0]!.closest("[inert]")).not.toBeNull();
+    await act(async () => dots.click());
+    expect(dots.getAttribute("aria-expanded")).toBe("true");
+    expect(buttons("Add folder…")[0]!.closest("[inert]")).toBeNull();
+    await act(async () => dots.click());
+    expect(dots.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("with Use default folders off, every folder not chosen yet shows Set…", async () => {

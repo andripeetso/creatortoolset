@@ -10,20 +10,22 @@ import { across, clock, frameAt, frameStyle, KIND_ICON, NoPictureChip, noPicture
  * pointer, and a mouse across a video scrubs it. Only photos: in their own proportions, in columns.
  */
 
-const wide = (a: AssetCard) => !!a.width && !!a.height && a.width > a.height * 1.1;
+/** Wider than tall (a little square-ish stays tall): two columns at the same height. */
+export const wideShape = (aspect: number) => aspect > 1.1;
+const wide = (a: AssetCard) => !!a.width && !!a.height && wideShape(a.width / a.height);
 
 /** `size`: the folders view's card size (views.tsx); a tall clip here is about half a card. */
-/** `lead`: cards before the clips (a drop's files going in, ./Placeholders.tsx), each one cell. */
-export function GalleryGrid({ assets, size, tile, lead = [] }: { assets: readonly AssetCard[]; size?: number | null; tile: (a: AssetCard, ownShape: boolean) => ReactNode; lead?: readonly ReactNode[] }) {
+/** `lead`: cards before the clips (a drop's files going in, ./Placeholders.tsx), one cell, two when `wide` like a clip's. */
+export function GalleryGrid({ assets, size, tile, lead = [] }: { assets: readonly AssetCard[]; size?: number | null; tile: (a: AssetCard, ownShape: boolean) => ReactNode; lead?: readonly { key: string; wide: boolean; node: ReactNode }[] }) {
   if (!lead.length && assets.length && assets.every((a) => a.kind === "image")) return <PhotoMasonry assets={assets} tile={(a) => tile(a, true)} />;
   return (
     <div
       className={cn("grid grid-flow-row-dense gap-2", size ? "" : "grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]")}
       style={size ? cardColumns(Math.round(size * 0.45)) : undefined}
     >
-      {lead.map((n, i) => (
-        <div key={(n as { key?: string })?.key ?? i} className="min-w-0">
-          {n}
+      {lead.map((l) => (
+        <div key={l.key} className={cn("min-w-0", l.wide && "col-span-2")}>
+          {l.node}
         </div>
       ))}
       {assets.map((a) => (

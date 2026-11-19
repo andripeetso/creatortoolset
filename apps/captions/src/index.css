@@ -416,6 +416,12 @@ html:not(.dark) [data-nle] ::-webkit-scrollbar-thumb { background: #3f3f46; }
   inherits: true;
   initial-value: rgb(167 139 250);
 }
+/* everywhere else the workspace's own colour, never the registered violet (11-19 sign-off A1): the violet shades follow
+   <html data-tint> (useRootTint); ToolsetHome sets its own on its page */
+:root {
+  --tint: rgb(var(--violet-600));
+  --tint-text: rgb(var(--t-violet-400));
+}
 /* a Home tile with work running (ToolsetHome Running): a light sweeps round the icon's rounded edge; work that waits, a still ring */
 @property --run-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
 .tile-running {

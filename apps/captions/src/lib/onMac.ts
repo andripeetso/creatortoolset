@@ -61,6 +61,39 @@ const once = (el: HTMLElement, ok: string, signal?: AbortSignal) =>
     signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
 
+/**
+ * A file's shape (width / height) from its metadata only, fast and before anything is sent: a picture as decoded, a video
+ * as it plays (turned the way it was filmed). null for sound, or when it can't be read in `ms`.
+ */
+export async function shapeOf(file: File, ms = 5000): Promise<number | null> {
+  const url = URL.createObjectURL(file);
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(new Error("timed out")), ms);
+  try {
+    if (file.type.startsWith("image/") || /\.(jpe?g|png|heic|webp|gif|tiff?)$/i.test(file.name)) {
+      const img = new Image();
+      img.src = url;
+      await Promise.race([img.decode(), new Promise((_, no) => stop.signal.addEventListener("abort", no, { once: true }))]);
+      return img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+    }
+    if (file.type.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i.test(file.name)) return null;
+    const el = document.createElement("video");
+    el.muted = true;
+    el.preload = "metadata";
+    el.src = url;
+    await once(el, "loadedmetadata", stop.signal);
+    const shape = el.videoWidth && el.videoHeight ? el.videoWidth / el.videoHeight : null;
+    el.removeAttribute("src");
+    el.load();
+    return shape;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    URL.revokeObjectURL(url);
+  }
+}
+
 export interface MacIndex {
   duration?: number;
   width?: number;
