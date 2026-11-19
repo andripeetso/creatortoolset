@@ -30,6 +30,8 @@ export const MARKER_FILE = ".creatortoolset-folder";
 export const THIS_COMPUTER = "this-computer";
 /** The Exports folder setup suggests (~/Movies/Creator Toolset), and the subfolder for each role inside it. */
 export const LIBRARY_NAME = "Creator Toolset";
+/** A workspace's default Library folder on a computer: ~/Movies/Creator Toolset/<workspace> (setup; the Project files ask). */
+export const libraryBase = (workspace: string) => `~/Movies/${LIBRARY_NAME}/${workspace.replace(/\//g, "-")}`;
 /** New disk folders' names (existing folders are never renamed); apps/editor/editor/storage.py mirrors them. */
 export const LIBRARY_SUBFOLDERS: Record<"footage" | "finished", string> = { footage: "Source media", finished: "Final exports" };
 

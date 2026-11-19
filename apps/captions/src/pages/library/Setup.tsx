@@ -37,7 +37,7 @@ import {
   type WatchModel,
 } from "@contracts/library";
 import type { ServerWorkView } from "@contracts/work";
-import { EXPORTS_NAME, FOLDER_LABELS, LIBRARY_NAME, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
+import { EXPORTS_NAME, FOLDER_LABELS, PROJECTS_NAME, libraryBase, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
 
 /**
  * The owner's Media Library setup (UNIFIED-PRD §3.3, SCREENS-COPY §4): one fixed-size sheet, the steps in dependency
@@ -126,7 +126,7 @@ const proxiesHosted = (a: Answers): boolean => a.hosted.proxies;
 const defaultsOf = (a: Answers): boolean => (a.start === "scratch" ? !a.custom : !a.projects && !a.exports);
 
 /** The workspace's default Library folder: ~/Movies/Creator Toolset/<workspace>. */
-export const baseOf = (workspace: string) => `~/Movies/${LIBRARY_NAME}/${workspace.replace(/\//g, "-")}`;
+export const baseOf = libraryBase;
 /** The folder the first Source media folder is in (existing folders): Project files and Final exports go there. */
 const parentOf = (p: string) => p.replace(/\/[^/]*\/?$/, "");
 

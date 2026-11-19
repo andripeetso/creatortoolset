@@ -867,6 +867,11 @@ export const LIBRARY_WORDS = {
   downloadsCard: "This edit needs the files on your computer, and Automatic downloads is off. Turn it on?",
   downloadsButton: "Turn on",
   downloadsDone: (ask: string) => `Automatic downloads is on. Continuing: ${ask}`,
+  projectsCard: (workspace: string) => `Project files folder for ${workspace}`,
+  projectsUse: (path: string) => `Use ${path}`,
+  projectsChoose: "Choose…",
+  projectsSet: "Set: the edit carries on",
+  projectsFailed: "Could not set the folder. Retry",
   redo: "Redo",
   redoAll: "Redo all",
   forClips: (n: number) => (n === 1 ? "For 1 clip" : `For ${n} clips`),
@@ -875,10 +880,14 @@ export const LIBRARY_WORDS = {
 /**
  * One thing the person has to do before a tool or step can go on (UNIFIED-PRD §3.5, §4.7, §4.8). A tool answers
  * `{ [ACTION_NEEDED]: ActionNeeded }`; the chat shows the one card for its kind, and the ask continues when it's done
- * (setup: the LIBRARY_SETUP_DONE window event / change for that workspace; downloads: Turn on writes Downloads "needed").
+ * (setup: the LIBRARY_SETUP_DONE window event / change for that workspace; downloads: Turn on writes Downloads "needed";
+ * projects: the folder row is made and the waiting job is taken again by itself).
  */
 export type ActionNeeded =
   | { kind: "setup"; workspace: string; workspaceName: string; owner: boolean; href: string }
-  | { kind: "downloads"; libraryId: string; workspace: string };
+  | { kind: "downloads"; libraryId: string; workspace: string }
+  // an AI Editor job waits for the workspace's Project files folder on `device` (api/devices-storage.ts ensureUseFolder);
+  // `path` is the default offered (libraryBase/Project files on that computer). The job goes on once the row exists
+  | { kind: "projects"; workspace: string; workspaceName: string; device: string; path: string };
 export const ACTION_NEEDED = "action_needed";
 export const LIBRARY_SETUP_DONE = "library-setup-done";
