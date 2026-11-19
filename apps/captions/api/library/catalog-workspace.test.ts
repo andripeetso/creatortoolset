@@ -112,6 +112,44 @@ describe("no Media folder in a workspace a plug-in serves", () => {
   });
 });
 
+describe("no Media folder inside a Projects or Exports folder, or inside another workspace's Media folder", () => {
+  const line = (name: string, whose: string, use: string) => `That folder is inside ${name}, which is ${whose}'s ${use} folder: pick a folder outside it`;
+  const refused = async (p: string, error: string) => {
+    const r = await addFolder(B, "footage", p);
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe(error);
+    expect((await storageOf("ana")).folders.some((f) => f.origin.path === p)).toBe(false);
+  };
+  // the other workspace's folders: its Media folder written straight (the routes refuse it there), its Projects and Exports from Quick setup
+  const other = (name: string) => path.join(shoots, name);
+
+  it("another workspace's Media folder", async () => {
+    shoot("a-media/day1");
+    await changeStorage("ana", (st) => {
+      st.folders.push({ id: "fold_a_media", role: "footage", name: "a-media", origin: { host: "this-computer", path: other("a-media") }, make: false, createdAt: 0, reach: {}, workspace: A });
+    });
+    await refused(other("a-media/day1"), line("a-media", "Tiny Acrobatics", "Media"));
+  });
+
+  it("another workspace's Projects folder", async () => {
+    await refused(shoot("quick/Project files/edit1"), line("Project files", "Tiny Acrobatics", "Projects"));
+  });
+
+  it("another workspace's Exports folder", async () => {
+    await refused(shoot("quick/Final exports/finals"), line("Final exports", "Tiny Acrobatics", "Exports"));
+  });
+
+  it("an Exports subfolder in the same workspace", async () => {
+    expect((await addFolder(B, "library", shoot("b-exports"))).status).toBe(200);
+    await refused(shoot("b-exports/Creator Toolset/Footage/Phone uploads"), line("b-exports", "Climbers", "Exports"));
+  });
+
+  it("a Projects subfolder in the same workspace", async () => {
+    expect((await addFolder(B, "projects", shoot("b-projects"))).status).toBe(200);
+    await refused(shoot("b-projects/Edit 1/Media"), line("b-projects", "Climbers", "Projects"));
+  });
+});
+
 describe("the indexer never fills a served workspace's library", () => {
   const mac = pairDevice("ana", "Tiny Mac").device;
   const DIR = "/Volumes/Tiny Footage/Downloads";
