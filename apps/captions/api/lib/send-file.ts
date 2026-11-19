@@ -15,6 +15,16 @@ export const attachment = (name: string) => {
   return `attachment; filename="${plain}"${plain === name ? "" : `; filename*=UTF-8''${utf8}`}`;
 };
 
+/**
+ * A stored file's type as it is sent: footage, sound and raster pictures keep theirs (parameters dropped); anything
+ * else an upload claimed (text/html, image/svg+xml) goes as a download, so a file never runs as a page of this site.
+ */
+export const servedType = (type: string): string =>
+  /^(?:(?:video|audio)\/[\w.+-]+|image\/(?:png|jpeg|jpg|gif|webp|avif|heic|heif|bmp|tiff))(?=\s*(?:;|$))/i.exec(type.trim())?.[0] ?? "application/octet-stream";
+
+/** On every stored file's response: the browser never guesses another type, and a page that slips through has no origin. */
+export const FILE_HEADERS = { "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox" } as const;
+
 /** Range-aware file response. An open range (`bytes=0-` on a 20 GB
  *  master) is capped; a closed one is answered exactly, since Apple's
  *  player (the iPhone app, Safari) rejects any other length. */
@@ -23,7 +33,8 @@ export async function sendFile(c: Context, p: string, type: string, download?: s
   if (!st) return c.json({ error: "Not ready" }, 409);
   const size = st.size;
   const headers: Record<string, string> = {
-    "Content-Type": type,
+    ...FILE_HEADERS,
+    "Content-Type": servedType(type),
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, max-age=3600",
     "Last-Modified": new Date(st.mtimeMs).toUTCString(),
@@ -49,6 +60,8 @@ export async function sendFile(c: Context, p: string, type: string, download?: s
     status = 206;
     headers["Content-Range"] = `bytes ${start}-${end}/${size}`;
   }
+  // an empty file: createReadStream can't read the range 0..-1
+  if (!size) return new Response("", { status, headers: { ...headers, "Content-Length": "0" } });
   headers["Content-Length"] = String(end - start + 1);
   return new Response(
     Readable.toWeb(createReadStream(p, { start, end })) as unknown as ReadableStream,

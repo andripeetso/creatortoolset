@@ -35,6 +35,10 @@ project("team-old", "team-member", 90);
 project("team-mid", "team-member", 20);
 project("admin-old", "owner-admin", 400);
 project("gone-new", "removed-account", 1); // an account that was deleted
+put("users-deleted/removed-account", String(now)); // deleteUser's mark
+// an account this process doesn't know: made on the other server process during a swap, so never deleted for that
+project("unknown-new", "made-elsewhere", 1);
+put("clips/unknown-note/meta.json", { owner: "made-elsewhere", updatedAt: now });
 project("legacy-old", undefined, 400);
 project("admin-copy", "owner-admin", 30, { mediaProjectId: "plain-old" });
 
@@ -62,6 +66,8 @@ const { sweepUserContent, deleteUserContent } = await import("./retention");
 it("with no age limit, only a deleted account's files go", async () => {
   await sweepUserContent();
   expect(has("projects/gone-new")).toBe(false);
+  expect(has("projects/unknown-new")).toBe(true);
+  expect(has("clips/unknown-note")).toBe(true);
   expect(has("projects/plain-old")).toBe(true);
   expect(has("projects/team-old")).toBe(true);
   expect(has(`review/${PLAIN_VIDEO}`)).toBe(true);
@@ -80,6 +86,7 @@ it("CONTENT_EXPIRES=1: keeps a plain user's files 14 days, team's 28, admin's al
   expect(has("clips/gone-note")).toBe(false);
   expect(has("documents/plain-guide")).toBe(false);
   expect(has("clips/old-note")).toBe(true); // a clip is a shared link: age never deletes it
+  expect(has("projects/unknown-new")).toBe(true);
   for (const kept of ["projects/plain-new", "projects/team-mid", "projects/admin-old", "projects/legacy-old", `review/${TEAM_VIDEO}`, "documents/plain-fresh"]) {
     expect(has(kept)).toBe(true);
   }

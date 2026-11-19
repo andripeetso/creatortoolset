@@ -86,15 +86,28 @@ export async function writeUserMarker(username: string, marker: UserMarker): Pro
   await writeJsonAtomic(markerPath(username), marker);
 }
 
-export async function ownedProjects(username: string): Promise<Project[]> {
-  let names: string[] = [];
-  try {
-    names = (await readdir(PROJECTS)).filter((n) => n.endsWith(".json"));
-  } catch {
-    return [];
-  }
-  const out: Project[] = [];
+/**
+ * Each project file's owner, read once: the folder is listed each time (a project added or removed shows at once), and
+ * a project's owner never changes, so only a new file is opened to learn it.
+ */
+const owners = new Map<string, string>();
+
+async function projectOwners(): Promise<Map<string, string>> {
+  const names = new Set((await readdir(PROJECTS).catch(() => [] as string[])).filter((n) => n.endsWith(".json")));
+  for (const name of owners.keys()) if (!names.has(name)) owners.delete(name);
   for (const name of names) {
+    if (owners.has(name)) continue;
+    const owner = (await readJson<Project>(path.join(PROJECTS, name)))?.owner;
+    if (owner) owners.set(name, owner); // one that can't be read now is tried again next time
+  }
+  return owners;
+}
+
+export async function ownedProjects(username: string): Promise<Project[]> {
+  const out: Project[] = [];
+  for (const [name, owner] of await projectOwners()) {
+    if (owner !== username) continue;
+    // read fresh: a project's name and fields change with each save
     const rec = await readJson<Project>(path.join(PROJECTS, name));
     if (rec?.owner === username) out.push(rec);
   }

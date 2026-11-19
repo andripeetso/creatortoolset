@@ -73,6 +73,24 @@ const up = async (name: string, projectId?: string, bytes = Buffer.from(name)) =
 const patch = (body: unknown) => ({ ...json(body), method: "PATCH" });
 
 describe("review", () => {
+  it("keeps a type the uploader named only as footage, and sends a stored file so it never runs as a page", async () => {
+    const bytes = Buffer.from("<script>alert(document.cookie)</script>");
+    const init = await read(app.request("/uploads", json({ name: "Clip.mov", mime: "text/html", size: bytes.length })));
+    await app.request(`/uploads/${init.id}/parts/1`, {
+      method: "POST",
+      headers: { "upload-length": String(bytes.length), "upload-part-size": String(init.partSize), "content-length": String(bytes.length) },
+      body: bytes,
+    });
+    const asset = await read(app.request(`/uploads/${init.id}/complete`, { method: "POST" }));
+    const meta = JSON.parse(readFileSync(path.join(dataDir, "review", asset.id, "meta.json"), "utf-8"));
+    expect(meta.versions[0].mime).toBe("application/octet-stream");
+    const down = await app.request(`/assets/${asset.id}/v/1/download`);
+    expect(down.status).toBe(200);
+    expect(down.headers.get("content-type")).toBe("application/octet-stream");
+    expect(down.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(down.headers.get("content-security-policy")).toBe("sandbox");
+  });
+
   it("deletes the earlier versions' files, keeping comments and the version a kept one was made from", async () => {
     const asset = await up("Round1.mov");
     const add = async (name: string) => {

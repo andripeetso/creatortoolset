@@ -24,6 +24,7 @@ import {
 import { deviceStatus, deviceTranscribes, transcribeOnDevice } from "./lib/device-transcribe";
 import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
 import { env } from "./lib/env";
+import { FILE_HEADERS, servedType } from "./lib/send-file";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { videoLanguages } from "./lib/video-languages";
 import { workspaceContext, workspaceOf } from "./lib/workshop/context";
@@ -897,7 +898,8 @@ async function streamFile(
   const size = st.size;
   const range = c.req.header("range");
   const base = {
-    "Content-Type": type,
+    ...FILE_HEADERS,
+    "Content-Type": servedType(type),
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, max-age=3600",
     "Last-Modified": new Date(st.mtimeMs).toUTCString(),
@@ -1348,7 +1350,8 @@ clipsApp.get("/:id/download", async (c) => {
     Readable.toWeb(createReadStream(p)) as unknown as ReadableStream,
     {
       headers: {
-        "Content-Type": meta.mime || "video/webm",
+        ...FILE_HEADERS,
+        "Content-Type": servedType(meta.mime || "video/webm"),
         "Content-Length": String(st.size),
         "Content-Disposition": `attachment; filename="${base}.${ext}"`,
       },

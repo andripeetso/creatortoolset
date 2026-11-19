@@ -7,7 +7,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { jobTurn, type AuthVars } from "./auth";
 import type { Expired } from "./retention";
-import { sendFile } from "./lib/send-file";
+import { sendFile, servedType } from "./lib/send-file";
 import { uploadRelayView } from "./lib/storage";
 import { pluginUploadRelays, type UploadRelay } from "./lib/plugin";
 
@@ -1015,7 +1015,8 @@ export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<R
     total: size,
     partSize: PART_SIZE,
     name: cleanText(body?.name, 160) || "Untitled",
-    mime: cleanText(body?.mime, 80) || "video/mp4",
+    // what the browser said: kept only as a footage or picture type, since a bucket serves it under this type too
+    mime: servedType(cleanText(body?.mime, 80) || "video/mp4"),
     owner: user.username,
     assetId,
     projectId: projectId as string | undefined,
