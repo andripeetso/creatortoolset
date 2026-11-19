@@ -148,6 +148,28 @@ struct AccountSetupPresenter: ViewModifier {
     @ObservedObject private var accountServers = AccountServers.shared
 
     func body(content: Content) -> some View {
+        #if DEBUG
         content.sheet(isPresented: $accountServers.setupShown) { AccountSetupSheet() }
+            .fullScreenCover(isPresented: .constant(ConnectionDemo.screen)) { NavigationStack { ConnectionDemo.view } }
+            .onAppear { if ConnectionDemo.mode == "setup" { accountServers.setupShown = true } }
+        #else
+        content.sheet(isPresented: $accountServers.setupShown) { AccountSetupSheet() }
+        #endif
     }
 }
+
+#if DEBUG
+extension ConnectionDemo {
+    /// `list`, `add`, `detail` and `diagnosis` open their screen over the app.
+    static var screen: Bool { ["list", "add", "detail", "diagnosis"].contains(mode ?? "") }
+
+    @MainActor @ViewBuilder static var view: some View {
+        switch mode {
+        case "add": AddServerView()
+        case "detail": ServerDetailView(serverId: "mac-1")
+        case "diagnosis": ServerDetailView(serverId: "mac-2")
+        default: ServersView()
+        }
+    }
+}
+#endif

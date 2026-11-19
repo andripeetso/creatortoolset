@@ -104,7 +104,12 @@ struct AddServerView: View {
         .onAppear {
             if let prefill, address.isEmpty { address = prefill }
             #if DEBUG
-            if ConnectionDemo.mode == "add" { error = PairingError.differentServer("Office Mac mini").localizedDescription; address = "10.0.0.40"; code = "ABCDEFGHJKLM" }
+            if ConnectionDemo.mode == "add" {
+                address = "10.0.0.40"
+                code = "ABCDEFGHJKLM"
+                // after the typing's own clearing of the error
+                Task { error = PairingError.differentServer("Office Mac mini").localizedDescription }
+            }
             #endif
         }
         .alert("Invalid QR code", isPresented: $invalidScan) { Button("OK") {} } message: {
