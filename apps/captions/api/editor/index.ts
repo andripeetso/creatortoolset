@@ -152,7 +152,7 @@ const rowOf = (id: string) =>
  */
 export const shotLog = {
   first: (ids: string[]): void => lookFirst(ids),
-  redo: (versionId: string, actor: string | null): boolean => queueLook(libraryDb(), versionId, actor, true),
+  redo: (versionId: string, actor: string | null): boolean => queueLook(libraryDb(), versionId, actor, true, true),
   stamp: (versionId: string): Promise<string> => lookStamp(libraryDb(), versionId),
   refresh: (versionId: string, actor: string | null): Promise<boolean> => refreshDescription(libraryDb(), versionId, actor),
   retry: (libraryId: string, versionId: string, kind: string, actor: string | null): void => enqueueJob(libraryDb(), libraryId, versionId, kind, actor),

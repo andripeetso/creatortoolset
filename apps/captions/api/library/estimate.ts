@@ -5,7 +5,7 @@ import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watching, watchUsdPerHour } from "./timeline";
-import { BUDGET_WAITS, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
+import { BUDGET_WAITS, budgetPause, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
@@ -423,7 +423,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     const held = rows.filter((r) => r.held && STEP_OF[r.kind] === step);
     const heldN = held.reduce((n, r) => n + r.n, 0);
     const budget = held.filter((r) => r.error === BUDGET_WAITS).reduce((n, r) => n + r.n, 0);
-    if (budget) waiting.unshift({ step, count: budget, missing: BUDGET_WAITS, limit: true });
+    if (budget) waiting.unshift({ step, count: budget, missing: budgetPause(), limit: true });
     const limited = held.filter((r) => r.error !== BUDGET_WAITS);
     const limitedN = heldN - budget;
     if (limitedN) waiting.unshift({ step, count: limitedN, missing: `${limited[0]!.error} They continue then.`, limit: true });

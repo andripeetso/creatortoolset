@@ -7,6 +7,7 @@ import { env } from "../lib/env";
 import { recordUsage } from "../lib/mac-claude";
 import { librarySetting, libraryDb } from "./db";
 import { workspaceIdOf } from "./describe";
+import { firstClips } from "./jobs";
 import { looksLikeSong, type ProbeSummary } from "./media/probe";
 import { soundMiddle } from "./media/wave";
 import { SHORT_SOUND_S } from "./organize";
@@ -123,7 +124,7 @@ export async function settleSoundKind(d: DatabaseSync, versionId: string, e: { s
 export async function listen(d: DatabaseSync, versionId: string, libraryId: string, file: string, seconds: number, actor: string | null): Promise<Heard> {
   const key = watchKey(actor);
   if (!key || !librarySetting(libraryId, "describe") || (parked.get(key)?.until ?? 0) > Date.now()) return null;
-  if (await lookBudgetWaits(d, versionId)) return null;
+  if (await lookBudgetWaits(d, versionId, firstClips())) return null;
   const clip = path.join(process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch"), `listen-${randomUUID()}.mp3`);
   try {
     await soundMiddle(file, seconds, LISTEN_S, clip);

@@ -155,7 +155,8 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   organizeOnProbe(d, versionId, sound);
   // its transcript is made on that Mac from the file where it is (worker.ts): never uploaded for it
   // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
-  if (kind === "video") enqueueJob(d, libraryId, versionId, "transcribe", by);
+  // Analysis effort: Off makes no transcript on import (UNIFIED-PRD §4.4)
+  if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     const dir = framesDir(versionId);
     await mkdir(dir, { recursive: true });
