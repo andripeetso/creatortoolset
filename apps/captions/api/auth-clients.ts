@@ -155,14 +155,16 @@ async function pairingUrls(c: Context, credential: string): Promise<PairingLinkU
 authClientsApp.post("/pairing-links", async (c) => {
   const who = accessCaller(c);
   if (who instanceof Response) return who;
-  const b = ((await c.req.json().catch(() => null)) ?? {}) as { label?: unknown; scopes?: unknown };
+  const b = ((await c.req.json().catch(() => null)) ?? {}) as { label?: unknown; scopes?: unknown; deviceType?: unknown };
   const scopes = b.scopes === undefined ? [...STANDARD] : parseScopes(b.scopes);
   if (!scopes || scopes.length === 0) return c.json({ error: "Unknown scope" }, 400);
   // a link can hand on only what its maker holds
   const missing = scopes.find((s) => !who.scopes.includes(s));
   if (missing) return scopeRefused(c, missing);
+  if (b.deviceType !== undefined && !DEVICE_TYPES.includes(b.deviceType as DeviceType)) return c.json({ error: "Unknown device type" }, 400);
+  const deviceType = (b.deviceType as DeviceType | undefined) ?? "unknown";
   const label = typeof b.label === "string" ? b.label.trim().slice(0, 80) : "";
-  const { link, credential } = createGrant({ kind: "pairing", subject: who.user.username, scopes, ...(label ? { label } : {}) });
+  const { link, credential } = createGrant({ kind: "pairing", subject: who.user.username, scopes, deviceType, ...(label ? { label } : {}) });
   c.header("Cache-Control", "no-store");
   return c.json({ ...link, credential, urls: await pairingUrls(c, credential) });
 });
@@ -271,8 +273,9 @@ oauthTokenApp.post("/oauth/token", async (c) => {
   if (field("grant_type") !== TOKEN_EXCHANGE_GRANT) return refuse("unsupported_grant_type");
   const credential = field("subject_token");
   if (!credential || field("subject_token_type") !== BOOTSTRAP_TOKEN_TYPE || field("requested_token_type") !== ACCESS_TOKEN_TYPE) return refuse("invalid_request");
-  const deviceType = (field("client_device_type") ?? "unknown") as DeviceType;
-  if (!DEVICE_TYPES.includes(deviceType)) return refuse("invalid_request");
+  // checked for shape only: the session's kind is the one its link was made for, whatever the device says
+  const claimed = (field("client_device_type") ?? "unknown") as DeviceType;
+  if (!DEVICE_TYPES.includes(claimed)) return refuse("invalid_request");
   const scopeField = field("scope");
   const requested = scopeField === undefined ? undefined : parseScopes(scopeField.split(/\s+/));
   if (requested === null) return refuse("invalid_scope");
@@ -292,7 +295,7 @@ oauthTokenApp.post("/oauth/token", async (c) => {
   const label = (r.grant.kind === "pairing" && r.grant.label) || field("client_label");
   const client: ClientMetadata = {
     ...(label ? { label: label.slice(0, 80) } : {}),
-    deviceType,
+    deviceType: r.grant.deviceType ?? "unknown",
     ...(field("client_os") ? { os: field("client_os") } : {}),
     ...(field("client_model") ? { model: field("client_model") } : {}),
     ...(field("app_version") ? { appVersion: field("app_version") } : {}),

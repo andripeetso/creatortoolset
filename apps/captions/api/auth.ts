@@ -8,6 +8,7 @@ import { env, hostedMode, keepsOverRestart } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
+import { sessionById } from "./lib/clients";
 import {
   LOCAL_USER,
   type SessionUser,
@@ -370,6 +371,18 @@ export const isAppSession = (cookieHeader: string | undefined, username: string)
     if (got.length === want.length && timingSafeEqual(got, want)) return true;
   }
   return false;
+};
+
+/**
+ * Whether the request is the iPhone app's own: a client session whose link was made for a phone or a tablet (the
+ * link's kind, auth-clients.ts), or else the app's marked cookie. A request with a client session is decided by it
+ * alone, as the account gate answers it, so a Mac's, a bot's or an unknown device's token never counts, whatever cookie it sends.
+ */
+export const isPhoneSession = (c: Context<{ Variables: AuthVars }>, username: string): boolean => {
+  const id = c.get("clientSession");
+  if (!id) return isAppSession(c.req.header("cookie"), username);
+  const row = sessionById(id);
+  return row?.subject === username && (row.client.deviceType === "mobile" || row.client.deviceType === "tablet");
 };
 
 /**

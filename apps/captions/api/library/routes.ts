@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { isAppSession, type AuthVars } from "../auth";
+import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { hasMembers, mayReceive, mayServe, type Received } from "./upload-gate";
@@ -543,8 +543,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
   const into = { id: libraryId, collectionId: collection };
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
-  // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isAppSession), never a browser's
-  const phone = !from && c.req.header("x-ct-origin") === "phone" && isAppSession(c.req.header("cookie"), user.username);
+  // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's
+  const phone = !from && c.req.header("x-ct-origin") === "phone" && isPhoneSession(c, user.username);
   const origin = from ? "computer" : phone ? "phone" : "person";
   const gate = made?.proxy
     ? mayReceive("proxy", into, origin, { sender, proof: { ...(made.proxy.sha256 ? { sha256: made.proxy.sha256 } : {}), bytes: size, original: made.proxy.size } })

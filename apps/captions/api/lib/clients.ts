@@ -48,6 +48,8 @@ export interface CreatedPairingLink extends PairingLink {
 export interface CreatePairingLinkInput {
   label?: string;
   scopes?: Scope[];
+  /** the kind of device this link is for, said by the screen that makes it (default "unknown") */
+  deviceType?: DeviceType;
 }
 
 export interface ClientMetadata {
@@ -213,6 +215,7 @@ interface GrantRow {
   label?: string;
   scopes: Scope[];
   jkt?: string; // a connect grant is redeemed only with a proof by this key
+  deviceType?: DeviceType; // fixed by the link's maker; the session gets this, never the redeeming device's claim
   createdAt: number;
   expiresAt: number;
 }
@@ -317,7 +320,7 @@ const linkOf = (g: GrantRow): PairingLink => ({
   expiresAt: iso(g.expiresAt),
 });
 
-export function createGrant(o: { kind: "pairing" | "connect"; subject: string; scopes: readonly Scope[]; label?: string; jkt?: string; ttlMs?: number; now?: number }): { link: PairingLink; credential: string } {
+export function createGrant(o: { kind: "pairing" | "connect"; subject: string; scopes: readonly Scope[]; label?: string; jkt?: string; deviceType?: DeviceType; ttlMs?: number; now?: number }): { link: PairingLink; credential: string } {
   const now = o.now ?? Date.now();
   const s = load();
   const credential = newCredential();
@@ -329,6 +332,7 @@ export function createGrant(o: { kind: "pairing" | "connect"; subject: string; s
     ...(o.label ? { label: o.label } : {}),
     scopes: [...o.scopes],
     ...(o.jkt ? { jkt: o.jkt } : {}),
+    deviceType: o.deviceType ?? "unknown",
     createdAt: now,
     expiresAt: now + (o.ttlMs ?? (o.kind === "connect" ? CONNECT_TTL_MS : PAIRING_TTL_MS)),
   };
@@ -403,6 +407,9 @@ export function issueSession(o: { subject: string; scopes: Scope[]; jkt?: string
   emit({ type: "clientUpserted", row });
   return { token, row };
 }
+
+/** A session by its id (the request's, set by the account gate in boot.ts). */
+export const sessionById = (id: string): SessionRow | undefined => load().sessions.find((r) => r.id === id);
 
 export type ResolveResult = { ok: true; row: SessionRow } | { ok: false; code: "INVALID_TOKEN" | "SESSION_EXPIRED" | "SESSION_REVOKED" };
 

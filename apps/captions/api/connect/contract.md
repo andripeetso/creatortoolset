@@ -47,7 +47,9 @@ sends a credential (wrong machine, already saved, unsupported `protocol`).
 
 ### `POST /api/auth/pairing-links` (signed-in, needs `access` and every scope it delegates)
 
-Request `{ "label"?: string (≤ 80 chars), "scopes"?: ("read"|"write"|"access")[] }` (default Standard).
+Request `{ "label"?: string (≤ 80 chars), "scopes"?: ("read"|"write"|"access")[], "deviceType"?: "desktop"|"mobile"|"tablet"|"bot"|"unknown" }`
+(default Standard, `"unknown"`). The kind is fixed here: the session the link becomes has it, whatever the device claims at
+`/oauth/token`. A connect credential from `/api/connect/mint` is always `"mobile"`.
 Response 200:
 
 ```json
@@ -59,7 +61,7 @@ Response 200:
 `urls` lists the addresses a phone can reach this server on (the tunnel hostname or the public origin first, then LAN,
 then the tailnet address; never loopback). It may be empty: the code still works when typed on a reachable address. The raw
 `credential` appears only in this response. The pairing signs in **as the account that made the link**.
-Errors: 401 `"Sign in first"`; 403 `{code: "SCOPE"}` (see below); 400 `"Unknown scope"`.
+Errors: 401 `"Sign in first"`; 403 `{code: "SCOPE"}` (see below); 400 `"Unknown scope"`, `"Unknown device type"`.
 
 ### Pairing link shapes (what scans, opens and is typed)
 
@@ -114,7 +116,7 @@ subject_token_type=urn:creatortoolset:params:oauth:token-type:server-bootstrap
 requested_token_type=urn:ietf:params:oauth:token-type:access_token
 scope?            space-separated, intersected with the grant's
 client_label?     e.g. the device name ("Sam's iPhone"; it has no authority)
-client_device_type? desktop|mobile|tablet|bot|unknown
+client_device_type? desktop|mobile|tablet|bot|unknown (checked, then ignored: the link's own kind wins)
 client_os?        "iOS 26"
 client_model?     "iPhone17,1"
 app_version?      "1.4.0"

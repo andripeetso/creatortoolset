@@ -155,7 +155,7 @@ describe("mint", () => {
       subject_token: a.credential,
       subject_token_type: "urn:creatortoolset:params:oauth:token-type:server-bootstrap",
       requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-      client_device_type: "mobile",
+      client_device_type: "desktop",
     };
     const url = `https://${host}/oauth/token`;
     // no proof (a Bearer ask) and a proof by another key: refused, the code kept
@@ -167,8 +167,11 @@ describe("mint", () => {
     const pl = b({ htm: "POST", htu: url, iat: now(), jti: randomUUID() });
     const otherProof = `${h}.${pl}.${sign("sha256", Buffer.from(`${h}.${pl}`), { key: other.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
     expect(await (await call("POST", "/oauth/token", { host, form, headers: { dpop: otherProof } })).json()).toMatchObject({ error: "invalid_grant" });
-    const t = (await (await call("POST", "/oauth/token", { host, form, headers: { dpop: dpop(url) } })).json()) as { token_type: string; scope: string };
+    const t = (await (await call("POST", "/oauth/token", { host, form, headers: { dpop: dpop(url) } })).json()) as { access_token: string; token_type: string; scope: string };
     expect(t).toMatchObject({ token_type: "DPoP", scope: "read write access" });
+    // a connect code is for a phone: the session is one, whatever kind the device said
+    const { resolveToken } = await import("../lib/clients");
+    expect(resolveToken(t.access_token)).toMatchObject({ ok: true, row: { client: { deviceType: "mobile" } } });
   });
 
   it("refuses a proof whose cnf.jkt isn't the phone's key, a wrong scope, and a replay", async () => {
