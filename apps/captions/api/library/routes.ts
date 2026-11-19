@@ -18,7 +18,7 @@ import { blobs, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, lib
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { hostsNone, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { hostsNone, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -928,7 +928,8 @@ libraryApp.get("/", async (c) => {
   return c.json({ libraries, uploadTakes: UPLOAD_TAKES });
 });
 
-const settingsOf = (json: string): LibrarySettings => {
+/** A library's stored settings as the page reads them: every key setup and the owner page write comes back here. */
+export const settingsOf = (json: string): LibrarySettings => {
   const s = JSON.parse(json || "{}") as Partial<LibrarySettings>;
   return {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
@@ -936,7 +937,13 @@ const settingsOf = (json: string): LibrarySettings => {
     timeline: s.timeline ?? SETTING_DEFAULTS.timeline,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
+    proxyQuality: proxyQualityOf(s.proxyQuality),
     pictures: s.pictures ?? SETTING_DEFAULTS.pictures,
+    transcribe: s.transcribe ?? SETTING_DEFAULTS.transcribe,
+    ...(typeof s.lookTalking === "boolean" ? { lookTalking: s.lookTalking } : {}),
+    // without it the page took every library for one never set up, and setup's Done changed nothing on screen
+    ...(typeof s.setupAt === "string" ? { setupAt: s.setupAt } : {}),
+    ...(typeof s.defaultFolders === "boolean" ? { defaultFolders: s.defaultFolders } : {}),
     upload: uploadOf(s.upload),
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),

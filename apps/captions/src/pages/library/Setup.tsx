@@ -528,7 +528,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
   // not set up yet: the page is the setup, in the sheet's own size, with nothing to close it
   if (inline)
     return (
-      <div className="flex flex-1 items-start justify-center px-4 py-8">
+      <div className="flex flex-1 items-center justify-center px-4 py-8">
         <section aria-label={LIBRARY_WORDS.setupTitle} className="h-[min(38rem,calc(100dvh-8rem))] w-[min(36rem,100%)] overflow-hidden rounded-2xl border bg-background shadow-sm">
           {sheet}
         </section>
