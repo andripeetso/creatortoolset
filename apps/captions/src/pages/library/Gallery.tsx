@@ -13,13 +13,19 @@ import { across, clock, frameAt, frameStyle, KIND_ICON, PhotoMasonry, type Drag 
 const wide = (a: AssetCard) => !!a.width && !!a.height && a.width > a.height * 1.1;
 
 /** `size`: the folders view's card size (views.tsx); a tall clip here is about half a card. */
-export function GalleryGrid({ assets, size, tile }: { assets: readonly AssetCard[]; size?: number | null; tile: (a: AssetCard, ownShape: boolean) => ReactNode }) {
-  if (assets.length && assets.every((a) => a.kind === "image")) return <PhotoMasonry assets={assets} tile={(a) => tile(a, true)} />;
+/** `lead`: cards before the clips (a drop's files going in, ./Placeholders.tsx), each one cell. */
+export function GalleryGrid({ assets, size, tile, lead = [] }: { assets: readonly AssetCard[]; size?: number | null; tile: (a: AssetCard, ownShape: boolean) => ReactNode; lead?: readonly ReactNode[] }) {
+  if (!lead.length && assets.length && assets.every((a) => a.kind === "image")) return <PhotoMasonry assets={assets} tile={(a) => tile(a, true)} />;
   return (
     <div
       className={cn("grid grid-flow-row-dense gap-2", size ? "" : "grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]")}
       style={size ? cardColumns(Math.round(size * 0.45)) : undefined}
     >
+      {lead.map((n, i) => (
+        <div key={(n as { key?: string })?.key ?? i} className="min-w-0">
+          {n}
+        </div>
+      ))}
       {assets.map((a) => (
         <div key={a.id} className={cn("min-w-0", wide(a) && "col-span-2")}>
           {tile(a, false)}

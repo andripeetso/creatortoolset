@@ -1,16 +1,39 @@
 import Foundation
 
-// Where each thing sits among the tabs: Chats · Plan · Make · Distribute · Tools, the desktop's stages.
+// Where each thing sits among the tabs: Chats · Projects · Media · Publish · Tools.
+
+/// The groups of Projects, as the computer's Content Workshop lists them.
+enum ProjectGroup: CaseIterable {
+    case ideas, making, published, shelved
+
+    var title: String {
+        switch self {
+        case .ideas: "Ideas & writing"
+        case .making: "Ready & in production"
+        case .published: "Published"
+        case .shelved: "Shelved"
+        }
+    }
+}
 
 extension WorkshopStatus {
-    /// The tab a Workshop piece shows on at this stage: ideas and scripts on Plan (Shelved folded at its bottom), pieces
-    /// being filmed or edited on Make, what is ready to post and what was posted on Distribute.
-    var tab: AppTab {
+    /// The group a project is listed in on Projects.
+    var group: ProjectGroup {
         switch self {
-        case .draft, .writing, .ready, .shelved, .unknown: .plan
-        case .production, .editing: .make
-        case .toPost, .published: .distribute
+        case .draft, .writing, .unknown: .ideas
+        case .ready, .production, .editing, .toPost: .making
+        case .published: .published
+        case .shelved: .shelved
         }
+    }
+}
+
+extension AppTab {
+    /// What waits on the person, on the tab where it lives: chats that ask on Chats; edits and Review videos that wait
+    /// (Review, your go, failed) on Projects; failed uploads on Media; what is ready to post on Publish.
+    static func badges(rows: [ChatRow], failedUploads: Int, sessions: [WorkshopSession]) -> [AppTab: Int] {
+        [.chats: ChatList.waiting(rows, chats: true), .projects: ChatList.waiting(rows, chats: false),
+         .media: failedUploads, .publish: sessions.filter(\.toPost).count]
     }
 }
 
@@ -20,28 +43,45 @@ extension ChatList {
         Dictionary(chats.compactMap { c in c.workspace.map { (c.id, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The chat rows of `workspace`: a chat in another workspace is left out; one whose workspace is not known (an
-    /// older server, a new chat before its first message) shows. No workspace picked: all of them.
-    static func inWorkspace(_ rows: [ChatRow], _ workspace: String?, of spaces: [String: String], open: AssistantView?) -> [ChatRow] {
-        guard let workspace else { return rows }
-        return rows.filter { row in
-            guard case .chat(let id) = row.route else { return true }
-            let ws = spaces[id] ?? (open?.id == id ? open?.workspace : nil)
-            return ws == nil || ws == workspace
+    /// Every chat row, each marked with its own workspace (from the list of chats, or the open chat's own); none is
+    /// left out, whatever workspace the app is in.
+    static func placed(_ rows: [ChatRow], spaces: [String: String], open: AssistantView?) -> [ChatRow] {
+        rows.map { row in
+            guard case .chat(let id) = row.route else { return row }
+            var row = row
+            row.workspace = spaces[id] ?? (open?.id == id ? open?.workspace : nil)
+            return row
         }
     }
 
-    /// The Workshop pieces being filmed or edited, a row each on Make: their stage in words, never waiting on the
-    /// person (only Review, a go and a failure do), so they sit under what waits and above Working. A piece whose edit
-    /// has a row already (the editor names the edit after it) is told once, by the edit.
-    static func sessions(_ sessions: [WorkshopSession], besides rows: [ChatRow] = []) -> [ChatRow] {
-        let named = Set(rows.filter { !$0.route.isAssistant }.map { $0.title.lowercased() })
-        return sessions.filter { $0.status.tab == .make && !named.contains($0.title.lowercased()) }.map { session in
-            let route = AppRoute.session(session.id)
-            let at = session.updatedAt.map { Date(timeIntervalSince1970: $0 / 1000) } ?? .distantPast
-            return ChatRow(id: path(route), route: route, title: session.title,
-                           detail: [session.status.label, session.kindLabel].compactMap { $0 }.joined(separator: " · "),
-                           status: .time(at), at: at)
+    /// Whether an edit or a Review video is a project's: the AI Editor names an edit after the project it is made for,
+    /// and a cut after its edit ("Handstand basics, cut 2"). The assistant's chats belong to no project.
+    static func belongs(_ row: ChatRow, to session: WorkshopSession) -> Bool {
+        guard !row.route.isAssistant else { return false }
+        let name = FinalsSessions.nameKey(session.title)
+        let before = row.title.split(separator: ",", maxSplits: 1).first.map(String.init) ?? row.title
+        return !name.isEmpty && [row.title, before].contains { FinalsSessions.nameKey($0) == name }
+    }
+
+    /// The edits and Review videos that are no project's: Projects lists them last, under Other edits.
+    static func others(_ rows: [ChatRow], sessions: [WorkshopSession]) -> [ChatRow] {
+        rows.filter { row in !row.route.isAssistant && !sessions.contains { belongs(row, to: $0) } }
+    }
+}
+
+extension WorkshopSession {
+    /// It matches the type filter (nil: All) and the words searched for (its title or its workspace's name).
+    func shows(kind: String?, words: String) -> Bool {
+        (kind == nil || (kinds ?? []).contains(kind!))
+            && (words.isEmpty || [title, projectName ?? ""].contains { $0.lowercased().contains(words) })
+    }
+
+    /// Projects in their groups, newest first in each; an empty group is left out.
+    static func grouped(_ sessions: [WorkshopSession]) -> [(group: ProjectGroup, sessions: [WorkshopSession])] {
+        let newest = sessions.sorted { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }
+        return ProjectGroup.allCases.compactMap { group in
+            let its = newest.filter { $0.status.group == group }
+            return its.isEmpty ? nil : (group, its)
         }
     }
 }

@@ -1,4 +1,5 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Images, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // The editor's panels, as a non-linear editor lays them out: Media, Viewer and Inspector side by side on top, the
@@ -27,6 +28,18 @@ const keepSizes = (s: Sizes) => {
     localStorage.setItem(KEY, JSON.stringify(s));
   } catch {
     // not kept: the sizes go back to the start ones next time
+  }
+};
+
+// Which side panels are open (the window buttons on top, Tab and ⇧Tab), kept apart from the sizes.
+const OPEN_KEY = "ct-nle-panels";
+type Open = { media: boolean; inspector: boolean };
+const readOpen = (): Open => {
+  try {
+    const got = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "null") as Partial<Open> | null;
+    return { media: got?.media !== false, inspector: got?.inspector !== false };
+  } catch {
+    return { media: true, inspector: true };
   }
 };
 
@@ -66,15 +79,43 @@ function Splitter({ dir, onDrag, onDone, label }: { dir: "x" | "y"; onDrag: (d: 
   return (
     <div role="separator" aria-orientation={dir === "x" ? "vertical" : "horizontal"} aria-label={label} onPointerDown={down}
       className={cn("group relative shrink-0 touch-none", dir === "x" ? "w-1 cursor-col-resize" : "h-1 w-full cursor-row-resize")}>
-      <span className={cn("absolute rounded-full bg-violet-400/0 transition-colors group-hover:bg-violet-400/60 group-active:bg-violet-400",
+      <span className={cn("absolute rounded-full bg-violet-400/0 group-hover:bg-violet-400/60 group-active:bg-violet-400",
         dir === "x" ? "inset-y-2 left-[1px] w-[2px]" : "inset-x-2 top-[1px] h-[2px]")} />
     </div>
   );
 }
 
-/** The four panels in their places. `media` null: no Media panel (the viewer takes its room). */
-export function NleLayout({ media, viewer, inspector, timeline }: { media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode }) {
+/** A window button on the top bar: a panel's icon and name, bright while it is open. */
+function WindowButton({ on, icon, label, keys, onClick }: { on: boolean; icon: ReactNode; label: string; keys: string; onClick: () => void }) {
+  return (
+    <button type="button" aria-pressed={on} title={`${on ? "Hide" : "Show"} ${label} (${keys})`} onClick={onClick}
+      className={cn("inline-flex h-full items-center gap-1.5 px-3 text-[12px] hover:bg-white/[0.04] [&_svg]:size-3.5", on ? "text-zinc-100" : "text-zinc-500")}>
+      {icon}{label}
+    </button>
+  );
+}
+
+/**
+ * The four panels in their places, under a thin bar of window buttons (Media Pool on the left, Inspector on the right)
+ * that show and hide the side panels; a hidden one gives its room to the viewer. `media` null: no Media panel at all.
+ * `panelKeys` gets what Tab (media) and ⇧Tab (inspector) call.
+ */
+export function NleLayout({ media, viewer, inspector, timeline, panelKeys }: {
+  media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode;
+  panelKeys?: MutableRefObject<((p: keyof Open) => void) | null>;
+}) {
   const [sizes, setSizes] = useState(readSizes);
+  const [open, setOpen] = useState(readOpen);
+  const toggle = (p: keyof Open) => setOpen((o) => {
+    const next = { ...o, [p]: !o[p] };
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify(next));
+    } catch {
+      // not kept: the panels open as they were next time
+    }
+    return next;
+  });
+  if (panelKeys) panelKeys.current = toggle;
   const box = useRef<HTMLDivElement>(null);
   const from = useRef(sizes);
   const live = useRef(sizes);
@@ -86,23 +127,29 @@ export function NleLayout({ media, viewer, inspector, timeline }: { media: React
   };
   const begin = () => void (from.current = live.current);
   const done = () => keepSizes(live.current);
-  const height = () => box.current?.clientHeight || 1;
+  const height = () => Math.max(1, (box.current?.clientHeight ?? 0) - 28); // less the bar of window buttons
+  // hidden, not taken away: a panel shown again is as it was (the bin's search, the inspector's tab)
+  const showMedia = media !== null && open.media;
   return (
-    <div ref={box} data-nle className="dark flex min-h-0 w-full flex-1 flex-col bg-[#0f0f11] p-1 text-zinc-200 [color-scheme:dark]">
-      <div className="flex min-h-0 shrink-0" style={{ height: `${sizes.top * 100}%` }}>
+    <div ref={box} data-nle className="dark flex min-h-0 w-full flex-1 flex-col bg-[#0f0f11] p-1 pt-0 text-zinc-200 [color-scheme:dark]">
+      <div role="toolbar" aria-label="Panels" className="flex h-7 shrink-0 items-stretch justify-between">
+        {media !== null ? <WindowButton on={open.media} icon={<Images />} label="Media Pool" keys="Tab" onClick={() => toggle("media")} /> : <span />}
+        <WindowButton on={open.inspector} icon={<SlidersHorizontal />} label="Inspector" keys="⇧Tab" onClick={() => toggle("inspector")} />
+      </div>
+      <div className="flex min-h-0 shrink-0" style={{ height: `calc(${sizes.top * 100}% - ${sizes.top * 28}px)` }}>
         {media !== null && (
           <>
-            <div className="flex min-w-0 shrink-0" style={{ width: sizes.media }}>{media}</div>
-            <div className="flex" onPointerDownCapture={begin}>
+            <div className={cn("flex min-w-0 shrink-0", !showMedia && "hidden")} style={{ width: sizes.media }}>{media}</div>
+            <div className={cn("flex", !showMedia && "hidden")} onPointerDownCapture={begin}>
               <Splitter dir="x" label="Media width" onDrag={(d) => set({ media: from.current.media + d })} onDone={done} />
             </div>
           </>
         )}
         <div className="flex min-w-0 flex-1">{viewer}</div>
-        <div className="flex" onPointerDownCapture={begin}>
+        <div className={cn("flex", !open.inspector && "hidden")} onPointerDownCapture={begin}>
           <Splitter dir="x" label="Inspector width" onDrag={(d) => set({ inspector: from.current.inspector - d })} onDone={done} />
         </div>
-        <div className="flex min-w-0 shrink-0" style={{ width: sizes.inspector }}>{inspector}</div>
+        <div className={cn("flex min-w-0 shrink-0", !open.inspector && "hidden")} style={{ width: sizes.inspector }}>{inspector}</div>
       </div>
       <div className="flex" onPointerDownCapture={begin}>
         <Splitter dir="y" label="Timeline height" onDrag={(d) => set({ top: from.current.top + d / height() })} onDone={done} />

@@ -246,7 +246,7 @@ describe("under Upload none", () => {
     expect(host.textContent).not.toContain("Proxies aren't uploaded");
   });
 
-  it("with no proxy anywhere, an original that errors is asked for again (this computer asked too), then said, with Try again", async () => {
+  it("with no proxy anywhere, an original that errors is asked for again (this computer asked too), then said, with Retry", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await openNone();
     const asked = post.mock.calls.length;
@@ -259,7 +259,7 @@ describe("under Upload none", () => {
     await fire("error"); // the last try failed too
     expect(host.textContent).toContain("The original on this computer didn't open.");
     expect(host.textContent).not.toContain("Proxies aren't uploaded");
-    await act(async () => void button("Try again")!.click());
+    await act(async () => void button("Retry")!.click()); // replaced (app wording rule: the button is "Retry")
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     expect(video().getAttribute("src")).toBe("ctlocal://media/a?try=4");
   });

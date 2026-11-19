@@ -231,19 +231,28 @@ const openMore = async (host: HTMLElement) => {
 const moreItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((x) => x.textContent?.includes(text));
 
 describe("Media Library page", () => {
-  it("an empty library is its own page: it says what it is for, the folder to choose, upload as the second way", async () => {
+  // replaced (CEO 11-19, Andri): the empty Library is one drop box, nothing else on the page (no toolbar until the first clip)
+  it("an empty library is one drop box: no toolbar, Drop media here, and a click opens the file window", async () => {
     server.items = [];
     const host = await mount();
-    expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
-    expect(more(host)).not.toBeNull(); // Library settings, in the More menu
-    expect(host.textContent).not.toContain("Where are your videos?");
-    expect(host.textContent).toContain("No clips");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Upload files", "Upload"])); // the fixture is set up: no Set up button
-    expect(buttons(host)).not.toContain("Set up");
-    expect(buttons(host)).not.toContain("Choose a folder");
-    expect(host.textContent).not.toContain("Copies");
-    expect(buttons(host)).not.toContain("Skip");
-    expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
+    expect(host.querySelector('[role="searchbox"]')).toBeNull();
+    expect(more(host)).toBeNull();
+    expect(buttons(host)).not.toContain("Upload");
+    expect(buttons(host)).not.toContain("New folder");
+    expect(host.textContent).toContain("Drop media here");
+    expect(host.textContent).toContain("or click to choose files");
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const click = vi.spyOn(input, "click").mockImplementation(() => {});
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Drop media here"))!.click());
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("an empty library given to look at says No clips yet, with no drop box", async () => {
+    server.items = [];
+    server.readOnly = true;
+    const host = await mount();
+    expect(host.textContent).toContain("No clips yet");
+    expect(host.textContent).not.toContain("Drop media here");
   });
 
   it("an owner whose library was never set up is asked to set it up; a set-up library is not", async () => {
@@ -257,7 +266,8 @@ describe("Media Library page", () => {
     expect(document.body.textContent).not.toContain("Let's set up the Media Library");
   });
 
-  it("the first upload asks how the library sorts files, Standard until another is picked, saved before the files go in", async () => {
+  // replaced (CEO 11-19 import-flow): a drop asks nothing first (no "Add N files?", no sort question: setup chose them)
+  it("a drop goes in at once: no dialog first, and the file is sent", async () => {
     server.items = [];
     const host = await mount();
     const files = [new File(["x"], "tiny-0.mp4", { type: "video/mp4" })];
@@ -269,18 +279,9 @@ describe("Media Library page", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
-    const sort = document.querySelectorAll<HTMLInputElement>('[role="dialog"] input[name="organize"]');
-    expect(sort[0]!.checked).toBe(true);
-    act(() => sort[1]!.click());
-    const go = [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Upload") as HTMLButtonElement;
-    await act(async () => {
-      go.click();
-      await new Promise((r) => setTimeout(r, 0));
-    });
-    expect(server.patched).toEqual([{ settings: { organize: "ai", organizeOffered: true } }]);
-    expect(server.sent[0]).toBe("save");
-    expect(server.sent).toContain("upload tiny-0.mp4");
-    for (const name of ["A-roll", "B-roll", "Music", "Sound effects", "Graphics", "Examples"]) expect(host.textContent).toContain(name);
+    await settle();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(server.uploaded).toEqual(["tiny-0.mp4"]);
   });
 
   it("a library whose organize is chosen is not asked again", async () => {
@@ -591,8 +592,9 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     expect(server.asked.at(-1)).toMatchObject({ sort: "longest" });
   });
 
-  it("files dropped on the page are added", async () => {
-    server.settings = { organize: "own" }; // asked already: no dialog first
+  // replaced (CEO 11-19 import-flow): no Uploads list; each file is a card in the grid while it goes in
+  it("files dropped on the page are added, each a card in the grid at once, and no list of uploads", async () => {
+    server.settings = { organize: "own" };
     const host = await mount();
     const file = new File(["x"], "Tiny drop.mp4", { type: "video/mp4" });
     const e = new Event("drop", { bubbles: true, cancelable: true });
@@ -601,10 +603,13 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await settle();
     await settle();
     expect(server.uploaded).toEqual(["Tiny drop.mp4"]);
-    expect(host.querySelector('[aria-label="Uploads"]')?.textContent).toContain("Tiny drop.mp4");
+    expect(host.querySelector("[data-placeholder]")?.textContent).toContain("Tiny drop.mp4");
+    expect(host.querySelector('[aria-label="Uploads"]')).toBeNull();
+    expect(host.textContent).not.toContain("Clear finished");
   });
 
-  it("a waiting file cancelled and retried goes once: the queue does not send it again when its turn comes", async () => {
+  // replaced (CEO 11-19 import-flow): files go side by side, not one after another; one line counts them, with Cancel all
+  it("a drop's files are on their way at the same time, with one line counting them until they are in", async () => {
     server.settings = { organize: "own" };
     const host = await mount();
     let letGo = () => {};
@@ -615,15 +620,14 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await act(async () => void host.querySelector("main")!.dispatchEvent(e));
     await settle();
     await settle();
-    expect(server.uploaded).toEqual(["Tiny one.mp4"]); // on its way; the second waits
-    const press = (find: (b: HTMLButtonElement) => boolean) => act(async () => [...host.querySelectorAll("button")].find(find)!.click());
-    await press((b) => b.getAttribute("aria-label") === "Cancel Tiny two.mp4");
-    await press((b) => b.textContent === "Retry");
-    await settle();
+    expect(server.uploaded).toEqual(["Tiny one.mp4", "Tiny two.mp4"]); // both on their way; neither waits for the other
+    expect(host.querySelectorAll("[data-placeholder]").length).toBe(2);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Adding 2 clips · 0 done");
+    expect(host.textContent).toContain("Cancel all");
     letGo();
     await settle();
     await settle();
-    expect(server.uploaded).toEqual(["Tiny one.mp4", "Tiny two.mp4"]);
+    expect(host.textContent).not.toContain("Adding 2 clips");
   });
 });
 

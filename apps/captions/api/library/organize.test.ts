@@ -114,7 +114,7 @@ describe("organize", () => {
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'vid-old'").run();
     await organize("lib_ai", { organize: "ai" }); // the same choice again files nothing again
     expect(job(old, "describe")).toBeUndefined();
-    expect(((await (await organize("lib_ai", { organizeOffered: true })).json()) as { settings: unknown }).settings).toMatchObject({ organizeOffered: true });
+    // replaced (CEO 11-19: organize offer dropped; Organization is chosen in setup step 4 and Library settings only): no organizeOffered
   });
 
   it("a video is filed by what the footage is: a new folder with its first file, the same one again in any case; never Finals", async () => {

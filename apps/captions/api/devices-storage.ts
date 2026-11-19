@@ -9,10 +9,11 @@ import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
 import { inside, localDisks, mediaFolders, migrateStorage, mountOf, onInternalDisk, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
-import { mergeStudio, studioRows, type HostLookup } from "./lib/studio-folders";
+import { mergeStudio, replacedIds, studioRows, type HostLookup } from "./lib/studio-folders";
 import { resolveDevice } from "./library/whereis";
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
+import { repointFolders } from "./library/place-rows";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf, projectOf } from "./lib/project-of";
 import { ownedProjects, sharedProjects } from "./lib/workshop/workspace";
@@ -88,8 +89,11 @@ export async function importStudioFile(file: string, fallbackOwner: string, prep
   for (const [owner, rows] of byOwner) {
     await chained(owner, async () => {
       const st = await readStorage(owner);
-      st.folders = mergeStudio(st.folders, rows);
+      const before = st.folders;
+      st.folders = mergeStudio(before, rows);
       await writeStorage(owner, st);
+      // a row merged into the studio's: its files' place rows are that folder's now
+      repointFolders(replacedIds(before, st.folders));
     });
   }
   await rename(file, `${file}.migrated`);

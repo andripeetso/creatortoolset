@@ -18,8 +18,10 @@ const h = vi.hoisted(() => ({
   updates: [] as { id: string; settings: Record<string, unknown> }[],
   events: [] as CustomEvent[],
   failMake: false,
-  /** what the Mac app's folder window answers, in order */
-  picks: [] as string[],
+  /** what the Mac app's folder window answers, in order (a path, or a path with the folder names in it and beside it) */
+  picks: [] as (string | { path: string; children?: string[]; siblings?: string[] })[],
+  /** the folders the Mac app was asked to make (import:make) */
+  makes: [] as { in: string; names: string[] }[],
   /** the Finder items of the drag dropped on the window */
   dropped: [] as { path: string; folder: boolean }[],
   paired: null as { device: string } | null,
@@ -35,7 +37,18 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/components/settings/ThisMacSection", () => ({ hasThisMac: () => h.mac }));
 vi.mock("@/lib/thisMac", () => ({
-  chooseFolderOnMac: async () => h.picks.shift() ?? null,
+  chooseFolderOnMac: async () => {
+    const p = h.picks.shift();
+    return p === undefined ? null : typeof p === "string" ? p : p.path;
+  },
+  pickFolderOnMac: async () => {
+    const p = h.picks.shift();
+    return p === undefined ? null : typeof p === "string" ? { path: p } : p;
+  },
+  importMake: async (folder: string, names: string[]) => {
+    h.makes.push({ in: folder, names });
+    return { made: names.map((n) => `${folder}/${n}`), failed: [], children: undefined };
+  },
   droppedOnMac: async () => h.dropped,
   pairThisMac: () => h.pair(),
 }));
@@ -92,6 +105,7 @@ beforeEach(() => {
   h.events = [];
   h.failMake = false;
   h.picks = [];
+  h.makes = [];
   h.dropped = [];
   h.paired = null;
   h.pair = async () => h.paired;
@@ -182,22 +196,41 @@ describe("Media Library setup: scratch, This Mac", () => {
   });
 
   // replaced (Andri 11-19): folders are picked in the Mac app's folder window, never typed; no Use default folders switch
-  it("Change… picks Source media in the Mac app's folder window; Project files and Final exports go beside it", async () => {
+  // replaced (CEO 11-19, Andri's test on ap vlogs): one Library folder holds the three; a picked Source media folder no longer
+  // puts the others beside it. Its folders are found by their usual names in any case; only the missing ones are made
+  it("Change… picks the Library folder: FOOTAGE and exports are found as they are named, only Project files is made", async () => {
     await mount("mac");
-    await next(); // scratch: to Folders, the defaults shown
-    expect(shown()).toContain("~/Movies/Creator Toolset/Tiny Acrobatics/Source media");
+    await next(); // scratch: to Folders, the default Library folder shown
+    expect(shown()).toContain("~/Movies/Creator Toolset/Tiny Acrobatics");
     expect(document.querySelector('input[type="text"], input:not([type])')).toBeNull(); // nothing to type
-    h.picks = ["/Volumes/NAS/Media/Footage"];
+    h.picks = [{ path: "/Volumes/Tiny/Lib", children: ["FOOTAGE", "exports", "Notes"] }];
     await press(buttons("Change…")[0]);
-    expect(shown()).toContain("/Volumes/NAS/Media/Project files");
-    h.picks = ["/Volumes/NAS/Exports"];
-    await press(buttons("Change…")[2]); // Final exports
-    expect(button("Continue")?.disabled).toBe(false);
+    const inside = () => [...document.querySelectorAll('[aria-label="Inside the Library folder"] li')].map((li) => (li.textContent ?? "").replace(/\u200b/g, ""));
+    expect(inside()).toEqual(["Source media/Volumes/Tiny/Lib/FOOTAGE· Found", "Project files/Volumes/Tiny/Lib/Project files· Will be created", "Final exports/Volumes/Tiny/Lib/exports· Found"]);
     await next(); // proxy
     await next(); // analysis
     await press(button("Done"));
-    expect(folderPaths()).toEqual(["/Volumes/NAS/Media/Footage", "/Volumes/NAS/Media/Project files", "/Volumes/NAS/Exports"]);
-    expect(h.calls.map((c) => c.body.make)).toEqual([undefined, undefined, undefined]); // a picked folder is there already
+    expect(h.makes).toEqual([{ in: "/Volumes/Tiny/Lib", names: ["Project files"] }]);
+    expect(folderPaths()).toEqual(["/Volumes/Tiny/Lib/FOOTAGE", "/Volumes/Tiny/Lib/Project files", "/Volumes/Tiny/Lib/exports"]);
+    expect(h.calls.map((c) => c.body.make)).toEqual([undefined, undefined, undefined]); // the Mac app made the missing one
+    expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: true });
+  });
+
+  it("Choose each folder: the Library folder reads Custom and each folder is picked in the folder window, nothing made", async () => {
+    await mount("mac");
+    await next();
+    await press(button("Choose each folder"));
+    expect(shown()).toContain("Custom");
+    expect(button("Choose each folder")).toBeUndefined();
+    h.picks = ["/Volumes/NAS/Media"];
+    await press(buttons("Change…")[1]); // Source media (the first Change… is the Library folder's)
+    h.picks = ["/Volumes/NAS/Exports"];
+    await press(buttons("Change…")[3]); // Final exports
+    await next();
+    await next();
+    await press(button("Done"));
+    expect(folderPaths()).toEqual(["/Volumes/NAS/Media", "~/Movies/Creator Toolset/Tiny Acrobatics/Project files", "/Volumes/NAS/Exports"]);
+    expect(h.makes).toEqual([]);
     expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: false });
   });
 
@@ -235,6 +268,21 @@ describe("Media Library setup: existing folders", () => {
     await press(button("Done"));
     expect(folderPaths()).toEqual(["/Volumes/NAS/Media", "/Volumes/NAS/Project files", "/Volumes/NAS/Final exports"]);
     expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: true, importMode: "copy" });
+  });
+
+  it("Moo's layout: PROJECTS and EXPORTS beside the picked FOOTAGE are found and used as they are, nothing made", async () => {
+    await mount("mac");
+    await press(button("Use my existing folders"));
+    await next();
+    h.picks = [{ path: "/Volumes/Tiny/MOO/FOOTAGE", children: [], siblings: ["EXPORTS", "FOOTAGE", "PROJECTS"] }];
+    await press(button("Add folder…"));
+    expect(shown()).toContain("/Volumes/Tiny/MOO/PROJECTS · Found");
+    expect(shown()).toContain("/Volumes/Tiny/MOO/EXPORTS · Found");
+    await next();
+    await next();
+    await press(button("Done"));
+    expect(folderPaths()).toEqual(["/Volumes/Tiny/MOO/FOOTAGE", "/Volumes/Tiny/MOO/PROJECTS", "/Volumes/Tiny/MOO/EXPORTS"]);
+    expect(h.makes).toEqual([]);
   });
 
   it("'Use files where they are' is saved as in-place", async () => {
@@ -364,7 +412,7 @@ describe("Media Library setup: analysis and organization", () => {
 
 describe("rowsOf", () => {
   it("names the scratch folders for the workspace and puts the others beside the first Source media folder", () => {
-    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", hosted: { finals: true, proxies: false, originals: false } };
+    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", base: "", custom: false, sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", hosted: { finals: true, proxies: false, originals: false } };
     expect(rowsOf(base, "Moo/Classic")).toEqual([
       { role: "footage", path: "~/Movies/Creator Toolset/Moo-Classic/Source media" },
       { role: "projects", path: "~/Movies/Creator Toolset/Moo-Classic/Project files" },

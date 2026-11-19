@@ -318,8 +318,9 @@ struct ScriptText: UIViewRepresentable {
     }
 }
 
-/// A session opened by its id (a card in a chat, a link): its script. Not in the phone's workspace, it is asked for by id:
-/// one in another workspace says which in one line, with a button that switches there; one that can't be read says why.
+/// A project opened by its id (a card on Projects or in a chat, a link): its page. Not in the phone's workspace, it is
+/// asked for by id: one in another workspace says which in one line, with a button that switches there; one that can't
+/// be read says why.
 /// Never a spinner that never ends.
 struct SessionRouteView: View {
     let id: String
@@ -335,7 +336,7 @@ struct SessionRouteView: View {
 
     var body: some View {
         if let session = model.sessions.first(where: { $0.id == id }) {
-            ScriptReaderView(session: session)
+            ProjectView(session: session)
         } else if model.needsSignIn {
             SignInAgainButton { await model.load(force: true) }.padding()
         } else if let error = model.error {
@@ -343,16 +344,16 @@ struct SessionRouteView: View {
         } else {
             Group {
                 switch found {
-                case .open(let session): ScriptReaderView(session: session)
+                case .open(let session): ProjectView(session: session)
                 case .elsewhere(let ws):
                     if let entry = workspaces.entries.first(where: { $0.server.id == Servers.shared.currentId && $0.workspace?.id == ws }) {
                         VStack(spacing: 12) {
-                            Text("This script is in \(entry.name).").foregroundStyle(.secondary)
+                            Text("This project is in \(entry.name).").foregroundStyle(.secondary)
                             Button("Switch to \(entry.name)") { workspaces.pick(entry) }.buttonStyle(.bordered)
                         }
                         .padding()
                     } else {
-                        Problem(text: "This script is in another workspace.").padding()
+                        Problem(text: "This project is in another workspace.").padding()
                     }
                 case .failed(let why): Problem(text: why).padding()
                 case nil: ProgressView()
@@ -370,7 +371,7 @@ struct SessionRouteView: View {
             if workspaces.entries.isEmpty { await workspaces.load() }
             found = Self.found(asked, picked: api.workspace)
         } catch APIError.server(404, _) {
-            found = .failed("This script is gone, or this account can't open it")
+            found = .failed("This project is gone, or this account can't open it")
         } catch {
             found = .failed(error.localizedDescription)
         }

@@ -91,6 +91,8 @@ struct ChatListRow<Leading: View>: View {
     let status: RowStatus
     /// Working and finished rows step back, so the ones that wait stand out.
     var quiet = false
+    /// The workspace it is in, named small at the start of the second line.
+    var workspace: WorkspaceEntry? = nil
     @ViewBuilder var leading: () -> Leading
 
     var body: some View {
@@ -100,11 +102,20 @@ struct ChatListRow<Leading: View>: View {
                 Text(title)
                     .font(.body.weight(quiet ? .regular : .semibold))
                     .lineLimit(2)
-                if !detail.isEmpty {
-                    Text(detail)
-                        .font(.footnote)
-                        .foregroundStyle(detailIsError ? Color.red : Color.secondary)
-                        .lineLimit(1)
+                if workspace != nil || !detail.isEmpty {
+                    HStack(spacing: 5) {
+                        if let workspace {
+                            WorkspaceMark(entry: workspace, size: 16)
+                            Text(workspace.name).font(.footnote.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                                .layoutPriority(1)
+                        }
+                        if !detail.isEmpty {
+                            Text(workspace == nil ? detail : "· \(detail)")
+                                .font(.footnote)
+                                .foregroundStyle(detailIsError ? Color.red : Color.secondary)
+                                .lineLimit(1)
+                        }
+                    }
                 }
             }
             Spacer(minLength: 8)
@@ -117,8 +128,9 @@ struct ChatListRow<Leading: View>: View {
 }
 
 extension ChatListRow where Leading == EmptyView {
-    init(title: String, detail: String, detailIsError: Bool = false, status: RowStatus, quiet: Bool = false) {
-        self.init(title: title, detail: detail, detailIsError: detailIsError, status: status, quiet: quiet) { EmptyView() }
+    init(title: String, detail: String, detailIsError: Bool = false, status: RowStatus, quiet: Bool = false,
+         workspace: WorkspaceEntry? = nil) {
+        self.init(title: title, detail: detail, detailIsError: detailIsError, status: status, quiet: quiet, workspace: workspace) { EmptyView() }
     }
 }
 

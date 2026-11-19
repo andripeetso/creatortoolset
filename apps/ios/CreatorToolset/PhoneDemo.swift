@@ -2,7 +2,7 @@
 import UIKit
 
 /// `-PhoneDemo YES`: two computers with three workspaces and something in every tab, no server needed, for screenshots
-/// of the tabs and the switcher (`-StartTab plan`, `-MakeSide media`, `-SwitcherOpen YES`). Nothing is sent anywhere.
+/// of the tabs and the switcher (`-StartTab projects`, `-StartTab media`, `-SwitcherOpen YES`). Nothing is sent anywhere.
 enum PhoneDemo {
     static let on = debugArg("PhoneDemo") != nil
 
@@ -51,7 +51,8 @@ enum PhoneDemo {
     private static let now = Date().timeIntervalSince1970 * 1000
     private static func ago(_ minutes: Double) -> Double { now - minutes * 60_000 }
 
-    /// Make's rows: one Review video, a go, a failure, one at work and one done.
+    /// The edits: one Review video, a go, a failure, one at work and one done (the video and the one at work are
+    /// projects', the rest Other edits). The chats are in two workspaces.
     static func edits() -> (videos: [ReviewListItem], others: [ChatRow], spaces: [String: String]) {
         let json = """
         [{"id":"r1","name":"Handstand basics, cut 2","approval":{"status":"needs_review"},"updatedAt":\(ago(10)),
@@ -69,7 +70,7 @@ enum PhoneDemo {
             ChatRow(id: "/editor/e4", route: .edit("e4"), title: "Balance beam", detail: "Approved yesterday", status: .time(date(1500)),
                     at: date(1500), shelf: .done, picture: "/demo/4"),
         ]
-        return (videos, others, ["c1": "tiny", "c2": "tiny", "c3": "harbor"])
+        return (videos, others, ["c1": "tiny", "c2": "tiny", "c3": "northside"])
     }
 
     static let assistant = """
@@ -77,7 +78,7 @@ enum PhoneDemo {
      "messages":[{"id":"m1","role":"user","text":"Turn yesterday's beam clips into a 30 second reel","at":\(ago(20))},
                  {"id":"m2","role":"assistant","text":"Done: the cut is in Review as Handstand basics, cut 2.","at":\(ago(18)),"status":"done"}],
      "past":[{"id":"c2","title":"Captions for the cartwheel post","at":\(ago(300)),"count":6},
-             {"id":"c3","title":"Bread of the week","at":\(ago(400)),"count":3}]}
+             {"id":"c3","title":"Open day poster for the gym","at":\(ago(400)),"count":3}]}
     """
 
     static let sessions: [WorkshopSession] = {
@@ -102,7 +103,7 @@ enum PhoneDemo {
     static let finals: FinalsData? = {
         let pieces = (1...9).map { n in
             """
-            {"id":"p\(n)","title":"Final \(n)","kind":"reel","createdAt":"2026-11-\(String(format: "%02d", 18 - n))T10:00:00Z",
+            {"id":"p\(n)","title":"\(n == 1 ? "First class nerves" : "Final \(n)")","kind":"reel","createdAt":"2026-11-\(String(format: "%02d", 18 - n))T10:00:00Z",
              "versions":[{"clipId":"demo\(n)","mediaType":"video","duration":28}]}
             """
         }.joined(separator: ",")

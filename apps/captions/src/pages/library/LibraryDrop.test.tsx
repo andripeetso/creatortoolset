@@ -7,7 +7,7 @@ import { useLibraryDrop } from "./LibraryDrop";
 
 const m = vi.hoisted(() => ({ droppedFiles: vi.fn() }));
 vi.mock("@/components/assistant/draft", () => ({ droppedFiles: m.droppedFiles }));
-vi.mock("@/components/LibraryProcessing", () => ({ useBigFolder: () => ({ check: (_p: string, add: () => unknown) => add(), after: (fn: () => void) => fn(), dialog: null }) }));
+// replaced (CEO 11-19: organize offer dropped; no big-folder dialog): no useBigFolder to stand in for, no offer to pass
 vi.mock("@/lib/library", () => ({ getWatch: async () => ({}) }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,7 +35,7 @@ async function drop(library: unknown, d: { files: File[]; folders: string[] }) {
   const addFiles = vi.fn();
   let props!: ReturnType<typeof useLibraryDrop>["props"];
   const Host = () => {
-    props = useLibraryDrop({ library: library as LibrarySummary, readsFolders: true, offer: false, answerOffer: async () => {}, addFiles, onWatch: () => {}, onError: vi.fn() }).props;
+    props = useLibraryDrop({ library: library as LibrarySummary, readsFolders: true, addFiles, onWatch: () => {}, onError: vi.fn() }).props;
     return null;
   };
   host = document.createElement("div");

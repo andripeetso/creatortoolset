@@ -9,7 +9,8 @@ import Foundation
 // gets a status and no contents, and a missing file outside the folders reads as not granted, never as missing.
 // Each folder is also kept by its root (Places.swift): the disk's root key and the folder's path inside it, so a share
 // mounted again at another path (/Volumes/footage-1) is still the folder that was granted. A file on a network disk
-// that doesn't answer gets 503 at once (Places.guarded), never a wait; a granted file on a drive that is not connected
+// that doesn't answer gets 503 at once (Places.guarded), never a wait; one that answers gets up to 10 s for the first read
+// (a share waking up), and a slow one never marks the disk away. A granted file on a drive that is not connected
 // gets 409 with the drive's name (disk_away), never 403. The proxy cache of the account the window is signed
 // in to on the page's server plays without a grant (ProxyCache.swift); every other account's cache is outside.
 
@@ -134,7 +135,8 @@ enum MediaFiles {
     }
 
     /// What the page of `server` may play for a clip of `workspace`: the open-panel and drop grants (kept as they were,
-    /// DM10) and that server's allowed folders in that workspace.
+    /// DM10) and that server's allowed folders in that workspace. With `rootGrants` (the gate's `roots`), the one grant
+    /// list: serving, the places check and placeState all take it.
     static func granted(server: String, workspace: String?) -> [String] {
         granted + folderGrants(serverFolders(server), workspace: workspace, allowed: { isAllowed($0, server: server) })
     }
@@ -154,17 +156,23 @@ enum MediaFiles {
         return folders.map(\.precomposedStringWithCanonicalMapping).contains { p == $0 || p.hasPrefix($0 == "/" ? "/" : $0 + "/") }
     }
 
+    /// Granted by name, with no file call (its disk may be gone): at or under a granted folder or a root grant's folder,
+    /// or inside a root grant on the disk mounted now with that root (a share mounted again at /Volumes/footage-1).
+    static func grantedByName(_ path: String, granted: [String], roots: [RootGrant], disks: [PlaceDisk]) -> Bool {
+        underByName(path, granted + roots.map(\.path)) || isGranted(path, folders: [], roots: roots, disks: disks)
+    }
+
     /// The page's placesState for one path on `server`: here | not_here | disk_away | not_granted | needs_ok, and the
-    /// drive's name for disk_away. Reads the file only when it is granted and its disk is here.
-    static func placeState(_ path: String, server: String, places: Places = .shared) -> (state: String, disk: String?) {
+    /// drive's name for disk_away. The grants are serving's (`granted(server:workspace:)` and `roots`). Reads the file
+    /// only when it is granted and its disk is here.
+    static func placeState(_ path: String, server: String, workspace: String? = nil, roots: [RootGrant] = rootGrants,
+                           places: Places = .shared) -> (state: String, disk: String?) {
         guard isPlain(path) else { return ("not_granted", nil) }
-        let folders = serverFolders(server)
-        let allowed = { (p: String) in isAllowed(p, server: server) }
-        let grants = granted + folderGrants(folders, workspace: nil, allowed: allowed)
-        guard underByName(path, grants + rootGrants.map(\.path)) else {
-            return underByName(path, folders.map(\.path)) ? ("needs_ok", nil) : ("not_granted", nil)
-        }
         let disks = places.diskList()
+        guard grantedByName(path, granted: granted(server: server, workspace: workspace), roots: roots, disks: disks) else {
+            let listed = folderGrants(serverFolders(server), workspace: workspace, allowed: { _ in true })
+            return underByName(path, listed) ? ("needs_ok", nil) : ("not_granted", nil)
+        }
         if let name = unmountedDisk(path, disks: disks) { return ("disk_away", name) }
         if let disk = Places.disk(of: path, in: disks), disk.network, !places.answers(disk.path) {
             return ("disk_away", disk.name.isEmpty ? (disk.path as NSString).lastPathComponent : disk.name)
@@ -260,20 +268,22 @@ enum MediaFiles {
     /// A plain path named as a file this app serves: the only paths the places check looks at (Places.swift).
     static func isPlainMedia(_ path: String) -> Bool { isPlain(path) && isMedia(path) }
 
-    /// `cache`: the proxy cache folder this page may play from (ProxyCache.allowed), nil for none.
-    static func gate(_ path: String, granted: [String], roots: [RootGrant] = rootGrants, cache: String? = nil, places: Places = .shared) -> Gate {
+    /// `cache`: the proxy cache folder this page may play from (ProxyCache.allowed), nil for none. `firstRead`: serving
+    /// the file (Places.guarded); `look` the file call, the tests give their own.
+    static func gate(_ path: String, granted: [String], roots: [RootGrant] = rootGrants, cache: String? = nil, places: Places = .shared,
+                     firstRead: Bool = false, look: @escaping (String, [String], [RootGrant], [PlaceDisk]) -> Gate = MediaFiles.look(_:granted:roots:disks:)) -> Gate {
         guard isPlain(path) else { return .status(403) }
         guard type(of: path) != nil else { return .status(415) }
         let disks = places.diskList()
         let allowed = granted + (cache.map { [$0] } ?? [])
         // a drive that is not connected: granted is told by the folder's name (nothing on it can be resolved)
         if let disk = unmountedDisk(path, disks: disks) {
-            return underByName(path, allowed + roots.map(\.path)) ? .diskAway(disk) : .status(403)
+            return grantedByName(path, granted: allowed, roots: roots, disks: disks) ? .diskAway(disk) : .status(403)
         }
-        return places.guarded(path) { look(path, granted: allowed, roots: roots, disks: disks) } ?? .status(503)
+        return places.guarded(path, firstRead: firstRead) { look(path, allowed, roots, disks) } ?? .status(503)
     }
 
-    private static func look(_ path: String, granted: [String], roots: [RootGrant], disks: [PlaceDisk]) -> Gate {
+    static func look(_ path: String, granted: [String], roots: [RootGrant], disks: [PlaceDisk]) -> Gate {
         // compared in one Unicode form (a folder's name may be stored decomposed); the file is opened as realpath named it
         let folders = realFolders(granted, disks: disks)
         let inside = { (p: String) in isGranted(p, folders: folders, roots: roots, disks: disks) }

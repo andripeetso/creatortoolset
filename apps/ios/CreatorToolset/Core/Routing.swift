@@ -53,8 +53,8 @@ enum AppRoute: Hashable {
     }
 }
 
-/// Where the app is: the tab, and what is open on top of Chats, Plan and Make. One object, so a card in a
-/// chat, a notification or a launch argument all open a screen the same way.
+/// Where the app is: the tab, and what is open on top of Chats and Projects. One object, so a card in a chat, a
+/// notification or a launch argument all open a screen the same way.
 @MainActor
 final class AppNavigator: ObservableObject {
     static let shared = AppNavigator()
@@ -62,12 +62,8 @@ final class AppNavigator: ObservableObject {
     @Published var tab: AppTab = AppNavigator.startTab
     /// The screens pushed on Chats, first to last.
     @Published var chats: [AppRoute] = []
-    /// The screens pushed on Plan, first to last.
-    @Published var plan: [AppRoute] = []
-    /// The screens pushed on Make, first to last.
-    @Published var make: [AppRoute] = []
-    /// Make shows its edits or its Media Library.
-    @Published var makeSide: MakeSide = debugArg("MakeSide") == "media" ? .media : .edits
+    /// The screens pushed on Projects, first to last.
+    @Published var projects: [AppRoute] = []
     /// The assistant was opened to write: its box takes the keyboard once, then this is cleared.
     var composing = false
 
@@ -75,16 +71,16 @@ final class AppNavigator: ObservableObject {
         if let route = debugArg("OpenPath").flatMap(AppRoute.from(path:)) { open(route) }
     }
 
-    /// The tab a screen opens on: an edit or a Review video on Make, the assistant's chats on Chats, Finals on
-    /// Distribute; a script on the tab in front when it has screens of its own (from a chat it opens over the chat),
-    /// else on Plan; a page on the tab in front, else on Chats.
+    /// The tab a screen opens on: an edit or a Review video on Projects, the assistant's chats on Chats, Finals on
+    /// Publish; a project on the tab in front when it has screens of its own (from a chat it opens over the chat),
+    /// else on Projects; a page on the tab in front, else on Chats.
     nonisolated static func tab(for route: AppRoute, from current: AppTab) -> AppTab {
-        let stacked = [AppTab.chats, .plan, .make].contains(current)
+        let stacked = [AppTab.chats, .projects].contains(current)
         switch route {
-        case .finals: return .distribute
-        case .edit, .review: return .make
+        case .finals: return .publish
+        case .edit, .review: return .projects
         case .assistant, .chat: return .chats
-        case .session: return stacked ? current : .plan
+        case .session: return stacked ? current : .projects
         case .page: return stacked ? current : .chats
         }
     }
@@ -93,10 +89,7 @@ final class AppNavigator: ObservableObject {
         tab = Self.tab(for: route, from: tab)
         switch tab {
         case .chats: if chats.last != route { chats.append(route) }
-        case .plan: if plan.last != route { plan.append(route) }
-        case .make:
-            makeSide = .edits
-            if make.last != route { make.append(route) }
+        case .projects: if projects.last != route { projects.append(route) }
         default: break
         }
     }
@@ -137,19 +130,13 @@ final class AppNavigator: ObservableObject {
         }
     }
 
-    /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 1` or `-startTab make`
-    /// (also `-StartTab`; the older names edits, upload, finals and more still work), `-OpenPath /review/<id>?v=2`
-    /// (on its own tab), `-OpenPath /assistant`. `-newEdit YES` opens on Make, where New edit then opens.
+    /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 1` or `-startTab media`
+    /// (also `-StartTab`; the older names plan, make, edits, upload, distribute, finals and more still work),
+    /// `-OpenPath /review/<id>?v=2` (on its own tab), `-OpenPath /assistant`. `-newEdit YES` opens on Projects, where
+    /// New edit then opens.
     private static var startTab: AppTab {
         let raw = UserDefaults.standard.string(forKey: "startTab") ?? debugArg("StartTab")
         return raw.flatMap { AppTab(named: $0) ?? Int($0).flatMap { AppTab.allCases.indices.contains($0) ? AppTab.allCases[$0] : nil } }
-            ?? (UserDefaults.standard.bool(forKey: "newEdit") ? .make : .chats)
+            ?? (UserDefaults.standard.bool(forKey: "newEdit") ? .projects : .chats)
     }
-}
-
-/// The two sides of Make.
-enum MakeSide: String, CaseIterable, Identifiable {
-    case edits = "Edits"
-    case media = "Media"
-    var id: String { rawValue }
 }

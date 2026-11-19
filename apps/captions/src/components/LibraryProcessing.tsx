@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStatus, type LibrarySummary, type Organize, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
-import { Button } from "@/components/ui/button";
+import { NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStatus, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { getEstimate, getProgress, getStatus, getWatch, type Drop, listLibraries, updateLibrary } from "@/lib/library";
-import { OrganizePicker, offerAnswer, offersOrganize } from "@/pages/library/Organize";
+import { getProgress, getStatus, getWatch } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { ownMacLine } from "@/lib/wording";
@@ -14,23 +12,9 @@ import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 
 /**
  * The Media Library's processing, said in time and money: a line per step with the time left while clips are being
- * prepared, and before a big upload what it will take (api/library/estimate.ts). Both read this server's own pace.
+ * prepared (api/library/estimate.ts), read at this server's own pace. Nothing asks before files or a folder go in (11-19):
+ * the import's one line and a folder's indexing line say the total, and the monthly budget guards the cost.
  */
-
-/** Uploads of this many files or more ask first, with the estimate. */
-export const BIG_DROP = 20;
-
-/** GET /api/library/:id/watch/size: the media files a folder holds. */
-export interface FolderSize {
-  files: number;
-  bytes: number;
-  audio: number;
-  audioBytes: number;
-  /** asked with `to`: the room there for a copy */
-  free?: number;
-}
-
-export const dropOf = (s: FolderSize, music = false): Drop => ({ clips: s.files, bytes: s.bytes, audio: s.audio, audioBytes: s.audioBytes, music });
 
 export function aboutTime(s: number): string {
   if (s < 60) return "under a minute";
@@ -41,7 +25,6 @@ export function aboutTime(s: number): string {
   return `about ${h} h${rest ? ` ${rest} min` : ""}`;
 }
 
-const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 export function aboutUsd(usd: number): string {
   if (usd < 0.01) return "under a cent";
@@ -317,165 +300,5 @@ export function ClipStage({ card, className }: { card: Pick<AssetCard, "preparin
   );
 }
 
-/** Before a big upload or folder: where a folder's files are kept (`children`), what preparing `clips` files of `bytes` in all takes, the organize offer, and the go (`go` names it). */
-export function BigUploadDialog({
-  libraryId,
-  drop,
-  title,
-  go,
-  offer = false,
-  onUpload,
-  onClose,
-  estimate = true,
-  children,
-}: {
-  libraryId: string;
-  drop: Drop;
-  title: string;
-  go: string;
-  /** the first upload or folder into a library never asked how it sorts files: it asks (api/library/organize.ts), once */
-  offer?: boolean;
-  /** `organize`: the answer, when it was asked */
-  onUpload: (organize?: Organize) => void;
-  onClose: () => void;
-  /** false: a small folder, asked only where its files are kept (`children`) */
-  estimate?: boolean;
-  children?: ReactNode;
-}) {
-  const [e, setE] = useState<LibraryEstimate | null>(null);
-  const [organize, setOrganize] = useState<Organize>("default");
-  const [failed, setFailed] = useState<string | null>(null);
-  const { clips, bytes, audio, audioBytes, music } = drop;
-  useEffect(() => {
-    if (estimate) getEstimate(libraryId, { clips, bytes, audio, audioBytes, music }).then(setE, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
-  }, [libraryId, clips, bytes, audio, audioBytes, music, estimate]);
-  const guess = e?.steps.some((s) => !s.measured && s.route !== "off" && s.route !== "none");
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogTitle>{title}</DialogTitle>
-        {children}
-        {estimate ? (
-          <DialogDescription>{e ? `${cap(aboutTime(e.minutes * 60))} of footage.` : (failed ?? "Estimating…")}</DialogDescription>
-        ) : (
-          <DialogDescription className="sr-only">{title}</DialogDescription>
-        )}
-        {e && (
-          <div className="flex flex-col gap-2 text-sm">
-            <ul className="flex flex-col gap-1">
-              {e.steps.map((st) => [st.step, stepLine(st, e.proxies !== false)] as const).filter(([, line]) => line).map(([key, line]) => (
-                <li key={key}>{line}</li>
-              ))}
-            </ul>
-            <p>
-              Ready in {aboutTime(e.seconds)}{guess ? ", a first estimate" : ""}.
-            </p>
-            {e.withApiKey && (
-              <p className="text-zinc-400">
-                With your own Anthropic key in{" "}
-                <Link to="/settings/keys" className="underline">
-                  Settings → API keys
-                </Link>
-                , the descriptions run six at a time: ready in {aboutTime(e.withApiKey.seconds)}, {aboutUsd(e.withApiKey.usd)} on that key.
-              </p>
-            )}
-          </div>
-        )}
-        {offer && <OrganizePicker value={organize} onChange={setOrganize} />}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => onUpload(offer ? organize : undefined)}>{go}</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
+/** A size in GB, or MB under one GB. */
 export const gbOf = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
-
-/** Where copies go, with Change. */
-export function CopyTo({ path, onChange }: { path: string; onChange?: () => void }) {
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 truncate font-mono text-xs text-zinc-500" title={path}>
-        {path}
-      </span>
-      {onChange && (
-        <Button type="button" size="sm" variant="outline" className="h-7 shrink-0" onClick={onChange}>
-          Change
-        </Button>
-      )}
-    </span>
-  );
-}
-
-/** The page's own organize offer (pages/library/Organize.tsx useOrganize): whether it shows, and the answer's save. */
-export interface OrganizeOffer {
-  offer: boolean;
-  answer: (organize: Organize) => Promise<void>;
-}
-
-/**
- * A folder on this computer about to join the account's own Library (or `libraryId`'s), in one dialog: `check(path, add)`
- * adds a small folder at once, and for a big one (BIG_DROP files or more) shows the dialog first, where Add folder runs
- * `add` and Cancel adds nothing. A big folder into a library the AI does not organize yet is offered it in the same dialog,
- * once, saved before `add` runs: by `organize` where the page has its own, else here, `onOrganized` getting the library
- * saved with the answer. A folder the server can't size goes to `add` as before. `dialog` is rendered by the caller.
- */
-type CheckOpts = { libraryId?: string; organize?: OrganizeOffer };
-
-export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
-  check: (path: string, add: (copyTo?: string) => unknown, opts?: CheckOpts) => Promise<void>;
-  /** runs `then` once no folder dialog is open (at once when none is) */
-  after: (then: () => void) => void;
-  dialog: ReactNode;
-} {
-  type Asking = { libraryId: string; path: string; files: number; drop: Drop; big: boolean; add: () => unknown; offer?: OrganizeOffer };
-  // folders dropped together are asked one after another, each in its own dialog
-  const [queue, setQueue] = useState<Asking[]>([]);
-  const asking = queue[0];
-  // the dialogs asked and not yet answered, counted at once (the queue's state comes a render later), and what waits on them
-  const open = useRef(0);
-  const waiting = useRef<(() => void)[]>([]);
-  const after = (then: () => void) => (open.current ? waiting.current.push(then) : then());
-  const next = () => {
-    setQueue((q) => q.slice(1));
-    if (open.current > 0 && --open.current === 0) waiting.current.splice(0).forEach((f) => f());
-  };
-  const check = async (path: string, add: (copyTo?: string) => unknown, opts: CheckOpts = {}) => {
-    // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
-    const library = opts.libraryId && opts.organize ? undefined : (await listLibraries().catch(() => []))?.find((l) => !opts.libraryId || l.id === opts.libraryId);
-    const libraryId = opts.libraryId ?? library?.id;
-    const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}`).catch(() => null) : null;
-    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    const big = !!size && size.files >= BIG_DROP;
-    const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (o) => void (await updateLibrary(library.id, offerAnswer(o)).then(onOrganized, () => {})) } : undefined;
-    const organize = opts.organize ?? own;
-    const offer = organize?.offer ? organize : undefined;
-    if (libraryId && size && (big || offer)) {
-      open.current++;
-      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size), big, add: () => add(), offer }]);
-    } else await add();
-  };
-  const dialog = asking && (
-    <BigUploadDialog
-      key={asking.path}
-      libraryId={asking.libraryId}
-      drop={asking.drop}
-      estimate={asking.big}
-      title={`Add ${asking.files.toLocaleString()} ${asking.files === 1 ? "file" : "files"} from ${folderName(asking.path)}?`}
-      go="Add folder"
-      offer={!!asking.offer}
-      onClose={next}
-      onUpload={async (o) => {
-        next();
-        // before the folder: its files are filed as they come in; a failed save never stops the folder
-        if (asking.offer && o) await asking.offer.answer(o).catch(() => {});
-        void asking.add();
-      }}
-    />
-  );
-  return { check, after, dialog };
-}

@@ -183,6 +183,7 @@ struct AssistantChatView: View {
         VStack(spacing: 8) {
             if model.view?.connected == true, messages.isEmpty, outbox.shown.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
+                    NewChatWorkspace()
                     ForEach(Self.starters, id: \.self) { starter in
                         Button { say(starter) } label: {
                             Text(starter)
@@ -387,5 +388,38 @@ struct AssistantAttachmentChips: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+}
+
+/// A new chat's workspace, over its starters: where it starts (the last one written in), and a menu of the computer's
+/// workspaces to start it in another before the first message. Nothing when the computer has one workspace.
+private struct NewChatWorkspace: View {
+    @ObservedObject private var model = AssistantModel.shared
+    @ObservedObject private var workspaces = Workspaces.shared
+    @EnvironmentObject private var servers: Servers
+
+    var body: some View {
+        let list = workspaces.lists[servers.currentId ?? ""] ?? []
+        if list.count > 1, let here = workspaces.entry(model.chatWorkspace) ?? workspaces.current {
+            Menu {
+                ForEach(list) { ws in
+                    Button { model.startIn = ws.id } label: {
+                        if ws.id == here.workspace?.id { Label(ws.name, systemImage: "checkmark") } else { Text(ws.name) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("In").foregroundStyle(.secondary)
+                    WorkspaceMark(entry: here, size: 20)
+                    Text(here.name).fontWeight(.semibold).foregroundStyle(.primary).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Workspace: \(here.name)")
+            .accessibilityHint("Picks the workspace this chat starts in")
+        }
     }
 }

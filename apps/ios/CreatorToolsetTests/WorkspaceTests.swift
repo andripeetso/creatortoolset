@@ -142,7 +142,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(AppNotifications.userInfo(path: "/x", server: nil, workspace: nil), ["path": "/x"])
     }
 
-    func testChatsListThisWorkspacesChats() throws {
+    func testChatsListEveryWorkspacesChatsEachInItsOwn() throws {
         let spaces = ChatList.spaces([ChatSummary(id: "c1", workspace: "tiny"), ChatSummary(id: "c2", workspace: "gym"),
                                       ChatSummary(id: "c3")])
         XCTAssertEqual(spaces, ["c1": "tiny", "c2": "gym"])
@@ -150,31 +150,74 @@ final class WorkspaceTests: XCTestCase {
         let rows = ["c1", "c2", "c3", "c4"].map { id in
             ChatRow(id: "/?chat=\(id)", route: .chat(id), title: id, detail: "", status: .none, at: .distantPast)
         }
-        // another workspace's chats are left out; one whose workspace isn't known shows; the open chat says its own
-        XCTAssertEqual(ChatList.inWorkspace(rows, "tiny", of: spaces, open: open).map(\.title), ["c1", "c3"])
-        XCTAssertEqual(ChatList.inWorkspace(rows, "gym", of: spaces, open: open).map(\.title), ["c2", "c3", "c4"])
-        XCTAssertEqual(ChatList.inWorkspace(rows, nil, of: spaces, open: open).count, 4)
+        let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "e1", detail: "", status: .none, at: .distantPast, workspace: "tiny")
+        // none is left out, whatever workspace the app is in; each says its own (the open chat its own, one not known none)
+        let placed = ChatList.placed(rows + [edit], spaces: spaces, open: open)
+        XCTAssertEqual(placed.map(\.title), ["c1", "c2", "c3", "c4", "e1"])
+        XCTAssertEqual(placed.map(\.workspace), ["tiny", "gym", nil, "gym", "tiny"])
     }
 
-    func testEachStageSitsOnItsTab() {
-        let tabs = [WorkshopStatus.draft, .writing, .ready, .production, .editing, .toPost, .published, .shelved].map(\.tab)
-        XCTAssertEqual(tabs, [.plan, .plan, .plan, .make, .make, .distribute, .distribute, .plan])
-        func session(_ id: String, _ status: WorkshopStatus, at: Double) -> WorkshopSession {
-            WorkshopSession(id: id, title: id, status: status, kinds: ["reel"], projectName: nil, updatedAt: at, posted: nil)
+    func testProjectsAreGroupedLikeTheWorkshop() {
+        let groups = [WorkshopStatus.draft, .writing, .ready, .production, .editing, .toPost, .published, .shelved, .unknown].map(\.group)
+        XCTAssertEqual(groups, [.ideas, .ideas, .making, .making, .making, .making, .published, .shelved, .ideas])
+        func session(_ id: String, _ status: WorkshopStatus, _ kind: String, at: Double) -> WorkshopSession {
+            WorkshopSession(id: id, title: id, status: status, kinds: [kind], projectName: "Tiny Acrobatics", updatedAt: at, posted: nil)
         }
-        let all = [session("idea", .draft, at: 1), session("ready", .ready, at: 3), session("filming", .production, at: 2),
-                   session("editing", .editing, at: 4), session("post", .toPost, at: 5), session("away", .shelved, at: 6)]
-        // Plan: its stages, newest first (Shelved folds at the bottom of the screen)
-        XCTAssertEqual(PlanView.cards(all).map(\.id), ["away", "ready", "idea"])
-        // Make: the pieces being filmed or edited, as rows that open their script
-        let rows = ChatList.sessions(all)
-        XCTAssertEqual(rows.map(\.title), ["filming", "editing"])
-        XCTAssertEqual(rows.first?.route, .session("filming"))
-        XCTAssertEqual(rows.first?.detail, "In Production · Reel")
-        XCTAssertFalse(rows.contains { $0.status.waitsOnYou })
-        // a piece whose edit has a row is told once, by the edit
-        let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Editing", detail: "", status: .working(since: nil), at: .distantPast)
-        XCTAssertEqual(ChatList.sessions(all, besides: [edit]).map(\.title), ["filming"])
+        let all = [session("idea", .draft, "reel", at: 1), session("ready", .ready, "carousel", at: 3),
+                   session("filming", .production, "reel", at: 2), session("editing", .editing, "reel", at: 4),
+                   session("post", .toPost, "carousel", at: 5), session("away", .shelved, "reel", at: 6),
+                   session("writing", .writing, "carousel", at: 7), session("posted", .published, "reel", at: 8)]
+        // every status shows, in the Workshop's groups and order, newest first in each; Shelved last
+        let grouped = WorkshopSession.grouped(all)
+        XCTAssertEqual(grouped.map(\.group), [.ideas, .making, .published, .shelved])
+        XCTAssertEqual(grouped.map(\.group.title), ["Ideas & writing", "Ready & in production", "Published", "Shelved"])
+        XCTAssertEqual(grouped.map { $0.sessions.map(\.id) }, [["writing", "idea"], ["post", "editing", "ready", "filming"], ["posted"], ["away"]])
+        XCTAssertEqual(grouped.map(\.sessions.count), [2, 4, 1, 1])
+        // the type filter and search
+        let reels = all.filter { $0.shows(kind: "reel", words: "") }
+        XCTAssertEqual(WorkshopSession.grouped(reels).map(\.sessions.count), [1, 2, 1, 1])
+        XCTAssertEqual(all.filter { $0.shows(kind: "carousel", words: "") }.map(\.id), ["ready", "post", "writing"])
+        XCTAssertEqual(all.filter { $0.shows(kind: nil, words: "edit") }.map(\.id), ["editing"])
+        XCTAssertEqual(all.filter { $0.shows(kind: nil, words: "tiny") }.count, all.count)   // its workspace's name
+        // an empty group is left out
+        XCTAssertEqual(WorkshopSession.grouped([all[0]]).map(\.group), [.ideas])
+    }
+
+    func testAnEditIsTheProjectsItIsNamedAfter() {
+        let project = WorkshopSession(id: "s6", title: "Handstand basics", status: .production, kinds: ["reel"], projectName: nil,
+                                      updatedAt: nil, posted: nil)
+        func row(_ title: String, _ route: AppRoute) -> ChatRow {
+            ChatRow(id: ChatList.path(route), route: route, title: title, detail: "", status: .review, at: .distantPast)
+        }
+        let edit = row("Handstand Basics", .edit("e1"))
+        let cut = row("Handstand basics, cut 2", .review("r1", version: nil))
+        let other = row("Warm-up reel", .edit("e2"))
+        let chat = row("Handstand basics", .chat("c1"))
+        XCTAssertTrue(ChatList.belongs(edit, to: project))
+        XCTAssertTrue(ChatList.belongs(cut, to: project))
+        XCTAssertFalse(ChatList.belongs(other, to: project))
+        XCTAssertFalse(ChatList.belongs(chat, to: project))   // a chat is no project's edit
+        // the edits of no project are Other edits; chats are never there
+        XCTAssertEqual(ChatList.others([edit, cut, other, chat], sessions: [project]).map(\.title), ["Warm-up reel"])
+        XCTAssertEqual(ChatList.others([edit, other], sessions: []).count, 2)
+    }
+
+    func testEachThingThatWaitsBadgesItsOwnTab() {
+        func row(_ route: AppRoute, _ status: RowStatus) -> ChatRow {
+            ChatRow(id: ChatList.path(route), route: route, title: "x", detail: "", status: status, at: .distantPast)
+        }
+        let rows = [row(.chat("c1"), .approval), row(.chat("c2"), .time(.distantPast)), row(.edit("e1"), .yourGo),
+                    row(.edit("e2"), .failed), row(.review("r1", version: nil), .review), row(.edit("e3"), .working(since: nil))]
+        let sessions = [WorkshopStatus.toPost, .toPost, .published, .editing].enumerated().map { n, status in
+            WorkshopSession(id: "s\(n)", title: "s\(n)", status: status, kinds: ["reel"], projectName: nil, updatedAt: nil, posted: nil)
+        }
+        let badges = AppTab.badges(rows: rows, failedUploads: 3, sessions: sessions)
+        // a chat that asks on Chats; Review, a go and a failed edit on Projects; failed uploads on Media; to post on Publish
+        XCTAssertEqual(badges[.chats], 1)
+        XCTAssertEqual(badges[.projects], 3)
+        XCTAssertEqual(badges[.media], 3)
+        XCTAssertEqual(badges[.publish], 2)
+        XCTAssertNil(badges[.tools])
     }
 
     func testEditsSortWhatWaitsThenWhatWorksThenWhatIsDone() {

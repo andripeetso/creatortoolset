@@ -61,9 +61,9 @@ enum Appearance: String, CaseIterable, Identifiable {
     }
 }
 
-/// The tabs, the desktop's stages: Chats · Plan · Make · Distribute · Tools. Every tab always shows (one the account
-/// can't use says why it's empty), and each starts with the workspace switcher top left. A badge counts only what waits
-/// on the person.
+/// The tabs: Chats · Projects · Media · Publish · Tools. Every tab always shows (one the account can't use says why it's
+/// empty). Chats spans every workspace; Projects, Media and Publish are the picked workspace's, with the switcher top
+/// left. A badge counts only what waits on the person, on the tab where it lives (`AppTab.badges`).
 struct RootView: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var access = ToolsetAccess.shared
@@ -72,7 +72,7 @@ struct RootView: View {
     @ObservedObject private var chats = ChatsModel.shared
     @ObservedObject private var workshop = WorkshopModel.shared
     @ObservedObject private var workspaces = Workspaces.shared
-    /// Uploads that need a look (on Make's badge). Counted from the store's list, not by watching the store: a byte
+    /// Uploads that need a look (on Media's badge). Counted from the store's list, not by watching the store: a byte
     /// going up must not redraw every tab.
     @State private var failed = 0
     private static var placed = false
@@ -81,28 +81,35 @@ struct RootView: View {
         if servers.list.isEmpty {
             NavigationStack { FirstRunView() }
         } else {
+            let badges = AppTab.badges(rows: chats.rows, failedUploads: failed, sessions: workshop.sessions)
+            // another workspace shows its own projects, media and finals: those tabs start again there; Chats stays
+            let picked = workspaces.picked ?? ""
             TabView(selection: $nav.tab) {
-                StackTab(path: $nav.chats) { ChatsTab() }
+                StackTab(path: $nav.chats) { ChatsTab().connectionHeader() }
                     .tabItem { Label("Chats", systemImage: "bubble.left.and.text.bubble.right") }
-                    .badge(ChatList.waiting(chats.rows, chats: true))
+                    .badge(badges[.chats] ?? 0)
                     .tag(AppTab.chats)
-                StackTab(path: $nav.plan) { PlanView() }
-                    .tabItem { Label("Plan", systemImage: "lightbulb") }
-                    .tag(AppTab.plan)
-                StackTab(path: $nav.make) { MakeView() }
-                    .tabItem { Label("Make", systemImage: "film.stack") }
-                    .badge(ChatList.waiting(chats.rows, chats: false) + failed)
-                    .tag(AppTab.make)
-                NavigationStack { DistributeView() }
-                    .tabItem { Label("Distribute", systemImage: "paperplane") }
-                    .badge(workshop.sessions.filter(\.toPost).count)
-                    .tag(AppTab.distribute)
+                StackTab(path: $nav.projects) { ProjectsView().workspaceSwitcher() }
+                    .id(picked)
+                    .tabItem { Label("Projects", systemImage: "folder") }
+                    .badge(badges[.projects] ?? 0)
+                    .tag(AppTab.projects)
+                NavigationStack { MediaView() }
+                    .id(picked)
+                    .tabItem { Label("Media", systemImage: "photo.on.rectangle") }
+                    .badge(badges[.media] ?? 0)
+                    .tag(AppTab.media)
+                NavigationStack { PublishView() }
+                    .id(picked)
+                    .tabItem { Label("Publish", systemImage: "paperplane") }
+                    .badge(badges[.publish] ?? 0)
+                    .tag(AppTab.publish)
                 NavigationStack { ToolsView() }
                     .tabItem { Label("Tools", systemImage: "square.grid.2x2") }
                     .tag(AppTab.tools)
             }
-            // another server or workspace shows its own content: every tab starts again
-            .id("\(servers.currentId ?? "")|\(workspaces.picked ?? "")")
+            // another server is another account's chats too: every tab starts again
+            .id(servers.currentId ?? "")
             .overlay(alignment: .top) { WorkspaceToast() }
             .sheet(isPresented: $workspaces.choosing) { WorkspaceSwitcher() }
             // what the shared parts know is per server: the last answer at once, then the server's
@@ -125,16 +132,15 @@ struct RootView: View {
         }
     }
 
-    /// A helper who uploads (an account without the AI Editor on the studio) starts on Make's Media Library. Once per
-    /// launch, and never over a tab or screen asked for at launch.
+    /// A helper who uploads (an account without the AI Editor on the studio) starts on Media. Once per launch, and never
+    /// over a tab or screen asked for at launch.
     private func place() {
         guard !Self.placed else { return }
         Self.placed = true
         guard UserDefaults.standard.string(forKey: "startTab") == nil, debugArg("StartTab") == nil,
               debugArg("OpenPath") == nil else { return }
         if plugins.studio, let me = access.me, me.role != "admin" {
-            nav.tab = .make
-            nav.makeSide = .media
+            nav.tab = .media
         }
     }
 }
@@ -147,13 +153,12 @@ struct StackTab<Root: View>: View {
     var body: some View {
         NavigationStack(path: $path) {
             root()
-                .workspaceSwitcher()
                 .navigationDestination(for: AppRoute.self) { RouteView(route: $0) }
         }
     }
 }
 
-/// Chats: the workspace's chats, the round New chat button over them.
+/// Chats: every workspace's chats, the round New chat button over them.
 struct ChatsTab: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var nav = AppNavigator.shared

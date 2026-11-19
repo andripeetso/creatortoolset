@@ -10,6 +10,7 @@ import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged } from "./access";
 import { libraryDb } from "./db";
+import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
 import { indexOnMac, type OnMacIndex } from "./on-mac";
@@ -174,6 +175,8 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
     versionId, device, folder, f.path, f.bytes, f.mtime, f.quick ?? null, f.sha256 ?? null, state, source,
     state === "gone" ? null : now, now, state === "verified" && f.quick ? now : null, state === "gone" ? now : null,
   );
+  // the same file's row under a folder merged away: one row, this folder's
+  mergeSamePath(versionId, device);
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */

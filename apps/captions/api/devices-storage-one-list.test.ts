@@ -14,6 +14,7 @@ process.env.DATA_DIR = path.join(dir, "data");
 const { storageApp, ensureUseFolder, importStudioFile, storageOf } = await import("./devices-storage");
 const { relayFolders } = await import("./library/report");
 const { parseStorageFile } = await import("./lib/storage");
+const { libraryDb } = await import("./library/db");
 
 const USER = "owner-one";
 const app = new Hono<{ Variables: AuthVars }>();
@@ -87,7 +88,16 @@ describe("the plug-in's storage.json, imported once (A12)", () => {
     const st = path.join(dir, "data", "storage", `${USER}.json`);
     writeFileSync(st, JSON.stringify({ schemaVersion: 3, folders: [folder("core-dup", "dev-studio", "/Volumes/Dup/Shoot"), folder("44919794", "dev-studio", "/Volumes/Moo/Shoot")] }));
     writeFileSync(file, JSON.stringify(studioFile));
+    // the files the scan found in the two core rows (one also under the studio's id already): their place rows follow the merge
+    const places = libraryDb();
+    const row = places.prepare("INSERT INTO version_places (version_id, device, kind, folder_id, path, state, source, checked_at) VALUES (?, 'dev-studio', 'original', ?, ?, 'verified', 'scan', ?)");
+    row.run("v-moo", "44919794", "/Volumes/Moo/Shoot/a.MP4", 1);
+    row.run("v-dup", "core-dup", "/Volumes/Dup/Shoot/b.MP4", 1);
+    row.run("v-dup", "studio-dup", "/Volumes/Dup/Shoot/b.MP4", 2);
     const n = await importStudioFile(file, USER, (x) => x, lookup);
+    const folderOf = (v: string) => places.prepare("SELECT folder_id FROM version_places WHERE version_id = ?").all(v).map((r) => r.folder_id);
+    expect(folderOf("v-moo")).toEqual(["studio-moo"]);
+    expect(folderOf("v-dup")).toEqual(["studio-dup"]);
     expect(n).toBe(4);
     expect(existsSync(file)).toBe(false);
     expect(existsSync(`${file}.migrated`)).toBe(true);

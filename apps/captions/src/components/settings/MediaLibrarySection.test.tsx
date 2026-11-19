@@ -111,7 +111,8 @@ describe("Settings → Media Library, the owner's page", () => {
 
   it("gives each setting its ⓘ tip, and the stops of the Effort slider one each", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    for (const label of [LIBRARY_WORDS.importCopy.label, LIBRARY_WORDS.importInPlace.label, LIBRARY_WORDS.defaultFolders.label, LIBRARY_WORDS.smartFolders.label, LIBRARY_WORDS.generateProxies.label, LIBRARY_WORDS.descriptions, LIBRARY_WORDS.videoBreakdown, LIBRARY_WORDS.transcripts]) {
+    // replaced (CEO 11-19): the Library folder row took the Use default folders switch's place, with its own ⓘ
+    for (const label of [LIBRARY_WORDS.importCopy.label, LIBRARY_WORDS.importInPlace.label, LIBRARY_WORDS.libraryFolder.label, LIBRARY_WORDS.smartFolders.label, LIBRARY_WORDS.generateProxies.label, LIBRARY_WORDS.descriptions, LIBRARY_WORDS.videoBreakdown, LIBRARY_WORDS.transcripts]) {
       expect(tip(label), label).not.toBeNull();
     }
     for (const stop of ["Off", "Low", "Medium", "High", "Extra high", "Max"]) expect(tip(stop), stop).not.toBeNull();

@@ -99,7 +99,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         guard method == "GET" else { return reply(task, url, 405, ["Allow": "GET"]) }
         if url.host == MediaFiles.host {
             guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
-            switch MediaFiles.gate(path, granted: granted, cache: cache) {
+            switch MediaFiles.gate(path, granted: granted, cache: cache, firstRead: true) {
             case .status(let status): return reply(task, url, status)
             case .diskAway(let disk):
                 let body = (try? JSONSerialization.data(withJSONObject: ["state": "disk_away", "disk": disk])) ?? Data()

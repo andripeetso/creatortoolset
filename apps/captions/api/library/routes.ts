@@ -948,7 +948,6 @@ export const settingsOf = (json: string): LibrarySettings => {
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
-    ...(s.organizeOffered ? { organizeOffered: true } : {}),
     lookLevel: lookLevelOf(s.lookLevel),
     timelineModel: watchModelOf(s.timelineModel),
     lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
@@ -1037,7 +1036,6 @@ libraryApp.patch("/:id", async (c) => {
     if (organize === "ai" && was !== "ai") void fileUnfiled(db(), libraryId, user).catch((e) => console.error("[library] filing:", e));
     libraryChanged(libraryId); // the folders: other open pages read them again
   }
-  if (b?.settings?.organizeOffered === true) db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.organizeOffered', json('true')) WHERE id = ?`).run(libraryId);
   const r = db().prepare("SELECT name, storage_kind, settings FROM libraries WHERE id = ?").get(libraryId) as {
     name: string;
     storage_kind: LibrarySummary["storage"];
