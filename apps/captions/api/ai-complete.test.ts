@@ -13,8 +13,10 @@ const {
   OUT_OF_TOKENS_MSG,
   aiFor,
   macLabelOf,
+  onApiKey,
   streamWithFallback,
 } = await import("./ai-complete");
+const { saveMyKey } = await import("./my-keys");
 const { saveSettings } = await import("./lib/providers");
 const { MacClaudeError, macUsageSince, relayRoutes } = await import("./lib/mac-claude");
 const { pairDevice } = await import("./lib/devices");
@@ -269,5 +271,19 @@ describe("Anthropic usage, effort and Stop", () => {
     await macClaudeApp.request(`/${id2}/done`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Sure, here is a note." }) });
     expect(await answer2).toMatchObject({ kind: "failed" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("onApiKey: the Descriptions model on the person's own Anthropic key", () => {
+  it("runs the Descriptions model when it is a Claude one; another provider's pick, or another job, keeps the default", async () => {
+    saveMyKey("alex", "ANTHROPIC_API_KEY", "own-anthropic-key");
+    const claude = { id: "claude_own", driver: "claude" as const, name: "Claude (own)", enabled: true };
+    const other = { id: "codex_own", driver: "codex" as const, name: "Codex (own)", enabled: true };
+    await saveSettings({ instances: [claude, other], default: { instance: "claude_own", model: "claude-opus-5-5", effort: "low" }, jobs: { library: { instance: "claude_own", model: "claude-sonnet-5", effort: "medium" } } }, "alex");
+    expect(onApiKey("alex", "library", "Media Library describe")).toMatchObject({ only: ["anthropic"], apiKey: "own-anthropic-key", model: "claude-sonnet-5", effort: "medium" });
+    expect(onApiKey("alex", "analyzer", "Idea board")).not.toHaveProperty("model");
+    await saveSettings({ instances: [claude, other], default: { instance: "claude_own", model: "claude-opus-5-5", effort: "low" }, jobs: { library: { instance: "codex_own", model: "gpt-5-codex", effort: "high" } } }, "alex");
+    expect(onApiKey("alex", "library", "Media Library describe")).not.toHaveProperty("model");
+    saveMyKey("alex", "ANTHROPIC_API_KEY", null);
   });
 });
