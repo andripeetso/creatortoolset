@@ -19,9 +19,9 @@ writeFileSync(
   path.join(dir, "workspaces.json"),
   JSON.stringify({
     workspaces: [
-      // ana's team (Settings → Team), first: workspaceOf reads the first one ana owns; mem is given ws_cat and ws_shared, so their libraries have members (hasMembers)
+      // ana's team (Settings → Team), its home ws_p: mem is given ws_cat and ws_shared, so their libraries have members (hasMembers)
       {
-        id: "ana",
+        id: "ws_p",
         name: "Tiny Acrobatics",
         plan: "team",
         createdAt: 0,
@@ -30,7 +30,6 @@ writeFileSync(
           { username: "mem", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0, workspaces: ["ws_cat", "ws_shared"] },
         ],
       },
-      { id: "ws_p", name: "Tiny Acrobatics", members: [{ username: "ana", role: "owner" }, { username: "mem", role: "member" }] },
       { id: "ws_cat", name: "Tiny Catalog", members: [{ username: "ana", role: "owner" }, { username: "mem", role: "member" }] },
     ],
     invites: [],
