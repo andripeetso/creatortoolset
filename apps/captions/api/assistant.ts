@@ -109,7 +109,7 @@ You also run on the user's own Mac, in a folder of your own there (the current f
 
 ${process.env.CT_LOCAL === "1" ? LINK_LOCAL : LINK_AWAY}
 
-Where this workspace keeps its files on the user's computers is listed below when it has any folders (Source media; Exports for finished videos). Look for its footage and music there first, and save what you make on the Mac (a cut, a render) in its Exports folder. With no folders listed, don't search the user's drives for footage, and don't ask for a folder: a tool that needs the Media Library answers with the setup card, so stop there in one line (see the tools' answers).
+Where this workspace keeps its files on the user's computers is listed below when it has any folders (${FOLDER_LABELS.footage}; ${FOLDER_LABELS.library} for finished videos). Look for its footage and music there first, and save what you make on the Mac (a cut, a render) in its ${FOLDER_LABELS.library} folder. With no folders listed, don't search the user's drives for footage, and don't ask for a folder: a tool that needs the Media Library answers with the setup card, so stop there in one line (see the tools' answers).
 
 Before saying a file is not there, or asking what it is called, look with folder_list (match: words from what they said, like song): it sees every subfolder.`;
 

@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { LIBRARY_SETUP_DONE, LIBRARY_WORDS, type ActionNeeded } from "@contracts/library";
 import { Button } from "@/components/ui/button";
+import { useLibraryChanges } from "@/lib/library";
+
+/** Whether any library in the list is set up (setupAt, the library page's save; GET /api/library). */
+export const setUpIn = (libraries: { settings: { setupAt?: string } }[]): boolean => libraries.some((l) => !!l.settings?.setupAt);
 
 /**
  * The card under a reply whose tool needs the person first (ActionNeeded, contracts/library.ts): the Media Library's
@@ -15,6 +19,17 @@ export function ActionCard({ action, ask, onContinue }: { action?: ActionNeeded;
   const navigate = useNavigate();
   const [turned, setTurned] = useState<"busy" | "on" | "failed" | null>(null);
   const continued = useRef(false);
+
+  // the library page saves the setup and the change stream says the library changed: then the list says whether it is set up
+  useLibraryChanges(() => {
+    if (action?.kind !== "setup" || !ask || continued.current) return;
+    void fetch("/api/library")
+      .then((r) => (r.ok ? (r.json() as Promise<{ libraries: { settings: { setupAt?: string } }[] }>) : null))
+      .then((b) => {
+        if (b && setUpIn(b.libraries)) window.dispatchEvent(new CustomEvent(LIBRARY_SETUP_DONE, { detail: { workspace: action.workspace } }));
+      })
+      .catch(() => undefined);
+  });
 
   useEffect(() => {
     if (action?.kind !== "setup" || !ask) return;

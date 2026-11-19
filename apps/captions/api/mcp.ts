@@ -923,6 +923,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     editor_get: async (a) => {
       const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
       const jobs = (e.jobs as Args[] | undefined) ?? [];
+      const waiting = downloadsWaiting(jobs);
+      if (waiting) return { [ACTION_NEEDED]: waiting };
       const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
       const titles = (e.plans as Args[] | undefined) ?? [];
       // a moment of a long recording is one line: what is said in it, for the AI to write a script or a post from
@@ -967,7 +969,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       // the style by its id or name, as editor_style_use takes it
       if (a.style != null && String(a.style).trim()) body.style = one((await json<EditingStylesView>("/api/editor/styles")).styles, a.style).id;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
-      if (a.start !== false) await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
+      if (a.start !== false) {
+        await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
+        const waiting = downloadsWaiting(((await json(`/api/editor/${encodeURIComponent(id)}`)).jobs as Args[] | undefined) ?? []);
+        if (waiting) return { [ACTION_NEEDED]: waiting };
+      }
       return { id, name: a.name ?? "Untitled edit", status: a.start !== false ? "started" : "made", link: `${origin}/editor/${id}`, note: "It runs by itself and files each version's preview in Review; the chat says when it is ready, so end your reply rather than wait." };
     },
     media_folders: async () => {
@@ -1391,6 +1397,12 @@ class Asked extends Error {}
 const libraryGate = async (user: SessionUser, turn: string | null | undefined): Promise<ActionNeeded | null> =>
   setupNeeded(user.username, await workspaceOfTurn(user.username, turn ?? null));
 
+/** A step queued with no reader and Downloads off (reach.ts downloadsAsk): the card asks before the reply goes on. */
+const downloadsWaiting = (jobs: Args[]): ActionNeeded | null => {
+  const d = jobs.find((j) => j.downloads)?.downloads as { libraryId: string; workspace: string } | undefined;
+  return d ? { kind: "downloads", ...d } : null;
+};
+
 /** What the reply says in its one line when a tool stopped for the person (the card under it asks). */
 const ACTION_STOP: Record<ActionNeeded["kind"], string> = {
   setup: "The Media Library of this workspace is not set up yet. Say one line that it needs setting up and end your reply: no uploads, no folder questions. The card under your reply carries on.",
@@ -1423,7 +1435,9 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     const off = plug ? await offHere(user, plugged.from.get(name)!) : null;
     if (off) throw new ToolError(off);
     if ((ASSISTANT_TOOLS.has(name) || DOCK_ONLY.has(name)) && !isJob(auth) && !confirmed) throw new ToolError(`${name} is for the assistant only.`);
-    const result = await handler(args ?? {});
+    // voice_make saves its voice into the Media Library: the same setup gate as use_file, editor_create and media_import_folder
+    const gate = name === "voice_make" ? await libraryGate(user, turn) : null;
+    const result = gate ? { [ACTION_NEEDED]: gate } : await handler(args ?? {});
     // a tool that needs the person first answers ACTION_NEEDED (library gate, downloads): the card shows it, the reply stops
     const action = result && typeof result === "object" && ACTION_NEEDED in result ? ((result as Args)[ACTION_NEEDED] as ActionNeeded) : null;
     if (action) {

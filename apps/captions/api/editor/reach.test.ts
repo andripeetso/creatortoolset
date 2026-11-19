@@ -17,7 +17,7 @@ const { enqueueJob } = await import("../library/jobs");
 const { pairDevice, devicesSaved, setDeviceKinds } = await import("../lib/devices");
 const { registerDeviceKinds } = await import("./engine");
 const { blobs } = await import("../library/db");
-const { fileFor, lightKey, rankOf, waitLine } = await import("./reach");
+const { downloadsAsk, fileFor, lightKey, rankOf, waitLine } = await import("./reach");
 
 const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
 const post = (token: string, url: string, body: unknown) =>
@@ -175,5 +175,16 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     writeFileSync(path.join(dir, "storage", "maker.json"), JSON.stringify({ folders: [] }));
     expect(waitLine("maker", job)).toBe("No computer can read b.mp4: add its folder to a computer in Settings → Folders");
     expect(waitLine("maker", { kind: "cards-draw", version_id: `${other}:v1` })).toBeUndefined();   // reads no footage
+  });
+  it("a step no computer reads asks to turn Downloads on only while the person's Downloads is off", async () => {
+    serverWork(false);
+    const edit = (await json<{ id: string }>(app.request("/api/editor", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Downloads off", sources: ["ver_r2"] }) }))).id;
+    const job = { kind: "reach-render", version_id: `${edit}:v1`, actor: "maker" };
+    expect(downloadsAsk(job)).toBeUndefined();   // Downloads on by default: the server's copy is fetched, nothing to ask
+    const put = (mode: string) => app.request("/api/library/offline/downloads", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ libraryId: libraryDb().prepare("SELECT library_id AS id FROM asset_versions WHERE id = 'ver_r2'").get()!.id, mode }) });
+    expect((await put("none")).status).toBe(200);
+    expect(downloadsAsk(job)).toEqual({ libraryId: expect.any(String), workspace: expect.any(String) });
+    expect((await put("needed")).status).toBe(200);
+    expect(downloadsAsk(job)).toBeUndefined();   // Turn on: nothing more to ask, the step fetches the copy
   });
 });
