@@ -132,6 +132,8 @@ describe("organize", () => {
     await run("vid-game2", "gameplay");
     await run("vid-finals", "Finals");
     expect(folderOf("vid-game")).toEqual(["Gameplay"]);
+    // the AI-made folder is a smart folder named by its own rule (fileInto aiMade)
+    expect(libraryDb().prepare("SELECT rule FROM collections WHERE library_id = 'lib_ai' AND name = 'Gameplay'").get()).toEqual({ rule: "Gameplay" });
     expect(folderOf("vid-game2")).toEqual(["Gameplay"]);
     expect(folderOf("vid-finals")).toEqual([]);
     expect(folders("lib_ai").map((f) => f.name)).toEqual(["Finals", "Graphics", "Gameplay"]);

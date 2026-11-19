@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { SOUNDS, type Organize, type Sound } from "../../contracts/library";
 import type { SessionUser } from "../users";
-import { libraryDb } from "./db";
+import { libraryDb, librarySetting } from "./db";
+import { workspaceOf } from "./describe";
 import { enqueueJob } from "./jobs";
 import { indexAsset } from "./query";
+import { lookBudgetWaits } from "./shots";
 import { fileSmart } from "./smart";
 
 type Who = Pick<SessionUser, "username" | "role">;
@@ -72,7 +74,7 @@ export function plainFolders(d: DatabaseSync, libraryId: string): string[] {
 
 /** The top-level folders the cap counts: plain or smart, never Finals (a smart folder the AI made is one of them too). */
 export const topCount = (d: DatabaseSync, libraryId: string): number =>
-  (d.prepare("SELECT COUNT(DISTINCT name) AS n FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get(libraryId) as { n: number }).n;
+  (d.prepare("SELECT COUNT(DISTINCT name COLLATE NOCASE) AS n FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals'").get(libraryId) as { n: number }).n;
 
 interface Asset {
   id: string;
@@ -142,8 +144,8 @@ export function organizeOnProbe(d: DatabaseSync, versionId: string, sound: Sound
 /**
  * A library just set to "ai": what is in no folder yet is filed now. Videos get their description again, on the person
  * who chose it: describe.ts judges the smart folders first, then names a plain folder. A sound or picture goes to the
- * smart folders that fit it (smart.ts, when there are any; with none this stays synchronous), else to its kind's folder.
- * Trashed files are left alone.
+ * smart folders that fit it (smart.ts), else to its kind's folder. A judge call is a model call, so with describe off or
+ * the look budget spent (UNIFIED-PRD §4.4–4.5) those files take their kind's folder only. Trashed files are left alone.
  */
 export async function fileUnfiled(d: DatabaseSync, libraryId: string, who: Who): Promise<void> {
   const by = who.username;
@@ -156,13 +158,13 @@ export async function fileUnfiled(d: DatabaseSync, libraryId: string, who: Who):
          AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')`,
     )
     .all(SOUNDS.music.tag, SOUNDS.effect.tag, libraryId) as unknown as (Asset & { version: string; sound: string | null })[];
-  // a video's describe job judges the smart folders first (describe.ts), then names a plain one
-  const filing = rows.filter((r) => r.kind !== "video").map(async (r) => {
-    // the smart folders first: a sound or picture that goes into one is not also put in its kind's folder
-    if ((await fileSmart(d, r.version, who, "").catch(() => 0)) ?? 0) return;
+  for (const r of rows) if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
+  // one at a time: each judge call is a model call (shortcut: not batched as sortFolder is, fine while the sweep is once per library, upgrade if a large library stalls)
+  for (const r of rows) {
+    if (r.kind === "video") continue;
+    const judge = librarySetting(libraryId, "describe") && !(await lookBudgetWaits(d, r.version));
+    if (judge && ((await fileSmart(d, r.version, who, await workspaceOf(d, r.version)).catch(() => 0)) ?? 0)) continue;
     // a sound by its kind's tag (sound-kind.ts, since its probe): one with none (taken off, someone talking) stays where it is
     organizeOnProbe(d, r.version, r.sound === SOUNDS.music.tag ? "music" : r.sound === SOUNDS.effect.tag ? "effect" : null);
-  });
-  for (const r of rows) if (r.kind === "video") enqueueJob(d, libraryId, r.version, "describe", by, true);
-  await Promise.all(filing);
+  }
 }

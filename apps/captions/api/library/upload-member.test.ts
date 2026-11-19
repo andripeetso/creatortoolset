@@ -61,6 +61,13 @@ describe("a member's add (UNIFIED-PRD §4.3)", () => {
     const off = await start();
     expect(off.status).toBe(409);
     expect(await off.json()).toMatchObject({ code: "upload_refused", message: REFUSED_COMPUTER_OFF });
+    const mac = await member.request("/api/library/lib_mem/on-mac", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/Users/sam/Movies/Handstand.mp4", size: 4 }),
+    });
+    expect(mac.status).toBe(409);
+    expect(await mac.json()).toMatchObject({ code: "upload_refused", message: REFUSED_COMPUTER_OFF });
     libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'originals') WHERE id = 'lib_mem'`).run();
     expect((await start()).status).toBe(201);
   });
@@ -73,5 +80,16 @@ describe("a member's add (UNIFIED-PRD §4.3)", () => {
     });
     expect(r.status).toBe(403);
     expect(await r.json()).toMatchObject({ code: "forbidden" });
+  });
+
+  it("a file into Final exports follows Final exports' setting, not the master upload", async () => {
+    libraryDb().prepare(`INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES ('col_fin', 'lib_mem', NULL, 'Finals', 'manual', 0, 'tinyacrobatics')`).run();
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'none', '$.finalsUpload', 'all') WHERE id = 'lib_mem'`).run();
+    const r = await member.request("/api/library/lib_mem/uploads", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "Final.mp4", size: 4, collectionId: "col_fin" }),
+    });
+    expect(r.status).toBe(201);
   });
 });

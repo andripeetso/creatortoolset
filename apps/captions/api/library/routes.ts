@@ -115,7 +115,8 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
  */
 export function unproxied(libraryId: string, versionId?: string, hosted = false): { id: string; created_by: string }[] {
   // a library that keeps only originals gets none (UNIFIED-PRD §4.2)
-  const want = { cloud: proxiesInCloud(libraryId) || hosted, on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
+  const keeps = keepsOnlyOriginals(libraryId);
+  const want = { cloud: !keeps && (proxiesInCloud(libraryId) || hosted), on: librarySetting(libraryId, "proxy") && !keeps };
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
@@ -504,6 +505,11 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   // with a workspace named, only that workspace's libraries (a cross-brand id is refused); with none, as before
   if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  // a member's add is an upload, taken only where Hosted media takes it (UNIFIED-PRD §4.3, the §3.2 line under Off)
+  const collectionOf = typeof body?.collectionId === "string" ? body.collectionId : null;
+  if (!libraryRole(user.username, libraryId) && uploadFor({ id: libraryId, collectionId: collectionOf }) === "none") {
+    return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
+  }
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
   // the largest upload holds only where an upload is the only way in: on the person's own computer the disk is the limit.
@@ -513,10 +519,6 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   if (size > max && !own) {
     return c.json({ error: `This file is ${gb(size)}. This server takes files up to ${gb(max)}. Export a smaller copy and upload that.`, code: "too_large" }, 413);
   }
-  // a member's add is an upload, taken only where Hosted media takes it (UNIFIED-PRD §4.3, the §3.2 line under Off)
-  if (!libraryRole(user.username, libraryId) && uploadFor({ id: libraryId }) === "none") {
-    return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
-  }
   const replaces = typeof body?.replacesAssetId === "string" ? body.replacesAssetId : null;
   if (replaces) {
     const target = db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(replaces, libraryId) as
@@ -525,7 +527,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     if (!target || !(await mayWrite(user.username, libraryId, replaces, target.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
-  const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
+  const collection = collectionOf;
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
@@ -664,7 +666,11 @@ libraryApp.post("/:id/on-mac", async (c) => {
   const libraryId = c.req.param("id");
   if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   // a member's rows only locate (UNIFIED-PRD §4.3): what a member adds from a folder is uploaded, never indexed from it
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: MEMBER_NOT_INDEXED, code: "forbidden" }, 403);
+  if (!libraryRole(user.username, libraryId)) {
+    if (uploadFor({ id: libraryId }) === "none") return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
+    // the app sends a member's file by upload where Hosted media takes it; this path is never a member's folder
+    return c.json({ error: MEMBER_NOT_INDEXED, code: "forbidden" }, 403);
+  }
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   if (x.collectionId) {
@@ -876,16 +882,20 @@ libraryApp.patch("/:id", async (c) => {
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "timeline", "embed", "proxy", "pictures", "transcribe", "lookTalking"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "pictures", "transcribe", "lookTalking"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
-  if (LIBRARY_UPLOADS.includes(s.upload as LibraryUpload)) put("upload", s.upload);
+  // true/false: the upload switch's older values (db.ts uploadOf), kept so a stored boolean still maps the same way
+  const upload = s.upload === true ? "all" : s.upload === false ? "none" : s.upload;
+  if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
   // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
-  if (typeof s.setupAt === "string" && s.setupAt.length < 40) put("setupAt", s.setupAt);
+  if (typeof s.setupAt === "string" && s.setupAt.length < 40 && Number.isFinite(Date.parse(s.setupAt))) {
+    db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.setupAt', json(?)) WHERE id = ? AND json_extract(settings, '$.setupAt') IS NULL`).run(JSON.stringify(s.setupAt), libraryId);
+  }
   // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
   // (All clips → Shot descriptions), or an edit asks for its files
   if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
@@ -898,17 +908,20 @@ libraryApp.patch("/:id", async (c) => {
   }
   if (LIBRARY_UPLOADS.includes(s.finalsUpload as LibraryUpload)) put("finalsUpload", s.finalsUpload);
   if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
-  const proxy = b?.settings?.proxy;
+  // Hosted proxies: the switch stays on and every video gets a proxy (UNIFIED-PRD §3.1, §4.1), whatever the request says
+  const hosted = hostsProxies(libraryUpload(libraryId));
+  const proxy = hosted ? true : b?.settings?.proxy;
+  if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
   if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
-  if (proxy === true) for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUpload(libraryId)))) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  if (proxy === true) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
     const was = organizeOf(libraryId, db());
     const set = (key: string, value: string) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(value, libraryId);
-    set("organize", JSON.stringify(organize));
-    if (organize === "ai" && was !== "ai") void fileUnfiled(db(), libraryId, user).catch(() => {});
+    set("organize", JSON.stringify(organize === "default" ? "own" : organize)); // Standard is gone (UNIFIED-PRD M4)
+    if (organize === "ai" && was !== "ai") void fileUnfiled(db(), libraryId, user).catch((e) => console.error("[library] filing:", e));
     libraryChanged(libraryId); // the folders: other open pages read them again
   }
   if (b?.settings?.organizeOffered === true) db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.organizeOffered', json('true')) WHERE id = ?`).run(libraryId);

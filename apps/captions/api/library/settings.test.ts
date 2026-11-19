@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 
 // The library settings PATCH (UNIFIED-PRD §2 M1–M9, §4.1): what it saves, what it stops writing, and the new-library defaults.
@@ -12,8 +12,15 @@ process.env.DATA_DIR = dir;
 const { libraryDb, newLibrarySettings } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { libraryOf } = await import("./finals");
+const { releaseBudget } = await import("./shots");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// a budget change must release the looks held for it (shots.ts); the real function still runs
+vi.mock("./shots", async (orig) => {
+  const m = await orig<typeof import("./shots")>();
+  return { ...m, releaseBudget: vi.fn(m.releaseBudget) };
+});
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
@@ -24,6 +31,7 @@ app.route("/api/library", libraryApp);
 
 libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_set', 'local', 'Set', 'local', '{}', 0)").run();
 libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_orig', 'local', 'Orig', 'local', '{\"upload\":\"originals\"}', 0)").run();
+libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, settings, created_at) VALUES ('lib_place', 'local', 'Place', 'local', '{\"proxies\":{\"kind\":\"local\"}}', '{\"upload\":\"originals\"}', 0)").run();
 
 const patch = (lib: string, settings: Record<string, unknown>) =>
   app.request(`/api/library/${lib}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings }) });
@@ -113,5 +121,36 @@ describe("the library settings PATCH", () => {
     const hosted = clip("lib_set", "hosted-plain", 1280, 720);
     await patch("lib_set", { proxy: true });
     expect(proxyJobs(hosted)).toBe(1); // Hosted proxies: every video gets one
+  });
+
+  it("under Hosted proxies the switch stays on, whatever the request says", async () => {
+    await patch("lib_set", { upload: "all", proxy: false });
+    expect(stored("lib_set")).toMatchObject({ upload: "all", proxy: true });
+  });
+
+  it("a proxy place does not backfill an originals-only library", async () => {
+    const v = clip("lib_place", "placed", 3840, 2160);
+    await patch("lib_place", { proxy: true });
+    expect(proxyJobs(v)).toBe(0);
+  });
+
+  it("a budget change releases the looks held for it", async () => {
+    vi.mocked(releaseBudget).mockClear();
+    await patch("lib_set", { lookBudget: 7 });
+    expect(releaseBudget).toHaveBeenCalledWith(expect.anything(), "lib_set");
+  });
+
+  it("setupAt is written once: a later or empty one leaves the first", async () => {
+    await patch("lib_set", { setupAt: "2026-11-19T09:00:00.000Z" });
+    await patch("lib_set", { setupAt: "" });
+    expect(stored("lib_set").setupAt).toBe("2026-11-18T09:00:00.000Z");
+  });
+
+  it("organize Standard is stored as own; a PATCH without organize or budget keeps both", async () => {
+    await patch("lib_set", { organize: "default" });
+    expect(stored("lib_set").organize).toBe("own");
+    await patch("lib_set", { organize: "ai", lookBudget: 5 });
+    await patch("lib_set", { describe: true });
+    expect(stored("lib_set")).toMatchObject({ organize: "ai", lookBudget: 5 });
   });
 });
