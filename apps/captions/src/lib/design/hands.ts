@@ -311,7 +311,7 @@ export function hugLoose(pages: DesignPage[], drop = true): DesignPage[] {
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
   if (!base) return mine;
   const out: Record<string, unknown> = { ...theirs };
-  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "grain", "vignette", "layers"] as const) {
+  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "grain", "vignette", "guides", "grids", "safe", "layers"] as const) {
     if (JSON.stringify(mine[f]) === JSON.stringify(base[f])) continue;
     if (mine[f] === undefined) delete out[f];
     else out[f] = mine[f];

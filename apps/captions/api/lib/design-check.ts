@@ -2,6 +2,7 @@ import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES,
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
+import { cleanAids } from "./design-aids";
 
 /**
  * A design's pages, checked. Whatever sends them (the person's own changes, or their AI's answer), every value is
@@ -362,7 +363,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     // a loose picture with nothing left on it is gone
     if (loose && !layers.length) continue;
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), ...cleanAids(p), layers });
   }
   // loose pictures after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };

@@ -45,6 +45,8 @@ import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
 import { ColourPicker } from "./ColourPicker";
+import { FrameAids } from "./FrameAids";
+import { setAidPref, useAidPrefs } from "@/lib/design/aids";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
 
@@ -279,7 +281,10 @@ function Slide({ label, value, min, max, onLive, onCommit }: { label: string; va
 const ZoomNumber = ({ view }: { view: ViewStore }) => <>{Math.round(useZoom(view) * 100)}%</>;
 
 /** The zoom's number and its menu (in, out, fit, selection, 50, 100, 200 %). */
+const AID_ITEMS = [["rulers", "Rulers", "⇧R"], ["grids", "Layout grids", typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌃G" : "Ctrl+Shift+4"], ["pixels", "Pixel grid", "⇧'"]] as const;
+
 export function ZoomMenu({ view, onZoom }: { view: ViewStore; onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void }) {
+  const aids = useAidPrefs();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
@@ -305,6 +310,14 @@ export function ZoomMenu({ view, onZoom }: { view: ViewStore; onZoom: (to: "in" 
           Zoom to 100%<DropdownMenuShortcut>⇧0</DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onZoom(2)}>Zoom to 200%</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {AID_ITEMS.map(([k, name, keys]) => (
+          <DropdownMenuItem key={k} onSelect={() => setAidPref(k)} className="gap-2">
+            <Check className={cn("h-3.5 w-3.5", !aids[k] && "invisible")} />
+            {name}
+            <DropdownMenuShortcut>{keys}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -574,6 +587,7 @@ export function Inspector({
             <Slide label="Grain" value={page.grain ?? 0} min={0} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, grain: n || undefined })} onCommit={(n) => onPage({ ...page, grain: n || undefined })} />
             <Slide label="Vignette" value={page.vignette ?? 0} min={-100} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, vignette: n || undefined })} onCommit={(n) => onPage({ ...page, vignette: n || undefined })} />
           </Section>
+          {!page.loose && <FrameAids page={page} onPage={onPage} colours={colours} onDropper={onDropper} />}
         </>
       )}
 
@@ -1020,3 +1034,5 @@ export function Inspector({
     </aside>
   );
 }
+
+export { Choice, Colour, Num, Section, Tap };
