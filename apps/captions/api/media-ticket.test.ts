@@ -25,7 +25,7 @@ function call(method: string, p: string, o: Opts = {}) {
     headers["content-type"] = "application/json";
     body = JSON.stringify(o.body);
   }
-  return app.request(`http://localhost${p}`, { method, headers, body }, { incoming: { socket: { remoteAddress: "10.0.0.20", remotePort: 50000, remoteFamily: "IPv4" } } });
+  return app.request(`http://localhost${p}`, { method, headers, body }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } });
 }
 
 const key = (() => {

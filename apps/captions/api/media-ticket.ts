@@ -5,7 +5,7 @@ import { sessionOf } from "./auth";
 import { callerOf, scopeFor, scopeRefused, sessionRefused, type Caller } from "./auth-clients";
 import { env } from "./lib/env";
 import type { SessionRow } from "./lib/clients";
-import { LOCAL_USER, findUser } from "./users";
+import { LOCAL_USER, findUser, type SessionUser } from "./users";
 
 /**
  * Media tickets (api/connect/contract.md → "Media tickets"): what a device session hands to the things that can't sign
@@ -37,19 +37,29 @@ const under = (path: string, prefix: string) => path === prefix || path.startsWi
 /** Paths a ticket may never open: sign-in and access management stay with the session's own signed requests. */
 const closed = (path: string) => /^\/api\/auth(?:\/|$)/.test(path) || scopeFor("GET", path) === "access";
 
-/** The session a ticket on this request stands for, as a token caller; null when there is none or it doesn't fit. */
-export function ticketCaller(c: Context, now = Date.now()): Caller | null {
+/** The live ticket this request carries (query or cookie) and its account, or null. */
+function carried(c: Context, now: number): { t: Ticket; user: SessionUser } | null {
   const raw = c.req.query(TICKET_PARAM) ?? getCookie(c, TICKET_PARAM);
   if (!raw || !TICKET_RE.test(raw)) return null;
   const t = tickets.get(sha(raw));
   if (!t || t.expiresAt <= now || t.row.revokedAt || t.row.expiresAt <= now) return null;
-  const path = c.req.path;
-  if (closed(path) || !under(path, t.prefix)) return null;
-  if (!t.write && c.req.method !== "GET" && c.req.method !== "HEAD") return null;
   const record = env.appSecret ? findUser(t.row.subject) : null;
   const user = env.appSecret ? (record ? sessionOf(record) : null) : LOCAL_USER;
-  return user ? { kind: "token", user, row: t.row } : null;
+  return user ? { t, user } : null;
 }
+
+/** The session a ticket on this request stands for, as a token caller; null when there is none or it doesn't fit. */
+export function ticketCaller(c: Context, now = Date.now()): Caller | null {
+  const found = carried(c, now);
+  if (!found) return null;
+  const path = c.req.path;
+  if (closed(path) || !under(path, found.t.prefix)) return null;
+  if (!found.t.write && c.req.method !== "GET" && c.req.method !== "HEAD") return null;
+  return { kind: "token", user: found.user, row: found.t.row };
+}
+
+/** Who a live ticket signs in as, whatever its path: `/api/auth/check` only, so a web view's page opens signed in. */
+export const ticketUser = (c: Context, now = Date.now()): SessionUser | null => carried(c, now)?.user ?? null;
 
 export const mediaTicketApp = new Hono();
 

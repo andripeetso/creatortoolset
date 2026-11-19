@@ -44,7 +44,7 @@ import { consumeJti, connectState, tunnelHostname } from "./connect/state";
 import { TicketError, verifyTicket } from "./connect/ticket";
 import { originOf } from "./sign-in";
 import { inviteTarget } from "./lib/workshop/workspace";
-import { ticketCaller } from "./media-ticket";
+import { ticketUser } from "./media-ticket";
 import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret, spendStep, stepFor, waitFor, wrongTry } from "./lib/sign-in-code";
 
 /**
@@ -256,8 +256,7 @@ const withLogins = (u: SessionUser) => ({
 // platform admin is viewing as an account (view-as, admin.ts), `user` is that account and `viewedBy` the admin.
 authApp.get("/check", (c) => {
   // a phone's web view is signed in by its session's media ticket (media-ticket.ts), never by a cookie of its own
-  const ticket = ticketCaller(c);
-  const session = getSessionUser(c.req.header("cookie")) ?? (ticket?.kind === "token" ? ticket.user : null);
+  const session = getSessionUser(c.req.header("cookie")) ?? ticketUser(c);
   const viewed = hostedMode() && session?.role === "admin" ? viewAsTarget(c.req.header("cookie")) : null;
   const user = viewed ? sessionOf(viewed) : session;
   return c.json({
