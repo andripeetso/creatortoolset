@@ -43,7 +43,7 @@ const readOpen = (): Open => {
   }
 };
 
-export const panelBar = "flex h-8 shrink-0 items-center gap-2 border-b border-black/60 bg-[#232327] px-2.5 text-[11px] text-zinc-400";
+export const panelBar = "relative flex h-8 shrink-0 items-center gap-2 border-b border-black/60 bg-[#232327] px-2.5 text-[11px] text-zinc-400";
 
 /** A framed panel: its title bar (the title, then whatever the panel puts beside it) and its body. */
 export function Panel({ title, bar, children, className, label }: { title: string; bar?: ReactNode; children: ReactNode; className?: string; label?: string }) {
