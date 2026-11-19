@@ -39,13 +39,14 @@ const { mountPlugins } = await import("../lib/plugin");
 
 // a plug-in that keeps one workspace's uploads in a store of its own (as a studio's footage catalog does)
 let storeIn: string | null = null;
-mountPlugins(new Hono(), [{ id: "store", uploadsTo: () => (storeIn && workspaceScope.getStore()?.id === storeIn ? "store" : null) }]);
+let refusal: string | null = null; // the store's own refusal of the asker (one it has no account for)
+mountPlugins(new Hono(), [{ id: "store", uploadsTo: () => (storeIn && workspaceScope.getStore()?.id === storeIn ? (refusal ? { error: refusal } : "store") : null) }]);
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
-  // "bo:read": bo with the Media Library on Read (Settings → Team → Access)
-  const [username, read] = (c.req.header("x-test-user") ?? "").split(":");
-  c.set("user", { username, role: "user", off: [], read: read ? ["media"] : [] } as never);
+  // "bo:read": bo with the Media Library on Read (Settings → Team → Access); "bo:off": switched off
+  const [username, access] = (c.req.header("x-test-user") ?? "").split(":");
+  c.set("user", { username, role: "user", off: access === "off" ? ["media"] : [], read: access === "read" ? ["media"] : [] } as never);
   return next();
 });
 app.use(inRequestWorkspace);
@@ -146,4 +147,25 @@ it("refuses another workspace's library by id when the request names a workspace
   // a chat's own workspace wins over the window's header
   const inChat = await workspaceScope.run({ id: CLIMBERS }, () => post("ana", `/api/library/${climbers}/uploads`, TINY, { filename: "x.mov", size: 4 }));
   expect(inChat.status).toBe(201);
+});
+
+it("refuses an account with the Media Library switched off, and the one a plug-in's store refuses, with the line", async () => {
+  const answer = async (user: string, ws: string) => {
+    const r = await call(user, "/api/upload-target", ws);
+    return [r.status, await r.json()];
+  };
+  const NOT_YOURS = { error: "This account can't add footage to that workspace", code: "forbidden" };
+  expect(await answer("ana:off", TINY)).toEqual([403, NOT_YOURS]);
+  storeIn = TINY;
+  try {
+    expect(await answer("ana:off", TINY)).toEqual([403, NOT_YOURS]); // the store's workspace too
+    refusal = "Tiny Acrobatics has no account for you";
+    expect(await answer("ana", TINY)).toEqual([403, { error: refusal, code: "forbidden" }]);
+    expect(await target("ana", CLIMBERS)).toBe("library"); // only where the store answers
+    refusal = null;
+    expect(await target("ana", TINY)).toBe("store");
+  } finally {
+    storeIn = null;
+    refusal = null;
+  }
 });

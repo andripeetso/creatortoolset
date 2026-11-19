@@ -98,8 +98,9 @@ export interface ServerPlugin {
   uploadRelays?: UploadRelay[];
   // Where uploads from a phone go in the workspace a request works in (api/library/upload-target.ts): the name of the
   // plug-in's own store, which the phone knows how to send to, or null for that workspace's own library. The first
-  // plug-in that answers wins, and the library's own upload without a library id refuses that workspace.
-  uploadsTo?: (username: string) => string | null | Promise<string | null>;
+  // plug-in that answers wins, and the library's own upload without a library id refuses that workspace. { error } refuses
+  // this asker there (403 with that line); the workspace still counts as the plug-in's.
+  uploadsTo?: (username: string) => UploadsTo | Promise<UploadsTo>;
   // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
   deviceJobs?: DeviceJobSlot[];
   // Replaces a built-in tool: answers that tool's old root paths (the URLs a script or worker still posts to), mounted by
@@ -417,8 +418,11 @@ function checkDeviceJobs(plugins: ServerPlugin[]): void {
   }
 }
 
+/** A plug-in's store's name, its refusal of the asker, or null for the workspace's own library (ServerPlugin.uploadsTo). */
+export type UploadsTo = string | { error: string } | null;
+
 /** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
-export async function pluginUploadsTo(username: string): Promise<string | null> {
+export async function pluginUploadsTo(username: string): Promise<UploadsTo> {
   for (const p of loaded) {
     const to = await p.uploadsTo?.(username);
     if (to) return to;
