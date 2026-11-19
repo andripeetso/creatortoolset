@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
-import { getEndpoints, hostOf, type Endpoint } from "@/lib/access";
+import { getEndpoints, getPhoneNotifications, hostOf, setPhoneNotifications, type Endpoint, type PhoneNotifications } from "@/lib/access";
 import { setNetworkAccess, setReachFromAnywhere } from "@/lib/thisMac";
 import { Card, Row, Section, Status } from "./ui";
 import type { ThisMacState } from "./ThisMacSection";
@@ -37,6 +37,33 @@ export function ReachFromAnywhereRow({ mac }: { mac: ThisMacState | null }) {
       description={reachLine(reach)}
       status={problem ? <Status tone="broken">{problem}</Status> : undefined}
       control={<Switch checked={reach === "available" || reach === "unreachable"} disabled={busy || reach === "signed-out"} aria-label="Reach from anywhere" onCheckedChange={(on) => void turn(on)} />}
+    />
+  );
+}
+
+/**
+ * Send notifications to your phones: the account's phones hear when something starts to wait on the owner. Drawn only
+ * for the owner of a computer on an account (the route refuses everyone else).
+ */
+export function PhoneNotificationsRow() {
+  const [state, setState] = useState<PhoneNotifications | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => void getPhoneNotifications().then(setState, () => setState(null)), []);
+  if (!state?.linked) return null;
+  const turn = async (on: boolean) => {
+    setBusy(true);
+    setProblem(null);
+    await setPhoneNotifications(on).then(setState, (e: Error) => setProblem(e.message));
+    setBusy(false);
+  };
+  return (
+    <Row
+      id="phone-notifications"
+      title="Send notifications to your phones"
+      description="Your phones are told when something waits on you: its title and one line, never media or chat."
+      status={problem ? <Status tone="broken">{problem}</Status> : undefined}
+      control={<Switch checked={state.on} disabled={busy} aria-label="Send notifications to your phones" onCheckedChange={(on) => void turn(on)} />}
     />
   );
 }
@@ -101,9 +128,10 @@ export function ConnectionsCard({ inMac, mac }: { inMac: boolean; mac: ThisMacSt
         {(endpoints ?? [])
           .filter((e) => e !== lan)
           .map((e) => (
-            <Row key={e.httpBaseUrl} title={e.kind === "tailnet" ? "VPN" : hostOf(e.httpBaseUrl)} description={`Reachable at ${e.httpBaseUrl}`} />
+            <Row key={e.httpBaseUrl} title={e.kind === "tailnet" ? "Tailnet" : hostOf(e.httpBaseUrl)} description={`Reachable at ${e.httpBaseUrl}`} />
           ))}
         <ReachFromAnywhereRow mac={inMac ? mac : null} />
+        <PhoneNotificationsRow />
       </Card>
     </Section>
   );

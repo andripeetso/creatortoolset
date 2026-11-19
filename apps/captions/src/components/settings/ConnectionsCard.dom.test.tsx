@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ConnectionsCard, reachLine, ReachFromAnywhereRow } from "./ConnectionsCard";
+import { ConnectionsCard, PhoneNotificationsRow, reachLine, ReachFromAnywhereRow } from "./ConnectionsCard";
 import type { ThisMacState } from "./ThisMacSection";
 
 // Settings → Computers → This Mac: Network access, the addresses it is reachable at, and Reach from anywhere.
@@ -74,6 +74,7 @@ it("in a browser: Network access says where this computer is reachable, and its 
   expect(text()).toContain("This computer");
   expect(text()).toContain("Reachable on your network at tiny-mac.local:3773.");
   expect(text()).toContain("Reachable at http://tiny-mac.vpn.example:3773");
+  expect(text()).toContain("Tailnet");
   const sw = document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!;
   expect(sw.getAttribute("aria-checked")).toBe("true");
   expect(sw.disabled).toBe(true);
@@ -103,4 +104,34 @@ it("in the Mac app with Network access on: the switch turns it off through the a
   act(() => document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!.click());
   await flush();
   expect(postMessage).toHaveBeenCalledWith("access:off");
+});
+
+it("Send notifications to your phones: only on a linked computer, and the switch saves through the server", async () => {
+  let notify = { linked: false, on: true };
+  const sent: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "POST") sent.push(JSON.parse(String(init.body))), (notify = { linked: true, on: false });
+    return new Response(JSON.stringify(notify), { headers: { "content-type": "application/json" } });
+  }));
+  act(() => root.render(<PhoneNotificationsRow />));
+  await flush();
+  expect(text()).not.toContain("Send notifications to your phones");
+  act(() => root.unmount());
+  notify = { linked: true, on: true };
+  root = createRoot(document.body.appendChild(document.createElement("div")));
+  act(() => root.render(<PhoneNotificationsRow />));
+  await flush();
+  const sw = document.querySelector<HTMLButtonElement>('[aria-label="Send notifications to your phones"]')!;
+  expect(sw.getAttribute("aria-checked")).toBe("true");
+  act(() => sw.click());
+  await flush();
+  expect(sent).toEqual([{ on: false }]);
+  expect(sw.getAttribute("aria-checked")).toBe("false");
+});
+
+it("Send notifications to your phones: not drawn for someone who isn't the owner", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Only the owner can change this" }), { status: 403 })));
+  act(() => root.render(<PhoneNotificationsRow />));
+  await flush();
+  expect(document.body.innerHTML).toBe("<div></div>");
 });

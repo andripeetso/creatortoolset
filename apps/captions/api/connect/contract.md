@@ -258,3 +258,19 @@ Request `{ "path": "/api/…", "write"?: boolean }`. Response 200 `{ "ticket": "
 Read after an `Authorization` token and before the browser cookie. A ticket that doesn't fit (unknown, expired, another
 path, a write on a read ticket) is ignored, so the request is answered as if it had none. `GET /api/auth/check` counts a
 ticket on its path as signed in, so the web app in a phone's web view opens signed in as the session's account.
+
+## Phone notifications
+
+`GET /api/connect/notifications` → `{ linked, on }` · `POST /api/connect/notifications { on: boolean }` → the same
+(the owner only: 403 for anyone else; 409 when this computer is not on an account). Settings → Computers shows the
+"Send notifications to your phones" switch only while `linked`. What is sent and when: `activity.ts`.
+
+## Deploy notes (connect service, apps/relay)
+
+- `RELAY_SELF_URL` (else `RELAY_PUBLIC_URL`) is the service's own address: its **origin** is the `iss` of everything it
+  signs for a computer, the `aud` computers sign their answers and link proofs to, and the base of every DPoP `htu` a
+  phone signs. It must be exactly the origin computers linked with and phones call (`https://connect.creatortoolset.com`
+  for the public service): a different scheme, host or port refuses every health, mint and DPoP request.
+- Push to iPhones: `RELAY_APNS_KEY_ID`, `RELAY_APNS_TEAM_ID`, and the `.p8` key as text in `RELAY_APNS_KEY` (`\n` may be
+  written out) or a path in `RELAY_APNS_KEY_FILE`. Unset: no push, everything else works.
+- The service drops `/ticket`: ship it with or after the phone app that pairs through `/v1/computers/:id/connect`.

@@ -62,5 +62,21 @@ export function openDb(file: string): DatabaseSync {
   // public_key: the computer's own key (base64 SPKI), which signs its health and mint answers (connect.ts). Saved at
   // link; a computer linked before this gets it on its next signed tunnel request.
   if (!cols.has('public_key')) db.exec('ALTER TABLE computers ADD COLUMN public_key TEXT');
+  // Push (push.ts): each phone's APNs token under its account, and the activity proofs already used.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mobile_devices (
+      account_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      token TEXT NOT NULL,
+      sandbox INTEGER NOT NULL,
+      bundle_id TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (account_id, device_id));
+    CREATE INDEX IF NOT EXISTS mobile_devices_token ON mobile_devices (token);
+    CREATE TABLE IF NOT EXISTS activity_jti (
+      computer_id TEXT NOT NULL,
+      jti TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (computer_id, jti));`);
   return db;
 }
