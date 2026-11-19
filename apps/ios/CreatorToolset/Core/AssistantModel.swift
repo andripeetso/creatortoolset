@@ -151,18 +151,25 @@ struct AssistantConfirm: Decodable, Equatable, Identifiable {
     }
 }
 
-/// Something a tool needs the person to do before it can go on (the server's ActionNeeded, contracts/library.ts):
-/// "setup", "downloads" or "projects". The phone only says what to do and opens the website's page for it; the
-/// ask carries on wherever it is done. Never fails to decode: a kind this app doesn't know shows nothing.
-/// shortcut: information only, until the server sends a card with its own buttons.
-struct AssistantAction: Decodable, Equatable {
+/// Something a tool needs the person to do before it can go on (the server's ActionNeeded, contracts/library.ts).
+/// A server that sends `actions` drives the whole card: its `title`, `line` and buttons (ActionCard.swift), with no
+/// per-kind logic here. An older one sends only the kind ("setup", "downloads", "projects"): the phone then says what
+/// to do and opens the website's page for it (`card`). Never fails to decode: a kind or an action this app doesn't
+/// know shows nothing.
+struct AssistantAction: Decodable, Hashable {
     var kind = ""
     var workspaceName = ""
     var owner = true
     var path = ""
     var href: String?
+    var title: String?
+    var line: String?
+    /// "computer": no computer of the person's was found; `line` names it.
+    var missing: String?
+    /// The card's buttons, in order; nil from an older server (the fallback card).
+    var actions: [CardAction]?
 
-    enum CodingKeys: String, CodingKey { case kind, workspaceName, owner, path, href }
+    enum CodingKeys: String, CodingKey { case kind, workspaceName, owner, path, href, title, line, missing, actions }
 
     init(from decoder: Decoder) throws {
         let c = try? decoder.container(keyedBy: CodingKeys.self)
@@ -172,9 +179,24 @@ struct AssistantAction: Decodable, Equatable {
         owner = ((try? c?.decodeIfPresent(Bool.self, forKey: .owner)) ?? nil) ?? true
         path = text(.path) ?? ""
         href = text(.href)
+        title = text(.title)
+        line = text(.line)
+        missing = text(.missing)
+        // one action this app can't read (an unknown type, a broken field) is left out, never the card
+        if var list = try? c?.nestedUnkeyedContainer(forKey: .actions) {
+            var read: [CardAction] = []
+            while !list.isAtEnd {
+                if let action = try? list.decode(CardAction.self) {
+                    if action.call != nil || action.browse != nil || action.open != nil { read.append(action) }
+                } else {
+                    _ = try? list.decode(JSONValue.self)   // a failed decode doesn't move on by itself
+                }
+            }
+            actions = read
+        }
     }
 
-    /// The card's title and line, and the website page that does it (nil: no button). Nil for an unknown kind.
+    /// The fallback card's title and line, and the website page that does it (nil: no button). Nil for an unknown kind.
     var card: (title: String, line: String?, page: String?)? {
         let whose = workspaceName.isEmpty ? "this workspace's" : "\(workspaceName)'s"
         switch kind {

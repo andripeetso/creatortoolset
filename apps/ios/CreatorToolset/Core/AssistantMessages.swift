@@ -358,24 +358,6 @@ struct AssistantConfirmCard: View {
     }
 }
 
-/// What a tool needs the person to do first, as information: the button opens the website's page for it and sends
-/// nothing, so the chat goes on as it would without the card.
-struct AssistantActionCard: View {
-    let action: AssistantAction
-
-    var body: some View {
-        if let card = action.card {
-            AskCard(eyebrow: "Needed first", title: card.title, detail: card.line) {
-                if let page = card.page {
-                    WideButton(title: "Open on the computer", systemImage: "desktopcomputer", kind: .plain) {
-                        AppNavigator.shared.open(.page(page))
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// A message that has not gone yet, at the end of the feed: dimmed, its videos by name, and "Queued"
 /// while it waits its turn, or "Not sent" with the reason. The cross takes it back into the message box.
 struct AssistantQueuedBubble: View {
