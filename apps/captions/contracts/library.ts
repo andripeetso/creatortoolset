@@ -848,8 +848,6 @@ export const LIBRARY_WORDS = {
   dropMedia: "Drop media here",
   chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
-  analysisOff: "Analysis is Off",
-  smartFoldersOff: "Smart folders sort clips by their descriptions, so Analysis has to be on.",
   proxiesHostedOn: "On while proxies are hosted",
   recommended: "Recommended",
   budget: {

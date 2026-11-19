@@ -132,12 +132,12 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(bodyText()).toContain("Monthly budget: No limit");
   });
 
-  it("Smart folders is disabled with its status while Effort is Off, and the stored choice stays", async () => {
+  it("Smart folders stay a choice while Effort is Off: they file by shoot with no AI", async () => {
     const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, transcribe: false, lookLevel: "standard" } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(radio("Smart folders").disabled).toBe(true);
+    expect(radio("Smart folders").disabled).toBe(false);
     expect(radio("Organize yourself").disabled).toBe(false);
-    expect(bodyText()).toContain("Analysis is Off");
+    expect(bodyText()).not.toContain("Analysis is Off");
     expect(host!.querySelector('[aria-label="Effort"] [aria-checked="true"]')!.textContent).toBe("Off");
   });
 

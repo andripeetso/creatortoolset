@@ -83,7 +83,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
         <OwnerFolders library={library} workspace={workspace === undefined ? windowWorkspace : workspace} onChange={onChange} onError={onError} />
       </Section>
       <Section title={LIBRARY_WORDS.organizationTitle}>
-        <Organization settings={s} level={level} save={save} />
+        <Organization settings={s} save={save} />
       </Section>
       <Section title={LIBRARY_WORDS.proxyTitle}>
         <Proxies library={library} save={save} />
@@ -105,9 +105,8 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
   );
 }
 
-/** Smart folders (the default) or Organize yourself. Smart folders needs Analysis: at Off it is disabled, a stored choice kept. */
-function Organization({ settings, level, save }: { settings: Settings; level: string; save: (s: Partial<Settings>) => Promise<unknown> }) {
-  const off = level === "off";
+/** Smart folders (the default) or Organize yourself. Smart folders file by shoot with no AI, so they work at every Effort (api/library/shoots.ts). */
+function Organization({ settings, save }: { settings: Settings; save: (s: Partial<Settings>) => Promise<unknown> }) {
   const smart = LIBRARY_WORDS.smartFolders;
   return (
     <Card>
@@ -115,13 +114,7 @@ function Organization({ settings, level, save }: { settings: Settings; level: st
         name="organize"
         value={organizeOf(settings.organize) ?? "ai"}
         options={[
-          {
-            value: "ai",
-            label: smart.label,
-            tip: off ? `${smart.tip} ${LIBRARY_WORDS.smartFoldersOff}` : smart.tip,
-            disabled: off,
-            status: off ? <Status>{LIBRARY_WORDS.analysisOff}</Status> : undefined,
-          },
+          { value: "ai", label: smart.label, tip: smart.tip },
           { value: "own", label: LIBRARY_WORDS.organizeYourself.label, tip: LIBRARY_WORDS.organizeYourself.tip },
         ]}
         onChange={(v) => void save({ organize: v })}

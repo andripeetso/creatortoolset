@@ -417,13 +417,13 @@ describe("Media Library setup: own server and Cloud", () => {
 
 describe("Media Library setup: analysis and organization", () => {
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
-  it("Analysis Off makes Smart folders unavailable and files as Organize yourself", async () => {
+  it("Smart folders stay available with Analysis Off: they file by shoot with no AI", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next(); // to Analysis and organization
     await press(stop("Off"));
-    expect(document.body.textContent).toContain("Analysis is Off");
+    expect(document.body.textContent).not.toContain("Analysis is Off");
     await press(button("Done"));
-    expect(h.updates[0]!.settings).toMatchObject({ organize: "own", describe: false, transcribe: false });
+    expect(h.updates[0]!.settings).toMatchObject({ organize: "ai", describe: false, transcribe: false });
   });
 });
 
@@ -487,12 +487,13 @@ describe("Media Library setup: proxies, analysis and organization details", () =
   });
 
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
-  it("Effort Off leaves Smart folders unavailable, and Effort back up picks it again", async () => {
+  it("Effort Off leaves Smart folders picked and available, at every stop", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next();
     const smart = () => [...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Smart folders"))!;
     await press(stop("Off"));
-    expect(smart().disabled).toBe(true);
+    expect(smart().disabled).toBe(false);
+    expect(smart().getAttribute("aria-checked")).toBe("true");
     await press(stop("High"));
     expect(smart().disabled).toBe(false);
     expect(smart().getAttribute("aria-checked")).toBe("true");
