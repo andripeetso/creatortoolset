@@ -66,6 +66,7 @@ import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerify
 import { ownerProfileApp } from "./owner-profile";
 import { devicePairApp, devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
+import { phoneNotifyApp } from "./connect/activity";
 import { connectPublicApp } from "./connect/mint";
 import { computerKey } from "./connect/keys";
 import { authClientsApp, callerOf, oauthTokenApp, scopeFor, scopeRefused, sessionRefused } from "./auth-clients";
@@ -464,6 +465,8 @@ app.route("/api/work/server-work", serverWorkApp);
 app.route("/api/server-update", serverUpdateApp);
 // Settings → Connect: link this computer to the account on the connect broker (api/connect/routes.ts)
 app.route("/api/connect", connectApp);
+// phone notifications through the connect service: the switch (api/connect/activity.ts; importing it starts the listeners)
+app.route("/api/connect", phoneNotifyApp);
 // the menu bar panel's rows from plug-ins (activity.ts)
 app.route("/api/activity", activityApp(serverPlugins));
 // the Mac app's signed-in account as this server's owner (owner-profile.ts)

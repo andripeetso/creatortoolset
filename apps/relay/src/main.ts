@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCloudflare } from './cloudflare.ts';
 import { openDb } from './db.ts';
@@ -6,6 +6,7 @@ import { loadSigningKey } from './keys.ts';
 import { freeLimit } from './limits.ts';
 import { reap } from './reaper.ts';
 import { startServer } from './server.ts';
+import { apnsConfig, createApns } from './push.ts';
 
 // Everything comes from the environment (see .env.example). Nothing is read from the repo.
 const env = process.env;
@@ -25,6 +26,9 @@ if (accountSecret.length < 32) throw new Error('RELAY_ACCOUNT_SECRET must be at 
 const grantSecret = env.RELAY_GRANT_SECRET ? Buffer.from(env.RELAY_GRANT_SECRET) : null;
 if (grantSecret && grantSecret.length < 32) throw new Error('RELAY_GRANT_SECRET must be at least 32 bytes');
 
+const keyFile = env.RELAY_APNS_KEY_FILE;
+const apns = apnsConfig(keyFile ? { ...env, RELAY_APNS_KEY: readFileSync(keyFile, 'utf8') } : env);
+
 const cf = createCloudflare({
   accountId: need('CLOUDFLARE_ACCOUNT_ID'),
   zoneId: need('CLOUDFLARE_ZONE_ID'),
@@ -41,6 +45,8 @@ const deps = {
   selfUrl: env.RELAY_SELF_URL?.replace(/\/$/, '') || undefined,
   accountSecret,
   signing: loadSigningKey(env.RELAY_SIGNING_KEY, join(dataDir, 'relay-signing-key.der')),
+  // Push to phones (push.ts): on only when RELAY_APNS_KEY, RELAY_APNS_KEY_ID and RELAY_APNS_TEAM_ID are all set.
+  ...(apns ? { apns: createApns(apns) } : {}),
   ...(grantSecret ? { gateway: { secret: grantSecret, openaiChallenge: env.RELAY_OPENAI_APPS_CHALLENGE, selfUrl: env.RELAY_SELF_URL?.replace(/\/$/, '') } } : {}),
 };
 

@@ -98,9 +98,10 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// iOS gave the app a moment in the background: look, and tell what is new.
+    /// iOS gave the app a moment in the background: look, and tell what is new. A server on the account pushes
+    /// through it (`AccountPush`): no look for that one.
     func lookInBackground() async {
-        guard ToolsetAPI.current != nil else { return }
+        guard ToolsetAPI.current != nil, !AccountPush.coversCurrent else { return }
         looking = true
         await ChatsModel.shared.load()
         looking = false
@@ -109,7 +110,7 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
 
     private func rowsChanged(_ rows: [ChatRow]) {
         center.setBadgeCount(rows.filter(\.status.waitsOnYou).count)
-        guard !looking else { return }
+        guard !looking, !AccountPush.coversCurrent else { return }
         let notes = take(rows)
         guard !notes.isEmpty else { return }
         switch UIApplication.shared.applicationState {
@@ -159,8 +160,8 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
             defaults.set(false, forKey: "notify.ask")
             _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
         }
-        // a server that pushes gets the phone's token once he said yes (`Push`, studio plug-in only)
-        guard ServerPlugins.shared.studio else { return }
+        // a server that pushes (`Push`, studio plug-in) and the account (`AccountPush`) get the phone's token once he said yes
+        guard ServerPlugins.shared.studio || AccountPush.signedIn else { return }
         let status = await center.notificationSettings().authorizationStatus
         if status == .authorized || status == .provisional { UIApplication.shared.registerForRemoteNotifications() }
     }
