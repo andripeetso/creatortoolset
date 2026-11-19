@@ -10,12 +10,16 @@ struct LibraryBrowse: View {
     @ObservedObject private var access = ToolsetAccess.shared
 
     var body: some View {
-        // the catalog's footage sits behind the account's kids-footage switch on the server
-        if plugins.known.catalog || debugArg("UploadRoute") == "catalog", access.allows("kids-footage") {
+        if Self.catalog(plugins, access) {
             CatalogBrowse(segment: $segment)
         } else {
             ServerLibraryGrid(segment: $segment)
         }
+    }
+
+    /// The catalog's footage sits behind the account's kids-footage switch on the server.
+    static func catalog(_ plugins: ServerPlugins, _ access: ToolsetAccess) -> Bool {
+        (plugins.known.catalog || debugArg("UploadRoute") == "catalog") && access.allows("kids-footage")
     }
 }
 
@@ -487,11 +491,123 @@ struct Asset: Decodable, Identifiable, Hashable {
     let state: String
 }
 
-/// The server's own Media Library, newest first, 60 at a time.
+/// A Media Library folder (`GET /api/library/:id/collections`): a plain one holds clips, a saved search (`smart`) runs its
+/// query when opened. Only what this screen reads.
+struct LibraryFolder: Decodable, Identifiable, Hashable {
+    struct Query: Decodable, Hashable {
+        let q: String?
+        let kind: [String]?
+        let roll: String?
+    }
+    let id: String
+    let name: String
+    let parentId: String?
+    let kind: String
+    let query: Query?
+    let count: Int?
+}
+
+/// What the server's Media Library page reads (`apps/captions/src/pages/LibraryPage.tsx`), for the phone's grid: the
+/// workspace's library, its folders, and a page of clips in a folder or the search's answer. Every request goes with
+/// the API it is given, so with that API's workspace.
+enum LibraryListing {
+    struct Page: Decodable {
+        let items: [Asset]
+        let next: String?
+    }
+    private struct Libraries: Decodable {
+        struct Library: Decodable {
+            let id: String
+            let name: String
+        }
+        let libraries: [Library]
+    }
+    private struct Folders: Decodable { let collections: [LibraryFolder] }
+    private struct Hit: Decodable { let asset: Asset }
+
+    /// The workspace's library (the first, as the page opens), with its name for the trail.
+    static func library(_ api: API, session: URLSession = API.session) async throws -> (id: String, name: String)? {
+        let answer = try JSONDecoder().decode(Libraries.self, from: try await api.data(api.request("/api/library"), session: session))
+        return answer.libraries.first.map { ($0.id, $0.name) }
+    }
+
+    /// Its folders, flat; Finals is its own tool and is left out, as on the page (lib/library.ts isFinals).
+    static func folders(_ api: API, library: String, session: URLSession = API.session) async throws -> [LibraryFolder] {
+        let path = "/api/library/\(escaped(library))/collections"
+        return try JSONDecoder().decode(Folders.self, from: try await api.data(api.request(path), session: session)).collections
+            .filter { !($0.kind == "manual" && $0.parentId == nil && $0.name == "Finals") }
+    }
+
+    /// The folders shown in `open` (nil: the top): the ones in it, or while searching every one below it whose name
+    /// matches. Folders first, then saved searches, each A to Z (pages/library/folders.ts foldersAt).
+    static func foldersAt(_ all: [LibraryFolder], open: String?, search: String) -> [LibraryFolder] {
+        let ids = Set(all.map(\.id))
+        let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let words = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let here = words.isEmpty
+            ? all.filter { ($0.parentId.flatMap { ids.contains($0) ? $0 : nil }) == open }
+            : all.filter { f in f.id != open && f.name.lowercased().contains(words) && (open == nil || trail(byId, to: f.id).contains { $0.id == open }) }
+        return here.sorted { a, b in
+            if (a.kind == "smart") != (b.kind == "smart") { return b.kind == "smart" }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    /// The folders from the top down to `id` (the page's trail back up).
+    static func trail(_ all: [LibraryFolder], to id: String?) -> [LibraryFolder] {
+        trail(Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }), to: id)
+    }
+
+    private static func trail(_ byId: [String: LibraryFolder], to id: String?) -> [LibraryFolder] {
+        var out: [LibraryFolder] = []
+        var at = id.flatMap { byId[$0] }
+        while let f = at, !out.contains(f) {
+            out.insert(f, at: 0)
+            at = f.parentId.flatMap { byId[$0] }
+        }
+        return out
+    }
+
+    /// A page of clips: with words (a saved search's own with the ones typed) the search's answer, best first, in one
+    /// page; else 60 at a time, newest first, of the open folder, or at the top the clips in no folder.
+    static func page(_ api: API, library: String, open: LibraryFolder?, search: String, cursor: String? = nil,
+                     session: URLSession = API.session) async throws -> Page {
+        let smart = open?.kind == "smart" ? open?.query : nil
+        let words = [smart?.q, search.trimmingCharacters(in: .whitespaces)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
+        var parts = URLComponents()
+        if words.isEmpty {
+            parts.percentEncodedPath = "/api/library/\(escaped(library))/assets"
+            parts.queryItems = [URLQueryItem(name: "limit", value: "60"),
+                                open.map { URLQueryItem(name: "collectionId", value: $0.id) } ?? URLQueryItem(name: "unfiled", value: "1")]
+            if let cursor { parts.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
+        } else {
+            parts.percentEncodedPath = "/api/library/\(escaped(library))/search"
+            parts.queryItems = [URLQueryItem(name: "q", value: words)]
+            if let kind = smart?.kind?.first { parts.queryItems?.append(URLQueryItem(name: "kind", value: kind)) }
+            if let roll = smart?.roll { parts.queryItems?.append(URLQueryItem(name: "roll", value: roll)) }
+            if let open, smart == nil { parts.queryItems?.append(URLQueryItem(name: "collectionId", value: open.id)) }
+        }
+        // a "+" in the words is a plus, not a space, on the server
+        let path = (parts.string ?? "").replacingOccurrences(of: "+", with: "%2B")
+        let data = try await api.data(api.request(path), session: session)
+        if words.isEmpty { return try JSONDecoder().decode(Page.self, from: data) }
+        var seen = Set<String>()
+        let hits = try JSONDecoder().decode([Hit].self, from: data).map(\.asset).filter { seen.insert($0.id).inserted }
+        return Page(items: hits, next: nil)
+    }
+
+    private static func escaped(_ id: String) -> String { id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id }
+}
+
+/// The server's own Media Library: its folders (open one, back up the trail) and its clips, newest first, 60 at a
+/// time; the search box asks the server's search, as the website's page does.
 struct ServerLibraryGrid: View {
     @Binding var segment: UploadView.Segment
     @EnvironmentObject private var servers: Servers
-    @State private var libraryId: String?
+    @State private var library: (id: String, name: String)?
+    /// nil until read (an empty list is a library with no folders)
+    @State private var folders: [LibraryFolder]?
+    @State private var openId: String?
     @State private var assets: [Asset] = []
     @State private var next: String?
     @State private var loaded = false
@@ -500,17 +616,37 @@ struct ServerLibraryGrid: View {
     @Environment(\.libraryQuery) private var query
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
+    private var openFolder: LibraryFolder? { folders?.first { $0.id == openId } }
+    private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty || openFolder?.query?.q?.isEmpty == false }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 UploadSegments(segment: $segment, shown: true)
                 if let error { Problem(text: error) }
+                if openId != nil { trail }
+                ForEach(LibraryListing.foldersAt(folders ?? [], open: openId, search: query)) { folder in
+                    Button { openId = folder.id } label: {
+                        HStack {
+                            Image(systemName: folder.kind == "smart" ? "magnifyingglass" : "folder").foregroundStyle(.tint).frame(width: 24)
+                            Text(folder.name).foregroundStyle(.primary).lineLimit(1)
+                            Spacer()
+                            if let count = folder.count { Text("\(count)").foregroundStyle(.secondary) }
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                }
             }
             .padding(.horizontal)
             .padding(.bottom, 6)
             if loaded && assets.isEmpty && error == nil {
-                Text("Nothing here yet").font(.subheadline).foregroundStyle(.secondary).padding(.top, 60)
+                // the website's own lines (LibraryPage.tsx)
+                Text(searching ? "No clips found" : openId != nil ? "No clips in this folder" : "No clips")
+                    .font(.subheadline).foregroundStyle(.secondary).padding(.top, 60)
             } else if !loaded {
                 ProgressView().padding(.top, 60)
             }
@@ -534,40 +670,44 @@ struct ServerLibraryGrid: View {
                 }
             }
         }
-        .task(id: query) {
+        .task(id: "\(query)|\(openId ?? "")") {
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }   // one read when typing stops
             guard !Task.isCancelled else { return }
             await load(more: false)
         }
-        .refreshable { await load(more: false) }
+        .refreshable { await load(more: false, folders: true) }
         .sheet(item: $open) { AssetView(asset: $0) }
     }
 
-    private struct Page: Decodable {
-        let items: [Asset]
-        let next: String?
+    /// Back up: the library, then each folder above the open one (the page's FolderTrail).
+    private var trail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                Button(library?.name ?? "Library") { openId = nil }
+                ForEach(LibraryListing.trail(folders ?? [], to: openId)) { f in
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                    if f.id == openId { Text(f.name).fontWeight(.semibold) } else { Button(f.name) { openId = f.id } }
+                }
+            }
+            .font(.subheadline)
+        }
     }
 
-    private func load(more: Bool) async {
+    private func load(more: Bool, folders reread: Bool = false) async {
         guard let api = servers.api else { return }
         defer { loaded = true }
         #if DEBUG
         if PhoneDemo.on { return assets = PhoneDemo.assets(query) }
         #endif
         do {
-            if libraryId == nil {
-                let libraries: ServerPlugins.Libraries = try await api.get("/api/library")
-                libraryId = libraries.libraries.first?.id
-            }
-            guard let libraryId else { return }
-            var path = "/api/library/\(libraryId)/assets?limit=60"
-            let words = query.trimmingCharacters(in: .whitespaces)
-            if !words.isEmpty { path += "&q=\(words.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")" }
-            if more, let next { path += "&cursor=\(next.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? next)" }
-            let page: Page = try await api.get(path)
+            if library == nil { library = try await LibraryListing.library(api) }
+            guard let library else { return }
+            if reread || folders == nil { folders = try await LibraryListing.folders(api, library: library.id) }
+            let page = try await LibraryListing.page(api, library: library.id, open: openFolder, search: query, cursor: more ? next : nil)
             assets = more ? assets + page.items : page.items
             next = page.next
             error = nil
+        } catch let e as URLError where e.code == .cancelled {   // the search changed while it was asked
         } catch {
             self.error = error.localizedDescription
         }

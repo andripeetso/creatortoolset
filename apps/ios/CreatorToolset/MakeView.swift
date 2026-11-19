@@ -55,7 +55,8 @@ struct MediaView: View {
         }
         .environment(\.libraryQuery, query)
         .environment(\.hidesUploadSegments, true)
-        .searchable(text: $query, prompt: "Search footage")
+        // the website's own line for its Media Library page; a plug-in's catalog keeps its own
+        .searchable(text: $query, prompt: LibraryBrowse.catalog(ServerPlugins.shared, access) ? "Search footage" : "Search clips and transcripts")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Upload") { uploading = true }

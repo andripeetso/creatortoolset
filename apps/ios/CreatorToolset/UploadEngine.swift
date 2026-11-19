@@ -33,6 +33,8 @@ final class UploadEngine: ObservableObject {
     private var timer: Timer?
     /// The server's chunks are 32 MB; never send more in one request.
     private let maxChunk: Int64 = 32 << 20
+    /// The session of the requests the app makes itself (start, where the server's copy ends); a test gives its own.
+    var session = API.session
 
     /// (a test gives its own transfers and queue, so nothing leaves the phone)
     init(transfers: Transfers = .shared, store: UploadStore? = nil) {
@@ -50,14 +52,25 @@ final class UploadEngine: ObservableObject {
     func add(id: UUID, filename: String, size: Int64, server: Server, edit: UUID? = nil) {
         var item = UploadItem(id: id, filename: filename, size: size, server: server.id)
         item.edit = edit
+        item.workspace = workspace(on: server.id)
         store.add(item)
     }
 
     /// Camera-roll clips, waiting for Upload. A clip already waiting or on its way to that server is not added twice.
     func add(_ assets: [PHAsset], server: String) {
+        let workspace = workspace(on: server)
         store.add(assets.filter { store.byAsset[UploadStore.key(asset: $0.localIdentifier, server: server)].map(\.isFinished) ?? true }
-            .map { UploadItem(asset: $0.localIdentifier, filename: Exporter.name(for: $0), isVideo: $0.mediaType == .video,
-                              capturedAt: $0.creationDate, server: server) })
+            .map {
+                var item = UploadItem(asset: $0.localIdentifier, filename: Exporter.name(for: $0), isVideo: $0.mediaType == .video,
+                                      capturedAt: $0.creationDate, server: server)
+                item.workspace = workspace
+                return item
+            })
+    }
+
+    /// The workspace picked on that server now (`WorkspacePick`): stamped on a clip as it is queued.
+    func workspace(on server: String) -> String? {
+        Servers.shared.list.first { $0.id == server }.flatMap(API.connected)?.workspace
     }
 
     /// Upload everything picked, and everything that failed before (a New edit's clips go with their edit).
@@ -181,9 +194,11 @@ final class UploadEngine: ObservableObject {
 
     // MARK: Steps
 
+    /// The client of the clip's own server, in the workspace it was queued in: a switch after Upload moves nothing.
     func api(for item: UploadItem) -> API? {
-        // shortcut: the workspace picked now, not when the clip was picked; stamp it on UploadItem if switching mid-upload misfiles clips
-        Servers.shared.list.first { $0.id == item.server }.flatMap(API.connected)
+        guard var api = Servers.shared.list.first(where: { $0.id == item.server }).flatMap(API.connected) else { return nil }
+        if let workspace = item.workspace { api.workspace = workspace }
+        return api
     }
 
     /// The copy on the phone (out of Photos for a camera-roll clip), then where it goes, then on its way.
@@ -270,7 +285,7 @@ final class UploadEngine: ObservableObject {
                 return
             }
             // where the server's copy ends (HEAD answers through GET, empty)
-            let (_, response) = try await API.session.data(for: api.request("/api/library/uploads/\(uploadId)"))
+            let (_, response) = try await session.data(for: api.request("/api/library/uploads/\(uploadId)"))
             let http = response as? HTTPURLResponse
             switch http?.statusCode {
             case 200:
@@ -282,7 +297,8 @@ final class UploadEngine: ObservableObject {
             }
         } catch APIError.signedOut {
             perform(.signedOut, id)
-        } catch APIError.server(let status, let message) where status == 413 || status == 507 || status == 404 {
+        } catch APIError.server(let status, let message) where [403, 404, 409, 413, 507].contains(status) {
+            // 403: this account can't add to the clip's workspace; 409: a plug-in keeps that workspace's uploads
             fail(id, message)
         } catch APIError.refused(let line) {
             fail(id, line)
@@ -326,18 +342,19 @@ final class UploadEngine: ObservableObject {
         if item.direct != nil { startPart(id, 1) } else { startPatch(id, from: item.sent) }
     }
 
-    /// POST /api/library/:id/uploads into the account's first library, with what the phone made of a video when the
-    /// server takes it.
+    /// POST /api/library/here/uploads: the server files it in the own library of the clip's workspace (the API's
+    /// header, `api(for:)`; upload-target.ts), with what the phone made of a video when the server takes it.
     private func makeUpload(_ id: UUID, _ api: API) async throws {
-        let libraries: Libraries = try await api.get("/api/library")
-        guard let library = libraries.libraries.first else { throw APIError.server(404, "This server has no Media Library") }
-        let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: library.settings?.upload == "proxies") : [:]
+        let libraries = try JSONDecoder().decode(Libraries.self, from: try await api.data(api.request("/api/library"), session: session))
+        // the workspace's first library is the one here/uploads files into (access.ts ensureLibrary, librariesHere): its Upload setting
+        let proxies = libraries.libraries.first?.settings?.upload == "proxies"
+        let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: proxies) : [:]
         guard let item = store.item(id) else { return }
-        var request = api.request("/api/library/\(library.id)/uploads", method: "POST",
+        var request = api.request("/api/library/here/uploads", method: "POST",
                                   json: made.merging(["filename": item.filename, "size": item.size]) { $1 })
         // the person's own file, sent to their computers: the server takes it under Upload none too (routes.ts x-ct-origin)
         request.setValue("phone", forHTTPHeaderField: "x-ct-origin")
-        let data = try await api.data(request)
+        let data = try await api.data(request, session: session)
         let created = try JSONDecoder().decode(Created.self, from: data)
         store.update(id) {
             $0.uploadId = created.id

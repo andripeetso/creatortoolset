@@ -76,7 +76,7 @@ struct UploadItem: Codable, Identifiable, Hashable {
     /// Changed by `UploadStore.move` only.
     fileprivate(set) var state: State = .picked
     var sent: Int64 = 0
-    /// The server's upload (POST /api/library/:id/uploads).
+    /// The server's upload (POST /api/library/here/uploads).
     var uploadId: String?
     var chunkSize: Int64?
     /// A library on a storage bucket: the parts go straight to the bucket's signed URLs, and their ETags to `finish`.
@@ -100,6 +100,9 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var finishedAt: Date?
     /// What the phone read of the original before sending (`PhoneMade`): sent with every start of its upload.
     var made: PhoneMade.Original?
+    /// The workspace it was queued in (`X-CT-Workspace`), fixed when it is picked: every step of its upload names it,
+    /// whatever is picked later. nil (queued by an older build): the pick at the time of each step.
+    var workspace: String?
 
     struct Direct: Codable, Hashable {
         let partSize: Int64
