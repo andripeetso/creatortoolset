@@ -44,6 +44,11 @@ const BIG = { os: "linux", cpus: 32, memGb: 64, freeGb: 48, load: 0.05 };
 const WAITS = "Waits for one of your computers. Open Creator Toolset on your Mac";
 
 const cookies: Record<string, string> = {};
+/** The name members see: the first admin's ("'s server"), as the route computes it. */
+async function firstAdminServer(): Promise<string> {
+  const first = (await import("../users")).listUsers().filter((x) => x.role === "admin").sort((a, b) => a.createdAt - b.createdAt)[0]!;
+  return `${first.displayName || first.username}'s server`;
+}
 async function login(user: string, role: "user" | "admin" = "user") {
   setOff(createUser(user, "password1", { role }), []);
   const res = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: user, password: "password1" }) });
@@ -144,14 +149,32 @@ describe("defaults", () => {
     sw.writeServerWork({ on: true });
   });
 
-  it("only the workspaces the admin picks, and only where the workspace's owner lets it", () => {
+  it("only the workspaces the admin picks: an owner's old per-workspace choice is no longer read", () => {
     workspace("ws-aaa", "early");
     workspace("ws-bbb", "early", { serverWork: false });
     sw.writeServerWork({ on: true, projectIds: ["ws-aaa", "ws-bbb"] });
     expect(sw.serverWorks("ws-aaa", "early")).toBe(true);
-    expect(sw.serverWorks("ws-bbb", "early")).toBe(false); // its owner chose its computers only
+    expect(sw.serverWorks("ws-bbb", "early")).toBe(true);
     expect(sw.serverWorks("ws-ccc", "early")).toBe(false);
     expect(sw.serverWorks(null, "early")).toBe(false);
+    sw.writeServerWork({ on: true });
+  });
+
+  it("an owner's 'Your computers' choice becomes the list, once; a workspace made later starts off", () => {
+    workspace("ws-mig-on", "early");
+    workspace("ws-mig-own", "early", { serverWork: false });
+    sw.writeServerWork({ on: true, offByUpdate: true });
+    sw.migrateOwnerChoices();
+    const once = sw.readServerWork();
+    expect(once).toMatchObject({ on: true, offByUpdate: true });
+    expect(once?.projectIds).toContain("ws-mig-on");
+    expect(once?.projectIds).not.toContain("ws-mig-own");
+    sw.migrateOwnerChoices();
+    expect(sw.readServerWork()).toEqual(once);
+    workspace("ws-mig-new", "early");
+    expect(sw.serverWorks("ws-mig-on", "early")).toBe(true);
+    expect(sw.serverWorks("ws-mig-own", "early")).toBe(false);
+    expect(sw.serverWorks("ws-mig-new", "early")).toBe(false);
     sw.writeServerWork({ on: true });
   });
 });
@@ -228,16 +251,31 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
     rmSync(path.join(dir, "balance", "far.json"));
   });
 
-  it("a workspace whose owner keeps its video work on their computers is never run on the server", async () => {
-    workspace("ws-far", "far", { serverWork: false });
-    const e = await newEdit("far", ["ver_f"], "ws-far");
-    queue("far", e, "v1");
-    expect((await serverTick()).took).toBe(false);
-    expect(await json(as("far", "/api/work/server-work/workspace/ws-far"))).toEqual({ allowed: true, server: false });
-    // its owner lets it use the server again: it runs there
-    expect(await json(as("far", "/api/work/server-work/workspace/ws-far", { server: true }))).toEqual({ allowed: true, server: true });
-    expect((await serverTick()).took).toBe(true);
-    settle();
+  it("a member sees the server's name and whether the current workspace renders on it", async () => {
+    workspace("ws-on", "far");
+    workspace("ws-off", "far");
+    sw.writeServerWork({ on: true, projectIds: ["ws-on"] });
+    const view = (ws: string) => json(app.request("/api/work/server-work", { headers: { cookie: cookies.far!, "x-ct-workspace": ws } }));
+    expect(await view("ws-on")).toMatchObject({ serverName: await firstAdminServer(), workspace: { id: "ws-on", rendering: true } });
+    expect(await view("ws-off")).toMatchObject({ workspace: { id: "ws-off", rendering: false } });
+    sw.writeServerWork({ on: true });
+  });
+
+  it("the server's name: Creator Toolset Cloud on Cloud, none on This Mac", async () => {
+    process.env.CT_MODE = "hosted";
+    try {
+      expect(await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }))).toMatchObject({ kind: "hosted", serverName: "Creator Toolset Cloud" });
+    } finally {
+      delete process.env.CT_MODE;
+    }
+    process.env.CT_LOCAL = "1";
+    try {
+      const v = await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }));
+      expect(v.kind).toBe("local");
+      expect(v.serverName).toBeUndefined();
+    } finally {
+      delete process.env.CT_LOCAL;
+    }
   });
 
   it("Settings: the admin's switch, and the person's server row", async () => {
@@ -247,7 +285,7 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
     expect((await as("solo", "/api/work/server-work", { on: false })).status).toBe(403);
     expect(await json(as("boss", "/api/work/server-work", { only: ["ws-boss"] }))).toMatchObject({ on: true, all: false });
     // solo's workspaces are not on the list: no server row for them
-    expect(await json(as("solo", "/api/work/server-work"))).toEqual({ kind: "server", place: { allowed: false, weight: 50 } });
+    expect(await json(as("solo", "/api/work/server-work"))).toEqual({ kind: "server", place: { allowed: false, weight: 50 }, serverName: await firstAdminServer() });
     expect((await as("boss", "/api/work/server-work", { only: ["nope"] })).status).toBe(400);
     await as("boss", "/api/work/server-work", { all: true });
     // the server's preference saves with the computers'

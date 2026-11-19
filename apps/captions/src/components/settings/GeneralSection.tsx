@@ -143,7 +143,7 @@ export function ThisComputer({ version }: { version?: string }) {
   };
 
   return (
-    <Section title="This computer">
+    <Section title="Creator Toolset">
       <Card>
         {version && <Row id="app-version" title="Version" status={`Creator Toolset ${version}`} />}
         <Reports />

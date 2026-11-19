@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { EMPTIED, type KeptKind, type KeptRow, type KeptView } from "@contracts/storage";
+import { useEffect, useState } from "react";
+import { EMPTIED, type KeptKind, type KeptRow, type KeptView, type WorkspaceStorage } from "@contracts/storage";
 import { Button } from "@/components/ui/button";
 import { confirmDialog, type DialogOpts } from "@/lib/dialogs";
 import { useCachedLoad } from "@/lib/local-cache";
+import { chooseDownloadLocation, downloadLocation, showDownloadLocation, thisMacBridge, thisMacState } from "@/lib/thisMac";
 import { call } from "./StorageRows";
-import { Card, EmptyRow, ErrorRow, LoadingRow, Row, Section } from "./ui";
+import { Card, EmptyRow, ErrorRow, InfoTip, LoadingRow, Row, RowMenu, saveFailed, Section } from "./ui";
 
 /**
  * "Your files" (api/kept.ts): what this account keeps in the server's data folder, in every workspace, one row per kind
@@ -15,6 +16,7 @@ import { Card, EmptyRow, ErrorRow, LoadingRow, Row, Section } from "./ui";
  */
 
 const KEPT_API = "/api/devices/storage/kept";
+const WORKSPACES_API = `${KEPT_API}/workspaces`;
 
 const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   captions: ["Caption Studio projects", "project", "projects"],
@@ -115,11 +117,19 @@ function EmptyButton({ row, onEmpty }: { row: KeptRow; onEmpty: () => Promise<vo
   );
 }
 
+/** This Mac's device id in the Mac app (null in a browser, or until the app answers): its proxy cache is under This computer. */
+function useThisDevice(): string | null {
+  const [device, setDevice] = useState<string | null>(null);
+  useEffect(() => void thisMacState().then((s) => setDevice(s?.device ?? null)), []);
+  return device;
+}
+
 export function KeptSection() {
   const kept = useCachedLoad<KeptView>(KEPT_API, () => call<KeptView>(KEPT_API), { own: true });
+  const mine = useThisDevice();
   // a failed Empty: what went wrong, and the same Empty again for Retry
   const [error, setError] = useState<{ detail: string; retry: () => void } | null>(null);
-  const rows = kept.data && keptRows(kept.data.rows);
+  const rows = kept.data && keptRows(kept.data.rows).filter((r) => !(r.kind === "proxies" && r.device?.id === mine));
   const total = rows?.reduce((n, r) => n + r.bytes, 0) ?? 0;
   const empty = async (kind: KeptKind, device?: string) => {
     setError(null);
@@ -157,6 +167,80 @@ export function KeptSection() {
           ))
         )}
         {error && <ErrorRow title="Could not empty" detail={error.detail} retry={error.retry} />}
+      </Card>
+    </Section>
+  );
+}
+
+/** Storage › Workspaces (admin, a server): the Media Library's bytes on this server for each workspace (M19). */
+export function WorkspaceStorageSection() {
+  const work = useCachedLoad<WorkspaceStorage[]>(WORKSPACES_API, () => call<WorkspaceStorage[]>(WORKSPACES_API), { own: true });
+  return (
+    <Section title={<>Workspaces <InfoTip text="Media Library files stored on this server for each workspace: originals, proxies and analysis files." /></>}>
+      <Card>
+        {!work.data && !work.error ? (
+          <LoadingRow />
+        ) : !work.data ? (
+          <ErrorRow title="Could not load workspaces" detail={work.error} retry={() => void work.refresh().catch(() => {})} />
+        ) : work.data.length === 0 ? (
+          <EmptyRow title="No workspaces" />
+        ) : (
+          work.data.map((w) => <Row key={w.id} title={w.name} control={<span className="text-sm text-muted-foreground">{bytesLabel(w.bytes)}</span>} />)
+        )}
+      </Card>
+    </Section>
+  );
+}
+
+/** Storage › This computer (the Mac app only): this Mac's download cache with its limit and Empty, and where it is kept. */
+export function ThisComputerSection() {
+  return thisMacBridge() ? <MacComputer /> : null;
+}
+
+function MacComputer() {
+  const kept = useCachedLoad<KeptView>(KEPT_API, () => call<KeptView>(KEPT_API), { own: true });
+  const mine = useThisDevice();
+  const [location, setLocation] = useState<string | null>(null);
+  // the row shows only once the Mac answers: a Mac release without the location bridge shows nothing, not a blank path
+  useEffect(() => void downloadLocation().then((r) => setLocation(r?.path ?? null), () => {}), []);
+  const row = kept.data?.rows.find((r) => r.kind === "proxies" && r.device?.id === mine);
+  // the cap is named only when the server enforces one (cacheLimit), so the tooltip never promises a limit it does not hold
+  const cap = row?.limit ? (row.limit % 1e9 === 0 ? `${row.limit / 1e9} GB` : bytesLabel(row.limit)) : "";
+  const limit = cap ? ` of ${cap}` : "";
+  const cacheTip = `Files downloaded for edits on this computer. ${cap ? `Past ${cap}, the files used longest ago are removed. ` : ""}Files you made available offline are never removed.`;
+  // the computer's proxies: Empty keeps the ones made available offline (the same route as the Your files row)
+  const emptyCache = async (device: string | null) => {
+    await call<KeptView>(`${KEPT_API}/proxies/empty?device=${encodeURIComponent(device ?? "")}`, "POST").catch((e: unknown) => saveFailed(e instanceof Error ? e.message : "Could not empty"));
+    await kept.refresh().catch(() => {});
+  };
+  const change = async () => {
+    const r = await chooseDownloadLocation();
+    if (r?.path) setLocation(r.path);
+  };
+  return (
+    <Section title="This computer">
+      <Card>
+        <Row
+          title="Download cache"
+          tip={cacheTip}
+          control={
+            <>
+              <span className="text-sm text-muted-foreground">{`${bytesLabel(row?.bytes ?? 0)}${limit}`}</span>
+              {row && row.bytes > 0 && <EmptyButton row={row} onEmpty={() => emptyCache(mine)} />}
+            </>
+          }
+        />
+        {location !== null && (
+          <Row
+            title="Download location"
+            control={
+              <>
+                <span className="min-w-0 truncate text-sm text-muted-foreground">{location}</span>
+                <RowMenu label="Download location" items={[{ label: "Change…", onSelect: change }, { label: "Show in Finder", onSelect: () => showDownloadLocation() }]} />
+              </>
+            }
+          />
+        )}
       </Card>
     </Section>
   );

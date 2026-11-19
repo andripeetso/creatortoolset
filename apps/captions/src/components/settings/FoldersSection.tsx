@@ -1,6 +1,5 @@
 import { useCallback } from "react";
 import { HardDrive } from "lucide-react";
-import { ServerWorkSection } from "./ServerWorkSection";
 import { ServerUpdateSection } from "./ServerUpdateSection";
 import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -10,7 +9,7 @@ import { devicesSectionsFor, replacementFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section, Status, WorkspacePick, useSettingsWorkspace } from "./ui";
 import { STORAGE_ALL, STORAGE_API, Storage, call, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
-import { KeptSection } from "./KeptRows";
+import { KeptSection, ThisComputerSection, WorkspaceStorageSection } from "./KeptRows";
 import { ServerProjects } from "@/components/AdminPanel";
 
 /**
@@ -36,7 +35,8 @@ export function StorageSection() {
     <>
       {me?.role === "admin" && <ServerUpdateSection />}
       <KeptSection />
-      {!hosted && me?.role === "admin" && <ServerWorkSection />}
+      {me?.role === "admin" && !hosted && <WorkspaceStorageSection />}
+      <ThisComputerSection />
       {me?.role === "admin" && <Drives />}
       {me &&
         devicesSectionsFor(me, webPlugins).map((s) => (

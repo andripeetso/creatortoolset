@@ -7,88 +7,21 @@ import { Card, ErrorRow, ListRow, Row, saveFailed, Section, SettingsSelect } fro
 import type { Listed } from "./computers-group";
 
 /**
- * Where video work runs (api/work/server-work.ts, PRD 4.1 and 4.5): the admin's switch for this server (Settings →
- * Storage), the person's Load balancing over every place they may use (Settings → Devices), and a workspace's own
- * choice (its form).
+ * Where video work runs (api/work/server-work.ts): the person's Load balancing over every place they may use (Settings →
+ * Computers). The admin's switches are Settings → Workspace policies (WorkspacePoliciesSection.tsx).
  */
 
 /** The key the server's row saves under in Load balancing (api/work/server-work.ts SERVER_PLACE). */
 const SERVER_PLACE = "server";
 
-async function call<T>(url: string, body?: unknown): Promise<T> {
+export async function call<T>(url: string, body?: unknown): Promise<T> {
   const r = await fetch(url, body === undefined ? undefined : { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!r.ok || !j) throw new Error(j?.error ?? "Could not save");
   return j;
 }
 
-const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** Settings → Storage, an admin of a server by address: whether this server does video work, and for which workspaces. */
-export function ServerWorkSection() {
-  const [view, setView] = useState<ServerWorkView | null>(null);
-  const [failed, setFailed] = useState(false);
-  const load = useCallback(() => call<ServerWorkView>("/api/work/server-work").then(setView, () => setFailed(true)), []);
-  useEffect(() => void load(), [load]);
-  if (failed && !view)
-    return (
-      <Section title="Video work">
-        <Card>
-          <ErrorRow title="Could not load video work" retry={() => (setFailed(false), void load())} />
-        </Card>
-      </Section>
-    );
-  const a = view?.admin;
-  if (!a) return null;
-  const save = (body: { on: boolean } | { all: true } | { only: string[] }) =>
-    call<NonNullable<ServerWorkView["admin"]>>("/api/work/server-work", body).then((next) => setView((v) => (v ? { ...v, admin: next } : v)), (e) => saveFailed(msg(e)));
-  const on = (w: { on: boolean }) => a.all || w.on;
-  return (
-    <Section title="Video work">
-      <Card>
-        <Row
-          title="This server"
-          description={
-            a.offByUpdate
-              ? "Turned off by an update: video work now runs on each person's own computers unless this is on."
-              : "Cuts, previews, proxies, waveforms and transcripts can run on this server, after each person's own computers."
-          }
-          control={<Switch checked={a.on} aria-label="Video work on this server" onCheckedChange={(v) => void save({ on: v })} />}
-        />
-        {a.on && a.workspaces.length > 0 && (
-          <>
-            <Row
-              title="All workspaces"
-              description="Includes workspaces added later."
-              control={
-                <Switch
-                  checked={a.all}
-                  aria-label="Video work for all workspaces"
-                  // off keeps every workspace on, so nothing stops until one is switched off
-                  onCheckedChange={(all) => void save(all ? { all: true } : { only: a.workspaces.map((w) => w.id) })}
-                />
-              }
-            />
-            {a.workspaces.map((w) => (
-              <Row
-                key={w.id}
-                title={w.name}
-                description={w.owner}
-                control={
-                  <Switch
-                    checked={on(w)}
-                    aria-label={`Video work for ${w.name}`}
-                    onCheckedChange={(v) => void save({ only: a.workspaces.filter((x) => (x.id === w.id ? v : on(x))).map((x) => x.id) })}
-                  />
-                }
-              />
-            ))}
-          </>
-        )}
-      </Card>
-    </Section>
-  );
-}
+export const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * Settings → Computers → Load balancing: every place the person may use, their computers that do video work first, then
@@ -154,27 +87,5 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
         {balance.on && server && row(SERVER_PLACE, "This server", <Server className="size-4" />, "After your computers, unless set to Prefer")}
       </Card>
     </Section>
-  );
-}
-
-/** Under a workspace's form, a card of its own (it saves when picked): where its video work runs, offered only where this server allows video work for it. */
-export function WorkspaceServerWork({ projectId }: { projectId: string }) {
-  const [state, setState] = useState<{ allowed: boolean; server: boolean } | null>(null);
-  useEffect(() => void call<{ allowed: boolean; server: boolean }>(`/api/work/server-work/workspace/${encodeURIComponent(projectId)}`).then(setState, () => {}), [projectId]);
-  if (!state?.allowed) return null;
-  const pick = (server: boolean) =>
-    server !== state.server &&
-    void call<{ allowed: boolean; server: boolean }>(`/api/work/server-work/workspace/${encodeURIComponent(projectId)}`, { server }).then(setState, (e) => saveFailed(msg(e)));
-  const options = [
-    { value: "computers", label: "Your computers" },
-    { value: "server", label: "Your computers, then this server" },
-  ];
-  return (
-    <Card>
-      <Row
-        title="Video work"
-        control={<SettingsSelect label="Video work" value={state.server ? "server" : "computers"} onValueChange={(v) => pick(v === "server")} options={options} />}
-      />
-    </Card>
   );
 }

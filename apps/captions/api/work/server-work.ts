@@ -10,12 +10,10 @@
  * - Any other server: Settings → Server, the admin: `$DATA_DIR/server-work.json { on, projectIds? }` (no list = every
  *   workspace). No file = off: the work runs on each person's own computers unless the admin turns it on. The first start
  *   of this version writes it off once on every server (settleServerWork), saying so in Settings → Server where it was on.
- * - Each workspace's owner picks whether it uses the server where it is allowed (the Workshop project's `serverWork`,
- *   missing = yes).
  * - Each person's Load balancing has a row for the server (balance weight SERVER_PLACE): Prefer sends work there first,
  *   Off never; Normal and Less often leave it to their computers first, as before.
  */
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_WEIGHT, type Balance } from "../../contracts/providers";
 import { balanceFile } from "../lib/balance";
@@ -47,7 +45,6 @@ export const serverKind = (): ServerKind => (hostedMode() ? "hosted" : process.e
 
 const file = () => path.join(env.dataDir, "server-work.json");
 const ID = /^[\w-]{1,100}$/;
-const projectFile = (id: string) => path.join(env.dataDir, "workshop", "projects", `${id}.json`);
 
 // read per queued job on every idle tick of both loops: parsed again only when the file changed
 const memo = new Map<string, { stamp: string; v: unknown }>();
@@ -96,6 +93,22 @@ export function settleServerWork(): void {
   writeServerWork({ on: false, ...(s?.projectIds ? { projectIds: s.projectIds } : {}), offByUpdate: s ? s.on : used() });
 }
 
+/**
+ * Once, after settleServerWork: a workspace whose owner chose "Your computers" (its project's serverWork false, no longer
+ * read) is left out of the admin's list, so All workspaces does not start it on this server. Once the file has a list,
+ * nothing is read again; a workspace made later starts off (PRD E3).
+ */
+export function migrateOwnerChoices(): void {
+  const s = readServerWork();
+  if (serverKind() !== "server" || s?.projectIds) return;
+  const dir = path.join(env.dataDir, "workshop", "projects");
+  const projects = (existsSync(dir) ? readdirSync(dir) : [])
+    .filter((n) => n.endsWith(".json") && ID.test(n.slice(0, -5)))
+    .map((n) => ({ id: n.slice(0, -5), off: readJson<{ serverWork?: boolean }>(path.join(dir, n))?.serverWork === false }));
+  if (!projects.some((p) => p.off)) return;
+  writeServerWork({ on: !!s?.on, projectIds: projects.filter((p) => !p.off).map((p) => p.id), ...(s?.offByUpdate ? { offByUpdate: true } : {}) });
+}
+
 /** Whether the server lets video work run on it for `workspace` (a Workshop project id; none = filed in no workspace), asked by `account`. */
 export function serverAllows(workspace: string | null | undefined, account: string | null): boolean {
   const kind = serverKind();
@@ -109,13 +122,8 @@ export function serverAllows(workspace: string | null | undefined, account: stri
   return s.on && (!s.projectIds || (!!workspace && s.projectIds.includes(workspace)));
 }
 
-/** The workspace owner's choice: also this server where it allows (missing, the default), or its computers only. */
-export const workspaceUsesServer = (workspace: string | null | undefined): boolean =>
-  !workspace || !ID.test(workspace) || readJson<{ serverWork?: boolean }>(projectFile(workspace))?.serverWork !== false;
-
-/** Whether this server's loops may run video work for `workspace`, asked by `account`. */
-export const serverWorks = (workspace: string | null | undefined, account: string | null): boolean =>
-  serverAllows(workspace, account) && (serverKind() === "local" || workspaceUsesServer(workspace));
+/** Whether this server's loops may run video work for `workspace`, asked by `account`. The admin's Workspace policies is the only switch. */
+export const serverWorks = (workspace: string | null | undefined, account: string | null): boolean => serverAllows(workspace, account);
 
 /** The person's Load balancing weight for this server (DEFAULT_WEIGHT unless set; balancing off = Normal). This Mac has no row. */
 export function serverWeight(account: string | null): number {
