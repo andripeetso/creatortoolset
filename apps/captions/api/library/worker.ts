@@ -493,7 +493,7 @@ export async function afterProbe(
   if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
   music ||= song;
   // every sound is music or a sound effect (sound-kind.ts); Gemini listens only when nothing else tells, and only to a file here
-  const sound = await settleSoundKind(db, v.id, { song, seconds: p.duration, listen: file && librarySetting(v.library_id, "timeline") && (async () => listen(db, v.id, v.library_id, await file(), p.duration, actor)) });
+  const sound = await settleSoundKind(db, v.id, { song, seconds: p.duration, listen: file && librarySetting(v.library_id, "timeline") ? async () => listen(db, v.id, v.library_id, await file(), p.duration, actor) : undefined });
   // a sound effect gets its type from its name and length (sfx-type.ts): no AI, and nothing when it has one already
   if (v.kind === "audio") tagSoundType(db, v.id, v.title, p.duration);
   // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description

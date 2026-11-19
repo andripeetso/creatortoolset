@@ -402,7 +402,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(send
       ? {
           // older workers read only "proxies" | "all": Originals only is sent as "all" with no proxy (UNIFIED-PRD §4.2, E9)
-          upload: keepsOnlyOriginals(r.library_id) ? "all" : upload,
+          upload: upload === "proxies" ? "proxies" : "all",
           // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
           // Hosted proxies: every video is made here and sent, and the switch reads on (UNIFIED-PRD §4.1, §4.2)
           proxy: { cloud: proxiesInCloud(r.library_id) || hostsProxies(upload), on: hostsProxies(upload) || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
