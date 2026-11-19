@@ -17,6 +17,7 @@ import { readDraft, readEdit } from "./store";
 import { serverOpen, workWaitLine } from "../work/place";
 import { downloadsAllowFor } from "../work/offline";
 
+
 /**
  * Which of a person's computers may take an AI Editor step that reads the edit's footage: one that can get at every
  * file. A file is read where it is on a computer (the Mac it was indexed on, or a shared folder another computer also
@@ -174,6 +175,26 @@ export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">
   const at = missing && (missing.mac_path ?? missing.source_path);
   const what = (at && ((folderFor(at, folders, missing.mac_device ?? undefined) ?? folderFor(at, folders))?.folder.name ?? path.basename(at))) || "this footage";
   return can.length ? `Only ${either(can.map((c) => c.x.name))} can read ${what}` : `No computer can read ${what}: add its folder to a computer in Settings → Folders`;
+}
+
+/**
+ * The library whose server copies would let a waiting step run, when Downloads is off for it (UNIFIED-PRD 4.7, S5.1):
+ * the server won't run the step, no computer of the person reads every file where it is, and a file has a light copy
+ * the person may download. The chat then asks to turn Automatic downloads on (action_needed downloads). Undefined
+ * otherwise, including Hosted media Off, which keeps the existing line.
+ */
+export function downloadsAsk(job: Pick<JobRow, "kind" | "version_id" | "actor">): { libraryId: string; workspace: string } | undefined {
+  if (!usesFootage(job.kind) || serverOpen(job) || !job.actor) return undefined;
+  const rows = editFiles(editOf(job));
+  const folders = foldersOf(job.actor);
+  const allows = downloadsAllowFor(job.actor);
+  const onDisk = (host: string) => rows.every((r) => { const f = fileFor(r, host, folders, isThisMachine); return !!f && "path" in f; });
+  const cs = computers(job.actor);
+  if (!rows.length || !cs.length || cs.some((c) => onDisk(c.x.id))) return undefined;
+  const r = rows.find((x) => x.library_id && lightKey(x) && !allows(x.library_id));
+  if (!r?.library_id) return undefined;
+  const ws = libraryDb().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(r.library_id) as { ws: string | null } | undefined;
+  return { libraryId: r.library_id, workspace: ws?.ws ?? "" };
 }
 
 /** The same window as isOnline (lib/devices.ts). */
