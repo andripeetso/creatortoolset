@@ -469,3 +469,45 @@ export function freeTrack(tl: NleTimeline, kind: "V" | "A", a: number, b: number
 /** Every clip edge, for a drag to land on. */
 export const edgesOf = (tl: NleTimeline, except: Set<string>) =>
   [0, ...Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => !except.has(i._k!)).flatMap((i) => [i.rec, endOf(i)]))];
+
+/**
+ * Y and ⌥Y (Select clips forward / on this track) and ⌘Y (backward): the clips on the unlocked tracks (or only `tracks`)
+ * that end after frame `f`, or start before it backward. The clip under the playhead is in both.
+ */
+export function clipsFrom(tl: NleTimeline, f: number, dir: 1 | -1, tracks?: string[]): string[] {
+  return Object.entries(tl.tracks)
+    .filter(([id, t]) => !t.locked && (!tracks || tracks.includes(id)))
+    .flatMap(([, t]) => t.items.filter((i) => (dir > 0 ? endOf(i) > f : i.rec < f)).map((i) => i._k!));
+}
+
+/** The clip under frame `f` that Q, W and E work on: a picked one, else the lowest video track's, else the first sound track's. */
+export function clipAt(tl: NleTimeline, f: number, picked: string[]): { track: string; item: NleItem } | null {
+  const hits = Object.entries(tl.tracks).filter(([, t]) => !t.locked)
+    .flatMap(([track, t]) => t.items.filter((i) => i.rec < f && f < endOf(i)).map((item) => ({ track, item })));
+  const mine = hits.filter((h) => picked.includes(h.item._k!));
+  const rank = (h: { track: string }) => (isVideo(h.track) ? 0 : 1000) + trackNo(h.track);
+  return (mine.length ? mine : hits).sort((a, b) => rank(a) - rank(b))[0] ?? null;
+}
+
+/** Q / W: the clip under frame `f` loses its start (or end) up to `f`, and what comes after moves up to close the gap. */
+export function rippleToPlayhead(tl: NleTimeline, f: number, edge: Edge, picked: string[]): NleTimeline {
+  const h = clipAt(tl, f, picked);
+  if (!h) return tl;
+  return trim(tl, h.item._k!, edge, f - (edge === "head" ? h.item.rec : endOf(h.item)), true);
+}
+
+/**
+ * E (Extend edit): the clip's end nearer frame `f` (the end past which `f` lies) is moved to `f`. A cut against the next
+ * or the previous clip rolls, so that clip gives up what this one takes; a free end is trimmed.
+ */
+export function extendTo(tl: NleTimeline, key: string, f: number): NleTimeline {
+  const hit = find(tl, key);
+  if (!hit) return tl;
+  const { item: it, track } = hit;
+  const tail = f >= endOf(it) || (f > it.rec && endOf(it) - f <= f - it.rec);
+  const d = f - (tail ? endOf(it) : it.rec);
+  const items = tl.tracks[track].items;
+  if (tail) return items.some((x) => x.rec === endOf(it)) ? roll(tl, key, d) : trim(tl, key, "tail", d);
+  const prev = items.find((x) => endOf(x) === it.rec);
+  return prev ? roll(tl, prev._k!, d) : trim(tl, key, "head", d);
+}
