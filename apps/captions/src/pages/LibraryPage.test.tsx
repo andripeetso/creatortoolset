@@ -311,7 +311,7 @@ describe("Media Library page", () => {
     expect(more(host)?.getAttribute("aria-label")).toContain("not found");
   });
 
-  it("Library settings holds the footage folders, storage and the AI switches; a hosted server has no footage folders", async () => {
+  it("Library settings holds the owner sections in the §3.1 order (How should imported media behave, Folders, Organization, Proxy workflow, Hosted media, Analysis, Models)", async () => {
     const host = await mount();
     const open = async () => {
       await openMore(host);
@@ -320,10 +320,9 @@ describe("Media Library page", () => {
     };
     await open();
     const sheet = () => document.querySelector('[role="dialog"]')?.textContent ?? "";
-    expect(sheet()).toContain("Footage folders");
-    expect(sheet()).toContain("Storage");
-    expect(sheet()).toContain("Search by meaning");
-    expect(sheet()).toContain("Uses the AI provider");
+    const order = ["How should imported media behave?", "Folders", "Organization", "Proxy workflow", "Hosted media", "Analysis", "Models"].map((t) => sheet().indexOf(t));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(sheet()).not.toContain("OpenAI key");
     act(() => root?.unmount());
     document.body.innerHTML = "";
@@ -332,8 +331,8 @@ describe("Media Library page", () => {
     await openMore(hosted);
     await act(async () => moreItem("Library settings")!.click());
     await act(async () => new Promise((r) => setTimeout(r, 0)));
-    expect(sheet()).toContain("Storage");
-    expect(sheet()).not.toContain("Footage folders");
+    expect(sheet()).toContain("Organization");
+    expect(sheet()).not.toContain("Search by meaning");
   });
 
   it("the A-roll and B-roll tabs ask the server for that roll, so the whole library is narrowed", async () => {
