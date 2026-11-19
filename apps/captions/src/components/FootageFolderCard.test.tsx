@@ -155,7 +155,7 @@ describe("Where are your videos?", () => {
     expect(button("Choose a folder")).not.toBeUndefined();
   });
 
-  it("a big folder asks in one dialog: copy or keep, what it takes, and how the library sorts it, answered before the folder is added", async () => {
+  it("a big folder asks in one dialog: what it takes and how the library sorts it, answered before the folder is added; no copy question", async () => {
     watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;
     const order: string[] = [];
@@ -181,8 +181,7 @@ describe("Where are your videos?", () => {
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Add 40 files from Trip?");
     expect(dialog.textContent).toContain("of footage.");
-    const copy = dialog.querySelectorAll('input[name="import-mode"]')[1] as HTMLInputElement; // after Keep in place
-    expect(copy.checked).toBe(true); // copying is the default where there is room
+    expect(dialog.querySelectorAll('input[name="import-mode"]')).toHaveLength(0); // the stored answer decides, no question
     const sort = dialog.querySelectorAll<HTMLInputElement>('input[name="organize"]');
     expect(sort[0]!.checked).toBe(true); // the usual folders, until another is picked
     act(() => sort[1]!.click());
@@ -190,7 +189,7 @@ describe("Where are your videos?", () => {
     act(() => add.click());
     await flush();
     expect(order).toEqual(["offer ai", "/api/library/watch/folder"]);
-    expect(posted.copyTo).toBe("~/Movies/Creator Toolset/Footage");
+    expect(posted.copyTo).toBeUndefined();
   });
 
   it("on the AI Editor's page (no offer passed) a big folder still asks how the library sorts it, saved on it", async () => {
@@ -217,7 +216,7 @@ describe("Where are your videos?", () => {
     expect(order[1]).toContain("POST /api/library/watch/folder");
   });
 
-  it("a small folder asks where its files are kept and, the first time, how the library sorts them: no time", async () => {
+  it("a small folder asks only how the library sorts it, the first time: no copy question", async () => {
     watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -233,7 +232,7 @@ describe("Where are your videos?", () => {
     await click("Choose a folder");
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Add 3 files from Trip?");
-    expect(dialog.textContent).toContain("Keep in place");
+    expect(dialog.querySelectorAll('input[name="import-mode"]')).toHaveLength(0);
     expect(dialog.textContent).not.toContain("of footage.");
     expect(dialog.querySelectorAll('input[name="organize"]')).toHaveLength(3);
   });
