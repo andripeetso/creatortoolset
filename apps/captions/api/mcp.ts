@@ -12,7 +12,7 @@ import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
 import { askConfirm, askFolder, askSend, noteAction, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended, workspaceOfTurn } from "./assistant";
-import { workspaceScope } from "./lib/workshop/workspace";
+import { getWorkspace, workspaceScope } from "./lib/workshop/workspace";
 import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
 import { SESSION_STATUSES } from "./lib/workshop/types";
@@ -380,6 +380,8 @@ export type PluginTools = {
   work: Array<(name: string, args: Args, result: Args) => WorkCard | null>;
   /** What the plug-ins add to the assistant's guide and to the MCP server's instructions: how this install differs. */
   guide: string;
+  /** What they add for the workspace a call works in (a plug-in's `guideHere`, asked in that workspace): "" where nothing. */
+  guideHere: (username: string) => Promise<string>;
 };
 
 /** The tools kept in their own files (mcp-tools/index.ts), by name. */
@@ -411,16 +413,20 @@ const notHere = (name: string) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("
 export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
   const builtIn = new Set([...TOOLS.map((t) => t.name), ...MODULE_DEFS.filter((d) => !d.dockOnly).map((d) => d.name)]);
   const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name), ...DOCK_ONLY]);
-  const out: PluginTools = { defs: [], handlers: new Map(), from: new Map(), replaced: new Set(), steps: {}, work: [], guide: "" };
+  const here: Array<(username: string) => string | Promise<string>> = [];
+  const guideHere = async (username: string) => (await Promise.all(here.map((f) => f(username)))).map((t) => t.trim()).filter(Boolean).join("\n\n");
+  const out: PluginTools = { defs: [], handlers: new Map(), from: new Map(), replaced: new Set(), steps: {}, work: [], guide: "", guideHere };
   for (const plugin of plugins) {
-    const { defs = [], handlers = {}, replaces = [], steps = {}, work, guide } = (plugin.tools ?? {}) as {
+    const { defs = [], handlers = {}, replaces = [], steps = {}, work, guide, guideHere: oneHere } = (plugin.tools ?? {}) as {
       defs?: PluginToolDef[];
       handlers?: Record<string, PluginToolHandler>;
       replaces?: string[];
       steps?: Record<string, string>;
       work?: (name: string, args: Args, result: Args) => WorkCard | null;
       guide?: string;
+      guideHere?: (username: string) => string | Promise<string>;
     };
+    if (oneHere) here.push(oneHere);
     Object.assign(out.steps, steps);
     if (work) out.work.push(work);
     if (guide?.trim()) out.guide += `${out.guide ? "\n\n" : ""}${guide.trim()}`;
@@ -585,10 +591,18 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       }
       try {
         const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}), ...pick(a, ["sound"]) });
-        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note", "waiting"]), ...(r.waiting ? { save: r.id } : {}) });
+        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note", "waiting", "store"]), ...(r.waiting ? { save: r.id } : {}) });
       } catch (e) {
         files.push({ file: id, error: e instanceof Error ? e.message : String(e) });
       }
+    }
+    // a workspace a plug-in serves: the files went into its store, which processes them before they show
+    const stored = files.filter((f) => f.store);
+    if (stored.length) {
+      const fresh = stored.filter((f) => !f.note).length;
+      const clips = (n: number) => `${n} ${n === 1 ? "clip" : "clips"}`;
+      const said = fresh ? `Added ${clips(fresh)} to ${String(stored[0]!.store)}. They'll show once processed.` : `Nothing new: ${String(stored[0]!.note)}.`;
+      return { said: fresh && fresh < stored.length ? `${said} ${clips(stored.length - fresh)} already there.` : said, files: files.map(({ library: _, store: __, ...f }) => f), href: "/library" };
     }
     const added = files.filter((f) => f.version_id);
     const lib = String(added[0]?.library ?? "");
@@ -619,6 +633,36 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       }
       await sleep(3000);
     }
+  };
+
+  /** use_file in the workspace this call works in (the handler below picks it). */
+  const useFileHere = async (a: Args) => {
+    if (a.to === "library") {
+      const gate = await libraryGate(user, jobTurn(auth.get("authorization") ?? undefined));
+      if (gate) return { [ACTION_NEEDED]: gate };
+    }
+    // what the tool still needs comes first: the assistant asks for it (ask_secret) or opens the page that holds it, then tries again
+    const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
+    const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
+    if (missing.length) {
+      // the page each kind of need is set up on, the same ones Settings → Tools sends a person to
+      const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library?setup=1", project: "/projects" };
+      return {
+        not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
+        needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
+      };
+    }
+    // a file dropped in the Mac app, from the dock, on a server that isn't on that computer: the dock sends that one file
+    const turn = jobTurn(auth.get("authorization") ?? undefined);
+    const name = a.path && turn && process.env.CT_LOCAL !== "1" ? await askSend(user, turn, `${origin}/api/mcp`, String(a.path), a.to as AssistantFileUse) : null;
+    if (name) return { sending: name, note: "It has to be on this server first, and the chat is sending it now: say so in one line and end your reply. The chat carries on with it once it is here." };
+    if (a.to === "library") return toLibrary(a);
+    if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
+    // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
+    if (a.version_of && a.to !== "review") throw new ToolError("version_of goes with to: review.");
+    const of = a.version_of ? { version_of: ((await json(reviewPath(String(a.version_of), origin))).asset as Args).id } : {};
+    const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
+    return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", { ...pick(a, ["to", "name"]), ...of });
   };
 
   const handlers: Record<string, (a: Args) => Promise<unknown>> = {
@@ -800,32 +844,22 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
     use_file: async (a) => {
-      if (a.to === "library") {
-        const gate = await libraryGate(user, jobTurn(auth.get("authorization") ?? undefined));
-        if (gate) return { [ACTION_NEEDED]: gate };
+      // a chat that keeps no workspace while the person has several: whose library is asked once, on a card naming the
+      // open one; Add runs this same call again in it (a.workspace, kept with the card's call). Otherwise never asked
+      if (a.to === "library" && !workspaceScope.getStore()) {
+        const w = await getWorkspace(user);
+        const ws = w.projects.find((p) => p.id === (a.workspace ?? w.currentProjectId));
+        if (a.workspace && !ws) throw new ToolError("That workspace isn't this account's.");
+        if (ws && w.projects.length > 1) {
+          if (!a.workspace) {
+            a.workspace = ws.id;
+            const n = (Array.isArray(a.files) ? a.files.length : 0) + (a.file || a.path ? 1 : 0);
+            await sure(`Add ${n === 1 ? "this clip" : "these clips"} to ${ws.name}${/s$/i.test(ws.name) ? "'" : "'s"} Media Library?`, { yes: "Add", no: "Not now" });
+          }
+          return workspaceScope.run({ id: ws.id }, () => useFileHere(a));
+        }
       }
-      // what the tool still needs comes first: the assistant asks for it (ask_secret) or opens the page that holds it, then tries again
-      const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
-      const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
-      if (missing.length) {
-        // the page each kind of need is set up on, the same ones Settings → Tools sends a person to
-        const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library?setup=1", project: "/projects" };
-        return {
-          not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
-          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
-        };
-      }
-      // a file dropped in the Mac app, from the dock, on a server that isn't on that computer: the dock sends that one file
-      const turn = jobTurn(auth.get("authorization") ?? undefined);
-      const name = a.path && turn && process.env.CT_LOCAL !== "1" ? await askSend(user, turn, `${origin}/api/mcp`, String(a.path), a.to as AssistantFileUse) : null;
-      if (name) return { sending: name, note: "It has to be on this server first, and the chat is sending it now: say so in one line and end your reply. The chat carries on with it once it is here." };
-      if (a.to === "library") return toLibrary(a);
-      if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
-      // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
-      if (a.version_of && a.to !== "review") throw new ToolError("version_of goes with to: review.");
-      const of = a.version_of ? { version_of: ((await json(reviewPath(String(a.version_of), origin))).asset as Args).id } : {};
-      const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
-      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", { ...pick(a, ["to", "name"]), ...of });
+      return useFileHere(a);
     },
     notes_get: async (a) => {
       const path = `/api/clips/${encodeURIComponent(String(a.id))}`;
@@ -1426,10 +1460,10 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     origin,
     api,
     json: async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T,
-    sure: async (question) => {
+    sure: async (question, labels) => {
       // outside the dock the caller's own AI app asks its own way; in the dock the question waits on a card
       if (confirmed || !turn) return;
-      if (!askConfirm(user.username, turn, question, { tool: name, args })) throw new ToolError("Too many questions are waiting for the user under this reply: end it and let them answer.");
+      if (!askConfirm(user.username, turn, question, { tool: name, args }, labels)) throw new ToolError("Too many questions are waiting for the user under this reply: end it and let them answer.");
       throw new Asked(question);
     },
     ...(turn ? { open: async (p: string) => void (await navigateTo(user.username, p, turn)) } : {}),
@@ -1584,7 +1618,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : EDITOR_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : EDITOR_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide, await plugged.guideHere(user.username)].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
@@ -1639,7 +1673,7 @@ export const annotationsOf = (name: string) => ({
 export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {
   const app = new Hono<{ Variables: AuthVars }>();
   const plugged = pluginToolsOf(plugins);
-  setInstallGuide(plugged.guide);
+  setInstallGuide(plugged.guide, plugged.guideHere);
   // Yes on a card (assistant.ts): the call it stands for runs again as the person who pressed it
   setConfirmRunner(async (user, headers, origin, tool, args) => {
     const inner: Call = (path, init) => innerCall.run(user, () => call(path, init));

@@ -30,9 +30,10 @@ export type ToolContext = {
    * the person reads it ("Delete the session "Tiny tumbles"?"). In the dock the question becomes a Yes / No card and
    * this throws: the AI is told it was asked, and the same call runs again as the person when they press Yes (then
    * sure() returns). A caller with its own way of asking (an AI key from outside the app) goes straight through.
-   * Everything before sure() runs twice on a Yes, so only read before it.
+   * Everything before sure() runs twice on a Yes, so only read before it. `labels`: the card's two buttons when Yes / No
+   * would read wrong ("Add" / "Not now").
    */
-  sure: (question: string) => Promise<void>;
+  sure: (question: string, labels?: { yes: string; no: string }) => Promise<void>;
   /**
    * Opens a page of the app for the person, in the chat the reply is written in (a relative path, as navigate takes).
    * Only there in the app's own assistant: a caller from outside has no window of this app to open it in.

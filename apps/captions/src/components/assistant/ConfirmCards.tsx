@@ -52,7 +52,7 @@ function Confirm({ q, onView }: { q: AssistantConfirm; onView: (v: AssistantView
                 onClick={() => void send(true)}
                 className="rounded-full bg-[var(--tint)] px-3.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-1 disabled:opacity-60"
               >
-                Yes
+                {q.yes ?? "Yes"}
               </button>
               <button
                 type="button"
@@ -60,7 +60,7 @@ function Confirm({ q, onView }: { q: AssistantConfirm; onView: (v: AssistantView
                 onClick={() => void send(false)}
                 className="rounded-full border px-3.5 py-1 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-60"
               >
-                No
+                {q.no ?? "No"}
               </button>
               {busy && <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label="Working" />}
             </div>
