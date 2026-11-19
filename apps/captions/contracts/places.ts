@@ -287,6 +287,8 @@ export interface ReportV2 {
   machine?: unknown;
   version?: string;
   folders?: ReportFolder[];
+  /** this computer reads when and where a file was filmed for a known file that has none (answer `filmed`) */
+  filmed?: boolean;
 }
 
 /** The answer: the files that match no version in the folder's libraries. The agent indexes each where it is
@@ -294,7 +296,13 @@ export interface ReportV2 {
 export interface ReportAnswer {
   ok: true;
   index: Array<{ folder: string; path: string }>;
+  /** known files whose filming date and place were never read (to a computer that says `filmed`): it reads each once
+   *  and sends it (POST /api/devices/relay/filmed {folder, path, size, capturedAt?, tz?, location?, camera, alpha?}) */
+  filmed?: Array<{ folder: string; path: string }>;
 }
+
+/** Most known files one report asks to have read for when they were filmed. */
+export const FILMED_MAX = 200;
 
 /** POST /api/devices/relay/index: a file in one of this computer's folders, indexed in place in every library its
  *  folder is in (the on-mac body, contracts in api/library/on-mac.ts OnMacIndex, plus the folder id). No bytes. */

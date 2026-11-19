@@ -665,4 +665,7 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE uploads ADD COLUMN origin TEXT;`,
   // the upload's origin kept on its version: a version the iPhone app sent is the only original held for a computer (upload-gate.ts mayServe)
   `ALTER TABLE asset_versions ADD COLUMN origin TEXT;`,
+  // a folder Smart folders made for one shoot (shoots.ts): JSON {label, country, place, name}, name = the name it was given,
+  // so one the person renamed is never renamed again
+  `ALTER TABLE collections ADD COLUMN shoot TEXT;`,
 ];

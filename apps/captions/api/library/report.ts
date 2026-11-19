@@ -1,4 +1,4 @@
-import { FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
+import { FILMED_MAX, FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
 import { EVERY_WORKSPACE, editorDirsOf, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
 import type { Device } from "../../contracts/providers";
 import { LIBRARY_WORDS } from "../../contracts/library";
@@ -13,7 +13,9 @@ import { libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
-import { indexOnMac, type OnMacIndex } from "./on-mac";
+import { indexOnMac, patchFilmed, type Filmed, type OnMacIndex } from "./on-mac";
+import { organizeOf } from "./organize";
+import { reshoot } from "./shoots";
 
 /**
  * The computers report, the server records (local first, P1). A location agent (the Mac app's LocationAgent, the Linux
@@ -158,7 +160,7 @@ function leaveLibrary(dev: Device, folderId: string, inLibs: string, libs: strin
   }
 }
 
-type Hit = { version_id: string; library_id: string; vbytes: number; vquick: string | null; state: string; bytes: number | null; mtime: number | null; folder_id: string };
+type Hit = { version_id: string; library_id: string; vbytes: number; vquick: string | null; state: string; bytes: number | null; mtime: number | null; folder_id: string; unread: number };
 
 function upsert(versionId: string, device: string, folder: string, f: ReportFile, state: string, source: string, now: number): void {
   const d = db();
@@ -180,7 +182,7 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
-async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[]): Promise<void> {
+async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[], filmed: ReportAnswer["filmed"]): Promise<void> {
   const d = db();
   const device = dev.id;
   const libs = libraries.map((l) => l.id);
@@ -219,7 +221,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       }
       const hits = d
         .prepare(
-          `SELECT p.version_id, a.library_id, v.bytes AS vbytes, v.quick AS vquick, p.state, p.bytes, p.mtime, p.folder_id
+          `SELECT p.version_id, a.library_id, v.bytes AS vbytes, v.quick AS vquick, p.state, p.bytes, p.mtime, p.folder_id, json_type(v.probe, '$.camera') IS NULL AS unread
            FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
            WHERE p.device = ? AND p.kind = 'original' AND p.folder_id IN (?, '') AND p.path = ?
              AND a.library_id IN (SELECT value FROM json_each(?))`,
@@ -232,6 +234,8 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         const next = !same ? "gone" : f.quick && h.vquick ? "verified" : h.state === "verified" && h.bytes === f.bytes && h.mtime === f.mtime ? "verified" : "found";
         upsert(h.version_id, device, folder.id, next === "verified" && !f.quick ? { ...f, quick: h.vquick ?? undefined } : f, next, "scan", now);
         if (next !== "gone") done.add(h.library_id);
+        // never read for when it was filmed (indexed by a Mac app before 11-19): this computer reads it once
+        if (filmed && next !== "gone" && h.unread && filmed.length < FILMED_MAX && !filmed.some((x) => x.folder === folder.id && x.path === f.path)) filmed.push({ folder: folder.id, path: f.path });
         touched.add(h.library_id);
       }
       for (const lib of libs.filter((l) => !done.has(l))) {
@@ -283,8 +287,10 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
 }
 
 /** A report's folders from computer `dev`: the folders it holds, matched; the files that match nothing answered. */
-export async function applyReport(dev: Device, folders: ReportFolder[], now = Date.now()): Promise<ReportAnswer> {
+export async function applyReport(dev: Device, folders: ReportFolder[], now = Date.now(), reads = false): Promise<ReportAnswer> {
   const index: ReportAnswer["index"] = [];
+  // only a computer that says it reads when files were filmed is asked (contracts/places.ts ReportV2.filmed)
+  const filmed: ReportAnswer["filmed"] = reads ? [] : undefined;
   if (dev.owner === "workspace" || !folders.length) return { ok: true, index };
   const st = await storageOf(dev.owner);
   const touched = new Set<string>();
@@ -293,10 +299,34 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
-    await applyFolder(dev, folder, of, r, now, index, touched, keepOut);
+    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed);
   }
   for (const l of touched) libraryChanged(l);
-  return { ok: true, index };
+  return { ok: true, index, ...(filmed?.length ? { filmed } : {}) };
+}
+
+/**
+ * POST /api/devices/relay/filmed: when, where and by what a known file of a folder of computer `dev` was filmed, read
+ * on that computer (the report's `filmed` answer). Every version at that path and size gets what its probe lacks
+ * (on-mac.ts patchFilmed); one whose date or place is new leaves the shoot the app filed it in for its own (shoots.ts
+ * reshoot). Returns how many versions it read for.
+ */
+export async function filmedForDevice(dev: Device, folderId: string, x: { path: string; size: number } & Filmed): Promise<number | string> {
+  if (dev.owner === "workspace") return "Not for this computer";
+  const st = await storageOf(dev.owner);
+  if (!st.folders.some((f) => f.id === folderId && f.origin.host === dev.id)) return "Not one of this computer's folders";
+  const d = db();
+  const rows = d
+    .prepare(
+      `SELECT v.id AS version, a.id, a.library_id, a.kind, a.created_by FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.bytes = ? AND a.current_version_id = v.id`,
+    )
+    .all(dev.id, folderId, nfc(x.path), x.size) as { version: string; id: string; library_id: string; kind: string; created_by: string }[];
+  for (const r of rows) {
+    if ((await patchFilmed(d, r.version, x)) && organizeOf(r.library_id, d) === "ai") reshoot(d, r);
+    libraryChanged(r.library_id);
+  }
+  return rows.length;
 }
 
 /**
