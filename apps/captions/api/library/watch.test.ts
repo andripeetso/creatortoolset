@@ -276,7 +276,7 @@ describe("the watch list is the account's Source media rows", () => {
     expect(versions().some((v) => v.source_path === path.join(newer, "Later.mp4"))).toBe(false);
   });
 
-  it("refuses a copy (copyTo, or mode copy): not on yet, and nothing is written", async () => {
+  it("refuses a copy watch (copyTo, or mode copy): copying is for drops, and nothing is written", async () => {
     const before = rowsOnDisk();
     expect((await put2([{ path: watched }, { path: copied }, { path: newer, mode: "copy" }])).status).toBe(400);
     expect((await put2([{ path: watched }, { path: copied }, { path: newer, copyTo: dir }])).status).toBe(400);

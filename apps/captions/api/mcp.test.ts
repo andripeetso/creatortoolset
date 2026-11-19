@@ -254,6 +254,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     ).toThrow("plug-in tinier: tool editor_list is already served");
   });
 
+  // replaced (UNIFIED-PRD §4.7, §4.8): the edit is read once for the Downloads card; voice_make is gated on setup
   it("editor_create makes the edit from the takes and starts it at analyze; start=false only makes it", async () => {
     const site = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }), "POST /api/editor/edit_tiny/run": () => ({ ok: true }), "GET /api/editor/edit_tiny": () => ({ jobs: [] }) });
     const out = await callWith(site, "editor_create", {
@@ -349,6 +350,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect(Object.fromEntries(newest)).toEqual({ limit: "50" }); // no q: the newest files
   });
 
+  // replaced (UNIFIED-PRD §4.8): the tool asks the library (setup, a plug-in's refusal) before it imports
   it("media_import_folder sends the folder, since as epoch ms and the folder id, and shapes the files and scripts", async () => {
     const site = fakeSite({
       "GET /api/library": () => ({ libraries: [{ id: "lib_home" }] }),

@@ -242,12 +242,13 @@ describe("library storage choice", () => {
     libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.projectId', ?) WHERE id = ?").run(id, library);
   };
 
+  // replaced (UNIFIED-PRD §4.3, §4.6 item 1): a watched folder is a Source media row read in place; copy watches are gone
   it("a bucket library refuses watch folders that leave files in place, and the other way round", async () => {
     const folder = path.join(dir, "Footage");
     mkdirSync(folder, { recursive: true });
     const ref = await call("owner-a", "PUT", "/api/library/lib_a/watch", { folders: [{ path: folder, mode: "reference" }] });
     expect(ref.status).toBe(400);
-    // copying into Source media is not on yet: refused, nothing written
+    // a copy watch is refused, nothing written (copying is for drops)
     expect((await call("owner-a", "PUT", "/api/library/lib_a/watch", { folders: [{ path: folder, mode: "copy" }] })).status).toBe(400);
 
     workspace("ws_a", "lib_a");

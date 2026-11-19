@@ -20,8 +20,9 @@ import { parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage } from "../devices-storage";
 import { editorDirsOf, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 
-// shortcut: copying files into Source media (copyTo) is not read from the rows yet; it refuses until the copy task lands
-const IN_PLACE_ONLY = "Only folders read where they are can be added for now: copying into Source media is not on yet";
+// a watched folder is a Source media row read where it is (UNIFIED-PRD §4.3); copying is for drops, and the migration
+// turned the old copy watches into rows read in place (§4.6 item 1)
+const IN_PLACE_ONLY = "A watched folder is read where it is. To copy footage into Source media, drop it into the Library.";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
