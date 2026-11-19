@@ -21,6 +21,7 @@ writeFileSync(
 );
 const { libraryDb } = await import("./db");
 const { mediaReady, setupNeeded } = await import("./access");
+const { migrateLibraries } = await import("./migrate");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -50,5 +51,17 @@ describe("mediaReady", () => {
 
   it("without a projectId, the asker's own library", () => {
     expect(mediaReady("ana")).toEqual({ ready: true, owner: true, libraryId: "lib_p" });
+  });
+
+  it("a library that already has clips is set up by the migration at boot; one with none stays unset", async () => {
+    libraryDb()
+      .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_old', 'ana', 'Library', 'local', '{}', 0)")
+      .run();
+    libraryDb().exec("INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_old', 'lib_old', 'video', 'Old', 'ana', 0, NULL)");
+    const changes = await migrateLibraries({ now: "2026-11-18T10:00:00.000Z" });
+    expect(changes).toEqual([{ libraryId: "lib_old", field: "setupAt", from: null, to: "2026-11-18T10:00:00.000Z" }]);
+    expect(libraryDb().prepare("SELECT json_extract(settings, '$.setupAt') AS s FROM libraries WHERE id = 'lib_old'").get()).toEqual({ s: "2026-11-18T10:00:00.000Z" });
+    expect(libraryDb().prepare("SELECT json_extract(settings, '$.setupAt') AS s FROM libraries WHERE id = 'lib_p'").get()).toEqual({ s: null });   // no clips: still unset
+    expect(await migrateLibraries()).toEqual([]);   // idempotent
   });
 });
