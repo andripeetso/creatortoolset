@@ -1,3 +1,4 @@
+import { hostsOriginals, hostsProxies } from "@contracts/library";
 import type {
   TagCount,
   AssetKind,
@@ -51,7 +52,8 @@ export const listLibraries = () =>
 export async function macIndexOnly(libraryId: string): Promise<boolean> {
   if (!macPageMarked()) return false;
   const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
-  return libs.find((l) => l.id === libraryId)?.settings.upload === "none";
+  const upload = libs.find((l) => l.id === libraryId)?.settings.upload;
+  return !hostsOriginals(upload) && !hostsProxies(upload);
 }
 
 /**
