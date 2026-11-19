@@ -79,14 +79,16 @@ export function issueDpopToken(d: ConnectDeps, b: Record<string, unknown>, proof
   const asked = typeof b.scope === 'string' && b.scope.trim() ? b.scope.trim().split(/\s+/) : [...CLIENT_SCOPES];
   if (asked.some((s) => !(CLIENT_SCOPES as readonly string[]).includes(s))) throw new HttpError(400, 'invalid_scope');
   let account: string;
+  let bound: string | undefined;
   try {
-    account = checkAccountToken(d.accountSecret, b.subject_token, d.now());
+    ({ account, jkt: bound } = checkAccountToken(d.accountSecret, b.subject_token, d.now()));
   } catch (e) {
     if (e instanceof TokenError || e instanceof SyntaxError) throw new HttpError(400, 'invalid_grant');
     throw e;
   }
   const now = d.now();
-  const jkt = checkDpop(d.db, proof, { method: 'POST', url: urlOf(d, '/v1/client/dpop-token'), now });
+  // an account token from an app whose own token is bound to its key opens a token for that key only
+  const jkt = checkDpop(d.db, proof, { method: 'POST', url: urlOf(d, '/v1/client/dpop-token'), now, jkt: bound });
   const scope = [...new Set(asked)].join(' ');
   const token = signJwt(d.signing.privateKey, TYP.token, {
     iss: d.self, aud: d.self, sub: account, jti: randomUUID(), iat: now, exp: now + DPOP_TOKEN_TTL, scope, cnf: { jkt },

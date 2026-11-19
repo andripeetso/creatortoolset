@@ -12,19 +12,19 @@ function mac(secret: Buffer, body: string): Buffer {
   return createHmac('sha256', secret).update(body).digest();
 }
 
-export function mintAccountToken(secret: Buffer, sub: string, now: number): string {
-  const body = Buffer.from(JSON.stringify({ sub, exp: now + ACCOUNT_TTL })).toString('base64url');
+export function mintAccountToken(secret: Buffer, sub: string, now: number, jkt?: string): string {
+  const body = Buffer.from(JSON.stringify({ sub, exp: now + ACCOUNT_TTL, ...(jkt ? { jkt } : {}) })).toString('base64url');
   return `${body}.${mac(secret, body).toString('base64url')}`;
 }
 
-// Returns the account id, or throws.
-export function checkAccountToken(secret: Buffer, token: string, now: number): string {
+// Returns the account id and, for an app whose account token is bound to its key, that key's thumbprint; or throws.
+export function checkAccountToken(secret: Buffer, token: string, now: number): { account: string; jkt?: string } {
   const [body, tag, extra] = token.split('.');
   if (!body || !tag || extra !== undefined) throw new TokenError('malformed');
   const want = mac(secret, body);
   const got = Buffer.from(tag, 'base64url');
   if (got.length !== want.length || !timingSafeEqual(got, want)) throw new TokenError('bad mac');
-  const c = JSON.parse(Buffer.from(body, 'base64url').toString()) as { sub: string; exp: number };
+  const c = JSON.parse(Buffer.from(body, 'base64url').toString()) as { sub: string; exp: number; jkt?: unknown };
   if (!(c.exp > now)) throw new TokenError('expired');
-  return c.sub;
+  return typeof c.jkt === 'string' ? { account: c.sub, jkt: c.jkt } : { account: c.sub };
 }

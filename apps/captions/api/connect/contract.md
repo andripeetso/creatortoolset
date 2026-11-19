@@ -169,6 +169,11 @@ account at that service gets a session there without a sign-in sheet:
    every later call sends `Authorization: DPoP cta_…` with a proof by that key (a bound token as Bearer, with no
    proof, or with another key's, is refused). `POST /api/account/sign-out` ends the token it carries;
    `{ phones: true }` ends every phone token of the account. The Mac app's plain Bearer tokens get no tickets.
+   The Mac app binds its token the same way (its own key, `bound: true` in the `/token` answer). An app's plain token
+   from before binding binds itself once: `POST /api/account/bind`, `Bearer cta_…` with a proof by its key (`ath` = the
+   token). `/api/account/relay-token` puts a bound token's `jkt` in the relay token, and the connect service's
+   `/v1/client/dpop-token` then takes a proof by that key only. With `ACCOUNT_REQUIRE_BOUND=1` on the account site, a
+   plain token gets no relay token (401) and can't bind (403): its app asks to sign in again.
 1. Phone → the service `POST /api/account-signin/app-ticket` with its bound token and proof, and `{ host, challenge }`:
    the server's host (one the account signed in to through the service, and one the service serves) and the
    base64url SHA-256 of a verifier the phone keeps. The ticket is bound to the token's key (a `jkt` in the body is

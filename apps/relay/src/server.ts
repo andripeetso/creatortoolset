@@ -51,7 +51,7 @@ function accountOf(d: Deps, req: Request): string {
   const h = req.headers.get('authorization') ?? '';
   if (!h.startsWith('Bearer ')) throw new HttpError(401, 'unauthorized');
   try {
-    return checkAccountToken(d.accountSecret, h.slice(7), d.now());
+    return checkAccountToken(d.accountSecret, h.slice(7), d.now()).account;
   } catch (e) {
     if (e instanceof TokenError) throw new HttpError(401, 'unauthorized');
     throw e;

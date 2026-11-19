@@ -250,6 +250,18 @@ test('dpop token: an account token and a proof give a 30-minute token bound to t
   assert.equal((await exchange(acct(), p.proof('POST', `${SELF}/v1/client/dpop-token`), 'status admin')).json.error, 'invalid_scope');
 });
 
+test('dpop token: an account token bound to an app key opens a token for that key only', async () => {
+  const p = phone();
+  const thief = phone();
+  const bound = () => mintAccountToken(SECRET, 'acct-1', clock, p.jkt);
+  const r = await exchange(bound(), thief.proof('POST', `${SELF}/v1/client/dpop-token`));
+  assert.equal(r.status, 401);
+  assert.equal(r.json.error, 'invalid_dpop');
+  const ok = await exchange(bound(), p.proof('POST', `${SELF}/v1/client/dpop-token`));
+  assert.equal(ok.status, 200);
+  assert.deepEqual(verifyJwt(ok.json.access_token, deps.signing.publicKey, TYP.token)!.cnf, { jkt: p.jkt });
+});
+
 test('dpop token: no proof, a bad account token, or a wrong grant is refused', async () => {
   const p = phone();
   assert.equal((await exchange(acct())).json.error, 'invalid_dpop');

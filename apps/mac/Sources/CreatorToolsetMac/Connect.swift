@@ -187,9 +187,8 @@ extension Shell {
     /// The broker account token, minted by the account server from this Mac's sign-in. Nil: signed out, no service, or
     /// the account server did not answer.
     private func relayToken() async -> String? {
-        guard let accountServer = account.server, let host = accountServer.host, connectService != nil,
-              let token = DeviceVault.token(for: host, service: Account.vault) else { return nil }
-        return try? await AccountClient(server: accountServer).relayToken(token)
+        guard let accountServer = account.server, connectService != nil, let token = await account.token() else { return nil }
+        return try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(token)
     }
 
     /// Every refresh: the account's other computers, the switch's state, and the link made by itself when the switch is
@@ -223,10 +222,10 @@ extension Shell {
     /// none), using the old sign-in while it still has it. A Mac linked here then joins the new account by itself.
     func leaveAccount(oldToken: String, newToken: String?) async {
         guard let id = linkedConfig?.computerId, let base = connectService, let accountServer = account.server,
-              let old = try? await AccountClient(server: accountServer).relayToken(oldToken) else { return }
+              let old = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(oldToken) else { return }
         var new: String?
         if let newToken {
-            new = try? await AccountClient(server: accountServer).relayToken(newToken)
+            new = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(newToken)
             if new == nil { return }
         }
         if await BrokerClient(base: base).leave(id, oldToken: old, newToken: new) {

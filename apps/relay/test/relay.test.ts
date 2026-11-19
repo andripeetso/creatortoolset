@@ -112,7 +112,7 @@ test('device grant: pending, then approved, then a token for the approving accou
   assert.equal(ap.status, 204);
   const t = await poll(d.device_code);
   assert.equal(t.status, 200);
-  assert.equal(checkAccountToken(SECRET, t.json.access_token, clock), 'acct-7');
+  assert.equal(checkAccountToken(SECRET, t.json.access_token, clock).account, 'acct-7');
   assert.equal((await poll(d.device_code)).json.error, 'invalid_grant', 'a grant pays out once');
 });
 
