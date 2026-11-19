@@ -49,7 +49,7 @@ export function PlaceholderTile({ upload: u, onRetry, onCancel }: { upload: Uplo
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {failed && <DropdownMenuItem onSelect={onRetry}>Try again</DropdownMenuItem>}
+              {failed && <DropdownMenuItem onSelect={onRetry}>Retry</DropdownMenuItem>}
               {going(u) && <DropdownMenuItem onSelect={onCancel}>Cancel</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
