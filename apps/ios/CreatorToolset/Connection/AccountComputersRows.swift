@@ -20,13 +20,19 @@ struct AccountComputersRows: View {
             } else if let failed = accountServers.problem {
                 VStack(alignment: .leading, spacing: 8) {
                     Problem(text: failed)
-                    HStack {
-                        Button("Try again") { Task { await accountServers.refresh() } }
-                        if let trace = accountServers.traceId {
-                            Button("Copy trace ID") { UIPasteboard.general.string = trace }
+                    Button("Try again") { Task { await accountServers.refresh() } }
+                        .buttonStyle(.bordered)
+                    if let trace = accountServers.traceId {
+                        DisclosureGroup("Details") {
+                            HStack {
+                                Text(trace).font(.caption.monospaced()).textSelection(.enabled)
+                                Spacer()
+                                Button("Copy") { UIPasteboard.general.string = trace }.font(.caption)
+                            }
                         }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.bordered)
                 }
                 .padding(.vertical, 8)
             } else if accountServers.computers.isEmpty, accountServers.hosted.isEmpty {

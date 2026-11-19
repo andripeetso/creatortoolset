@@ -95,6 +95,13 @@ final class Account: ObservableObject {
         return try await Self.reaching(computer.url) { try await SignIn.app(computer.url, code: code, verifier: pkce.verifier) }
     }
 
+    /// A one-time ticket (5 min) from the account's sign-in service for a hosted server this account signed in to,
+    /// bound to this phone's key and `challenge`: the server trades it for a session (`AccountServers.hostedSession`).
+    func serverTicket(host: String, challenge: String, jkt: String) async throws -> String {
+        let data = try await ask("/api/account-signin/app-ticket", method: "POST", json: ["host": host, "challenge": challenge, "jkt": jkt])
+        return try JSONDecoder().decode(ServerTicket.self, from: data).ticket
+    }
+
     /// Takes a hosted server off the account's list. The phone's own sign-in to it stays.
     func forget(_ computer: Computer) async throws {
         do {
@@ -110,10 +117,10 @@ final class Account: ObservableObject {
     }
 
     /// The account server, as this account. 401 = the token no longer works: the account is forgotten here.
-    private func ask(_ path: String, method: String = "GET") async throws -> Data {
+    private func ask(_ path: String, method: String = "GET", json: [String: String]? = nil) async throws -> Data {
         guard let token else { throw AccountError.signedOut }
         do {
-            return try await Self.send(Self.site, path, method: method, bearer: token)
+            return try await Self.send(Self.site, path, method: method, bearer: token, json: json)
         } catch APIError.server(401, _) {
             signOut()
             throw AccountError.signedOut
@@ -186,6 +193,9 @@ struct AccountToken: Decodable {
     let name: String?
     let email: String?
 }
+
+/// POST /api/account-signin/app-ticket → a hosted server's one-time ticket.
+struct ServerTicket: Decodable { let ticket: String }
 
 /// POST /api/account/relay-token → the short token for the connect service.
 struct RelayToken: Decodable { let token: String }
@@ -359,25 +369,31 @@ final class WebSheet: NSObject, ASWebAuthenticationPresentationContextProviding 
 }
 
 /// A sign-in button that fills its row, which gives it the row's own shape: the system's Continue with Apple button,
-/// and plain ones in the same colours for Google and GitHub.
+/// and plain ones in the same colours for Google and GitHub. `busy`: its sign-in is running, a spinner where the
+/// icon sits (the Apple one is drawn plain then, since the system's button can't show one).
 struct SignInButton: View {
     let provider: String
+    var busy = false
     let press: () -> Void
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        if provider == "apple" {
+        if provider == "apple", !busy {
             // made again when the look changes: the system's button takes its colours once
             AppleButton(dark: scheme == .dark, press: press).frame(height: 52).id(scheme)
         } else {
             Button(action: press) {
-                Text("Continue with \(provider == "github" ? "GitHub" : provider.capitalized)")
-                    .font(.system(size: 20.5, weight: .medium))   // the size the system's button draws at this height
-                    .foregroundStyle(Color(.systemBackground))
-                    .frame(maxWidth: .infinity, minHeight: 52)
-                    .background(Color.primary)
+                HStack(spacing: 8) {
+                    if busy { ProgressView().tint(Color(.systemBackground)) }
+                    Text("Continue with \(provider == "github" ? "GitHub" : provider.capitalized)")
+                }
+                .font(.system(size: 20.5, weight: .medium))   // the size the system's button draws at this height
+                .foregroundStyle(Color(.systemBackground))
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(Color.primary)
             }
             .buttonStyle(.plain)
+            .accessibilityValue(busy ? "Signing in" : "")
         }
     }
 }

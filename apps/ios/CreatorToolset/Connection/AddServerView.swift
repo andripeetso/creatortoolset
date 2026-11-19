@@ -222,25 +222,31 @@ struct ScanCard: View {
 /// Continue with Apple, Google or GitHub. Signing in then adds the account's computer by itself, or lists them.
 struct AccountSignInButtons: View {
     var compact = false
-    @State private var busy = false
+    /// The provider whose sign-in is running: its button spins, the others keep their look and ignore presses.
+    @State private var running: String?
     @State private var problem: String?
 
     var body: some View {
         VStack(spacing: compact ? 8 : 12) {
             ForEach(Account.providers, id: \.self) { provider in
-                SignInButton(provider: provider) { Task { await signIn(provider) } }
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .disabled(busy)
+                SignInButton(provider: provider, busy: running == provider) {
+                    guard let next = Self.start(provider, running: running) else { return }
+                    running = next
+                    Task { await signIn(provider) }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             if let problem { Problem(text: problem) }
         }
         .padding(.vertical, compact ? 6 : 0)
     }
 
+    /// A press starts its sign-in only when none is running; nil = ignored.
+    nonisolated static func start(_ provider: String, running: String?) -> String? { running == nil ? provider : nil }
+
     private func signIn(_ provider: String) async {
-        busy = true
         problem = nil
-        defer { busy = false }
+        defer { running = nil }
         do {
             guard try await Account.shared.signIn(provider) else { return }
             await AccountServers.shared.afterSignIn()
@@ -259,7 +265,7 @@ struct FirstRunView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                if account.profile != nil, !accountServers.loading, accountServers.computers.isEmpty, accountServers.hosted.isEmpty {
+                if account.profile != nil, !accountServers.loading, accountServers.problem == nil, accountServers.computers.isEmpty, accountServers.hosted.isEmpty {
                     NoComputerYet()
                 } else if account.profile != nil {
                     VStack(alignment: .leading, spacing: 10) {
