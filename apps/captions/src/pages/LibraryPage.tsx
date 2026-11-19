@@ -42,7 +42,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacBridge } from "@/lib/thisMac";
-import { addRefused } from "@/lib/library";
+import { addRefused, scanWatchNow } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
@@ -62,7 +62,8 @@ import { thisMacDevice } from "@/lib/providers";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { EmptyDrop } from "./library/EmptyDrop";
-import { FoldersToAllow, useImportQuestion } from "./library/Import";
+import { FoldersToAllow, lookForNew, lookedLine, useImportQuestion } from "./library/Import";
+import { SourceMediaItems } from "./library/SourceMediaItems";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
@@ -814,6 +815,26 @@ export default function LibraryPage() {
   const chooseFiles = () => picker.current?.click();
   const changing = !!library && !readOnly && !trash;
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
+  // Look for new files (the ⋯ menu): the server reads this computer's folders itself (This Mac, the owner), or the Mac
+  // app reads its own Source media folders for a server elsewhere (the owner, or a member who may add, on their computer)
+  const serverReads = !!watch?.allowed;
+  const canLook = !!library && mayAdd && (serverReads ? !!watch : !!thisMacBridge() && !!thisMacDevice());
+  const [lookLine, setLookLine] = useState<string | null>(null);
+  const lookDone = useRef(0);
+  const lookNow = async () => {
+    if (!library) return;
+    clearTimeout(lookDone.current);
+    setLookLine("Looking for new files");
+    try {
+      const r = serverReads ? { ...(await scanWatchNow(library.id)), reconnected: 0, refused: [] as string[] } : { ...(await lookForNew(library, setLookLine)), settling: 0 };
+      const cant = r.refused.length ? ` · can't read ${r.refused.map((f) => f.split("/").pop()).join(", ")}` : "";
+      setLookLine(lookedLine(r.added, r.reconnected, r.settling) + cant);
+      reload();
+    } catch (e) {
+      setLookLine(message(e));
+    }
+    lookDone.current = window.setTimeout(() => setLookLine(null), 8000);
+  };
 
   const sidebar = library && (
     <LibrarySidebar
@@ -963,6 +984,7 @@ export default function LibraryPage() {
                           <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
                             <Activity /> Library status
                           </DropdownMenuItem>
+                          {!trash && <SourceMediaItems canLook={canLook} onLook={() => void lookNow()} onError={setError} />}
                           {watch && !readOnly && !trash && library && redoKinds(library.settings).length > 0 && (
                             <>
                               <DropdownMenuSeparator />
@@ -1039,6 +1061,11 @@ export default function LibraryPage() {
                 {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
 
                 {/* one line while a drop goes in; the library's own progress line otherwise */}
+                {lookLine && !importLine && (
+                  <p role="status" className="text-xs text-zinc-500">
+                    {lookLine}
+                  </p>
+                )}
                 {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
                 <FoldersToAllow />
                 {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
