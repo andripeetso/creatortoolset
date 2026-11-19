@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router";
-import type { WatchStatus } from "@contracts/library";
+import { LIBRARY_WORDS, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { getWatch } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -27,7 +27,7 @@ export function FootageFolderCard({ libraryId, onUpload, page = false, needsSetu
       <div className="flex flex-wrap items-center justify-center gap-2">
         {owner && needsSetup && (
           <Button size={size} onClick={() => navigate("/library?setup=1")}>
-            Set up
+            {LIBRARY_WORDS.setupButton}
           </Button>
         )}
         <Button size={size} variant={owner && needsSetup ? "outline" : "default"} onClick={() => (onUpload ? onUpload() : navigate("/library"))}>

@@ -32,14 +32,16 @@ enum ProxyCacheMove {
     static func move(from: URL, to: URL, free: (URL) -> Int64? = freeSpace) throws {
         guard from.standardizedFileURL.path != to.standardizedFileURL.path else { return }
         let fm = FileManager.default
-        let files = (fm.enumerator(at: from, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])?.allObjects as? [URL] ?? [])
+        // the enumerator returns real paths (/var → /private/var), so the base is resolved too, or the relative paths come out wrong
+        let root = from.resolvingSymlinksInPath()
+        let files = (fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])?.allObjects as? [URL] ?? [])
             .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
         let needed = files.reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
         try fm.createDirectory(at: to, withIntermediateDirectories: true)
         let have = free(to) ?? 0
         guard needed == 0 || have >= needed else { throw ProxyCacheMoveError.noSpace(needed: needed, free: have) }
         for file in files {
-            let rel = String(file.path.dropFirst(from.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let rel = String(file.resolvingSymlinksInPath().path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let target = to.appendingPathComponent(rel)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             // a file already at the target is that folder's own: never overwritten
