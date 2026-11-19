@@ -79,8 +79,9 @@ const start = (lib: string, from?: string) =>
 
 describe("mayReceive: original bytes only where somebody chose to send them", () => {
   // UNIFIED-PRD §4.2: under none a browser's original is refused too; under proxies a person's own file is taken as today
-  it("takes a person's original under originals, all and proxies, refuses it under none (unset reads as none)", () => {
-    for (const id of ["lib_orig", "lib_all", "lib_p"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+  it("takes a person's original under originals and all; refuses it under proxies and none (unset reads as none)", () => {
+    for (const id of ["lib_orig", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
+    expect(mayReceive("original", { id: "lib_p" }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_PROXIES, code: "upload_refused", message: REFUSED_PROXIES } });
     for (const id of ["lib_none", "lib_unset"]) {
       expect(mayReceive("original", { id }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
     }
@@ -143,11 +144,28 @@ describe("the library upload routes ask it", () => {
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
   });
 
-  it("under proxies a Mac's original is refused at its start, and a browser's is taken (UNIFIED-PRD §4.2)", async () => {
+  it("under proxies a Mac's and a browser's original are refused at their start (UNIFIED-PRD §4.2)", async () => {
     const r = await start("lib_p", "/Users/tiny/Movies/Handstand.mp4");
     expect(r.status).toBe(409);
     expect(await r.json()).toMatchObject({ error: REFUSED_PROXIES, code: "upload_refused" });
-    expect((await start("lib_p")).status).toBe(201);
+    const browser = await start("lib_p");
+    expect(browser.status).toBe(409);
+    expect(await browser.json()).toMatchObject({ error: REFUSED_PROXIES, code: "upload_refused" });
+  });
+
+  it("a browser's made proxy is refused under none and originals at its start, filed under proxies; the iPhone app's 720p copy is taken under every setting", async () => {
+    const probe = { duration: 3, width: 1280, height: 720, fps: 30, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" };
+    const made = (lib: string, cookie?: string) =>
+      app.request(`/api/library/${lib}/uploads`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(cookie ? { cookie, "x-ct-origin": "phone" } : {}) },
+        body: JSON.stringify({ filename: "Cartwheel.mov", size: 4, quick: hex("q"), proxy: { size: 9000, probe, sha256: hex("abcd") } }),
+      });
+    expect(await (await made("lib_none")).json()).toMatchObject({ code: "upload_refused", message: REFUSED_NONE });
+    expect((await made("lib_orig")).status).toBe(409);
+    expect((await made("lib_p")).status).toBe(201);
+    const appCookie = sessionCookieFor("tinyacrobatics", true)!;
+    for (const lib of ["lib_none", "lib_orig", "lib_p", "lib_all"]) expect((await made(lib, appCookie)).status, lib).toBe(201);
   });
 
   it("the iPhone app's own file is taken under none at its start, each part and the finish; a browser's or a Mac's is not, header or no header", async () => {
@@ -283,6 +301,20 @@ describe("P2: proxies and the proxy proof", () => {
     expect(existsSync(inc) ? readdirSync(inc) : []).toEqual([]);
     // undeclared from a computer that declares: refused before a byte is read
     expect(await acceptLibraryFile(id, device.id, "proxy", Readable.from([Buffer.from("proxy")]))).toMatchObject({ ok: false });
+  });
+
+  it("a computer's proxy of a file the server holds (a phone's, held under none too) is kept only if smaller than the original", async () => {
+    const { device } = pairDevice("tinyacrobatics", "Tiny Mac");
+    setDeviceWork(device.id, proving.work);
+    d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_held', 'lib_none', 'video', 'Flip', 'tinyacrobatics', 0)`).run();
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES ('v_held', 'a_held', 1, 'phone:v_held', 500, 'phone:x', 'tinyacrobatics', 0, 'ready')`,
+    ).run();
+    const job = Number(d.prepare(`INSERT INTO jobs (library_id, version_id, kind, state, actor, held_by) VALUES ('lib_none', 'v_held', 'proxy', 'running', 'tinyacrobatics', ?) RETURNING id`).get(device.id)!.id);
+    expect(await acceptLibraryFile(job, device.id, "proxy", Readable.from([Buffer.alloc(500, 1)]))).toMatchObject({ ok: false, status: 409, body: { message: REFUSED_PROOF } });
+    const inc = path.join(dir, "library", "incoming", String(job));
+    expect(existsSync(inc) ? readdirSync(inc) : []).toEqual([]);
+    expect(await acceptLibraryFile(job, device.id, "proxy", Readable.from([Buffer.alloc(499, 1)]))).toBe(true);
   });
 
   it("R-A2 replaced: the team-proxy queue is gone, so a library under none never gets a proxy job from a computer's report", async () => {

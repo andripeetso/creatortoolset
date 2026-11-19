@@ -2,10 +2,10 @@
  * Whether this server takes a file's bytes into a library: the one rule, asked by every upload route (the route table is
  * upload-gate.test.ts). A library's Hosted media (hostsOriginals / hostsProxies, UNIFIED-PRD §4.2) says what the server
  * keeps. A computer's original is taken only under originals or all: under proxies and none it is refused, with or without
- * the computer's proof. A person's own file (browser) is taken under proxies too, as today (the server keeps its proxy),
- * but never under none; the iPhone app's own file is taken under none, held until a computer has it. A computer's proxy is
- * taken only under proxies or all, its bytes must hash to the SHA-256 it declared, and from every sender a proxy no smaller
- * than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
+ * the computer's proof. A person's own file (browser) is taken under originals or all only; the iPhone app's own file is taken
+ * under any setting, held until a computer has it. A proxy is taken only under proxies or all, except the iPhone app's own
+ * 720p copy, which every library takes; a computer's proxy must hash to the SHA-256 it declared, and from every sender a proxy
+ * no smaller than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
  */
 import { finalsUpload, isFinalsCollection, libraryDb, libraryUpload, versionUpload } from "./db";
 import { hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
@@ -62,7 +62,7 @@ export const uploadFor = (library: ReceiveInto): LibraryUpload =>
       ? finalsUpload(library.id)
       : libraryUpload(library.id);
 
-/** Whether the library's owner gave its workspace to at least one member (Settings → Team): its computers send team proxies. */
+/** Whether the library's owner gave its workspace to at least one member (Settings → Team): the library is shared (the migration and the list read it). */
 export async function hasMembers(libraryId: string): Promise<boolean> {
   const row = libraryDb().prepare("SELECT workspace_id, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as
     | { workspace_id: string; ws: string | null }
@@ -77,8 +77,10 @@ export async function hasMembers(libraryId: string): Promise<boolean> {
   return !!of && given.has(of(row.ws ?? undefined));
 }
 
-const refuse = (message: string): Received => ({ ok: false, status: 409, body: { error: message, code: "upload_refused", message } });
+export const refuse = (message: string): Received => ({ ok: false, status: 409, body: { error: message, code: "upload_refused", message } });
 const HEX = /^[0-9a-f]{64}$/;
+/** A proxy no smaller than its original is not kept, from every sender (UNIFIED-PRD §4.1 rule 4). */
+export const proxyTooBig = (bytes: number, original: number | undefined): boolean => original !== undefined && bytes >= original;
 
 export function mayReceive(
   kind: ReceiveKind,
@@ -88,19 +90,20 @@ export function mayReceive(
 ): Received {
   if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
   const upload = uploadFor(library);
+  // a person's own file is refused under proxies too (UNIFIED-PRD §4.2): nothing drops it yet, so the server would keep it
   if (kind === "original") {
     if (hostsOriginals(upload) || origin === "phone") return { ok: true };
-    // a person's own file under proxies is taken as today; a computer's is refused with or without its proof (UNIFIED-PRD §4.2)
-    if (origin === "person" && upload === "proxies") return { ok: true };
-    return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
+    return refuse(hostsProxies(upload) ? REFUSED_PROXIES : REFUSED_NONE);
   }
-  // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs Hosted proxies
-  if (origin === "computer" && !hostsProxies(upload)) return refuse(upload === "none" ? REFUSED_COMPUTER_OFF : REFUSED_NO_PROXY);
+  // the iPhone app's 720p copy is the one proxy every library takes (held as its original is); any other needs Hosted proxies
+  if (origin !== "phone" && !hostsProxies(upload)) {
+    const off = !hostsOriginals(upload);
+    return refuse(off ? (origin === "computer" ? REFUSED_COMPUTER_OFF : REFUSED_NONE) : REFUSED_NO_PROXY);
+  }
   const p = opts.proof ?? {};
   if (p.sha256 !== undefined && !HEX.test(p.sha256)) return refuse(REFUSED_PROOF);
   if (p.got !== undefined && p.sha256 !== undefined && p.got !== p.sha256) return refuse(REFUSED_PROOF);
-  // a proxy no smaller than its original is not kept, from every sender (UNIFIED-PRD §4.1 rule 4); no proof needed
-  if (p.bytes !== undefined && p.original !== undefined && p.bytes >= p.original) return refuse(REFUSED_PROOF);
+  if (p.bytes !== undefined && proxyTooBig(p.bytes, p.original)) return refuse(REFUSED_PROOF);
   return { ok: true };
 }
 
@@ -123,5 +126,5 @@ export async function mayServe(
   if (what === "original" && opts.toComputer && libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ? AND origin = 'phone'").get(version.versionId) && !libraryDb().prepare("SELECT 1 FROM version_places WHERE version_id = ? AND kind = 'original' AND state = 'verified'").get(version.versionId)) {
     return { ok: true };
   }
-  return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
+  return refuse(hostsProxies(upload) ? REFUSED_PROXIES : REFUSED_NONE);
 }

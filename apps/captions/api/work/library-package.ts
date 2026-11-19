@@ -31,7 +31,7 @@ import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDevi
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
-import { mayReceive, provesProxies, type Received } from "../library/upload-gate";
+import { mayReceive, provesProxies, proxyTooBig, refuse, REFUSED_PROOF, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { FRAMES } from "../library/describe";
@@ -402,7 +402,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(send
       ? {
           // older workers read only "proxies" | "all": Originals only is sent as "all" with no proxy (UNIFIED-PRD §4.2, E9)
-          upload: upload === "proxies" ? "proxies" : "all",
+          upload: hostsProxies(upload) && !hostsOriginals(upload) ? "proxies" : "all",
           // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
           // Hosted proxies: every video is made here and sent, and the switch reads on (UNIFIED-PRD §4.1, §4.2)
           proxy: { cloud: proxiesInCloud(r.library_id) || hostsProxies(upload), on: hostsProxies(upload) || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
@@ -556,6 +556,10 @@ export async function acceptLibraryFile(
       await rm(out, { force: true }); // not the proxy it said: nothing of it is kept
       return after;
     }
+  } else if (name === "proxy" && proxyTooBig(bytes, r?.bytes)) {
+    // a proxy of a file the server holds (a phone's, under none too) is a derivative, but no smaller than its original is not kept
+    await rm(out, { force: true });
+    return refuse(REFUSED_PROOF);
   }
   return true;
 }

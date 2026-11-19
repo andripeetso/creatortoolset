@@ -173,7 +173,7 @@ offlineApp.put("/downloads", async (c) => {
   const libId = b.library;
   if (!(await readerOf(user, libId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const upload = libraryUpload(libId);
-  if (b.mode === "all" && upload === "none") return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
+  if (b.mode === "all" && !hostsOriginals(upload) && !hostsProxies(upload)) return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
   const next: Downloads =
     b.mode === "all"
       ? { mode: "all", proxies: b.proxies === true && hostsProxies(upload), originals: b.originals === true && hostsOriginals(upload) }
@@ -199,7 +199,7 @@ offlineApp.post("/", async (c) => {
   const libId = key === "versions" ? v?.library_id : key === "collections" ? (db().prepare("SELECT library_id FROM collections WHERE id = ?").get(id) as { library_id: string } | undefined)?.library_id : id;
   const ok = !!libId && (key === "versions" ? await mayRead(user, libId, v!.id, id) : !!(await readerOf(user, libId)));
   if (!ok) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (key === "libraries" && b.on && libraryUpload(id) === "none")
+  if (key === "libraries" && b.on && !hostsOriginals(libraryUpload(id)) && !hostsProxies(libraryUpload(id)))
     return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
   const list = offlineOf(user);
   const next = [...(list[key] ?? []).filter((x) => x !== id), ...(b.on ? [id] : [])];
