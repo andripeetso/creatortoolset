@@ -58,7 +58,7 @@ const server = vi.hoisted(() => ({
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [
-    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}) },
+    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}) },
   ],
   // Default folders makes the six folders (api/library/organize.ts)
   uploadFile: async (_: string, f: File) => {
@@ -80,7 +80,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
         count: 0,
         createdBy: "admin",
       }));
-    return { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings } };
+    return { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings } };
   },
   // the stand-in narrows by roll the way the server does (api/library/query.ts): the page asks, it does not filter
   listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b"; unfiled?: boolean }) => {
@@ -231,11 +231,23 @@ describe("Media Library page", () => {
     expect(more(host)).not.toBeNull(); // Library settings, in the More menu
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("No clips");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
-    expect(host.textContent).not.toContain("Standard"); // asked in the first upload's dialog, not on the page
-    expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Upload files", "Upload"])); // the fixture is set up: no Set up button
+    expect(buttons(host)).not.toContain("Set up");
+    expect(buttons(host)).not.toContain("Choose a folder");
+    expect(host.textContent).not.toContain("Copies");
     expect(buttons(host)).not.toContain("Skip");
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
+  });
+
+  it("an owner whose library was never set up is asked to set it up; a set-up library is not", async () => {
+    server.settings = { setupAt: undefined }; // the fixture's library has no setupAt
+    await mount();
+    expect(document.body.textContent).toContain("Let's set up the Media Library");
+    await act(async () => root!.unmount());
+    root = null;
+    server.settings = {};
+    await mount();
+    expect(document.body.textContent).not.toContain("Let's set up the Media Library");
   });
 
   it("the first upload asks how the library sorts files, Standard until another is picked, saved before the files go in", async () => {

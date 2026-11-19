@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router";
 import { Compass, type LucideIcon } from "lucide-react";
 import type { WatchStatus } from "@contracts/library";
 import { TOOL_NAMES, type Have, type Need, type Tool } from "@contracts/tools";
 import type { Job } from "@contracts/work-prefs";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useBigFolder } from "@/components/LibraryProcessing";
 import { listLibraries } from "@/lib/library";
 import { JOB_SETUP, jobNeeds, jobsFor } from "@/lib/setup";
-import { chooseFolderOnMac } from "@/lib/thisMac";
 import { Choice } from "./Choice";
 import { NeedLine, NeedRow, TOOL_ICONS } from "./ToolNeeds";
 
@@ -30,40 +28,12 @@ function useFootage(on: boolean) {
   useEffect(() => {
     if (on && !read) void reload();
   }, [on, read, reload]);
-  return { lib, status, read, reload };
+  return { lib, status, read };
 }
 
-/**
- * "Where are your videos?": the Mac app's folder picker (a typed path in a browser on her computer), with what a big
- * folder takes said first. The folder goes on the library's watch list, read in place or copied first, as the Library's own card does.
- */
-function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus; reload: () => Promise<void> }) {
-  const [typing, setTyping] = useState(false);
-  const [path, setPath] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const big = useBigFolder();
-  const add = async (folder: string, copyTo?: string) => {
-    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId: lib, copyTo }) }).catch(() => null);
-    const body = (await r?.json().catch(() => ({}))) as { error?: string } | undefined;
-    if (!r?.ok) return setError(body?.error ?? "Could not add the folder");
-    setTyping(false);
-    await reload();
-  };
-  const take = async (folder: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await big.check(folder, (copyTo) => add(folder, copyTo), { libraryId: lib, offerCopy: true });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const choose = async () => {
-    const picked = await chooseFolderOnMac();
-    if (picked === undefined) setTyping(true); // a browser: no folder picker, so a path is typed
-    else if (picked) await take(picked); // null: she closed the Mac's panel
-  };
+/** "Where are your videos?": the Media Library's setup sheet sets the folders up (one entry point), so this row opens it. */
+function FootageRow({ status }: { status: WatchStatus }) {
+  const navigate = useNavigate();
   const met = status.folders.length > 0;
   return (
     <NeedLine
@@ -71,28 +41,11 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
       name="Footage folder"
       line={met ? status.folders.map((f) => f.path).join(", ") : undefined}
       button={
-        <Button size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => void choose()}>
-          Choose a folder
+        <Button size="sm" variant="outline" className="h-7" onClick={() => navigate("/library?setup=1")}>
+          Set up
         </Button>
       }
-    >
-      {typing && (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (path.trim()) void take(path.trim());
-          }}
-        >
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="Folder path" aria-label="Folder path" className="h-8 min-w-0 flex-1 font-mono" disabled={busy} autoFocus />
-          <Button type="submit" size="sm" disabled={busy || !path.trim()}>
-            Add folder
-          </Button>
-        </form>
-      )}
-      {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
-      {big.dialog}
-    </NeedLine>
+    />
   );
 }
 
@@ -137,7 +90,7 @@ export function JobStep({ mine, have, job, onPick, ai }: { mine: readonly Tool[]
               {rows.map((n) => (
                 <NeedRow key={key(n)} need={n} met={!missing.some((m) => key(m) === key(n))} welcome form={n.form === "ai" ? ai : undefined} />
               ))}
-              {showFolder && <FootageRow lib={footage.lib!} status={footage.status!} reload={footage.reload} />}
+              {showFolder && <FootageRow status={footage.status!} />}
             </ul>
           )}
           {ready && <p className="py-2 text-sm text-emerald-600 dark:text-emerald-400">{JOB_SETUP[job].ready}</p>}

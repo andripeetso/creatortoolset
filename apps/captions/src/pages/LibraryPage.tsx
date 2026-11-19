@@ -12,7 +12,7 @@ import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { LibraryCopies } from "./library/Copies";
+import { LibrarySetup } from "./library/Setup";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -166,6 +166,14 @@ export default function LibraryPage() {
   const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
   const watch = watchLoad.data;
   const adding = !!watch?.folders.some((f) => f.adding > 0);
+  // the setup sheet: the owner's only (watch is theirs alone), opened by ?setup=1 or by itself until the library is set up
+  const setupParam = linked.get("setup") === "1";
+  const [setupClosed, setSetupClosed] = useState(false);
+  const setupOpen = !!watch && (setupParam || (!library?.settings.setupAt && !setupClosed));
+  const closeSetup = () => {
+    setSetupClosed(true);
+    if (setupParam) navigate("/library", { replace: true });
+  };
 
   // ?clip= is the clip open (?asset= in older links), ?library= the library when not the first: Back closes the clip,
   // Forward opens it again, a link opens it. Read from the address itself on Back and Forward too: the router's copy can
@@ -1126,8 +1134,8 @@ export default function LibraryPage() {
                   )
                 )}
 
-                {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} offer={organize.offer} onOffer={organize.answerOffer} />}
-                {firstScreen && !readOnly && <LibraryCopies libraryId={library.id} className="mx-auto w-full max-w-md" />}
+                {firstScreen && <FootageFolderCard page libraryId={library.id} needsSetup={!library.settings.setupAt} onUpload={chooseFiles} />}
+                {setupOpen && library && <LibrarySetup library={library} watchAllowed={!!watch?.allowed} onDone={(l) => (saved(l), closeSetup())} onClose={closeSetup} />}
 
                 {next &&
                   (watchesEnd() ? (
