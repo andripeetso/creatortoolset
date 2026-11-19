@@ -1,3 +1,4 @@
+import { PICTURE_FILE } from "@contracts/library";
 import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type LibraryUpload } from "@contracts/library";
 import { importThumb, thisMacBridge } from "@/lib/thisMac";
 
@@ -113,7 +114,8 @@ export async function readIndex(file: File | MacFile, signal?: AbortSignal, path
   const url = file instanceof File ? URL.createObjectURL(file) : file.url;
   const type = file instanceof File ? file.type : "";
   try {
-    if (type.startsWith("image/") || /\.(jpe?g|png|heic|heif|webp|gif|tiff?)$/i.test(file.name)) return (await pictureIndex(file, url, path)) ?? { frames: [] };
+    // a picture: the window's own decode, else the Mac's (HEIC, RAW); none from either is listed with no picture, and its card says so
+    if (type.startsWith("image/") || PICTURE_FILE.test(file.name)) return (await pictureIndex(file, url, path)) ?? { frames: [] };
     const audio = type.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i.test(file.name);
     const el = document.createElement(audio ? "audio" : "video") as HTMLVideoElement;
     el.muted = true;

@@ -95,3 +95,17 @@ describe("a card's line about its file", () => {
     expect(renderToStaticMarkup(<AssetRow asset={at({ placeWord: { word: "folder_not_found" } })} onOpen={() => {}} />)).toContain("Folder not found, re-point?");
   });
 });
+
+describe("a photo with no picture", () => {
+  const photo: AssetCard = { ...card, kind: "image", title: "Cartwheel.heic", durationS: undefined, thumbUrl: undefined, spriteUrl: undefined };
+  it("says No picture yet, once, on a photo that is in; nothing while it is being prepared or once it has one", () => {
+    show(photo);
+    expect(host.textContent?.match(/No picture yet/g)).toHaveLength(1);
+    show({ ...photo, state: "processing" });
+    expect(host.textContent).not.toContain("No picture yet");
+    show({ ...photo, thumbUrl: "/api/library/media/v1/thumb" });
+    expect(host.textContent).not.toContain("No picture yet");
+    show({ ...card, thumbUrl: undefined });
+    expect(host.textContent).not.toContain("No picture yet");
+  });
+});

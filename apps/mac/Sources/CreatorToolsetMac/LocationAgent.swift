@@ -379,7 +379,7 @@ final class QuickCache: @unchecked Sendable {
 /// size, a card picture (480 wide, at a tenth), the hover strip (20 frames of 160×90) and four stills (512 wide).
 /// A file AVFoundation can't read is indexed by its name and size only.
 enum MacIndex {
-    private static let pictures: Set<String> = ["jpg", "jpeg", "png", "heic", "webp", "gif", "tif", "tiff"]
+    private static let pictures: Set<String> = Set(MediaFiles.types.filter { $0.value.hasPrefix("image/") }.keys)
     static let spriteFrames = 20
     static let stills = 4
 

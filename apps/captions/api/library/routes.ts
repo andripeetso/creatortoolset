@@ -18,7 +18,7 @@ import { blobs, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, lib
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { hostsNone, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -91,7 +91,7 @@ const gb = (bytes: number) => (bytes >= GiB ? `${Number((bytes / GiB).toFixed(1)
 const KIND_OF: [RegExp, "video" | "image" | "audio"][] = [
   [/\.(mp4|mov|m4v|webm|mkv|avi)$/i, "video"],
   [/\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i, "audio"],
-  [/\.(jpe?g|png|heic|webp|gif|tiff?)$/i, "image"],
+  [PICTURE_FILE, "image"],
 ];
 export const kindOf = (filename: string) => KIND_OF.find(([re]) => re.test(filename))?.[1] ?? "doc";
 
@@ -110,6 +110,16 @@ const MIME: [RegExp, string][] = [
   [/\.png$/i, "image/png"],
   [/\.webp$/i, "image/webp"],
   [/\.gif$/i, "image/gif"],
+  [/\.heic$/i, "image/heic"],
+  [/\.heif$/i, "image/heif"],
+  [/\.dng$/i, "image/x-adobe-dng"],
+  [/\.(cr2|cr3)$/i, "image/x-canon-raw"],
+  [/\.arw$/i, "image/x-sony-arw"],
+  [/\.nef$/i, "image/x-nikon-nef"],
+  [/\.raf$/i, "image/x-fuji-raf"],
+  [/\.rw2$/i, "image/x-panasonic-rw2"],
+  [/\.orf$/i, "image/x-olympus-orf"],
+  [/\.tiff?$/i, "image/tiff"],
 ];
 export const mimeOf = (filename: string) => MIME.find(([re]) => re.test(filename))?.[1] ?? "application/octet-stream";
 const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "video/x-matroska": ".mkv", "video/x-msvideo": ".avi",
@@ -240,6 +250,7 @@ export async function saveToLibrary(
       .find((l) => l && libraryRole(username, l)) ??
     (await librariesHere(username))[0]?.id;
   if (!lib || !libraryRole(username, lib)) return null;
+  if (RAW_FILE.test(filename)) return { error: RAW_FROM_COMPUTER, code: "failed" };
   const { size } = await stat(file);
   await mkdir(stagingDir(), { recursive: true });
   if ((await freeBytes(stagingDir())) - (await pendingBytes(username)) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
@@ -633,6 +644,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   const id = randomUUID();
   const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
+  if (RAW_FILE.test(filename)) return c.json({ error: RAW_FROM_COMPUTER, code: "invalid" }, 400);
   const from = typeof body?.fromPath === "string" && body.fromPath.startsWith("/") && body.fromPath.length <= 2048 && !body.fromPath.split("/").includes("..") ? body.fromPath : null;
   const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
@@ -717,6 +729,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (!real || !s?.isFile()) return refuse(`File not found on this computer: ${given}`);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
+  if (RAW_FILE.test(real)) return refuse(RAW_FROM_COMPUTER);
   // macOS may keep this server out of a folder the app itself may read (Desktop, Downloads): the page uploads it then
   const readable = await open(real, "r").catch(() => null);
   if (!readable) return refuse("This server may not read that file");

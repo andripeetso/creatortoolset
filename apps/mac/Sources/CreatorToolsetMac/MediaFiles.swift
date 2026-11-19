@@ -25,7 +25,10 @@ enum MediaFiles {
         "wav": "audio/wav", "aif": "audio/aiff", "aiff": "audio/aiff", "m4a": "audio/mp4", "mp3": "audio/mpeg",
         "flac": "audio/flac", "caf": "audio/x-caf",
         "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "heic": "image/heic", "webp": "image/webp",
-        "gif": "image/gif", "tif": "image/tiff", "tiff": "image/tiff",
+        "gif": "image/gif", "tif": "image/tiff", "tiff": "image/tiff", "heif": "image/heif",
+        // camera RAW: macOS reads these (Import.thumb, MacIndex) where a web page can't
+        "dng": "image/x-adobe-dng", "cr2": "image/x-canon-cr2", "cr3": "image/x-canon-cr3", "arw": "image/x-sony-arw",
+        "nef": "image/x-nikon-nef", "raf": "image/x-fuji-raf", "rw2": "image/x-panasonic-rw2", "orf": "image/x-olympus-orf",
     ]
 
     /// A video, sound or picture file by its name.

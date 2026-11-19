@@ -10,7 +10,7 @@ import { looksLikeSong, type ProbeSummary } from "./media/probe";
 import { organizeOnProbe } from "./organize";
 import { tagSoundType } from "./sfx-type";
 import { settleSoundKind } from "./sound-kind";
-import { kindOf, recordVersion } from "./routes";
+import { kindOf, mimeOf, recordVersion } from "./routes";
 import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
 import { confirmPlaces, OWN } from "./places";
@@ -196,8 +196,14 @@ export function noPicture(libraryId: string, device: string, limit = 500): { ver
 export async function putThumb(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
   if (!jpeg(b64, MB)) return false;
   const d = libraryDb();
-  const own = d.prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?").get(versionId, libraryId);
+  const own = d.prepare("SELECT v.mime, v.mac_path, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?").get(versionId, libraryId) as
+    | { mime: string | null; mac_path: string | null; source_path: string | null }
+    | undefined;
   if (!own) return false;
+  // a photo indexed before its type was known (HEIC, RAW) was stored as application/octet-stream: the repair sets its type
+  const named = own.mac_path ?? own.source_path;
+  const mime = named ? mimeOf(path.basename(named)) : null;
+  if (mime && mime !== "application/octet-stream" && mime !== own.mime) d.prepare("UPDATE asset_versions SET mime = ? WHERE id = ?").run(mime, versionId);
   const base = `libraries/${libraryId}/v/${versionId}`;
   const scratch = path.join(env.dataDir, "library", "staging");
   await mkdir(scratch, { recursive: true });

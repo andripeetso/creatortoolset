@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import type { AssetCard } from "@contracts/library";
 import { cn } from "@/lib/utils";
 import { cardColumns } from "./views";
-import { across, clock, frameAt, frameStyle, KIND_ICON, PhotoMasonry, type Drag } from "./ClipCards";
+import { across, clock, frameAt, frameStyle, KIND_ICON, NoPictureChip, noPictureYet, PhotoMasonry, type Drag } from "./ClipCards";
 
 /**
  * The Gallery view (LibraryPage.tsx): only clips, big and edge to edge across the open tab. Tall clips stand in one
@@ -66,6 +66,7 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
         <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1.5 text-zinc-600", a.state === "processing" && "motion-safe:animate-pulse")}>
           <Icon className="h-7 w-7" />
           {a.state === "processing" && <span className="text-xs text-zinc-400">Preparing</span>}
+          {noPictureYet(a) && <NoPictureChip />}
         </div>
       )}
       {strip && at !== null && (
