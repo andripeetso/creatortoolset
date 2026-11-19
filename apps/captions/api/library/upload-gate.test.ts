@@ -144,13 +144,12 @@ describe("the library upload routes ask it", () => {
     expect((await start("lib_all", "/Users/tiny/Movies/Handstand.mp4")).status).toBe(201);
   });
 
-  it("under proxies a Mac's and a browser's original are refused at their start (UNIFIED-PRD §4.2)", async () => {
+  // UNIFIED-PRD §4.2 (CEO 11-18): under proxies only a computer's original is refused; a browser's own file is taken
+  it("under proxies a Mac's original is refused at its start, a browser's is taken (UNIFIED-PRD §4.2)", async () => {
     const r = await start("lib_p", "/Users/tiny/Movies/Handstand.mp4");
     expect(r.status).toBe(409);
     expect(await r.json()).toMatchObject({ error: REFUSED_PROXIES, code: "upload_refused" });
-    const browser = await start("lib_p");
-    expect(browser.status).toBe(409);
-    expect(await browser.json()).toMatchObject({ error: REFUSED_PROXIES, code: "upload_refused" });
+    expect((await start("lib_p")).status).toBe(201);
   });
 
   it("a browser's made proxy is refused under none and originals at its start, filed under proxies; the iPhone app's 720p copy is taken under every setting", async () => {

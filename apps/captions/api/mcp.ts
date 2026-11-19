@@ -1436,7 +1436,8 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     if (off) throw new ToolError(off);
     if ((ASSISTANT_TOOLS.has(name) || DOCK_ONLY.has(name)) && !isJob(auth) && !confirmed) throw new ToolError(`${name} is for the assistant only.`);
     // voice_make saves its voice into the Media Library: the same setup gate as use_file, editor_create and media_import_folder
-    const gate = name === "voice_make" ? await libraryGate(user, turn) : null;
+    // (a call missing its text or its voice is a mistake in the words, answered before the setup is asked about)
+    const gate = name === "voice_make" && typeof args?.text === "string" && args.text.trim() && typeof args?.voice === "string" && args.voice.trim() ? await libraryGate(user, turn) : null;
     const result = gate ? { [ACTION_NEEDED]: gate } : await handler(args ?? {});
     // a tool that needs the person first answers ACTION_NEEDED (library gate, downloads): the card shows it, the reply stops
     const action = result && typeof result === "object" && ACTION_NEEDED in result ? ((result as Args)[ACTION_NEEDED] as ActionNeeded) : null;

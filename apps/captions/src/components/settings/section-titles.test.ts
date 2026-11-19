@@ -25,8 +25,8 @@ const ALLOWED: Record<string, string[]> = {
   "Plug-ins": ["src/components/community/PacksInstalled.tsx", "src/components/community/PluginsCatalog.tsx"],
   // Settings → Appearance, and Settings → Media Library
   "Media Library": ["src/components/settings/AppearanceSection.tsx", "src/components/settings/MediaLibrarySection.tsx"],
-  // the studio's Folders screen replaces the app's (replacementFor "storage"): never both
-  Folders: ["plugins/baby-acrobatics/web/EditorStorage.tsx", "src/components/settings/FoldersSection.tsx"],
+  // the studio's Folders screen replaces the app's (replacementFor "storage"): never both; a member's Media Library page has its own
+  Folders: ["plugins/baby-acrobatics/web/EditorStorage.tsx", "src/components/settings/FoldersSection.tsx", "src/pages/library/MemberSettings.tsx"],
   // the Video Cleaner's own page, and a workspace's page
   Access: ["plugins/video-cleaner/web/CleanerAccess.tsx", "src/components/settings/WorkspaceSection.tsx"],
   // the studio plug-in's Computers entry: Settings → Computers draws no title for it, its rows sit under the app's card
