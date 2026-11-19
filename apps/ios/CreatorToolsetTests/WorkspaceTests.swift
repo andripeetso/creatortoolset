@@ -29,10 +29,10 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertNil(none.request("/api/library").value(forHTTPHeaderField: "X-CT-Workspace"))
         XCTAssertNil(none.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"])
         // the Share extension's calls
-        let share = ShareLink(server: one.url, cookie: "c", workspace: "ws-a")
+        let share = ShareLink(server: one.url, workspace: "ws-a")
         XCTAssertEqual(share.request("/api/instagram/share", json: ["text": "x"]).value(forHTTPHeaderField: "X-CT-Workspace"), "ws-a")
         XCTAssertEqual(share.request("/api/workshop/workspace", method: "GET").url?.absoluteString, "https://one.example.test/api/workshop/workspace")
-        XCTAssertNil(ShareLink(server: one.url, cookie: "c").request("/x").value(forHTTPHeaderField: "X-CT-Workspace"))
+        XCTAssertNil(ShareLink(server: one.url).request("/x").value(forHTTPHeaderField: "X-CT-Workspace"))
     }
 
     /// The merge seam: a saved server's client signs with its route's credential AND names the phone's workspace there,
@@ -57,9 +57,10 @@ final class WorkspaceTests: XCTestCase {
             XCTAssertEqual(r.value(forHTTPHeaderField: "X-CT-Workspace"), "ws-a")
             XCTAssertNil(r.value(forHTTPHeaderField: "Cookie"))
         }
-        // a Bearer player sends its token as a header with the workspace; it needs no ticket
-        XCTAssertEqual(bearer.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String],
-                       ["Authorization": "Bearer cts_paired", "X-CT-Workspace": "ws-a"])
+        // a Bearer player never carries its token in a header option (it follows a redirect to any host): a ticket
+        // in a cookie scoped to the server's host, as a DPoP one
+        XCTAssertEqual(bearer.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String], ["X-CT-Workspace": "ws-a"])
+        XCTAssertTrue(bearer.player("/api/library/media/v1/play") is TicketPlayer)
         XCTAssertFalse(bearer.needsTicket)
         XCTAssertTrue(bearer.webNeedsTicket)
 

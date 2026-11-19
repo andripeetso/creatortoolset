@@ -1,3 +1,4 @@
+import Security
 import XCTest
 @testable import CreatorToolset
 
@@ -123,14 +124,34 @@ final class KeychainTests: XCTestCase {
         Keychain.set(account, nil)
     }
 
-    func testTheServerListIsMirroredForTheShareExtension() {
+    /// What an app from before routes kept in the Keychain is still read, once, by the move to the registry.
+    func testTheOldServerListIsReadForTheMove() throws {
         let server = Server(url: URL(string: "https://studio.example.test/")!, username: "sam")
         let saved = SavedServers(list: [server], currentId: server.id)
-        let before = SavedServers.read()
-        defer { if let before { before.write() } else { Keychain.set(SavedServers.account, nil) } }
-        saved.write()
+        let before = Keychain.get(SavedServers.account)
+        defer { Keychain.set(SavedServers.account, before) }
+        Keychain.set(SavedServers.account, String(data: try JSONEncoder().encode(saved), encoding: .utf8))
         XCTAssertEqual(SavedServers.read(), saved)
-        XCTAssertEqual(SavedServers.read()?.current?.server, server)
+    }
+
+    /// A value saved again is changed in place (the same item), never deleted and added: a refused add would lose it.
+    func testASecondSaveUpdatesTheItemInPlace() throws {
+        let account = "test-\(UUID().uuidString)"
+        defer { Keychain.set(account, nil) }
+        XCTAssertTrue(Keychain.set(account, "one"))
+        let created = try XCTUnwrap(Self.created(account))
+        Thread.sleep(forTimeInterval: 1.1)
+        XCTAssertTrue(Keychain.set(account, "two"))
+        XCTAssertEqual(Keychain.get(account), "two")
+        XCTAssertEqual(Self.created(account), created)
+    }
+
+    private static func created(_ account: String) -> Date? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "creator-toolset.server",
+                                kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
+        return (out as? [String: Any])?[kSecAttrCreationDate as String] as? Date
     }
 }
 

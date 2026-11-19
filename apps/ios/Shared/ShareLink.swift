@@ -7,7 +7,6 @@ import Foundation
 /// or a link saved to the Content Analyzer.
 struct ShareLink {
     let server: URL
-    let cookie: String?
     /// The credential of the route the app last connected over (`Authorization`, not the cookie).
     var credential: Credential? = nil
     /// The phone's pick of workspace on this server (`WorkspacePick`): every request names it.
@@ -24,7 +23,7 @@ struct ShareLink {
     /// The server the app has in use, or nil before any is added.
     static func saved(_ connection: (base: URL, entry: ServerEntry, credential: Credential?)? = ServerRegistry.currentConnection()) -> ShareLink? {
         connection.map {
-            ShareLink(server: $0.base, cookie: nil, credential: $0.credential,
+            ShareLink(server: $0.base, credential: $0.credential,
                       workspace: WorkspacePick.get(server: $0.entry.key, username: $0.entry.username))
         }
     }
@@ -59,7 +58,6 @@ struct ShareLink {
     func request(_ path: String, method: String = "POST", json: [String: Any]? = nil) -> URLRequest {
         var request = URLRequest(url: URL(string: String(path.dropFirst()), relativeTo: server)?.absoluteURL ?? server)
         request.httpMethod = method
-        if let cookie, !cookie.isEmpty { request.setValue("cap_auth=\(cookie)", forHTTPHeaderField: "Cookie") }
         for (k, v) in credential?.headers(method: method, url: request.url ?? server) ?? [:] { request.setValue(v, forHTTPHeaderField: k) }
         if let workspace { request.setValue(workspace, forHTTPHeaderField: WorkspacePick.header) }
         if let json {

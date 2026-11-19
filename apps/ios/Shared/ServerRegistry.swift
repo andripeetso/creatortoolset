@@ -58,8 +58,10 @@ struct ServerEntry: Codable, Identifiable, Hashable {
 
     var server: Server { Server(url: home, username: username, label: label) }
 
+    /// The route last connected over, else the first that needs no check of who answers (nil: none, until the
+    /// supervisor checks one: the network changed, or nothing connected yet).
     var activeRoute: Route? {
-        routes.first { $0.id == activeRouteId } ?? Routes.usable(routes).first
+        routes.first { $0.id == activeRouteId } ?? Routes.usable(routes).first { !$0.needsVerifiedServer }
     }
 }
 
@@ -75,9 +77,11 @@ enum ServerRegistry {
 
     static let account = "registry"
 
+    /// The registry; the first launch with routes moves the old list in. A registry this build can't read is never
+    /// replaced by the old list (that would bring back servers removed since).
     static func read() -> Saved {
-        if let saved = Keychain.get(account).flatMap({ try? JSONDecoder().decode(Saved.self, from: Data($0.utf8)) }) { return saved }
-        return migrate()
+        guard let raw = Keychain.get(account) else { return migrate() }
+        return (try? JSONDecoder().decode(Saved.self, from: Data(raw.utf8))) ?? Saved()
     }
 
     static func write(_ saved: Saved) {
@@ -125,7 +129,7 @@ enum ServerRegistry {
 
     /// The first launch with routes: each server saved by address becomes a server with one route, its sign-in
     /// cookie kept as that route's credential until the server turns it away (then the person pairs again). The old
-    /// cookie item is deleted only once its copy is in.
+    /// items (the list and each cookie) are deleted only once the registry is in.
     static func migrate(from old: SavedServers? = SavedServers.read() ?? SavedServers.fromDefaults()) -> Saved {
         guard let old else { return Saved() }
         var saved = Saved()
@@ -142,6 +146,7 @@ enum ServerRegistry {
         write(saved)
         guard Keychain.get(account) != nil else { return saved }   // a locked phone: tried again next launch
         for server in old.list { Keychain.set(server.id, nil) }
+        SavedServers.forget()
         return saved
     }
 

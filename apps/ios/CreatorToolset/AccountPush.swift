@@ -25,8 +25,12 @@ enum AccountPush {
     static weak var relay: AccountRelay?
     private static let defaults = UserDefaults.standard
 
-    /// The computers on the account, as of the last registration: their pushes reach this phone.
-    private(set) static var pushing: Set<String> = []
+    /// The computers on the account, as of the last registration: their pushes reach this phone. Kept on the phone, so
+    /// a launch in the background still knows them and the phone's own look tells nothing twice.
+    private(set) static var pushing: Set<String> {
+        get { Set(defaults.stringArray(forKey: "push.pushing") ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: "push.pushing") }
+    }
 
     static var signedIn: Bool { relay?.signedIn == true }
 

@@ -32,13 +32,11 @@ struct SavedServers: Codable, Equatable {
         return SavedServers(list: list, currentId: defaults.string(forKey: "currentServer"))
     }
 
-    func write() {
-        Keychain.set(Self.account, (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) })
-    }
-
-    /// The server in use and its sign-in cookie (nil cookie: a server without sign-in, or signed out).
-    var current: (server: Server, cookie: String?)? {
-        list.first { $0.id == currentId }.map { ($0, Keychain.get($0.id)) }
+    /// After the move: neither copy is read again.
+    static func forget(_ defaults: UserDefaults = .standard) {
+        Keychain.set(account, nil)
+        defaults.removeObject(forKey: "servers")
+        defaults.removeObject(forKey: "currentServer")
     }
 }
 
@@ -61,11 +59,16 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Saves (nil deletes). False when the Keychain refused it.
+    /// Saves (nil deletes), in place when the item exists, so a refused write never leaves it deleted. False when the
+    /// Keychain refused it.
     @discardableResult
     static func set(_ account: String, _ value: String?) -> Bool {
-        SecItemDelete(query(account) as CFDictionary)
-        guard let value else { return true }
+        guard let value else {
+            SecItemDelete(query(account) as CFDictionary)
+            return true
+        }
+        let update = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
+        if update != errSecItemNotFound { return update == errSecSuccess }
         var q = query(account)
         q[kSecValueData as String] = Data(value.utf8)
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly

@@ -325,10 +325,15 @@ final class ConnectionTests: XCTestCase {
         ServerRegistry.setCredential(entry.serverId, routeId: lan.id, Credential(kind: .bearer, token: "lan-token"))
         ServerRegistry.setCredential(entry.serverId, routeId: https.id, Credential(kind: .cookie, token: "old-cookie"))
         defer { ServerRegistry.forgetCredentials(entry) }
+        // nothing connected yet: never the plain-HTTP LAN address unchecked, the HTTPS one
         var api = API.connected(entry)
+        XCTAssertEqual(api.server, https.url)
+        XCTAssertEqual(api.cookie, "old-cookie")
+        XCTAssertEqual(api.key, https.url.absoluteString)
+        entry.activeRouteId = lan.id
+        api = API.connected(entry)
         XCTAssertEqual(api.server, lan.url)
         XCTAssertEqual(api.credential?.token, "lan-token")
-        XCTAssertEqual(api.key, https.url.absoluteString)
         entry.activeRouteId = https.id
         api = API.connected(entry)
         XCTAssertEqual(api.server, https.url)

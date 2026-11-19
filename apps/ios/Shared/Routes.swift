@@ -60,6 +60,10 @@ struct Route: Codable, Hashable, Identifiable {
 
     var isPlainHTTP: Bool { url.scheme?.lowercased() == "http" }
 
+    /// Plain HTTP outside the tailnet: whatever machine holds that address on the network the phone is on now answers
+    /// it, so it is used only once it says it is this server.
+    var needsVerifiedServer: Bool { isPlainHTTP && kind != .tailnet }
+
     /// The address part a route is known by: two routes to one origin are the same route.
     var origin: String { Routes.origin(url) }
 

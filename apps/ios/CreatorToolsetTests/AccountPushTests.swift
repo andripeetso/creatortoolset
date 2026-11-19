@@ -58,6 +58,8 @@ final class AccountPushTests: XCTestCase {
         XCTAssertFalse(AccountPush.coversCurrent)
         relay.currentServerId = nil
         XCTAssertFalse(AccountPush.coversCurrent)
+        // kept on the phone: a launch in the background (a new process) still knows who pushes
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "push.pushing"), [mac])
     }
 
     func testARefusedRegistrationKeepsTheLookOn() async {

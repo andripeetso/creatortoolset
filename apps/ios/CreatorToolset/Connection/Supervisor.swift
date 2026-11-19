@@ -274,7 +274,11 @@ final class ServerSupervisor {
         closeLine()
     }
 
-    func post(_ signal: SupervisorSignal) { mailbox.post(signal) }
+    func post(_ signal: SupervisorSignal) {
+        // at once, so a supervisor made in the background never opens a line before it reads its mail
+        if signal == .suspend { suspended = true }
+        mailbox.post(signal)
+    }
 
     private var entry: ServerEntry? { owner?.entry(serverId) }
 
@@ -376,6 +380,7 @@ final class ServerSupervisor {
         let connectedAt = Date()
         state = ConnectionState(phase: .connected, attempt: state.attempt, routeId: route.id)
         owner?.connected(serverId, route: route)
+        if credential.kind == .dpop { owner?.renewBefore(serverId, credential) }
         let learning = Task { await learnRoutes(over: route, credential: credential) }
         defer { learning.cancel() }
         let end = await monitor(route: route, credential: credential)
@@ -390,23 +395,16 @@ final class ServerSupervisor {
 
     // MARK: choosing a route
 
-    /// Every route is first asked who it is (a LAN address another machine answers gets no credential); near routes
-    /// share a head start before the account's route is tried; the first that connects wins; a server this app can't
-    /// talk to stops the walk (it is the same server on every route); routes that didn't answer are tried last.
+    /// The first route that connects wins; a server this app can't talk to stops the walk (it is the same server on
+    /// every route).
     private func connectOverRoutes(_ entry: ServerEntry, preferred: String?) async throws -> (Route, Credential) {
         var routes = Routes.usable(entry.routes)
         if let preferred, let i = routes.firstIndex(where: { $0.id == preferred }) { routes.insert(routes.remove(at: i), at: 0) }
         guard !routes.isEmpty else {
             throw ConnectionFailure(reason: .configuration, detail: "\(entry.label) has no route this phone may use.", hop: .device)
         }
-        let checks: [Task<RouteCheck, Never>] = routes.count == 1 ? [] : routes.map { route in
-            Task { await Self.check(route, serverId: entry.serverId, provisional: entry.provisional, timeout: ConnectionTiming.routeCheck) }
-        }
-        defer { checks.forEach { $0.cancel() } }
-        let headStart = Date().addingTimeInterval(ConnectionTiming.routeHeadStart)
         var transient: ConnectionFailure?
         var blocked: ConnectionFailure?
-        var silent: [Int] = []
         func tryRoute(_ route: Route) async throws -> (Route, Credential)? {
             do {
                 return try await open(entry, route)
@@ -416,31 +414,60 @@ final class ServerSupervisor {
                 return nil
             }
         }
-        for (index, route) in routes.enumerated() {
-            let check: RouteCheck = checks.isEmpty || route.kind == .account ? .unchecked : await Self.value(checks[index], by: headStart) ?? .silent
-            if check == .silent {
-                silent.append(index)
-                continue
-            }
-            if let won = try await tryRoute(route) { return won }
+        let (serverId, provisional) = (entry.serverId, entry.provisional)
+        let check: (Route) async -> RouteCheck = {
+            await Self.check($0, serverId: serverId, provisional: provisional, timeout: ConnectionTiming.routeCheck)
         }
-        // a slow route that answered after the head start goes before one that is still dead
-        var late: [(Int, RouteCheck)] = []
-        for index in silent { late.append((index, await checks[index].value)) }
-        for (index, _) in late.filter({ $0.1 != .silent }) + late.filter({ $0.1 == .silent }) {
-            if let won = try await tryRoute(routes[index]) { return won }
-        }
+        if let won = try await Self.walk(routes, headStart: ConnectionTiming.routeHeadStart, check: check, open: tryRoute) { return won }
         throw transient ?? blocked ?? ConnectionFailure(reason: .endpointUnavailable,
                                                         detail: "\(entry.label) did not answer on any saved route.")
     }
 
-    enum RouteCheck: Equatable { case answered, silent, unchecked }
+    /// The order routes are opened in (`open` nil: that one failed, try the next). Every route but the account's (the
+    /// connect service checks its tunnel) is first asked who it is; near routes share a head start before the
+    /// account's route is tried; routes that didn't answer are tried last. One that answered as another server is
+    /// never opened, nor is a plain-HTTP address outside the tailnet that didn't answer: whatever answers there on the
+    /// network the phone is on now would get the credential.
+    static func walk<T>(_ routes: [Route], headStart: TimeInterval, check: @escaping (Route) async -> RouteCheck,
+                        open: (Route) async throws -> T?) async throws -> T? {
+        let checks: [Task<RouteCheck, Never>?] = routes.map { route in route.kind == .account ? nil : Task { await check(route) } }
+        defer { checks.forEach { $0?.cancel() } }
+        let deadline = Date().addingTimeInterval(headStart)
+        var silent: [Int] = []
+        for (index, route) in routes.enumerated() {
+            if let task = checks[index] {
+                switch await value(task, by: deadline) ?? .silent {
+                case .other: continue
+                case .silent:
+                    silent.append(index)
+                    continue
+                case .answered, .unchecked: break
+                }
+            }
+            if let won = try await open(route) { return won }
+        }
+        // a slow route that answered after the head start goes before one that is still dead
+        var late: [(Int, RouteCheck)] = []
+        for index in silent { if let task = checks[index] { late.append((index, await task.value)) } }
+        let answered = late.filter { $0.1 == .answered }
+        let unverified = late.filter { $0.1 == .silent && !routes[$0.0].needsVerifiedServer }
+        for (index, _) in answered + unverified {
+            if let won = try await open(routes[index]) { return won }
+        }
+        return nil
+    }
+
+    enum RouteCheck: Equatable {
+        case answered, silent, unchecked
+        /// Another server answered at that address.
+        case other
+    }
 
     /// The public descriptor, so this sends no credential to whatever answers at a saved LAN address on another
     /// network. A server saved by address before ids existed takes any answer (and is given its id on connect).
     static func check(_ route: Route, serverId: String, provisional: Bool, timeout: TimeInterval) async -> RouteCheck {
         guard let descriptor = try? await ServerDescriptor.fetch(route.url, timeout: timeout) else { return .silent }
-        return provisional || descriptor.serverId == serverId ? .answered : .silent
+        return provisional || descriptor.serverId == serverId ? .answered : .other
     }
 
     private static func value(_ task: Task<RouteCheck, Never>, by deadline: Date) async -> RouteCheck? {
@@ -535,23 +562,18 @@ final class ServerSupervisor {
     }
 
     /// Watches a live line: its pings, the better-route check every minute, wakeups and network changes (a probe
-    /// that finds the server gone replaces the line), and the renewal of an account session.
+    /// that finds the server gone replaces the line). An account session renews itself (`Connections.renewBefore`).
     private func monitor(route: Route, credential: Credential) async -> Outcome {
         var lastFrame = Date()
         var nextCheck = Date().addingTimeInterval(ConnectionTiming.betterRouteEvery)
-        var renewAt = credential.kind == .dpop ? credential.expiresAt?.addingTimeInterval(-ConnectionTiming.renewBefore) : nil
         while !Task.isCancelled {
-            let deadline = [nextCheck, lastFrame.addingTimeInterval(ConnectionTiming.lineSilence), renewAt].compactMap { $0 }.min()
+            let deadline = [nextCheck, lastFrame.addingTimeInterval(ConnectionTiming.lineSilence)].min()
             guard let signal = await mailbox.next(until: deadline) else {
                 if Task.isCancelled { return .interrupted }
                 let now = Date()
                 if now >= lastFrame.addingTimeInterval(ConnectionTiming.lineSilence) {
                     return .failed(ConnectionFailure(reason: .timeout, detail: "The connection went quiet.", hop: route.kind == .account ? .tunnel : .server,
                                                      via: route.kind == .account ? .account : .direct, cause: "timeout"), connectedFor: nil)
-                }
-                if let at = renewAt, now >= at {
-                    renewAt = nil
-                    if let entry { Task { try? await owner?.renew(entry) } }
                 }
                 if now >= nextCheck {
                     nextCheck = now.addingTimeInterval(ConnectionTiming.betterRouteEvery)
@@ -576,9 +598,11 @@ final class ServerSupervisor {
                 guard online else { return .interrupted }
                 health.forgetSilent()
                 if !(await probe(route, longResume: false)) { return .replace }
+                owner?.connected(serverId, route: route)   // checked again on the new network
                 if let better = await betterRoute(than: route) { return replace(with: better) }
             case .wakeup(let long):
                 if !(await probe(route, longResume: long)) { return .replace }
+                owner?.connected(serverId, route: route)
                 if let better = await betterRoute(than: route) { return replace(with: better) }
             case .retry:
                 if !(await probe(route, longResume: false)) { return .replace }
@@ -610,7 +634,7 @@ final class ServerSupervisor {
                 group.addTask {
                     if Routes.sendsTokenInClear(entry.routes, route) { return (route.id, .silent) }
                     let check = await Self.check(route, serverId: entry.serverId, provisional: entry.provisional, timeout: ConnectionTiming.routeCheck)
-                    return (route.id, check == .silent ? .silent : ready ? .ready : .unprepared)
+                    return (route.id, check != .answered ? .silent : ready ? .ready : .unprepared)
                 }
             }
             var out: [String: RouteHealth.Preflight] = [:]
@@ -649,9 +673,16 @@ final class Connections: ObservableObject {
     private let path = NWPathMonitor()
     private var backgroundAt: Date?
     private var renewing: [String: Task<(URL, Credential), Error>] = [:]
+    /// The next renewal of each account session, armed from the credential it renews.
+    private var renewals: [String: Task<Void, Never>] = [:]
+    /// Mints an account session (the connect service); a test's own.
+    var mint: (String) async throws -> (URL, Credential) = { try await AccountServers.shared.session(for: $0) }
     let live: Bool
 
-    init(saved: ServerRegistry.Saved = ServerRegistry.read(), live: Bool = true) {
+    /// `background`: launched straight into the background (an upload finished, a refresh): no line opens until the
+    /// app comes forward.
+    init(saved: ServerRegistry.Saved = ServerRegistry.read(), live: Bool = true,
+         background: Bool = UIApplication.shared.applicationState == .background) {
         self.saved = saved
         #if DEBUG
         let demo = ConnectionDemo.on || PhoneDemo.on
@@ -662,8 +693,10 @@ final class Connections: ObservableObject {
         self.live = live
         #endif
         guard self.live else { return }
+        if background { backgroundAt = Date() }
         path.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in self?.networkChanged(online: path.status == .satisfied) }
+            let shape = "\(path.status) \(path.availableInterfaces.map(\.name).sorted()) \(path.gateways.map(\.debugDescription).sorted())"
+            Task { @MainActor in self?.pathChanged(online: path.status == .satisfied, shape: shape) }
         }
         path.start(queue: DispatchQueue(label: "connections.path"))
         let center = NotificationCenter.default
@@ -744,6 +777,7 @@ final class Connections: ObservableObject {
         let api = API.connected(entry)
         Task { await StudioHooks.removing(api) }
         supervisors.removeValue(forKey: serverId)?.stop()
+        renewals.removeValue(forKey: serverId)?.cancel()
         ServerRegistry.forgetCredentials(entry)
         saved.servers.removeAll { $0.serverId == serverId }
         states[serverId] = nil
@@ -797,8 +831,12 @@ final class Connections: ObservableObject {
         }
     }
 
-    /// The server turned the credential of a request away: the next request asks the supervisor again.
-    func refused(_ entry: ServerEntry) { supervisors[entry.serverId]?.post(.retry) }
+    /// The server turned the credential of a request away: the next request asks the supervisor again, and an account
+    /// session is minted again.
+    func refused(_ entry: ServerEntry) {
+        if entry.activeRoute?.authorization == .account { Task { _ = try? await renew(entry) } }
+        supervisors[entry.serverId]?.post(.retry)
+    }
 
     /// A 401 on a server's line or a request, by its code. Revoked: that credential is dropped and the computer says
     /// Signed out until the person signs in again, never retried by itself (a paired route revoked on a computer still
@@ -881,17 +919,52 @@ final class Connections: ObservableObject {
     @discardableResult
     func renew(_ entry: ServerEntry) async throws -> Credential {
         if let running = renewing[entry.serverId] { return try await running.value.1 }
-        let task = Task { try await AccountServers.shared.session(for: entry.serverId) }
+        let task = Task { try await mint(entry.serverId) }
         renewing[entry.serverId] = task
         defer { renewing[entry.serverId] = nil }
         let (endpoint, credential) = try await task.value
         ServerRegistry.setCredential(entry.serverId, routeId: Route.accountId, credential)
+        renewBefore(entry.serverId, credential)
         if let i = saved.servers.firstIndex(where: { $0.serverId == entry.serverId }),
            let r = saved.servers[i].routes.firstIndex(where: { $0.id == Route.accountId }), saved.servers[i].routes[r].url != endpoint {
             saved.servers[i].routes[r].url = endpoint
             persist()
         }
         return credential
+    }
+
+    /// When an account session is renewed: its last minute, or halfway through a shorter one.
+    nonisolated static func renewAt(_ credential: Credential, now: Date = Date()) -> Date? {
+        guard credential.kind == .dpop, let end = credential.expiresAt else { return nil }
+        return end.addingTimeInterval(-min(ConnectionTiming.renewBefore, max(0, end.timeIntervalSince(now)) / 2))
+    }
+
+    /// Arms the renewal of the account session just used or minted, while its server stays connected over the
+    /// account; a renewal that fails is tried again in 30 s.
+    func renewBefore(_ serverId: String, _ credential: Credential) {
+        guard let at = Self.renewAt(credential) else { return }
+        armRenewal(serverId, at: at)
+    }
+
+    private func armRenewal(_ serverId: String, at: Date) {
+        renewals[serverId]?.cancel()
+        renewals[serverId] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, at.timeIntervalSinceNow)))
+            guard !Task.isCancelled, let self, let entry = self.entry(serverId), self.state(serverId).phase == .connected,
+                  entry.activeRoute?.authorization == .account else { return }
+            if (try? await self.renew(entry)) == nil { self.armRenewal(serverId, at: Date().addingTimeInterval(30)) }
+        }
+    }
+
+    /// The client for a server whose account session ends within a minute, signed with a new one (an upload step asks
+    /// for its ticket in the background, where no line renews it). Others come back as they are.
+    func renewedIfEnding(_ api: API) async -> API {
+        guard let credential = api.credential, credential.kind == .dpop,
+              credential.expired(Date().addingTimeInterval(ConnectionTiming.renewBefore)),
+              let key = api.key, let entry = entry(key: key), let fresh = try? await renew(entry) else { return api }
+        var out = api
+        out.credential = fresh
+        return out
     }
 
     // MARK: inside
@@ -928,8 +1001,19 @@ final class Connections: ObservableObject {
         }
     }
 
-    private func networkChanged(online: Bool) {
-        guard offline == online else { return }
+    /// Any change of the network path (online, offline, another interface or gateway, also while the app was away):
+    /// the route last connected over is forgotten until the supervisor checks it on this network.
+    func pathChanged(online: Bool, shape: String, defaults: UserDefaults = .standard) {
+        let key = "connections.path"
+        let changed = defaults.string(forKey: key).map { $0 != shape } ?? false
+        defaults.set(shape, forKey: key)
+        if changed {
+            for entry in saved.servers where entry.activeRouteId != nil { update(entry.serverId, signal: false) { $0.activeRouteId = nil } }
+        }
+        guard offline == online else {
+            if changed, online { supervisors.values.forEach { $0.post(.network(online: true)) } }
+            return
+        }
         offline = !online
         supervisors.values.forEach { $0.post(.network(online: online)) }
     }
@@ -955,6 +1039,7 @@ extension API {
         let credential = route.flatMap { ServerRegistry.credential(entry.serverId, route: $0) }
         var api = API(server: route?.url ?? entry.home, cookie: credential?.kind == .cookie ? credential?.token : nil, username: entry.username)
         if credential?.kind != .cookie { api.credential = credential }
+        api.unrouted = route == nil
         api.key = entry.key
         // the phone's own pick of workspace on this server (`WorkspacePick`), on every request
         api.workspace = WorkspacePick.get(server: entry.key, username: entry.username)

@@ -297,13 +297,41 @@ enum BackgroundRefresh {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
             MainActor.assumeIsolated {
                 schedule()
-                let work = Task {
+                task.expirationHandler = run(done: task.setTaskCompleted(success:)) {
                     await UploadEngine.shared.reconcile()
                     await AppNotifications.shared.lookInBackground()
-                    task.setTaskCompleted(success: true)
                 }
-                task.expirationHandler = { work.cancel() }
             }
+        }
+    }
+
+    /// Runs `work` and reports it done once: true when it finished, false when iOS took the time back first (the
+    /// handler this returns; iOS ends the app if a task is never reported done).
+    static func run(done: @escaping (Bool) -> Void, _ work: @escaping () async -> Void) -> () -> Void {
+        let once = Once(done)
+        let task = Task { @MainActor in
+            await work()
+            once.report(true)
+        }
+        return {
+            task.cancel()
+            once.report(false)
+        }
+    }
+
+    /// The expiration handler may come on any thread.
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done: ((Bool) -> Void)?
+
+        init(_ done: @escaping (Bool) -> Void) { self.done = done }
+
+        func report(_ success: Bool) {
+            lock.lock()
+            let done = self.done
+            self.done = nil
+            lock.unlock()
+            done?(success)
         }
     }
 

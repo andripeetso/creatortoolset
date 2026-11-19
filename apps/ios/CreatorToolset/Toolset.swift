@@ -22,10 +22,8 @@ extension API {
     /// For calls that take minutes (an upload's part, transcription, the change stream).
     static let slow: URLSession = {
         let config = URLSessionConfiguration.default
-        config.httpShouldSetCookies = false
-        config.httpCookieStorage = nil
         config.timeoutIntervalForRequest = 600
-        return URLSession(configuration: config)
+        return making(config)
     }()
 
     static let snake: JSONDecoder = {

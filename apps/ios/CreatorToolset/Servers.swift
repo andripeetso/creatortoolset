@@ -130,19 +130,31 @@ struct API {
     /// The workspace every request works in (`X-CT-Workspace`): the phone's pick on this server (`API.connected`), or
     /// a chat's own for that chat's calls. nil: the server's own rule.
     var workspace: String? = nil
+    /// No route was checked yet (`ServerEntry.activeRoute` is nil): every request goes nowhere, so neither a sign-in nor
+    /// footage reaches whatever answers at a saved plain-HTTP address on another network.
+    var unrouted = false
+
+    /// A host that never resolves (RFC 2606): a request to it fails as no connection.
+    static let nowhere = URL(string: "https://unrouted.invalid/")!
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        return making(config)
+    }()
+
+    /// A session that keeps no cookies and never takes a sign-in header to another host on a redirect.
+    static func making(_ config: URLSessionConfiguration) -> URLSession {
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
-        config.timeoutIntervalForRequest = 30
-        return URLSession(configuration: config)
-    }()
+        return URLSession(configuration: config, delegate: SameHostRedirects(), delegateQueue: nil)
+    }
 
     /// A path on this server. Only this server is ever asked: another site's address (in something the server passed
     /// on, a picture's or a video's) becomes this server's front door, so neither the request nor the sign-in that
     /// rides on it goes anywhere else.
     func url(_ path: String) -> URL {
+        guard !unrouted else { return Self.nowhere }
         guard let made = URL(string: path.hasPrefix("/") ? String(path.dropFirst()) : path, relativeTo: server)?.absoluteURL,
               made.scheme == server.scheme, made.host() == server.host(), made.port == server.port else { return server }
         return made
@@ -177,9 +189,9 @@ struct API {
     }
 
     /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled. A
-    /// DPoP proof the server couldn't check this time (`INVALID_DPOP`, its replay cache full) is sent once more with a
-    /// fresh proof.
-    func data(_ request: URLRequest, session: URLSession = API.session, again: Bool = true) async throws -> Data {
+    /// DPoP proof the server couldn't check this time (`INVALID_DPOP`) is sent once more with a fresh proof; a server
+    /// too busy to check one (503 `busy`) is asked again later, up to 3 times, after its `Retry-After` or 1, 2, 4 s.
+    func data(_ request: URLRequest, session: URLSession = API.session, again: Bool = true, busyTries: Int = 0) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -188,6 +200,15 @@ struct API {
             throw APIError.offline
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 503, busyTries < 3, Self.busy(data) {
+            let after = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+            try await Task.sleep(for: .seconds(min(after ?? pow(2, Double(busyTries)), 10)))
+            var fresh = request
+            if let credential, credential.kind == .dpop, let url = request.url {
+                for (k, v) in credential.headers(method: request.httpMethod ?? "GET", url: url) { fresh.setValue(v, forHTTPHeaderField: k) }
+            }
+            return try await self.data(fresh, session: session, again: again, busyTries: busyTries + 1)
+        }
         if status == 401 {
             let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? String
             if code == "INVALID_DPOP", again, let credential, credential.kind == .dpop, let url = request.url {
@@ -206,6 +227,12 @@ struct API {
             throw APIError.server(status, Self.message(data, status: status))
         }
         return data
+    }
+
+    /// A 503 that says the server is too busy to check a signature now (`{code|error: "busy"}`).
+    static func busy(_ data: Data) -> Bool {
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return json?["code"] as? String == "busy" || json?["error"] as? String == "busy"
     }
 
     /// The server's `{ error }`, or its plain-text answer, or the status.
@@ -365,6 +392,20 @@ enum SignIn {
         }
         guard let url = response.url else { return nil }
         return HTTPCookie.cookies(withResponseHeaderFields: headers, for: url).first { $0.name == "cap_auth" }?.value
+    }
+}
+
+/// A redirect to another host (a storage bucket a media URL points at) takes none of the headers that sign a request
+/// in or name a workspace.
+final class SameHostRedirects: NSObject, URLSessionTaskDelegate {
+    static let signIn = ["Authorization", "DPoP", "Cookie", MediaTicket.header, WorkspacePick.header]
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        guard let from = response.url, let to = request.url, Routes.origin(from) != Routes.origin(to) else { return request }
+        var out = request
+        for name in Self.signIn { out.setValue(nil, forHTTPHeaderField: name) }
+        return out
     }
 }
 

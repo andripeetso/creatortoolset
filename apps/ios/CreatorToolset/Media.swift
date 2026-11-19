@@ -34,9 +34,9 @@ struct RemoteImage: View {
 
 extension API {
     /// A player for a media path. The cookie is scoped to the server's host, so a redirect to a bucket never gets it.
-    /// A DPoP session's player carries a media ticket in a cookie (`TicketPlayer`).
+    /// A device session's player (Bearer or DPoP) carries a media ticket in a cookie (`TicketPlayer`).
     func player(_ path: String) -> AVPlayer {
-        needsTicket ? TicketPlayer(api: self, path: path) : AVPlayer(playerItem: AVPlayerItem(asset: playerAsset(path)))
+        webNeedsTicket ? TicketPlayer(api: self, path: path) : AVPlayer(playerItem: AVPlayerItem(asset: playerAsset(path)))
     }
 
     /// The asset for a media path: its URL as it is, never a credential in it (URLs end up in access logs).
@@ -54,16 +54,13 @@ extension API {
         }
         if let ticket, let c = MediaTicket.cookie(ticket, for: server) { cookies.append(c) }
         var options: [String: Any] = [AVURLAssetHTTPCookiesKey: cookies]
-        var fields: [String: String] = [:]
-        // a paired route's bearer token; a DPoP session's proof is good for one request, so its players carry a ticket
-        if cookie == nil, let credential, credential.kind == .bearer { fields = credential.headers(method: "GET", url: server) }
-        if let workspace { fields[WorkspacePick.header] = workspace }
-        if !fields.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = fields }
+        // a header option follows a redirect to any host, so no session ever rides in one
+        if let workspace { options["AVURLAssetHTTPHeaderFieldsKey"] = [WorkspacePick.header: workspace] }
         return options
     }
 }
 
-/// A DPoP session's player: its item comes once its media ticket is in, a moment later, playing if `play()` was already
+/// A device session's player: its item comes once its media ticket is in, a moment later, playing if `play()` was already
 /// asked. A ticket lives 5 minutes, so an item that played and then fails (its range request got a 401) is loaded
 /// again with a new ticket from where it was. One that fails before it ever played stays failed (no loop).
 final class TicketPlayer: AVPlayer {

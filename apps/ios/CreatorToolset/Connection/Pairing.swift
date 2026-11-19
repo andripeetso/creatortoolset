@@ -165,6 +165,11 @@ enum Pairing {
         request.httpBody = Data(form(fields).utf8)
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        // too busy to check the proof now: a retry later, never a refusal the person has to act on
+        if status == 503 {
+            throw ConnectionFailure(reason: .remoteUnavailable, detail: "The computer is busy. Try again in a minute.", hop: .server,
+                                    cause: "busy", httpStatus: status)
+        }
         guard status == 200 else {
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let words = object?["error_description"] as? String ?? object?["error"] as? String
