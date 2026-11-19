@@ -3,10 +3,11 @@ import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Film, Loader2, Magnet, MousePointer2, Music, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
-  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
+  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
   place, remove, removeTrack, rippleToPlayhead, setItems, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
+import { keyAction } from "@/lib/nle/keys";
 import { NleInspector } from "./NleInspector";
 import { nleAudio } from "@/lib/nle/audio";
 import type { NleFile } from "./NlePlayer";
@@ -74,6 +75,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [marks, setMarks] = useState<[number | null, number | null]>([null, null]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
+  const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
   useEffect(() => {
     const fresh = withKeys(initial);
@@ -107,10 +109,10 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
-    let last = performance.now();
+    let then = performance.now();
     const step = (now: number) => {
-      const t = timeRef.current + ((now - last) / 1000) * rate;
-      last = now;
+      const t = timeRef.current + ((now - then) / 1000) * rate;
+      then = now;
       if (t >= last && rate > 0) {
         setTime(last);
         setPlaying(false);
@@ -189,7 +191,12 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     },
     unlink: () => sel.length && commit(unlink(tl, sel)),
     link: () => sel.length > 1 && commit(linkTogether(tl, sel)),
-    blade: () => commit(blade(tl, Math.round(time * fps), sel.length ? sel : undefined)),
+    // the picked clips under the playhead, or (none there) every clip under it on the unlocked tracks
+    blade: () => {
+      const f = Math.round(time * fps);
+      const under = sel.filter((k) => { const it = find(tl, k)!.item; return it.rec < f && f < endOf(it); });
+      commit(blade(tl, f, under.length ? under : undefined));
+    },
   };
 
   const save = async () => {
@@ -209,61 +216,75 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
-      const k = e.key.toLowerCase();
-      const mod = e.metaKey || e.ctrlKey;
+      const a = keyAction(e);
+      if (!a) return;
       const f = Math.round(time * fps);
-      // Y / ⌘Y: the clips from the playhead on / before it, all tracks; with ⌥ only the track under the pointer (or the
-      // picked clips' tracks), as Resolve has them
-      const pickFrom = (dir: 1 | -1) => {
-        const over = document.querySelector<HTMLElement>("[data-lane]:hover")?.dataset.lane;
-        const tracks = !e.altKey ? undefined : over ? [over] : sel.length ? [...new Set(sel.map((s) => find(tl, s)!.track))] : ["V1"];
-        setSelected(clipsFrom(tl, f, dir, tracks));
+      const zoom = (key: string) => zoomKeys.current?.(new KeyboardEvent("keydown", { key }));
+      const step = (d: number) => {
+        play(false);
+        seek(time + d / fps);
       };
-      if (e.code === "KeyY" && !e.shiftKey) pickFrom(mod ? -1 : 1);
-      else if (mod && k === "s") void save();
-      else if (mod && k === "z") setHist(e.shiftKey ? histRedo : histUndo);
-      else if (mod && e.key === "\\") act.blade();
-      else if (mod && k === "c") act.copy();
-      else if (mod && k === "x") act.cut();
-      else if (mod && k === "v") act.paste();
-      else if (mod && k === "d") act.duplicate();
-      else if (mod && k === "b") act.blade();
-      else if (mod && k === "a") setSelected(Object.values(tl.tracks).flatMap((t) => t.items.map((i) => i._k!)));
-      else if (e.altKey && e.code === "KeyX") setMarks([null, null]);
-      else if (mod || e.altKey) return;
-      else if (e.key === " ") play(!playing);
-      else if (k === "k") play(false);
-      else if (k === "l") shuttle(1);
-      else if (k === "j") shuttle(-1);
-      else if (k === "i") setMarks(([, o]) => [f, o !== null && o > f ? o : null]);
-      else if (k === "o") setMarks(([i]) => [i !== null && i < f ? i : null, f]);
-      else if (k === "a") setTool("select");
-      else if (k === "t") setTool("trim");
-      else if (k === "b") setTool("blade");
-      else if (k === "n") setSnap((s) => !s);
-      // Q / W: ripple-trim the clip under the playhead's start / end to it; E: the picked clip's nearer end to it
-      else if (k === "q" && !readOnly) {
-        const h = clipAt(tl, f, sel);
-        const next = rippleToPlayhead(tl, f, "head", sel);
-        commit(next);
-        if (h && next !== tl) seek(h.item.rec / fps); // the playhead goes to the cut, where the next shot now starts
-      } else if (k === "w" && !readOnly) commit(rippleToPlayhead(tl, f, "tail", sel));
-      else if (k === "e" && sel.length) commit(extendTo(tl, sel[0], f));
-      else if (k === "d" && sel.length) commit(setItems(tl, sel, { enabled: find(tl, sel[0])!.item.enabled === false ? undefined : false }));
-      else if ((e.key === "," || e.key === "<" || e.key === "." || e.key === ">") && sel.length) commit(move(tl, sel, (e.key === "," || e.key === "<" ? -1 : 1) * (e.shiftKey ? 5 : 1)));
-      else if (e.key === "Delete" || e.key === "Backspace") act.delete(e.shiftKey);
-      else if (e.key === "Escape") setSelected([]);
-      else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        play(false);
-        seek(time + ((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? fps : 1)) / fps);
-      } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-        play(false);
-        const p = e.key === "ArrowUp" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);
-        if (p !== undefined) seek(p / fps);
-      } else if (e.key === "Home") seek(0);
-      else if (e.key === "End") seek(last);
-      else if (k === "z" && e.shiftKey) zoomKeys.current?.(new KeyboardEvent("keydown", { key: "\\" }));
-      else if (!zoomKeys.current?.(e)) return;
+      if (a.startsWith("lock:")) {
+        const id = a.slice(5);
+        if (tl.tracks[id]) commit(setTrack(tl, id, { locked: tl.tracks[id].locked ? undefined : true }));
+      } else switch (a) {
+        case "play": play(!playing); break;
+        case "stop": play(false); break;
+        case "forward": shuttle(1); break;
+        case "reverse": shuttle(-1); break;
+        case "save": void save(); break;
+        case "undo": setHist(histUndo); break;
+        case "redo": setHist(histRedo); break;
+        case "split": act.blade(); break;
+        case "copy": act.copy(); break;
+        case "cut": act.cut(); break;
+        case "paste": act.paste(); break;
+        case "duplicate": act.duplicate(); break;
+        case "selectAll": setSelected(Object.values(tl.tracks).flatMap((t) => t.items.map((i) => i._k!))); break;
+        case "deselect": setSelected([]); break;
+        // ⌥Y / ⌥⌘Y: every clip from the playhead on / up to it, on all tracks
+        case "selectForward": setSelected(clipsFrom(tl, f, 1)); break;
+        case "selectBack": setSelected(clipsFrom(tl, f, -1)); break;
+        case "rippleStart": {
+          if (readOnly) break;
+          const h = clipAt(tl, f, sel);
+          const next = rippleToPlayhead(tl, f, "head", sel);
+          commit(next);
+          if (h && next !== tl) seek(h.item.rec / fps); // the playhead goes to the cut, where the next shot now starts
+          break;
+        }
+        case "rippleEnd": if (!readOnly) commit(rippleToPlayhead(tl, f, "tail", sel)); break;
+        case "delete": act.delete(false); break;
+        case "rippleDelete": act.delete(true); break;
+        case "enable": if (sel.length) commit(setItems(tl, sel, { enabled: find(tl, sel[0])!.item.enabled === false ? undefined : false })); break;
+        case "markIn": setMarks(([, o]) => [f, o !== null && o > f ? o : null]); break;
+        case "markOut": setMarks(([i]) => [i !== null && i < f ? i : null, f]); break;
+        case "clearMarks": setMarks([null, null]); break;
+        case "toolSelect": setTool("select"); break;
+        case "toolTrim": setTool("trim"); break;
+        case "toolBlade": setTool("blade"); break;
+        case "snap": setSnap((s) => !s); break;
+        case "nudgeBack": case "nudgeBack5": case "nudgeOn": case "nudgeOn5":
+          if (sel.length) commit(move(tl, sel, (a.startsWith("nudgeBack") ? -1 : 1) * (a.endsWith("5") ? 5 : 1)));
+          break;
+        case "frameBack": step(-1); break;
+        case "frameOn": step(1); break;
+        case "secondBack": step(-fps); break;
+        case "secondOn": step(fps); break;
+        case "prevEdit": case "nextEdit": {
+          play(false);
+          const p = a === "prevEdit" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);
+          if (p !== undefined) seek(p / fps);
+          break;
+        }
+        case "start": seek(0); break;
+        case "end": seek(last); break;
+        case "zoomIn": zoom("="); break;
+        case "zoomOut": zoom("-"); break;
+        case "zoomFit": zoom("\\"); break;
+        case "mediaPool": panelKeys.current?.("media"); break;
+        case "inspector": panelKeys.current?.("inspector"); break;
+      }
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
@@ -288,7 +309,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   return (
     <>
-      <NleLayout
+      <NleLayout panelKeys={panelKeys}
         media={
           <Panel title="Media" className="flex-1">
             <Sources tl={tl} nameOf={nameOfSrc} here={urlFor} bin={!!bin}
@@ -309,7 +330,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               transport={
                 <>
                   <button type="button" aria-label="Start" title="Start (Home)" onClick={() => seek(0)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipBack className="size-3.5" /></button>
-                  <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space, K)" : "Play (Space, L; J plays back)"} onClick={() => play(!playing)}
+                  <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space, 2, K)" : "Play (Space, 2; 3 or L forward, 1 or J back)"} onClick={() => play(!playing)}
                     className="inline-flex size-7 items-center justify-center rounded-full bg-zinc-200 text-zinc-900 hover:bg-white">
                     {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
                   </button>
@@ -331,7 +352,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               <>
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
-                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
                 {sep}
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Edit mode">
                   {(["overwrite", "insert"] as const).map((m) => (
