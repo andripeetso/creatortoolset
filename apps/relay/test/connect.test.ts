@@ -114,26 +114,32 @@ async function tokenFor(p: ReturnType<typeof phone>, account = 'acct-1', scope?:
   return r.json.access_token as string;
 }
 
+// what a computer's /api/connect/link-proof answers (contract.md), for the Mac app to pass on as it is
+function linkProofBody(key: KeyObject, challenge: string, over: Record<string, unknown> = {}, publicKey = publicKeyB64(createPublicKey(key))) {
+  const id = createHash('sha256').update(Buffer.from(publicKey, 'base64')).digest('hex').slice(0, 32);
+  const origin = 'http://127.0.0.1:43128';
+  const claims = { iss: `ct-computer:${id}`, aud: SELF, sub: id, jti: randomUUID(), iat: clock, exp: clock + 300, challenge, publicKey, origin, name: 'Studio Mac', ...over };
+  return { proof: signJwt(key, TYP.linkProof, claims), computerId: id, publicKey, origin, name: 'Studio Mac' };
+}
+
+const challengeFor = async (account = 'acct-1') => (await call('POST', '/v1/computers/link-challenges', { token: acct(account) })).json.challenge as string;
+
 // a linked computer, through the account-token link the Mac app drives
 async function linkComputer(account = 'acct-1') {
-  const kp = generateKeyPairSync('ed25519');
-  const ch = await call('POST', '/v1/computers/link-challenges', { token: acct(account) });
-  assert.equal(ch.status, 200);
-  const payload = JSON.stringify({ nonce: ch.json.challenge, name: 'Studio Mac', origin: 'http://127.0.0.1:43128' });
-  const r = await call('POST', '/v1/computers/link', {
-    token: acct(account),
-    body: { public_key: publicKeyB64(kp.publicKey), payload, signature: sign(null, Buffer.from(payload), kp.privateKey).toString('base64') },
-  });
+  const key = generateKeyPairSync('ed25519').privateKey;
+  const r = await call('POST', '/v1/computers/link', { token: acct(account), body: linkProofBody(key, await challengeFor(account)) });
   assert.equal(r.status, 200, JSON.stringify(r.json));
-  return { id: r.json.computerId as string, key: kp.privateKey as KeyObject, out: r.json };
+  return { id: r.json.computerId as string, key, out: r.json };
 }
 
 // what a computer answers: its own key signs the nonce it was asked with
 function healthy(id: string, key: KeyObject, over: Record<string, unknown> = {}) {
   pc.answer = (path, c) => {
     if (path !== '/api/connect/health') return { status: 404, body: {} };
-    const claims = { iss: id, nonce: c.nonce, checkedAt: new Date(clock * 1000).toISOString(), descriptor: { serverId: id, label: 'Studio Mac' }, iat: clock, exp: clock + 60, ...over };
-    return { status: 200, body: { proof: signJwt(key, TYP.healthAnswer, claims) } };
+    const checkedAt = new Date(clock * 1000).toISOString();
+    const descriptor = { serverId: id, label: 'Studio Mac' };
+    const claims = { iss: `ct-computer:${id}`, aud: SELF, sub: id, jti: randomUUID(), iat: clock, exp: clock + 60, requestNonce: c.nonce, status: 'online', checkedAt, descriptor, ...over };
+    return { status: 200, body: { serverId: id, status: 'online', checkedAt, descriptor, proof: signJwt(key, TYP.healthAnswer, claims) } };
   };
 }
 
@@ -143,7 +149,7 @@ function minting(id: string, key: KeyObject, over: (c: Record<string, unknown>) 
     const exp = clock + 120;
     const o = over(c);
     const credential = 'ctc_one-time';
-    const claims = { iss: id, nonce: c.nonce, jkt: (c.cnf as { jkt: string }).jkt, credential, exp, iat: clock, ...o.claims };
+    const claims = { iss: `ct-computer:${id}`, aud: SELF, sub: id, jti: randomUUID(), iat: clock, exp, requestNonce: c.nonce, clientProofKeyThumbprint: c.clientProofKeyThumbprint, credential, ...o.claims };
     return { status: 200, body: { credential, expiresAt: new Date(exp * 1000).toISOString(), proof: signJwt(key, TYP.mintAnswer, claims), ...o.body } };
   };
 }
@@ -161,7 +167,8 @@ const connect = (p: ReturnType<typeof phone>, token: string, id: string, jkt = p
 
 test('link: a challenge and the computer-signed proof link it, store its key, and hand back what the computer keeps', async () => {
   const { id, out } = await linkComputer();
-  assert.equal(out.accountId, 'acct-1');
+  assert.equal(out.owner, 'acct-1');
+  assert.equal(out.hostname, `${id}.${ZONE}`);
   assert.equal(out.endpoint, `https://${id}.${ZONE}`);
   assert.ok(out.tunnelToken.startsWith('connector-token-'));
   assert.equal(out.brokerKey, publicKeyB64(deps.signing.publicKey));
@@ -172,6 +179,26 @@ test('link: a challenge and the computer-signed proof link it, store its key, an
   await linkComputer();
   await linkComputer();
   assert.equal((await call('POST', '/v1/computers/link-challenges', { token: acct() })).json.error, 'limit_reached');
+});
+
+test('link: a proof for another broker, past its time, by another key, or for a spent challenge is refused', async () => {
+  const key = generateKeyPairSync('ed25519').privateKey;
+  const link = (body: Record<string, unknown>) => call('POST', '/v1/computers/link', { token: acct(), body });
+  let ch = await challengeFor();
+  assert.equal((await link(linkProofBody(key, ch, { aud: 'https://other-broker.example' }))).json.error, 'bad_signature');
+  assert.equal((await link(linkProofBody(key, ch, { exp: clock }))).json.error, 'stale_proof');
+  assert.equal((await link(linkProofBody(key, ch, { exp: clock + 400 }))).json.error, 'stale_proof');
+  assert.equal((await link(linkProofBody(key, ch, { iss: 'ct-computer:' + 'f'.repeat(32) }))).json.error, 'bad_signature');
+  // signed by one key, presented as another's
+  const other = publicKeyB64(generateKeyPairSync('ed25519').publicKey);
+  assert.equal((await link(linkProofBody(key, ch, {}, other))).json.error, 'bad_signature');
+  // a challenge another account was given
+  assert.equal((await link(linkProofBody(key, await challengeFor('acct-2')))).json.error, 'bad_challenge');
+  assert.equal((await link(linkProofBody(key, ch))).status, 200, 'the challenge was still good after the refusals');
+  ch = await challengeFor();
+  const again = linkProofBody(generateKeyPairSync('ed25519').privateKey, ch);
+  assert.equal((await link(again)).status, 200);
+  assert.equal((await link(again)).json.error, 'bad_challenge');
 });
 
 test('link: a computer linked before keys were kept gets its key from its next signed tunnel ask', async () => {
@@ -285,10 +312,10 @@ test('status: what the computer is sent is signed by the broker, for this comput
   let seen: Record<string, unknown> = {};
   pc.answer = (path, c) => {
     seen = c;
-    return { status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { iss: id, nonce: c.nonce, iat: clock, exp: clock + 60 }) } };
+    return { status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { iss: `ct-computer:${id}`, aud: SELF, sub: id, requestNonce: c.nonce, iat: clock, exp: clock + 60 }) } };
   };
   await status(p, await tokenFor(p), id);
-  assert.equal(seen.aud, id);
+  assert.equal(seen.aud, `ct-computer:${id}`);
   assert.equal(seen.sub, 'acct-1');
   assert.equal(seen.iss, SELF);
   assert.deepEqual(seen.scope, ['status']);
@@ -306,10 +333,13 @@ test('status: an answer for another nonce, from another key, another computer id
     assert.equal(r.status, 502);
     assert.equal(r.json.error, 'invalid_response');
   };
-  const ok = (c: Record<string, unknown>) => ({ iss: id, nonce: c.nonce, iat: clock, exp: clock + 60 });
-  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), nonce: 'other' }) } }));
+  const ok = (c: Record<string, unknown>) => ({ iss: `ct-computer:${id}`, aud: SELF, sub: id, requestNonce: c.nonce, iat: clock, exp: clock + 60 });
+  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), requestNonce: 'other' }) } }));
+  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), aud: 'https://other-broker.example' }) } }));
+  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), sub: 'f'.repeat(32) }) } }));
+  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), exp: clock }) } }));
   await bad((_p, c) => ({ status: 200, body: { proof: signJwt(generateKeyPairSync('ed25519').privateKey, TYP.healthAnswer, ok(c)) } }));
-  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), iss: 'f'.repeat(32) }) } }));
+  await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), iss: `ct-computer:${'f'.repeat(32)}` }) } }));
   await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), iat: clock - 120 }) } }));
   await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.mintAnswer, ok(c)) } })); // a mint answer is not a health answer
   await bad((_p, c) => ({ status: 200, body: { proof: signJwt(key, TYP.healthAnswer, { ...ok(c), descriptor: { serverId: 'f'.repeat(32) } }) } }));
@@ -396,7 +426,7 @@ test('connect: the computer mints a one-time credential bound to the phone key, 
   assert.equal(r.json.credential, 'ctc_one-time');
   assert.equal(r.json.endpoint, `https://${id}.${ZONE}`);
   // what the computer checks: the broker's key, this computer, this account, the phone's key, one scope, ≤ 300 s
-  assert.equal(asked.aud, id);
+  assert.equal(asked.aud, `ct-computer:${id}`);
   assert.equal(asked.sub, 'acct-1');
   assert.deepEqual(asked.cnf, { jkt: p.jkt });
   assert.equal(asked.clientProofKeyThumbprint, p.jkt);
@@ -427,13 +457,14 @@ test('connect: a mint answer for another key, nonce, credential or expiry, or li
     assert.equal(r.status, 502, JSON.stringify(r.json));
     assert.equal(r.json.error, 'invalid_response');
   };
-  await bad(() => ({ claims: { jkt: phone().jkt } }));
-  await bad(() => ({ claims: { nonce: 'other' } }));
+  await bad(() => ({ claims: { clientProofKeyThumbprint: phone().jkt } }));
+  await bad(() => ({ claims: { requestNonce: 'other' } }));
+  await bad(() => ({ claims: { aud: 'https://other-broker.example' } }));
   await bad(() => ({ claims: { credential: 'ctc_other' } }));
   await bad(() => ({ body: { credential: 'ctc_other' } }));
   await bad(() => ({ claims: { exp: clock + 121 } }));
   await bad(() => ({ claims: { exp: clock + 400 }, body: { expiresAt: new Date((clock + 400) * 1000).toISOString() } }));
-  await bad(() => ({ claims: { iss: 'f'.repeat(32) } }));
+  await bad(() => ({ claims: { iss: `ct-computer:${'f'.repeat(32)}` } }));
   minting(id, generateKeyPairSync('ed25519').privateKey);
   assert.equal((await connect(p, token, id)).json.error, 'invalid_response');
 });

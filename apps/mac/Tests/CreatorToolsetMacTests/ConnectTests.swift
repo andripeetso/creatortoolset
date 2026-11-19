@@ -84,11 +84,11 @@ final class ConnectTests: XCTestCase {
         broker.answer = { r in
             switch r.path {
             case "/v1/computers/link-challenges": return (200, #"{"challenge":"ch-1","expiresAt":"2026-11-18T12:00:00Z"}"#)
-            case "/v1/computers/link": return (200, #"{"computerId":"bbbb","accountId":"acct-1","endpoint":"https://bbbb.tunnels.example.com","tunnelToken":"tok","brokerKey":"key"}"#)
+            case "/v1/computers/link": return (200, #"{"computerId":"bbbb","owner":"acct-1","hostname":"bbbb.tunnels.example.com","endpoint":"https://bbbb.tunnels.example.com","tunnelToken":"tok","brokerKey":"key","brokerKid":"k1","computer_id":"bbbb"}"#)
             default: return (404, "{}")
             }
         }
-        let proof = Data(#"{"public_key":"pk","payload":"{\"nonce\":\"ch-1\"}","signature":"sig"}"#.utf8)
+        let proof = Data(#"{"proof":"a.b.c","computerId":"bbbb","publicKey":"pk","origin":"http://127.0.0.1:43128","name":"Studio Mac"}"#.utf8)
         var local: [(String, [String: Any])] = []
         try await BrokerClient(base: broker.url).link(token: "relay-tok") { path, body in
             local.append((path, body))
@@ -100,9 +100,10 @@ final class ConnectTests: XCTestCase {
         XCTAssertEqual(local.map(\.0), ["/api/connect/link-proof", "/api/connect/relay-config"])
         XCTAssertEqual(local[0].1["challenge"] as? String, "ch-1")
         XCTAssertEqual(local[0].1["relayUrl"] as? String, broker.url.absoluteString)
-        XCTAssertEqual(local[1].1["computerId"] as? String, "bbbb")
-        XCTAssertEqual(local[1].1["accountId"] as? String, "acct-1")
-        XCTAssertEqual(local[1].1["relayUrl"] as? String, broker.url.absoluteString)
+        // exactly what the server's relay-config takes: the broker's answer, less its older names, and the broker's address
+        XCTAssertEqual(Set(local[1].1.keys), ["owner", "computerId", "hostname", "tunnelToken", "brokerKey", "brokerKid", "brokerUrl"])
+        XCTAssertEqual(local[1].1["owner"] as? String, "acct-1")
+        XCTAssertEqual(local[1].1["brokerUrl"] as? String, broker.url.absoluteString)
     }
 
     func testALinkTheBrokerRefusesNeverReachesTheServersConfig() async {

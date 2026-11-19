@@ -96,8 +96,10 @@ struct BrokerClient {
         let relayUrl = base.absoluteString
         let proof = try await local("/api/connect/link-proof", ["challenge": challenge.challenge, "relayUrl": relayUrl])
         let linked = try await post("/v1/computers/link", token: token, body: proof)
-        guard var config = try JSONSerialization.jsonObject(with: linked) as? [String: Any] else { throw BrokerError.status(0) }
-        config["relayUrl"] = relayUrl
+        guard let answer = try JSONSerialization.jsonObject(with: linked) as? [String: Any] else { throw BrokerError.status(0) }
+        // the fields the server's relay-config takes (api/connect/contract.md), and the broker it linked with
+        var config = answer.filter { ["owner", "computerId", "hostname", "tunnelToken", "brokerKey", "brokerKid"].contains($0.key) }
+        config["brokerUrl"] = relayUrl
         _ = try await local("/api/connect/relay-config", config)
     }
 }

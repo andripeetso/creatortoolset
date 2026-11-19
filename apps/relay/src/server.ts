@@ -73,8 +73,9 @@ async function body(req: Request): Promise<Record<string, unknown>> {
 export async function handle(d: Deps, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
-  const link: LinkDeps = { db: d.db, cf: d.cf, now: d.now, limitFor: d.limitFor, tunnelDomain: d.tunnelDomain, signing: d.signing };
-  const cn: ConnectDeps = { db: d.db, now: d.now, signing: d.signing, accountSecret: d.accountSecret, self: d.selfUrl || d.publicUrl, fetch: d.fetch, originOf: d.originOf };
+  const self = new URL(d.selfUrl || d.publicUrl).origin;
+  const link: LinkDeps = { db: d.db, cf: d.cf, now: d.now, limitFor: d.limitFor, tunnelDomain: d.tunnelDomain, signing: d.signing, self };
+  const cn: ConnectDeps = { db: d.db, now: d.now, signing: d.signing, accountSecret: d.accountSecret, self, fetch: d.fetch, originOf: d.originOf };
   const gw: GatewayDeps | null = d.gateway ? { db: d.db, now: d.now, publicUrl: d.publicUrl, ...d.gateway } : null;
   try {
     if (req.method === 'GET' && path === '/healthz') return new Response('ok');

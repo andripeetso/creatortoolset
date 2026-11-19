@@ -23,20 +23,24 @@ const COMPUTER_TIMEOUT_MS = 10_000;
 const ANSWER_SKEW = 60; // seconds a computer's signed answer may be off this clock
 const MAX_ANSWER = 64 * 1024;
 
+// The computer's side of these is apps/captions/api/connect/contract.md.
 export const TYP = {
   token: 'ct-relay-dpop+jwt',
-  health: 'ct-health-request+jwt',
-  healthAnswer: 'ct-health-response+jwt',
-  mint: 'ct-mint-request+jwt',
-  mintAnswer: 'ct-mint-response+jwt',
+  health: 'ct-connect-health+jwt',
+  healthAnswer: 'ct-connect-health-answer+jwt',
+  mint: 'ct-connect-mint+jwt',
+  mintAnswer: 'ct-connect-mint-answer+jwt',
+  linkProof: 'ct-link-proof+jwt',
 } as const;
+/** How a computer is named in what is signed for it, and in what it signs. */
+export const computerName = (id: string) => `ct-computer:${id}`;
 
 export interface ConnectDeps {
   db: DatabaseSync;
   now: () => number;
   signing: { privateKey: KeyObject; publicKey: KeyObject; kid: string };
   accountSecret: Buffer;
-  /** This broker's own public address: the iss of what it signs and the base of every DPoP htu. */
+  /** This broker's own origin: the iss of what it signs, the aud of what computers sign, the base of every DPoP htu. */
   self: string;
   fetch?: typeof fetch;
   /** Where a computer's tunnel hostname is reached (tests point it at a local server). */
@@ -178,12 +182,13 @@ async function askComputer(d: ConnectDeps, hostname: string, path: string, proof
   return { ok: false, failure: 'invalid_response' };
 }
 
-/** The claims of a computer's answer, when its own key signed it for this request; else null. */
+/** The claims of a computer's answer, when its own key signed it to this broker for this request; else null. */
 function answerClaims(d: ConnectDeps, row: Linked, computerId: string, token: unknown, typ: string, nonce: string) {
   const c = verifyJwt(token, parsePublicKey(row.public_key!), typ);
   const now = d.now();
-  if (!c || c.iss !== computerId || c.nonce !== nonce) return null;
+  if (!c || c.iss !== computerName(computerId) || c.sub !== computerId || c.aud !== d.self || c.requestNonce !== nonce) return null;
   if (typeof c.iat !== 'number' || Math.abs(now - c.iat) > ANSWER_SKEW) return null;
+  if (typeof c.exp !== 'number' || c.exp <= now) return null;
   return c;
 }
 
@@ -193,7 +198,7 @@ const request = (d: ConnectDeps, account: string, computerId: string, scope: str
   return {
     nonce,
     now,
-    claims: { iss: d.self, aud: computerId, sub: account, jti: randomUUID(), iat: now, exp: now + REQUEST_TTL, nonce, scope: [scope], ...extra },
+    claims: { iss: d.self, aud: computerName(computerId), sub: account, jti: randomUUID(), iat: now, exp: now + REQUEST_TTL, nonce, scope: [scope], ...extra },
   };
 };
 
@@ -237,14 +242,15 @@ export async function connectComputer(d: ConnectDeps, caller: { account: string;
   if (b.clientProofKeyThumbprint !== caller.jkt) throw new HttpError(401, 'unauthorized');
   const row = linked(d, caller.account, computerId);
   if (!row.public_key) throw new HttpError(409, 'computer_key_unknown');
-  const r = request(d, caller.account, computerId, 'connect', { cnf: { jkt: caller.jkt }, clientProofKeyThumbprint: caller.jkt });
+  const device = typeof b.deviceId === 'string' && b.deviceId.length <= 128 ? { deviceId: b.deviceId } : {};
+  const r = request(d, caller.account, computerId, 'connect', { cnf: { jkt: caller.jkt }, clientProofKeyThumbprint: caller.jkt, ...device });
   const a = await askComputer(d, row.hostname, '/api/connect/mint', signJwt(d.signing.privateKey, TYP.mint, r.claims));
   if (!a.ok) throw new HttpError(a.failure === 'timeout' ? 504 : 502, a.failure === 'timeout' ? 'computer_timeout' : 'computer_unreachable');
   const c = answerClaims(d, row, computerId, a.json.proof, TYP.mintAnswer, r.nonce);
   const exp = seconds(a.json.expiresAt);
   const fits =
     c &&
-    c.jkt === caller.jkt &&
+    c.clientProofKeyThumbprint === caller.jkt &&
     typeof a.json.credential === 'string' &&
     a.json.credential.length > 0 &&
     c.credential === a.json.credential &&

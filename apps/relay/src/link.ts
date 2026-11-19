@@ -4,6 +4,7 @@ import type { Cloudflare } from './cloudflare.ts';
 import { HttpError } from './errors.ts';
 import type { LimitFor } from './limits.ts';
 import { keyId, parsePublicKey, publicKeyB64 } from './keys.ts';
+import { computerName, TYP, verifyJwt } from './connect.ts';
 import type { KeyObject } from 'node:crypto';
 
 export const CHALLENGE_TTL = 120; // seconds
@@ -15,6 +16,8 @@ export interface LinkDeps {
   limitFor: LimitFor;
   tunnelDomain: string; // computers get <id>.<tunnelDomain>
   signing: { privateKey: KeyObject; publicKey: KeyObject; kid: string };
+  /** This broker's origin: a link proof must be addressed to it. */
+  self: string;
 }
 
 const ORIGIN = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/; // a computer's local server, and only that
@@ -66,9 +69,31 @@ export function signedBody(body: Record<string, unknown>): { key: KeyObject; p: 
   return { key, p };
 }
 
-// The link: a signed payload of { nonce, name, origin }.
+/**
+ * The proof a computer's /api/connect/link-proof makes for the Mac app to pass on: { proof, publicKey, … }, the proof a
+ * JWS signed by that key, addressed to this broker, naming the challenge. Read into the same { nonce, name, origin }.
+ */
+function linkProof(d: LinkDeps, body: Record<string, unknown>): { key: KeyObject; p: Record<string, unknown> } {
+  let key: KeyObject;
+  try {
+    key = parsePublicKey(String(body.publicKey));
+  } catch {
+    throw new HttpError(400, 'bad_key');
+  }
+  const id = keyId(key);
+  const c = verifyJwt(body.proof, key, TYP.linkProof);
+  if (!c || c.iss !== computerName(id) || c.sub !== id || c.aud !== d.self || c.publicKey !== body.publicKey) throw new HttpError(401, 'bad_signature');
+  const now = d.now();
+  if (typeof c.iat !== 'number' || typeof c.exp !== 'number' || c.exp <= now || c.iat > now + 60 || c.exp - c.iat > 300) {
+    throw new HttpError(401, 'stale_proof');
+  }
+  return { key, p: { nonce: c.challenge, name: c.name, origin: c.origin } };
+}
+
+// The link: the computer's proof of the challenge (linkProof), or, from a computer that links by itself after a device
+// grant (api/connect/broker.ts), a signed payload of { nonce, name, origin }.
 export async function linkComputer(d: LinkDeps, accountId: string, body: Record<string, unknown>) {
-  const { key, p } = signedBody(body);
+  const { key, p } = typeof body.proof === 'string' ? linkProof(d, body) : signedBody(body);
   const name = typeof p.name === 'string' ? p.name.trim() : '';
   const origin = typeof p.origin === 'string' ? p.origin : '';
   if (typeof p.nonce !== 'string' || !name || name.length > 64 || !ORIGIN.test(origin)) {
@@ -107,14 +132,14 @@ export async function linkComputer(d: LinkDeps, accountId: string, body: Record<
     return {
       // what the computer hands its own /api/connect/relay-config (the Mac app passes it on)
       computerId: id,
-      accountId,
+      owner: accountId,
+      hostname,
       endpoint: `https://${hostname}`,
       tunnelToken,
       brokerKey,
       brokerKid: d.signing.kid,
       // the same, as computers from before account-token linking read it (api/connect/broker.ts linkThisComputer)
       computer_id: id,
-      hostname,
       tunnel_token: tunnelToken,
       relay_kid: d.signing.kid,
       relay_public_key: brokerKey,
