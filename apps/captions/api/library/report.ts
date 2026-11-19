@@ -27,6 +27,10 @@ const nfc = (p: string) => p.normalize("NFC");
 /** A media folder of a computer, as its agent sees it (GET /api/devices/relay/folders). */
 export const useOf = (f: StorageFolder): RelayFolder["use"] => (f.role === "projects" ? "projects" : f.role === "library" || f.role === "finals" ? "exports" : "media");
 
+/** This computer's Projects and Exports folders (its paths): never footage, wherever they sit, even inside a Media folder. */
+export const keptOut = (st: { folders: StorageFolder[] }, host: string): string[] =>
+  st.folders.filter((x) => x.origin.host === host && useOf(x) !== "media").map((x) => x.origin.path);
+
 /** The workspace ids a folder is in, "*" for every one; a folder from before workspaces is the first brand's. */
 async function workspacesOf(owner: string, f: StorageFolder): Promise<string[] | "*"> {
   if (f.workspace === EVERY_WORKSPACE) return "*";
@@ -277,8 +281,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   if (dev.owner === "workspace" || !folders.length) return { ok: true, index };
   const st = await storageOf(dev.owner);
   const touched = new Set<string>();
-  // a Projects or Exports folder of this computer is never footage, wherever it sits (even inside a Media folder)
-  const keepOut = st.folders.filter((x) => x.origin.host === dev.id && useOf(x) !== "media").map((x) => x.origin.path);
+  const keepOut = keptOut(st, dev.id);
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
@@ -296,9 +299,12 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
  */
 export async function indexForDevice(dev: Device, folderId: string, x: OnMacIndex): Promise<{ versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> } | string> {
   if (dev.owner === "workspace") return "Not for this computer";
-  const folder = (await storageOf(dev.owner)).folders.find((f) => f.id === folderId && f.origin.host === dev.id);
+  const st = await storageOf(dev.owner);
+  const folder = st.folders.find((f) => f.id === folderId && f.origin.host === dev.id);
   if (!folder || useOf(folder) !== "media") return "Not one of this computer's folders";
   if (inside(nfc(x.path), folder.origin.path) === null && !(folder.mountPath && inside(nfc(x.path), folder.mountPath) !== null)) return "Not inside that folder";
+  // a file of a Projects or Exports folder is never footage, even when a computer sends it (applyFolder keeps them out too)
+  if (keptOut(st, dev.id).some((k) => inside(nfc(x.path), k) !== null)) return "Inside a Projects or Exports folder: not footage";
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
   for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
     // a member's workspace is only located, never indexed into (applyFolder answers no file for it)

@@ -6,9 +6,12 @@ import { afterAll, describe, expect, it } from "vitest";
 // Amendment b: a Projects or Exports folder is never indexed by the watcher, even nested inside a watched Media folder
 const dir = realpathSync(mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "watch-keepout-")));
 process.env.DATA_DIR = path.join(dir, "data");
-const { filesIn, keepOutOf } = await import("./watch");
+process.env.LIBRARY_WATCH_FOLDERS = "1";
+const { libraryDb } = await import("./db");
+const { filesIn, keepOutOf, scanWatchFolders, SETTLE_MS } = await import("./watch");
 
 afterAll(() => {
+  delete process.env.LIBRARY_WATCH_FOLDERS;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -40,11 +43,26 @@ describe("the watcher keeps Projects and Exports folders out (Amendment b)", () 
     expect(files).toEqual([path.join(media, "Day 1", "a.mp4")]);
   });
 
-  it("a watched folder that is itself an Exports folder is still read (Finals reads its project folders)", async () => {
-    expect(await filesIn(exports, await keepOutOf(USER))).toEqual([path.join(exports, "final.mp4")]);
+  it("a Finals folder is read with no keep-out (scanFolders passes none for it): its project folders are the files", async () => {
+    expect(await filesIn(exports)).toEqual([path.join(exports, "final.mp4")]);
+  });
+
+  it("a Source media folder that is itself a Projects or Exports folder is kept out too", async () => {
+    expect(await filesIn(exports, [exports])).toEqual([]);
   });
 
   it("with no list, the same folder reads everything (the keep-out is the only thing that drops them)", async () => {
     expect((await filesIn(media)).length).toBeGreaterThan(1);
+  });
+});
+
+describe("the server's own scan of Source media never takes a nested Projects or Exports folder", () => {
+  it("imports the footage of the Source media row only, nothing of the Exports folder nested in it", async () => {
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_k', ?, 'K', 'local', 0)").run(USER);
+    const t0 = 1_000_000_000_000;
+    expect(await scanWatchFolders(t0)).toBe(0);
+    expect(await scanWatchFolders(t0 + SETTLE_MS)).toBe(1);
+    const taken = libraryDb().prepare("SELECT source_path FROM asset_versions").all() as { source_path: string }[];
+    expect(taken.map((v) => v.source_path)).toEqual([path.join(media, "Day 1", "a.mp4")]);
   });
 });

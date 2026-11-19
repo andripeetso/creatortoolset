@@ -118,6 +118,25 @@ describe("location agents: the computers report, the server records", () => {
     expect(libraryDb().prepare("SELECT trashed_at AS t FROM assets WHERE id = ?").get(shared.id)).toEqual({ t: null });
   });
 
+  it("a Final exports folder nested in a Media folder is never footage: the report leaves it out and the index route refuses it", async () => {
+    const { device, token } = await pair("machine-gggg-7777");
+    const auth = { ...json, authorization: `Bearer ${token}` };
+    const media = "/Volumes/Tiny Footage/Nested";
+    const exp = `${media}/Final exports`;
+    await app.request("/api/devices/storage/folders", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ role: "footage", host: device.id, path: media }) });
+    await app.request("/api/devices/storage/folders", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ role: "library", host: device.id, path: exp }) });
+    const folders = ((await (await app.request("/api/devices/relay/folders", { headers: auth })).json()) as { folders: { id: string; path: string; use: string }[] }).folders;
+    const folder = folders.find((f) => f.path === media && f.use === "media")!.id;
+    const file = (p: string, n: number) => ({ path: `${p}`, bytes: 200 + n, mtime: 1_700_000_000_000, quick: quick(200 + n) });
+    const kept = file(`${exp}/final.mp4`, 1);
+    const footage = file(`${media}/Day 1/a.mp4`, 2);
+    const r = (await (await app.request("/api/devices/relay/report", { method: "POST", headers: auth, body: JSON.stringify({ reportVersion: 2, folders: [{ id: folder, state: "ok", scan: `n${Math.random()}`, complete: true, files: [kept, footage] }] }) })).json()) as { index: { path: string }[] };
+    expect(r.index).toEqual([{ folder, path: footage.path }]);
+    const ix = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "final.mp4", path: kept.path, size: kept.bytes, quick: kept.quick, frames: [] }) });
+    expect(ix.status).toBe(400);
+    expect(((await ix.json()) as { error: string }).error).toMatch(/not footage/);
+  });
+
   it("keeps an old pairing's id and its places when an app from before pairs again", async () => {
     const old = await pair();
     libraryDb().prepare("INSERT INTO version_places (version_id, device, path, state, source) VALUES ('v-old', ?, '/x.mp4', 'verified', 'scan')").run(old.device.id);
