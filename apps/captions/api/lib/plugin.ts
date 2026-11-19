@@ -1,7 +1,7 @@
 import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { applyNeedWays, isPluginGateId, isTool, TOOL_NAMES, type Have, type NeedWay, type PluginGateId, type Tool } from "../../contracts/tools";
-import type { LibrarySlot } from "../../contracts/library-source";
+import type { LibrarySlot, LibrarySource } from "../../contracts/library-source";
 import type { CopyItem, LibraryCopy } from "../../contracts/library";
 import type { EditFlag, FootageTarget, Timeline } from "../../contracts/editor";
 import type { StepInfo } from "../../contracts/editor-steps";
@@ -443,6 +443,12 @@ async function servingPlugin(username: string): Promise<{ plugin: ServerPlugin; 
 
 /** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
 export const pluginUploadsTo = async (username: string): Promise<UploadsTo> => (await servingPlugin(username))?.to ?? null;
+
+/** The main source (LibrarySource.main) of the plug-in that serves this request's workspace itself (its uploadsTo), else undefined. */
+export async function pluginMainSource(username: string): Promise<LibrarySource | undefined> {
+  const source = (await servingPlugin(username))?.plugin.library?.source;
+  return source?.main ? source : undefined;
+}
 
 /**
  * A chat file into the store of the plug-in that serves this request's workspace (ServerPlugin.receiveFile), as `user`;

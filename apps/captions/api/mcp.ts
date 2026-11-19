@@ -25,7 +25,7 @@ import { editorTools, hasStyle } from "./mcp-tools/editor";
 import { one } from "./mcp-tools/editor-styles";
 import type { EditingStylesView } from "../contracts/editor-styles";
 import { finalsTools } from "./mcp-tools/finals";
-import { mainSource } from "./library/sources";
+import { mainSourceFor } from "./library/access";
 import { setupNeeded } from "./library/access";
 import { ACTION_NEEDED, SOUNDS, type ActionNeeded, type AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
@@ -396,12 +396,12 @@ const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.nam
  */
 const BUILT_IN_EDITOR = new Set(editorTools.defs.map((d) => d.name));
 /**
- * The built-in Finals tools (mcp-tools/finals.ts) work on the pieces of the app's own library. On an install whose
- * Media Library is a plug-in's (LibrarySource.main) the person never sees that library, so the tools would list and
- * change pieces that are on no page there: left out, like the editor's.
+ * The built-in Finals tools (mcp-tools/finals.ts) work on the pieces of the app's own library. In a workspace whose
+ * Media Library is a plug-in's (mainSourceFor) the person never sees that library, so the tools would list and change
+ * pieces that are on no page there: left out, like the editor's. Every other workspace on the same server has them.
  */
 const BUILT_IN_FINALS = new Set(finalsTools.defs.map((d) => d.name));
-const notHere = (name: string) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor")) || (BUILT_IN_FINALS.has(name) && !!mainSource());
+const notHere = (name: string, finalsOff: boolean) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor")) || (BUILT_IN_FINALS.has(name) && finalsOff);
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
@@ -1471,7 +1471,7 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     notTheirs: (texts, theirs) => notTheirs(call, auth, user, texts, theirs),
   };
   const plug = plugged.handlers.get(name);
-  const own = notHere(name) ? undefined : MODULE_HANDLERS.get(name);
+  const own = notHere(name, BUILT_IN_FINALS.has(name) && !!(await mainSourceFor(user.username))) ? undefined : MODULE_HANDLERS.get(name);
   const handler = plug ? (a: Args) => plug(a, ctx) : own ? (a: Args) => own(a, ctx) : tools(call, auth, origin, user, ctx.sure)[name];
   if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}, plugged.steps));
   try {
@@ -1619,7 +1619,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : EDITOR_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide, await plugged.guideHere(user.username)].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : EDITOR_GUIDE, (await mainSourceFor(user.username)) ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide, await plugged.guideHere(user.username)].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
@@ -1627,9 +1627,10 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       const dock = isJob(auth);
       const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : ASSISTANT_DEFS.filter((d) => KEY_TOO.has(d.name)))];
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
+      const finalsOff = !!(await mainSourceFor(user.username));
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name, finalsOff) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
           // the labels are for an AI app outside (it asks before a tool that can remove); the dock's list stays as it was
           dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(cardToolMeta(name) && !plugged.handlers.has(name) ? { _meta: cardToolMeta(name) } : {}) },
         ) });

@@ -19,7 +19,7 @@ import type { SessionUser } from "../../api/users";
 import { blobs, libraryDb } from "../../api/library/db";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { saveToLibrary } from "../../api/library/routes";
-import { mainSource } from "../../api/library/sources";
+import { mainSourceFor } from "../../api/library/access";
 import { EXAMPLE_JPEG } from "./example";
 
 /**
@@ -234,8 +234,8 @@ export const resetAuto = async () => {
  * workspace, and Face Blur is on there. Never a copy this made, or a finished file made from a clip.
  */
 export async function queueVersion(e: { libraryId: string; versionId: string; owner: string }): Promise<boolean> {
-  if (mainSource()) return false;
   const workspace = await workspaceOfLibrary(e.owner, e.libraryId);
+  if (await mainSourceFor(e.owner, workspace)) return false;
   if (!settingsOf(e.owner, workspace).auto || !(await pluginOnIn(faceBlur, e.owner, workspace))) return false;
   if (jobs().jobs.some((j) => j.versionId === e.versionId)) return false;
   const db = libraryDb();
@@ -276,8 +276,8 @@ const versionGone = (versionId: string) =>
   !libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(versionId);
 
 /** Whether this account can have new Media Library files covered by itself here, and why not. */
-export function autoCan(owner: string): { can: true } | { can: false; why: string } {
-  if (mainSource()) return { can: false, why: "Not available while this server's Media Library comes from a plug-in." };
+export async function autoCan(owner: string): Promise<{ can: true } | { can: false; why: string }> {
+  if (await mainSourceFor(owner)) return { can: false, why: "Not available while this workspace's Media Library comes from a plug-in." };
   if (!listDevices((d) => d.owner === owner && !!d.kinds?.includes(AUTO_KIND)).length)
     return { can: false, why: "Needs the newest Mac app on a computer added to this account." };
   return { can: true };
@@ -355,10 +355,10 @@ export const autoJobs = {
   },
 };
 
-routes.get("/auto", (c) => {
+routes.get("/auto", async (c) => {
   const user = c.get("user").username;
   const failed = jobs().jobs.filter((j) => j.owner === user && j.state === "failed").map((j) => ({ versionId: j.versionId, title: j.title, error: j.error ?? "" }));
-  return c.json({ ...autoCan(user), failed });
+  return c.json({ ...(await autoCan(user)), failed });
 });
 
 routes.post("/auto/retry", async (c) => {

@@ -183,7 +183,7 @@ describe.skipIf(rootReplaced)("AI Editor: a voice made from text", () => {
     try {
       expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({
         status: 400,
-        body: { error: "On this server the Media Library is the Footage catalog: a voice cannot be added to it" },
+        body: { error: "In this workspace the Media Library is the Footage catalog: a voice cannot be added to it" },
       });
       expect(calls).toEqual([]);
     } finally {
