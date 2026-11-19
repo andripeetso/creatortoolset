@@ -820,6 +820,8 @@ export const LIBRARY_WORDS = {
   sameAsDefault: "Same as default",
   needsKey: (name: string) => `Needs ${name} key`,
   apiKeys: "API keys",
+  noModelsYet: "No AI connected yet.",
+  providers: "Providers",
   download: "Download",
   downloading: "Downloading",
   downloadsTitle: "Downloads",

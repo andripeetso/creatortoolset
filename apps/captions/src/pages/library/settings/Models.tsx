@@ -53,7 +53,16 @@ function ModelRow({ name, title, tip, value, selected, options, onPick }: { name
         </Button>
       }
     >
-      {open && (
+      {open && options().length === 0 && (
+        // nothing to pick yet (no AI connected): say so and point where one is added, never an empty list
+        <p className="pt-2 text-sm text-muted-foreground">
+          {LIBRARY_WORDS.noModelsYet}{" "}
+          <Link to="/settings/providers" className="underline underline-offset-4 hover:underline">
+            {LIBRARY_WORDS.providers}
+          </Link>
+        </p>
+      )}
+      {open && options().length > 0 && (
         <RadioList
           name={name}
           value={selected}

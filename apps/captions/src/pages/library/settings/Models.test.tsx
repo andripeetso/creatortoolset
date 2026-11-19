@@ -112,6 +112,15 @@ describe("the owner's Models rows", () => {
     expect(el.textContent).not.toContain("Change");
   });
 
+  it("a row with nothing to pick yet (no AI connected) says so with a Providers link, never an empty list", async () => {
+    h.providers = null;
+    const el = mount({ timeline: false, transcribe: true, describe: true });
+    await open("Descriptions");
+    expect(el.textContent).toContain("No AI connected yet.");
+    expect(el.querySelector('a[href="/settings/providers"]')?.textContent).toBe("Providers");
+    expect(el.querySelector('input[type="radio"]')).toBeNull();
+  });
+
   it("hides Descriptions and Transcripts at Analysis Off, and Video breakdown below High", () => {
     h.providers = providers;
     h.voice = voice;
