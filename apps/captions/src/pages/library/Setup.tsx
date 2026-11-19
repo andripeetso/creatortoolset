@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { Cloud, FolderOpen, Gauge, ScanSearch, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { call, STORAGE_API } from "@/components/settings/StorageRows";
 import { updateLibrary } from "@/lib/library";
 import { chooseFolderOnMac, droppedOnMac, pairThisMac } from "@/lib/thisMac";
 import { thisMacDevice } from "@/lib/providers";
-import { useAuth, useMe } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { ModelRows } from "./settings/Models";
 import { HostedSwitches } from "./settings/Hosted";
@@ -35,6 +35,7 @@ import {
   type ProxyQuality,
   type WatchModel,
 } from "@contracts/library";
+import type { ServerWorkView } from "@contracts/work";
 import { EXPORTS_NAME, FOLDER_LABELS, LIBRARY_NAME, LIBRARY_SUBFOLDERS, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
 
 /**
@@ -203,11 +204,14 @@ function FolderRow({ title, tip, path, empty = LIBRARY_WORDS.notSet, onPick }: {
  */
 export function LibrarySetup({ library, watchAllowed, inline = false, onDone, onClose }: { library: LibrarySummary; watchAllowed: boolean; inline?: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
   const hosted = useAuth((s) => s.hosted);
-  const me = useMe();
   const project = useWorkspace((s) => currentProject(s));
   const workspace = { id: project?.id ?? "", name: project?.name ?? "Media Library" };
   const kind: Kind = hosted ? "cloud" : watchAllowed ? "mac" : "server";
-  const serverName = hosted ? "Creator Toolset Cloud" : `${me?.name ?? me?.username ?? "Your"}'s server`;
+  // the server's own name, as the member page's Server row shows it (api/work/server-work-routes.ts serverNameOf)
+  const [serverName, setServerName] = useState<string | null>(null);
+  useEffect(() => {
+    if (kind !== "mac") void call<ServerWorkView>("/api/work/server-work").then((v) => setServerName(v.serverName ?? null), () => {});
+  }, [kind]);
   const steps = stepsFor(kind);
   const [at, setAt] = useState(0);
   const [a, setA] = useState<Answers>(START);
@@ -490,7 +494,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
           ? "Smaller copies keep playback and editing fast."
           : step === "analysis"
             ? "Clips are described and tagged so you can search by what's in them. Higher effort looks closer and costs more."
-            : `Choose what goes to ${serverName}, so your team can play it.`;
+            : `Choose what goes to ${serverName ?? "the server"}, so your team can play it.`;
   const Icon = ICON[step];
 
   const head = (

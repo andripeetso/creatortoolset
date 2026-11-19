@@ -18,6 +18,7 @@ import { currentWorkspaceId } from "../lib/workspace-scope";
 import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import type { Project } from "../lib/workshop/types";
 import { listUsers } from "../users";
+import { pluginServerName } from "../lib/plugin";
 import { readServerWork, serverKind, serverWeight, serverWorks, writeServerWork, type ServerKind } from "./server-work";
 
 export const serverWorkApp = new Hono<{ Variables: AuthVars }>();
@@ -45,10 +46,15 @@ async function adminView(): Promise<NonNullable<ServerWorkView["admin"]>> {
   };
 }
 
-/** The name members see (M18): Creator Toolset Cloud, else the first admin's name and "'s server"; none on This Mac. */
-function serverNameOf(kind: ServerKind): string | undefined {
-  if (kind === "hosted") return "Creator Toolset Cloud";
+/**
+ * The server's name (M18), the one for the member page's Server row and setup's Hosted media: the name a plug-in gives
+ * it (Creator Toolset Cloud's own), else the first admin's name and "'s server" (a hosted own server too, the studio);
+ * none on This Mac.
+ */
+export function serverNameOf(kind: ServerKind): string | undefined {
   if (kind === "local") return undefined;
+  const named = pluginServerName();
+  if (named) return named;
   const admin = listUsers().filter((x) => x.role === "admin").sort((a, b) => a.createdAt - b.createdAt)[0];
   return admin && `${admin.displayName || admin.username}'s server`;
 }

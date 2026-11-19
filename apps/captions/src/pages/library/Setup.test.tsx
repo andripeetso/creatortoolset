@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
   refuse: {} as Record<string, string>,
   /** the PATCH reply leaves setupAt out (a server from before it returned it) */
   dropSetupAt: false,
+  /** the server's own name (GET /api/work/server-work) */
+  serverName: "Tiny's server" as string | undefined,
 }));
 
 vi.mock("@/components/settings/ThisMacSection", () => ({ hasThisMac: () => h.mac }));
@@ -40,6 +42,7 @@ vi.mock("@/lib/thisMac", () => ({
 vi.mock("@/components/settings/StorageRows", () => ({
   STORAGE_API: "/api/devices/storage",
   call: async (url: string, _method: string, body: Record<string, unknown>, workspace?: string | null) => {
+    if (url === "/api/work/server-work") return { kind: "server", place: null, serverName: h.serverName };
     h.calls.push({ url, body, workspace });
     if (h.failMake && body.make) throw new Error("That folder could not be made on this computer");
     if (h.refuse[body.role as string]) throw new Error(h.refuse[body.role as string]);
@@ -94,6 +97,7 @@ beforeEach(() => {
   h.pair = async () => h.paired;
   h.refuse = {};
   h.dropSetupAt = false;
+  h.serverName = "Tiny's server";
   delete document.documentElement.dataset.macDevice;
   onDone.mockReset();
   onClose.mockReset();
@@ -531,6 +535,21 @@ describe("Media Library setup: Done in the Mac app on a hosted server", () => {
     await press(button("Done"));
     expect(alert()).toContain("Saving the setup: The server didn't keep the setup");
     expect(onDone).not.toHaveBeenCalled();
+  });
+});
+
+describe("Media Library setup: the server's name in Hosted media", () => {
+  it("is the server's own name, as the member page's Server row says it: Cloud only where the server calls itself that", async () => {
+    h.mac = false;
+    h.hosted = true; // a hosted own server (the studio) is no Cloud
+    await mount("cloud");
+    for (let i = 0; i < 4; i++) await next();
+    expect(document.body.textContent).toContain("Choose what goes to Tiny's server, so your team can play it.");
+    act(() => root!.unmount());
+    h.serverName = "Creator Toolset Cloud";
+    await mount("cloud");
+    for (let i = 0; i < 4; i++) await next();
+    expect(document.body.textContent).toContain("Choose what goes to Creator Toolset Cloud, so your team can play it.");
   });
 });
 
