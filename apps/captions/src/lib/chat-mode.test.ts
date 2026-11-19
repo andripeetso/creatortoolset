@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { bareNow, chatLayout, frontAt, frontReaches, LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
+import { describe, expect, it, vi } from "vitest";
+import { bareNow, chatLayout, dragChatEdge, frontAt, frontReaches, LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow, useChatMode } from "./chat-mode";
 
 const fresh = { w: 0, page: true };
 
@@ -91,5 +91,35 @@ describe("the wave's front", () => {
     for (const t of [0, 0.05, 0.3, 0.62, 0.9, 1]) expect(frontReaches(frontAt(t))).toBeCloseTo(t, 4);
     expect(frontReaches(-0.2)).toBe(0);
     expect(frontReaches(1.4)).toBe(1);
+  });
+});
+
+describe("dragging the chats' edge", () => {
+  it("lays the chats out once a frame as letting go will, and draws them again only when the list comes or goes", () => {
+    const frames: Array<() => void> = [];
+    const root = { style: new Map<string, string>(), dataset: {} as Record<string, string> };
+    vi.stubGlobal("requestAnimationFrame", (f: () => void) => frames.push(f));
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => (frames[id - 1] = () => {}));
+    vi.stubGlobal("document", { documentElement: { clientWidth: 1440, style: { setProperty: (k: string, v: string) => root.style.set(k, v) }, dataset: root.dataset }, querySelector: () => null });
+    const run = () => frames.splice(0).forEach((f) => f());
+    useChatMode.setState({ need: 960, lw: 0 });
+    dragChatEdge(900);
+    dragChatEdge(100);
+    run();
+    // the last place only, and never under the chat's least
+    expect(root.style.get("--chat-w")).toBe(`${MIN_CHAT}px`);
+    const first = useChatMode.getState().drag;
+    expect(first).toBe(100);
+    dragChatEdge(110);
+    run();
+    expect(useChatMode.getState().drag).toBe(first); // the list stayed folded: the chats are not drawn again
+    // the editor needs 960 of 1440: the chats stop at 480 while dragged, as they do when let go
+    dragChatEdge(700);
+    run();
+    expect(root.style.get("--chat-w")).toBe("480px");
+    dragChatEdge(null);
+    run();
+    expect(useChatMode.getState().drag).toBe(0);
+    vi.unstubAllGlobals();
   });
 });

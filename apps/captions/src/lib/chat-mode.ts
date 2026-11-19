@@ -59,6 +59,8 @@ interface ChatModeState extends Stored {
   pane: number | null;
   /** How wide the screen on show says it has to be to work (usePageNeeds); 0 when it says nothing. Never stored. */
   need: number;
+  /** Where the chats' edge was dragged when the list last came or went beside the chat (dragChatEdge); 0 when no drag. Never stored. */
+  drag: number;
   set: (patch: Partial<Stored>) => void;
 }
 
@@ -67,6 +69,7 @@ export const useChatMode = create<ChatModeState>((set) => ({
   shown: false,
   pane: null,
   need: 0,
+  drag: 0,
   set: (patch) =>
     set((s) => {
       const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, lw: patch.lw ?? s.lw, page: patch.page ?? s.page, bare: patch.bare ?? s.bare };
@@ -162,13 +165,14 @@ export function useChatModeLayout(active: boolean): ChatLayout {
   const bare = useChatMode((s) => s.bare);
   const lw = useChatMode((s) => s.lw);
   const need = useChatMode((s) => s.need);
+  const drag = useChatMode((s) => s.drag);
   const [win, setWin] = useState(pageWidth);
   useEffect(() => {
     const on = () => setWin(pageWidth());
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
-  const layout = chatLayout({ w, page, bare, lw }, win, need);
+  const layout = chatLayout({ w: drag || w, page, bare, lw }, win, need);
   // before the browser draws: a switch is one picture of the old screen and one of the new (washTo)
   useLayoutEffect(() => {
     if (!active) return;
@@ -193,14 +197,34 @@ export function useChatModeLayout(active: boolean): ChatLayout {
   return layout;
 }
 
-/** While the chats' edge is dragged: the page follows at once (the store takes the width when the drag ends). */
-export function previewChatWidth(x: number): number {
-  const win = pageWidth();
-  const chat = Math.min(Math.max(x, MIN_CHAT), Math.max(MIN_CHAT, win - MIN_PAGE));
-  const root = document.documentElement;
-  root.style.setProperty("--chat-w", `${chat}px`);
-  root.dataset.pane = paneBelow(win - chat);
-  return chat;
+let dragFrame = 0;
+
+/**
+ * While the chats' edge is dragged (`x`; null when it is let go): the chats and the page follow once a frame, laid out
+ * as when the edge is let go (chatLayout): the open chat never under its least, the list giving way to it and the page
+ * keeping what it needs. So letting go moves nothing (owner, 11-19: "extremely laggy ... so compressed on the side").
+ */
+export function dragChatEdge(x: number | null): void {
+  cancelAnimationFrame(dragFrame);
+  if (x == null) return void useChatMode.setState({ drag: 0 });
+  dragFrame = requestAnimationFrame(() => {
+    const s = useChatMode.getState();
+    const win = pageWidth();
+    const l = chatLayout({ w: Math.max(1, x), page: true, lw: s.lw }, win, s.need);
+    // written here, not drawn again by the chats every frame (they hold a whole conversation)
+    const root = document.documentElement;
+    root.style.setProperty("--chat-w", `${l.chat}px`);
+    root.dataset.pane = paneBelow(win - l.chat);
+    document.querySelector<HTMLElement>("[data-chat-side]:not(.absolute)")?.style.setProperty("width", `${l.listW}px`);
+    // the chats are drawn again only when the list comes or goes beside the open chat
+    if (!s.drag || chatLayout({ w: s.drag, page: true, lw: s.lw }, win, s.need).list !== l.list) useChatMode.setState({ drag: Math.max(1, x) });
+  });
+}
+
+/** The chats' width for an edge let go at `x`, as the drag showed it. */
+export function chatWidthAt(x: number): number {
+  const s = useChatMode.getState();
+  return chatLayout({ w: Math.max(1, x), page: true, lw: s.lw }, pageWidth(), s.need).chat;
 }
 
 /** ⌘J (Ctrl+J): chat mode on or off, from anywhere. */
