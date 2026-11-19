@@ -178,6 +178,15 @@ export async function renewTunnel(d: LinkDeps, computerId: string, body: Record<
   const now = d.now();
   if (keyId(key) !== computerId || p.purpose !== 'tunnel' || p.computer_id !== computerId) throw new HttpError(401, 'bad_signature');
   if (typeof p.at !== 'number' || Math.abs(now - p.at) > PROOF_WINDOW) throw new HttpError(401, 'stale_proof');
+  // each ask once: a copy sent again within the window (which could hand out a new tunnel's token) is refused. Kept in
+  // activity_jti with the computer's other spent ids, under its own prefix.
+  // shortcut: an ask without a jti (a server from before it sent one) is still taken; require it once those are gone
+  if (p.jti !== undefined) {
+    if (typeof p.jti !== 'string' || !p.jti || p.jti.length > 128) throw new HttpError(401, 'bad_signature');
+    d.db.prepare('DELETE FROM activity_jti WHERE expires_at <= ?').run(now);
+    const fresh = d.db.prepare('INSERT OR IGNORE INTO activity_jti (computer_id, jti, expires_at) VALUES (?, ?, ?)').run(computerId, `tunnel:${p.jti}`, p.at + PROOF_WINDOW + 1);
+    if (fresh.changes !== 1) throw new HttpError(409, 'proof_replayed');
+  }
   const row = d.db.prepare('SELECT origin, hostname, dns_id, released_at FROM computers WHERE id = ?').get(computerId) as
     | { origin: string; hostname: string; dns_id: string; released_at: number | null }
     | undefined;

@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_JTIS, dpopReplayForTest, htuOf, jwkThumbprint, resetDpopReplay, tokenHash, verifyDpop } from "./dpop";
+import { dpopVectors } from "../../../relay/test/dpop-vectors";
+import { MAX_JTIS_PER_KEY, dpopReplayForTest, htuOf, jwkThumbprint, resetDpopReplay, spendJti, tokenHash, verifyDpop } from "./dpop";
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const keyPair = () => {
@@ -67,19 +68,42 @@ describe("DPoP proofs", () => {
   });
 });
 
+describe("the shared vectors (the connect service runs the same ones)", () => {
+  it("answers each the way the shared check does", () => {
+    for (const v of dpopVectors()) {
+      const r = verifyDpop({ proof: v.proof, method: v.method, url: v.url, now: v.nowS * 1000, accessToken: v.accessToken, expectedJkt: v.jkt });
+      expect({ name: v.name, code: r.ok ? "ok" : r.code }).toEqual({ name: v.name, code: v.expect });
+    }
+  });
+});
+
 describe("the proof-id cache", () => {
-  it("refuses new proofs when full of live ids, never forgetting one, and takes them again once old ones expire", () => {
+  it("refuses a key holding its cap of live ids, never forgetting one, lets every other key on, and takes it again once they expire", () => {
     const seen = dpopReplayForTest();
     const now = Date.now();
-    for (let i = 0; i < MAX_JTIS; i++) seen.set(`flood:${i}`, now + 600_000);
+    const mine = jwkThumbprint(phone.jwk as never);
+    seen.set(mine, new Map(Array.from({ length: MAX_JTIS_PER_KEY }, (_, i) => [`flood${i}`, now / 1000 + 600])));
     const p = proofBy(phone, { htm: "POST", htu: URL_ });
     expect(verifyDpop({ proof: p, method: "POST", url: URL_, now })).toEqual({ ok: false, code: "busy" });
-    expect(seen.size).toBe(MAX_JTIS);
+    expect(seen.get(mine)!.size).toBe(MAX_JTIS_PER_KEY);
+    // one key's flood is that key's alone
+    expect(verifyDpop({ proof: proofBy(keyPair(), { htm: "POST", htu: URL_ }), method: "POST", url: URL_, now })).toMatchObject({ ok: true });
     // ten minutes on, the flood's ids could no longer pass: they go, and a fresh proof is taken
     const later = now + 600_001;
     const q = proofBy(phone, { htm: "POST", htu: URL_, iat: Math.floor(later / 1000) });
     expect(verifyDpop({ proof: q, method: "POST", url: URL_, now: later })).toMatchObject({ ok: true });
-    expect(seen.size).toBe(1);
+    expect(seen.get(mine)!.size).toBe(1);
+  });
+
+  it("checks without spending when asked, and spends once", () => {
+    const p = proofBy(phone, { htm: "POST", htu: URL_ });
+    const v = verifyDpop({ proof: p, method: "POST", url: URL_, spend: false });
+    expect(v.ok).toBe(true);
+    expect(verifyDpop({ proof: p, method: "POST", url: URL_, spend: false }).ok).toBe(true);
+    if (!v.ok) return;
+    expect(spendJti(v.jkt, v.jti)).toBe("ok");
+    expect(spendJti(v.jkt, v.jti)).toBe("replay");
+    expect(verifyDpop({ proof: p, method: "POST", url: URL_ })).toEqual({ ok: false, code: "replay" });
   });
 
   it("forgets expired ids on a timer that never keeps the process alive", async () => {
@@ -87,10 +111,12 @@ describe("the proof-id cache", () => {
     try {
       vi.resetModules();
       const d = await import("./dpop");
-      d.dpopReplayForTest().set("k:old", Date.now() + 1000);
-      d.dpopReplayForTest().set("k:live", Date.now() + 10 * 60_000);
+      const s = Date.now() / 1000;
+      d.dpopReplayForTest().set("k", new Map([["old", s + 1], ["live", s + 600]]));
+      d.dpopReplayForTest().set("gone", new Map([["old", s + 1]]));
       vi.advanceTimersByTime(61_000);
-      expect([...d.dpopReplayForTest().keys()]).toEqual(["k:live"]);
+      expect([...d.dpopReplayForTest().keys()]).toEqual(["k"]);
+      expect([...d.dpopReplayForTest().get("k")!.keys()]).toEqual(["live"]);
     } finally {
       vi.useRealTimers();
     }

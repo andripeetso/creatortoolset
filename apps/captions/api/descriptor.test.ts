@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// a LAN address whatever network the test machine has, so "none in hosted mode" can't pass by having none
+vi.mock("./auth", async (original) => ({ ...(await original<typeof import("./auth")>()), routeAddress: async () => "10.0.0.5" }));
+
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "descriptor-"));
 process.env.APP_SECRET = "local-sign-in-test-secret";
 
@@ -49,6 +52,13 @@ describe("endpoints", () => {
       expect(e.httpBaseUrl).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:43128$/);
       expect(e.httpBaseUrl).not.toMatch(/\/\/127\./);
     }
+  });
+
+  it("lists nothing in hosted mode, where the container's addresses reach nobody", async () => {
+    vi.stubEnv("HOST", "");
+    expect(await endpoints("3000")).toContainEqual({ kind: "lan", httpBaseUrl: "http://10.0.0.5:3000" });
+    vi.stubEnv("CT_MODE", "hosted");
+    expect(await endpoints("3000")).toEqual([]);
   });
 
   it("needs a sign-in", async () => {

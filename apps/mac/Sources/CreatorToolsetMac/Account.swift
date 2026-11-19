@@ -305,6 +305,9 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     /// Where the sign-in sheet sits, and what to do with a new profile (the server on this Mac takes it).
     var window: () -> NSWindow? = { nil }
     var signedIn: (AccountProfile) -> Void = { _ in }
+    /// Called with the old token before it is replaced by another account's (`new`) or removed (nil): this Mac leaves
+    /// the account it is linked to while it still can (Shell.leaveAccount).
+    var leaving: (_ old: String, _ new: String?) async -> Void = { _, _ in }
     private var session: ASWebAuthenticationSession?
     private var pending: ((AccountReply) -> Void)?
     /// The verifier of the sign-in in flight: a code is swapped only with it.
@@ -389,6 +392,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         session = nil
         answer(["state": "cancelled"])
         pkce = nil
+        if let old = DeviceVault.token(for: host, service: Self.vault) { await leaving(old, nil) }
         DeviceVault.remove(for: host, service: Self.vault)
         UserDefaults.standard.removeObject(forKey: profileKey)
         UserDefaults.standard.removeObject(forKey: providerKey)
@@ -515,6 +519,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         pkce = nil   // one try per sign-in: the server burns the code on a wrong verifier anyway
         do {
             let (token, profile) = try await AccountClient(server: server).exchange(code, verifier: pair.verifier)
+            if let old = DeviceVault.token(for: host, service: Self.vault), old != token { await leaving(old, token) }
             guard DeviceVault.save(token, for: host, service: Self.vault) else {
                 return answer(["state": "error", "message": "The Keychain didn't keep the sign-in."])
             }

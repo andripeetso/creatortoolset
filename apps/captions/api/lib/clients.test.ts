@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,6 +125,61 @@ describe("client sessions", () => {
   });
 });
 
+describe("the file is written only when something changed", () => {
+  const file = () => path.join(process.env.DATA_DIR!, "clients.json");
+  const stamp = () => {
+    const st = statSync(file());
+    return `${st.ino}:${st.mtimeMs}`;
+  };
+
+  it("a redeem that spends nothing leaves the file as it was", () => {
+    const g = c.createGrant({ kind: "connect", subject: "admin", scopes: c.READ_ONLY, jkt: "k".repeat(43) });
+    const before = stamp();
+    expect(c.redeemGrant("ZZZZZZZZZZZZ", {})).toEqual({ ok: false, error: "invalid_grant" });
+    expect(c.redeemGrant(g.credential, { jkt: "x".repeat(43) })).toEqual({ ok: false, error: "invalid_grant" });
+    expect(c.redeemGrant(g.credential, { jkt: "k".repeat(43), requested: ["write"] })).toEqual({ ok: false, error: "invalid_scope" });
+    expect(stamp()).toBe(before);
+    expect(c.redeemGrant(g.credential, { jkt: "k".repeat(43) })).toMatchObject({ ok: true });
+    expect(stamp()).not.toBe(before);
+  });
+
+  it("lastConnectedAt is kept in memory and written for every session at once, surviving a re-read meanwhile", () => {
+    const now = Date.now();
+    const a = c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" }, now });
+    const b = c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "tablet" }, now });
+    const before = stamp();
+    c.touchSession(a.row, now + 1);
+    c.touchSession(b.row, now + 2);
+    expect(stamp()).toBe(before); // a request never writes
+    // another write re-reads the file: the touches still count
+    c.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] });
+    const listed = (id: string) => c.accessSnapshot(all).clientSessions.find((x) => x.sessionId === id)?.lastConnectedAt;
+    expect(listed(a.row.id)).toBe(new Date(now + 1).toISOString());
+    c.flushTouches();
+    const onDisk = JSON.parse(readFileSync(file(), "utf8")).sessions as { id: string; lastConnectedAt: number | null }[];
+    expect(onDisk.find((r) => r.id === a.row.id)?.lastConnectedAt).toBe(now + 1);
+    expect(onDisk.find((r) => r.id === b.row.id)?.lastConnectedAt).toBe(now + 2);
+    const flushed = stamp();
+    c.flushTouches(); // nothing new: no write
+    expect(stamp()).toBe(flushed);
+  });
+
+  it("a token is found by its hash, not by going through every session", () => {
+    const tokens = Array.from({ length: 20 }, () => c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" } }).token);
+    c.resolveToken(tokens[0]); // the index is built once
+    const find = vi.spyOn(Array.prototype, "find");
+    try {
+      for (const t of tokens) expect(c.resolveToken(t).ok).toBe(true);
+      expect(find).not.toHaveBeenCalled();
+    } finally {
+      find.mockRestore();
+    }
+    // a session issued after the index was built is found too
+    const late = c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" } });
+    expect(c.resolveToken(late.token).ok).toBe(true);
+  });
+});
+
 describe("two servers on one file (the no-downtime swap)", () => {
   it("see each other's revokes and issues, and spend a code once", async () => {
     vi.resetModules();
@@ -157,6 +212,18 @@ describe("two servers on one file (the no-downtime swap)", () => {
     c.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] });
     expect(existsSync(lock)).toBe(false);
     expect(JSON.parse(readFileSync(file, "utf8")).grants.length).toBeGreaterThan(0);
+  });
+
+  it("a change waits for the other server's lock a moment, never seconds, while it blocks every request", () => {
+    const lock = path.join(process.env.DATA_DIR!, "clients.json.lock");
+    writeFileSync(lock, ""); // fresh: held by a live server
+    const t = Date.now();
+    try {
+      expect(() => c.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] })).toThrow(/stayed locked/);
+      expect(Date.now() - t).toBeLessThan(c.LOCK_WAIT_MS + 500);
+    } finally {
+      rmSync(lock, { force: true });
+    }
   });
 
   it("an account's password change, sign-out or deletion signs out all its devices and drops its codes", () => {

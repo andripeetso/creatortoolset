@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
 
@@ -42,7 +42,10 @@ export function saveConnectState(next: ConnectState | null): void {
     return;
   }
   mkdirSync(env.dataDir, { recursive: true });
-  writeFileSync(file(), JSON.stringify(next), { mode: 0o600 });
+  // a whole new file, then swapped in: a crash mid-write never leaves a cut-off connect.json (the link would be lost)
+  const tmp = `${file()}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+  renameSync(tmp, file());
   cache = next;
 }
 

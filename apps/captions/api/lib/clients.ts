@@ -106,8 +106,8 @@ export interface AccessTokenResult {
 
 export type TokenError = "unsupported_grant_type" | "invalid_request" | "invalid_dpop_proof" | "invalid_grant" | "invalid_scope";
 
-/** 401 codes on /api/* for a token that doesn't work. */
-export type SessionErrorCode = "INVALID_TOKEN" | "SESSION_EXPIRED" | "SESSION_REVOKED" | "INVALID_DPOP";
+/** 401 codes on /api/* for a token that doesn't work; BUSY is 503 (the device's key spent its share of proofs). */
+export type SessionErrorCode = "INVALID_TOKEN" | "SESSION_EXPIRED" | "SESSION_REVOKED" | "INVALID_DPOP" | "BUSY";
 
 /** GET /api/auth/session */
 export interface SessionState {
@@ -244,6 +244,8 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const file = () => path.join(env.dataDir, "clients.json");
 let store: Store | null = null;
 let readAs = ""; // the file as `store` was read from it: inode, mtime, size (a write by another process changes them)
+let byHash: Map<string, SessionRow> | null = null; // sessions by token hash, for `store` as it is (dropped on any change)
+const touched = new Map<string, number>(); // session id -> lastConnectedAt not written yet (flushTouches)
 
 const fileStamp = () => {
   try {
@@ -268,11 +270,26 @@ function load(): Store {
     store = { grants: [], sessions: [] };
   }
   readAs = now;
+  byHash = null;
+  // requests seen here since the last flush still count
+  for (const r of store.sessions) {
+    const at = touched.get(r.id);
+    if (at !== undefined && (r.lastConnectedAt ?? 0) < at) r.lastConnectedAt = at;
+  }
   return store;
 }
 
+const sessionByHash = (hash: string): SessionRow | undefined => {
+  const s = load();
+  if (!byHash) byHash = new Map(s.sessions.map((r) => [r.hash, r]));
+  return byHash.get(hash);
+};
+
 export const LOCK_STALE_MS = 10_000;
 const pause = new Int32Array(new SharedArrayBuffer(4));
+
+/** How long a change waits for the other server's write, blocking this one meanwhile: a write takes milliseconds. */
+export const LOCK_WAIT_MS = 250;
 
 /** Runs `fn` holding DATA_DIR/clients.json.lock (made with O_EXCL), so a change by one server never undoes another's. */
 function locked<T>(fn: () => T): T {
@@ -289,7 +306,7 @@ function locked<T>(fn: () => T): T {
       try {
         if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { force: true });
       } catch { /* gone already */ }
-      if (tries >= 1000) throw new Error("clients.json stayed locked");
+      if (tries * 5 >= LOCK_WAIT_MS) throw new Error("clients.json stayed locked");
       Atomics.wait(pause, 0, 0, 5);
     }
   }
@@ -300,12 +317,14 @@ function locked<T>(fn: () => T): T {
   }
 }
 
-/** One change: under the lock, on the file as it is now, written back whole (temp file + rename). */
-function change<T>(fn: (s: Store) => T): T {
+/** One change: under the lock, on the file as it is now, written back whole (temp file + rename) unless `wrote` says no. */
+function change<T>(fn: (s: Store) => T, wrote: (out: T) => boolean = () => true): T {
   return locked(() => {
     store = null;
     const s = load();
     const out = fn(s);
+    if (!wrote(out)) return out;
+    byHash = null;
     const now = Date.now();
     // expired links go; a session goes once it expired and nothing holds a line open on it (a revoked one stays marked
     // until then, so its token is answered "signed out on the computer", not "unknown")
@@ -323,6 +342,8 @@ function change<T>(fn: (s: Store) => T): T {
 export const resetClientsForTest = () => {
   store = null;
   readAs = "";
+  byHash = null;
+  touched.clear();
   lines.clear();
   listeners.clear();
 };
@@ -404,6 +425,8 @@ export function redeemGrant(credential: string, o: { jkt?: string; requested?: S
   const c = normalizeCredential(credential);
   if (!c) return { ok: false, error: "invalid_grant" };
   const hash = sha(c);
+  // a code the file doesn't hold (load() reads another server's write) is answered without the lock or a write
+  if (!load().grants.some((g) => g.hash === hash)) return { ok: false, error: "invalid_grant" };
   // looked at and spent under one lock: two servers on one file never both spend a code
   const { result, gone } = change((s): { result: RedeemResult; gone?: GrantRow } => {
     const i = s.grants.findIndex((g) => g.hash === hash);
@@ -419,7 +442,7 @@ export function redeemGrant(credential: string, o: { jkt?: string; requested?: S
     s.grants.splice(i, 1);
     const { hash: _h, ...grant } = g;
     return { result: { ok: true, grant, scopes }, gone: g };
-  });
+  }, (o) => o.gone !== undefined);
   if (gone?.kind === "pairing") emit({ type: "pairingLinkRemoved", id: gone.id, subject: gone.subject });
   return result;
 }
@@ -465,24 +488,39 @@ export type ResolveResult = { ok: true; row: SessionRow } | { ok: false; code: "
 export function resolveToken(token: string, now = Date.now()): ResolveResult {
   if (!TOKEN_RE.test(token)) return { ok: false, code: "INVALID_TOKEN" };
   const hash = sha(token);
-  const row = load().sessions.find((r) => r.hash === hash);
+  const row = sessionByHash(hash);
   if (!row) return { ok: false, code: "INVALID_TOKEN" };
   if (row.revokedAt) return { ok: false, code: "SESSION_REVOKED" };
   if (row.expiresAt <= now) return { ok: false, code: "SESSION_EXPIRED" };
   return { ok: true, row };
 }
 
-/** A request on this session: lastConnectedAt, written at most once a minute. */
+/** A request on this session: lastConnectedAt, at most once a minute, kept in memory and written with the others. */
 export function touchSession(row: SessionRow, now = Date.now()): void {
   if (row.lastConnectedAt !== null && now - row.lastConnectedAt < TOUCH_EVERY_MS) return;
   row.lastConnectedAt = now;
-  const fresh = change((s) => {
-    const r = s.sessions.find((x) => x.id === row.id);
-    if (r) r.lastConnectedAt = now;
-    return r;
-  });
-  if (fresh) emit({ type: "clientUpserted", row: fresh });
+  touched.set(row.id, now);
+  emit({ type: "clientUpserted", row });
 }
+
+/** Every session's lastConnectedAt seen since the last flush, in one write. Once a minute, and at exit. */
+export function flushTouches(): void {
+  if (touched.size === 0) return;
+  const batch = new Map(touched);
+  try {
+    change((s) => {
+      for (const r of s.sessions) {
+        const at = batch.get(r.id);
+        if (at !== undefined && (r.lastConnectedAt ?? 0) < at) r.lastConnectedAt = at;
+      }
+    });
+    for (const [id, at] of batch) if (touched.get(id) === at) touched.delete(id);
+  } catch (e) {
+    console.error("clients.json: lastConnectedAt not written yet", (e as Error).message); // kept for the next flush
+  }
+}
+setInterval(flushTouches, TOUCH_EVERY_MS).unref();
+process.once("exit", flushTouches); // synchronous: every process.exit (a pm2 reload, a container stop) writes what is left
 
 // open change streams per session: `connected`, and how a revoke ends them at once
 const lines = new Map<string, Set<() => void>>();
