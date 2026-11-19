@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addSource, addTrack, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, removeTrack, roll,
-  setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
+  fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
 } from "./model";
 
 // A reel: two talking shots on V1 with their voice on A1 (linked), a B-roll clip on V2 and a song on A2.
@@ -250,5 +250,26 @@ describe("nle keys", () => {
     expect(spans(extendTo(tl, key(tl, "V1", 0), 70), "V1")).toEqual([[0, 70, 100], [70, 80, 395]]);
     expect(spans(extendTo(tl, key(tl, "V2", 90), 120), "V2")).toEqual([[90, 30, 0]]);
     expect(spans(extendTo(tl, key(tl, "V2", 90), 140), "V2")).toEqual([[90, 50, 0]]);
+  });
+
+  it("sets a clip's fades by its corners: kept inside the clip, on that clip alone, 0 takes it off", () => {
+    const tl = reel();
+    const k = key(tl, "V1", 0);
+    const a = setFade(tl, k, "head", 10.4);
+    expect(find(a, k)!.item.fade_in).toBe(10);
+    // its linked sound keeps none
+    expect(find(a, key(a, "A1", 0))!.item.fade_in).toBeUndefined();
+    // in + out never more than the clip's 75 frames
+    const b = setFade(a, k, "tail", 200);
+    expect(find(b, k)!.item.fade_out).toBe(65);
+    expect(setFade(b, k, "tail", 65)).toBe(b);
+    const c = setFade(b, k, "head", -5);
+    expect("fade_in" in find(c, k)!.item).toBe(false);
+    // a locked track: nothing
+    const locked = setTrack(tl, "V1", { locked: true });
+    expect(setFade(locked, k, "head", 10)).toBe(locked);
+    // how much shows: up from 0 over the fade in, down to 0 over the fade out
+    const it = { src: "cam", rec: 0, len: 75, in: 0, fade_in: 10, fade_out: 25 };
+    expect([0, 5, 10, 40, 50, 62.5, 75].map((f) => fadeAt(it, f))).toEqual([0, 0.5, 1, 1, 1, 0.5, 0]);
   });
 });

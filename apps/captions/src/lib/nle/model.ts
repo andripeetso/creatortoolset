@@ -43,6 +43,9 @@ export interface NleItem {
   speed?: number;
   gain_db?: number;
   enabled?: boolean;
+  /** timeline frames of fade at the start / end: a picture from / to black (an opacity ramp), a sound from / to silence */
+  fade_in?: number;
+  fade_out?: number;
   /** this editor's own handle on the clip while it is open (stripped on save) */
   _k?: string;
   [k: string]: unknown;
@@ -511,3 +514,20 @@ export function extendTo(tl: NleTimeline, key: string, f: number): NleTimeline {
   const prev = items.find((x) => endOf(x) === it.rec);
   return prev ? roll(tl, prev._k!, d) : trim(tl, key, "head", d);
 }
+
+/**
+ * A clip's fade at its start (`head`, fade_in) or end (`tail`, fade_out) set to `frames`, kept so the two fit in the
+ * clip; 0 takes it off. The clip alone, not its linked clips.
+ */
+export function setFade(tl: NleTimeline, key: string, edge: Edge, frames: number): NleTimeline {
+  const hit = find(tl, key);
+  if (!hit || tl.tracks[hit.track].locked) return tl;
+  const [f, other] = edge === "head" ? (["fade_in", "fade_out"] as const) : (["fade_out", "fade_in"] as const);
+  const v = Math.max(0, Math.min(Math.round(frames) || 0, hit.item.len - (hit.item[other] ?? 0)));
+  if (v === (hit.item[f] ?? 0)) return tl;
+  return setItems(tl, [key], { [f]: v || undefined });
+}
+
+/** How much of a clip shows `k` timeline frames after its start, 0–1, from its fades. */
+export const fadeAt = (it: NleItem, k: number): number =>
+  Math.max(0, Math.min(1, it.fade_in ? k / it.fade_in : 1, it.fade_out ? (it.len - k) / it.fade_out : 1));
