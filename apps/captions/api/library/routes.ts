@@ -293,19 +293,16 @@ export type SaveAfter =
   | { edit: Record<string, unknown>; projectId?: string };
 
 /**
- * Bytes this server's disk is about to hold for others, counted against the free-space reserve: what the open uploads
- * may still write (only those sent to in the last hour, so empty or abandoned ones hold no space), and saves waiting in
- * staging for a computer (they hold the disk until one takes them), each under its asker. Of each other person only the
- * OPEN_PER_USER largest count, so one person's many uploads never hold everyone else's; the asker's own all count, or ten
- * of theirs sent a byte each would together write past the reserve.
+ * Bytes the open uploads may still write, counted against the free-space reserve: only those sent to in the last hour
+ * (expires_at moves on with each part), so empty or abandoned ones hold no space, and of each other person only the
+ * OPEN_PER_USER largest, so one person's many uploads never hold everyone else's; the asker's own all count, or ten of
+ * theirs sent a byte each would together write past the reserve. Bytes already on the disk (a save waiting in staging
+ * for a computer) are not counted: freeBytes already leaves them out.
  */
 async function pendingBytes(username: string): Promise<number> {
-  (await import("../work/tasks")).taskTable();
   return (db().prepare(
-    `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT created_by, n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY n DESC) AS k FROM (
-       SELECT created_by, size - received AS n FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?
-       UNION ALL SELECT actor, COALESCE(json_extract(input, '$.bytes'), 0) FROM computer_tasks WHERE kind = 'library-save' AND state IN ('queued', 'running')
-     )) WHERE k <= ? OR created_by = ?`,
+    `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT created_by, size - received AS n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY size - received DESC) AS k
+     FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?) WHERE k <= ? OR created_by = ?`,
   ).get(active(), OPEN_PER_USER, username) as { n: number }).n;
 }
 
@@ -360,7 +357,7 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
   await copyFile(file, staged);
   const ref = `${lib}:${quick}`;
-  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, bytes: size, folders, footage, ...(sound ? { sound } : {}), sources, ...(after ? { after } : {}) });
+  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), sources, ...(after ? { after } : {}) });
   const name = (id: string) => deviceOf(id)?.name ?? "Your computer";
   const where = (id: string) => `${label} (${folders[id]!.path})`;
   if (started.state === "queued" && started.line) return { waiting: `${name(first[0])} is offline. I'll save it to ${where(first[0])} when it's back.`, save: ref };
@@ -665,7 +662,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const started = direct ? await direct.start(sourceKeyOf(libraryId, id), size, { contentType: mimeOf(filename) }) : null;
   if (!started) {
     await mkdir(stagingDir(), { recursive: true });
-    // what the open uploads may still write and saves waiting for a computer count too (pendingBytes)
+    // what the open uploads may still write counts too (pendingBytes)
     const pending = await pendingBytes(user.username);
     if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
       return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);

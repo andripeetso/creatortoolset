@@ -23,9 +23,8 @@ export const LIBRARY_SAVE_TASK = "library-save";
 export interface LibrarySaveInput {
   lib: string;
   filename: string;
-  /** the server's copy until a computer has it, and its size (it counts in the free-space reserve: routes.ts pendingBytes) */
+  /** the server's copy until a computer has it */
   staged: string;
-  bytes: number;
   /** each computer that may take it: its folder for this save (id and path there) */
   folders: Record<string, { id: string; path: string }>;
   footage: boolean;

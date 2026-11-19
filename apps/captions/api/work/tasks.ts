@@ -85,9 +85,6 @@ const kinds = new Map<string, TaskKind>();
 /** The error a task that waited past its kind's ttlMs fails with. */
 export const TASK_EXPIRED = "expired";
 
-/** Makes sure the tasks table is there, for a reader that queries it directly (library/routes.ts pendingBytes). */
-export const taskTable = (): void => void db();
-
 /** Registers a kind (each module in api/work/tasks/ at load). */
 export function taskKind<I, R>(kind: string, def: TaskKind<I, R>): void {
   kinds.set(kind, def as TaskKind);

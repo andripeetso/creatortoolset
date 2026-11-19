@@ -20,8 +20,20 @@ process.env.APP_SECRET = "save-on-computer-test-secret";
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
 process.env.ELEVENLABS_API_KEY = "";
 vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
-// the disk has 100 GB free, whatever disk the test runs on
-vi.mock("../lib/uploads", async (real) => ({ ...(await real<typeof import("../lib/uploads")>()), freeBytes: async () => 100 * 1024 ** 3 }));
+// a 100 GB disk, whatever disk the test runs on: what the staging folder holds is not free, as on a real disk
+vi.mock("../lib/uploads", async (real) => {
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const used = () => {
+    const dir = join(process.env.DATA_DIR!, "library", "staging");
+    try {
+      return readdirSync(dir).reduce((n, f) => n + statSync(join(dir, f)).size, 0);
+    } catch {
+      return 0;
+    }
+  };
+  return { ...(await real<typeof import("../lib/uploads")>()), freeBytes: async () => 100 * 1024 ** 3 - used() };
+});
 
 // a finished export of tina's, as the export queue leaves one on disk
 const exportId = "00000000-0000-4000-8000-000000000001";
@@ -272,22 +284,26 @@ describe("which folder, and no computer at all", () => {
 });
 
 describe("a save waiting for a computer: the reserve, and 7 days at most", () => {
-  it("its bytes count in the free-space reserve under the asker; past 7 days they go and the person is told, naming the file", async () => {
+  it("its bytes on the disk leave that much less room; past 7 days they go and the person is told, naming the file", async () => {
+    const MiB = 1024 ** 2;
     const rae = await account("rae", "none");
-    drop("rae", "00000000-0000-4000-8000-0000000000a9", "Straddle.mp4", "tiny acrobatics straddle");
+    drop("rae", "00000000-0000-4000-8000-0000000000a9", "Straddle.mp4", "s".repeat(4 * MiB));
     const saved = await useFile(findUser("rae") as never, "00000000-0000-4000-8000-0000000000a9", "library");
     expect(saved).toMatchObject({ waiting: true });
     const staged = readdirSync(path.join(dataDir, "library", "staging")).filter((n) => n.startsWith(`computer-${rae.lib}-`));
     expect(staged).toHaveLength(1);
+    expect(statSync(path.join(dataDir, "library", "staging", staged[0]!)).size).toBe(4 * MiB);
     // a second library of rae's that keeps uploads, to start one in
     d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_rae_all', 'rae', 'All', 'local', '{"upload":"all","setupAt":"2026-11-01T00:00:00.000Z"}', 0)`).run();
-    // as if the clip waiting were 8 GB, with room for 9 GB above the reserve: a 2 GB upload would cross it
-    d.prepare("UPDATE computer_tasks SET input = json_set(input, '$.bytes', ?) WHERE actor = 'rae'").run(8 * 1024 ** 3);
-    process.env.LIBRARY_DISK_RESERVE_GB = "91";
-    const start = () =>
-      app.request("/api/library/lib_rae_all/uploads", { method: "POST", headers: { cookie: cookies.rae!, "content-type": "application/json" }, body: JSON.stringify({ filename: "Big.mp4", size: 2 * 1024 ** 3 }) });
+    // the free space as the disk says it now, the waiting 4 MB already out of it: 3 MB of it above the reserve
+    const free = await (await import("../lib/uploads")).freeBytes(dataDir);
+    process.env.LIBRARY_DISK_RESERVE_GB = String((free - 3 * MiB) / 1024 ** 3);
+    const start = (mb: number) =>
+      app.request("/api/library/lib_rae_all/uploads", { method: "POST", headers: { cookie: cookies.rae!, "content-type": "application/json" }, body: JSON.stringify({ filename: `Clip ${mb}.mp4`, size: mb * MiB }) });
     try {
-      const refused = await start();
+      // the waiting bytes are counted once, by the disk: a 2 MB start fits, a 4 MB one does not
+      expect((await start(2)).status).toBe(201);
+      const refused = await start(4);
       expect(refused.status).toBe(507);
       expect(await refused.json()).toMatchObject({ code: "disk_reserve" });
       // 8 days later the save is dropped: its bytes go, and the inbox says so with the file's name (it came from no chat)
@@ -299,8 +315,8 @@ describe("a save waiting for a computer: the reserve, and 7 days at most", () =>
       const inbox = JSON.parse(readFileSync(path.join(dataDir, "review", "notifications", "rae.json"), "utf8")) as Array<{ kind: string; name: string; text: string }>;
       expect(inbox[0]).toMatchObject({ kind: "failed", name: "Straddle.mp4", text: expect.stringContaining("“Straddle.mp4” was not saved") });
       expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(rae.lib)).toEqual({ n: 0 });
-      // its bytes no longer hold the disk
-      expect((await start()).status).toBe(201);
+      // its 4 MB are free again: the 4 MB start fits now
+      expect((await start(4)).status).toBe(201);
     } finally {
       process.env.LIBRARY_DISK_RESERVE_GB = "0";
     }
