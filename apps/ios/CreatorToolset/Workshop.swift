@@ -35,6 +35,8 @@ struct WorkshopSession: Codable, Identifiable, Hashable {
     /// Epoch milliseconds (the server's `updatedAt`).
     let updatedAt: Double?
     let posted: Posted?
+    /// The workspace it is in (the server's `projectId`); nil on a server from before workspaces.
+    var projectId: String? = nil
 
     struct Posted: Codable, Hashable { let url: String }
 

@@ -45,6 +45,10 @@ struct QueuedMessage: Codable, Equatable, Identifiable {
         /// Photos is still handing it over (a big video, one kept in iCloud): its name and copy are not known
         /// yet, and nothing of it can go up until they are.
         var pending: Bool?
+        /// The server (`Server.id`) and workspace of its chat when its message was sent: every request about it goes
+        /// there, whatever the phone picks later. nil on one an older app saved: the phone's current ones.
+        var server: String?
+        var workspace: String?
     }
 }
 

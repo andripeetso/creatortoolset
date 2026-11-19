@@ -239,7 +239,10 @@ final class Workspaces: ObservableObject {
         nav.chats = []
         nav.plan = []
         nav.make = []
+        // a plug-in's library may be this workspace's and not the last one's (the Upload tab's library side)
+        ServerPlugins.shared.load(for: Servers.shared.currentId, workspace: id)
         Task {
+            await ServerPlugins.shared.refresh()
             await ChatsModel.shared.load()
             await WorkshopModel.shared.load(force: true)
             await look(force: true)

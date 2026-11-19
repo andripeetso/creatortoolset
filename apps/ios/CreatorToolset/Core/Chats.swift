@@ -25,6 +25,8 @@ struct ChatRow: Identifiable, Hashable {
     var phoneEdit: UUID?
     /// The picture of its newest cut in Review, when it has one.
     var picture: String?
+    /// The workspace it was read in: its picture and its screen ask there, whatever is picked since.
+    var workspace: String?
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
@@ -509,11 +511,16 @@ final class ChatsModel: ObservableObject {
     private func rebuild() {
         let work = ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
                                                   opened: Set(opened.keys)), dismissed: dismissed)
-        let fresh = link == .none ? [] : ChatList.arrange(
+        let fresh: [ChatRow] = link == .none ? [] : ChatList.arrange(
             rows: work
                 + ChatList.sessions(WorkshopModel.shared.sessions, besides: work)
                 + ChatList.inWorkspace(ChatList.chats(assistant), workspace, of: chatSpaces, open: assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
+            .map { row in
+                var row = row
+                row.workspace = workspace
+                return row
+            }
         if fresh != rows { rows = fresh }
     }
 
@@ -855,7 +862,7 @@ private struct WorkCard: View {
         HStack(spacing: 12) {
             Group {
                 if let picture = row.picture {
-                    ToolsetImage(path: picture, maxPixels: 240)
+                    ToolsetImage(path: picture, maxPixels: 240, api: API.current(in: row.workspace))
                 } else {
                     Image(systemName: "film")
                         .font(.system(size: 18, weight: .medium))

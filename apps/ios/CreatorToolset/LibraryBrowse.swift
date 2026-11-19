@@ -183,6 +183,8 @@ struct CatalogBrowse: View {
     @State private var loadTask: Task<Void, Never>?
     @State private var opened: CatalogClip?
     @FocusState private var searching: Bool
+    /// The server and workspace this screen opened in: its list and pictures ask there.
+    @State private var api: API?
 
     private var media: CatalogMedia { CatalogMedia(rawValue: mediaChoice) ?? .all }
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
@@ -219,7 +221,7 @@ struct CatalogBrowse: View {
             }
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(clips) { clip in
-                    Button { opened = clip } label: { CatalogCell(clip: clip) }.buttonStyle(.plain)
+                    Button { opened = clip } label: { CatalogCell(clip: clip, api: api) }.buttonStyle(.plain)
                 }
             }
             .opacity(loading && !clips.isEmpty ? 0.4 : 1)
@@ -232,7 +234,7 @@ struct CatalogBrowse: View {
             load(force: true)
             await loadTask?.value
         }
-        .navigationDestination(item: $opened) { CatalogDetailView(clip: $0) }
+        .navigationDestination(item: $opened) { CatalogDetailView(clip: $0, api: api) }
         .task {
             // a debug build searches by itself and can show the recent searches: -UploadSearch words, -UploadShow recents
             if let words = debugArg("UploadSearch") { query = words }
@@ -306,7 +308,8 @@ struct CatalogBrowse: View {
     }
 
     private func fetch(_ words: String, media: CatalogMedia, force: Bool) async {
-        guard let api = servers.api else { return }
+        if api == nil { api = servers.api }
+        guard let api else { return }
         let cache = BrowseCache.shared
         // the newest-first list is one list for all three chips, filtered here
         let key = words.isEmpty ? BrowseCache.latestKey : BrowseCache.searchKey(words, media)
@@ -339,11 +342,12 @@ struct CatalogBrowse: View {
 
 struct CatalogCell: View {
     let clip: CatalogClip
+    let api: API?
 
     var body: some View {
         Color.clear
             .aspectRatio(1, contentMode: .fit)
-            .overlay(ToolsetImage(path: clip.thumbnail))
+            .overlay(ToolsetImage(path: clip.thumbnail, api: api))
             .clipped()
             .overlay(alignment: .bottomLeading) {
                 if clip.isVideo {
@@ -367,6 +371,8 @@ final class SaveProgress: ObservableObject {
 
 struct CatalogDetailView: View {
     let clip: CatalogClip
+    /// The browse screen's server and workspace: its pictures, player and saving ask there.
+    let api: API?
     @EnvironmentObject private var servers: Servers
     @StateObject private var progress = SaveProgress()
     @State private var player: AVPlayer?
@@ -412,15 +418,15 @@ struct CatalogDetailView: View {
                     Label(playError, systemImage: "exclamationmark.triangle").font(.footnote).padding()
                 }
             } else {
-                ToolsetImage(path: clip.thumbnail, contentMode: .fit).overlay { ProgressView() }
+                ToolsetImage(path: clip.thumbnail, contentMode: .fit, api: api).overlay { ProgressView() }
             }
         } else {
             // the kept grid picture at once, the sharp preview over it
             ZStack {
-                ToolsetImage(path: clip.thumbnail, contentMode: .fit)
+                ToolsetImage(path: clip.thumbnail, contentMode: .fit, api: api)
                 if let sharp { Image(uiImage: sharp).resizable().scaledToFit() }
             }
-            .task { sharp = await ToolsetImages.shared.image(CatalogAPI.path("api/clips/\(clip.id)/image-preview"), maxPixels: 2400) }
+            .task { sharp = await ToolsetImages.shared.image(CatalogAPI.path("api/clips/\(clip.id)/image-preview"), maxPixels: 2400, api: api) }
         }
     }
 
@@ -449,7 +455,7 @@ struct CatalogDetailView: View {
     }
 
     private func preparePlayer() async {
-        guard clip.isVideo, player == nil, let api = servers.api else { return }
+        guard clip.isVideo, player == nil, let api else { return }
         do {
             // a short-lived signed link straight to the video edge; no sign-in goes with it
             let player = AVPlayer(url: try await CatalogAPI(api: api).videoURL(clip.id))
@@ -461,7 +467,7 @@ struct CatalogDetailView: View {
     }
 
     private func save() async {
-        guard let api = servers.api else { return }
+        guard let api else { return }
         saveError = nil
         progress.fraction = 0
         let progress = self.progress
@@ -613,6 +619,8 @@ struct ServerLibraryGrid: View {
     @State private var loaded = false
     @State private var error: String?
     @State private var open: Asset?
+    /// The server and workspace this screen opened in: its list and pictures ask there.
+    @State private var api: API?
     @Environment(\.libraryQuery) private var query
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
@@ -655,7 +663,7 @@ struct ServerLibraryGrid: View {
                     Button { open = asset } label: {
                         Color.clear
                             .aspectRatio(1, contentMode: .fit)
-                            .overlay(ToolsetImage(path: asset.thumbUrl))
+                            .overlay(ToolsetImage(path: asset.thumbUrl, api: api))
                             .clipped()
                             .overlay(alignment: .bottomTrailing) {
                                 if asset.state == "processing" {
@@ -676,7 +684,7 @@ struct ServerLibraryGrid: View {
             await load(more: false)
         }
         .refreshable { await load(more: false, folders: true) }
-        .sheet(item: $open) { AssetView(asset: $0) }
+        .sheet(item: $open) { AssetView(asset: $0, api: api) }
     }
 
     /// Back up: the library, then each folder above the open one (the page's FolderTrail).
@@ -694,7 +702,8 @@ struct ServerLibraryGrid: View {
     }
 
     private func load(more: Bool, folders reread: Bool = false) async {
-        guard let api = servers.api else { return }
+        if api == nil { api = servers.api }
+        guard let api else { return }
         defer { loaded = true }
         #if DEBUG
         if PhoneDemo.on { return assets = PhoneDemo.assets(query) }
@@ -717,7 +726,8 @@ struct ServerLibraryGrid: View {
 /// One item of the server's library: it plays, or shows its picture, and saves to Photos.
 private struct AssetView: View {
     let asset: Asset
-    @EnvironmentObject private var servers: Servers
+    /// The library screen's server and workspace.
+    let api: API?
     @State private var player: AVPlayer?
     @State private var saving = false
     @State private var saved = false
@@ -730,7 +740,7 @@ private struct AssetView: View {
                     if asset.kind == "video" || asset.kind == "audio", let player {
                         NativePlayer(player: player)
                     } else {
-                        RemoteImage(path: "/api/library/media/\(asset.versionId)/source").scaledToFit()
+                        RemoteImage(path: "/api/library/media/\(asset.versionId)/source", api: api).scaledToFit()
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -746,14 +756,14 @@ private struct AssetView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear {
-            player = servers.api?.player("/api/library/media/\(asset.versionId)/play")
+            player = api?.player("/api/library/media/\(asset.versionId)/play")
             player?.play()
         }
         .onDisappear { player?.pause() }
     }
 
     private func save() async {
-        guard let api = servers.api else { return }
+        guard let api else { return }
         saving = true
         defer { saving = false }
         let name = (asset.title as NSString).pathExtension.isEmpty ? asset.title + (asset.kind == "video" ? ".mp4" : ".jpg") : asset.title

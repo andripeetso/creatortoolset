@@ -99,7 +99,8 @@ final class ToolsetAccess: ObservableObject {
 
 /// Which plug-ins the server in use has, read the way the computer's app learns it (`GET /api/plugins`), and whether
 /// its Media Library is a plug-in's (`GET /api/library/:id/sources` lists one with `main: true`). Remembered per
-/// server; asked again on sign-in, server change and each return to the app. Whether a plug-in's tools are on for the
+/// server and workspace (a plug-in's library may answer in one workspace only); asked again on sign-in, server change,
+/// workspace pick and each return to the app. Whether a plug-in's tools are on for the
 /// account is `ToolsetAccess.allows(<its gate>)`.
 @MainActor
 final class ServerPlugins: ObservableObject {
@@ -118,6 +119,7 @@ final class ServerPlugins: ObservableObject {
 
     @Published private(set) var known = Known()
     private var serverId: String?
+    private var workspace: String?
 
     init() { load(for: API.current?.server.absoluteString) }
 
@@ -131,19 +133,27 @@ final class ServerPlugins: ObservableObject {
     func has(_ id: String) -> Bool { known.plugins.contains(id) }
     var mainSource: Source? { known.mainSource }
 
-    func load(for serverId: String?) {
+    private static func key(_ serverId: String, _ workspace: String?) -> String { serverId + "|" + (workspace ?? "") }
+
+    /// What was last known of `serverId` in `workspace` (the phone's pick there unless one is given).
+    func load(for serverId: String?, workspace: String?? = nil) {
         self.serverId = serverId
-        known = serverId.flatMap { saved[$0] } ?? Known()
+        self.workspace = workspace ?? API.current?.workspace
+        known = serverId.flatMap { saved[Self.key($0, self.workspace)] } ?? Known()
     }
 
     func refresh() async {
         guard let api = API.current else { return }
-        let id = api.server.absoluteString
         guard let fresh = try? await Self.read(api) else { return }   // offline: keep what we knew
+        take(fresh, server: api.server.absoluteString, workspace: api.workspace)
+    }
+
+    /// A server's answer in a workspace: kept, and shown when it is the one on screen.
+    func take(_ fresh: Known, server id: String, workspace: String?) {
         var all = saved
-        all[id] = fresh
+        all[Self.key(id, workspace)] = fresh
         saved = all
-        if id == serverId, fresh != known { known = fresh }
+        if id == serverId, workspace == self.workspace, fresh != known { known = fresh }
     }
 
     /// The answers in the server's words. A server from before plug-ins answers 404: none.

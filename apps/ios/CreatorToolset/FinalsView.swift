@@ -385,6 +385,8 @@ final class FinalsModel: ObservableObject {
     private var checkedAt: Date?
     /// The server, account and kind of list shown.
     private var key: String?
+    /// The server and workspace this screen was opened in: its lists, pictures, players and buttons all ask there.
+    private(set) var api: API?
 
     /// The plug-in's list (its stacks and the library's Finals in one) when the server has it and the account has
     /// it on; else the core library's Finals collection.
@@ -394,7 +396,8 @@ final class FinalsModel: ObservableObject {
 
     /// Shows the saved list at once; asks again when it's a minute old, on pull, or when the kind of list changed.
     func load(studio: Bool, force: Bool = false) async {
-        guard let api = API.current else {
+        if api == nil { api = API.current }   // signed in on this screen
+        guard let api else {
             needsSignIn = true
             return
         }
@@ -485,7 +488,7 @@ struct FinalsView: View {
                 ForEach(months, id: \.title) { month in
                     Section {
                         ForEach(month.pieces) { piece in
-                            NavigationLink(value: piece) { FinalCell(piece: piece) }
+                            NavigationLink(value: piece) { FinalCell(piece: piece, api: model.api) }
                                 .buttonStyle(.plain)
                         }
                     } header: {
@@ -515,16 +518,16 @@ struct FinalsView: View {
             openAtLaunch()
         }
         .navigationDestination(for: FinalsData.Piece.self) { detail($0, made: made) }
-        .navigationDestination(for: WorkshopSession.self) { FinalDetailView(piece: nil, link: nil, made: $0, sure: true) }
+        .navigationDestination(for: WorkshopSession.self) { FinalDetailView(piece: nil, link: nil, made: $0, sure: true, api: model.api) }
         .navigationDestination(item: $opened) { detail($0, made: made) }
-        .navigationDestination(item: $openedSession) { FinalDetailView(piece: nil, link: nil, made: $0, sure: true) }
+        .navigationDestination(item: $openedSession) { FinalDetailView(piece: nil, link: nil, made: $0, sure: true, api: model.api) }
         .navigationDestination(item: $tool) { name in
             if name == "captions" { CaptionStudioView() } else { StorySplitterView() }
         }
     }
 
     private func detail(_ piece: FinalsData.Piece, made: FinalsSessions) -> some View {
-        FinalDetailView(piece: piece, link: model.links.link(of: piece.id), made: made.session(of: piece), sure: made.sure(of: piece))
+        FinalDetailView(piece: piece, link: model.links.link(of: piece.id), made: made.session(of: piece), sure: made.sure(of: piece), api: model.api)
     }
 
     /// A debug build opens a screen without taps: `-Open <piece id>`, `-OpenSession <session id>`, and the tools whose
@@ -554,9 +557,9 @@ struct FinalsView: View {
                     ForEach(ready) { item in
                         Group {
                             if let piece = item.piece {
-                                NavigationLink(value: piece) { ReadyCard(item: item) }
+                                NavigationLink(value: piece) { ReadyCard(item: item, api: model.api) }
                             } else {
-                                NavigationLink(value: item.session) { ReadyCard(item: item) }
+                                NavigationLink(value: item.session) { ReadyCard(item: item, api: model.api) }
                             }
                         }
                         .buttonStyle(.plain)
@@ -645,6 +648,7 @@ struct FinalsView: View {
 /// what it is.
 private struct ReadyCard: View {
     let item: ReadyToPost
+    let api: API?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -663,7 +667,7 @@ private struct ReadyCard: View {
 
     @ViewBuilder private var picture: some View {
         if let path = item.piece?.coverPath {
-            ToolsetImage(path: path, maxPixels: 480)
+            ToolsetImage(path: path, maxPixels: 480, api: api)
         } else {
             ZStack {
                 Rectangle().fill(Color("AccentColor").opacity(0.22))
@@ -675,12 +679,13 @@ private struct ReadyCard: View {
 
 private struct FinalCell: View {
     let piece: FinalsData.Piece
+    let api: API?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Color.clear
                 .aspectRatio(4 / 5, contentMode: .fit)
-                .overlay { ToolsetImage(path: piece.coverPath, maxPixels: 360) }
+                .overlay { ToolsetImage(path: piece.coverPath, maxPixels: 360, api: api) }
                 .overlay(alignment: .bottomLeading) {
                     HStack(spacing: 4) {
                         if piece.versions.count > 1 {
@@ -769,6 +774,8 @@ struct FinalDetailView: View {
     let made: WorkshopSession?
     /// The session is known for sure, not guessed from the title: only then can it be changed from here.
     let sure: Bool
+    /// The Finals screen's server and workspace: every picture, player and button of this one asks there.
+    let api: API?
     @ObservedObject private var access = ToolsetAccess.shared
     @ObservedObject private var plugins = ServerPlugins.shared
     @ObservedObject private var workshop = WorkshopModel.shared
@@ -876,7 +883,7 @@ struct FinalDetailView: View {
         if paged {
             TabView {
                 ForEach(items) { slide in
-                    ToolsetImage(path: slide.picture, maxPixels: 1200, contentMode: .fit)
+                    ToolsetImage(path: slide.picture, maxPixels: 1200, contentMode: .fit, api: api)
                         .aspectRatio(4 / 5, contentMode: .fit)
                 }
             }
@@ -884,7 +891,7 @@ struct FinalDetailView: View {
             .frame(maxWidth: .infinity)
             .frame(height: Self.mediaHeight)
         } else if let current, current.isImage {
-            ToolsetImage(path: current.picture, maxPixels: 1200, contentMode: .fit)
+            ToolsetImage(path: current.picture, maxPixels: 1200, contentMode: .fit, api: api)
                 .aspectRatio(4 / 5, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.mediaHeight)
@@ -959,7 +966,7 @@ struct FinalDetailView: View {
     /// The session's words (its documents) and, without a final, the files its share links brought back.
     private func load() async {
         if player == nil, !paged, let current { select(current) }
-        guard let sessionId, let api = API.current else {
+        guard let sessionId, let api else {
             loaded = true
             return
         }
@@ -980,11 +987,11 @@ struct FinalDetailView: View {
     private func select(_ item: FinalItem) {
         selected = item
         player?.pause()
-        player = item.isImage ? nil : API.current?.player(item.play)
+        player = item.isImage ? nil : api?.player(item.play)
     }
 
     private func save(_ picked: [FinalItem]) async {
-        guard let api = API.current else { return }
+        guard let api else { return }
         saving = true
         error = nil
         defer { saving = false }
@@ -998,7 +1005,7 @@ struct FinalDetailView: View {
 
     /// The video downloads (as Save to Photos does) and opens in Story Splitter.
     private func openSplitter(_ item: FinalItem) async {
-        guard let api = API.current else { return }
+        guard let api else { return }
         preparing = true
         error = nil
         defer { preparing = false }
@@ -1013,7 +1020,7 @@ struct FinalDetailView: View {
 
     /// The session's team link (the one it has, or a new one), handed to the iPhone's share sheet.
     private func sendToTeam(_ id: String) async {
-        guard let api = API.current else { return }
+        guard let api else { return }
         linking = true
         error = nil
         defer { linking = false }
@@ -1025,7 +1032,7 @@ struct FinalDetailView: View {
     }
 
     private func markPublished() async {
-        guard let api = API.current, let sessionId else { return }
+        guard let api, let sessionId else { return }
         publishing = true
         error = nil
         defer { publishing = false }

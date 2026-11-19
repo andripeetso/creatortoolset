@@ -318,10 +318,20 @@ struct ScriptText: UIViewRepresentable {
     }
 }
 
-/// A session opened by its id (a card in a chat, a link): its script.
+/// A session opened by its id (a card in a chat, a link): its script. Not in the phone's workspace, it is asked for by id:
+/// one in another workspace says which in one line, with a button that switches there; one that can't be read says why.
+/// Never a spinner that never ends.
 struct SessionRouteView: View {
     let id: String
     @ObservedObject private var model = WorkshopModel.shared
+    @ObservedObject private var workspaces = Workspaces.shared
+    @State private var found: Found?
+
+    enum Found: Equatable {
+        case open(WorkshopSession)
+        case elsewhere(String)
+        case failed(String)
+    }
 
     var body: some View {
         if let session = model.sessions.first(where: { $0.id == id }) {
@@ -331,7 +341,44 @@ struct SessionRouteView: View {
         } else if let error = model.error {
             Problem(text: error).padding()
         } else {
-            ProgressView().task { await model.load(force: true) }
+            Group {
+                switch found {
+                case .open(let session): ScriptReaderView(session: session)
+                case .elsewhere(let ws):
+                    if let entry = workspaces.entries.first(where: { $0.server.id == Servers.shared.currentId && $0.workspace?.id == ws }) {
+                        VStack(spacing: 12) {
+                            Text("This script is in \(entry.name).").foregroundStyle(.secondary)
+                            Button("Switch to \(entry.name)") { workspaces.pick(entry) }.buttonStyle(.bordered)
+                        }
+                        .padding()
+                    } else {
+                        Problem(text: "This script is in another workspace.").padding()
+                    }
+                case .failed(let why): Problem(text: why).padding()
+                case nil: ProgressView()
+                }
+            }
+            .task(id: workspaces.picked) { await find() }
         }
+    }
+
+    private func find() async {
+        await model.load(force: true)
+        guard !model.sessions.contains(where: { $0.id == id }), let api = API.current else { return }
+        do {
+            let asked: WorkshopSession = try await api.get("/api/workshop/sessions/\(id)")
+            if workspaces.entries.isEmpty { await workspaces.load() }
+            found = Self.found(asked, picked: api.workspace)
+        } catch APIError.server(404, _) {
+            found = .failed("This script is gone, or this account can't open it")
+        } catch {
+            found = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Opens here when it is in the phone's workspace (or names none); otherwise names the workspace it is in.
+    nonisolated static func found(_ session: WorkshopSession, picked: String?) -> Found {
+        if let ws = session.projectId, ws != picked { return .elsewhere(ws) }
+        return .open(session)
     }
 }

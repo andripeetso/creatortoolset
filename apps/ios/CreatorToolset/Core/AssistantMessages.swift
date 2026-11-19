@@ -31,7 +31,7 @@ struct AssistantUserMessage: View {
                     ForEach(Array(stride(from: 0, to: images.count, by: 3)), id: \.self) { start in
                         HStack(spacing: 6) {
                             ForEach(images[start..<min(start + 3, images.count)]) { image in
-                                ToolsetImage(path: "/api/assistant/images/\(image.id)", maxPixels: 300)
+                                ToolsetImage(path: "/api/assistant/images/\(image.id)", maxPixels: 300, api: AssistantModel.shared.chatAPI)
                                     .frame(width: 84, height: 84)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
                                     .accessibilityLabel(image.name)
@@ -242,7 +242,7 @@ struct AssistantVideoCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .task(id: media.poster) {
             guard let path = media.poster else { return }
-            poster = await ToolsetImages.shared.image(path, maxPixels: 900)
+            poster = await ToolsetImages.shared.image(path, maxPixels: 900, api: AssistantModel.shared.chatAPI)
         }
         .onDisappear { player?.pause() }
         .onAppear {
@@ -251,7 +251,7 @@ struct AssistantVideoCard: View {
     }
 
     private func play() {
-        guard let api = ToolsetAPI.current else { return }
+        guard let api = AssistantModel.shared.chatAPI else { return }
         Self.playing?.pause()
         let fresh = api.player(media.src)
         Self.playing = fresh

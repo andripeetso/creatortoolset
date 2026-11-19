@@ -19,6 +19,13 @@ extension API {
         return ServerRegistry.read().current.map(API.connected)
     }
 
+    /// The server in use in `workspace` when one is given (a chat's or a screen's own), else the phone's pick there.
+    static func current(in workspace: String?) -> API? {
+        guard var api = current else { return nil }
+        if let workspace { api.workspace = workspace }
+        return api
+    }
+
     /// For calls that take minutes (an upload's part, transcription, the change stream).
     static let slow: URLSession = {
         let config = URLSessionConfiguration.default
@@ -91,8 +98,8 @@ enum DiskCache {
     }
 }
 
-/// Pictures from the server in use: memory while the app runs, disk between launches, so a grid appears at once the
-/// second time. Kept per server and account.
+/// Pictures from a server (the screen's own; the one in use by default): memory while the app runs, disk between
+/// launches, so a grid appears at once the second time. Kept per server, account and workspace.
 @MainActor
 final class ToolsetImages {
     static let shared = ToolsetImages()
@@ -101,24 +108,29 @@ final class ToolsetImages {
     private static let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("toolset-images", isDirectory: true)
 
+    /// (a test gives its own)
+    var session = API.session
+
     init() { memory.totalCostLimit = 100 * 1024 * 1024 }
 
-    func image(_ path: String, maxPixels: Int) async -> UIImage? {
+    /// `api`: the screen's server and workspace, so a picture never comes from a workspace picked since it opened.
+    func image(_ path: String, maxPixels: Int, api: API? = API.current) async -> UIImage? {
         #if DEBUG
         if PhoneDemo.on { return PhoneDemo.picture(path) }
         #endif
-        guard let api = API.current else { return nil }
+        guard let api else { return nil }
         let key = "\(api.cacheKey)|\(maxPixels)|\(path)"
         if let hit = memory.object(forKey: key as NSString) { return hit }
         if let running = loading[key] { return await running.value }
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         let folder = Self.folder
         let file = folder.appendingPathComponent(digest + ".jpg")
+        let session = session
         let task = Task<UIImage?, Never> {
             if let saved = await Task.detached(priority: .userInitiated, operation: {
                 UIImage(contentsOfFile: file.path)?.preparingForDisplay()
             }).value { return saved }
-            guard let data = try? await api.data(api.request(path)) else { return nil }
+            guard let data = try? await api.data(api.request(path), session: session) else { return nil }
             return await Task.detached(priority: .userInitiated) {
                 let image = Self.decode(data, maxPixels: maxPixels)
                 if let jpeg = image?.jpegData(compressionQuality: 0.8) {
@@ -149,11 +161,12 @@ final class ToolsetImages {
     }
 }
 
-/// A picture from the server in use (nil path: the placeholder).
+/// A picture from `api` (the screen's server and workspace; nil: the one in use), nil path: the placeholder.
 struct ToolsetImage: View {
     let path: String?
     var maxPixels = 400
     var contentMode: ContentMode = .fill
+    var api: API?
     @State private var image: UIImage?
 
     var body: some View {
@@ -163,9 +176,9 @@ struct ToolsetImage: View {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: contentMode)
             }
         }
-        .task(id: path) {
+        .task(id: "\(api?.cacheKey ?? "")|\(path ?? "")") {
             guard let path else { return }
-            image = await ToolsetImages.shared.image(path, maxPixels: maxPixels)
+            image = await ToolsetImages.shared.image(path, maxPixels: maxPixels, api: api ?? API.current)
         }
     }
 }

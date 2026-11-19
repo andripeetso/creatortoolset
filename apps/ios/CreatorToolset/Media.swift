@@ -6,6 +6,8 @@ import WebKit
 /// A picture from the server (a thumbnail, a cover), loaded with the sign-in cookie and kept in memory.
 struct RemoteImage: View {
     let path: String
+    /// The screen's server and workspace; nil: the one in use.
+    var api: API?
     @EnvironmentObject private var servers: Servers
     @State private var image: UIImage?
 
@@ -23,7 +25,7 @@ struct RemoteImage: View {
     }
 
     private func load() async {
-        guard let api = servers.api else { return }
+        guard let api = api ?? servers.api else { return }
         let key = "\(api.cacheKey)\(path)" as NSString
         if let hit = Self.cache.object(forKey: key) { return image = hit }
         guard let data = try? await api.data(api.request(path)), let loaded = UIImage(data: data) else { return }

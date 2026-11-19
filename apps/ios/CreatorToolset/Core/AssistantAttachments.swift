@@ -84,20 +84,38 @@ enum AssistantUpload {
         let parts: [Int]
     }
 
-    private static func signedIn() throws -> ToolsetAPI {
-        guard let api = ToolsetAPI.current else { throw ToolsetAPI.Failure(status: 0, message: "Not signed in") }
+    /// A message's videos, stamped with its chat's server and workspace (`api`) as it is sent.
+    static func stamped(_ videos: [QueuedMessage.Video]?, api: ToolsetAPI?) -> [QueuedMessage.Video]? {
+        videos?.map { video in
+            var video = video
+            video.server = api?.key ?? api?.server.absoluteString
+            video.workspace = api?.workspace
+            return video
+        }
+    }
+
+    /// Where a video's requests go: the server and workspace it was stamped with (one an older app saved: the phone's
+    /// current ones). That server gone from this phone: it waits, as with no connection.
+    static func api(for video: QueuedMessage.Video) throws -> ToolsetAPI {
+        let notSignedIn = ToolsetAPI.Failure(status: 0, message: "Not signed in")
+        guard let server = video.server else {
+            guard let api = ToolsetAPI.current else { throw notSignedIn }
+            return api
+        }
+        guard var api = ServerRegistry.read().servers.first(where: { $0.key == server }).map(API.connected) else { throw notSignedIn }
+        api.workspace = video.workspace
         return api
     }
 
-    /// A waiting message's video gets its id on the signed-in server: the message can name it from then on.
+    /// A waiting message's video gets its id on its chat's server: the message can name it from then on.
     static func begin(_ video: QueuedMessage.Video) async throws -> String {
-        try await begin(video.url, name: video.name, api: signedIn()).id
+        try await begin(video.url, name: video.name, api: api(for: video)).id
     }
 
-    /// A waiting message's video, to the signed-in server.
+    /// A waiting message's video, to its chat's server and workspace.
     static func send(_ video: QueuedMessage.Video, begun: @escaping @MainActor (String) -> Void,
                      progress: @escaping @Sendable (Double) -> Void) async throws -> String {
-        try await send(video.url, name: video.name, resuming: video.file, api: signedIn(), begun: begun, progress: progress)
+        try await send(video.url, name: video.name, resuming: video.file, api: api(for: video), begun: begun, progress: progress)
     }
 
     private static func size(_ file: URL) throws -> Int {
@@ -175,9 +193,8 @@ enum AssistantUpload {
     /// The app leaves the front: every part these videos still lack is handed to iOS now, in order, so
     /// they go on up by themselves. What the phone has no room for goes when the app is open again.
     static func handOver(_ videos: [QueuedMessage.Video]) async {
-        guard let api = ToolsetAPI.current else { return }
         for video in videos {
-            guard let id = video.file, let total = try? size(video.url) else { continue }
+            guard let api = try? api(for: video), let id = video.file, let total = try? size(video.url) else { continue }
             // what the server has is known from when the upload began or carried on: only one from before the app started is asked about
             var known = await AssistantTransfers.shared.known(id)
             if known == nil, let asked = try? await parts(of: id, api: api) { known = (asked.partSize, Set(asked.parts)) }

@@ -191,7 +191,14 @@ final class EditThreadModel: ObservableObject {
     /// Counts send()'s answers: a chat read that began before one is older than it.
     private var sends = 0
 
-    init(id: String) { self.id = id }
+    /// The server and workspace this edit was opened in (its row's workspace, else the phone's): every request,
+    /// player and picture of this screen asks there.
+    let api: API?
+
+    init(id: String, api: API? = nil) {
+        self.id = id
+        self.api = api ?? API.current(in: ChatsModel.shared.rows.first { $0.id == ChatList.path(.edit(id)) }?.workspace)
+    }
 
     var running: EditorProject.Job? { edit?.jobs.first { $0.status == "running" } }
     var queued: [EditorProject.Job] { edit?.jobs.filter { $0.status == "queued" } ?? [] }
@@ -225,7 +232,7 @@ final class EditThreadModel: ObservableObject {
             again = true
             return
         }
-        guard let api = ToolsetAPI.current else {
+        guard let api else {
             error = "Not signed in"
             return
         }
@@ -248,7 +255,7 @@ final class EditThreadModel: ObservableObject {
 
     /// True when the message went.
     func send(_ text: String) async -> Bool {
-        guard let api = ToolsetAPI.current else { return false }
+        guard let api else { return false }
         sending = true
         defer { sending = false }
         do {
@@ -297,7 +304,7 @@ final class EditThreadModel: ObservableObject {
     }
 
     private func act(_ work: (ToolsetAPI) async throws -> Void) async {
-        guard let api = ToolsetAPI.current else { return }
+        guard let api else { return }
         do {
             try await work(api)
             notice = nil
@@ -373,7 +380,7 @@ struct EditThreadView: View {
                         if job.ask == "language" {
                             LanguageCard(job: job) { await model.go(job, language: $0) }
                         } else {
-                            GoCard(editId: id, job: job) { await model.go(job) }
+                            GoCard(editId: id, job: job, api: model.api) { await model.go(job) }
                         }
                     }
                 }
@@ -413,7 +420,7 @@ struct EditThreadView: View {
             .foregroundStyle(.red)
             .frame(maxWidth: .infinity, alignment: .leading)
         case .cut(let draft):
-            CutCard(editId: id, draft: draft) { await model.sendToReview(draft) }
+            CutCard(editId: id, draft: draft, api: model.api) { await model.sendToReview(draft) }
         case .said(_, let text):
             UserBubble(text: text)
         case .reply(_, let text, let steps, let failed):
@@ -471,6 +478,7 @@ struct EditThreadView: View {
 private struct CutCard: View {
     let editId: String
     let draft: EditorProject.Draft
+    let api: API?
     let sendToReview: () async -> Void
     @State private var player: AVPlayer?
     @State private var busy = false
@@ -485,7 +493,7 @@ private struct CutCard: View {
                 .frame(width: 180, height: 320)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .onAppear {
-                    if player == nil, let api = ToolsetAPI.current {
+                    if player == nil, let api {
                         player = api.player("/api/editor/\(editId)/drafts/\(pathPiece(draft.name))/preview")
                     }
                 }
@@ -541,6 +549,7 @@ private struct CutCard: View {
 private struct GoCard: View {
     let editId: String
     let job: EditorProject.Job
+    let api: API?
     let go: () async -> Void
     @State private var busy = false
 
@@ -548,7 +557,7 @@ private struct GoCard: View {
         AskCard(eyebrow: "Waiting for you", title: job.sheet != nil ? "Look sheet" : "Next: \(EditorWords.pass(job.kind))") {
             if let sheet = job.sheet {
                 // the picture's address carries the sheet's time: a sheet made again is another picture
-                SheetPicture(path: "/api/editor/\(editId)/jobs/\(job.id)/sheet.jpg?c=\(Int(sheet.at ?? 0))")
+                SheetPicture(path: "/api/editor/\(editId)/jobs/\(job.id)/sheet.jpg?c=\(Int(sheet.at ?? 0))", api: api)
                 if let plan = sheet.plan, !plan.isEmpty { MarkdownText(text: plan).font(.subheadline) }
             }
             WideButton(title: "Looks good, carry on", busy: busy) {
@@ -599,6 +608,7 @@ private struct LanguageCard: View {
 /// The look sheet's picture across the card, in its own shape.
 private struct SheetPicture: View {
     let path: String
+    let api: API?
     @State private var image: UIImage?
 
     var body: some View {
@@ -610,6 +620,6 @@ private struct SheetPicture: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .task(id: path) { image = await ToolsetImages.shared.image(path, maxPixels: 1400) }
+        .task(id: path) { image = await ToolsetImages.shared.image(path, maxPixels: 1400, api: api) }
     }
 }

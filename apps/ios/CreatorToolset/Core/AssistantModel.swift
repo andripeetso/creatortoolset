@@ -170,8 +170,7 @@ struct AssistantServer {
 
     /// In the chat's own workspace when it has one (a chat keeps its workspace), else the phone's. The outbox is the account's.
     static func signedIn(chat workspace: String?) -> AssistantServer? {
-        guard var api = ToolsetAPI.current else { return nil }
-        if let workspace { api.workspace = workspace }
+        guard let api = ToolsetAPI.current(in: workspace) else { return nil }
         return AssistantServer(queue: AssistantOutbox.file(for: api.accountKey)) { path, method, json in
             var request = api.request(path, method: method, json: json)
             let turn = path == "/api/assistant/turn"
@@ -206,6 +205,9 @@ final class AssistantModel: ObservableObject {
     private var resets = 0
     /// Replies being stopped because a video of their message failed.
     private var stopping: Set<String> = []
+
+    /// The chat's own client: the server in use, in the chat's workspace (a chat keeps its own), else the phone's pick.
+    var chatAPI: ToolsetAPI? { ToolsetAPI.current(in: view?.workspace) }
 
     init() {
         server = { [weak self] in .signedIn(chat: self?.view?.workspace) }
@@ -288,6 +290,8 @@ final class AssistantModel: ObservableObject {
     /// The person's message: it goes now when it can, and waits its turn when a reply is being
     /// written or there is no connection.
     func send(_ message: QueuedMessage) {
+        var message = message
+        message.videos = AssistantUpload.stamped(message.videos, api: chatAPI)
         outbox.add(message)
         carryOn()
     }
