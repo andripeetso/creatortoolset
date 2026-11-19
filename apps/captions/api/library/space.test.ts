@@ -83,16 +83,11 @@ describe("the library's space", () => {
     expect((d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE version_id = 'v1' AND kind = 'proxy'").get() as { n: number }).n).toBe(1);
   });
 
-  it("proxies off: none is queued, nor made again on opening; on again: the clips without one get one", async () => {
+  it("Hosted proxies: the switch stays on whatever it is set to, and the clips without a proxy get one", async () => {
     d.prepare("DELETE FROM jobs").run();
     const set = (proxy: boolean) =>
       app.request("/api/library/lib_s", { method: "PATCH", headers: { "x-user": "owner-s", "content-type": "application/json" }, body: JSON.stringify({ settings: { proxy } }) });
-    enqueueJob(d, "lib_s", "v1", "proxy", "owner-s");
-    expect(((await (await set(false)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(false);
-    expect(d.prepare("SELECT 1 FROM jobs WHERE kind = 'proxy'").get()).toBeUndefined();
-    await app.request("/api/library/media/v1/play", { headers: { "x-user": "owner-s" } });
-    expect(d.prepare("SELECT 1 FROM jobs WHERE kind = 'proxy'").get()).toBeUndefined();
-    await set(true);
+    expect(((await (await set(false)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(true); // UNIFIED-PRD §3.1
     expect(d.prepare("SELECT version_id, state FROM jobs WHERE kind = 'proxy'").all()).toEqual([{ version_id: "v1", state: "queued" }]); // v2 has its proxy
   });
 
