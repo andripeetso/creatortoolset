@@ -128,6 +128,31 @@ describe("the proof-id cache", () => {
     expect(verifyDpop({ proof: q, method: "POST", url: URL_ })).toEqual({ ok: false, code: "replay" });
   });
 
+  it("tries the file again a minute after it failed to open, with one log line per try", async () => {
+    const { existsSync, rmSync, writeFileSync } = await import("node:fs");
+    const blocker = `${DATA}-blocker`;
+    writeFileSync(blocker, ""); // a file where the data folder's parent should be: it can't be made
+    process.env.DATA_DIR = `${blocker}/data`;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.resetModules();
+      const d = await import("./dpop");
+      const t = Date.now();
+      expect(d.spendJti("k", "a", t)).toBe("ok"); // in memory only
+      expect(d.spendJti("k", "b", t + 30_000)).toBe("ok");
+      expect(errors).toHaveBeenCalledTimes(1); // not tried again within the minute
+      expect(d.spendJti("k", "c", t + 61_000)).toBe("ok");
+      expect(errors).toHaveBeenCalledTimes(2); // tried again, still failing: one more line
+      rmSync(blocker);
+      expect(d.spendJti("k", "d", t + 122_000)).toBe("ok");
+      expect(existsSync(`${blocker}/data/dpop-jti.db`)).toBe(true);
+      expect(errors).toHaveBeenCalledTimes(2);
+    } finally {
+      errors.mockRestore();
+      process.env.DATA_DIR = DATA;
+    }
+  });
+
   it("forgets expired ids on a timer that never keeps the process alive", async () => {
     vi.useFakeTimers();
     try {
