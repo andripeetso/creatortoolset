@@ -35,7 +35,7 @@ import { onEvent } from "../lib/events";
 import { readComments, readMeta } from "../review";
 import { inProjectOf, projectOf } from "../lib/project-of";
 import { sharedHere } from "../lib/workshop/workspace";
-import { currentWorkspaceId } from "../lib/workspace-scope";
+import { currentWorkspaceId, listWorkspaceId } from "../lib/workspace-scope";
 import type { SessionUser } from "../users";
 import { getWorkspace, resolveProjectId } from "../lib/workshop/workspace";
 
@@ -114,11 +114,12 @@ editorApp.post("/", async (c) => {
 /**
  * The edits the person sees (their own, and every one in a workspace given to them), newest first, each with the
  * project it is in as its workspace's owner files it (lib/project-of.ts: an old one is the first brand's);
- * ?projectId= only those of that project of theirs.
+ * ?projectId= only those of that project of theirs; none asked: the workspace the request works in (the app's header,
+ * a chat's tools), so a chat never lists another workspace's edits.
  */
 editorApp.get("/", async (c) => {
   const user = c.get("user");
-  const want = c.req.query("projectId");
+  const want = await listWorkspaceId(user, c.req.query("projectId"));
   const only = want && (await inProjectOf(user, want)) ? want : undefined;
   const all = await listFor(user);
   // the edits there before projects were filed go into their videos' folders once (projects.ts); the folders' change stream refreshes the list

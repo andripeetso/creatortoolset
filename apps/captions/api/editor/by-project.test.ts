@@ -70,6 +70,11 @@ describe.skipIf(rootReplaced)("AI Editor: edits kept apart by project", () => {
     // and no other's
     const where = Object.fromEntries((await json<EditSummary[]>(call("maker", "GET", "/api/editor"))).map((e) => [e.name, e.projectId]));
     expect(where).toEqual({ "Old take": first, "First's reel": first, "Second's reel": second, "Asked for theirs": second });
+    // a request working in a workspace (the app's header, a chat's tools) lists that one's only, never another client's
+    const inWs = async (ws: string) =>
+      (await json<EditSummary[]>(app.request("/api/editor", { headers: { cookie: cookies.maker!, "x-ct-workspace": ws } }))).map((e) => e.name).sort();
+    expect(await inWs(first)).toEqual(["First's reel", "Old take"]);
+    expect(await inWs(second)).toEqual(["Asked for theirs", "Second's reel"]);
   });
 
   it("a person with no project: every edit, and none says a project", async () => {
