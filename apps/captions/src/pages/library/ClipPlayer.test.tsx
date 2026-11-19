@@ -2,7 +2,7 @@
 import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssetCard } from "@contracts/library";
+import type { AssetCard, AssetDetail } from "@contracts/library";
 import type { PlaceCheck } from "@contracts/places";
 import { ClipPlayer } from "./ClipPlayer";
 
@@ -41,6 +41,8 @@ afterEach(async () => {
 
 const open = (a: AssetCard = card) =>
   act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} />));
+const openWith = (detail: unknown) =>
+  act(async () => r.render(<ClipPlayer asset={card} detail={detail as AssetDetail} media={createRef()} startAt={0} />));
 const video = () => host.querySelector("video")!;
 const badge = () => host.querySelector("span.rounded")?.textContent;
 const fire = (type: string) => act(async () => void video().dispatchEvent(new Event(type)));
@@ -81,11 +83,15 @@ describe("with it", () => {
 
   it("when the server refuses the clip, the panel says where it is: the place line, else not checked yet", async () => {
     answer = undefined;
+    // the library cannot be read: the place line is said as before (no library answer to wait for)
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline"))));
     await open({ ...card, onMac: undefined, placeWord: { word: "on", computer: "Studio" } });
     await fire("error");
+    await act(async () => {});
     expect(host.textContent).toContain("On Studio");
     await open({ ...card, onMac: undefined, placeWord: undefined });
     await fire("error");
+    await act(async () => {});
     expect(host.textContent).toContain("Not checked yet");
   });
 
@@ -266,5 +272,36 @@ describe("under Originals hosted", () => {
     await fire("error");
     expect(host.textContent).not.toContain("The original is on footage (office-nas), which isn't connected");
     expect(host.textContent).not.toContain("Proxies aren't uploaded");
+  });
+
+  it("a file the window cannot play says Can't play this format here, with Download of the original", async () => {
+    answer = undefined;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: { upload: "originals" } }] })));
+    await openWith({ state: "ready", jobs: [] });
+    await fire("error");
+    await act(async () => {});
+    expect(host.textContent).toContain("Can't play this format here");
+    expect(host.querySelector('a[href="/api/library/media/v1/source"]')?.textContent).toContain("Download");
+  });
+
+  it("the library's answer comes first: no away line shows while it is pending", async () => {
+    answer = undefined;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    await openWith({ state: "ready", jobs: [] });
+    await fire("error");
+    expect(host.textContent).not.toContain("Not checked yet");
+    expect(host.textContent).not.toContain("This clip isn't on the server.");
+  });
+});
+
+describe("under Proxies hosted, with no proxy for the clip", () => {
+  it("says This clip isn't on the server.", async () => {
+    answer = undefined;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: { upload: "proxies" } }] })));
+    await openWith({ state: "ready", jobs: [] });
+    await fire("error");
+    await act(async () => {});
+    expect(host.textContent).toContain("This clip isn't on the server.");
+    expect(host.textContent).not.toContain("Can't play this format here");
   });
 });

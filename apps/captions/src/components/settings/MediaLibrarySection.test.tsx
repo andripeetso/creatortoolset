@@ -243,24 +243,19 @@ describe("the Media Library's settings", () => {
     expect(changed.at(-1)?.settings.upload).toBe("proxies");
   });
 
-  it("Keep on this computer in Library settings toggles library-wide offline proxies in the Mac app and is disabled when Upload is Off", async () => {
+  // replaced: the owner's "Keep on this computer" switch is the Downloads card (MemberSettings.tsx OwnerDownloads), shown in the Mac app only
+  it("the owner's offline control is the Downloads card in the Mac app, and is not shown with Upload off", async () => {
     document.documentElement.dataset.macDevice = "dev_mac";
     try {
-      await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-      const offSwitch = host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
-      expect(offSwitch).not.toBeNull();
-      expect(offSwitch.disabled).toBe(true);
-      expect(document.body.textContent).toContain("there is no proxy to keep.");
+      await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, upload: "proxies" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+      expect(host!.querySelector('[aria-label="Keep on this computer"]')).toBeNull();
+      expect(host!.querySelector('[aria-label="Automatic downloads"]')).not.toBeNull();
+      expect(host!.querySelector('[aria-label="Make available offline"]')).not.toBeNull();
 
       act(() => root!.unmount());
       host!.remove();
-      await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, upload: "proxies" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-      const sw = () => host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
-      expect(sw().disabled).toBe(false);
-      expect(sw().getAttribute("aria-checked")).toBe("false");
-      await act(async () => sw().click());
-      expect(asked.some(([what]) => what === "POST /api/library/offline")).toBe(true);
-      expect(sw().getAttribute("aria-checked")).toBe("true");
+      await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, upload: "none" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+      expect(host!.querySelector('[aria-label="Automatic downloads"]')).toBeNull();
     } finally {
       delete document.documentElement.dataset.macDevice;
     }

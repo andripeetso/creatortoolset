@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Folder } from "lucide-react";
-import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus, hostsProxies } from "@contracts/library";
+import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -12,7 +12,6 @@ import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { askMediaFolder } from "@/lib/local-files";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
-import { thisMacDevice } from "@/lib/providers";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
@@ -20,6 +19,7 @@ import { UploadSelect } from "./UploadSelect";
 import { addFrom, CantRead, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 import { LibraryCopies } from "./Copies";
+import { OwnerDownloads } from "./MemberSettings";
 
 /**
  * The Media Library's settings (the owner's: the places and where the files are kept are theirs only), behind one
@@ -114,6 +114,7 @@ export function LibrarySettingsBody({ library, watch, folders, onChange, onError
       {watch.allowed && !inSettings && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
       <LibraryCopies libraryId={library.id} />
       <Storage library={library} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />
+      <OwnerDownloads library={library} />
       <AiSwitches library={library} onChange={onChange} onError={onError} />
       <RedoAll library={library} onError={onError} />
     </>
@@ -513,20 +514,6 @@ function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps,
  */
 function SpaceRows({ library, saved, space, read, videos, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { saved: LibraryStorage | null; space: LibrarySpace | null; read: () => Promise<void>; videos: string | null }) {
   const cloud = saved?.proxies ?? null;
-  const [offlineLibs, setOfflineLibs] = useState<string[] | null>(null);
-  const keepOffline = !!offlineLibs?.includes(library.id);
-  const noServerProxy = !hostsProxies(library.settings.upload);
-  useEffect(() => {
-    if (thisMacDevice()) void fetch("/api/library/offline").then((r) => r.json() as Promise<{ libraries?: string[] }>).then((x) => setOfflineLibs(x.libraries ?? []), () => {});
-  }, []);
-  const flipOffline = (on: boolean) =>
-    fetch("/api/library/offline", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ library: library.id, on }) })
-      .then(async (r) => {
-        const b = (await r.json().catch(() => ({}))) as { libraries?: string[]; error?: string };
-        if (!r.ok) throw new Error(b.error ?? `Request failed (${r.status})`);
-        setOfflineLibs(b.libraries ?? []);
-      })
-      .catch((e: unknown) => onError(message(e)));
   useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
@@ -544,29 +531,11 @@ function SpaceRows({ library, saved, space, read, videos, onChange, onError }: P
       .catch((e) => onError(message(e)));
   const proxyFiles = !!space && (cloud || space.proxies.files > 0);
   const models = !!space?.models && space.models.bytes > 0;
-  if (!videos && !offlineLibs && cloud && !proxyFiles && !models) return null;
+  if (!videos && cloud && !proxyFiles && !models) return null;
   return (
     <Section title="Storage">
       <Card>
         {videos && <Row title="Video files" description={videos} />}
-        {offlineLibs && (
-          <Row
-            title="Keep on this computer"
-            description={
-              noServerProxy
-                ? "This library keeps its files on the computers they were added from; there is no proxy to keep."
-                : "Downloads a proxy of each video in this library to this computer so it plays without internet."
-            }
-            control={
-              <Switch
-                aria-label="Keep on this computer"
-                checked={keepOffline}
-                disabled={noServerProxy && !keepOffline}
-                onCheckedChange={(on) => void flipOffline(on)}
-              />
-            }
-          />
-        )}
         {!cloud && (
           <Row
             id="library-proxies"

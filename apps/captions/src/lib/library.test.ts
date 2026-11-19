@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
+import type { LibrarySummary } from "@contracts/library";
+import { addRefused, clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -126,6 +127,19 @@ describe("uploadFile from the Mac app on its own server", () => {
     vi.stubGlobal("fetch", browser);
     expect(await macIndexOnly("lib_1")).toBe(false);
     expect(browser).not.toHaveBeenCalled();
+    // a library the list does not have is not index-in-place either (its upload is unknown)
+    mac(picked);
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "1" } } });
+    vi.stubGlobal("fetch", libs("none"));
+    expect(await macIndexOnly("other_lib")).toBe(false);
+  });
+
+  it("a member's add is refused only with Hosted media Off; the owner's is never refused", () => {
+    const lib = (upload: string, readOnly?: true) => ({ id: "lib_1", settings: { upload }, readOnly }) as unknown as LibrarySummary;
+    expect(addRefused(lib("none", true))).toBe(true);
+    expect(addRefused(lib("proxies", true))).toBe(false);
+    expect(addRefused(lib("none"))).toBe(false);
+    expect(addRefused(null)).toBe(false);
   });
 
   it("uploads as before in an older Mac app, which answers the question with its state, and when the server says to", async () => {

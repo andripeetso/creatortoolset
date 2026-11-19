@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import { anyFilter } from "./Filters";
-import { DownloadsCard, hostedWords, MemberSettings } from "./MemberSettings";
+import { DownloadsCard, hostedWords, MemberSettings, OwnerDownloads } from "./MemberSettings";
+import { savable } from "./Filters";
 import { downloadsOf, type OfflineState } from "./offline-state";
 import { listAssets } from "@/lib/library";
 
@@ -20,10 +21,14 @@ let root: Root;
 let calls: { url: string; method: string; body?: unknown }[];
 let offline: OfflineState;
 let serverWork: object;
+let storageView: object;
+
+// a folder of one role on one computer (the fields the Folders card reads)
+const folder = (role: string, host: string, path: string) => ({ id: `${role}-${path}`, role, name: path, origin: { host, path }, make: false, createdAt: 0 });
 
 function route(url: string, init?: RequestInit): Response {
   if (url === "/api/work/server-work") return Response.json(serverWork);
-  if (url === "/api/devices/storage") return Response.json({ folders: [], here: [], serverDisks: [] });
+  if (url === "/api/devices/storage") return Response.json(storageView);
   if (url === "/api/library/offline" && (!init || !init.method)) return Response.json(offline);
   if (url === "/api/library/offline/downloads") {
     const body = JSON.parse(String(init?.body)) as { mode: string; proxies?: boolean; originals?: boolean };
@@ -41,6 +46,7 @@ beforeEach(() => {
   calls = [];
   offline = { versions: [], collections: [], libraries: [], downloads: {} };
   serverWork = { kind: "hosted", place: null, serverName: "Creator Toolset Cloud", workspace: { id: "ws", rendering: true } };
+  storageView = { folders: [], here: [], serverDisks: [] };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -137,5 +143,50 @@ describe("Available offline", () => {
     expect(vi.mocked(fetch).mock.calls.at(-1)?.[0]).toContain("versions=v1%2Cv2");
     await listAssets("lib_1", { versions: [] });
     expect(vi.mocked(fetch).mock.calls.at(-1)?.[0]).toContain("versions=none");
+  });
+});
+
+describe("Folders on this computer", () => {
+  it("shows this computer's Source media folders with Add folder…, and Project files and Final exports as Not set", async () => {
+    storageView = { folders: [folder("footage", "dev_mac", "/Volumes/Drive/Footage"), folder("footage", "dev_other", "/Volumes/Other")], here: [], serverDisks: [] };
+    await show(<MemberSettings library={lib("all")} />);
+    expect(host.textContent).toContain("/Volumes/Drive/Footage");
+    expect(host.textContent).not.toContain("/Volumes/Other");
+    expect(host.textContent).toContain("Add folder…");
+    expect(host.textContent!.split("Not set").length - 1).toBe(2);
+  });
+
+  it("shows no Not set before the folder list answers, so a folder never flashes Not set", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    await show(<MemberSettings library={lib("all")} />);
+    expect(host.textContent).toContain("Project files");
+    expect(host.textContent).not.toContain("Not set");
+  });
+
+  it("Set… opens the folder dialog for the role it was pressed on", async () => {
+    await show(<MemberSettings library={lib("all")} />);
+    const set = [...host.querySelectorAll("button")].find((b) => b.textContent === "Set…")!;
+    await act(async () => set.click());
+    expect(document.body.textContent).toContain("Projects folder");
+  });
+});
+
+describe("the owner's Downloads", () => {
+  it("is shown on a computer with no Source media folder for the workspace, and not where there is one", async () => {
+    await show(<OwnerDownloads library={lib("all")} />);
+    expect(sw("Automatic downloads")).not.toBeNull();
+    storageView = { folders: [folder("footage", "dev_mac", "/Volumes/Drive/Footage")], here: [], serverDisks: [] };
+    // a fresh mount, so the folder list is read again
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await show(<OwnerDownloads library={lib("all")} />);
+    expect(host.querySelector('[aria-label="Automatic downloads"]')).toBeNull();
+  });
+});
+
+describe("a saved search", () => {
+  it("never keeps Available offline, which names this person's list", () => {
+    expect(savable({ tags: ["a"], offline: true })).toEqual({ tags: ["a"] });
+    expect(savable({ tags: ["a"] })).toEqual({ tags: ["a"] });
   });
 });

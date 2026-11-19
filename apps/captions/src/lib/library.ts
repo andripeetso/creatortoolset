@@ -52,9 +52,14 @@ export const listLibraries = () =>
 export async function macIndexOnly(libraryId: string): Promise<boolean> {
   if (!macPageMarked()) return false;
   const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
-  const upload = libs.find((l) => l.id === libraryId)?.settings.upload;
-  return !hostsOriginals(upload) && !hostsProxies(upload);
+  // a library the list does not have (or none, when it fails) is not index-in-place: the upload goes as before
+  const lib = libs.find((l) => l.id === libraryId);
+  return !!lib && !hostsOriginals(lib.settings.upload) && !hostsProxies(lib.settings.upload);
 }
+
+/** A member's add (drop or pick) with Hosted media Off has nowhere to go: refused in the Library page (SCREENS-COPY §3). */
+export const addRefused = (l: LibrarySummary | null | undefined): boolean =>
+  !!l?.readOnly && !hostsOriginals(l.settings.upload) && !hostsProxies(l.settings.upload);
 
 /**
  * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,

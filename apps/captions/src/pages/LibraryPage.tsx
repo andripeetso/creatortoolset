@@ -44,7 +44,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
-import { checkUpload } from "@/lib/library";
+import { addRefused, checkUpload } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
 import { confirmDialog } from "@/lib/dialogs";
@@ -66,7 +66,7 @@ import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
-import { anyFilter, withSaved } from "./library/Filters";
+import { anyFilter, savable, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
 import type { LibraryFilters } from "@/lib/library";
 import { restoreFolder, tabCounts, type TabCounts } from "./library/api";
@@ -453,6 +453,7 @@ export default function LibraryPage() {
   // new place, asks how the files come in (./library/Import.tsx)
   const addFiles = async (files: FileList | File[] | null, paths?: Map<File, string>) => {
     if (!files?.length) return;
+    if (addRefused(library)) return setError("Upload is off for this workspace, so files can't be added from this computer.");
     const all = Array.from(files); // before the picker is cleared
     const look = await importQ.prepare(all, paths);
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
@@ -655,7 +656,7 @@ export default function LibraryPage() {
       const c = await createCollection(libId, {
         name: term.slice(0, 80),
         kind: "smart",
-        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined, ...filters },
+        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined, ...savable(filters) },
       });
       reloadFolders();
       setQ("");

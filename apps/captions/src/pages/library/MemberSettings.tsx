@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { hostsOriginals, hostsProxies, type LibrarySummary, type LibraryUpload } from "@contracts/library";
 import type { StorageView } from "@contracts/storage";
 import type { ServerWorkView } from "@contracts/work";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section } from "@/components/settings/ui";
-import { call, getStorage } from "@/components/settings/StorageRows";
-import { thisMacDevice } from "@/lib/providers";
+import { AddFolderDialog, call, getStorage } from "@/components/settings/StorageRows";
+import { thisMacDevice, useProviders } from "@/lib/providers";
 import { downloadsOf, setDownloads, useOffline, type Downloads } from "./offline-state";
 
 /**
@@ -89,14 +90,31 @@ const FOLDERS = [
   { role: "library", title: "Final exports", tip: "Where finished, clean exports are saved." },
 ] as const;
 
+type FolderRole = (typeof FOLDERS)[number]["role"];
+
+/**
+ * The owner's Downloads (M13), on a computer with no Source media folder for the workspace: a computer that reads the
+ * footage itself needs no copy, so the card is only for the others. The folder list is the window workspace's.
+ */
+export function OwnerDownloads({ library }: { library: LibrarySummary }) {
+  const [storage, setStorage] = useState<StorageView | null>(null);
+  useEffect(() => void getStorage().then(setStorage, () => {}), []);
+  const here = thisMacDevice();
+  if (!storage || !here || (storage.folders ?? []).some((f) => f.role === "footage" && f.origin.host === here)) return null;
+  return <DownloadsCard library={library} />;
+}
+
 export function MemberSettings({ library }: { library: LibrarySummary }) {
   const [view, setView] = useState<ServerWorkView | null>(null);
   const [storage, setStorage] = useState<StorageView | null>(null);
   useEffect(() => void call<ServerWorkView>("/api/work/server-work").then(setView, () => {}), []);
   useEffect(() => void getStorage().then(setStorage, () => {}), []);
+  const providers = useProviders();
+  const [adding, setAdding] = useState<FolderRole | null>(null);
   const here = thisMacDevice();
-  // this member's own folders, on this computer only: shown, not set up here
+  // this member's own folders, on this computer only: shown, located here, never set up for anyone else
   const mine = (role: string) => (storage && here ? storage.folders.filter((f) => f.role === role && f.origin.host === here) : []);
+  const reload = () => void getStorage().then(setStorage, () => {});
   return (
     <div className="flex flex-col gap-6">
       {!library.settings.setupAt && <p className="text-sm text-muted-foreground">This Media Library isn't set up yet.</p>}
@@ -119,16 +137,34 @@ export function MemberSettings({ library }: { library: LibrarySummary }) {
           <Card>
             {FOLDERS.map((f) => {
               const own = mine(f.role);
+              // Source media takes any number of folders; the other two are one each, "Not set" until chosen
+              const add = f.role === "footage" || !own.length;
               return (
                 <Row
                   key={f.role}
                   title={f.title}
                   tip={f.tip}
-                  status={own.length ? undefined : "Not set"}
+                  status={!own.length && storage && f.role !== "footage" ? "Not set" : undefined}
                   description={own.map((x) => x.origin.path).join(", ") || undefined}
+                  control={
+                    add ? (
+                      <Button size="sm" variant="outline" onClick={() => setAdding(f.role)}>
+                        {f.role === "footage" ? "Add folder…" : "Set…"}
+                      </Button>
+                    ) : undefined
+                  }
                 />
               );
             })}
+            <AddFolderDialog
+              open={adding !== null}
+              onOpenChange={(o) => !o && setAdding(null)}
+              role={adding ?? "footage"}
+              devices={(providers.data?.devices ?? []).filter((d) => d.id === here)}
+              serverDisks={storage?.serverDisks}
+              here={storage?.here}
+              onChanged={reload}
+            />
           </Card>
         </Section>
       )}

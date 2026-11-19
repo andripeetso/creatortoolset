@@ -127,21 +127,29 @@ export function ClipPlayer({
   // (also without the Mac app: a browser that the server refuses says it too)
   // the library's Hosted media, read once it is needed: under Originals the server plays an original, so a file it cannot
   // play is "Can't play this format here" with Download, not a place to go to
-  const [upload, setUpload] = useState<{ upload: LibraryUpload; owner: boolean }>();
+  // undefined: still asking; null: the library could not be read (the player then says what it said before)
+  const [upload, setUpload] = useState<{ upload: LibraryUpload; owner: boolean } | null>();
   useEffect(() => {
     if (phase !== "failed" && serverPlays) return;
     let gone = false;
-    listLibraries().then((ls) => {
-      const l = ls.find((x) => x.id === a.libraryId);
-      if (!gone && l) setUpload({ upload: l.settings.upload, owner: !l.readOnly });
-    }, () => {});
+    listLibraries().then(
+      (ls) => {
+        const l = ls.find((x) => x.id === a.libraryId);
+        if (!gone) setUpload(l ? { upload: l.settings.upload, owner: !l.readOnly } : null);
+      },
+      () => !gone && setUpload(null),
+    );
     return () => {
       gone = true;
     };
   }, [phase, serverPlays, a.libraryId]);
   const serverOriginals = !!upload && hostsOriginals(upload.upload);
+  // the library's answer first: while it is pending, a failed server play says nothing rather than the wrong line
+  const failedOnServer = phase === "failed" && onServer && upload !== undefined && !serverOriginals;
+  // proxies hosted, none of this clip: the server holds no copy of it to play (SCREENS-COPY §3)
+  const noCopy = failedOnServer && !!upload && hostsProxies(upload.upload) ? "This clip isn't on the server." : null;
   const away =
-    !waiting && ((phase === "failed" && onServer && !serverOriginals) || (!serverPlays && !src)) ? (awayLine(check) ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
+    !waiting && (failedOnServer || (!serverPlays && !src)) ? (awayLine(check) ?? noCopy ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
   const note = said === "missing" || away ? null : said;
   // the owner, with no proxies and no originals hosted: told why it plays only where the files are
   const noUpload = !!upload?.owner && !hostsProxies(upload.upload) && !hostsOriginals(upload.upload);
