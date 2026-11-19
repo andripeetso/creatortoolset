@@ -114,7 +114,7 @@ describe("folders dropped together", () => {
   it("are asked one after another, and each is added", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
-      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 3, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 50, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
       return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
     });
     const added: string[] = [];
@@ -133,7 +133,7 @@ describe("folders dropped together", () => {
     for (const name of ["Trip", "Beach"]) {
       const dialogs = document.querySelectorAll('[role="dialog"]');
       expect(dialogs).toHaveLength(1);
-      expect(dialogs[0].textContent).toContain(`Add 3 files from ${name}?`);
+      expect(dialogs[0].textContent).toContain(`Add 50 files from ${name}?`);
       act(() => [...dialogs[0].querySelectorAll("button")].find((b) => b.textContent === "Add folder")!.click());
       await flush();
     }
@@ -144,7 +144,7 @@ describe("folders dropped together", () => {
   it("what waits on them (loose files dropped beside) comes once the last is answered, or closed; at once with none open", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
-      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 3, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 50, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
       return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
     });
     const done: string[] = [];
@@ -169,5 +169,30 @@ describe("folders dropped together", () => {
     act(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
     expect(done).toEqual(["none open", "/Volumes/Card/Trip", "loose files"]);
+  });
+});
+
+describe("a folder dropped in place", () => {
+  it("under the big-folder count it is added at once, with no question", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 3, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
+      return new Response(JSON.stringify(watch), { status: 200 });
+    });
+    const added: string[] = [];
+    let big!: ReturnType<typeof useBigFolder>;
+    function Host() {
+      big = useBigFolder();
+      return <>{big.dialog}</>;
+    }
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><Host /></MemoryRouter>));
+    await act(async () => {
+      await big.check("/Volumes/Card/Trip", () => void added.push("/Volumes/Card/Trip"), { libraryId: "lib_1" });
+    });
+    expect(added).toEqual(["/Volumes/Card/Trip"]);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });
