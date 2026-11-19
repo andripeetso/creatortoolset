@@ -7,7 +7,7 @@ import { inProjectOf } from "../lib/project-of";
 import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
-import { blobs, libraryDb } from "./db";
+import { blobs, libraryDb, newLibrarySettings } from "./db";
 import { assetRef, canSee } from "./sources";
 
 let before: Record<string, string> | null = null;
@@ -102,7 +102,7 @@ export async function ensureLibrary(username: string, projectId?: string): Promi
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   libraryDb()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'Library', 'local', ?, ?)")
-    .run(id, homeOf(username), JSON.stringify(keep && ws ? { projectId: ws } : {}), Date.now());
+    .run(id, homeOf(username), newLibrarySettings(keep && ws ? { projectId: ws } : {}), Date.now());
   return id;
 }
 
