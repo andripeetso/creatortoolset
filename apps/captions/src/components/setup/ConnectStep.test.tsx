@@ -112,7 +112,7 @@ it("never asks for an API key on this step", () => {
   expect(view({ expanded: true, pasteCommand: CONNECT_COMMAND })).not.toMatch(/api key/i);
 });
 
-const link = { id: "pl1", credential: "AAAABBBBCCCC", scopes: ["read", "write", "access"] as const, expiresAt: 61_000, urls: [{ kind: "lan", url: "http://tiny-mac.local:3773/#token=AAAABBBBCCCC" }] };
+const link = { id: "pl1", subject: "admin", credential: "AAAABBBBCCCC", scopes: ["read", "write", "access"] as const, createdAt: new Date(0).toISOString(), expiresAt: new Date(61_000).toISOString(), urls: [{ kind: "lan" as const, url: "http://tiny-mac.local:3773/#token=AAAABBBBCCCC" }] };
 const made = { ...link, scopes: [...link.scopes] };
 
 it("tells a person who is not signed in to sign in first, not that the connection failed", () => {

@@ -17,6 +17,10 @@ const { PairingLinkCard } = await import("./PairingLinks");
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 const phone: ClientSession = {
   sessionId: "s-phone",
+  subject: "admin",
+  method: "bearer-access-token",
+  issuedAt: new Date(NOW - 86_400_000).toISOString(),
+  expiresAt: new Date(NOW + 86_400_000).toISOString(),
   scopes: ["read", "write", "access"],
   client: { label: "Tiny iPhone", deviceType: "mobile", os: "iOS 26", appVersion: "1.4.0" },
   lastConnectedAt: new Date(NOW - 3 * 60_000).toISOString(),
@@ -25,6 +29,10 @@ const phone: ClientSession = {
 };
 const browser: ClientSession = {
   sessionId: "s-here",
+  subject: "admin",
+  method: "dpop-access-token",
+  issuedAt: new Date(NOW - 86_400_000).toISOString(),
+  expiresAt: new Date(NOW + 86_400_000).toISOString(),
   scopes: ["read", "write", "access"],
   client: { deviceType: "desktop", os: "macOS", userAgent: "Safari" },
   lastConnectedAt: new Date(NOW - 60 * 60_000).toISOString(),
@@ -33,6 +41,10 @@ const browser: ClientSession = {
 };
 const ipad: ClientSession = {
   sessionId: "s-ipad",
+  subject: "admin",
+  method: "bearer-access-token",
+  issuedAt: new Date(NOW - 86_400_000).toISOString(),
+  expiresAt: new Date(NOW + 86_400_000).toISOString(),
   scopes: ["read"],
   client: { label: "Living room iPad", deviceType: "tablet", os: "iPadOS 26", appVersion: "1.4.0" },
   lastConnectedAt: null,
@@ -68,7 +80,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   calls = [];
   view = { pairingLinks: [], clientSessions: [phone, browser] };
-  created = { id: "pl-new", credential: "AAAABBBBCCCC", label: "Living room iPad", scopes: ["read"], createdAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 5 * 60_000).toISOString(), urls: [
+  created = { id: "pl-new", subject: "admin", credential: "AAAABBBBCCCC", label: "Living room iPad", scopes: ["read"], createdAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 5 * 60_000).toISOString(), urls: [
     { kind: "lan", url: "http://tiny-mac.local:3773/#token=AAAABBBBCCCC" },
     { kind: "tailnet", url: "http://tiny-mac.vpn.example:3773/#token=AAAABBBBCCCC" },
   ] };
@@ -167,7 +179,7 @@ it("creates a Read only link with its name, and shows its card with the QR code 
 });
 
 it("drops a link once it runs out, counting down to it", async () => {
-  view.pairingLinks = [{ id: "pl-old", label: "Kitchen phone", scopes: ["read", "write", "access"], expiresAt: NOW + 65_000 }];
+  view.pairingLinks = [{ id: "pl-old", label: "Kitchen phone", scopes: ["read", "write", "access"], subject: "admin", createdAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 65_000).toISOString() }];
   await show();
   const card = () => document.querySelector('[data-pairing-link="pl-old"]');
   expect(card()!.textContent).toContain("Expires in 1m 5s · Standard");
@@ -199,7 +211,7 @@ it("copies the code when the clipboard works", async () => {
 });
 
 it("revokes a link, one device, and every other device", async () => {
-  view.pairingLinks = [{ id: "pl-old", scopes: ["read"], expiresAt: NOW + 60_000 }];
+  view.pairingLinks = [{ id: "pl-old", scopes: ["read"], subject: "admin", createdAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 60_000).toISOString() }];
   view.clientSessions = [phone, ipad, browser];
   await show();
   click(button("Revoke", document.querySelector('[data-pairing-link="pl-old"]')!));
