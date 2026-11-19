@@ -419,7 +419,8 @@ export async function wholeDisk(real: string, drive = false): Promise<boolean> {
  * list the scan reads), in the library's workspace. A row already there is kept as it is.
  */
 async function addSourceRow(username: string, folderPath: string, libraryId?: string): Promise<void> {
-  const real = await realpath(expandHome(folderPath)).catch(() => expandHome(folderPath));
+  // the path as the storage routes keep it (not resolved): Projects and Exports rows are compared with it
+  const real = expandHome(folderPath).replace(/(.)\/+$/, "$1");
   const ws = libraryId ? (db().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws : null;
   await changeStorage(username, (st) => {
     if (st.folders.some((g) => g.role === "footage" && g.origin.host === THIS_COMPUTER && g.origin.path === real)) return "keep";
