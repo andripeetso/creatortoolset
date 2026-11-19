@@ -5,6 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-package-"));
 process.env.DATA_DIR = dir;
+// the studio suite runs hosted (CT_MODE=hosted), where a server does video work only by a plug-in's grant (serverWorks):
+// this file's server is its own, so the mode is cleared here and put back after
+const hostedWas = process.env.CT_MODE;
+delete process.env.CT_MODE;
 
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
@@ -55,7 +59,10 @@ beforeAll(() => {
   writeFileSync(path.join(dir, "editor", EDIT, "plan.json"), JSON.stringify({ lines: [], plans: [], notes: [] }));
   writeEdit(THEIRS, ["ver_a1"], { ver_b1: {} });
 });
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  if (hostedWas !== undefined) process.env.CT_MODE = hostedWas;
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe("buildPackage", () => {
   it("holds only the job's rows, with no bucket settings, and keeps the server's copy", async () => {
@@ -75,7 +82,12 @@ describe("buildPackage", () => {
   });
 
   it("lists the files the step reads, with this computer's own path and the proxy", async () => {
+    // replaced (UNIFIED-PRD §4.7): with the server's video work on, the server runs the preview itself and no copy is listed
+    // for the computer (reach.ts atFor), so the copy case is checked with the work off (the setup file turns it on)
+    const { writeServerWork } = await import("./server-work");
+    writeServerWork({ on: false });
     const preview = await buildPackage(held(EDIT, "v1", "preview"), me);
+    writeServerWork({ on: true });
     expect(preview.files).toEqual([
       { id: "ver_a1", title: "Take 1", bytes: 100, quick: "q1", path: "/Users/maker/Footage/take1.mov" },
       { id: "ver_a3", title: "B-roll", bytes: 300, proxy: { bytes: 30 } },

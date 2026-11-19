@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "relay-report-"));
 process.env.APP_SECRET = "relay-report-test-secret";
 
-const { createUser } = await import("../users");
+const { createUser, setOff } = await import("../users");
 const app = (await import("../boot")).default;
 const { libraryDb } = await import("./db");
 const { whereIs } = await import("./whereis");
@@ -14,7 +14,8 @@ const { placeWordOf } = await import("../../contracts/places");
 const { importStudioFile } = await import("../devices-storage");
 const { noteMachine } = await import("../lib/devices");
 
-createUser("ana", "password1");
+// a plug-in's default-off gates (the studio's Media tool) would turn Media off for a new account: this file's account keeps it on
+setOff(createUser("ana", "password1"), []);
 const login = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "ana", password: "password1" }) });
 const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
 const json = { "content-type": "application/json" };

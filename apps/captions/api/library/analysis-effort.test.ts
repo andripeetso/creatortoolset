@@ -9,6 +9,10 @@ import type { AuthVars } from "../auth";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-effort-"));
 process.env.DATA_DIR = dir;
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
+// the studio suite runs hosted (CT_MODE=hosted), where a server does video work only by a plug-in's grant; these tests are a
+// server's own, so the mode is cleared here and put back after (the server-work setup file turns its work on)
+const hostedWas = process.env.CT_MODE;
+delete process.env.CT_MODE;
 
 // every file here is a 30-second clip with sound: a browser plays it as it is, and the sound is one a transcript reads
 vi.mock("./media/probe", async (real) => ({
@@ -23,6 +27,7 @@ const { queueLook } = await import("./shots");
 
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
+  if (hostedWas !== undefined) process.env.CT_MODE = hostedWas;
   rmSync(dir, { recursive: true, force: true });
 });
 

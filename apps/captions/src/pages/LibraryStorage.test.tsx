@@ -90,7 +90,8 @@ describe("library storage", () => {
 
   it("an empty library: the choice, and no Save while there is no form", async () => {
     const el = await render({ ...local, locked: false });
-    expect([...uploadOf(el).options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Originals and proxies"]);
+    // replaced (UNIFIED-PRD §4.2): the four upload values stay, Originals only included; the three-word list predates it
+    expect([...uploadOf(el).options].map((o) => o.textContent)).toEqual(["Off", "Originals only", "Proxies only", "Originals and proxies"]);
     expect(saveOf(el)).toBeUndefined();
   });
 

@@ -281,9 +281,12 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect(asked.value).toEqual({ action_needed: { kind: "downloads", libraryId: "lib_t", workspace: "ws_t" }, stop: expect.any(String) });
 
     // voice_make saves into the Media Library, which this account has set up (the gate passes; a library not set up is media-ready.test.ts)
-    const voice = fakeSite({ "POST /api/editor/voice": () => ({ versionId: "v_x", name: "Tiny voice", voice: { name: "Tiny" }, libraryId: "lib_mcp", assetId: "a_x" }) });
-    expect((await callWith(voice, "voice_make", { text: "Hello" })).value).toMatchObject({ version_id: "v_x", voice: "Tiny" });
-    expect(voice.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor/voice"]);
+    // the studio suite (CT_PLUGINS) has a plug-in that answers /api/editor, which leaves the built-in editor's tools out (mcp.ts notHere)
+    if (!process.env.CT_PLUGINS) {
+      const voice = fakeSite({ "POST /api/editor/voice": () => ({ versionId: "v_x", name: "Tiny voice", voice: { name: "Tiny" }, libraryId: "lib_mcp", assetId: "a_x" }) });
+      expect((await callWith(voice, "voice_make", { text: "Hello" })).value).toMatchObject({ version_id: "v_x", voice: "Tiny" });
+      expect(voice.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor/voice"]);
+    }
 
     const made = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }) });
     const kept = await callWith(made, "editor_create", { sources: ["v_a"], start: false });
@@ -348,6 +351,7 @@ describe("Creator Toolset as a remote MCP server", () => {
 
   it("media_import_folder sends the folder, since as epoch ms and the folder id, and shapes the files and scripts", async () => {
     const site = fakeSite({
+      "GET /api/library": () => ({ libraries: [{ id: "lib_home" }] }),
       "GET /api/library/lib_home/assets": () => ({ items: [{ id: "a1", versionId: "v_1", kind: "video", state: "ready", durationS: 40, width: 1920, roll: "a" }] }),
       "POST /api/library/import-folder": () => ({
         libraryId: "lib_home",
@@ -359,7 +363,8 @@ describe("Creator Toolset as a remote MCP server", () => {
       }),
     });
     const out = await callWith(site, "media_import_folder", { path: "/Tiny/Footage", since: "2026-11-10T00:00:00+02:00", folder: "coll_b" });
-    expect(site.hits[0]!.body).toEqual({ path: "/Tiny/Footage", since: Date.parse("2026-11-10T00:00:00+02:00"), collectionId: "coll_b" });
+    // the library's own answer is asked first (mcp.ts media_import_folder), so the import is the POST
+    expect(site.hits.find((h) => h.method === "POST")!.body).toEqual({ path: "/Tiny/Footage", since: Date.parse("2026-11-10T00:00:00+02:00"), collectionId: "coll_b" });
     expect(out.value).toEqual({
       imported: 1,
       said: "1 clip added: 1 A-roll",
@@ -371,14 +376,14 @@ describe("Creator Toolset as a remote MCP server", () => {
       note: expect.stringContaining("editor_create can take them"),
     });
 
-    const nothing = fakeSite({ "POST /api/library/import-folder": () => ({ libraryId: "lib_home", imported: [], scripts: [] }) });
+    const nothing = fakeSite({ "GET /api/library": () => ({ libraries: [{ id: "lib_home" }] }), "POST /api/library/import-folder": () => ({ libraryId: "lib_home", imported: [], scripts: [] }) });
     const none = await callWith(nothing, "media_import_folder", { path: "/Tiny/Footage" });
     expect(none.value).toEqual({ imported: 0, files: [], scripts: [], note: "No media files there changed since then." });
-    expect(nothing.hits[0]!.body).toEqual({ path: "/Tiny/Footage" }); // no since: all of it
+    expect(nothing.hits.find((h) => h.method === "POST")!.body).toEqual({ path: "/Tiny/Footage" }); // no since: all of it
 
-    const bad = fakeSite({});
+    const bad = fakeSite({ "GET /api/library": () => ({ libraries: [{ id: "lib_home" }] }) });
     expect(await callWith(bad, "media_import_folder", { path: "/Tiny/Footage", since: "yesterday" })).toEqual({ error: true, value: expect.stringContaining("is not a date") });
-    expect(bad.hits).toHaveLength(0);
+    expect(bad.hits.filter((h) => h.method === "POST")).toHaveLength(0);   // only the library answer is asked, never the import
   });
 
   it("says in one line how the clips just added were sorted, and media_search with versions waits for the rest", async () => {
