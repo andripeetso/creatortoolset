@@ -133,7 +133,7 @@ func orNothing<T>(_ nothing: T, _ read: () async throws -> T) async throws -> T 
 
 /// What Chats and Edits show, worked out from what the server said: which rows, in which order.
 enum ChatList {
-    /// The tab a row is on: the assistant's chats on Chats, everything else (edits, Review videos) on Edits.
+    /// The tab a row is on: the assistant's chats on Chats, everything else (edits, Review videos) on Projects.
     static func onChats(_ row: ChatRow) -> Bool { row.route.isAssistant }
 
     /// A tab's badge: its rows that wait on the person.
@@ -264,7 +264,7 @@ enum ChatList {
     }
 }
 
-/// The rows of Chats and of Edits, in one list: the badges, the notifications and the phone's last copy read it.
+/// The rows of Chats and of Projects' edits, in one list: the badges, the notifications and the phone's last copy read it.
 @MainActor
 final class ChatsModel: ObservableObject {
     static let shared = ChatsModel()
@@ -298,9 +298,9 @@ final class ChatsModel: ObservableObject {
     private var assistant: AssistantView?
     private var videos: [ReviewListItem] = []
     private var others: [ChatRow] = []
-    /// Each chat's workspace (`GET /api/assistant/chats`), by chat id: Chats lists this workspace's.
+    /// Each chat's workspace (`GET /api/assistant/chats`), by chat id: each chat's row says its own.
     private var chatSpaces: [String: String] = [:]
-    /// The workspace the rows are of (the phone's pick when they were read).
+    /// The workspace the edits and Review videos are of (the phone's pick when they were read).
     private var workspace: String?
     private var opened: [String: Double]
     /// Rows he dismissed, each with the row's own time at that moment (`ChatList.settle`).
@@ -335,9 +335,9 @@ final class ChatsModel: ObservableObject {
                 self?.rebuild()
             }
         }.store(in: &bag)
-        // a screen pushed on Chats or Edits is its row opened, and so is one he comes back from:
+        // a screen pushed on Chats or Projects is its row opened, and so is one he comes back from:
         // what finished while he watched is not news
-        for stack in [AppNavigator.shared.$chats, AppNavigator.shared.$plan, AppNavigator.shared.$make] {
+        for stack in [AppNavigator.shared.$chats, AppNavigator.shared.$projects] {
             var open: [AppRoute] = []   // the screens open on that tab, as last seen
             stack.sink { [weak self] routes in
                 MainActor.assumeIsolated {
@@ -357,10 +357,6 @@ final class ChatsModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuild() } }
             .store(in: &bag)
-        // the Workshop's pieces being made sit on Make with the edits
-        WorkshopModel.shared.$sessions.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            MainActor.assumeIsolated { self?.rebuild() }
-        }.store(in: &bag)
         // another server picked (or the last one removed): its own conversation, change line and list
         Servers.shared.$currentId.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
             MainActor.assumeIsolated {
@@ -511,16 +507,15 @@ final class ChatsModel: ObservableObject {
     private func rebuild() {
         let work = ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
                                                   opened: Set(opened.keys)), dismissed: dismissed)
+        let edits = work.map { row in
+            var row = row
+            row.workspace = workspace
+            return row
+        }
+        // every workspace's chats, each in its own
         let fresh: [ChatRow] = link == .none ? [] : ChatList.arrange(
-            rows: work
-                + ChatList.sessions(WorkshopModel.shared.sessions, besides: work)
-                + ChatList.inWorkspace(ChatList.chats(assistant), workspace, of: chatSpaces, open: assistant),
+            rows: edits + ChatList.placed(ChatList.chats(assistant), spaces: chatSpaces, open: assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
-            .map { row in
-                var row = row
-                row.workspace = workspace
-                return row
-            }
         if fresh != rows { rows = fresh }
     }
 
@@ -630,24 +625,13 @@ private struct SavedRow: Codable {
     }
 }
 
-/// Chats (the assistant's chats, one row each) or Edits (`edits`: every AI Editor edit and Review video,
-/// as cards), the ones that wait on top.
+/// Chats: the assistant's chats of every workspace, one row each saying its workspace, the ones that ask on top.
 struct ChatsView: View {
-    var edits = false
+    @EnvironmentObject private var servers: Servers
     @ObservedObject private var model = ChatsModel.shared
-    @ObservedObject private var access = ToolsetAccess.shared
     @ObservedObject private var workspaces = Workspaces.shared
     @State private var query = ""
-    @AppStorage("chats.working.open") private var workingOpen = true
-    @AppStorage("chats.done.open") private var doneOpen = false
-    @State private var doneShown = 10
     @State private var signingIn = false
-    @State private var deleting: ChatRow?
-    @State private var askDismissAll = false
-    /// `-newEdit YES` opens New edit at launch (simulator screenshots).
-    @State private var newEdit = UserDefaults.standard.bool(forKey: "newEdit")
-    /// A New edit that stopped: Try again or Remove.
-    @State private var stopped: ChatRow?
 
     var body: some View {
         Group {
@@ -659,7 +643,7 @@ struct ChatsView: View {
                 list
             }
         }
-        .navigationTitle(edits ? "Make" : "Chats")
+        .navigationTitle("Chats")
         .task { model.watch() }
         .sheet(isPresented: $signingIn, onDismiss: {
             Task {
@@ -671,85 +655,67 @@ struct ChatsView: View {
         }
     }
 
-    private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
-
-    /// This tab's rows that match the search.
+    /// The chats that match the search.
     private var shown: [ChatRow] {
         let words = query.trimmingCharacters(in: .whitespaces).lowercased()
         return model.rows.filter { row in
-            ChatList.onChats(row) != edits
-                && (words.isEmpty || row.title.lowercased().contains(words) || row.detail.lowercased().contains(words))
+            ChatList.onChats(row) && (words.isEmpty || row.title.lowercased().contains(words) || row.detail.lowercased().contains(words))
         }
     }
 
     private var list: some View {
-        let rows = shown
+        // one workspace on this computer: naming it on every row says nothing
+        let many = (workspaces.lists[servers.currentId ?? ""]?.count ?? 0) > 1
         return List {
-            if model.link == .expired || model.offline || (edits && (model.notice != nil || model.couldNotRead > 0)) { header }
-            if edits {
-                work(rows)
-            } else {
-                // one kind of thing, one flat list: a chat that asks on top, then the newest
-                ForEach(rows) { row in
-                    opens(row) { ChatListRow(title: row.title, detail: row.detail, status: row.status) }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            if model.link == .expired || model.offline { header }
+            // one kind of thing, one flat list: a chat that asks on top, then the newest
+            ForEach(shown) { row in
+                Button { AppNavigator.shared.open(row.route) } label: {
+                    ChatListRow(title: row.title, detail: row.detail, status: row.status,
+                                workspace: many ? workspaces.entry(row.workspace) : nil)
                 }
-                // last, so its coming and going never moves a chat
-                if !searching, workspaces.chatsElsewhere > 0 { elsewhere(workspaces.chatsElsewhere) }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             }
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 36)
         .searchable(text: $query, prompt: "Search")
         .refreshable { await model.load() }
-        .overlay {
-            if edits, model.loaded, rows.isEmpty, !searching {
-                Text("No edits yet").foregroundStyle(.secondary)
-            }
-        }
-        .toolbar {
-            if edits, access.allows("editor") {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("New edit") { newEdit = true }
-                }
-            }
-            // everything that waits for his review, in one go
-            let reviews = rows.filter { $0.shelf == .active && $0.status == .review }
-            if edits, reviews.count > 1 {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Dismiss all \(reviews.count) reviews", systemImage: "checkmark") { askDismissAll = true }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .confirmationDialog("Dismiss all \(reviews.count) reviews?", isPresented: $askDismissAll, titleVisibility: .visible) {
-                        Button("Dismiss all") { Task { await model.dismiss(reviews) } }
-                    }
-                }
-            }
-        }
-        .confirmationDialog("Delete “\(deleting?.title ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-                            titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                if let row = deleting { Task { await model.delete(row) } }
-            }
-        } message: {
-            Text("It stays in Review's trash for 30 days.")
-        }
-        .confirmationDialog(stopped?.title ?? "", isPresented: Binding(get: { stopped != nil }, set: { if !$0 { stopped = nil } }),
-                            titleVisibility: .visible, presenting: stopped) { row in
-            Button("Try again") { if let id = row.phoneEdit { Task { await PhoneEdits.shared.retry(id) } } }
-            Button("Remove", role: .destructive) { if let id = row.phoneEdit { PhoneEdits.shared.forget(id) } }
-        } message: { row in
-            Text(row.detail)
-        }
-        .sheet(isPresented: edits ? $newEdit : .constant(false)) { NewEditView() }
-        // on Chats the round New chat button sits over the end of the list
-        .contentMargins(.bottom, edits ? 16 : 84, for: .scrollContent)
+        // the round New chat button sits over the end of the list
+        .contentMargins(.bottom, 84, for: .scrollContent)
     }
 
-    /// The edits and videos in play as cards, then the Working and Done shelves.
-    @ViewBuilder private func work(_ rows: [ChatRow]) -> some View {
+    /// What is off, when something is.
+    private var header: some View {
+        Group {
+            if model.link == .expired {
+                Button("Sign in again") { signingIn = true }.font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+            } else {
+                QuietNotice(text: "No connection")
+            }
+        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+    }
+}
+
+/// Edits and Review videos as cards, the ones in play first (a swipe dismisses, removes or deletes one), then the
+/// Working and Done shelves. The rows of a `List`: a project's on its page, the ones of no project at the end of
+/// Projects. The list they are in asks about a delete and a stopped New edit (`editDialogs`).
+struct EditRows: View {
+    let rows: [ChatRow]
+    /// Words are being searched for: the shelves show open.
+    var searching = false
+    @Binding var deleting: ChatRow?
+    /// A New edit that stopped: Try again or Remove.
+    @Binding var stopped: ChatRow?
+    @ObservedObject private var model = ChatsModel.shared
+    @AppStorage("chats.working.open") private var workingOpen = true
+    @AppStorage("chats.done.open") private var doneOpen = false
+    @State private var doneShown = 10
+
+    var body: some View {
         let working = rows.filter { $0.shelf == .working }
         let done = rows.filter { $0.shelf == .done }
         ForEach(rows.filter { $0.shelf == .active }) { row in
@@ -795,47 +761,11 @@ struct ChatsView: View {
     }
 
     private func card(_ row: ChatRow) -> some View {
-        opens(row) { WorkCard(row: row) }
+        Button { tap(row) } label: { WorkCard(row: row) }
+            .buttonStyle(.plain)
             .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
-    }
-
-    /// The chats that wait in other workspaces, in one quiet line; a tap opens the workspaces.
-    private func elsewhere(_ n: Int) -> some View {
-        Button { workspaces.choosing = true } label: {
-            Text(n == 1 ? "1 chat waiting in another workspace" : "\(n) chats waiting in other workspaces")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .listRowSeparator(.hidden)
-        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-    }
-
-    /// What is off, when something is.
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if model.link == .expired {
-                Button("Sign in again") { signingIn = true }.font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-            } else if model.offline {
-                QuietNotice(text: "No connection")
-            } else if edits, let notice = model.notice {
-                QuietNotice(text: notice)
-            }
-            if edits, model.couldNotRead > 0 {
-                QuietNotice(text: "Some things could not be read. Update the app.")
-            }
-        }
-        .listRowSeparator(.hidden)
-        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
-    }
-
-    /// A row that opens its screen the way a card or a notification does. No arrow at the right: the badge sits there.
-    private func opens<Label: View>(_ row: ChatRow, @ViewBuilder label: () -> Label) -> some View {
-        Button { tap(row) } label: { label() }.buttonStyle(.plain)
     }
 
     /// A New edit still starting has nothing to open yet, and one that stopped asks what to do.
@@ -850,6 +780,29 @@ struct ChatsView: View {
             }
         }
         AppNavigator.shared.open(row.route)
+    }
+}
+
+extension View {
+    /// The questions `EditRows` asks: delete an edit or a video, and what to do with a New edit that stopped.
+    func editDialogs(deleting: Binding<ChatRow?>, stopped: Binding<ChatRow?>) -> some View {
+        confirmationDialog("Delete “\(deleting.wrappedValue?.title ?? "")”?",
+                           isPresented: Binding(get: { deleting.wrappedValue != nil }, set: { if !$0 { deleting.wrappedValue = nil } }),
+                           titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let row = deleting.wrappedValue { Task { await ChatsModel.shared.delete(row) } }
+            }
+        } message: {
+            Text("It stays in Review's trash for 30 days.")
+        }
+        .confirmationDialog(stopped.wrappedValue?.title ?? "",
+                            isPresented: Binding(get: { stopped.wrappedValue != nil }, set: { if !$0 { stopped.wrappedValue = nil } }),
+                            titleVisibility: .visible, presenting: stopped.wrappedValue) { row in
+            Button("Try again") { if let id = row.phoneEdit { Task { await PhoneEdits.shared.retry(id) } } }
+            Button("Remove", role: .destructive) { if let id = row.phoneEdit { PhoneEdits.shared.forget(id) } }
+        } message: { row in
+            Text(row.detail)
+        }
     }
 }
 

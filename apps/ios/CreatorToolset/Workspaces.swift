@@ -111,10 +111,10 @@ final class Workspaces: ObservableObject {
 
     func isCurrent(_ entry: WorkspaceEntry) -> Bool { entry.id == current?.id }
 
-    /// Chats that wait on the person in every workspace but this one.
-    var chatsElsewhere: Int {
-        let here = current?.id
-        return waiting.filter { $0.key != here }.values.reduce(0) { $0 + $1.chats }
+    /// A workspace of the server in use, by its id (a chat's, a new chat's).
+    func entry(_ id: String?) -> WorkspaceEntry? {
+        guard let id else { return nil }
+        return entries.first { $0.server.id == Servers.shared.currentId && $0.workspace?.id == id }
     }
 
     /// Every saved server's workspaces, asked at once; each server's pick is settled (a pick that is gone falls back).
@@ -191,7 +191,8 @@ final class Workspaces: ObservableObject {
 
     // MARK: Moving
 
-    /// Makes `entry` the phone's workspace, and its server the one in use. Every tab starts again there.
+    /// Makes `entry` the phone's workspace, and its server the one in use. Projects, Media and Publish start again
+    /// there; Chats, every workspace's, stays as it is.
     func pick(_ entry: WorkspaceEntry) {
         let servers = Servers.shared
         if let ws = entry.workspace { WorkspacePick.set(ws.id, server: entry.server.id, username: entry.server.username) }
@@ -234,12 +235,9 @@ final class Workspaces: ObservableObject {
     private func apply(_ id: String?) {
         guard id != picked else { return }
         picked = id
-        // the screens open on top of a tab were the other workspace's
-        let nav = AppNavigator.shared
-        nav.chats = []
-        nav.plan = []
-        nav.make = []
-        // a plug-in's library may be this workspace's and not the last one's (the Upload tab's library side)
+        // the screens open on Projects were the other workspace's; a chat keeps its own workspace and stays open
+        AppNavigator.shared.projects = []
+        // a plug-in's library may be this workspace's and not the last one's (Media's library)
         ServerPlugins.shared.load(for: Servers.shared.currentId, workspace: id)
         Task {
             await ServerPlugins.shared.refresh()
@@ -281,7 +279,7 @@ final class Workspaces: ObservableObject {
     }
 }
 
-/// One chat as `GET /api/assistant/chats` lists it: what the workspace filter and the waiting counts need.
+/// One chat as `GET /api/assistant/chats` lists it: what its row's workspace and the waiting counts need.
 struct ChatSummary: Decodable, Equatable {
     let id: String
     var workspace: String?
@@ -310,7 +308,8 @@ struct WorkspaceMark: View {
     }
 }
 
-/// Top left on every tab: the workspace's mark, its name and a chevron. A tap opens the switcher.
+/// Top left on Projects, Media and Publish: the workspace's mark, its name and a chevron, on a plain capsule as tall as
+/// the bar's own buttons, its edge in line with the large title. A tap opens the switcher.
 struct WorkspaceSwitcherButton: View {
     @ObservedObject private var workspaces = Workspaces.shared
     @EnvironmentObject private var servers: Servers
@@ -327,7 +326,10 @@ struct WorkspaceSwitcherButton: View {
                 }
                 Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
             }
-            .contentShape(Rectangle())
+            .padding(.horizontal, 12)
+            .frame(height: 44)
+            .background(Color(.tertiarySystemFill), in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Workspace: \(workspaces.current?.name ?? "none")")
@@ -422,13 +424,22 @@ struct WorkspaceToast: View {
 }
 
 extension View {
-    /// The workspace switcher, top left: on the first screen of every tab, with the connection's line under it once a
-    /// state has lasted 800 ms (nothing while every computer is connected).
+    /// The workspace switcher, top left, on the first screen of Projects, Media and Publish, with the connection's line.
     func workspaceSwitcher() -> some View {
         toolbar {
-            ToolbarItem(placement: .topBarLeading) { WorkspaceSwitcherButton() }
-            // the connection's line in the bar's middle: a second line under the switcher doesn't fit the bar
-            ToolbarItem(placement: .principal) { ConnectionHeaderStatus() }
+            if #available(iOS 26.0, *) {
+                // its own capsule: no glass bubble behind it
+                ToolbarItem(placement: .topBarLeading) { WorkspaceSwitcherButton() }.sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarLeading) { WorkspaceSwitcherButton() }
+            }
         }
+        .connectionHeader()
+    }
+
+    /// The connection's line in the bar's middle once a state has lasted 800 ms (nothing while every computer is
+    /// connected): on the first screen of every tab.
+    func connectionHeader() -> some View {
+        toolbar { ToolbarItem(placement: .principal) { ConnectionHeaderStatus() } }
     }
 }
