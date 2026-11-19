@@ -111,11 +111,11 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
 
 /**
  * The library's read videos (or `versionId` alone) that want a proxy (media/proxy.ts wantsProxy) and have none, nor one
- * on its way.
+ * on its way. `hosted`: the switch was just turned on under Hosted proxies, so every video wants one (UNIFIED-PRD §4.1).
  */
-export function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
-  // hosted proxies make every video one (wantsProxy); a library that keeps only originals gets none (UNIFIED-PRD §4.1, §4.2)
-  const want = { cloud: proxiesInCloud(libraryId) || hostsProxies(libraryUpload(libraryId)), on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
+export function unproxied(libraryId: string, versionId?: string, hosted = false): { id: string; created_by: string }[] {
+  // a library that keeps only originals gets none (UNIFIED-PRD §4.2)
+  const want = { cloud: proxiesInCloud(libraryId) || hosted, on: librarySetting(libraryId, "proxy") && !keepsOnlyOriginals(libraryId) };
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
@@ -901,7 +901,7 @@ libraryApp.patch("/:id", async (c) => {
   const proxy = b?.settings?.proxy;
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
   if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
-  if (proxy === true) for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  if (proxy === true) for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUpload(libraryId)))) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
