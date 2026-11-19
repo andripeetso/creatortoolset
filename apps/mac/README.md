@@ -219,14 +219,12 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 
 ### Network access
 
-Off by default: the server listens on `127.0.0.1` only. The switch **This Mac → Network access** asks for a
-password of your own first (twice, 10 characters or more): the app changes the owner's password with
-`POST /api/auth/password` (the window gets its new cookie in the same answer), keeps it in the Keychain
-(`owner-password`), and restarts the server on every interface (`HOST=0.0.0.0`). Phones and other computers
-then sign in as `admin` with that password, at the address the section shows while it is on (macOS may ask to allow
-incoming connections for node: allow it, or phones can't connect). The server refuses a sign-in or a sign-in link from any address
-but loopback while the owner's password is still `APP_SECRET` (`CT_LOCAL=1`, `api/auth.ts`), so turning the
-listener on by hand can't open the account. The pairing QR for phones comes in a later change.
+Off by default: the server listens on `127.0.0.1` only. The switch **This Mac → Network access** restarts the
+server on every interface (`HOST=0.0.0.0`); nothing is asked. Phones on this network then pair with a link made in
+Settings → Computers, or come through the account; none of them signs in with a password (macOS may ask to allow
+incoming connections for node: allow it, or phones on this network can't connect). The owner's password stays
+`APP_SECRET` unless one was set before, and a username/password sign-in from any address but loopback is refused
+while it is (`CT_LOCAL=1`, `api/auth.ts`).
 
 ### Data location
 
@@ -307,11 +305,16 @@ one at most once a minute). A crash of the app itself is macOS's report in
   page's `account` messages are answered only for the window's own page, never a frame inside it. The account
   server is in This Mac → Account (default `https://creatortoolset.com`, the only place the app names it; empty = no
   account step, for your own server). `Account.swift`.
-- **Add this Mac to the account…** (Servers menu): makes the server on this Mac reachable from your other devices
-  through the connect service (default `https://connect.creatortoolset.com`, UserDefaults `connectBroker`; empty =
-  off). The browser opens the site's page with the code filled in; you sign in and say yes, the page hands back to the
-  app (`creatortoolset://connect`) and the tunnel starts. Nothing is sent to the service before that press, or before
-  you sign in to an account (then the Servers list shows the account's other computers). `Connect.swift`.
+- **Reach from anywhere** (Settings → Computers, and **Add this Mac to the account…** in the Servers menu): puts the
+  server on this Mac on your account, so your other devices reach it through the connect service (default
+  `https://connect.creatortoolset.com`, UserDefaults `connectBroker`; empty = off). The app links with its own account
+  sign-in, with no page to approve: the service's challenge (`POST /v1/computers/link-challenges`), a proof of it
+  signed by the server's own key (`POST /api/connect/link-proof`), the service's link (`POST /v1/computers/link`),
+  then the server keeps the answer and starts its tunnel (`POST /api/connect/relay-config`). The switch is on by itself
+  once the app is signed in (UserDefaults `connectReach`), and the Mac joins the account by itself then; turning it off
+  takes the Mac off the account first (`DELETE /v1/computers/<id>`), then the server forgets the link. When the
+  account no longer lists this Mac, the switch turns off and says so. Nothing is sent to the service before you sign
+  in. Linux servers keep `creatortoolset connect` (a code approved on the site). `Connect.swift`.
 - **Settings…** (⌘,, the one Settings item) opens the server's Settings in the window; with no server picked it opens
   This Mac. The Servers menu and the menu bar item (**This Mac…**) open the native **This Mac** window: Servers,
   **Take work from this server**, the server here (on or off, port, log, Data location, Network access) and

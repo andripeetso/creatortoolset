@@ -67,6 +67,9 @@ final class Shell: NSObject, ObservableObject {
     @Published internal(set) var accountComputers: [ServerEntry] = [] {
         didSet { if accountComputers != oldValue { syncRunners() } }
     }
+    /// Reach from anywhere's state for the page (Connect.swift refreshReach), and when the link was last tried by itself.
+    internal(set) var reach: Reach = .signedOut
+    var lastReachTry: Date?
 
     private let noteCenter = NoteCenter()
     private var timer: Timer?
@@ -267,6 +270,9 @@ final class Shell: NSObject, ObservableObject {
             case "access": Task { done(await self.accessFromOtherDevices()) }
             // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
+            // Settings → Computers → Reach from anywhere: the switch, answered once the link (or unlink) is done
+            case "connect.link": Task { done(self.thisMacState(problem: await self.setReach(true))) }
+            case "connect.unlink": Task { done(self.thisMacState(problem: await self.setReach(false))) }
             case "folder": done(self.chooseFolder())
             // Settings → Folders' "This Mac" on a server it isn't on yet (a press): paired, the AI left as it is
             case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; self.syncRunners(); done(self.thisMacState()) }
@@ -279,7 +285,10 @@ final class Shell: NSObject, ObservableObject {
             guard let self else { return done(["state": "off"]) }
             self.account.publish(text, done: done)
         }
-        account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
+        account.signedIn = { [weak self] profile in
+            self?.ownerProfile(profile)
+            Task { await self?.refreshReach() }   // signed in: this Mac joins the account by itself while the switch is on
+        }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }
             if ask == "status" || ask == "offered" {
@@ -478,26 +487,12 @@ final class Shell: NSObject, ObservableObject {
         AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
     }
 
-    /// Network access: on needs the owner's own password first (the server refuses another device's sign-in
-    /// while it is still APP_SECRET); the window keeps its session through the change. The server restarts on the new
-    /// interface. Returns what went wrong, or nil.
-    func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
+    /// Network access: the server listens on every interface (on) or on this Mac only (off), and restarts on it. Phones
+    /// sign in with a pairing link or through the account, never with a password, so nothing is asked here.
+    func setOtherDevices(_ on: Bool) async -> String? {
         guard let server else { return nil }
-        if on && !server.hasOwnerPassword {
-            guard let password, password.count >= 10 else { return "Use at least 10 characters." }
-            guard let current = server.ownerPasswords().last else { return "The Keychain did not give the server's secret." }
-            // the Keychain first: a password the server took but the app lost would lock the window out
-            guard server.saveOwnerPassword(password) else { return "The Keychain did not keep the password." }
-            do {
-                let cookies = try await client().postForCookies("/api/auth/password", ["current": current, "password": password])
-                for cookie in cookies { await webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
-            } catch {
-                server.forgetOwnerPassword()
-                return "Could not set the password: \(error.localizedDescription)"
-            }
-        }
         server.otherDevices = on
-        // another server was opened while the password was set: the one here is stopped, and starts with this when opened
+        // another server is open: the one here starts with this when it is opened
         guard runsHere else { return nil }
         server.stop()
         startServer()
@@ -987,7 +982,7 @@ final class Shell: NSObject, ObservableObject {
             appTools = []
             return
         }
-        Task { accountComputers = await brokerComputers() }   // a slow or down broker must not hold up the badge and notes
+        Task { await refreshReach() }   // a slow or down broker must not hold up the badge and notes
         let client = await client()
         sessions = (try? await client.get("/api/workshop/sessions/summary")) ?? []
         let rows: [PluginRow] = (try? await client.get("/api/activity")) ?? []

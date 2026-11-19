@@ -196,26 +196,15 @@ final class LocalServer: ObservableObject {
     }
 
     /// "Network access" (This Mac): on = the server listens on every interface (phones, the LAN);
-    /// off = this Mac only. The server lets another device sign in only once the owner has a password of their own.
+    /// off = this Mac only. Phones sign in with a pairing link or through the account, never with a password.
     var otherDevices: Bool {
         get { UserDefaults.standard.bool(forKey: "serverOtherDevices") }
         set { UserDefaults.standard.set(newValue, forKey: "serverOtherDevices") }
     }
 
-    /// The owner's password, when they chose one (to turn on other devices). Until then it is APP_SECRET.
-    var hasOwnerPassword: Bool { DeviceVault.token(for: "owner-password", service: Self.vault) != nil }
-
     /// The passwords to sign the window in with, newest first. Nothing here is ever shown or logged.
     func ownerPasswords() -> [String] {
         [DeviceVault.token(for: "owner-password", service: Self.vault), appSecret()].compactMap { $0 }
-    }
-
-    func saveOwnerPassword(_ password: String) -> Bool {
-        DeviceVault.save(password, for: "owner-password", service: Self.vault)
-    }
-
-    func forgetOwnerPassword() {
-        DeviceVault.remove(for: "owner-password", service: Self.vault)
     }
 
     private var pidFile: URL { dataDir.appendingPathComponent("server.pid") }

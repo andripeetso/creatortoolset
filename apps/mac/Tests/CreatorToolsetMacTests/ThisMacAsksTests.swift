@@ -10,6 +10,8 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertTrue(thisMacAsks.contains("state"))
         XCTAssertTrue(thisMacAsks.contains("pair"))   // Settings → Folders adds this Mac to a server with the AI left off
         XCTAssertTrue(thisMacAsks.contains("connect"))
+        XCTAssertTrue(thisMacAsks.contains("connect.link"))     // Settings → Computers → Reach from anywhere
+        XCTAssertTrue(thisMacAsks.contains("connect.unlink"))
         XCTAssertFalse(thisMacAsks.contains("forget"))
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
     }

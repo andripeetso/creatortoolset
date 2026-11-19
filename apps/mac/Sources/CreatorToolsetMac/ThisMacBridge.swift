@@ -7,7 +7,7 @@ import Foundation
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). These have parts of their own:
 /// "install:<claude|codex>:<key>" (installAsk), "ai-install:<id>" (aiInstallAsk), and the Media Library's "import:…" (Import.swift).
-let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "ai-install-progress", "pair"]
+let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "connect.link", "connect.unlink", "ai-install-progress", "pair"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -123,17 +123,11 @@ extension Shell {
         pushThisMac(problem: problem)
     }
 
-    /// "access" from the page: turns on Network access. Without the owner's password yet, this app asks for
-    /// one in a sheet (the page never sees it). The reply carries the problem, or none when it is on.
+    /// "access" from the page: turns on Network access (no password: phones pair with a link or the account).
     func accessFromOtherDevices() async -> [String: Any] {
         guard let server else { return thisMacState(problem: "There is no server on this Mac.") }
         if server.otherDevices { return thisMacState() }
-        var password: String?
-        if !server.hasOwnerPassword {
-            guard let typed = askNewOwnerPassword() else { return thisMacState(problem: "Choose this computer's password to turn it on.") }
-            password = typed
-        }
-        return thisMacState(problem: await setOtherDevices(true, password: password))
+        return thisMacState(problem: await setOtherDevices(true))
     }
 
     /// "folder" from the page (FootageFolderCard, "Choose a folder"): this Mac's own open panel for one folder. The reply is
@@ -150,20 +144,6 @@ extension Shell {
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
         MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
         return ["path": url.path]
-    }
-
-    /// The owner's new password for other devices, typed in a sheet of this app (nil: cancelled or too short).
-    @MainActor private func askNewOwnerPassword() -> String? {
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        let alert = NSAlert()
-        alert.messageText = "Choose this computer's password"
-        alert.informativeText = "Phones and other computers ask for it once, when they first sign in. Ten characters or more."
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Turn on")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn, field.stringValue.count >= 10 else { return nil }
-        return field.stringValue
     }
 
     func pushThisMac(problem: String? = nil) {
@@ -184,6 +164,9 @@ extension Shell {
             "pairs": true,
             // on an account through the connect service (setup's Add this computer hides once it is); none = no service set
             "linked": connectService == nil ? NSNull() : linkedHere,
+            // Settings → Computers → Reach from anywhere (Connect.swift): the switch, its state and the words under it;
+            // none = no connect service set
+            "reach": connectService == nil ? NSNull() : ["on": reachSwitch, "state": reach.rawValue, "text": reach.text] as [String: Any],
             // this Mac's names as the site matches its records: the name it pairs with, and the host name its worker reports
             "computer": Host.current().localizedName ?? macHostName(),
             "host": macHostName(),
