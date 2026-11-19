@@ -113,15 +113,12 @@ final class CatalogRulesTests: XCTestCase {
         XCTAssertFalse(TransferStep(itemId: UUID(), kind: .patch).catalog)
     }
 
-    /// Only a server whose Media Library is the plug-in's catalog gets the Upload tab's clips there.
+    /// Only a server whose Media Library is the plug-in's catalog shows it (where clips go is the server's answer).
     @MainActor
     func testTheCatalogIsUsedOnlyWhenItIsTheMediaLibrary() {
         let source = ServerPlugins.Source(id: "catalog", label: "Library")
         XCTAssertTrue(ServerPlugins.Known(plugins: [Studio.plugin], mainSource: source).catalog)
         XCTAssertFalse(ServerPlugins.Known(plugins: [Studio.plugin], mainSource: nil).catalog)
-        // sending never falls back to the storage library on a studio, even for an account that sees no catalog
-        XCTAssertTrue(ServerPlugins.Known(plugins: [Studio.plugin], mainSource: nil).sendsToCatalog)
-        XCTAssertFalse(ServerPlugins.Known(plugins: ["other"], mainSource: source).sendsToCatalog)
         XCTAssertFalse(ServerPlugins.Known(plugins: ["other"], mainSource: source).catalog)
         XCTAssertFalse(ServerPlugins.Known().catalog)
     }

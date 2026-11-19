@@ -168,6 +168,55 @@ final class LibraryHereUploadTests: XCTestCase {
             XCTAssertEqual(engine.store.item(id)?.note, line, "\(status)")
         }
     }
+
+    /// On a server with the studio plug-in, each clip goes where its own workspace's uploads go (GET /api/upload-target
+    /// in that workspace), asked once per workspace; a refusal fails the clip with the server's line.
+    func testEachClipGoesWhereItsWorkspaceSends() async throws {
+        let previous = LibraryServer.answer
+        LibraryServer.answer = { request in
+            switch (request.url!.path, request.value(forHTTPHeaderField: WorkspacePick.header)) {
+            case ("/api/plugins", _): return (200, [:], #"{"plugins":[{"id":"\#(Studio.plugin)"}]}"#)
+            case ("/api/upload-target", "ws-a"): return (200, [:], #"{"target":"catalog"}"#)
+            case ("/api/upload-target", "ws-b"): return (200, [:], #"{"target":"library"}"#)
+            case ("/api/upload-target", _):
+                return (403, [:], #"{"error":"This account can't add footage to that workspace","code":"forbidden"}"#)
+            default: return previous(request)
+            }
+        }
+        defer { LibraryServer.answer = previous }
+        let engine = engine()
+        func clip(in workspace: String) throws -> UUID {
+            pick(workspace)
+            let id = UUID()
+            made.append(id)
+            try Data("tinyacrobatics".utf8).write(to: AppFiles.upload(id))
+            engine.add(id: id, filename: "clip.mov", size: 14, server: server)
+            return id
+        }
+        let a = try clip(in: "ws-a"), b1 = try clip(in: "ws-b"), b2 = try clip(in: "ws-b"), c = try clip(in: "ws-c")
+        pick("ws-a")
+
+        for id in [b1, b2] {
+            engine.store.move(id, to: .preparing)
+            await engine.prepare(id)
+        }
+        try await wait("both B clips landed") { [b1, b2].allSatisfy { engine.store.item($0)?.state == .done } }
+        XCTAssertEqual([b1, b2].compactMap { engine.store.item($0)?.route }, [.library, .library])
+        let starts = LibraryServer.asked.filter { $0.path == "/api/library/here/uploads" }
+        XCTAssertEqual(starts.map(\.workspace), ["ws-b", "ws-b"], "into B's own library, with B's header")
+        XCTAssertEqual(LibraryServer.asked.filter { $0.path == "/api/upload-target" }.map(\.workspace), ["ws-b"],
+                       "asked once for B, not per clip")
+
+        let aItem = try XCTUnwrap(engine.store.item(a))
+        let aRoute = try await engine.route(for: aItem, api: try XCTUnwrap(engine.api(for: aItem)))
+        XCTAssertEqual(aRoute, .catalog, "A's clip goes to the catalog")
+
+        engine.store.move(c, to: .preparing)
+        await engine.prepare(c)
+        XCTAssertEqual(engine.store.item(c)?.state, .failed)
+        XCTAssertEqual(engine.store.item(c)?.note, "This account can't add footage to that workspace")
+        XCTAssertFalse(LibraryServer.asked.contains { $0.path == "/api/library/here/uploads" && $0.workspace != "ws-b" })
+    }
 }
 
 /// The phone's Media Library asks the server for its folders and searches as the website's page does.

@@ -35,6 +35,8 @@ final class UploadEngine: ObservableObject {
     private let maxChunk: Int64 = 32 << 20
     /// The session of the requests the app makes itself (start, where the server's copy ends); a test gives its own.
     var session = API.session
+    /// Where each workspace's uploads go, as its server said this run (`route`), per server and workspace.
+    private var targets: [String: UploadItem.Route] = [:]
 
     /// (a test gives its own transfers and queue, so nothing leaves the phone)
     init(transfers: Transfers = .shared, store: UploadStore? = nil) {
@@ -232,7 +234,7 @@ final class UploadEngine: ObservableObject {
                 }
             }
             if item.route == nil {
-                let route = try await Self.route(for: item, api: api)
+                let route = try await route(for: item, api: api)
                 store.update(id) { $0.route = route }
             }
             guard let fresh = store.item(id) else { return }
@@ -242,6 +244,8 @@ final class UploadEngine: ObservableObject {
             await resume(id)
         } catch APIError.signedOut {
             perform(.signedOut, id)
+        } catch APIError.refused(let line) {
+            fail(id, line)
         } catch let error as ExportError {
             fail(id, error.localizedDescription)
         } catch {
@@ -258,13 +262,30 @@ final class UploadEngine: ObservableObject {
         }.count
     }
 
-    /// A New edit's clips go to the server's own library; the Upload tab's to a plug-in's library when the server's
-    /// Media Library is one. Asked of the clip's own server, which may not be the one in use.
-    private static func route(for item: UploadItem, api: API) async throws -> UploadItem.Route {
+    /// A New edit's clips go to the server's own library; the Upload tab's where the clip's server says its workspace's
+    /// uploads go (`GET /api/upload-target` in the clip's workspace): a plug-in's library or the workspace's own. A
+    /// refusal fails the clip with the server's line. Asked once per server and workspace in a run, not per clip.
+    func route(for item: UploadItem, api: API) async throws -> UploadItem.Route {
         if item.edit != nil { return .library }
         // a debug build can send there on a scratch server whose library lists no source: -UploadRoute catalog
         if debugArg("UploadRoute") == "catalog" { return .catalog }
-        return try await ServerPlugins.read(api).sendsToCatalog ? .catalog : .library
+        let key = "\(item.server) \(api.workspace ?? "")"
+        if let known = targets[key] { return known }
+        let route: UploadItem.Route
+        do {
+            let data = try await api.data(api.request("/api/upload-target"), session: session)
+            switch (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["target"] as? String {
+            case "catalog": route = .catalog
+            case "library": route = .library
+            default: throw APIError.refused("This server keeps this workspace's uploads somewhere this app can't send to yet")
+            }
+        } catch APIError.server(404, _) {
+            route = .library   // a server from before upload-target: its own library
+        } catch APIError.server(403, let line) {
+            throw APIError.refused(line)
+        }
+        targets[key] = route
+        return route
     }
 
     func note(_ id: UUID, _ text: String?) {

@@ -50,10 +50,6 @@ enum DirectUploadState: String {
 extension ServerPlugins.Known {
     /// The server's Media Library is the studio's catalog: the Upload tab shows it.
     var catalog: Bool { plugins.contains(Studio.plugin) && mainSource != nil }
-    /// The Upload tab's clips go to the catalog on any server with the studio plug-in, whatever this account may see:
-    /// the server's own storage library is one nobody looks at there, so an account the catalog refuses gets a clip
-    /// that says why rather than footage sent where it is never found.
-    var sendsToCatalog: Bool { plugins.contains(Studio.plugin) }
 }
 
 extension APIError {
