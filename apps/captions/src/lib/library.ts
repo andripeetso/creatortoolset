@@ -126,6 +126,8 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.trashed) p.set("trashed", "1");
   if (q.unfiled) p.set("unfiled", "1");
   if (q.roll) p.set("roll", q.roll);
+  // an empty list sends a version id no clip has, so the answer is empty (an empty `versions` would mean every clip)
+  if (q.versions) p.set("versions", q.versions.length ? q.versions.join(",") : "none");
   if (q.cursor) p.set("cursor", q.cursor);
   if (q.sort) p.set("sort", q.sort);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
@@ -226,7 +228,8 @@ export const searchLibrary = async (
 };
 
 /** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where, on this computer. */
-export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here" | "missing">;
+/** Available offline (M14) is the person's own list of clips, sent as `versions`: never saved with a search. */
+export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here" | "missing"> & { offline?: true };
 
 /**
  * Those filters as query parameters (api/library/query.ts parseSearch reads them back). In the Mac app the page also

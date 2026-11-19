@@ -58,7 +58,9 @@ import { FoundInClips } from "./library/FoundInClips";
 import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
 import { ClipShare } from "./library/ClipShare";
 import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
-import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
+import { ClipMenu, ClipPick, offlineWords, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
+import { setOffline, useOffline } from "./library/offline-state";
+import { thisMacDevice } from "@/lib/providers";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
@@ -199,7 +201,19 @@ export default function LibraryPage() {
       : picked || view === "gallery"
         ? {}
         : { unfiled: true };
-  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined, sort, ...filters };
+  // Available offline (M14): the person's own list of clips, as `versions` (the filter is on this computer only)
+  const offline = useOffline();
+  const query = {
+    q: term || undefined,
+    kind: kind === "all" ? undefined : [kind],
+    facets,
+    ...folder,
+    source: source || undefined,
+    roll: roll ?? undefined,
+    sort,
+    ...filters,
+    ...(filters.offline ? { versions: offline.versions } : {}),
+  };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query), { own: true });
   const reload = () => void first.refresh().catch((e) => setError(message(e)));
@@ -652,6 +666,11 @@ export default function LibraryPage() {
 
   // a plain folder can be told what goes in it (a smart folder, api/library/smart.ts); Finals has its own tool
   const sortsItself = (c: Collection) => holdsClips(c) && !isFinals(c);
+  // Available offline for a clip or a folder, on this computer's list (M14); the server's answer replaces the list
+  const keepOffline = (target: { version: string } | { collection: string }, on: boolean) => setOffline(target, on).catch((e: unknown) => setError(message(e)));
+  const folderKeep = (c: Collection) => (
+    <ContextMenuItem onClick={() => void keepOffline({ collection: c.id }, !offline.collections.includes(c.id))}>{offlineWords(offline.collections.includes(c.id))}</ContextMenuItem>
+  );
   const folderProps = (c: Collection): FolderProps => ({
     name: c.name,
     to: folderTo(c.id),
@@ -664,10 +683,11 @@ export default function LibraryPage() {
     onRename: readOnly ? undefined : () => void renameFolder(c),
     onDelete: readOnly ? undefined : () => removeFolder(c),
     menu:
-      !readOnly && holdsClips(c) ? (
+      (!readOnly && holdsClips(c)) || thisMacDevice() ? (
         <>
-          <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>
-          {sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
+          {!readOnly && holdsClips(c) && <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
+          {!readOnly && sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
+          {thisMacDevice() && folderKeep(c)}
         </>
       ) : undefined,
   });
@@ -675,6 +695,7 @@ export default function LibraryPage() {
   const folderMenu = (c: Collection) => (
     <>
       <ContextMenuItem onSelect={() => go(c.id)}>Open</ContextMenuItem>
+      {thisMacDevice() && folderKeep(c)}
       {!readOnly && (
         <>
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
@@ -822,6 +843,7 @@ export default function LibraryPage() {
       <ClipMenu
         inTrash={trash}
         readOnly={readOnly}
+        offline={thisMacDevice() ? { on: offline.versions.includes(a.versionId), set: (on) => void keepOffline({ version: a.versionId }, on) } : undefined}
         moveTo={moveOptions(collections, into)}
         tags={tags}
         on={{

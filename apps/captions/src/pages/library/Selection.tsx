@@ -156,7 +156,10 @@ export interface ClipMoves {
   restore: () => void;
 }
 
-/** One clip's right-click menu. `extra` goes after Copy link (Show in Finder, where the Mac app can). */
+/** Available offline (M14): the words for a clip or folder the person keeps on this computer, or lets go. */
+export const offlineWords = (on: boolean) => (on ? "Remove offline copy" : "Make available offline");
+
+/** One clip's right-click menu. `extra` goes after Copy link (Show in Finder, where the Mac app can). `offline`: the Mac app's Available offline item. */
 export function ClipMenu({
   inTrash,
   readOnly,
@@ -164,6 +167,7 @@ export function ClipMenu({
   tags,
   on,
   extra,
+  offline,
 }: {
   inTrash: boolean;
   /** someone else's library to look at: open, download, copy the link */
@@ -172,12 +176,15 @@ export function ClipMenu({
   tags: string[];
   on: ClipMoves;
   extra?: ReactNode;
+  offline?: { on: boolean; set: (on: boolean) => void };
 }) {
+  const keep = offline && <ContextMenuItem onSelect={() => offline.set(!offline.on)}>{offlineWords(offline.on)}</ContextMenuItem>;
   if (readOnly)
     return (
       <>
         <ContextMenuItem onSelect={on.open}>Open</ContextMenuItem>
         <ContextMenuItem onSelect={on.download}>Download</ContextMenuItem>
+        {keep}
         <ContextMenuItem onSelect={on.copyLink}>Copy link</ContextMenuItem>
         {extra}
       </>
@@ -195,6 +202,7 @@ export function ClipMenu({
       <ContextMenuItem onSelect={on.open}>Open</ContextMenuItem>
       <ContextMenuItem onSelect={on.share}>Share…</ContextMenuItem>
       <ContextMenuItem onSelect={on.download}>Download</ContextMenuItem>
+      {keep}
       <ContextMenuItem onSelect={on.copyLink}>Copy link</ContextMenuItem>
       {extra}
       <ContextMenuSeparator />
