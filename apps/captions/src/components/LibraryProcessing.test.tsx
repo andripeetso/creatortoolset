@@ -114,6 +114,7 @@ describe("folders dropped together", () => {
   it("are asked one after another, and each is added", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
+      if (url.includes("/estimate")) return new Response(JSON.stringify({ steps: [] }), { status: 200 });
       if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 50, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
       return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
     });
@@ -144,6 +145,7 @@ describe("folders dropped together", () => {
   it("what waits on them (loose files dropped beside) comes once the last is answered, or closed; at once with none open", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
+      if (url.includes("/estimate")) return new Response(JSON.stringify({ steps: [] }), { status: 200 });
       if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 50, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
       return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
     });
