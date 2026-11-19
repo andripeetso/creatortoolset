@@ -20,6 +20,12 @@ const { runLibraryJob } = await import("./library");
 const { stopForExit } = await import("./computer");
 const { setCacheAccount } = await import("./cache");
 
+const { createUser } = await import("../users");
+const { sessionCookieFor } = await import("../auth");
+createUser("tiny", "secret-tiny-acrobatics");
+/** The iPhone app's own upload: its header and its session (routes.ts isAppSession). */
+const PHONE = () => ({ "x-ct-origin": "phone", cookie: sessionCookieFor("tiny", true)! });
+
 /** The server's side, loaded again for each "restart": nothing it held in memory survives one. */
 async function boot() {
   const { libraryDb } = await import("../library/db");
@@ -91,7 +97,7 @@ const scratchOf = (lib: LibraryPackage) => path.join(dir, "library-work", `${lib
 /** A phone upload to the library, probed and its card made: its proxy is left for the computer. */
 async function upload(file: string): Promise<string> {
   const size = statSync(file).size;
-  const start = (await (await post("/api/library/lib_t/uploads", { filename: path.basename(file), size })).json()) as { id: string };
+  const start = (await (await post("/api/library/lib_t/uploads", { filename: path.basename(file), size }, PHONE())).json()) as { id: string };
   await srv.app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
   const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
   expect(await srv.tick(Date.now(), ["probe"])).toBe(true);

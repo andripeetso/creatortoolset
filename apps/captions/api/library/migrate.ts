@@ -1,4 +1,4 @@
-import { libraryDb } from "./db";
+import { libraryDb, uploadOf } from "./db";
 import { hasMembers } from "./upload-gate";
 
 /** One change the migration makes, or in a dry run would make. */
@@ -23,12 +23,12 @@ export async function migrateLibraries(opts: { dryRun?: boolean; now?: string } 
          EXISTS (SELECT 1 FROM assets a WHERE a.library_id = l.id) AS hasClips
        FROM libraries l`,
     )
-    .all() as { id: string; setupAt: string | null; upload: string | null; hasClips: number }[];
+    .all() as { id: string; setupAt: string | null; upload: unknown; hasClips: number }[];
   const changes: MigrationChange[] = [];
   for (const r of rows) {
     if (r.setupAt == null && r.hasClips) changes.push({ libraryId: r.id, field: "setupAt", from: null, to: opts.now ?? new Date().toISOString() });
-    // an unset Upload reads as none (db.ts uploadOf), so a shared library with no Hosted media is one of these
-    if ((r.upload == null || r.upload === "none") && (await hasMembers(r.id))) changes.push({ libraryId: r.id, field: "upload", from: r.upload, to: "proxies" });
+    // a legacy false, an unset or "none" Upload all read as none (db.ts uploadOf), so a shared one with no Hosted media is one of these
+    if (uploadOf(r.upload) === "none" && (await hasMembers(r.id))) changes.push({ libraryId: r.id, field: "upload", from: r.upload, to: "proxies" });
   }
   if (!opts.dryRun)
     for (const c of changes)

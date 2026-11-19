@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, rm, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { hostsOriginals } from "../../contracts/library";
 import { WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type PictureInput, type PicturePackage, type PictureResult } from "../../contracts/work";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
@@ -88,7 +89,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
       print = JSON.stringify(await fingerprint(light, p.duration, dir));
     }
     // the original goes only to a library that keeps originals: in a proxies-only library it never leaves this computer
-    if (lib.upload === "all") files.original = src;
+    if (hostsOriginals(lib.upload)) files.original = src;
     const quick = await quickPrint(src);
     return { files, probe: p as unknown as Record<string, unknown>, sha256: await sha256File(src), ...(quick ? { quick } : {}), ...(print ? { fingerprint: print } : {}) };
   }

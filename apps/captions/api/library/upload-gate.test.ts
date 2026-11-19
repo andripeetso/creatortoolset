@@ -88,7 +88,7 @@ describe("mayReceive: original bytes only where somebody chose to send them", ()
   });
 
   it("the refusal under none says exactly what to do (Amendment c)", () => {
-    expect(REFUSED_NONE).toBe("Upload is off for this workspace. Add footage in the Mac app.");
+    expect(REFUSED_NONE).toBe("Upload is off for this workspace. Add footage in the Mac app, or turn on Originals in Settings → Media Library.");
   });
 
   it("an upload started under all is asked again at each part and at the finish: once the library says none, nothing more is taken", async () => {
@@ -486,5 +486,14 @@ describe("U2 §4.6 library migration: set up what has clips; a shared library ke
     expect((await migrateLibraries()).filter(mine)).toEqual([]);
     const kept = JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_set'").get() as { settings: string }).settings);
     expect(kept).toMatchObject({ upload: "all", setupAt: "2026-01-01T00:00:00.000Z" });
+  });
+
+  it("a legacy upload false reads as none, so a shared library with no Hosted media takes the team's proxies", async () => {
+    const { migrateLibraries } = await import("./migrate");
+    d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_mig_false', 'tinyacrobatics', 'F', 'local', '{"upload":false,"projectId":"ws_team"}', 0)`).run();
+    const changes = (await migrateLibraries({ dryRun: true })).filter((c) => c.libraryId === "lib_mig_false");
+    expect(changes).toEqual([{ libraryId: "lib_mig_false", field: "upload", from: 0, to: "proxies" }]);
+    await migrateLibraries();
+    expect(JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_false'").get() as { settings: string }).settings)).toMatchObject({ upload: "proxies" });
   });
 });

@@ -1,9 +1,8 @@
 /**
  * Whether this server takes a file's bytes into a library: the one rule, asked by every upload route (the route table is
  * upload-gate.test.ts). A library's Hosted media (hostsOriginals / hostsProxies, UNIFIED-PRD §4.2) says what the server
- * keeps. An original is taken only under originals or all, never under proxies; under none no original is taken from
- * anyone, a browser or phone included (local-first 11-18, decision 6), except the iPhone app's own file, held until a
- * computer has it. A proxy a computer made of a file it holds is taken only under proxies or all; its bytes must hash to
+ * keeps. An original is taken only under originals or all; under proxies and none no original is taken from anyone, a browser or
+ * a computer included (local-first 11-18, decision 6), except the iPhone app's own file, held until a computer has it. A proxy a computer made of a file it holds is taken only under proxies or all; its bytes must hash to
  * the SHA-256 the computer declared and must be smaller than the original. On This Mac the server and the computer are
  * one, so its own files are always taken.
  */
@@ -25,8 +24,10 @@ export type ReceiveKind = "original" | "proxy" | "derivative" | "serving";
  */
 export type ReceiveOrigin = "person" | "computer" | "phone";
 
-export const REFUSED_NONE = "Upload is off for this workspace. Add footage in the Mac app.";
+export const REFUSED_NONE = "Upload is off for this workspace. Add footage in the Mac app, or turn on Originals in Settings → Media Library.";
+export const REFUSED_COMPUTER_OFF = "Upload is off for this workspace, so files can't be added from this computer.";
 export const REFUSED_PROXIES = "This library takes proxies only. Your computer makes the proxy and sends that.";
+export const REFUSED_NO_PROXY = "This library keeps no proxies on the server.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
 
 export type Received = { ok: true } | { ok: false; status: 409; body: { error: string; code: "upload_refused"; message: string } };
@@ -87,13 +88,13 @@ export function mayReceive(
   if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
   const upload = uploadFor(library);
   // under proxies an original is refused with or without the computer's proof: only the proxy is kept (UNIFIED-PRD §4.2)
+  // the phone's own file is the one original no computer holds yet: taken under proxies and none alike (a computer makes its proxy)
   if (kind === "original") {
-    if (hostsOriginals(upload)) return { ok: true };
-    if (upload === "proxies") return refuse(REFUSED_PROXIES);
-    return origin === "phone" ? { ok: true } : refuse(REFUSED_NONE);
+    if (hostsOriginals(upload) || origin === "phone") return { ok: true };
+    return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
   }
   // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs Hosted proxies
-  if (origin === "computer" && !hostsProxies(upload)) return refuse(REFUSED_NONE);
+  if (origin === "computer" && !hostsProxies(upload)) return refuse(upload === "none" ? REFUSED_COMPUTER_OFF : REFUSED_NO_PROXY);
   const p = opts.proof;
   if (!p) return { ok: true };
   if (p.sha256 !== undefined && !HEX.test(p.sha256)) return refuse(REFUSED_PROOF);

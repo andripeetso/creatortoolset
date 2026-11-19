@@ -7,7 +7,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
-import { LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -225,6 +225,12 @@ export function versionUpload(versionId: string): LibraryUpload {
 }
 
 /** The Proxy quality a library's proxies are made at (UNIFIED-PRD §4.1); absent reads as standard. */
+/** Originals only: the server keeps no proxy of a library's clips (UNIFIED-PRD §4.2); a computer's proxy is refused there. */
+export const keepsOnlyOriginals = (libraryId: string): boolean => {
+  const u = libraryUpload(libraryId);
+  return hostsOriginals(u) && !hostsProxies(u);
+};
+
 export const libraryProxyQuality = (libraryId: string): ProxyQuality =>
   proxyQualityOf((libraryDb().prepare("SELECT json_extract(settings, '$.proxyQuality') AS q FROM libraries WHERE id = ?").get(libraryId) as { q: unknown } | undefined)?.q);
 

@@ -18,7 +18,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { hostsProxies, SOUNDS } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, SOUNDS } from "../../contracts/library";
 import { isWindowsPath } from "../../contracts/places";
 import type { Balance, Device } from "../../contracts/providers";
 import { sourcesOf } from "../../contracts/storage";
@@ -30,7 +30,7 @@ import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOrig
 import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDeviceWork, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
-import { libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
+import { keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "../library/db";
 import { mayReceive, provesProxies, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
@@ -387,7 +387,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(r.proxy && !["proxy", "probe", "send"].includes(job.kind) ? { proxy: { bytes: r.proxy_bytes ?? 0 } } : {}),
   };
   const upload = versionUpload(r.id);
-  const send = job.kind === "send" && upload !== "none";
+  const send = job.kind === "send" && (hostsOriginals(upload) || hostsProxies(upload));
   return {
     v: WORK_V,
     job: { id: job.id, kind: job.kind, versionId: r.id, libraryId: r.library_id, actor: job.actor ?? d.owner, ...(job.claim_id ? { claim: job.claim_id } : {}) },
@@ -402,10 +402,10 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     ...(send
       ? {
           // older workers read only "proxies" | "all": Originals only is sent as "all" with no proxy (UNIFIED-PRD §4.2, E9)
-          upload: upload === "originals" ? "all" : upload,
+          upload: keepsOnlyOriginals(r.library_id) ? "all" : upload,
           // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
           // Hosted proxies: every video is made here and sent, and the switch reads on (UNIFIED-PRD §4.1, §4.2)
-          proxy: { cloud: proxiesInCloud(r.library_id) || hostsProxies(upload), on: hostsProxies(upload) || (upload !== "originals" && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
+          proxy: { cloud: proxiesInCloud(r.library_id) || hostsProxies(upload), on: hostsProxies(upload) || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
           music: !!libraryDb()
             .prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map(() => "?").join(", ")})`)
             .get(r.id, ...Object.values(SOUNDS).map((s) => s.tag)),
