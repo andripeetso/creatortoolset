@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import XCTest
 @testable import CreatorToolsetMac
@@ -118,6 +119,54 @@ final class LocationAgentTests: XCTestCase {
     }
 
     /// The index says when and where a file was filmed (the server files it into its shoot): the offset from the file's own text.
+    func testStripCellsKeepTheClipsShape() {
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1920, height: 1080)).width, 256)
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1920, height: 1080)).height, 144)
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1080, height: 1920)).width, 144)
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1080, height: 1920)).height, 256)
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1000, height: 1000)).width, 256)
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1000, height: 1000)).height, 256)
+        // odd results come out even, as ffmpeg's force_divisible_by=2 makes them on the server
+        XCTAssertEqual(MacIndex.spriteCell(CGSize(width: 1000, height: 333)).height % 2, 0)
+    }
+
+    func testAnUprightClipsStripIsMadeInItsShape() throws {
+        let file = root.appendingPathComponent("upright.mov")
+        try Self.writeClip(file, width: 72, height: 128, frames: 30)
+        let index = MacIndex.read(file.path)
+        let b64 = try XCTUnwrap(index["sprite"] as? String)
+        let data = try XCTUnwrap(Data(base64Encoded: b64))
+        let image = try XCTUnwrap(NSBitmapImageRep(data: data))
+        XCTAssertEqual(image.pixelsWide, 144 * MacIndex.spriteFrames)
+        XCTAssertEqual(image.pixelsHigh, 256)
+    }
+
+    /// A short H.264 clip of a flat colour, made here so the test needs no fixture file.
+    static func writeClip(_ url: URL, width: Int, height: Int, frames: Int) throws {
+        try? FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height])
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        for i in 0..<frames {
+            while !input.isReadyForMoreMediaData { usleep(1000) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+            let b = buffer!
+            CVPixelBufferLockBaseAddress(b, [])
+            memset(CVPixelBufferGetBaseAddress(b), Int32(40 + i * 5), CVPixelBufferGetDataSize(b))
+            CVPixelBufferUnlockBaseAddress(b, [])
+            adaptor.append(b, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
+        }
+        input.markAsFinished()
+        let done = DispatchSemaphore(value: 0)
+        writer.finishWriting { done.signal() }
+        done.wait()
+        if writer.status != .completed { throw writer.error ?? NSError(domain: "writeClip", code: 1) }
+    }
+
     func testFilmedOffsetAndAPictureWithoutEXIF() throws {
         XCTAssertEqual(MacIndex.offset("2026-11-12T08:00:00-0600"), -360)
         XCTAssertEqual(MacIndex.offset("+05:30"), 330)
