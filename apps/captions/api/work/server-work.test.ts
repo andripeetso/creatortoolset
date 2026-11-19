@@ -220,23 +220,36 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
     sw.writeServerWork({ on: true });
   });
 
-  it("the server set to Off in Load balancing never takes it; Prefer sends it to the server first", async () => {
+  it("Load balancing: on, the server takes a step no computer can read and no computer gets a copy of it (PRD 5.5); Off hands it to the computer's Downloads", async () => {
     const e = await newEdit("maker", ["ver_m"]);
     queue("maker", e, "v1");
-    // Normal: the computer that is online goes first, the server leaves it
+    // Normal: the online computer has none of the files, and with the server on at weight > 0 it gets no server copy
     touchDevice(mac.device.id);
-    expect((await serverTick()).took).toBe(false);
+    expect((await serverTick()).took).toBe(true);
+    settle();
     // Prefer: the computer is not handed it while the server is free, and the server runs it
+    const p = await newEdit("maker", ["ver_m"]);
+    queue("maker", p, "v1");
     weight("maker", 100);
     expect((await claim(mac.token)).pkg).toBeNull();
     expect((await serverTick()).took).toBe(true);
     settle();
-    // while the server is busy with another step, the computer takes the next
+    // the server busy with another step: still no copy for the computer, so the step waits for the server
     const busy = await newEdit("maker", ["ver_m"]);
     queue("maker", busy, "v1");
     libraryDb().exec(`UPDATE edit_jobs SET state = 'running', device = NULL, lease_until = ${Date.now() + 60_000} WHERE state = 'queued'`);
     queue("maker", e, "v2");
-    expect((await claim(mac.token)).pkg?.job.id).toBe(row(e, "v2").id);
+    expect((await claim(mac.token)).pkg).toBeNull();
+    settle();
+    rmSync(path.join(dir, "balance", "maker.json"));
+    // Off: the server never takes it; the online computer takes it, since its Downloads (default: needed) allows a copy
+    weight("maker", 0);
+    const o = await newEdit("maker", ["ver_m"]);
+    queue("maker", o, "v1");
+    ffmpegRuns.n = 0;
+    expect((await serverTick()).took).toBe(false);
+    expect(ffmpegRuns.n).toBe(0);
+    expect((await claim(mac.token)).pkg?.job.id).toBe(row(o, "v1").id);
     settle();
     rmSync(path.join(dir, "balance", "maker.json"));
     // Off, for someone with no computer online: the step waits for one
