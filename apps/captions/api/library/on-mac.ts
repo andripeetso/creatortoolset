@@ -76,6 +76,7 @@ export function parseOnMac(body: unknown): OnMacIndex | string {
   const frames = Array.isArray(b.frames) ? b.frames.slice(0, FRAMES) : [];
   if (frames.some((f) => !jpeg(f, MB))) return "A still is not a JPEG under 1 MB";
   return {
+    ...parseFilmed(b),
     name,
     path: at,
     size,
@@ -87,12 +88,38 @@ export function parseOnMac(body: unknown): OnMacIndex | string {
     ...(typeof b.sprite === "string" ? { sprite: b.sprite } : {}),
     frames: frames as string[],
     ...(typeof b.collectionId === "string" && b.collectionId ? { collectionId: b.collectionId } : {}),
+  };
+}
+
+/** When, where and by what a file was filmed, as a computer read it from the file (the index, POST /relay/filmed). */
+export type Filmed = Pick<OnMacIndex, "capturedAt" | "tz" | "location" | "camera" | "alpha">;
+
+export function parseFilmed(b: Record<string, unknown>): Filmed {
+  return {
     ...(num(b.capturedAt, 1e14) ? { capturedAt: Math.round(b.capturedAt as number) } : {}),
     ...(Number.isInteger(b.tz) && Math.abs(b.tz as number) <= 14 * 60 ? { tz: b.tz as number } : {}),
     ...(typeof b.location === "string" && b.location.length <= 64 ? { location: b.location } : {}),
     ...(typeof b.camera === "boolean" ? { camera: b.camera } : {}),
     ...(typeof b.alpha === "boolean" ? { alpha: b.alpha } : {}),
   };
+}
+
+/**
+ * What a computer read later of when, where and by what a known version was filmed, into its probe: only what the probe
+ * lacks (a date it has stays), and `camera` always, so it is never asked again. True when its date or place is new.
+ */
+export async function patchFilmed(d: ReturnType<typeof libraryDb>, versionId: string, f: Filmed): Promise<boolean> {
+  const row = d.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined;
+  if (!row) return false;
+  const p = JSON.parse(row.probe ?? "{}") as Partial<ProbeSummary>;
+  // `camera` marks it read: what the server read itself stays
+  const add: Record<string, unknown> = p.camera === undefined ? { camera: f.camera ?? false } : {};
+  if (!((p.capturedAt ?? 0) > 631152000000) && f.capturedAt) Object.assign(add, { capturedAt: f.capturedAt }, f.tz !== undefined ? { tz: f.tz } : {});
+  const country = !p.country && f.location ? await countryOf({ format: { tags: { location: f.location } } }) : "";
+  if (country) add.country = country;
+  if (f.alpha && !p.pixFmt) add.pixFmt = "rgba";
+  d.prepare("UPDATE asset_versions SET probe = json_patch(COALESCE(probe, '{}'), ?) WHERE id = ?").run(JSON.stringify(add), versionId);
+  return "capturedAt" in add || "country" in add;
 }
 
 /** Where the describe stills wait for the describe job (deleted once it has run). */

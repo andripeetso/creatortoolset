@@ -72,11 +72,19 @@ function plainFolders(d: DatabaseSync, libraryId: string): string[] {
 const assetOf = (d: DatabaseSync, versionId: string) =>
   d.prepare("SELECT a.id, a.library_id, a.kind, a.created_by FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as Asset | undefined;
 
-/** The version's asset when the AI files it: its library organizes by AI and it is in no plain folder yet (one it was dropped in, Finals). */
+/**
+ * The version's asset when the AI files it: its library organizes by AI, it is in no plain folder yet (one it was
+ * dropped in, Finals), and the person never took it out of a shoot's folder (then where it is was their choice).
+ */
 export function toFile(d: DatabaseSync, versionId: string): Asset | null {
   const a = assetOf(d, versionId);
   if (!a || organizeOf(a.library_id, d) !== "ai") return null;
-  const filed = d.prepare("SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = ? AND c.kind = 'manual'").get(a.id);
+  const filed = d
+    .prepare(
+      `SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = ? AND c.kind = 'manual'
+       UNION ALL SELECT 1 FROM folder_out o JOIN collections c ON c.id = o.collection_id WHERE o.asset_id = ? AND c.shoot IS NOT NULL`,
+    )
+    .get(a.id, a.id);
   return filed ? null : a;
 }
 
@@ -134,6 +142,7 @@ function unfiled(d: DatabaseSync, libraryId: string) {
        FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
        WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'ready'
          AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = a.id AND c.kind = 'manual')
+         AND NOT EXISTS (SELECT 1 FROM folder_out o JOIN collections c ON c.id = o.collection_id WHERE o.asset_id = a.id AND c.shoot IS NOT NULL)
        ORDER BY ${FILMED}, a.id`,
     )
     .all(SOUNDS.music.tag, SOUNDS.effect.tag, libraryId) as unknown as (Asset & { version: string; sound: string | null })[];
@@ -204,13 +213,20 @@ export async function refileShoots(d: DatabaseSync, libraryId: string): Promise<
     if (file) await readHere(d, version, file, kind);
   }
   let n = 0;
+  let undated = 0;
+  const dated = d.prepare("SELECT 1 FROM asset_versions WHERE id = ? AND json_extract(probe, '$.capturedAt') > 631152000000");
   inTx(d, () => {
     for (const p of photos) if (!graphic(d, p.version)) d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?").run(p.folder, p.asset);
     for (const r of unfiled(d, libraryId)) {
       organizeOnProbe(d, r.version, soundOf(r.sound));
-      n += toFile(d, r.version) ? 0 : 1;
+      if (toFile(d, r.version)) continue;
+      n++;
+      if (r.kind !== "audio" && !dated.get(r.version)) undated++;
     }
   });
+  // a clip with no filming date in its file is dated by its modified time on the computer, else the day it was added;
+  // its real date arrives when a computer reads it (report.ts filmedForDevice) and moves it into its shoot (reshoot)
+  if (n) console.log(`[library] shoots: ${libraryId}: filed ${n}${undated ? `, ${undated} of them by modified time or the day added (no filming date known yet)` : ""}`);
   return n;
 }
 

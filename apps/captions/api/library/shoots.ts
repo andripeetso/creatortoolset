@@ -98,11 +98,36 @@ export function fileShoot(d: DatabaseSync, a: Asset): boolean {
   // a shoot begun by a clip with no location takes the first country one of its clips has
   const s = near && (JSON.parse(near.shoot) as Shoot);
   if (s && near && !s.country && me.country) rename(d, a.library_id, near.id, near.name, { ...s, country: me.country });
+  // the app's filing (by_ai, as smart.ts files): the one reshoot may move; one the person puts in by hand is theirs
   d.prepare(
-    `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
-     SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
-  ).run(folder, a.id, a.created_by, folder);
+    `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by, by_ai)
+     SELECT ?, ?, COALESCE(MAX(position), 0) + 1, 'ai', 1 FROM collection_items WHERE collection_id = ?`,
+  ).run(folder, a.id, folder);
   return true;
+}
+
+/**
+ * A clip whose filming date or place became known after it was filed (a computer read it later: report.ts
+ * filmedForDevice): it leaves the shoot the app filed it in and goes into the one it belongs to. Only the app's own
+ * filings move; a clip the person put somewhere stays. A shoot folder left empty goes, unless the person renamed it.
+ */
+export function reshoot(d: DatabaseSync, a: Asset): boolean {
+  const filed = d
+    .prepare("SELECT c.id, c.name, c.shoot FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = ? AND c.shoot IS NOT NULL AND i.by_ai = 1")
+    .all(a.id) as { id: string; name: string; shoot: string }[];
+  if (!filed.length) return false;
+  for (const f of filed) {
+    d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?").run(f.id, a.id);
+    // left empty, and never touched by the person (renamed, a folder inside, shared): it goes
+    const theirs = d.prepare(
+      "SELECT 1 FROM collection_items WHERE collection_id = ? UNION ALL SELECT 1 FROM collections WHERE parent_id = ? UNION ALL SELECT 1 FROM library_grants WHERE collection_id = ?",
+    ).get(f.id, f.id, f.id);
+    if (!theirs && f.name === (JSON.parse(f.shoot) as Shoot).name) {
+      d.prepare("DELETE FROM folder_out WHERE collection_id = ?").run(f.id);
+      d.prepare("DELETE FROM collections WHERE id = ?").run(f.id);
+    }
+  }
+  return fileShoot(d, a);
 }
 
 /** A name no other top-level folder of the library has: "12 Nov · Costa Rica", then "… 2". */
