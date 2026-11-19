@@ -190,6 +190,15 @@ describe("a Media Library whose upload is proxies only", () => {
 });
 
 describe("a Media Library whose Hosted media is originals only", () => {
+  /** A ready video row in `lib` (as an upload leaves it), sent from `from` when given: the worker's input is its probe. */
+  const direct = (lib: string, name: string, from?: string): string => {
+    const v = `ver-${name}-${lib}`;
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, ?, 'video', ?, ?, 'owner-a', 1, 'b')").run(`as-${v}`, lib, name, v);
+    d.prepare(
+      "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at, from_path) VALUES (?, ?, 1, ?, 1, ?, NULL, 'ready', 'owner-a', 1, ?)",
+    ).run(v, `as-${v}`, `libraries/${lib}/v/${v}/source`, `sha-${v}`, from ?? null);
+    return v;
+  };
   /** A version as the worker reads it when its probe is in (afterProbe's input). */
   const shape = (id: string) => ({
     id,
@@ -204,11 +213,11 @@ describe("a Media Library whose Hosted media is originals only", () => {
   it("keeps no proxy: none queued or stored for a clip that needs one, though the proxy switch is on; a computer's proxy is dropped", async () => {
     d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.proxy', json('true')) WHERE id = 'lib_orig'`).run();
     const needs = { duration: 5, width: 3840, height: 2160, fps: 30, rotation: 0, format: "mp4", vcodec: "hevc", pixFmt: "yuv420p", acodec: "" };
-    const id = await upload("lib_orig", "Handstand.mp4");
+    const id = direct("lib_orig", "Handstand.mp4", "/Users/tiny/Movies/Handstand.mp4");
     await afterProbe(d, shape(id), needs, "owner-a");
     expect(jobs(id)).not.toContain("proxy");
     // a control: the same clip in a library that keeps its proxies queues one
-    const kept = await upload("lib_p", "Handstand.mp4");
+    const kept = direct("lib_p", "Handstand.mp4", "/Users/tiny/Movies/Handstand.mp4");
     await afterProbe(d, shape(kept), needs, "owner-a");
     expect(jobs(kept)).toContain("proxy");
     const sent = path.join(dir, "computer-proxy.mp4");

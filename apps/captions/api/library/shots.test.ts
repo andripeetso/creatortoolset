@@ -370,11 +370,14 @@ describe("the background index", () => {
 
   it("a talking take gets a look only where the library's Max level reads them (lookTalking)", async () => {
     const d = libraryDb();
-    const v = await seed("ast-talk-01", { roll: "a", duration: 30 });
+    const v = await seed("ast-talk-01", { roll: "a", duration: 30, described: false });
     expect(lookable(d, v)).toBeNull();
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookTalking', json('true')) WHERE id = 'lib_s'`).run();
-    expect(lookable(d, v)).toBe("lib_s");
-    d.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.lookTalking') WHERE id = 'lib_s'`).run();
+    try {
+      d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookTalking', json('true')) WHERE id = 'lib_s'`).run();
+      expect(lookable(d, v)).toBe("lib_s");
+    } finally {
+      d.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.lookTalking') WHERE id = 'lib_s'`).run();
+    }
   });
 
   it("an edit's own ask gets its shot descriptions though the library's Shot descriptions switch is off", async () => {
