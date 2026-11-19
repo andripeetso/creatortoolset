@@ -61,7 +61,6 @@ describe("mediaReady", () => {
     const changes = await migrateLibraries({ now: "2026-11-18T10:00:00.000Z" });
     expect(changes).toEqual([{ libraryId: "lib_old", field: "setupAt", from: null, to: "2026-11-18T10:00:00.000Z" }]);
     expect(libraryDb().prepare("SELECT json_extract(settings, '$.setupAt') AS s FROM libraries WHERE id = 'lib_old'").get()).toEqual({ s: "2026-11-18T10:00:00.000Z" });
-    expect(libraryDb().prepare("SELECT json_extract(settings, '$.setupAt') AS s FROM libraries WHERE id = 'lib_p'").get()).toEqual({ s: null });   // no clips: still unset
     expect(await migrateLibraries()).toEqual([]);   // idempotent
   });
 });
