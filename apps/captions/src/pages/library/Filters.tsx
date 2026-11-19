@@ -11,7 +11,10 @@ import { cn } from "@/lib/utils";
  * it in a saved search.
  */
 
-export const anyFilter = (f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place || !!f.here || !!f.missing;
+/** A saved search keeps its filters but never Available offline: that names this person's list, not the search. */
+export const savable = ({ offline: _offline, ...f }: LibraryFilters): LibraryFilters => f;
+
+export const anyFilter =(f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place || !!f.here || !!f.missing || !!f.offline;
 
 /** A saved search's own filters, with the ones picked now in their place (as the server merges a smart folder's). On this computer and Missing on this computer are never saved: they name one computer. */
 export const withSaved = (f: LibraryFilters, saved?: SearchQuery): LibraryFilters => ({

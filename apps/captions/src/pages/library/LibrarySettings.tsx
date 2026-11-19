@@ -11,7 +11,7 @@ import { useWorkspace } from "@/lib/workspace";
 import { redoKinds } from "./Selection";
 import { thisComputer, storeName } from "../LibraryStorage";
 import { LibraryCopies } from "./Copies";
-import { MemberSettings } from "./MemberSettings";
+import { MemberSettings, OwnerDownloads } from "./MemberSettings";
 import { Effort } from "./settings/Effort";
 import { Models } from "./settings/Models";
 import { OwnerFolders } from "./settings/OwnerFolders";
@@ -94,6 +94,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
       <Section title={LIBRARY_WORDS.hostedTitle}>
         <Hosted library={library} watch={watch} save={save} />
       </Section>
+      <OwnerDownloads library={library} />
       <Section title={LIBRARY_WORDS.analysisTitle}>
         <Effort library={library} save={save} />
       </Section>

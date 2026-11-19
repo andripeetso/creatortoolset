@@ -1,3 +1,4 @@
+import { hostsOriginals, hostsProxies } from "@contracts/library";
 import type {
   TagCount,
   AssetKind,
@@ -52,8 +53,24 @@ export const listLibraries = () =>
 export async function macIndexOnly(libraryId: string): Promise<boolean> {
   if (!macPageMarked()) return false;
   const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
-  const u = libs.find((l) => l.id === libraryId)?.settings.upload;
-  return !hostsOriginals(u) && !hostsProxies(u);
+  // a library the list does not have (or none, when it fails) is not index-in-place: the upload goes as before
+  const lib = libs.find((l) => l.id === libraryId);
+  return !!lib && !hostsOriginals(lib.settings.upload) && !hostsProxies(lib.settings.upload);
+}
+
+/** A member's add (drop or pick) with Hosted media Off has nowhere to go: refused in the Library page (SCREENS-COPY §3). */
+export const addRefused = (l: LibrarySummary | null | undefined): boolean =>
+  !!l?.readOnly && !hostsOriginals(l.settings.upload) && !hostsProxies(l.settings.upload);
+
+/**
+ * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
+ * made the way the Media Library page makes one when the workspace has none yet.
+ */
+export async function setWorkspaceUpload(workspaceId: string, settings: { upload: LibraryUpload; finalsUpload: LibraryUpload }): Promise<void> {
+  const headers = { "content-type": "application/json", "X-CT-Workspace": workspaceId };
+  const own = (await fetch("/api/library", { headers }).then((r) => json<{ libraries: LibrarySummary[] }>(r))).libraries.find((l) => !l.readOnly);
+  const library: LibrarySummary = own ?? (await fetch("/api/library", { method: "POST", headers, body: JSON.stringify({ name: "Library" }) }).then((r) => json<LibrarySummary>(r)));
+  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings }) }).then((r) => json<LibrarySummary>(r));
 }
 
 /** What is going in: `clips` files of `bytes`, `audio` of them sound only (`audioBytes`), from a music folder or not. */
@@ -117,6 +134,8 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.trashed) p.set("trashed", "1");
   if (q.unfiled) p.set("unfiled", "1");
   if (q.roll) p.set("roll", q.roll);
+  // an empty list sends a version id no clip has, so the answer is empty (an empty `versions` would mean every clip)
+  if (q.versions) p.set("versions", q.versions.length ? q.versions.join(",") : "none");
   if (q.cursor) p.set("cursor", q.cursor);
   if (q.sort) p.set("sort", q.sort);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
@@ -217,7 +236,8 @@ export const searchLibrary = async (
 };
 
 /** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where, on this computer. */
-export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here" | "missing">;
+/** Available offline (M14) is the person's own list of clips, sent as `versions`: never saved with a search. */
+export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here" | "missing"> & { offline?: true };
 
 /**
  * Those filters as query parameters (api/library/query.ts parseSearch reads them back). In the Mac app the page also

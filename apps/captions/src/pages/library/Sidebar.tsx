@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { FileX, SlidersHorizontal } from "lucide-react";
+import { Download, FileX, SlidersHorizontal } from "lucide-react";
 import type { AssetKind, LibrarySort } from "@contracts/library";
 import { LibraryFacetBar, type FacetChoice } from "@/components/LibraryFacetBar";
 import { Button } from "@/components/ui/button";
@@ -144,6 +144,10 @@ export function LibrarySidebar(p: SidebarProps) {
         <Section title="Computer">
           <div className="flex flex-wrap gap-1.5">
             <HereFilter value={f} onChange={(here) => set({ here })} />
+            <Pill on={!!f.offline} onClick={() => set({ offline: f.offline ? undefined : true })}>
+              <Download aria-hidden className="h-3.5 w-3.5" />
+              Available offline
+            </Pill>
             {macPlaces() && (!!missing.data?.items.length || !!f.missing) && (
               <Pill on={!!f.missing} onClick={() => set({ missing: f.missing ? undefined : true })}>
                 <FileX aria-hidden className="h-3.5 w-3.5" />
