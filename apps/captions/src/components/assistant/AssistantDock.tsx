@@ -287,7 +287,17 @@ export function AssistantDock() {
     .filter((w) => w.href?.startsWith("/"))
     .at(-1);
   const pageWanted = useChatMode((s) => s.page);
-  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, view?.workspace, newest && { id: newest.id, href: newest.href }, () => {
+  // chat mode turned on while the open chat is another workspace's (the newest one, maybe started on another device): the
+  // window stays in its workspace and a new chat is started in it (owner, 11-19: "threw me into a different workspace
+  // completely"). Until it is on screen the page does not take that chat's
+  const onWas = useRef(chatMode);
+  const elsewhere = useRef<string | null>(null);
+  const wsNow = useWorkspace((s) => (s.loaded ? s.currentProjectId : null));
+  if (chatMode && !onWas.current && view?.messages.length && view.workspace && wsNow && view.workspace !== wsNow) elsewhere.current = view.id;
+  else if (elsewhere.current && view?.id !== elsewhere.current) elsewhere.current = null;
+  onWas.current = chatMode;
+  const leaving = !!view && view.id === elsewhere.current;
+  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, leaving ? undefined : view?.id, view?.workspace, newest && { id: newest.id, href: newest.href }, () => {
     if (useChatMode.getState().bare) washTo({ bare: false });
   });
   // a new chat has no page (lib/chat-mode.ts `bare`): chat mode shows it as only chats, the question and the message
@@ -347,7 +357,15 @@ export function AssistantDock() {
   const openWs = view?.workspace;
   const wsLoaded = useWorkspace((s) => s.loaded);
   useEffect(() => {
-    if (chatMode && wsLoaded) followWorkspace(openWs);
+    if (!chatMode || !wsLoaded) return;
+    if (!leaving) return followWorkspace(openWs);
+    landing.current.on = true;
+    void startOver().then((r) => {
+      if (r.ok) return land(r.data, null, null);
+      landing.current.on = false;
+      elsewhere.current = null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatMode, view?.id, openWs, wsLoaded]);
   // a reply that starts, ends or asks changes the list's groups
   useEffect(() => {
