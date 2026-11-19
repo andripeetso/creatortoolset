@@ -7,8 +7,8 @@ import type { NleFile } from "./NlePlayer";
 import { Panel } from "./NleLayout";
 
 // The Media Pool, laid out as Resolve's: a Bins column (Master, and under it the timeline's own sources and the page's
-// library), and the open bin's clips as picture cards or as a list with columns. A clip with no file here is red
-// (Media Offline); a right-click offers Relink… when the page can look for files.
+// library), and the open bin's clips as picture cards or as a list with columns. A click opens a clip in the viewer as
+// the source; a clip with no file here is red (Media Offline); a right-click offers Relink… when the page can look for files.
 
 /** A drag of one of the timeline's own sources (Media Pool → In this timeline): its key. */
 export const SOURCE_MIME = "application/x-ct-nle-source";
@@ -26,6 +26,8 @@ export interface PoolRow {
   uses: number;
   /** used on a video track */
   video: boolean;
+  /** every use is a designed flash, which the viewer draws: it never needs its file */
+  flash: boolean;
 }
 
 export type SortKey = "name" | "dur" | "res" | "fps" | "uses";
@@ -38,11 +40,12 @@ export function poolRows(tl: NleTimeline, nameOf: (src: string) => string): Pool
     let r = by.get(i.src);
     if (!r) {
       const s = tl.sources[i.src] ?? {};
-      r = { src: i.src, name: nameOf(i.src), path: s.path, frames: s.dur, fps: s.fps || tl.timeline.fps, w: s.w, h: s.h, uses: 0, video: false };
+      r = { src: i.src, name: nameOf(i.src), path: s.path, frames: s.dur, fps: s.fps || tl.timeline.fps, w: s.w, h: s.h, uses: 0, video: false, flash: true };
       by.set(i.src, r);
     }
     r.uses++;
     r.video ||= isVideo(id);
+    r.flash &&= i.fx === "flash";
   }
   return [...by.values()];
 }
@@ -66,8 +69,8 @@ export function sortRows(rows: PoolRow[], { key, up }: Sort): PoolRow[] {
 }
 
 const COLUMNS: [SortKey, string][] = [["name", "Clip Name"], ["dur", "Duration"], ["res", "Resolution"], ["fps", "Frame rate"], ["uses", "Uses"]];
-const STILL = /\.(png|jpe?g|webp|gif)$/i;
-const SOUND = /\.(wav|aif|aiff|m4a|mp3|flac|caf|aac)$/i;
+export const STILL = /\.(png|jpe?g|webp|gif)$/i;
+export const SOUND = /\.(wav|aif|aiff|m4a|mp3|flac|caf|aac)$/i;
 
 type Bin = "master" | "timeline" | "library";
 interface Prefs { view: "thumb" | "list"; size: number; sort: Sort; bins: boolean; master: boolean }
@@ -81,7 +84,7 @@ const loadPrefs = (): Prefs => {
   }
 };
 
-export function NleMediaPool({ tl, nameOf, here, bin, onPick, onRelink }: {
+export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, onBinDrag, onRelink }: {
   tl: NleTimeline;
   nameOf: (src: string) => string;
   /** a source's file here (null: not here) */
@@ -90,6 +93,12 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onRelink }: {
   bin?: ReactNode;
   /** selects the source's clips on the timeline */
   onPick: (src: string) => void;
+  /** a click: the source in the viewer */
+  onOpen: (src: string) => void;
+  /** a source's drag starting (its key) and ending (null) */
+  onDrag: (src: string | null) => void;
+  /** a drag out of the library bin starting (its data, readable now only) and ending (null) */
+  onBinDrag: (dt: DataTransfer | null) => void;
   /** looks for the files not found here */
   onRelink?: () => void;
 }) {
@@ -109,7 +118,8 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onRelink }: {
   const all = poolRows(tl, nameOf);
   const q = find?.trim().toLowerCase();
   const rows = sortRows(q ? all.filter((r) => r.name.toLowerCase().includes(q)) : all, prefs.sort);
-  const offline = (r: PoolRow) => !!r.path && !here(r.src);
+  // as the timeline marks a clip: no file here, or one the computer said won't play (a flash needs none)
+  const offline = (r: PoolRow) => { const f = here(r.src); return !!r.path && !r.flash && (!f || !!f.why); };
   const bins: [Bin, string, number | null][] = [["timeline", "In this timeline", all.length], ...(bin ? [["library", "Library", null] as [Bin, string, null]] : [])];
   const title = showBin === "master" ? "Master" : bins.find((b) => b[0] === showBin)![1];
 
@@ -122,20 +132,22 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onRelink }: {
   const clip = (r: PoolRow) => ({
     draggable: !!r.path,
     title: String(r.path ?? r.src),
-    onDragStart: (e: DragEvent) => { e.dataTransfer.setData(SOURCE_MIME, r.src); e.dataTransfer.effectAllowed = "copy"; },
-    onClick: () => { setPicked(r.src); onPick(r.src); },
+    onDragStart: (e: DragEvent) => { e.dataTransfer.setData(SOURCE_MIME, r.src); e.dataTransfer.effectAllowed = "copy"; onDrag(r.src); },
+    onDragEnd: () => onDrag(null),
+    onClick: () => { setPicked(r.src); onOpen(r.src); },
     onContextMenu: (e: MouseEvent) => { e.preventDefault(); setPicked(r.src); setMenu({ x: e.clientX, y: e.clientY, src: r.src }); },
   });
   const pool = showBin !== "library";
 
   return (
-    <Panel title="Media Pool" className="flex-1"
+    <Panel title="Media Pool" className="flex-1 select-none [&_input]:select-text"
       bar={
         <div className="flex min-w-0 flex-1 items-center gap-0.5">
           <button type="button" className={cn(tool, prefs.bins && "text-zinc-100")} title="Bins" aria-pressed={prefs.bins} onClick={() => set({ bins: !prefs.bins })}>
             <PanelLeft className="size-3.5" />
           </button>
-          <span className="min-w-0 flex-1 truncate pl-1 text-zinc-300">{title}</span>
+          {/* the open bin's name, when the bin list doesn't already show it lit */}
+          <span className="min-w-0 flex-1 truncate pl-1 text-zinc-300">{!prefs.bins || (!prefs.master && showBin !== "master") ? title : ""}</span>
           {pool && (
             <>
               <button type="button" className={tool} title={prefs.view === "thumb" ? "Thumbnail View" : "List View"} aria-haspopup="menu"
@@ -183,7 +195,7 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onRelink }: {
             </div>
           )}
           {showBin === "library" ? (
-            <div className="flex min-h-0 flex-1 flex-col p-2">{bin}</div>
+            <div className="flex min-h-0 flex-1 flex-col p-2" onDragStart={(e) => onBinDrag(e.dataTransfer)} onDragEnd={() => onBinDrag(null)}>{bin}</div>
           ) : showBin === "master" ? (
             <Folders view={prefs.view} size={prefs.size} bins={bins} onOpen={setOpen} />
           ) : prefs.view === "thumb" ? (

@@ -580,3 +580,67 @@ export function setFade(tl: NleTimeline, key: string, edge: Edge, frames: number
 /** How much of a clip shows `k` timeline frames after its start, 0–1, from its fades. */
 export const fadeAt = (it: NleItem, k: number): number =>
   Math.max(0, Math.min(1, it.fade_in ? k / it.fade_in : 1, it.fade_out ? (it.len - k) / it.fade_out : 1));
+
+/** In and Out marks in frames (null: not marked); Out is the last frame of the marked part. */
+export type Marks = [number | null, number | null];
+export const NO_MARKS: Marks = [null, null];
+
+/** Marks after Mark In / Mark Out at frame `f` (an Out before the new In, or an In after the new Out, goes) or a clear. */
+export function setMark(m: Marks, what: "in" | "out" | "clearIn" | "clearOut" | "clear", f: number): Marks {
+  const [i, o] = m;
+  switch (what) {
+    case "in": return [f, o !== null && o > f ? o : null];
+    case "out": return [i !== null && i < f ? i : null, f];
+    case "clearIn": return [null, o];
+    case "clearOut": return [i, null];
+    case "clear": return NO_MARKS;
+  }
+}
+
+/** A source's marked part in seconds, `from` its In to the end of its Out frame (the whole of `seconds` around what is
+ *  not marked); undefined when nothing is marked. */
+export function markedPart(m: Marks | undefined, fps: number, seconds?: number): { from: number; to?: number } | undefined {
+  if (!m || (m[0] === null && m[1] === null)) return undefined;
+  return { from: (m[0] ?? 0) / fps, ...(m[1] !== null ? { to: (m[1] + 1) / fps } : seconds ? { to: seconds } : {}) };
+}
+
+/** A clip laid at `rec` from a source's part `from`–`to` seconds (the whole `seconds` when unmarked; 5 s when nothing is
+ *  known): `in` in the source's own frames (`sfps`), `len` in the timeline's (`fps`). */
+export function clipOfPart(src: string, rec: number, fps: number, sfps: number, p: { seconds?: number; from?: number; to?: number }): NleItem {
+  const from = Math.max(0, p.from ?? 0);
+  const to = p.to ?? p.seconds ?? from + 5;
+  return { src, rec, in: Math.round(from * sfps), len: Math.max(1, Math.round((to - from) * fps)) };
+}
+
+/** A one-clip timeline playing a source on its own (the source viewer): its picture on V1 and its sound on A1, as far as
+ *  it has them, at the source's own frame rate and size. */
+export function sourceTimeline(key: string, s: NleSource, o: { fps: number; frames: number; picture: boolean; sound: boolean }): NleTimeline {
+  const item = (): NleItem => ({ src: key, rec: 0, len: Math.max(1, o.frames), in: 0 });
+  return {
+    timeline: { fps: o.fps, width: o.picture ? s.w || 1080 : 1920, height: o.picture ? s.h || 1920 : 1080, name: key },
+    sources: { [key]: s },
+    tracks: { V1: { items: o.picture ? [item()] : [] }, A1: { items: o.sound ? [item()] : [] } },
+  };
+}
+
+/** The part looping playback plays, in seconds: In to the end of the Out frame when both are marked, else 0 to the end of
+ *  the last frame (`frames` long). */
+export const loopPart = (m: Marks, frames: number, fps: number): [number, number] =>
+  m[0] !== null && m[1] !== null && m[1] >= m[0] ? [m[0] / fps, (m[1] + 1) / fps] : [0, frames / fps];
+
+/** Where looping playback goes from `t` seconds: past the part's end going forward, back to its start (with what it ran
+ *  over, so the clock keeps time); before its start going backward, to its end; else `t`. */
+export function loopNext(t: number, rate: number, [a, b]: [number, number]): number {
+  const len = b - a;
+  if (len <= 0) return t;
+  // a playhead far outside the part (play pressed after the Out) goes to its start / end exactly
+  if (rate > 0 && t >= b) return t - b < len ? a + (t - b) : a;
+  if (rate < 0 && t < a) return a - t < len ? b - Math.max(1e-6, a - t) : b - 1e-6;
+  return t;
+}
+
+/** Where Insert (F9) and Overwrite (F10) lay a source: the track of a picked clip, picture and sound each, else V1 / A1. */
+export function editTracks(tl: NleTimeline, picked: string[]): { picture: string; sound: string } {
+  const on = picked.map((k) => find(tl, k)?.track).filter((t): t is string => !!t);
+  return { picture: on.find(isVideo) ?? "V1", sound: on.find((t) => !isVideo(t)) ?? "A1" };
+}

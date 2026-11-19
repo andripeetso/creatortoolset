@@ -45,3 +45,14 @@ describe("editor keys", () => {
     expect(keyAction(k("b", "KeyB"))).toBe("toolBlade");
   });
 });
+
+describe("source viewer and loop keys", () => {
+  it("⌥I / ⌥O clear In / Out though ⌥ types another letter; F9 insert, F10 overwrite; ⌘/ loop", () => {
+    expect(keyAction(k("ˆ", "KeyI", { alt: true }))).toBe("clearIn");
+    expect(keyAction(k("ø", "KeyO", { alt: true }))).toBe("clearOut");
+    expect(keyAction(k("F9", "F9"))).toBe("insertEdit");
+    expect(keyAction(k("F10", "F10"))).toBe("overwriteEdit");
+    expect(keyAction(k("/", "Slash", { meta: true }))).toBe("loop");
+    expect(keyAction(k("/", "Slash"))).toBeNull();
+  });
+});
