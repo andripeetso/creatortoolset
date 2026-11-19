@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, removeTrack, roll,
+  addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, deleteTrack, roll,
   fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
+  NO_MARKS, clipOfPart, editTracks, loopNext, loopPart, markedPart, setMark, sourceTimeline, type Marks,
 } from "./model";
 
 // A reel: two talking shots on V1 with their voice on A1 (linked), a B-roll clip on V2 and a song on A2.
@@ -196,15 +197,15 @@ describe("nle model", () => {
     const tl = setTrack(reel(), "V2", { locked: true });
     expect(move(tl, [key(tl, "V2", 90)], 10)).toBe(tl);
     expect(setItems(tl, [key(tl, "V2", 90)], { zoom: 2 })).toBe(tl);
-    expect(removeTrack(tl, "V2")).toBe(tl);
+    expect(deleteTrack(tl, "V2")).toBe(tl);
   });
 
   it("adds and removes tracks, finds a free one, and names a source once", () => {
     const tl = reel();
     const v3 = addTrack(tl, "V");
     expect(v3.id).toBe("V3");
-    expect(removeTrack(v3.tl, "V3").tracks.V3).toBeUndefined();
-    expect(removeTrack(tl, "V1")).toBe(tl);
+    expect(deleteTrack(v3.tl, "V3").tracks.V3).toBeUndefined();
+    expect(deleteTrack(tl, "V1")).toBe(tl);
     expect(freeTrack(tl, "A", 0, 10, 2).id).toBe("A3");
     expect(freeTrack(tl, "V", 0, 10, 2).id).toBe("V2");
     const s = addSource(tl, { path: "/m/new/cam.mp4", fps: 25 });
@@ -306,5 +307,71 @@ describe("nle keys", () => {
     expect(cut.tracks.V2.items.map((i) => [i.fade_in, i.fade_out])).toEqual([[10, undefined], [undefined, 10]]);
     const short = setItems(faded, [k], { len: 12 });
     expect(toSaved(short).tracks.V2.items[0]).toMatchObject({ fade_in: 10, fade_out: 2 });
+  });
+});
+
+describe("source viewer: marks, the marked part, laying it, looping", () => {
+  it("each source keeps its own marks; an Out before a new In goes, ⌥I / ⌥O clear one", () => {
+    let all: Record<string, Marks> = {};
+    const mark = (path: string, what: Parameters<typeof setMark>[1], f: number) => (all = { ...all, [path]: setMark(all[path] ?? NO_MARKS, what, f) });
+    mark("/m/cam.mp4", "in", 10);
+    mark("/m/cam.mp4", "out", 40);
+    mark("/m/roll.mp4", "out", 5);
+    expect(all["/m/cam.mp4"]).toEqual([10, 40]);
+    expect(all["/m/roll.mp4"]).toEqual([null, 5]);
+    mark("/m/cam.mp4", "in", 50);
+    expect(all["/m/cam.mp4"]).toEqual([50, null]);
+    expect(setMark([3, 9], "clearIn", 0)).toEqual([null, 9]);
+    expect(setMark([3, 9], "clearOut", 0)).toEqual([3, null]);
+  });
+
+  it("the marked part runs to the end of the Out frame; In alone runs to the end of the source", () => {
+    expect(markedPart([25, 49], 25, 10)).toEqual({ from: 1, to: 2 });
+    expect(markedPart([25, null], 25, 10)).toEqual({ from: 1, to: 10 });
+    expect(markedPart([null, 24], 25)).toEqual({ from: 0, to: 1 });
+    expect(markedPart(NO_MARKS, 25, 10)).toBeUndefined();
+  });
+
+  it("a drop of In–Out lays only that part: `in` in the source's frames, `len` in the timeline's", () => {
+    expect(clipOfPart("b", 100, 25, 50, { seconds: 8, from: 1, to: 3 })).toEqual({ src: "b", rec: 100, in: 50, len: 50 });
+    expect(clipOfPart("b", 0, 25, 50, { seconds: 8 })).toEqual({ src: "b", rec: 0, in: 0, len: 200 });
+    expect(clipOfPart("x", 0, 25, 25, {})).toEqual({ src: "x", rec: 0, in: 0, len: 125 });
+  });
+
+  it("F9 inserts the marked part at the playhead and pushes what is after; F10 overwrites", () => {
+    const tl = reel();
+    const item = clipOfPart("b", 50, 25, 50, { from: 1, to: 2 });
+    const ins = place(tl, [{ track: "V1", item: { ...item } }, { track: "A1", item: { ...item, link: "x" } }], "insert");
+    expect(lengthOf(ins.tl)).toBe(lengthOf(tl) + 25);
+    expect(ins.tl.tracks.V1.items.find((i) => i.src === "b")).toMatchObject({ rec: 50, len: 25, in: 50 });
+    const over = place(tl, [{ track: "V1", item: { ...item } }], "overwrite");
+    expect(lengthOf(over.tl)).toBe(lengthOf(tl));
+    expect(over.tl.tracks.V1.items.filter((i) => i.rec < 75 && endOf(i) > 50).map((i) => i.src)).toEqual(["b"]);
+  });
+
+  it("F9 / F10 lay on V1 and A1, or on the tracks of the picked clips", () => {
+    const tl = reel();
+    expect(editTracks(tl, [])).toEqual({ picture: "V1", sound: "A1" });
+    expect(editTracks(tl, [key(tl, "V2", 90)])).toEqual({ picture: "V2", sound: "A1" });
+    expect(editTracks(tl, [key(tl, "A2", 0)])).toEqual({ picture: "V1", sound: "A2" });
+  });
+
+  it("a source plays as a one-clip timeline; a sound file has no picture", () => {
+    const s = sourceTimeline("song", { path: "/m/song.m4a" }, { fps: 25, frames: 250, picture: false, sound: true });
+    expect(s.tracks.V1.items).toEqual([]);
+    expect(lengthOf(s)).toBe(250);
+  });
+
+  it("loop: In–Out when both are marked, else the whole length; forward wraps to the start, backward to the end", () => {
+    expect(loopPart([25, 49], 250, 25)).toEqual([1, 2]);
+    expect(loopPart([25, null], 250, 25)).toEqual([0, 10]);
+    expect(loopNext(1.5, 1, [1, 2])).toBe(1.5);
+    expect(loopNext(2.02, 1, [1, 2])).toBeCloseTo(1.02);
+    expect(loopNext(10.04, 2, [0, 10])).toBeCloseTo(0.04);
+    expect(loopNext(0.98, -1, [1, 2])).toBeCloseTo(1.98);
+    expect(loopNext(-0.01, -1, [0, 10])).toBeCloseTo(9.99);
+    // play pressed far past the Out: straight to the In
+    expect(loopNext(7, 1, [1, 2])).toBe(1);
+    expect(loopNext(0, -1, [5, 6])).toBeCloseTo(6);
   });
 });

@@ -1,26 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Loader2, Magnet, MousePointer2, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
-  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
-  place, remove, removeTrack, rippleToPlayhead, setItems, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
+  addSource, blade, clipAt, closeGap, clipOfPart, clipsFrom, copyOf, duplicate, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
+  loopNext, loopPart, markedPart, move, NO_MARKS, paste, place, remove, rippleToPlayhead, setItems, setMark, setTrack, sourceTimeline,
+  timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
+import { dragging, type Dragged } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
 import { keyAction } from "@/lib/nle/keys";
 import { NleInspector } from "./NleInspector";
 import { nleAudio } from "@/lib/nle/audio";
 import type { NleFile } from "./NlePlayer";
 import { NleLayout, Panel } from "./NleLayout";
-import { NleMediaPool, SOURCE_MIME } from "./NleMediaPool";
-import { NleViewer } from "./NleViewer";
+import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
+import { NleViewer, SoundCard, SourceStrip } from "./NleViewer";
 
 export type { NleFile };
-import { NleTracks as Timeline, type Tool } from "./NleTracks";
+import { NleTracks as Timeline, useLinkedSelection, type Tool } from "./NleTracks";
 
 // A non-linear editor for one timeline, laid out as editors are (NleLayout): the Media Pool on the left (the timeline's own
-// sources, then the page's media bin), the viewer in the middle playing the timeline live from its files, the inspector
-// on the right, the timeline across the bottom. It fills the box it is put in. The page gives the timeline, where its
+// sources, then the page's media bin), the viewer in the middle playing the timeline live from its files (or, as Source,
+// one clip opened from the pool to mark In and Out on and lay on the timeline), the inspector on the right, the timeline
+// across the bottom. It fills the box it is put in. The page gives the timeline, where its
 // files play from and what Save does; everything else (edits, undo, keys, playback) is here.
 
 /** A clip from the media bin: its file and what is known of it. */
@@ -33,14 +36,75 @@ export interface NleDrop {
   h?: number;
   /** false: a picture with no sound */
   sound?: boolean;
+  /** the part laid, seconds into the file (its marked In–Out); the whole file when absent */
+  from?: number;
+  to?: number;
 }
 
 export interface NleControl {
   /** a clip from the bin laid at the playhead on V1 (or the In mark) */
   put: (d: NleDrop) => void;
+  /** a clip from the bin opened in the viewer as the source, to mark and lay */
+  source: (d: NleDrop) => void;
 }
 
 let clipboard: { track: string; item: NleItem }[] = [];
+/** A drag from the source viewer's picture: the source's marked part. */
+const VIEWER_MIME = "application/x-ct-nle-viewer";
+const LOOP_KEY = "ct-nle-loop";
+
+/** A playhead and its clock: it runs on the page's frame clock while playing (backwards for J) and stops on the last
+ *  frame, or with `loop` (seconds) goes round that part. */
+function useTransport(last: number, fps: number, loop: [number, number] | null) {
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [rate, setRate] = useState(1);
+  const timeRef = useRef(time);
+  timeRef.current = time;
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let then = performance.now();
+    const step = (now: number) => {
+      const t = timeRef.current + ((now - then) / 1000) * rate;
+      then = now;
+      const lp = loopRef.current;
+      if (lp) {
+        // straight back to the other end on this frame: the player has its pictures waiting there
+        timeRef.current = loopNext(t, rate, lp);
+        setTime(timeRef.current);
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      if (t >= last && rate > 0) {
+        setTime(last);
+        setPlaying(false);
+        return;
+      }
+      if (t <= 0 && rate < 0) {
+        setTime(0);
+        setPlaying(false);
+        return;
+      }
+      setTime(t);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, rate, last]);
+
+  const play = (on: boolean, r = 1) => {
+    nleAudio();
+    if (on && r > 0 && !loopRef.current && timeRef.current >= last - 0.5 / fps) setTime(0);
+    setRate(r);
+    setPlaying(on);
+  };
+  const seek = useCallback((t: number) => setTime(Math.max(0, t)), []);
+  const shuttle = (dir: 1 | -1) => play(true, !playing || Math.sign(rate) !== dir ? dir : Math.max(-8, Math.min(8, rate * 2)));
+  return { time, setTime, playing, setPlaying, rate, play, seek, shuttle };
+}
 
 
 export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink }: {
@@ -67,13 +131,28 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [saved, setSaved] = useState<NleTimeline>(hist.now);
   const [live, setLive] = useState<NleTimeline | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
-  const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [rate, setRate] = useState(1);
+  // a gap picked on the timeline (its clips' selection let go); any edit lets it go
+  const [gap, setGap] = useState<Gap | null>(null);
+  const pick = useCallback((keys: string[]) => {
+    setSelected(keys);
+    if (keys.length) setGap(null);
+  }, []);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
+  const [linkSel, toggleLinkSel] = useLinkedSelection();
   const [mode, setMode] = useState<PlaceMode>("overwrite");
-  const [marks, setMarks] = useState<[number | null, number | null]>([null, null]);
+  const [marks, setMarks] = useState<Marks>(NO_MARKS);
+  // the source viewer: the clip open in it, each source's own marks (by file, kept while the editor is open), which shows
+  const [source, setSource] = useState<NleDrop | null>(null);
+  const [srcMarks, setSrcMarks] = useState<Record<string, Marks>>({});
+  const [view, setView] = useState<"source" | "timeline">("timeline");
+  const [loop, setLoop] = useState(() => {
+    try {
+      return localStorage.getItem(LOOP_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
@@ -84,95 +163,119 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     setSaved(fresh);
     setLive(null);
     setSelected([]);
-    setTime(0);
-    setPlaying(false);
+    tln.setTime(0);
+    tln.setPlaying(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new version only
   }, [resetKey]);
 
   const tl = hist.now;
+  const sel = selected.filter((k) => find(tl, k));
   const shown = live ?? tl;
   const fps = tl.timeline.fps;
   const end = lengthOf(shown) / fps;
   // the cut's last frame: playing stops on it and End goes to it, so the viewer ends on a picture, never on past-the-end
   const last = Math.max(0, lengthOf(shown) - 1) / fps;
   const dirty = tl !== saved;
+  const tln = useTransport(last, fps, loop && lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null);
+  const { time, play, seek } = tln;
+
+  // the source: one of the timeline's own when it plays the same file (so it plays from where that one is found here)
+  const sfpsOf = (d: NleDrop) => d.fps || Number(Object.values(tl.sources).find((x) => x.path === d.path)?.fps) || fps;
+  const srcKey = source ? Object.keys(tl.sources).find((k) => tl.sources[k].path === source.path) ?? null : null;
+  const srcRec: NleSource | null = source && (srcKey ? tl.sources[srcKey] : { path: source.path, fps: source.fps, w: source.w, h: source.h });
+  const sfps = source ? sfpsOf(source) : fps;
+  const srcSecs = source ? source.seconds ?? (srcRec?.dur ? srcRec.dur / sfps : 5) : 0;
+  const srcFrames = Math.max(1, Math.round(srcSecs * sfps));
+  const srcPicture = !!source && !SOUND.test(source.path);
+  const srcJson = JSON.stringify([srcKey, srcRec, sfps, srcFrames, source?.sound, source?.path]);
+  const srcTl = useMemo(() => source && srcRec
+    ? sourceTimeline(srcKey ?? "source", srcRec, { fps: sfps, frames: srcFrames, picture: srcPicture, sound: source.sound !== false && !STILL.test(source.path) })
+    : null, [srcJson]); // eslint-disable-line react-hooks/exhaustive-deps -- by what it plays
+  const sm = (source && srcMarks[source.path]) || NO_MARKS;
+  const srcT = useTransport((srcFrames - 1) / sfps, sfps, loop ? loopPart(sm, srcFrames, sfps) : null);
+  const inSource = view === "source" && !!srcTl;
+  const T = inSource ? srcT : tln;
+  const tfps = inSource ? sfps : fps;
+  const show = (v: "source" | "timeline") => {
+    if (v === view) return;
+    (v === "source" ? tln : srcT).play(false);
+    setView(v);
+  };
+  const toggleLoop = () => {
+    const on = !loop;
+    setLoop(on);
+    try {
+      localStorage.setItem(LOOP_KEY, on ? "1" : "0");
+    } catch {
+      // for this page only
+    }
+  };
 
   const commit = useCallback((next: NleTimeline) => {
     setLive(null);
+    setGap(null);
     if (readOnly) return;
     setHist((h) => histChange(h, () => next));
   }, [readOnly]);
   const live_ = useCallback((next: NleTimeline | null) => !readOnly && setLive(next), [readOnly]);
 
-  // the clock: the playhead runs on the page's frame clock while playing (backwards for J)
-  const timeRef = useRef(time);
-  timeRef.current = time;
-  useEffect(() => {
-    if (!playing) return;
-    let raf = 0;
-    let then = performance.now();
-    const step = (now: number) => {
-      const t = timeRef.current + ((now - then) / 1000) * rate;
-      then = now;
-      if (t >= last && rate > 0) {
-        setTime(last);
-        setPlaying(false);
-        return;
-      }
-      if (t <= 0 && rate < 0) {
-        setTime(0);
-        setPlaying(false);
-        return;
-      }
-      setTime(t);
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, rate, last]);
-
-  const play = (on: boolean, r = 1) => {
-    nleAudio();
-    if (on && r > 0 && timeRef.current >= last - 0.5 / fps) setTime(0);
-    setRate(r);
-    setPlaying(on);
-  };
-  const seek = useCallback((t: number) => setTime(Math.max(0, t)), []);
-  const shuttle = (dir: 1 | -1) => {
-    const next = !playing || Math.sign(rate) !== dir ? dir : Math.max(-8, Math.min(8, rate * 2));
-    play(true, next);
-  };
-
   const urlFor = useCallback((src: string) => urlOf(src, shown), [urlOf, shown]);
+  const srcUrl = useCallback((k: string) => (srcTl ? urlOf(k, srcTl) : null), [urlOf, srcTl]);
   const nameOfSrc = useCallback((src: string) => String(shown.sources[src]?.path ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
   const nameOf = useCallback((it: NleItem) => (typeof it.name === "string" && it.name) || (typeof it.line === "string" && it.line ? `${it.line} · ${nameOfSrc(it.src)}` : nameOfSrc(it.src)), [nameOfSrc]);
 
-  // a clip from the bin: its picture on a video track, its sound with it on a free sound track, linked; on a sound
-  // track its sound alone
-  const lay = (d: NleDrop, at: { track: string; frame: number }) => {
+  // a clip from the bin: its picture on a video track, its sound with it on a free sound track (F9 / F10: the one given),
+  // linked; on a sound track its sound alone; only its `from`–`to` part when it has one
+  const lay = (d: NleDrop, at: { track: string; frame: number; sound?: string }, how: PlaceMode = mode) => {
     if (readOnly) return;
     const s = addSource(tl, { path: d.path, fps: d.fps, ...(d.seconds ? { dur: Math.round(d.seconds * (d.fps || fps)) } : {}), w: d.w, h: d.h });
     let next = s.tl;
-    // ponytail: a file picked on the computer comes with no length: 5 s, pulled out on the timeline
-    const len = Math.max(1, Math.round((d.seconds ?? 5) * fps));
-    const item: NleItem = { src: s.src, rec: at.frame, len, in: 0 };
+    // a file picked on the computer comes with no length: 5 s, pulled out on the timeline
+    const item = clipOfPart(s.src, at.frame, fps, Number(next.sources[s.src].fps) || fps, d);
     const clips: { track: string; item: NleItem }[] = [{ track: at.track, item }];
     if (isVideo(at.track) && d.sound !== false) {
-      const a = freeTrack(next, "A", at.frame, at.frame + len, at.track === "V1" ? 1 : 2);
+      const a = at.sound && next.tracks[at.sound] ? { tl: next, id: at.sound } : freeTrack(next, "A", at.frame, endOf(item), at.track === "V1" ? 1 : 2);
       next = a.tl;
       const link = `l${Date.now().toString(36)}`;
       item.link = link;
       clips.push({ track: a.id, item: { ...item } });
     }
-    const made = place(next, clips, mode);
+    const made = place(next, clips, how);
     commit(made.tl);
     setSelected(made.keys.slice(0, 1));
   };
-  if (control) control.current = { put: (d) => lay(d, { track: "V1", frame: marks[0] ?? Math.round(time * fps) }) };
+  // a drop with the marks its file has in the source viewer: their part only
+  const marked = (d: NleDrop): NleDrop => (d.from !== undefined || d.to !== undefined ? d : { ...d, ...markedPart(srcMarks[d.path], sfpsOf(d), d.seconds) });
+  const noteOf = (d: NleDrop): Dragged => {
+    const p = marked(d);
+    const to = p.to ?? p.seconds;
+    return { name: d.name, seconds: to !== undefined ? to - (p.from ?? 0) : null, picture: !SOUND.test(d.path), sound: d.sound !== false && !STILL.test(d.path) };
+  };
+  const note = (d: NleDrop | null) => void (dragging.current = d && noteOf(d));
+  const openSource = (d: NleDrop) => {
+    tln.play(false);
+    srcT.play(false);
+    if (d.path !== source?.path) srcT.seek((srcMarks[d.path]?.[0] ?? 0) / sfpsOf(d));
+    setSource(d);
+    setView("source");
+  };
+  const dropOfSrc = (src: string): NleDrop | null => {
+    const s = tl.sources[src];
+    if (!s?.path) return null;
+    return { path: s.path, name: nameOfSrc(src), fps: s.fps, w: s.w, h: s.h, ...(s.dur ? { seconds: s.dur / (s.fps || fps) } : {}) };
+  };
+  // F9 / F10: the source's marked part at the In mark or the playhead, on V1 and A1 or the picked clips' tracks
+  const edit = (how: PlaceMode) => {
+    if (!source) return;
+    const t = editTracks(tl, sel);
+    const track = srcPicture ? t.picture : t.sound;
+    if (tl.tracks[track]) lay(marked(source), { track, frame: marks[0] ?? Math.round(time * fps), sound: t.sound }, how);
+  };
+  if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(time * fps) }), source: openSource };
 
-  const sel = selected.filter((k) => find(tl, k));
   const act = {
-    delete: (ripple: boolean) => sel.length && commit(remove(tl, sel, ripple)),
+    // a gap goes with either delete key, as in Resolve: what is after it moves back
+    delete: (ripple: boolean) => (gap ? commit(closeGap(tl, gap)) : sel.length && commit(remove(tl, sel, ripple))),
     copy: () => sel.length && (clipboard = copyOf(tl, sel)),
     cut: () => {
       if (!sel.length) return;
@@ -221,18 +324,23 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       if (!a) return;
       const f = Math.round(time * fps);
       const zoom = (key: string) => zoomKeys.current?.(new KeyboardEvent("keydown", { key }));
+      // playing, stepping and marks go to what the viewer shows (Source or Timeline)
+      const pf = Math.round(T.time * tfps);
       const step = (d: number) => {
-        play(false);
-        seek(time + d / fps);
+        T.play(false);
+        T.seek(T.time + d / tfps);
       };
+      const mark = (what: Parameters<typeof setMark>[1]) => inSource && source
+        ? setSrcMarks((all) => ({ ...all, [source.path]: setMark(all[source.path] ?? NO_MARKS, what, pf) }))
+        : setMarks((m) => setMark(m, what, pf));
       if (a.startsWith("lock:")) {
         const id = a.slice(5);
         if (tl.tracks[id]) commit(setTrack(tl, id, { locked: tl.tracks[id].locked ? undefined : true }));
       } else switch (a) {
-        case "play": play(!playing); break;
-        case "stop": play(false); break;
-        case "forward": shuttle(1); break;
-        case "reverse": shuttle(-1); break;
+        case "play": T.play(!T.playing); break;
+        case "stop": T.play(false); break;
+        case "forward": T.shuttle(1); break;
+        case "reverse": T.shuttle(-1); break;
         case "save": void save(); break;
         case "undo": setHist(histUndo); break;
         case "redo": setHist(histRedo); break;
@@ -247,6 +355,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         case "selectForward": setSelected(clipsFrom(tl, f, 1)); break;
         case "selectBack": setSelected(clipsFrom(tl, f, -1)); break;
         case "rippleStart": {
+          // Q in the source viewer: back to the timeline (the owner's Q ripples on the timeline)
+          if (inSource) { show("timeline"); break; }
           if (readOnly) break;
           const h = clipAt(tl, f, sel);
           const next = rippleToPlayhead(tl, f, "head", sel);
@@ -258,28 +368,34 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         case "delete": act.delete(false); break;
         case "rippleDelete": act.delete(true); break;
         case "enable": if (sel.length) commit(setItems(tl, sel, { enabled: find(tl, sel[0])!.item.enabled === false ? undefined : false })); break;
-        case "markIn": setMarks(([, o]) => [f, o !== null && o > f ? o : null]); break;
-        case "markOut": setMarks(([i]) => [i !== null && i < f ? i : null, f]); break;
-        case "clearMarks": setMarks([null, null]); break;
+        case "markIn": mark("in"); break;
+        case "markOut": mark("out"); break;
+        case "clearMarks": mark("clear"); break;
+        case "clearIn": mark("clearIn"); break;
+        case "clearOut": mark("clearOut"); break;
+        case "insertEdit": edit("insert"); break;
+        case "overwriteEdit": edit("overwrite"); break;
+        case "loop": toggleLoop(); break;
         case "toolSelect": setTool("select"); break;
         case "toolTrim": setTool("trim"); break;
         case "toolBlade": setTool("blade"); break;
         case "snap": setSnap((s) => !s); break;
+        case "linkedSelection": toggleLinkSel(); break;
         case "nudgeBack": case "nudgeBack5": case "nudgeOn": case "nudgeOn5":
           if (sel.length) commit(move(tl, sel, (a.startsWith("nudgeBack") ? -1 : 1) * (a.endsWith("5") ? 5 : 1)));
           break;
         case "frameBack": step(-1); break;
         case "frameOn": step(1); break;
-        case "secondBack": step(-fps); break;
-        case "secondOn": step(fps); break;
+        case "secondBack": step(-tfps); break;
+        case "secondOn": step(tfps); break;
         case "prevEdit": case "nextEdit": {
           play(false);
           const p = a === "prevEdit" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);
           if (p !== undefined) seek(p / fps);
           break;
         }
-        case "start": seek(0); break;
-        case "end": seek(last); break;
+        case "start": T.seek(0); break;
+        case "end": T.seek(inSource ? (srcFrames - 1) / sfps : last); break;
         case "zoomIn": zoom("="); break;
         case "zoomOut": zoom("-"); break;
         case "zoomFit": zoom("\\"); break;
@@ -299,52 +415,98 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   // a drop on a lane: one of the timeline's own sources, or what the page reads from its bin
   const dropOn = (dt: DataTransfer, at: { track: string; frame: number }) => {
-    const src = dt.getData(SOURCE_MIME);
-    const s = src ? tl.sources[src] : undefined;
-    if (s?.path) {
-      const sfps = s.fps || fps;
-      return lay({ path: s.path, name: nameOfSrc(src), fps: s.fps, w: s.w, h: s.h, ...(s.dur ? { seconds: s.dur / sfps } : {}) }, at);
-    }
-    if (readDrop) void readDrop(dt).then((d) => d && lay(d, at), (e: Error) => toast.error(e.message));
+    if (source && dt.types.includes(VIEWER_MIME)) return lay(marked(source), at);
+    const d = dropOfSrc(dt.getData(SOURCE_MIME));
+    if (d) return lay(marked(d), at);
+    if (readDrop) void readDrop(dt).then((d) => d && lay(marked(d), at), (e: Error) => toast.error(e.message));
+  };
+  // a drag out of the library bin: its length known once the page has read what it is
+  const binDrag = (dt: DataTransfer | null) => {
+    if (!dt) return note(null);
+    const n: Dragged = { name: "", seconds: null, picture: true, sound: true };
+    dragging.current = n;
+    void readDrop?.(dt).then((d) => { if (d && dragging.current === n) dragging.current = noteOf(d); }, () => {});
   };
 
   return (
     <>
       <NleLayout panelKeys={panelKeys}
+        center={
+          <>
+            {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
+            {!readOnly && (
+              <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
+                title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
+                className="relative inline-flex h-5 shrink-0 items-center gap-1.5 overflow-hidden rounded px-2 text-[12px] text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-100 disabled:text-zinc-500 disabled:hover:bg-transparent">
+                {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/10" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
+                <span className="relative inline-flex items-center gap-1.5">
+                  {saving ? <Loader2 className="size-3 animate-spin" /> : dirty ? <span className="size-1.5 rounded-full bg-amber-400" /> : <Save className="size-3" />}
+                  {saving ? (saving.done ? `Saving ${Math.round(saving.done * 100)} %` : "Saving") : dirty ? "Save" : "Saved"}
+                </span>
+              </button>
+            )}
+          </>
+        }
         media={
           <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink}
-            onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
+            onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))}
+            onOpen={(src) => { const d = dropOfSrc(src); if (d) openSource(d); }}
+            onDrag={(src) => note(src ? dropOfSrc(src) : null)} onBinDrag={binDrag} />
         }
         viewer={
-          <Panel title="Viewer" className="flex-1" bar={<span className="min-w-0 truncate text-zinc-500">{tl.timeline.name}</span>}>
-            <NleViewer tl={shown} time={time} playing={playing} rate={rate} urlOf={urlFor} nameOf={nameOfSrc} onClick={() => play(!playing)}
+          <Panel title="Viewer" className="flex-1 select-none"
+            bar={
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Viewer shows">
+                  {(["source", "timeline"] as const).map((v) => (
+                    <button key={v} type="button" aria-pressed={view === v} disabled={v === "source" && !source} onClick={() => show(v)}
+                      title={v === "source" ? "The clip opened from the Media Pool: mark In and Out, drag it on, F9 insert, F10 overwrite (Q back)" : "The timeline"}
+                      className={cn("h-5 rounded-[3px] px-1.5 capitalize disabled:opacity-40", view === v ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{v}</button>
+                  ))}
+                </span>
+                <span className="min-w-0 truncate text-zinc-500">{inSource ? source!.name : tl.timeline.name}</span>
+              </div>
+            }>
+            <NleViewer tl={inSource ? srcTl! : shown} time={T.time} playing={T.playing} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
+              nameOf={inSource ? () => source!.name : nameOfSrc} onClick={() => T.play(!T.playing)}
+              loop={loop ? (inSource ? loopPart(sm, srcFrames, sfps) : lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null) : null}
+              onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
+              onDragEnd={() => note(null)}
+              over={inSource && !srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} time={srcT.time} /> : null}
+              below={inSource ? (
+                <SourceStrip time={srcT.time} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
+                  onSeek={(t) => { srcT.play(false); srcT.seek(t); }} />
+              ) : null}
               clock={
                 <span className="font-mono tabular-nums">
-                  <span className="text-[13px] text-zinc-100">{timecode(Math.round(time * fps), fps)}</span>
-                  <span className="text-zinc-500"> / {timecode(Math.round(end * fps), fps)}</span>
-                  {playing && rate !== 1 && <span className="pl-1.5 text-violet-300">{rate}×</span>}
+                  <span className="text-[13px] text-zinc-100">{timecode(Math.round(T.time * tfps), tfps)}</span>
+                  <span className="text-zinc-500"> / {inSource ? timecode(srcFrames, sfps) : timecode(Math.round(end * fps), fps)}</span>
+                  {T.playing && T.rate !== 1 && <span className="pl-1.5 text-violet-300">{T.rate}×</span>}
                 </span>
               }
               transport={
                 <>
-                  <button type="button" aria-label="Start" title="Start (Home)" onClick={() => seek(0)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipBack className="size-3.5" /></button>
-                  <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space, 2, K)" : "Play (Space, 2; 3 or L forward, 1 or J back)"} onClick={() => play(!playing)}
+                  <button type="button" aria-label="Start" title="Start (Home)" onClick={() => T.seek(0)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipBack className="size-3.5" /></button>
+                  <button type="button" aria-label={T.playing ? "Pause" : "Play"} title={T.playing ? "Pause (Space, 2, K)" : "Play (Space, 2; 3 or L forward, 1 or J back)"} onClick={() => T.play(!T.playing)}
                     className="inline-flex size-7 items-center justify-center rounded-full bg-zinc-200 text-zinc-900 hover:bg-white">
-                    {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
+                    {T.playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
                   </button>
-                  <button type="button" aria-label="End" title="End (End)" onClick={() => seek(last)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipForward className="size-3.5" /></button>
+                  <button type="button" aria-label="End" title="End (End)" onClick={() => T.seek(inSource ? (srcFrames - 1) / sfps : last)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipForward className="size-3.5" /></button>
+                  <button type="button" aria-label="Loop" aria-pressed={loop} title="Loop (⌘/): plays In to Out, or all of it, round and round" onClick={toggleLoop}
+                    className={cn(iconBtn(loop), "w-7 justify-center", loop && "text-violet-300")}><Repeat className="size-3.5" /></button>
                 </>
               } />
           </Panel>
         }
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} />}
         timeline={
-          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} marks={marks} onSeek={seek} onSelect={setSelected}
+          // a click in the timeline puts the viewer back on it
+          <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
+          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
             onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
-            onRemoveTrack={(id) => commit(removeTrack(tl, id))}
             onDrop={readOnly ? undefined : dropOn}
             tools={
               <>
@@ -360,31 +522,14 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                   ))}
                 </span>
                 <button type="button" aria-pressed={snap} aria-label="Snapping" title="Snapping (N)" onClick={() => setSnap(!snap)} className={iconBtn(snap)}><Magnet className="size-3.5" /></button>
-                {sep}
-                <button type="button" title="A video track above the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "V").tl)} className={iconBtn(false)}><Plus className="size-3" />Video</button>
-                <button type="button" title="An audio track below the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "A").tl)} className={iconBtn(false)}><Plus className="size-3" />Audio</button>
+                <button type="button" aria-pressed={linkSel} aria-label="Linked Selection" title="Linked Selection (⇧⌘L)" onClick={toggleLinkSel} className={iconBtn(linkSel)}><Link2 className="size-3.5" /></button>
                 {sep}
                 <button type="button" aria-label="Undo" title="Undo (⌘Z)" disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
                 <button type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
               </>
             }
-            end={
-              <>
-                <span className="flex min-w-0 items-center gap-2 truncate">{status}</span>
-                {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
-                {!readOnly && (
-                  <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
-                    title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
-                    className="relative inline-flex h-6 min-w-[5.5rem] shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded bg-violet-600 px-2.5 text-[12px] font-medium text-white hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-300">
-                    {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
-                    <span className="relative inline-flex items-center gap-1.5">
-                      {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      {saving ? (saving.done ? `Saving ${Math.round(saving.done * 100)} %` : "Saving") : dirty ? "Save" : "Saved"}
-                    </span>
-                  </button>
-                )}
-              </>
-            } />
+            end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>} />
+          </div>
         } />
 
       {menu && (

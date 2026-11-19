@@ -43,7 +43,7 @@ const isImage = (url: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url);
 type Drawable = { el: CanvasImageSource; w: number; h: number };
 const canFilter = typeof CanvasRenderingContext2D !== "undefined" && "filter" in CanvasRenderingContext2D.prototype;
 
-export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }: {
+export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, loop }: {
   tl: NleTimeline;
   /** seconds on the timeline */
   time: number;
@@ -54,11 +54,13 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
   urlOf: (src: string) => NleFile | null;
   nameOf: (src: string) => string;
   className?: string;
+  /** looping playback's part, seconds: the pictures where it wraps to are opened ahead, so the jump back shows at once */
+  loop?: [number, number] | null;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const pool = useRef(new Map<string, Media>());
-  const now = useRef({ tl, time, playing, rate, urlOf, nameOf });
-  now.current = { tl, time, playing, rate, urlOf, nameOf };
+  const now = useRef({ tl, time, playing, rate, urlOf, nameOf, loop });
+  now.current = { tl, time, playing, rate, urlOf, nameOf, loop };
   const W = tl.timeline.width || 1080;
   const H = tl.timeline.height || 1920;
 
@@ -276,6 +278,21 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
           const m = media(key, item.src);
           live.add(key);
           const at = track === "V1" ? shotTime(item, "main", 0, fps, srcFps) : sourceTime(t, item, item.rec / fps);
+          if (m && !m.seq && m.el instanceof HTMLVideoElement) keep(m.el, at + m.lead, false, 1);
+        }
+      }
+      // near a loop's end: the pictures at the other end open and waiting there (a clip playing now and there too is
+      // seeked at the wrap: one file can't wait in two places)
+      const lp = now.current.loop;
+      if (run && lp && (r > 0 ? lp[1] - s : s - lp[0]) < 2) {
+        const to = r > 0 ? lp[0] : lp[1] - 1 / fps;
+        const tf = Math.max(0, Math.floor(to * fps + 1e-6));
+        for (const { item, track } of picturesAt(t, tf)) {
+          const key = item._k ?? `${item.src}:${item.rec}`;
+          if (item.fx === "flash" || live.has(key)) continue;
+          const m = media(key, item.src);
+          live.add(key);
+          const at = track === "V1" ? shotTime(item, "main", tf - item.rec, fps, srcFps) : sourceTime(t, item, to);
           if (m && !m.seq && m.el instanceof HTMLVideoElement) keep(m.el, at + m.lead, false, 1);
         }
       }

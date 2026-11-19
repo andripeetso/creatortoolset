@@ -451,14 +451,6 @@ export function addTrack(tl: NleTimeline, kind: "V" | "A"): { tl: NleTimeline; i
   return { tl: out, id };
 }
 
-/** A track taken off with what is on it (V1 and A1 stay: a timeline always has somewhere to put a clip). */
-export function removeTrack(tl: NleTimeline, id: string): NleTimeline {
-  if (!tl.tracks[id] || id === "V1" || id === "A1" || tl.tracks[id].locked) return tl;
-  const out = clone(tl);
-  delete out.tracks[id];
-  return out;
-}
-
 /** A source for a file, or the one that already plays it. Returns its key. */
 export function addSource(tl: NleTimeline, s: NleSource & { path: string }): { tl: NleTimeline; src: string } {
   const had = Object.keys(tl.sources).find((k) => tl.sources[k].path === s.path);
@@ -580,3 +572,206 @@ export function setFade(tl: NleTimeline, key: string, edge: Edge, frames: number
 /** How much of a clip shows `k` timeline frames after its start, 0–1, from its fades. */
 export const fadeAt = (it: NleItem, k: number): number =>
   Math.max(0, Math.min(1, it.fade_in ? k / it.fade_in : 1, it.fade_out ? (it.len - k) / it.fade_out : 1));
+
+/** In and Out marks in frames (null: not marked); Out is the last frame of the marked part. */
+export type Marks = [number | null, number | null];
+export const NO_MARKS: Marks = [null, null];
+
+/** Marks after Mark In / Mark Out at frame `f` (an Out before the new In, or an In after the new Out, goes) or a clear. */
+export function setMark(m: Marks, what: "in" | "out" | "clearIn" | "clearOut" | "clear", f: number): Marks {
+  const [i, o] = m;
+  switch (what) {
+    case "in": return [f, o !== null && o >= f ? o : null];
+    case "out": return [i !== null && i <= f ? i : null, f];
+    case "clearIn": return [null, o];
+    case "clearOut": return [i, null];
+    case "clear": return NO_MARKS;
+  }
+}
+
+/** A source's marked part in seconds, `from` its In to the end of its Out frame (the whole of `seconds` around what is
+ *  not marked); undefined when nothing is marked. */
+export function markedPart(m: Marks | undefined, fps: number, seconds?: number): { from: number; to?: number } | undefined {
+  if (!m || (m[0] === null && m[1] === null)) return undefined;
+  return { from: (m[0] ?? 0) / fps, ...(m[1] !== null ? { to: (m[1] + 1) / fps } : seconds ? { to: seconds } : {}) };
+}
+
+/** A clip laid at `rec` from a source's part `from`–`to` seconds (the whole `seconds` when unmarked; 5 s when nothing is
+ *  known): `in` in the source's own frames (`sfps`), `len` in the timeline's (`fps`). */
+export function clipOfPart(src: string, rec: number, fps: number, sfps: number, p: { seconds?: number; from?: number; to?: number }): NleItem {
+  const from = Math.max(0, p.from ?? 0);
+  const to = p.to ?? p.seconds ?? from + 5;
+  return { src, rec, in: Math.round(from * sfps), len: Math.max(1, Math.round((to - from) * fps)) };
+}
+
+/** A one-clip timeline playing a source on its own (the source viewer): its picture on V1 and its sound on A1, as far as
+ *  it has them, at the source's own frame rate and size. */
+export function sourceTimeline(key: string, s: NleSource, o: { fps: number; frames: number; picture: boolean; sound: boolean }): NleTimeline {
+  const item = (): NleItem => ({ src: key, rec: 0, len: Math.max(1, o.frames), in: 0 });
+  return {
+    timeline: { fps: o.fps, width: o.picture ? s.w || 1080 : 1920, height: o.picture ? s.h || 1920 : 1080, name: key },
+    sources: { [key]: s },
+    tracks: { V1: { items: o.picture ? [item()] : [] }, A1: { items: o.sound ? [item()] : [] } },
+  };
+}
+
+/** The part looping playback plays, in seconds: In to the end of the Out frame when both are marked, else 0 to the end of
+ *  the last frame (`frames` long). */
+export const loopPart = (m: Marks, frames: number, fps: number): [number, number] =>
+  m[0] !== null && m[1] !== null && m[1] >= m[0] ? [m[0] / fps, (m[1] + 1) / fps] : [0, frames / fps];
+
+/** Where looping playback goes from `t` seconds: past the part's end going forward, back to its start (with what it ran
+ *  over, so the clock keeps time); before its start going backward, to its end; else `t`. */
+export function loopNext(t: number, rate: number, [a, b]: [number, number]): number {
+  const len = b - a;
+  if (len <= 0) return t;
+  // a playhead far outside the part (play pressed after the Out) goes to its start / end exactly
+  if (rate > 0 && t >= b) return t - b < len ? a + (t - b) : a;
+  if (rate < 0 && t < a) return a - t < len ? b - Math.max(1e-6, a - t) : b - 1e-6;
+  return t;
+}
+
+/** Where Insert (F9) and Overwrite (F10) lay a source: the track of a picked clip, picture and sound each, else V1 / A1. */
+export function editTracks(tl: NleTimeline, picked: string[]): { picture: string; sound: string } {
+  const on = picked.map((k) => find(tl, k)?.track).filter((t): t is string => !!t);
+  return { picture: on.find(isVideo) ?? "V1", sound: on.find((t) => !isVideo(t)) ?? "A1" };
+}
+
+// Round 3: a clip's look kept across tracks, the track menu (add, move, delete), box select and where a drop lands.
+
+// eslint-disable-next-line import/first -- the renderer's cover/fit rule, read only when called (picture.ts imports this file)
+import { covers } from "./picture";
+
+/**
+ * The clip as it would be on picture track `to`, looking as it did on `from`: the renderer scales a source to cover the
+ * frame on some tracks and to fit inside it on the others, so its zoom takes the difference and its size on screen stays.
+ * The clip as it is when that doesn't differ or the source's size isn't known.
+ */
+export function lookOn(tl: NleTimeline, it: NleItem, from: string, to: string): NleItem {
+  const s = tl.sources[it.src];
+  const W = tl.timeline.width || 1080;
+  const H = tl.timeline.height || 1920;
+  if (!isVideo(from) || !isVideo(to) || covers(from) === covers(to) || !s?.w || !s?.h) return it;
+  const cover = Math.max(W / s.w, H / s.h);
+  const fit = Math.min(W / s.w, H / s.h);
+  const zoom = r3((it.zoom ?? 1) * (covers(from) ? cover / fit : fit / cover));
+  const { zoom: _, ...rest } = it;
+  return zoom === 1 ? rest : { ...rest, zoom };
+}
+
+/** `after` with every clip that went to another picture track since `before` looking as it did there (lookOn). */
+export function keepLooks(before: NleTimeline, after: NleTimeline): NleTimeline {
+  const was = new Map<string, string>();
+  for (const [id, t] of Object.entries(before.tracks)) for (const i of t.items) if (i._k) was.set(i._k, id);
+  let out: NleTimeline | null = null;
+  for (const [id, t] of Object.entries(after.tracks)) {
+    t.items.forEach((i, n) => {
+      const from = i._k ? was.get(i._k) : undefined;
+      const next = from && from !== id ? lookOn(after, i, from, id) : i;
+      if (next === i) return;
+      out ??= clone(after);
+      out.tracks[id].items[n] = next;
+    });
+  }
+  return out ?? after;
+}
+
+/** The tracks of a kind from number 1 up, in number order (V0, which the renderer doesn't draw, stays out of it). */
+const kindOrder = (tl: NleTimeline, kind: "V" | "A") =>
+  Object.keys(tl.tracks).filter((t) => t[0] === kind && trackNo(t) >= 1).sort((a, b) => trackNo(a) - trackNo(b));
+
+// A track keeps its number for good: the AI Editor reads the tracks by number (V1 the talent, V3 motion graphics, A1 the
+// voice…), so adding or deleting one never numbers the others again. Only Move Track changes what is on a number.
+
+/** A new empty track with number `n` (1 = V1 / A1), when that number is free. */
+export function addTrackAt(tl: NleTimeline, kind: "V" | "A", n: number): { tl: NleTimeline; id: string } | null {
+  const id = `${kind}${Math.round(n)}`;
+  if (n < 1 || tl.tracks[id]) return null;
+  const out = clone(tl);
+  out.tracks[id] = { name: id, items: [] };
+  return { tl: out, id };
+}
+
+/** The track a track trades places with one step up or down on screen among its kind (video tracks count up the
+ *  screen, sound tracks down it): null at the end, or when it or that one is locked. */
+export function moveTarget(tl: NleTimeline, id: string, up: boolean): string | null {
+  const order = kindOrder(tl, id[0] as "V" | "A");
+  const i = order.indexOf(id);
+  const other = order[i + ((id[0] === "V") === up ? 1 : -1)];
+  return i >= 0 && other && !tl.tracks[id].locked && !tl.tracks[other].locked ? other : null;
+}
+
+/** A track moved one place up or down on screen among its kind: it and its neighbour trade numbers, each with its
+ *  name, switches and clips (the clips keeping their look, lookOn). */
+export function moveTrack(tl: NleTimeline, id: string, up: boolean): NleTimeline {
+  const other = moveTarget(tl, id, up);
+  if (!other) return tl;
+  const out = clone(tl);
+  const onto = (from: string, to: string) => ({ ...clone(tl.tracks[from]), items: tl.tracks[from].items.map((i) => lookOn(tl, i, from, to)) });
+  out.tracks[other] = onto(id, other);
+  out.tracks[id] = onto(other, id);
+  return out;
+}
+
+/** A track can go: not locked, and not V1 or A1 (a timeline always has the talent's tracks to put a clip on). */
+export const canDeleteTrack = (tl: NleTimeline, id: string) =>
+  !!tl.tracks[id] && !tl.tracks[id].locked && trackNo(id) >= 1 && id !== "V1" && id !== "A1";
+
+/** A track taken off with its clips; the others keep their numbers. */
+export function deleteTrack(tl: NleTimeline, id: string): NleTimeline {
+  if (!canDeleteTrack(tl, id)) return tl;
+  const out = clone(tl);
+  delete out.tracks[id];
+  return out;
+}
+
+/** Every empty track taken off (not locked ones, not V1 or A1); the others keep their numbers. */
+export function deleteEmptyTracks(tl: NleTimeline): NleTimeline {
+  const gone = Object.keys(tl.tracks).filter((t) => canDeleteTrack(tl, t) && !tl.tracks[t].items.length);
+  if (!gone.length) return tl;
+  const out = clone(tl);
+  for (const t of gone) delete out.tracks[t];
+  return out;
+}
+
+/** The clips on `tracks` (locked tracks left out) that a box from frame `a` to frame `b` touches. */
+export function boxPick(tl: NleTimeline, tracks: string[], a: number, b: number): string[] {
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  return tracks.flatMap((id) => {
+    const t = tl.tracks[id];
+    return !t || t.locked ? [] : t.items.filter((i) => i.rec <= hi && endOf(i) > lo).map((i) => i._k!);
+  });
+}
+
+/** Where a drop of `len` frames at `frame` on `track` lands, as the editor lays it: on that track, and a picture's sound
+ *  with it on the first free sound track (from A1 under V1, from A2 under the others). */
+export function dropPlan(tl: NleTimeline, track: string, frame: number, len: number, sound: boolean): { track: string; rec: number; len: number }[] {
+  const out = [{ track, rec: frame, len }];
+  if (isVideo(track) && sound) out.push({ track: freeTrack(tl, "A", frame, frame + len, track === "V1" ? 1 : 2).id, rec: frame, len });
+  return out;
+}
+
+/** An empty stretch of one track with a clip after it (Resolve's gap). */
+export interface Gap {
+  track: string;
+  from: number;
+  to: number;
+}
+
+/** The gap on `track` at frame `f`: from the end of the clip before it (or 0:00) to the start of the next one. null on a
+ *  clip, after the last one, or on a locked track. */
+export function gapAt(tl: NleTimeline, track: string, f: number): Gap | null {
+  const t = tl.tracks[track];
+  if (!t || t.locked || t.items.some((i) => i.rec <= f && f < endOf(i))) return null;
+  const next = Math.min(...t.items.filter((i) => i.rec > f).map((i) => i.rec));
+  if (!Number.isFinite(next)) return null;
+  return { track, from: Math.max(0, ...t.items.filter((i) => endOf(i) <= f).map(endOf)), to: next };
+}
+
+/** A gap closed (ripple delete): everything from its end on every unlocked track moves back by its length, as far as
+ *  every track can go, so they stay in sync. The timeline as it is when nothing can move. */
+export function closeGap(tl: NleTimeline, g: Gap): NleTimeline {
+  if (!tl.tracks[g.track] || g.to <= g.from) return tl;
+  const out = clone(tl);
+  return ripple(out, g.to, g.from - g.to, new Set()) ? out : tl;
+}

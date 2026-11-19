@@ -7,11 +7,12 @@ export type KeyAction =
   | "play" | "stop" | "forward" | "reverse"
   | "save" | "undo" | "redo" | "split" | "copy" | "cut" | "paste" | "duplicate" | "selectAll" | "deselect"
   | "selectForward" | "selectBack" | "rippleStart" | "rippleEnd" | "delete" | "rippleDelete" | "enable"
-  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "snap"
+  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "snap" | "linkedSelection"
   | "nudgeBack" | "nudgeBack5" | "nudgeOn" | "nudgeOn5"
   | "frameBack" | "frameOn" | "secondBack" | "secondOn" | "prevEdit" | "nextEdit" | "start" | "end"
   | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector"
-  | `lock:V${number}`;
+  | `lock:V${number}`
+  | "clearIn" | "clearOut" | "insertEdit" | "overwriteEdit" | "loop";
 
 type KeyLike = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
 
@@ -34,7 +35,7 @@ export const KEYS: Record<string, KeyAction> = {
   S: "rippleDelete", Delete: "rippleDelete", "⇧Delete": "rippleDelete", "⇧Backspace": "rippleDelete", Backspace: "delete",
   D: "enable",
   I: "markIn", O: "markOut", "⌥X": "clearMarks",
-  A: "toolSelect", T: "toolTrim", B: "toolBlade", N: "snap",
+  A: "toolSelect", T: "toolTrim", B: "toolBlade", N: "snap", "⌘⇧L": "linkedSelection",
   ",": "nudgeBack", "⇧,": "nudgeBack5", ".": "nudgeOn", "⇧.": "nudgeOn5",
   ArrowLeft: "frameBack", ArrowRight: "frameOn", "⇧ArrowLeft": "secondBack", "⇧ArrowRight": "secondOn",
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",
@@ -42,6 +43,7 @@ export const KEYS: Record<string, KeyAction> = {
   "-": "zoomOut", "⌘-": "zoomOut", "\\": "zoomFit", "⇧Z": "zoomFit",
   Tab: "mediaPool", "⇧Tab": "inspector",
   ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`⌥⇧${n}`, `lock:V${n}` as const])),
+  "⌥I": "clearIn", "⌥O": "clearOut", F9: "insertEdit", F10: "overwriteEdit", "⌘/": "loop",
 };
 
 export const keyAction = (e: KeyLike): KeyAction | null => KEYS[chordOf(e)] ?? null;
