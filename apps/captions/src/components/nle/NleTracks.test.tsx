@@ -29,8 +29,8 @@ const mount = async (props: Partial<Parameters<typeof NleTracks>[0]> = {}) => {
       onLive={onLive} onCommit={onCommit} onBlade={() => {}} onMenu={() => {}} onTrack={() => {}} onRemoveTrack={() => {}}
       nameOf={(i) => i.src} zoomKeys={{ current: null }} fileOf={(src) => (src === "a" ? { url: "" } : null)} {...props} />,
   ));
-  const pointer = (el: Element, type: string, clientX: number, altKey = false) =>
-    act(() => void el.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX, button: 0, buttons: 1, altKey })));
+  const pointer = (el: Element, type: string, clientX: number, altKey = false, more: PointerEventInit = {}) =>
+    act(() => void el.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX, clientY: 10, button: 0, buttons: 1, altKey, ...more })));
   return { host, root, onLive, onCommit, onSelect, pointer };
 };
 
@@ -66,6 +66,69 @@ describe("the timeline's clips", () => {
     expect(shots).toHaveLength(2);
     expect(shots[0].rec).toBe(0);
     expect(onSelect).toHaveBeenLastCalledWith([shots[1]._k]);
+    act(() => root.unmount());
+  });
+
+  it("a flash whose file is missing is drawn as it is, never offline: the player draws it", async () => {
+    const flash = withKeys({ ...tl, tracks: { V1: { items: [{ src: "gone", rec: 0, len: 10, in: 0, fx: "flash" }] }, A1: { items: [] } } } as unknown as NleTimeline);
+    const { host, root } = await mount({ tl: flash });
+    const clip = host.querySelector("[data-clip]") as HTMLElement;
+    expect(clip.title).toBe("");
+    expect(clip.className).not.toContain("bg-[#4a0909]");
+    act(() => root.unmount());
+  });
+});
+
+// a shot with its voice, linked, and a song
+const linked = withKeys({
+  timeline: { fps: 25 },
+  sources: { a: { path: "/m/a.mp4" }, song: { path: "/m/song.wav" } },
+  tracks: { V1: { items: [{ src: "a", rec: 0, len: 100, in: 0, link: 1 }] }, A1: { items: [{ src: "a", rec: 0, len: 100, in: 0, link: 1 }] }, A2: { items: [{ src: "song", rec: 0, len: 100, in: 0 }] } },
+} as unknown as NleTimeline);
+const [shot, voice, song] = [linked.tracks.V1.items[0]._k!, linked.tracks.A1.items[0]._k!, linked.tracks.A2.items[0]._k!];
+
+describe("picking clips", () => {
+  it("Linked Selection: a click picks the shot and its voice, ⌥-click the shot alone, off: the shot alone", async () => {
+    const { host, root, onSelect, pointer } = await mount({ tl: linked });
+    const clip = host.querySelector('[data-clip][aria-label^="V1"]')!;
+    await pointer(clip, "pointerdown", 500);
+    expect(onSelect).toHaveBeenLastCalledWith([shot, voice]);
+    await pointer(clip, "pointerup", 500);
+    await pointer(clip, "pointerdown", 500, true);
+    expect(onSelect).toHaveBeenLastCalledWith([shot]);
+    await pointer(clip, "pointerup", 500, true);
+    act(() => root.unmount());
+    const off = await mount({ tl: linked, linkedSelection: false });
+    await off.pointer(off.host.querySelector('[data-clip][aria-label^="V1"]')!, "pointerdown", 500);
+    expect(off.onSelect).toHaveBeenLastCalledWith([shot]);
+    act(() => off.root.unmount());
+  });
+
+  it("a box drawn on empty space picks every clip it touches on every track; a plain click there lets go", async () => {
+    const { host, root, onSelect, pointer } = await mount({ tl: linked, selected: [song] });
+    const lane = host.querySelector('[data-lane="A2"]')!;
+    await pointer(lane, "pointerdown", 153);
+    expect(onSelect).toHaveBeenLastCalledWith([]);
+    // every lane is 0–40 px tall here, so the box spans them all; it starts just after 0:00
+    await pointer(lane, "pointermove", 160, false, { clientY: 30 });
+    expect(onSelect).toHaveBeenLastCalledWith([shot, voice, song]);
+    await pointer(lane, "pointerup", 160);
+    expect((host.querySelector("[data-box]") as HTMLElement).style.display).toBe("none");
+    act(() => root.unmount());
+  });
+
+  it("the track menu adds a video track above V1 and greys what can't be done", async () => {
+    const onCommit = vi.fn();
+    const { host, root } = await mount({ tl: linked, onCommit });
+    const head = host.querySelector('[data-lane="V1"]')!.previousElementSibling!;
+    await act(() => void head.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })));
+    const item = (name: string) => [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent === name) as HTMLButtonElement;
+    expect(item("Delete Track").disabled).toBe(true); // the only video track
+    expect(item("Move Track Up").disabled).toBe(true);
+    expect(item("Delete Empty Tracks").disabled).toBe(true);
+    await act(() => item("Video Track Above").click());
+    expect(Object.keys((onCommit.mock.calls[0][0] as NleTimeline).tracks).sort()).toEqual(["A1", "A2", "V1", "V2"]);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
     act(() => root.unmount());
   });
 });

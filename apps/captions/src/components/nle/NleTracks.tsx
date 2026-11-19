@@ -1,11 +1,12 @@
-import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
+import { memo, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
-import { copyOf, edgesOf, endOf, find, isVideo, lengthOf, move, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { boxPick, canDeleteTrack, canMoveTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, endOf, find, insertTrack, isVideo, keepLooks, lengthOf, lookOn, move, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { dragging } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
-import { peaks, wavePath } from "@/lib/waveform";
+import { drawWave, levels, type Levels } from "@/lib/waveform";
 import { thumbAt } from "@/lib/nle/thumbs";
 import type { NleFile } from "./NlePlayer";
 import { Panel } from "./NleLayout";
@@ -14,14 +15,17 @@ import { Panel } from "./NleLayout";
 // playhead. A drag shows its result live (`onLive`) and becomes one step of undo when let go (`onCommit`).
 // Select tool: drag a clip to move it (onto any track of its kind; it overwrites what it lands on), ⌥ + drag to move a
 // copy and leave it, an end to trim it, ⌥ + an end to roll the cut, a top corner to fade it in or out. Trim tool: drag a clip to slip it, an end to ripple-trim it, ⌥ + an end to roll.
-// Blade tool: a click cuts the clip there.
+// Blade tool: a click cuts the clip there. A drag on empty space draws a box: every clip it touches is picked (⇧ adds,
+// ⌘ flips). With Linked Selection on, a click picks the clip with the clips linked to it (⌥-click: the one alone).
+// A right-click on a track header opens the track menu (add, move, delete, lock).
 // The panel's title bar carries the editor's tools (`tools`, `end`) and the timeline's own: track height and zoom.
 
 export type Tool = "select" | "trim" | "blade";
 
 const LABEL_W = 152;
-const RULER_H = 24;
+const RULER_H = 30;
 const HEIGHT_KEY = "ct-nle-track-height";
+const LINKED_KEY = "ct-nle-linked-selection";
 const readHeight = () => {
   try {
     const v = Number(localStorage.getItem(HEIGHT_KEY));
@@ -50,7 +54,22 @@ const keep = (k: string, v: unknown) => {
 /** A sound clip cut from a video file shows its waveform when the file is at most this big (the file is read whole). */
 // shortcut: whole-file decode, capped; a server-made peaks file would lift the cap for long camera files
 const VIDEO_SOUND_BYTES = 300e6;
+/** Linked Selection (Resolve's chain button, ⇧⌘L): on unless turned off, kept for next time. */
+export function useLinkedSelection(): [boolean, () => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(LINKED_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  return [on, () => setOn((v) => (keep(LINKED_KEY, v ? "0" : "1"), !v))];
+}
 const EDGE_PX = 6;
+/** A drop of something whose length isn't known yet is drawn this long while it is dragged. */
+const GHOST_SECONDS = 2;
+/** The clips' pictures and waveforms are drawn for what shows and half a view either side, on a grid of this many px. */
+const DRAW_GRID = 256;
 const DAY = 24 * 3600;
 const MAX_PPS = 600;
 const MAX_PX = 16e6;
@@ -71,7 +90,7 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onRemoveTrack, nameOf, zoomKeys, fileOf, tools, end,
+  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true,
 }: {
   tl: NleTimeline;
   time: number;
@@ -87,7 +106,8 @@ export const NleTracks = memo(function NleTracks({
   onDrop?: (dt: DataTransfer, at: { track: string; frame: number }) => void;
   onMenu: (at: { x: number; y: number }, key: string) => void;
   onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
-  onRemoveTrack: (id: string) => void;
+  /** unused: the header's ✕ and the track menu delete a track as Resolve does (lib/nle/model deleteTrack) */
+  onRemoveTrack?: (id: string) => void;
   nameOf: (it: NleItem) => string;
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
@@ -97,6 +117,8 @@ export const NleTracks = memo(function NleTracks({
   tools?: ReactNode;
   /** at its end, before the track height and zoom (what the save says, Save) */
   end?: ReactNode;
+  /** Resolve's Linked Selection: a click picks the clip and the clips linked to it */
+  linkedSelection?: boolean;
 }) {
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
@@ -112,6 +134,38 @@ export const NleTracks = memo(function NleTracks({
   const shown = Math.min(DAY, Math.max(MAX_PX / axis.pps, content + 3600, time + 60));
   zoomKeys.current = axis.key;
   const pps = axis.pps;
+  // what the clips' pictures and waveforms are drawn for: the zoom and the view once a zoom stops (until then the drawn
+  // pictures stretch with their clips, so a zoom step only moves boxes), and the view again once a scroll has gone half
+  // a view or stops
+  const [view, setView] = useState({ pps: 0, left: 0, width: 0 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const ppsRef = useRef(pps);
+  ppsRef.current = pps;
+  const takeView = useRef(() => {});
+  takeView.current = () => {
+    const el = scroller.current;
+    if (el) setView({ pps: ppsRef.current, left: el.scrollLeft, width: el.clientWidth });
+  };
+  useEffect(() => {
+    const t = setTimeout(() => takeView.current(), viewRef.current.pps ? 120 : 0);
+    return () => clearTimeout(t);
+  }, [pps]);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const on = () => {
+      clearTimeout(t);
+      if (Math.abs(el.scrollLeft - viewRef.current.left) > el.clientWidth / 2) takeView.current();
+      else t = setTimeout(() => takeView.current(), 120);
+    };
+    el.addEventListener("scroll", on, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", on);
+      clearTimeout(t);
+    };
+  }, []);
   // the playhead kept in view while it moves
   // eslint-disable-next-line react-hooks/exhaustive-deps -- on the time alone
   useEffect(() => axis.follow(time), [time]);
@@ -156,13 +210,14 @@ export const NleTracks = memo(function NleTracks({
     // a clip a few px wide (zoomed far out) is moved by its middle half, its ends are the quarters
     const edge = Math.min(EDGE_PX, box.width / 4);
     const grip = e.clientX - box.left < edge ? "head" : box.right - e.clientX < edge ? "tail" : "body";
-    let keys = selected.includes(key) ? selected : [key];
+    // Linked Selection: the clip with its linked clips (its picture and its sound); ⌥: the one clip alone
+    const group = linkedSelection && !e.altKey ? withLinked(tl, [key]) : [key];
     if (e.shiftKey || e.metaKey) {
-      keys = selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key];
-      onSelect(keys);
+      onSelect(selected.includes(key) ? selected.filter((k) => !group.includes(k)) : [...new Set([...selected, ...group])]);
       return;
     }
-    if (!selected.includes(key)) onSelect([key]);
+    const keys = selected.includes(key) && !e.altKey ? selected : group;
+    if (keys !== selected) onSelect(keys);
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     drag.current = { key, track, grip, x0: e.clientX, base: tl, moved: false, next: tl, keys };
   };
@@ -178,12 +233,48 @@ export const NleTracks = memo(function NleTracks({
   };
   const menu = (e: ReactMouseEvent, key: string) => {
     e.preventDefault();
-    if (!selected.includes(key)) onSelect([key]);
+    e.stopPropagation();
+    if (!selected.includes(key)) onSelect(linkedSelection ? withLinked(tl, [key]) : [key]);
     onMenu({ x: e.clientX, y: e.clientY }, key);
   };
   // the clips call through this (one object for good), so a clip that didn't change isn't drawn again
   const ctl = useRef<Ctl>(null!);
   ctl.current = { down, fade, menu };
+
+  // a box drawn on empty space: every clip it touches on the tracks it spans (Resolve's), live while it is drawn
+  const boxEl = useRef<HTMLDivElement>(null);
+  const boxing = useRef<{ x0: number; y0: number; base: string[]; how: "set" | "add" | "flip"; moved: boolean; last: string } | null>(null);
+  const startBox = (e: ReactPointerEvent) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("[data-head]")) return;
+    if (tool !== "select") return void (tool === "trim" && !e.shiftKey && onSelect([]));
+    const r = inner.current!.getBoundingClientRect();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const how = e.metaKey ? "flip" : e.shiftKey ? "add" : "set";
+    boxing.current = { x0: e.clientX - r.left, y0: e.clientY - r.top, base: how === "set" ? [] : selected, how, moved: false, last: "" };
+    // a plain click on empty space lets go of the selection
+    if (how === "set" && selected.length) onSelect([]);
+  };
+  const drawBox = (e: ReactPointerEvent) => {
+    const b = boxing.current!;
+    const r = inner.current!.getBoundingClientRect();
+    const [x, y] = [e.clientX - r.left, e.clientY - r.top];
+    if (!b.moved && Math.hypot(x - b.x0, y - b.y0) < 3) return;
+    b.moved = true;
+    const [l, t, w, h] = [Math.min(x, b.x0), Math.min(y, b.y0), Math.abs(x - b.x0), Math.abs(y - b.y0)];
+    const el = boxEl.current;
+    if (el) Object.assign(el.style, { display: "block", left: `${l}px`, top: `${t}px`, width: `${w}px`, height: `${h}px` });
+    const lanes = [...inner.current!.querySelectorAll<HTMLElement>("[data-lane]")].filter((n) => {
+      const lr = n.getBoundingClientRect();
+      return lr.bottom - r.top > t && lr.top - r.top < t + h;
+    }).map((n) => n.dataset.lane!);
+    const hits = boxPick(tl, lanes, ((l - LABEL_W) / pps) * fps, ((l + w - LABEL_W) / pps) * fps);
+    const next = b.how === "set" ? hits
+      : b.how === "add" ? [...new Set([...b.base, ...hits])]
+      : [...b.base.filter((k) => !hits.includes(k)), ...hits.filter((k) => !b.base.includes(k))];
+    const id = next.join();
+    if (id !== b.last) onSelect(next);
+    b.last = id;
+  };
 
   const moveTo = (e: ReactPointerEvent) => {
     const p = pan.current;
@@ -193,6 +284,7 @@ export const NleTracks = memo(function NleTracks({
       el.scrollTop = p.top0 - (e.clientY - p.y0);
       return;
     }
+    if (boxing.current) return drawBox(e);
     const d = drag.current;
     if (!d) return;
     const px = e.clientX - d.x0;
@@ -213,11 +305,12 @@ export const NleTracks = memo(function NleTracks({
       if (e.altKey) {
         // ⌥: a copy moves, the clips stay (onto the track it is over when it is one of its kind and open)
         const lane = to && to !== d.track && isVideo(to) === isVideo(d.track) && !d.base.tracks[to]?.locked ? to : d.track;
-        const clip = copyOf(d.base, d.keys).map((c) => (c.track === d.track ? { ...c, track: lane } : c));
+        // the copy looks as the clip does, on whichever track it lands (lookOn)
+        const clip = copyOf(d.base, d.keys).map((c) => (c.track === d.track ? { track: lane, item: lookOn(d.base, c.item, c.track, lane) } : c));
         const got = paste(d.base, clip, Math.max(0, Math.min(...[...linked].map((k) => find(d.base, k)!.item.rec)) + df));
         next = got.tl;
         d.copy = got.keys;
-      } else next = move(d.base, d.keys, df, to ? { from: d.track, to } : undefined);
+      } else next = keepLooks(d.base, move(d.base, d.keys, df, to ? { from: d.track, to } : undefined));
     } else if (d.grip === "body") {
       next = slip(d.base, d.key, -df);
     } else {
@@ -235,6 +328,10 @@ export const NleTracks = memo(function NleTracks({
 
   const up = () => {
     pan.current = null;
+    if (boxing.current) {
+      boxing.current = null;
+      if (boxEl.current) boxEl.current.style.display = "none";
+    }
     const d = drag.current;
     drag.current = null;
     if (!d?.moved) return;
@@ -243,16 +340,88 @@ export const NleTracks = memo(function NleTracks({
     if (d.copy?.length && d.next !== d.base) onSelect(d.copy);
   };
 
+  // the ruler: a press puts the playhead there at once, a drag scrubs every frame (held by the ruler outside it too)
+  const scrubbed = useRef(-1);
+  const scrubTo = (clientX: number) => {
+    const f = frameAt(clientX);
+    if (f !== scrubbed.current) onSeek(f / fps);
+    scrubbed.current = f;
+  };
   const scrub = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
+    e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    onSeek(frameAt(e.clientX) / fps);
+    scrubbed.current = -1;
+    scrubTo(e.clientX);
+  };
+
+  // where a drop lands (snapped as a move snaps) and the boxes that show it while something is dragged over a track
+  const dropFrame = (clientX: number, len: number) => {
+    const f = frameAt(clientX);
+    if (!snap) return f;
+    const targets = [...edgesOf(tl, new Set()), Math.round(timeRef.current * fps), ...marks.filter((m): m is number => m !== null)];
+    return Math.max(0, f + snapDelta([f, f + len], 0, targets, (SNAP_PX / pps) * fps));
+  };
+  const ghostEls = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
+  const hideGhost = () => ghostEls.forEach((g) => g.current && (g.current.style.display = "none"));
+  const showGhost = (e: ReactDragEvent, track: string) => {
+    const d = dragging.current;
+    if (!d) return hideGhost();
+    const len = Math.max(1, Math.round((d.seconds ?? GHOST_SECONDS) * fps));
+    const plan = dropPlan(tl, track, dropFrame(e.clientX, len), len, d.sound);
+    const r = inner.current!.getBoundingClientRect();
+    ghostEls.forEach((g, i) => {
+      const el = g.current;
+      const p = plan[i];
+      const lane = p && inner.current!.querySelector<HTMLElement>(`[data-lane="${p.track}"]`);
+      if (!el) return;
+      // shortcut: a sound that would get a new track shows no box, the track isn't there yet
+      if (!p || !lane) return void (el.style.display = "none");
+      const lr = lane.getBoundingClientRect();
+      Object.assign(el.style, { display: "block", left: `${LABEL_W + (p.rec / fps) * pps}px`, top: `${lr.top - r.top + 1}px`, width: `${Math.max(2, (p.len / fps) * pps)}px`, height: `${lr.height - 2}px` });
+      el.textContent = d.name;
+    });
+  };
+  useEffect(() => {
+    const off = () => hideGhost();
+    window.addEventListener("dragend", off);
+    window.addEventListener("drop", off);
+    return () => {
+      window.removeEventListener("dragend", off);
+      window.removeEventListener("drop", off);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs stay
+  }, []);
+
+  // the track menu: a right-click on a track header (`id`) or on the empty part of the header column (null)
+  const [trackMenu, setTrackMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
+  const openTrackMenu = (e: ReactMouseEvent, id: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTrackMenu({ x: e.clientX, y: e.clientY, id });
   };
 
   const ph = LABEL_W + time * pps;
   const cursor = tool === "blade" ? "cursor-crosshair" : "";
 
+  // the ruler: a timecode on each major tick and small ticks between, for what shows and a view and more either side
+  // under a second, steps of frames that divide a second (at 25 fps: 1 and 5), so each label is on a whole second's grid
+  const inSecond = Array.from({ length: Math.round(fps) - 1 }, (_, i) => i + 1).filter((n) => Math.round(fps) % n === 0);
+  const majorF = [...inSecond, ...[1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 10800].map((s) => Math.round(s * fps))]
+    .find((f) => (f / fps) * pps >= 110) ?? Math.round(21600 * fps);
+  const majorPx = (majorF / fps) * pps;
+  const minorPx = majorPx / [10, 5, 2].find((n) => majorPx / n >= 8)!;
+  const vw = view.width || 2000;
+  const vl = (scroller.current?.scrollLeft ?? 0) - LABEL_W;
+  const ticks: number[] = [];
+  for (let k = Math.max(0, Math.floor((vl - 1.5 * vw) / majorPx)); k <= Math.ceil((vl + 2.5 * vw) / majorPx) && (k * majorF) / fps <= shown; k++) ticks.push(k);
+
+  // what of each clip gets its pictures or waveform drawn (clip px), from the view they were last drawn for
+  const drawLo = view.left - LABEL_W - view.width / 2;
+  const drawHi = view.left - LABEL_W + view.width * 1.5;
+
   const slider = "h-1 w-20 cursor-pointer accent-zinc-300";
+  const headCol = "sticky left-0 z-20 shrink-0 border-r border-black/60 bg-[#1f1f23]";
   return (
     <Panel title="Timeline" className="flex-1" bar={
       <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -274,30 +443,46 @@ export const NleTracks = memo(function NleTracks({
         </div>
       </div>
     }>
-    <TimelineFrame scroller={scroller} inner={inner} seconds={shown} pps={pps} labelWidth={LABEL_W} rulerHeight={RULER_H}
-      className="min-h-0 flex-1 overflow-y-scroll bg-[#151517]" stickyRuler="bg-[#1d1d20] border-b border-black/60"
-      ruler={{ onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && onSeek(frameAt(e.clientX) / fps), className: "cursor-ew-resize" }}
-      rulerLabel={<span className="font-mono text-[11px] tabular-nums text-zinc-300" title="The playhead">{timecode(Math.round(time * fps), fps)}</span>}
+    <TimelineFrame scroller={scroller} inner={inner} seconds={shown} pps={pps} labelWidth={LABEL_W} rulerHeight={RULER_H} noMarks
+      className="min-h-0 flex-1 overflow-y-scroll bg-[#151517] select-none" stickyRuler="bg-[#1d1d20] border-b border-black/60"
+      ruler={{ onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && scrubTo(e.clientX), className: "cursor-ew-resize" }}
+      rulerLabel={<span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead">{timecode(Math.round(time * fps), fps)}</span>}
       rulerChildren={
         <>
+          {ticks.map((k) => (
+            <div key={k} className="pointer-events-none absolute inset-y-0 border-l border-zinc-600" style={{
+              left: k * majorPx, width: majorPx,
+              backgroundImage: `repeating-linear-gradient(to right, transparent 0 ${minorPx - 1}px, rgb(113 113 122 / 0.75) ${minorPx - 1}px ${minorPx}px)`,
+              backgroundSize: "100% 6px", backgroundPosition: "bottom", backgroundRepeat: "no-repeat",
+            }}>
+              <span className="absolute top-[7px] left-1 font-mono text-[10px] leading-none tabular-nums text-zinc-400">{timecode(k * majorF, fps)}</span>
+            </div>
+          ))}
           {marks[0] !== null && marks[1] !== null && (
-            <div className="absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
+            <div className="pointer-events-none absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
-          <div className="pointer-events-none absolute bottom-0 z-10 -translate-x-1/2" style={{ left: time * pps }}>
-            <div className="h-2.5 w-3 rounded-t-[2px] bg-red-500 [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]" />
+          <div className="pointer-events-none absolute inset-y-0 z-10" style={{ left: time * pps }}>
+            <div className="absolute inset-y-0 left-0 w-px bg-red-500" />
+            <div className="absolute top-0 left-px h-[15px] w-[13px] -translate-x-1/2 bg-red-500 [clip-path:polygon(0_0,100%_0,100%_62%,50%_100%,0_62%)]" />
           </div>
         </>
       }
       content={{
         onPointerDown: (e) => {
           const el = scroller.current;
-          if (e.button !== 1 || !el) return;
+          if (e.button !== 1 || !el) return startBox(e);
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
           pan.current = { x0: e.clientX, y0: e.clientY, left0: el.scrollLeft, top0: el.scrollTop };
         },
-        onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up, className: cn("flex min-h-full flex-col", cursor),
+        onPointerMove: moveTo, onPointerUp: up, onPointerCancel: up,
+        // never the browser's menu in the timeline
+        onContextMenu: (e) => e.preventDefault(),
+        onDragLeave: (e) => !inner.current?.contains(e.relatedTarget as Node | null) && hideGhost(),
+        className: cn("flex min-h-full flex-col", cursor),
       }}>
+      {/* Resolve's: room above the video tracks and under the sound tracks, both for a box to start in */}
+      <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>
       {order.map((id) => {
         const t = tl.tracks[id];
         const v = isVideo(id);
@@ -307,13 +492,14 @@ export const NleTracks = memo(function NleTracks({
         return (
           <div key={id} className="flex border-b border-black/50" style={{ height: h }}>
             {/* Resolve's header: the track's badge, lock and eye (or sound) on top, its name and clip count under */}
-            <div className="group/h sticky left-0 z-20 flex shrink-0 flex-col justify-center gap-0.5 overflow-hidden border-r border-black/60 bg-[#1f1f23] py-0.5 pr-1.5 pl-2.5 text-[11px]" style={{ width: LABEL_W }}>
+            <div data-head className="group/h sticky left-0 z-20 flex shrink-0 flex-col justify-center gap-0.5 overflow-hidden border-r border-black/60 bg-[#1f1f23] py-0.5 pr-1.5 pl-2.5 text-[11px]" style={{ width: LABEL_W }}
+              onContextMenu={(e) => openTrackMenu(e, id)}>
               <span className={cn("absolute inset-y-0 left-0 w-[3px]", v ? "bg-[#3d6e9c]" : "bg-[#2f8a5e]")} />
               <div className="flex items-center gap-0.5">
                 <span className="shrink-0 rounded-[3px] border border-[#b04848] bg-[#7a2c2c] px-1 font-mono text-[10px] leading-[14px] font-semibold text-white">{id}</span>
                 <span className="flex-1" />
-                {id !== "V1" && id !== "A1" && !t.locked && (
-                  <button type="button" aria-label={`Remove ${id}`} title={`Remove ${id} and its clips`} onClick={() => onRemoveTrack(id)}
+                {canDeleteTrack(tl, id) && (
+                  <button type="button" aria-label={`Remove ${id}`} title={`Remove ${id} and its clips`} onClick={() => onCommit(deleteTrack(tl, id))}
                     className="hidden rounded p-0.5 text-zinc-500 group-hover/h:block hover:bg-zinc-800 hover:text-zinc-200"><X className="size-3" /></button>
                 )}
                 <button type="button" aria-pressed={!!t.locked} aria-label={t.locked ? `Unlock ${id}` : `Lock ${id}`} title={t.locked ? "Locked" : "Unlocked"}
@@ -347,16 +533,18 @@ export const NleTracks = memo(function NleTracks({
                 onDoubleClick={() => sizeTrack(id, null)} />
             </div>
             <div data-lane={id} className={cn("relative flex-1", t.locked && "bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(255,255,255,0.03)_6px_12px)]")}
-              onPointerDown={(e) => e.button === 0 && tool !== "blade" && !e.shiftKey && onSelect([])}
               onDragOver={(e) => {
-                if (!onDrop || t.locked) return;
+                if (!onDrop || t.locked) return hideGhost();
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "copy";
+                showGhost(e, id);
               }}
               onDrop={(e) => {
+                hideGhost();
                 if (!onDrop || t.locked) return;
                 e.preventDefault();
-                onDrop(e.dataTransfer, { track: id, frame: frameAt(e.clientX) });
+                const d = dragging.current;
+                onDrop(e.dataTransfer, { track: id, frame: dropFrame(e.clientX, d ? Math.max(1, Math.round((d.seconds ?? GHOST_SECONDS) * fps)) : 0) });
               }}>
               {t.items.map((it) => {
                 // plain values only: the page hands a new file object every render, and a clip drawn again for every
@@ -364,26 +552,92 @@ export const NleTracks = memo(function NleTracks({
                 const file = fileOf?.(it.src);
                 const sfps = tl.sources[it.src]?.fps || fps;
                 const from = it.in / sfps;
+                const drawW = (it.len / fps) * view.pps;
+                const at = (it.rec / fps) * view.pps;
+                const x0 = Math.max(0, Math.min(drawW, Math.floor((drawLo - at) / DRAW_GRID) * DRAW_GRID));
+                const x1 = Math.max(0, Math.min(drawW, Math.ceil((drawHi - at) / DRAW_GRID) * DRAW_GRID));
                 return (
                   <Clip key={it._k} k={it._k!} track={id} video={v} left={(it.rec / fps) * pps} width={(it.len / fps) * pps} height={h}
                     name={nameOf(it)} length={timecode(it.len, fps).replace(/^0:/, "")} on={picked.has(it._k!)} dim={it.enabled === false || !!off}
                     tool={tool} locked={!!t.locked} fadeIn={((it.fade_in ?? 0) / fps) * pps} fadeOut={((it.fade_out ?? 0) / fps) * pps}
+                    // a flash is drawn by the player itself, it never needs its file
                     offline={fileOf && it.fx !== "flash" && (!file || file.why) ? file?.why || "Media offline" : null}
                     path={String(tl.sources[it.src]?.path ?? "")} from={from} to={from + (it.len / fps) * (it.speed || 1)}
-                    url={fileOf ? file?.url || null : undefined} still={!!file?.frame} ctl={ctl} />
+                    url={fileOf ? file?.url || null : undefined} still={!!file?.frame} drawW={drawW} x0={x0} x1={x1} ctl={ctl} />
                 );
               })}
             </div>
           </div>
         );
       })}
-      {/* under the last track: the headers' column goes on to the bottom */}
-      <div className="flex flex-1"><div className="sticky left-0 z-20 shrink-0 border-r border-black/60 bg-[#1f1f23]" style={{ width: LABEL_W }} /></div>
+      <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>
       <div className="pointer-events-none absolute top-0 bottom-0 z-[15] w-px bg-red-500" style={{ left: ph }} />
+      <div ref={boxEl} data-box className="pointer-events-none absolute z-[16] hidden border border-zinc-300/50 bg-zinc-300/15" />
+      {ghostEls.map((g, i) => (
+        <div key={i} ref={g} data-ghost className="pointer-events-none absolute z-[16] hidden truncate rounded-[3px] border border-white/70 bg-white/20 px-1 text-[10px] leading-4 text-white" />
+      ))}
     </TimelineFrame>
+    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack} />}
     </Panel>
   );
 });
+
+const MENU = "rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl";
+const MENU_ROW = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
+
+/** Resolve's track menu: add a track (above or below this one, or at the ends of its kind), move, delete, lock, hide or mute. */
+function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack }: {
+  tl: NleTimeline; x: number; y: number;
+  /** the track right-clicked, null: the empty part of the header column */
+  id: string | null;
+  onClose: () => void; onCommit: (tl: NleTimeline) => void; onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
+}) {
+  const t = id ? tl.tracks[id] : null;
+  const ofKind = (k: "V" | "A") => Object.keys(tl.tracks).filter((x) => x[0] === k && trackNo(x) >= 1).sort((a, b) => trackNo(a) - trackNo(b));
+  // this track's place among its kind from 1 (0: another kind), and how many there are
+  const pos = (k: "V" | "A") => (id?.[0] === k ? ofKind(k).indexOf(id) + 1 : 0);
+  const [pv, pa, nV, nA] = [pos("V"), pos("A"), ofKind("V").length, ofKind("A").length];
+  const add = (k: "V" | "A", at: number) => () => onCommit(insertTrack(tl, k, at).tl);
+  const adds: [string, () => void][] = [
+    ["Video Track Above", add("V", pv ? pv + 1 : nV + 1)],
+    ["Video Track Below", add("V", pv || 1)],
+    ["Audio Track Above", add("A", pa || 1)],
+    ["Audio Track Below", add("A", pa ? pa + 1 : nA + 1)],
+  ];
+  const empties = deleteEmptyTracks(tl);
+  const v = !!id && isVideo(id);
+  const rows: ([string, (() => void) | null] | null)[] = [
+    null,
+    ["Move Track Up", id && canMoveTrack(tl, id, true) ? () => onCommit(moveTrack(tl, id, true)) : null],
+    ["Move Track Down", id && canMoveTrack(tl, id, false) ? () => onCommit(moveTrack(tl, id, false)) : null],
+    null,
+    ["Delete Track", id && canDeleteTrack(tl, id) ? () => onCommit(deleteTrack(tl, id)) : null],
+    ["Delete Empty Tracks", empties !== tl ? () => onCommit(empties) : null],
+    null,
+    [t?.locked ? "Unlock Track" : "Lock Track", id ? () => onTrack(id, { locked: t!.locked ? undefined : true }) : null],
+    v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", () => onTrack(id!, { hidden: t!.hidden ? undefined : true })]
+      : [t?.mute ? "Unmute Track" : "Mute Track", id ? () => onTrack(id, { mute: t!.mute ? undefined : true }) : null],
+  ];
+  const run = (fn: () => void) => () => {
+    onClose();
+    fn();
+  };
+  return (
+    <div className="fixed inset-0 z-50" onPointerDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
+      <div role="menu" aria-label="Track" className={cn("fixed w-52", MENU)} style={{ left: x, top: Math.min(y, window.innerHeight - 320) }} onPointerDown={(e) => e.stopPropagation()}>
+        <div className="group/sub relative">
+          <button type="button" role="menuitem" aria-haspopup="menu" className={MENU_ROW}><span>Add Track</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
+          <div role="menu" aria-label="Add Track" className={cn("absolute -top-1 left-full hidden w-48 group-focus-within/sub:block group-hover/sub:block", MENU)}>
+            {adds.map(([l, fn]) => <button key={l} type="button" role="menuitem" className={MENU_ROW} onClick={run(fn)}>{l}</button>)}
+          </div>
+        </div>
+        {rows.map((r, i) => (r ? (
+          <button key={r[0]} type="button" role="menuitem" disabled={!r[1]} className={MENU_ROW} onClick={r[1] ? run(r[1]) : undefined}>{r[0]}</button>
+        ) : <div key={i} role="separator" className="my-1 h-px bg-zinc-800" />))}
+      </div>
+    </div>
+  );
+}
 
 
 type Ctl = {
@@ -418,7 +672,7 @@ const ramp = (side: "left" | "right", px: number) => (
  * waveform, an offline clip dark red with its name (the why on hover). Plain values only, so it is drawn again only when
  * it changes.
  */
-const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, ctl }: {
+const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl }: {
   k: string; track: string; video: boolean; left: number; width: number; height: number; name: string; length: string; on: boolean; dim: boolean;
   tool: Tool; locked: boolean;
   /** the fades, in px */
@@ -427,6 +681,8 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
   offline: string | null;
   /** its source file's path and the seconds of it the clip plays; `url` undefined: the timeline shows no files */
   path: string; from: number; to: number; url: string | null | undefined; still: boolean;
+  /** the clip's width its pictures or waveform are drawn at, and the part of it drawn (px): they stretch with a zoom */
+  drawW: number; x0: number; x1: number;
   ctl: MutableRefObject<Ctl>;
 }) {
   const w = Math.max(2, width);
@@ -438,11 +694,12 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
     <div data-clip={k} role="button" aria-pressed={on} aria-label={`${track} ${name}`} title={offline ?? undefined}
       onPointerDown={(e) => ctl.current.down(e, k, track)}
       onContextMenu={(e) => ctl.current.menu(e, k)}
-      className={cn("group absolute top-px bottom-px overflow-hidden rounded-[3px] border text-[10px] leading-4 select-none", look.box,
+      className={// strict containment and content-visibility: a zoom lays out and paints only the clips that show, each on its own
+      cn("group absolute top-px bottom-px overflow-hidden rounded-[3px] border text-[10px] leading-4 select-none [contain:strict] [content-visibility:auto]", look.box,
         dim && "opacity-40", tool === "select" ? "cursor-grab" : tool === "trim" ? "cursor-ew-resize" : "")}
       style={{ left, width: w }}>
       <div className="pointer-events-none absolute inset-x-0 top-0" style={{ bottom: bar, ...(offline ? OFFLINE_BG : {}) }}>
-        {!offline && url !== undefined && w > 8 && <ClipLook path={path} from={from} to={to} video={video} url={url} still={still} width={w} height={Math.max(1, body)} />}
+        {!offline && url !== undefined && w > 8 && <ClipLook path={path} from={from} to={to} video={video} url={url} still={still} w={drawW} x0={x0} x1={x1} height={Math.max(1, body)} />}
         {fadeIn > 0 && ramp("left", Math.min(fadeIn, w))}
         {fadeOut > 0 && ramp("right", Math.min(fadeOut, w))}
       </div>
@@ -454,7 +711,7 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
       ) : w > 24 && <span className="pointer-events-none relative block truncate px-1 text-white [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">{name}</span>}
       <span className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       <span className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
-      {on && <span className="pointer-events-none absolute inset-0 rounded-[3px] border-2 border-[#ff9d3b]" />}
+      {on && <span className="pointer-events-none absolute inset-0 rounded-[3px] border-2 border-[#e8483f]" />}
       {fades && (["head", "tail"] as const).map((edge) => (
         <span key={edge} role="slider" aria-label={edge === "head" ? "Fade in" : "Fade out"} aria-valuenow={Math.round(edge === "head" ? fadeIn : fadeOut)}
           title={edge === "head" ? "Drag: fade in" : "Drag: fade out"}
@@ -468,59 +725,57 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
 
 
 const SOUND_FILE = /\.(wav|aif|aiff|m4a|mp3|flac|caf|aac)$/i;
-const peakOf = new WeakMap<Float32Array, number>();
-const loudestIn = (d: Float32Array) => {
-  let p = peakOf.get(d);
-  if (p === undefined) peakOf.set(d, (p = d.reduce((a, b) => Math.max(a, b), 0)));
-  return p;
-};
+const WAVE = { peak: "rgb(209 250 229 / 0.45)", rms: "rgb(236 253 245 / 0.92)" };
 
-/** A clip's body: a sound clip's waveform from its sound file, a video clip's pictures along it (a picture a second). */
-const ClipLook = memo(function ClipLook({ path, from, to, video, url, still, width, height }: {
+/**
+ * A clip's body: a sound clip's waveform from its sound file, a video clip's pictures along it (a picture a tile), drawn
+ * on one canvas for the part `x0`…`x1` of the clip as wide as `w` px. The canvas is placed in % of the clip, so a zoom
+ * stretches it until the timeline draws it again for the new width.
+ */
+const ClipLook = memo(function ClipLook({ path, from, to, video, url, still, w, x0, x1, height }: {
   /** the source's file; `from` and `to`: the seconds of it the clip plays */
-  path: string; from: number; to: number; video: boolean; url: string | null; still: boolean; width: number; height: number;
+  path: string; from: number; to: number; video: boolean; url: string | null; still: boolean; w: number; x0: number; x1: number; height: number;
 }) {
-  const [wave, setWave] = useState<Float32Array | null>(null);
+  const [wave, setWave] = useState<Levels | null>(null);
   const sound = !video && !!url;
   useEffect(() => {
     if (!sound || !url) return void setWave(null);
     let gone = false;
     // a video file's sound too, unless it is too big to read whole
-    peaks(url, SOUND_FILE.test(path) ? undefined : VIDEO_SOUND_BYTES).then((d) => !gone && setWave(d), () => {});
+    levels(url, SOUND_FILE.test(path) ? undefined : VIDEO_SOUND_BYTES).then((d) => !gone && setWave(d), () => {});
     return () => void (gone = true);
   }, [sound, url, path]);
-  const wavePath_ = useMemo(() => wave && wavePath(wave, from, to, loudestIn(wave)), [wave, from, to]);
-  const strip = useRef<HTMLCanvasElement>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
   const pictures = video && !!url && !still && !/\.(png|jpe?g|webp|gif)$/i.test(path);
+  const span = x1 - x0;
+  const shows = span >= 1 && w > 0 && (pictures || !!wave);
   useEffect(() => {
-    const c = strip.current;
-    if (!pictures || !url || !c) return;
-    let gone = false;
-    const tile = Math.round(height * 0.75);
-    const n = Math.min(40, Math.ceil(width / tile));
+    const c = canvas.current;
+    if (!shows || !c) return;
+    const dpr = window.devicePixelRatio || 1;
+    c.width = Math.ceil(span * dpr);
+    c.height = Math.ceil(height * dpr);
     const g = c.getContext("2d");
-    for (let i = 0; i < n; i++) {
-      const sec = Math.floor(from + ((to - from) * i) / n);
-      void thumbAt(url, sec).then((b) => {
-        if (gone || !b || !g) return;
+    if (!g) return;
+    const sec = (x: number) => from + ((to - from) * x) / w;
+    if (!pictures) return void drawWave(g, wave!, sec(x0), sec(x1), c.width, c.height, WAVE);
+    let gone = false;
+    const tile = Math.max(8, Math.round(height * 0.75));
+    for (let i = Math.floor(x0 / tile); i * tile < x1; i++) {
+      void thumbAt(url!, Math.floor(sec(i * tile))).then((b) => {
+        if (gone || !b) return;
         // a picture filling its tile, cut to it
-        const s = Math.max(tile / b.width, height / b.height);
+        const s = Math.max(tile / b.width, height / b.height) * dpr;
         g.save();
         g.beginPath();
-        g.rect(i * tile, 0, tile, height);
+        g.rect((i * tile - x0) * dpr, 0, tile * dpr, height * dpr);
         g.clip();
-        g.drawImage(b, i * tile + (tile - b.width * s) / 2, (height - b.height * s) / 2, b.width * s, b.height * s);
+        g.drawImage(b, (i * tile - x0 + tile / 2) * dpr - (b.width * s) / 2, (height * dpr - b.height * s) / 2, b.width * s, b.height * s);
         g.restore();
       });
     }
     return () => void (gone = true);
-  }, [pictures, url, from, to, width, height]);
-  if (pictures) return <canvas ref={strip} width={Math.min(Math.ceil(width), 4000)} height={height} className="pointer-events-none absolute inset-0 h-full" style={{ width: Math.min(Math.ceil(width), 4000) }} />;
-  if (!wavePath_) return null;
-  const path_ = wavePath_;
-  return (
-    <svg className="pointer-events-none absolute inset-0 size-full text-emerald-100/80" viewBox={`0 -1 ${path_.n} 2`} preserveAspectRatio="none">
-      <path d={path_.d} fill="currentColor" />
-    </svg>
-  );
+  }, [shows, pictures, wave, url, from, to, w, x0, x1, span, height]);
+  if (!shows) return null;
+  return <canvas ref={canvas} className="pointer-events-none absolute top-0 h-full" style={{ left: `${(x0 / w) * 100}%`, width: `${(span / w) * 100}%` }} />;
 });

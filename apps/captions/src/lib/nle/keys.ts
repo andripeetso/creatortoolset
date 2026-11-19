@@ -7,7 +7,7 @@ export type KeyAction =
   | "play" | "stop" | "forward" | "reverse"
   | "save" | "undo" | "redo" | "split" | "copy" | "cut" | "paste" | "duplicate" | "selectAll" | "deselect"
   | "selectForward" | "selectBack" | "rippleStart" | "rippleEnd" | "delete" | "rippleDelete" | "enable"
-  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "snap"
+  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "snap" | "linkedSelection"
   | "nudgeBack" | "nudgeBack5" | "nudgeOn" | "nudgeOn5"
   | "frameBack" | "frameOn" | "secondBack" | "secondOn" | "prevEdit" | "nextEdit" | "start" | "end"
   | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector"
@@ -34,7 +34,7 @@ export const KEYS: Record<string, KeyAction> = {
   S: "rippleDelete", Delete: "rippleDelete", "⇧Delete": "rippleDelete", "⇧Backspace": "rippleDelete", Backspace: "delete",
   D: "enable",
   I: "markIn", O: "markOut", "⌥X": "clearMarks",
-  A: "toolSelect", T: "toolTrim", B: "toolBlade", N: "snap",
+  A: "toolSelect", T: "toolTrim", B: "toolBlade", N: "snap", "⌘⇧L": "linkedSelection",
   ",": "nudgeBack", "⇧,": "nudgeBack5", ".": "nudgeOn", "⇧.": "nudgeOn5",
   ArrowLeft: "frameBack", ArrowRight: "frameOn", "⇧ArrowLeft": "secondBack", "⇧ArrowRight": "secondOn",
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",

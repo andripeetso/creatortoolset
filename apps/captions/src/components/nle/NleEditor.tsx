@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Loader2, Magnet, MousePointer2, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
-  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
+  addSource, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
   place, remove, removeTrack, rippleToPlayhead, setItems, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,7 @@ import { NleMediaPool, SOURCE_MIME } from "./NleMediaPool";
 import { NleViewer } from "./NleViewer";
 
 export type { NleFile };
-import { NleTracks as Timeline, type Tool } from "./NleTracks";
+import { NleTracks as Timeline, useLinkedSelection, type Tool } from "./NleTracks";
 
 // A non-linear editor for one timeline, laid out as editors are (NleLayout): the Media Pool on the left (the timeline's own
 // sources, then the page's media bin), the viewer in the middle playing the timeline live from its files, the inspector
@@ -72,6 +72,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [rate, setRate] = useState(1);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
+  const [linkSel, toggleLinkSel] = useLinkedSelection();
   const [mode, setMode] = useState<PlaceMode>("overwrite");
   const [marks, setMarks] = useState<[number | null, number | null]>([null, null]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -265,6 +266,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         case "toolTrim": setTool("trim"); break;
         case "toolBlade": setTool("blade"); break;
         case "snap": setSnap((s) => !s); break;
+        case "linkedSelection": toggleLinkSel(); break;
         case "nudgeBack": case "nudgeBack5": case "nudgeOn": case "nudgeOn5":
           if (sel.length) commit(move(tl, sel, (a.startsWith("nudgeBack") ? -1 : 1) * (a.endsWith("5") ? 5 : 1)));
           break;
@@ -339,7 +341,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         }
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} />}
         timeline={
-          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} marks={marks} onSeek={seek} onSelect={setSelected}
+          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={setSelected}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
@@ -360,9 +362,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                   ))}
                 </span>
                 <button type="button" aria-pressed={snap} aria-label="Snapping" title="Snapping (N)" onClick={() => setSnap(!snap)} className={iconBtn(snap)}><Magnet className="size-3.5" /></button>
-                {sep}
-                <button type="button" title="A video track above the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "V").tl)} className={iconBtn(false)}><Plus className="size-3" />Video</button>
-                <button type="button" title="An audio track below the others" disabled={readOnly} onClick={() => commit(addTrack(tl, "A").tl)} className={iconBtn(false)}><Plus className="size-3" />Audio</button>
+                <button type="button" aria-pressed={linkSel} aria-label="Linked Selection" title="Linked Selection (⇧⌘L)" onClick={toggleLinkSel} className={iconBtn(linkSel)}><Link2 className="size-3.5" /></button>
                 {sep}
                 <button type="button" aria-label="Undo" title="Undo (⌘Z)" disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
                 <button type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
