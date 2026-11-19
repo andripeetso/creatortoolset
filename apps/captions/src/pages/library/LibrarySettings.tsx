@@ -73,7 +73,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
         <Card>
           <RadioList
             name="import-mode"
-            value={s.importMode ?? "in-place"}
+            value={s.importMode ?? (s.setupAt ? "copy" : "in-place")}
             options={[
               { value: "copy", label: LIBRARY_WORDS.importCopy.label, tip: LIBRARY_WORDS.importCopy.tip },
               { value: "in-place", label: LIBRARY_WORDS.importInPlace.label, tip: LIBRARY_WORDS.importInPlace.tip },
@@ -179,7 +179,7 @@ function Hosted({ library, watch, save }: { library: LibrarySummary; watch: Watc
       <Row
         title={LIBRARY_WORDS.uploadToServer}
         status={noServer ? <Status>{LIBRARY_WORDS.noServer}</Status> : undefined}
-        control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={master} disabled={noServer} onCheckedChange={(on) => void save({ upload: uploadFrom(false, on) })} />}
+        control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={master && !noServer} disabled={noServer} onCheckedChange={(on) => void save({ upload: uploadFrom(false, on) })} />}
       />
       {master && (
         <>
@@ -214,26 +214,26 @@ function RedoAll({ library, onError }: Pick<BodyProps, "library" | "onError">) {
       (e: unknown) => onError(message(e)),
     );
   return (
-    <Section title="All clips">
+    <Section title={LIBRARY_WORDS.redoTitle}>
       <Card>
         {redoKinds(library.settings).map((r) => (
           <Row
             key={r.kind}
             title={r.label}
-            status={asking?.kind === r.kind ? <Status>{asking.clips === 1 ? "For 1 clip" : `For ${asking.clips} clips`}</Status> : done === r.kind ? <Status>Started</Status> : null}
+            status={asking?.kind === r.kind ? <Status>{LIBRARY_WORDS.forClips(asking.clips)}</Status> : done === r.kind ? <Status>{LIBRARY_WORDS.started}</Status> : null}
             control={
               asking?.kind === r.kind ? (
                 <div className="flex gap-1.5">
                   <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>
-                    Cancel
+                    {LIBRARY_WORDS.cancel}
                   </Button>
                   <Button size="sm" disabled={!asking.clips} onClick={() => void run(r.kind)}>
-                    Redo all
+                    {LIBRARY_WORDS.redoAll}
                   </Button>
                 </div>
               ) : (
                 <Button size="sm" variant="outline" onClick={() => void ask(r.kind)}>
-                  Redo
+                  {LIBRARY_WORDS.redo}
                 </Button>
               )
             }

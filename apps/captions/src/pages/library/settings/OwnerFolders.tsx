@@ -65,19 +65,20 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
                 ) : undefined
               }
               control={
-                role === "footage" ? (
-                  <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
-                    {LIBRARY_WORDS.addFolder}
-                  </Button>
-                ) : none && !defaults ? (
+                none && !defaults ? (
                   <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
                     {LIBRARY_WORDS.setFolder}
+                  </Button>
+                ) : role === "footage" ? (
+                  <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
+                    {LIBRARY_WORDS.addFolder}
                   </Button>
                 ) : undefined
               }
             />
             {mine.map((f) => (
-              <FolderRow key={f.id} folder={f} devices={devices} onChanged={refresh} />
+              // Source media stays changeable (the folders added); the default Project files and Final exports rows are fixed while the switch is on
+              <FolderRow key={f.id} folder={f} devices={devices} onChanged={refresh} locked={defaults && role !== "footage"} />
             ))}
           </Fragment>
         );

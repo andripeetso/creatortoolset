@@ -836,6 +836,12 @@ export const LIBRARY_WORDS = {
   downloadsCard: "This edit needs the files on your computer, and Automatic downloads is off. Turn it on?",
   downloadsButton: "Turn on",
   downloadsDone: (ask: string) => `Automatic downloads is on. Continuing: ${ask}`,
+  redoTitle: "All clips",
+  redo: "Redo",
+  redoAll: "Redo all",
+  cancel: "Cancel",
+  started: "Started",
+  forClips: (n: number) => (n === 1 ? "For 1 clip" : `For ${n} clips`),
 } as const;
 
 /**

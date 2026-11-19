@@ -38,6 +38,7 @@ const patches: unknown[] = [];
 /** each request with the workspace it named */
 const asked: Array<[string, string | null]> = [];
 let serverHere = false;
+let storageFolders: unknown[] = [];
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -45,6 +46,7 @@ beforeEach(() => {
   patches.length = 0;
   asked.length = 0;
   serverHere = false;
+  storageFolders = [];
   // the Mac app: the bridge is there, so the Mac-only rows show
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -61,7 +63,7 @@ beforeEach(() => {
     if (url.endsWith("/space")) return ok({ videos: { onMac: 0, inPlace: 0, stored: { bytes: 0, files: 0 } }, proxies: { bytes: 0, files: 0 }, pictures: { bytes: 0, files: 0 }, models: null });
     if (url.endsWith("/status")) return ok({ clips: 0, unreadable: 0, stages: [] });
     if (url.includes("/estimate")) return ok({ steps: [], lookSpent: 0, lookLevels: [], timelineModels: [] });
-    if (url.startsWith("/api/devices/storage")) return ok({ folders: [], serverDisks: [], here: [] });
+    if (url.startsWith("/api/devices/storage")) return ok({ folders: storageFolders, serverDisks: [], here: [] });
     if (url.startsWith("/api/providers")) return ok({ devices: [] });
     return ok({});
   });
@@ -156,6 +158,35 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(bodyText()).toContain("No server connected");
   });
 
+  it("on This Mac, a stored upload of all still reads as off: the master is off and disabled", async () => {
+    serverHere = true;
+    const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
+    await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
+    expect(toggle(LIBRARY_WORDS.uploadToServer).getAttribute("aria-checked")).toBe("false");
+    expect(toggle(LIBRARY_WORDS.uploadToServer).disabled).toBe(true);
+  });
+
+  it("an import mode never stored reads as Copy on a set-up library", async () => {
+    const setUp: LibrarySummary = { ...library, settings: { ...SETTINGS, setupAt: "2026-11-01T00:00:00.000Z" } };
+    await render(<LibrarySettingsBody library={setUp} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(radio("Copy into Source media").checked).toBe(true);
+  });
+
+  it("with Use default folders off, a Source media folder not chosen yet shows Set…", async () => {
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, defaultFolders: false } };
+    await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const setButtons = [...host!.querySelectorAll("button")].filter((b) => b.textContent === LIBRARY_WORDS.setFolder);
+    expect(setButtons.length).toBe(3);
+  });
+
+  it("with Use default folders on, the Project files row is fixed: its menu has no Remove", async () => {
+    storageFolders = [{ id: "f1", role: "projects", name: "Projects", origin: { host: "mac-1", path: "/Users/x/Movies/Creator Toolset/Tiny" }, make: true, createdAt: 1, folderState: "ok", checkedAt: 1, workspace: "*" }];
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(host!.querySelector('button[aria-label="Actions for Projects"]')).not.toBeNull();
+    await act(async () => host!.querySelector<HTMLButtonElement>('button[aria-label="Actions for Projects"]')!.click());
+    expect(bodyText()).not.toContain("Remove");
+  });
+
   it("Originals and Proxies show while Upload to server is on, and Proxies is on when the master is turned on", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(host!.querySelector(`button[role="switch"][aria-label=""]`)).toBeNull();
@@ -182,6 +213,8 @@ describe("Settings → Media Library, the owner's page", () => {
     const given: LibrarySummary = { ...library, readOnly: true };
     await render(<LibrarySettingsBody library={given} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(headings()).not.toContain(LIBRARY_WORDS.importTitle);
+    // until the member page lands, the placeholder keeps the "No library" row rather than a blank section
+    expect(bodyText()).toContain("No library");
   });
 
   it("the workspace picked in the header is the one its requests name, and the window stays in its own", async () => {
