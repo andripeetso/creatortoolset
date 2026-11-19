@@ -350,4 +350,53 @@ final class PlacesTests: XCTestCase {
                                 readOnly: false, browsable: true, uuid: "5A1E0C7D")
         XCTAssertNil(diskReport(share)?["uuid"])
     }
+
+    /// Serving a file on a network disk: an idle share's slow first read (3 s, here scaled down tenfold with the
+    /// deadlines) is waited for and served, and never marks the disk away; only the quick look does.
+    func testASlowFirstReadOnANetworkDiskIsServedAndLeavesTheDiskHere() throws {
+        let file = root.appendingPathComponent("a.mov")
+        try Data("x".utf8).write(to: file)
+        let places = Places(diskList: { [PlaceDisk(path: self.root.path, key: self.share, network: true)] }, lookup: { _ in true })
+        places.quickDeadline = 0.2
+        places.firstReadDeadline = 1
+        let slow = { (p: String, g: [String], r: [MediaFiles.RootGrant], d: [PlaceDisk]) -> MediaFiles.Gate in
+            Thread.sleep(forTimeInterval: 0.3)
+            return MediaFiles.look(p, granted: g, roots: r, disks: d)
+        }
+        let gate = { (firstRead: Bool) in MediaFiles.gate(file.path, granted: [self.root.path], roots: [], places: places, firstRead: firstRead, look: slow) }
+        XCTAssertEqual(gate(true), .file(file.path, type: "video/quicktime"))
+        XCTAssertFalse(places.isAway(mount: root.path))
+        // slower than even the first read's deadline: no answer this time, and still not away
+        places.firstReadDeadline = 0.1
+        XCTAssertEqual(gate(true), .status(503))
+        XCTAssertFalse(places.isAway(mount: root.path))
+        // the quick look gives up and marks the disk away, as before
+        XCTAssertEqual(gate(false), .status(503))
+        XCTAssertTrue(places.isAway(mount: root.path))
+    }
+
+    /// Show in Finder when the server names no file for this Mac yet: the path this Mac's places check confirmed for
+    /// the clip's version on that server.
+    func testRevealUsesTheConfirmedPathWhenTheServerNamesNone() async throws {
+        let file = root.appendingPathComponent("a.mov")
+        try Data(repeating: 2, count: 3000).write(to: file)
+        let site = FakeSite()
+        let mac = Site(base: site.url, cookies: [])
+        let places = Places(diskList: { [PlaceDisk(path: "/", key: "vol:A"), PlaceDisk(path: self.root.path, key: "vol:T")] })
+        site.answer = { r in
+            if r.path.hasPrefix("/api/library/lib1/places") { return r.method == "GET" ? (200, #"{"versions":{"v1":{"tries":["\#(file.path)"],"bytes":3000,"quick":"q"}}}"#) : (200, "{}") }
+            return (200, #"{"id":"a1","versionId":"v1"}"#)
+        }
+        let none = await mac.clipPath(library: "lib1", asset: "a1", device: "dev1", places: places)
+        XCTAssertNil(none)   // nothing checked yet
+        _ = await places.answerCheck(library: "lib1", versions: ["v1"], site: mac, device: "dev1", granted: [root.path], roots: [])
+        let confirmed = await mac.clipPath(library: "lib1", asset: "a1", device: "dev1", places: places)
+        XCTAssertEqual(confirmed, file.path)
+        // another server's check is not this one's
+        XCTAssertNil(places.confirmed(server: URL(string: "https://other.example")!, library: "lib1", version: "v1"))
+        // the server's own word comes first
+        site.answer = { _ in (200, #"{"id":"a1","versionId":"v1","sourcePath":"/Volumes/footage/b.mov"}"#) }
+        let named = await mac.clipPath(library: "lib1", asset: "a1", device: "dev1", places: places)
+        XCTAssertEqual(named, "/Volumes/footage/b.mov")
+    }
 }

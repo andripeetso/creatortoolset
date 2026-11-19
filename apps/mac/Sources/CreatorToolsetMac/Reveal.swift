@@ -157,7 +157,7 @@ enum Reveal {
     }
 }
 
-private struct ClipFile: Decodable { let sourcePath: String? }
+private struct ClipFile: Decodable { let sourcePath: String?; let versionId: String? }
 private struct FolderList: Decodable { let folders: [ListedFolder] }
 private struct ReviewFile: Decodable {
     struct Asset: Decodable { let versions: [Version] }
@@ -168,9 +168,12 @@ private struct ReviewFile: Decodable {
 extension Site {
     /// The clip's file on the server's computer, as the server tells its admin (nil for anyone else, or none). With
     /// `device` (this Mac's id there) a clip whose original this Mac has gives its path here, to a member too (api/library/search.ts sourcePathFor).
-    func clipPath(library: String, asset: String, device: String? = nil) async -> String? {
+    /// When the server names none yet (it hasn't taken this Mac's report), the path this Mac's own places check
+    /// confirmed for the clip's current version on this server.
+    func clipPath(library: String, asset: String, device: String? = nil, places: Places = .shared) async -> String? {
         let asker = device?.addingPercentEncoding(withAllowedCharacters: .alphanumerics).map { "?device=\($0)" } ?? ""
-        return ((try? await get("/api/library/\(library)/assets/\(asset)\(asker)")) as ClipFile?)?.sourcePath
+        let clip = (try? await get("/api/library/\(library)/assets/\(asset)\(asker)")) as ClipFile?
+        return clip?.sourcePath ?? clip?.versionId.flatMap { places.confirmed(server: base, library: library, version: $0) }
     }
 
     /// Every workspace's Settings → Folders folders, as the server lists them to this window's account (none on a failure).

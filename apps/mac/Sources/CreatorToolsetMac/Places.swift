@@ -12,7 +12,9 @@ import Network
 //   test: smbfs served one from its cache at once with the server gone. This app opens no socket of its own to the
 //   server: one to a local address makes macOS ask for Local Network access, and a refusal would leave every share away.
 // - The guard: a file call on a network disk goes through `guarded`. A disk whose last check had no answer is never
-//   touched; any other call waits at most 2 s, and one that takes longer marks the disk away. Measured on macOS 26
+//   touched; any other call waits at most 2 s, and one that takes longer marks the disk away. Serving a file to the
+//   player waits up to 10 s instead and never marks the disk away: an idle SMB share took longer than 2 s to wake for
+//   its first read (Mac app 0.18.8, 2026-11-19), and the player then got 503 for a file that was there. Measured on macOS 26
 //   against a test share: with its server silent, a lookup blocks about 2 min 45 s before macOS drops the mount; with
 //   its server refusing, about 12 s, and the mount goes some seconds later.
 // - Mounts, unmounts, renames, wake and any network change are collapsed for 1.5 s, then the disks are read again, each
@@ -239,6 +241,10 @@ final class Places: @unchecked Sendable {
     var mountShare: (_ url: String, _ ui: Bool, _ done: @escaping (Int32) -> Void) -> Void = Places.mount
     /// Called on the main thread when a disk came, went, went away or came back: the report now, and the page's event.
     var onChange: (() -> Void)?
+    /// How long a guarded call waits: the quick look (the places check, Show in Finder), and serving's first read of a
+    /// file to the player. The tests give their own.
+    var quickDeadline: TimeInterval = 2
+    var firstReadDeadline: TimeInterval = 10
 
     private let lock = NSLock()
     /// mount paths whose last check had no answer, when each was checked, and the checks still waiting (one per disk)
@@ -249,6 +255,8 @@ final class Places: @unchecked Sendable {
     /// the check answers kept 10 s (by server, library and version), and what was told to the server this run
     private var kept: [String: (at: Date, check: [String: Any])] = [:]
     private var told = Set<String>()
+    /// the path this Mac's check confirmed here for each version (by server, library and version), for Show in Finder
+    private var confirmedHere: [String: String] = [:]
     /// shares being connected; the next try and the tries that failed; those that need a password
     private var connecting = Set<String>()
     private var nextTry: [String: (at: Date, failed: Int)] = [:]
@@ -355,8 +363,9 @@ final class Places: @unchecked Sendable {
     }
 
     /// Runs `body`, a file call on `path`. On a network disk: nil at once when the disk is away; else nil when the call
-    /// takes longer than `deadline`, which marks the disk away (the call ends on its own; its answer is dropped).
-    func guarded<T>(_ path: String, deadline: TimeInterval = 2, _ body: @escaping () -> T) -> T? {
+    /// takes longer than `deadline` (the quick look's by default), which marks the disk away (the call ends on its own;
+    /// its answer is dropped). `firstRead`: serving a file, which waits `firstReadDeadline` and never marks the disk away.
+    func guarded<T>(_ path: String, deadline: TimeInterval? = nil, firstRead: Bool = false, _ body: @escaping () -> T) -> T? {
         guard let disk = Self.disk(of: path, in: diskList()), disk.network else { return body() }
         if isAway(mount: disk.path) { return nil }
         let box = Box<T>()
@@ -365,8 +374,9 @@ final class Places: @unchecked Sendable {
             box.value = body()
             done.signal()
         }
-        if done.wait(timeout: .now() + deadline) == .timedOut {
-            markAway(disk.path)
+        if done.wait(timeout: .now() + (deadline ?? (firstRead ? firstReadDeadline : quickDeadline))) == .timedOut {
+            // a slow first read is a share waking up, not one gone: only a quick look that gets no answer marks it away
+            if !firstRead { markAway(disk.path) }
             return nil
         }
         return box.value
@@ -509,10 +519,16 @@ final class Places: @unchecked Sendable {
             for (v, check) in checked.answer {
                 kept["\(server)|\(library)|\(v)"] = (Date(), check)
                 out[v] = check
+                confirmedHere["\(site.base.absoluteString)|\(library)|\(v)"] = checked.confirmed[v]
             }
         }
         calls.async { self.tell(checked, tries: tries, library: library, device: device, site: site) }
         return ["versions": out]
+    }
+
+    /// The path this Mac's places check last confirmed here for a version on `server` (nil: none, or no longer here).
+    func confirmed(server: URL, library: String, version: String) -> String? {
+        lock.withLock { confirmedHere["\(server.absoluteString)|\(library)|\(version)"] }
     }
 
     /// POST …/places with what this check learnt that the server wasn't told this run: granted files only (`check`).
