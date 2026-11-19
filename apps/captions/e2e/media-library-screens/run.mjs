@@ -60,7 +60,7 @@ const SKIP_APP_SETUP = () => {
 /** The member's current workspace: the shared one, through the workspace switch the app's own picker uses. */
 async function switchMember(ctx, id) {
   const r = await ctx.request.patch(BASE + "/api/workshop/workspace", { data: { currentProjectId: id }, timeout: 180_000 });
-  if (r.status() !== 200) throw new Error(`switch the member's workspace failed: ${r.status()}`);
+  if (r.status() !== 200) throw new Error(`switch the member's workspace failed: ${r.status()} ${await r.text()}`);
 }
 
 const shot = async (page, name, theme) => {
