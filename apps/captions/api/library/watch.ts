@@ -17,6 +17,7 @@ import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
+import { changeStorage } from "../devices-storage";
 import { editorDirsOf, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
 
 /**
@@ -77,6 +78,7 @@ const finalsOf = (libraryId: string): WatchFolder[] => foldersOf(libraryId).filt
  */
 async function footageByLibrary(): Promise<Map<string, WatchFolder[]>> {
   const out = new Map<string, WatchFolder[]>();
+  if (!watchAllowed()) return out;
   const files = await readdir(path.join(env.dataDir, "storage")).catch(() => [] as string[]);
   for (const file of files.filter((n) => n.endsWith(".json"))) {
     const user = file.slice(0, -".json".length);
@@ -277,6 +279,7 @@ watchApp.post("/watch/folder", async (c) => {
   const copyTo = typeof body?.copyTo === "string" && body.copyTo.trim() ? body.copyTo : undefined;
   const refused = await addWatchFolder(user.username, folder, libraryId, copyTo);
   if (refused) return c.json({ error: refused, code: "invalid" }, 400);
+  await addSourceRow(user.username, folder, libraryId);
   return c.json({ ok: true });
 });
 
@@ -409,6 +412,19 @@ export async function wholeDisk(real: string, drive = false): Promise<boolean> {
   const root = path.parse(real).root;
   if (real === root || real === home || path.dirname(real) === root) return true;
   return !drive && (await stat(real)).dev !== (await stat(path.dirname(real))).dev;
+}
+
+/**
+ * The folder a Library card or the Mac picker chose, as this account's Source media row on this computer (the one folder
+ * list the scan reads), in the library's workspace. A row already there is kept as it is.
+ */
+async function addSourceRow(username: string, folderPath: string, libraryId?: string): Promise<void> {
+  const real = await realpath(expandHome(folderPath)).catch(() => expandHome(folderPath));
+  const ws = libraryId ? (db().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws : null;
+  await changeStorage(username, (st) => {
+    if (st.folders.some((g) => g.role === "footage" && g.origin.host === THIS_COMPUTER && g.origin.path === real)) return "keep";
+    st.folders.push({ id: randomUUID(), role: "footage", name: path.basename(real), origin: { host: THIS_COMPUTER, path: real }, make: false, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) });
+  });
 }
 
 /** Only the watch key: other settings (transcription and the rest) are written by other code. */
