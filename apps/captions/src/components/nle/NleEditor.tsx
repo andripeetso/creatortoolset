@@ -3,9 +3,9 @@ import { toast } from "sonner";
 import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
-  addSource, blade, clipAt, clipOfPart, clipsFrom, copyOf, duplicate, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
+  addSource, blade, clipAt, closeGap, clipOfPart, clipsFrom, copyOf, duplicate, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
   loopNext, loopPart, markedPart, move, NO_MARKS, paste, place, remove, rippleToPlayhead, setItems, setMark, setTrack, sourceTimeline,
-  timecode, toSaved, unlink, withKeys, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
+  timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { dragging, type Dragged } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
@@ -131,6 +131,12 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [saved, setSaved] = useState<NleTimeline>(hist.now);
   const [live, setLive] = useState<NleTimeline | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  // a gap picked on the timeline (its clips' selection let go); any edit lets it go
+  const [gap, setGap] = useState<Gap | null>(null);
+  const pick = useCallback((keys: string[]) => {
+    setSelected(keys);
+    if (keys.length) setGap(null);
+  }, []);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
   const [linkSel, toggleLinkSel] = useLinkedSelection();
@@ -207,6 +213,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   const commit = useCallback((next: NleTimeline) => {
     setLive(null);
+    setGap(null);
     if (readOnly) return;
     setHist((h) => histChange(h, () => next));
   }, [readOnly]);
@@ -267,7 +274,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(time * fps) }), source: openSource };
 
   const act = {
-    delete: (ripple: boolean) => sel.length && commit(remove(tl, sel, ripple)),
+    // a gap goes with either delete key, as in Resolve: what is after it moves back
+    delete: (ripple: boolean) => (gap ? commit(closeGap(tl, gap)) : sel.length && commit(remove(tl, sel, ripple))),
     copy: () => sel.length && (clipboard = copyOf(tl, sel)),
     cut: () => {
       if (!sel.length) return;
@@ -494,7 +502,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         timeline={
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
-          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={setSelected}
+          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}

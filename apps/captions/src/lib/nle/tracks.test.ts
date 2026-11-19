@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxPick, addTrackAt, canDeleteTrack, deleteEmptyTracks, deleteTrack, dropPlan, keepLooks, lookOn, move, moveTarget, moveTrack, setMark, trackOrder, withKeys, type NleTimeline } from "./model";
+import { boxPick, addTrackAt, canDeleteTrack, closeGap, gapAt, deleteEmptyTracks, deleteTrack, dropPlan, keepLooks, lookOn, move, moveTarget, moveTrack, setMark, trackOrder, withKeys, type NleTimeline } from "./model";
 import { placement } from "./picture";
 
 // A Tiny Acrobatics reel, 1080×1920: the talk on V1 with its voice on A1 (linked), a wide B-roll shot on V3 (a track
@@ -119,5 +119,33 @@ describe("where a drop lands", () => {
     expect(dropPlan(tl, "V3", 10, 50, true)[1].track).toBe("A3");
     expect(dropPlan(tl, "V3", 10, 50, false)).toHaveLength(1);
     expect(dropPlan(tl, "A2", 10, 50, true)).toEqual([{ track: "A2", rec: 10, len: 50 }]);
+  });
+});
+
+describe("a gap", () => {
+  const gappy = () => withKeys({ timeline: { fps: 25 }, sources: {}, tracks: {
+    V1: { items: [{ src: "a", rec: 0, len: 50, in: 0, link: 1 }, { src: "b", rec: 80, len: 40, in: 0, link: 2 }] },
+    A1: { items: [{ src: "a", rec: 0, len: 50, in: 0, link: 1 }, { src: "b", rec: 80, len: 40, in: 0, link: 2 }] },
+    A2: { items: [{ src: "song", rec: 0, len: 200, in: 0 }] },
+  } } as unknown as NleTimeline);
+
+  it("is the empty stretch between two clips, never on a clip or after the last one", () => {
+    expect(gapAt(gappy(), "V1", 60)).toEqual({ track: "V1", from: 50, to: 80 });
+    expect(gapAt(gappy(), "V1", 10)).toBeNull();
+    expect(gapAt(gappy(), "V1", 150)).toBeNull();
+  });
+
+  it("closes with a ripple on every track, a song under it untouched", () => {
+    const out = closeGap(gappy(), { track: "V1", from: 50, to: 80 });
+    expect(out.tracks.V1.items[1].rec).toBe(50);
+    expect(out.tracks.A1.items[1].rec).toBe(50);
+    expect(out.tracks.A2.items[0].rec).toBe(0);
+  });
+
+  it("closes only as far as every track can go", () => {
+    const tl = gappy();
+    tl.tracks.V2 = { items: [{ src: "t", rec: 40, len: 30, in: 0 }, { src: "t", rec: 90, len: 10, in: 0 }] } as never;
+    // V2 has a title running to 70 and another after 80: everything can go back only 10 frames
+    expect(closeGap(tl, { track: "V1", from: 50, to: 80 }).tracks.V1.items[1].rec).toBe(70);
   });
 });

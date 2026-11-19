@@ -117,6 +117,20 @@ describe("picking clips", () => {
     act(() => root.unmount());
   });
 
+  it("a plain click on empty space asks for the gap there (gapAt), a box doesn't", async () => {
+    const onGap = vi.fn();
+    const { host, root, pointer } = await mount({ onGap });
+    const lane = host.querySelector('[data-lane="V1"]')!;
+    await pointer(lane, "pointerdown", 900);
+    await pointer(lane, "pointerup", 900);
+    expect(onGap).toHaveBeenCalledTimes(1);
+    await pointer(lane, "pointerdown", 900);
+    await pointer(lane, "pointermove", 960, false, { clientY: 30 });
+    await pointer(lane, "pointerup", 960);
+    expect(onGap).toHaveBeenLastCalledWith(null);
+    act(() => root.unmount());
+  });
+
   it("the track menu adds a video track above V1 and greys what can't be done", async () => {
     const onCommit = vi.fn();
     const { host, root } = await mount({ tl: linked, onCommit });

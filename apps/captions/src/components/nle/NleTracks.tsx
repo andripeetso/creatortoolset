@@ -3,7 +3,7 @@ import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, 
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
-import { addTrack, addTrackAt, boxPick, canDeleteTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, endOf, find, isVideo, keepLooks, lengthOf, lookOn, move, moveTarget, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { addTrack, addTrackAt, boxPick, canDeleteTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, gapAt, endOf, find, isVideo, keepLooks, lengthOf, lookOn, move, moveTarget, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type Gap, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
 import { dragging } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
 import { drawWave, levels, type Levels } from "@/lib/waveform";
@@ -90,7 +90,7 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true,
+  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
 }: {
   tl: NleTimeline;
   time: number;
@@ -117,6 +117,9 @@ export const NleTracks = memo(function NleTracks({
   end?: ReactNode;
   /** Resolve's Linked Selection: a click picks the clip and the clips linked to it */
   linkedSelection?: boolean;
+  /** the gap picked by a click on empty space (ripple deleted with the delete keys) */
+  gap?: Gap | null;
+  onGap?: (g: Gap | null) => void;
 }) {
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
@@ -241,14 +244,14 @@ export const NleTracks = memo(function NleTracks({
 
   // a box drawn on empty space: every clip it touches on the tracks it spans (Resolve's), live while it is drawn
   const boxEl = useRef<HTMLDivElement>(null);
-  const boxing = useRef<{ x0: number; y0: number; base: string[]; how: "set" | "add" | "flip"; moved: boolean; last: string } | null>(null);
+  const boxing = useRef<{ x0: number; y0: number; cx: number; lane: string | null; base: string[]; how: "set" | "add" | "flip"; moved: boolean; last: string } | null>(null);
   const startBox = (e: ReactPointerEvent) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("[data-head]")) return;
     if (tool !== "select") return void (tool === "trim" && !e.shiftKey && onSelect([]));
     const r = inner.current!.getBoundingClientRect();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     const how = e.metaKey ? "flip" : e.shiftKey ? "add" : "set";
-    boxing.current = { x0: e.clientX - r.left, y0: e.clientY - r.top, base: how === "set" ? [] : selected, how, moved: false, last: "" };
+    boxing.current = { x0: e.clientX - r.left, y0: e.clientY - r.top, cx: e.clientX, lane: (e.target as HTMLElement).closest<HTMLElement>("[data-lane]")?.dataset.lane ?? null, base: how === "set" ? [] : selected, how, moved: false, last: "" };
     // a plain click on empty space lets go of the selection
     if (how === "set" && selected.length) onSelect([]);
   };
@@ -327,6 +330,10 @@ export const NleTracks = memo(function NleTracks({
   const up = () => {
     pan.current = null;
     if (boxing.current) {
+      const b = boxing.current;
+      // a plain click on empty space picks the gap there (Resolve's), a box or a click elsewhere lets it go
+      const lane = !b.moved && b.how === "set" ? b.lane : null;
+      onGap?.(lane ? gapAt(tl, lane, frameAt(b.cx)) : null);
       boxing.current = null;
       if (boxEl.current) boxEl.current.style.display = "none";
     }
@@ -544,6 +551,10 @@ export const NleTracks = memo(function NleTracks({
                 const d = dragging.current;
                 onDrop(e.dataTransfer, { track: id, frame: dropFrame(e.clientX, d ? Math.max(1, Math.round((d.seconds ?? GHOST_SECONDS) * fps)) : 0) });
               }}>
+              {gap?.track === id && (
+                <div data-gap className="pointer-events-none absolute inset-y-px rounded-[3px] border-2 border-[#e8483f] bg-white/10"
+                  style={{ left: (gap.from / fps) * pps, width: ((gap.to - gap.from) / fps) * pps }} />
+              )}
               {t.items.map((it) => {
                 // plain values only: the page hands a new file object every render, and a clip drawn again for every
                 // clip on every frame of playback (or of a drag) is what made the timeline lag

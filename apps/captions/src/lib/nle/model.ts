@@ -750,3 +750,28 @@ export function dropPlan(tl: NleTimeline, track: string, frame: number, len: num
   if (isVideo(track) && sound) out.push({ track: freeTrack(tl, "A", frame, frame + len, track === "V1" ? 1 : 2).id, rec: frame, len });
   return out;
 }
+
+/** An empty stretch of one track with a clip after it (Resolve's gap). */
+export interface Gap {
+  track: string;
+  from: number;
+  to: number;
+}
+
+/** The gap on `track` at frame `f`: from the end of the clip before it (or 0:00) to the start of the next one. null on a
+ *  clip, after the last one, or on a locked track. */
+export function gapAt(tl: NleTimeline, track: string, f: number): Gap | null {
+  const t = tl.tracks[track];
+  if (!t || t.locked || t.items.some((i) => i.rec <= f && f < endOf(i))) return null;
+  const next = Math.min(...t.items.filter((i) => i.rec > f).map((i) => i.rec));
+  if (!Number.isFinite(next)) return null;
+  return { track, from: Math.max(0, ...t.items.filter((i) => endOf(i) <= f).map(endOf)), to: next };
+}
+
+/** A gap closed (ripple delete): everything from its end on every unlocked track moves back by its length, as far as
+ *  every track can go, so they stay in sync. The timeline as it is when nothing can move. */
+export function closeGap(tl: NleTimeline, g: Gap): NleTimeline {
+  if (!tl.tracks[g.track] || g.to <= g.from) return tl;
+  const out = clone(tl);
+  return ripple(out, g.to, g.from - g.to, new Set()) ? out : tl;
+}
