@@ -103,10 +103,13 @@ describe.skipIf(rootReplaced)("AI Editor: edits shared in their workspace", () =
   it("everyone given the workspace sees every edit there, with its maker; nobody else sees any", async () => {
     expect(await listed("bo")).toEqual([anas, bos].sort());
     expect(await listed("dee")).toEqual([anas, bos].sort());
-    expect(await listed("ana")).toEqual([anas, anasOther, bos].sort());
+    // the owner's list is the workspace the request works in (every call here works in FIRST), the other one's apart
+    expect(await listed("ana")).toEqual([anas, bos].sort());
     const list = await json<EditSummary[]>(call("ana", "GET", "/api/editor"));
     expect(list.find((e) => e.id === bos)).toMatchObject({ projectId: FIRST, maker: { name: "bo" } });
-    expect(list.find((e) => e.id === anasOther)).toMatchObject({ projectId: SECOND, maker: { name: "ana" } });
+    const second = await json<EditSummary[]>(call("ana", "GET", `/api/editor?projectId=${SECOND}`));
+    expect(second.map((e) => e.id)).toEqual([anasOther]);
+    expect(second[0]).toMatchObject({ projectId: SECOND, maker: { name: "ana" } });
     expect((await json<EditSummary[]>(call("bo", "GET", "/api/editor"))).every((e) => e.projectId === FIRST)).toBe(true);
     expect((await call("bo", "GET", `/api/editor/${anasOther}`)).status).toBe(404);
     for (const u of ["cy", "eve"]) {
