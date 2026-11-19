@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Collection, LibrarySummary, WatchStatus } from "@contracts/library";
+import type { LibrarySummary, WatchStatus } from "@contracts/library";
 import { scopeRequests } from "@/lib/current-workspace";
-import { getWatch, isFinals, listCollections } from "@/lib/library";
-import { holdsClips } from "@/pages/library/folders";
+import { getWatch } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import { LibrarySettingsBody } from "@/pages/library/LibrarySettings";
@@ -28,7 +27,8 @@ export function MediaLibrarySection() {
   const w = useSettingsWorkspace("one", own);
   const here = useWorkspace((s) => s.currentProjectId);
   const libs = useCachedLoad<LibrarySummary[]>("/api/library", () => librariesOf(w.id), { workspace: w.cacheKey });
-  const library = libs.data?.find((l) => !l.readOnly) ?? null;
+  // the owner's library when the list has one; a workspace the team's owner gave this person shows the member page
+  const library = libs.data?.find((l) => !l.readOnly) ?? libs.data?.[0] ?? null;
   const id = library?.id;
   // every request for this library says the workspace shown, whatever the window is in. Set while drawing, before the
   // rows below fetch in their effects
@@ -36,7 +36,6 @@ export function MediaLibrarySection() {
   if (prefix) scopeRequests(prefix, w.id && w.id !== here ? w.id : null);
   useEffect(() => () => void (prefix && scopeRequests(prefix, null)), [prefix]);
   const watch = useCachedLoad<WatchStatus>(id ? `/api/library/${id}/watch` : null, () => getWatch(id!), { workspace: w.cacheKey });
-  const folders = useCachedLoad<Collection[]>(id ? `/api/library/${id}/collections` : null, () => listCollections(id!), { own: true, workspace: w.cacheKey });
   const [error, setError] = useState<string | null>(null);
   const saved = (l: LibrarySummary) => libs.set((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
 
@@ -68,7 +67,7 @@ export function MediaLibrarySection() {
         </Card>
       )}
       {/* keyed by the library: another workspace's starts from its own values */}
-      <LibrarySettingsBody key={library.id} inSettings library={library} watch={watch.data} folders={(folders.data ?? []).filter((c) => holdsClips(c) && !isFinals(c))} onChange={saved} onError={setError} />
+      <LibrarySettingsBody key={library.id} library={library} watch={watch.data} workspace={w.id} onChange={saved} onError={setError} />
     </>
   );
 }

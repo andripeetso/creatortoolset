@@ -244,7 +244,7 @@ function FolderList({ role, storage, devices, serverDisks, w, onChanged }: {
  * two or more workspaces: which one saves where), and its menu: Show in Finder (on this Mac), Workspaces (any of them, or
  * all), Remove.
  */
-function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
+export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void; /** a default folder: only Show in Finder */ locked?: boolean }) {
   const exports = f.role === "library";
   const tagged = !!w?.all || (exports && !!w?.many);
   const [picking, setPicking] = useState(false);
@@ -301,14 +301,18 @@ function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder
         <RowMenu
           label={`Actions for ${f.name}`}
           items={[
-            ...(w?.many ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
+            ...(w?.many && !locked ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
             ...(canRevealFolder(f) ? [{ label: "Show in Finder", onSelect: () => revealFolder(f) }] : []),
-            {
-              label: "Remove",
-              destructive: true,
-              confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
-              onSelect: () => removeStorageFolder(f.id).then(onChanged),
-            },
+            ...(locked
+              ? []
+              : [
+                  {
+                    label: "Remove",
+                    destructive: true,
+                    confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
+                    onSelect: () => removeStorageFolder(f.id).then(onChanged),
+                  },
+                ]),
           ]}
         />
       }
@@ -422,7 +426,7 @@ const NEW_MAC = "this-mac:new";
  * A folder the person already has, as a Media folder, on a drive of one of the account's computers. With two or more
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
  */
-function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
+export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
   open: boolean; onOpenChange: (o: boolean) => void; role: AddFolderBody["role"]; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
   // `here`: the computers that are the machine this server runs on. A folder added on one joins the Media Library,

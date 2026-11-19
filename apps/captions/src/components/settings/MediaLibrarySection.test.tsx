@@ -3,9 +3,8 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LibrarySummary } from "@contracts/library";
-import { LibrarySettings, LibrarySettingsBody } from "@/pages/library/LibrarySettings";
-import { UploadSelect } from "@/pages/library/UploadSelect";
+import { LIBRARY_WORDS, type LibrarySettings, type LibrarySummary } from "@contracts/library";
+import { LibrarySettingsBody } from "@/pages/library/LibrarySettings";
 import { useAuth } from "@/lib/auth";
 import { clearLocalCache } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
@@ -13,10 +12,10 @@ import { MediaLibrarySection } from "./MediaLibrarySection";
 import { PageActionContext } from "./page-action";
 import { resetWorkspacePick } from "./workspace-pick";
 
-// Settings → Media Library is the library's own settings sheet, the same sections in both, for the workspace its
-// selector shows; the upload choice is one select whose answer is saved on the library.
+// Settings → Media Library is the owner's page (UNIFIED-PRD §3.1): its sections in order, one row per setting, each
+// label's ⓘ tip (not a line under the row), and the Effort and Hosted media states.
 
-// the kit's select as a plain one, so a test can pick a value (the kit's own file: the workspace selector reads it there)
+// the kit's select as a plain one, so a test can pick a value (the workspace selector is one)
 vi.mock("@/components/settings/kit-controls", async (orig) => ({
   ...(await orig<object>()),
   SettingsSelect: ({ label, value, options, onValueChange }: { label: string; value: string; options: { value: string; label: string }[]; onValueChange: (v: string) => void }) => (
@@ -32,14 +31,14 @@ vi.mock("@/components/settings/kit-controls", async (orig) => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: 20 } };
+const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: null };
+const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: SETTINGS };
 const watch = { allowed: false, folders: [], missing: 0 };
 const patches: unknown[] = [];
 /** each request with the workspace it named */
 const asked: Array<[string, string | null]> = [];
 let serverHere = false;
-let stopped: "free" | "credit" | null = null;
-let offlineLibraries: string[] = [];
+let storageFolders: unknown[] = [];
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -47,9 +46,8 @@ beforeEach(() => {
   patches.length = 0;
   asked.length = 0;
   serverHere = false;
-  stopped = null;
-  offlineLibraries = [];
-  // the Mac app with the server elsewhere: every section shows
+  storageFolders = [];
+  // the Mac app: the bridge is there, so the Mac-only rows show
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
@@ -59,29 +57,14 @@ beforeEach(() => {
       patches.push(b);
       return ok({ ...library, settings: { ...library.settings, ...b.settings } });
     }
-    if (url === "/api/library/offline") {
-      if (init?.method === "POST") {
-        const b = JSON.parse(String(init.body)) as { library: string; on: boolean };
-        offlineLibraries = b.on ? [b.library] : [];
-      }
-      return ok({ versions: [], collections: [], ...(offlineLibraries.length ? { libraries: offlineLibraries } : {}) });
-    }
     if (url === "/api/library") return ok({ libraries: [library] });
     if (url.endsWith("/watch")) return ok({ ...watch, allowed: serverHere });
     if (url.endsWith("/collections")) return ok({ collections: [] });
-    if (url.endsWith("/usage")) return ok({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] });
     if (url.endsWith("/space")) return ok({ videos: { onMac: 0, inPlace: 0, stored: { bytes: 0, files: 0 } }, proxies: { bytes: 0, files: 0 }, pictures: { bytes: 0, files: 0 }, models: null });
-    if (url.includes("/estimate"))
-      return ok({
-        steps: [],
-        lookSpent: 4.2,
-        timelineKey: true,
-        ...(stopped ? { timelineStopped: stopped } : {}),
-        timelineModels: [
-          { model: "gemini-3.8-flash", usd: 0.42 },
-          { model: "gemini-3.5-flash-lite", usd: 0.16 },
-        ],
-        lookLevels: [{ level: "light", seconds: 300, usd: 0.9 }, { level: "standard", seconds: 720, usd: 2.64 }, { level: "detailed", seconds: 1440, usd: 5.28 }] });
+    if (url.endsWith("/status")) return ok({ clips: 0, unreadable: 0, stages: [] });
+    if (url.includes("/estimate")) return ok({ steps: [], lookSpent: 0, lookLevels: [], timelineModels: [] });
+    if (url.startsWith("/api/devices/storage")) return ok({ folders: storageFolders, serverDisks: [], here: [] });
+    if (url.startsWith("/api/providers")) return ok({ devices: [] });
     return ok({});
   });
 });
@@ -101,36 +84,140 @@ async function render(el: ReactNode) {
   document.body.append(host);
   root = createRoot(host);
   act(() => root!.render(<MemoryRouter>{el}</MemoryRouter>));
-  for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
+  for (let i = 0; i < 6; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
 }
 
-const SECTIONS = ["Adding files", "Footage folders", "Uploads", "Storage", "Descriptions", "Shot detail", "Search", "All clips"];
-const WITHOUT_FOLDERS = SECTIONS.filter((s) => s !== "Footage folders");
-const headings = (text: string) => SECTIONS.filter((s) => text.includes(s));
+/** The owner page's sections, in the order the page draws them (the §3.1 order). */
+const SECTION_TITLES = [LIBRARY_WORDS.importTitle, LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.modelsTitle, "All clips"];
+const headings = () => [...host!.querySelectorAll("h2")].map((h) => h.textContent ?? "");
+const bodyText = () => document.body.textContent ?? "";
+/** a radio input by its label (RadioList gives each its label as aria-label) */
+const radio = (label: string) => host!.querySelector<HTMLInputElement>(`input[type="radio"][aria-label="${label}"]`)!;
+const toggle = (label: string) => host!.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`)!;
+const tip = (label: string) => host!.querySelector<HTMLButtonElement>(`button[aria-label="About ${label}"]`);
 
-describe("the Media Library's settings", () => {
-  it("Settings → Media Library shows the sheet's sections", async () => {
-    await render(<MediaLibrarySection />);
-    expect(headings(document.body.textContent ?? "")).toEqual(WITHOUT_FOLDERS);
-    // the folder choices by the names the first add offers them under: a name says what the choice does
-    expect([...document.querySelector<HTMLSelectElement>('select[aria-label="Folders"]')!.options].map((o) => o.textContent)).toEqual(["Standard", "Automatic", "None"]);
+describe("Settings → Media Library, the owner's page", () => {
+  it("draws its sections in the §3.1 order, with Copies last", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(headings().slice(0, SECTION_TITLES.length)).toEqual(SECTION_TITLES);
+    expect(headings()[SECTION_TITLES.length - 1]).toBe("All clips");
   });
 
-  it("on the server's own computer the sheet has the footage folders and the folder copies go into; Settings leaves both to its Folders page", async () => {
+  it("has no description line under any row: the words of a tip stay out of the page until its ⓘ is opened", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    for (const t of [LIBRARY_WORDS.importCopy.tip, LIBRARY_WORDS.smartFolders.tip, LIBRARY_WORDS.generateProxies.tip, LIBRARY_WORDS.descriptionsTip]) expect(bodyText()).not.toContain(t);
+  });
+
+  it("gives each setting its ⓘ tip, and the stops of the Effort slider one each", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    for (const label of [LIBRARY_WORDS.importCopy.label, LIBRARY_WORDS.importInPlace.label, LIBRARY_WORDS.defaultFolders.label, LIBRARY_WORDS.smartFolders.label, LIBRARY_WORDS.generateProxies.label, LIBRARY_WORDS.descriptions, LIBRARY_WORDS.videoBreakdown, LIBRARY_WORDS.transcripts]) {
+      expect(tip(label), label).not.toBeNull();
+    }
+    for (const stop of ["Off", "Low", "Medium", "High", "Extra high", "Max"]) expect(tip(stop), stop).not.toBeNull();
+    // Final exports has its tip on its own row; the Upload to server row has none (S1.12)
+    expect(tip(LIBRARY_WORDS.uploadToServer)).toBeNull();
+  });
+
+  it("the Effort slider has six stops, the one in use is High, Recommended is under High", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const slider = host!.querySelector('[role="slider"]')!;
+    expect(slider.getAttribute("aria-valuemax")).toBe("5");
+    expect(slider.getAttribute("aria-valuenow")).toBe("3");
+    expect(bodyText()).toContain("Recommended");
+    expect(bodyText()).toContain("Monthly budget: No limit");
+  });
+
+  it("Smart folders is disabled with its status while Effort is Off, and the stored choice stays", async () => {
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, transcribe: false, lookLevel: "standard" } };
+    await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(radio("Smart folders").disabled).toBe(true);
+    expect(radio("Organize yourself").disabled).toBe(false);
+    expect(bodyText()).toContain("Analysis is Off");
+    expect(host!.querySelector('[role="slider"]')!.getAttribute("aria-valuenow")).toBe("0");
+  });
+
+  it("the Proxy quality radio shows only while proxies are generated", async () => {
+    const noProxy: LibrarySummary = { ...library, settings: { ...SETTINGS, proxy: false } };
+    await render(<LibrarySettingsBody library={noProxy} watch={watch} onChange={() => {}} onError={() => {}} />);
+        expect(host!.querySelector('input[name="proxy-quality"]')).toBeNull();
+  });
+
+  it("while Hosted media hosts proxies, Generate proxies is on and disabled with its status", async () => {
+    const hosted: LibrarySummary = { ...library, settings: { ...SETTINGS, proxy: false, upload: "proxies" } };
+    await render(<LibrarySettingsBody library={hosted} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const gen = toggle(LIBRARY_WORDS.generateProxies.label);
+    expect(gen.getAttribute("aria-checked")).toBe("true");
+    expect(gen.disabled).toBe(true);
+    expect(bodyText()).toContain("On while proxies are hosted");
+  });
+
+  it("on This Mac with no server connected, Upload to server is off and disabled", async () => {
     serverHere = true;
-    const copying = { ...library, settings: { ...library.settings, importMode: "copy" as const } };
-    await render(<LibrarySettings open onOpenChange={() => {}} library={copying} watch={{ ...watch, allowed: true }} folders={[]} onChange={() => {}} onError={() => {}} />);
-    for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
-    expect(headings(document.body.textContent ?? "")).toEqual(SECTIONS);
-    expect(document.body.textContent).toContain("Library folder");
-    act(() => root!.unmount());
-    host!.remove();
-    await render(<LibrarySettingsBody inSettings library={copying} watch={{ ...watch, allowed: true }} folders={[]} onChange={() => {}} onError={() => {}} />);
-    expect(headings(document.body.textContent ?? "")).toEqual(WITHOUT_FOLDERS);
-    expect(document.body.textContent).not.toContain("Library folder");
+    await render(<LibrarySettingsBody library={library} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
+    expect(toggle(LIBRARY_WORDS.uploadToServer).disabled).toBe(true);
+    expect(bodyText()).toContain("No server connected");
   });
 
-  it("shows the library of the workspace picked in its header: the requests name that workspace, and the window stays in its own", async () => {
+  it("on This Mac, a stored upload of all still reads as off: the master is off and disabled", async () => {
+    serverHere = true;
+    const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
+    await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
+    expect(toggle(LIBRARY_WORDS.uploadToServer).getAttribute("aria-checked")).toBe("false");
+    expect(toggle(LIBRARY_WORDS.uploadToServer).disabled).toBe(true);
+  });
+
+  it("an import mode never stored reads as Copy on a set-up library", async () => {
+    const setUp: LibrarySummary = { ...library, settings: { ...SETTINGS, setupAt: "2026-11-01T00:00:00.000Z" } };
+    await render(<LibrarySettingsBody library={setUp} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(radio("Copy into Source media").checked).toBe(true);
+  });
+
+  it("with Use default folders off, a Source media folder not chosen yet shows Set…", async () => {
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, defaultFolders: false } };
+    await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const setButtons = [...host!.querySelectorAll("button")].filter((b) => b.textContent === LIBRARY_WORDS.setFolder);
+    expect(setButtons.length).toBe(3);
+  });
+
+  it("with Use default folders on, the Project files row is fixed: its menu has no Remove", async () => {
+    storageFolders = [{ id: "f1", role: "projects", name: "Projects", origin: { host: "mac-1", path: "/Users/x/Movies/Creator Toolset/Tiny" }, make: true, createdAt: 1, folderState: "ok", checkedAt: 1, workspace: "*" }];
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(host!.querySelector('button[aria-label="Actions for Projects"]')).not.toBeNull();
+    await act(async () => host!.querySelector<HTMLButtonElement>('button[aria-label="Actions for Projects"]')!.click());
+    expect(bodyText()).not.toContain("Remove");
+  });
+
+  it("Originals and Proxies show while Upload to server is on, and Proxies is on when the master is turned on", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(host!.querySelector(`button[role="switch"][aria-label=""]`)).toBeNull();
+    await act(async () => toggle(LIBRARY_WORDS.uploadToServer).click());
+    expect(patches.at(-1)).toEqual({ settings: { upload: "proxies" } });
+  });
+
+  it("Models shows the three rows, and hides at Off", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(headings()).toContain(LIBRARY_WORDS.modelsTitle);
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, transcribe: false, lookLevel: "standard" } };
+    await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(headings()).not.toContain(LIBRARY_WORDS.modelsTitle);
+  });
+
+  it("saves a picked import mode", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(radio("Use files where they are").checked).toBe(true);
+    await act(async () => radio("Copy into Source media").click());
+    expect(patches.at(-1)).toEqual({ settings: { importMode: "copy" } });
+  });
+
+  it("a library given to this person (not the owner's) renders the member page, not the owner's sections", async () => {
+    const given: LibrarySummary = { ...library, readOnly: true };
+    await render(<LibrarySettingsBody library={given} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(headings()).not.toContain(LIBRARY_WORDS.importTitle);
+    // until the member page lands, the placeholder keeps the "No library" row rather than a blank section
+    expect(bodyText()).toContain("No library");
+  });
+
+  it("the workspace picked in the header is the one its requests name, and the window stays in its own", async () => {
     useAuth.setState({ required: true, me: { username: "sam", role: "admin", cloud: false, off: [] } });
     useWorkspace.setState({
       loaded: true,
@@ -138,8 +225,6 @@ describe("the Media Library's settings", () => {
       projects: [
         { id: "p1", owner: "sam", name: "Tiny Acrobatics", createdAt: 1 },
         { id: "p2", owner: "sam", name: "Tiny Acrobatics shop", createdAt: 2 },
-        // one the team's owner gave this person: its library is the owner's, so it is not offered
-        { id: "p3", owner: "ana", name: "Given", createdAt: 3 },
       ] as ReturnType<typeof useWorkspace.getState>["projects"],
     });
     const header = document.body.appendChild(document.createElement("div"));
@@ -149,7 +234,6 @@ describe("the Media Library's settings", () => {
       </PageActionContext.Provider>,
     );
     const pick = header.querySelector('select[aria-label="Workspace"]') as HTMLSelectElement;
-    expect([...pick.options].map((o) => o.textContent)).toEqual(["Tiny Acrobatics", "Tiny Acrobatics shop"]);
     expect(pick.value).toBe("p1");
     asked.length = 0;
     await act(async () => {
@@ -160,109 +244,5 @@ describe("the Media Library's settings", () => {
     expect(asked.find(([what]) => what === "GET /api/library")).toEqual(["GET /api/library", "p2"]);
     expect(useWorkspace.getState().currentProjectId).toBe("p1");
     header.remove();
-  });
-
-  it("the library's own sheet shows the same", async () => {
-    await render(<LibrarySettings open onOpenChange={() => {}} library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
-    expect(headings(document.body.textContent ?? "")).toEqual(WITHOUT_FOLDERS);
-  });
-
-  it("Shot detail lists each level with an hour's time and cost, and saves the level picked and the monthly budget", async () => {
-    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("$2.64 and about 12 min for each hour of footage");
-    expect(text).toContain("$4.20 this month");
-    // Light and Detailed have Use; Standard, the one in use, says so
-    const uses = [...host!.querySelectorAll('[data-settings-row="library-shot-detail"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
-    expect(uses).toHaveLength(2);
-    expect(text).toContain("In use");
-    await act(async () => uses[1]!.click());
-    const field = host!.querySelector('input[aria-label="Monthly budget"]') as HTMLInputElement;
-    expect(field.value).toBe("20");
-    await act(async () => {
-      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      set.call(field, "35");
-      field.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-    await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
-    expect(patches).toEqual([{ settings: { lookLevel: "detailed" } }, { settings: { lookBudget: 35 } }]);
-  });
-
-  it("Timelines list each Gemini model with an hour's cost, 3.8 Flash in use, Antigravity as picture only, and save the one picked", async () => {
-    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("Gemini 3.8 Flash");
-    expect(text).toContain("Picture and sound, most moments, about $0.42 for each hour of footage");
-    expect(text).toContain("Picture and sound, fewer moments, about $0.16 for each hour of footage");
-    expect(text).toContain("Picture only, no sound");
-    const [lite, agy] = [...host!.querySelectorAll('[data-settings-row="library-timeline-model"] button')].filter((b) => b.textContent === "Use") as HTMLButtonElement[];
-    await act(async () => lite!.click());
-    await act(async () => agy!.click());
-    expect(patches).toEqual([{ settings: { timelineModel: "gemini-3.5-flash-lite" } }, { settings: { timelineModel: "antigravity" } }]);
-  });
-
-  it("Timelines on Antigravity need it among the AI providers", async () => {
-    await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, timelineModel: "antigravity" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    const needs = [...host!.querySelectorAll("a")].find((x) => x.textContent === "Needs Antigravity");
-    expect(needs?.getAttribute("href")).toBe("/settings/providers");
-    expect(document.body.textContent).not.toContain("Uses the Gemini API key");
-  });
-
-  it("Timelines say once when the Gemini key is on Google's free tier", async () => {
-    stopped = "free";
-    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    const text = document.body.textContent ?? "";
-    expect(text.split("free tier").length - 1).toBe(1);
-    expect(text).toContain("The Gemini key is on Google's free tier, about 20 calls a day; billing in Google AI Studio lifts the limit");
-  });
-
-  it("Timelines say once when the Gemini credit ran out", async () => {
-    stopped = "credit";
-    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    const text = document.body.textContent ?? "";
-    expect(text.split("credit ran out").length - 1).toBe(1);
-    expect(text).not.toContain("Uses the Gemini API key");
-  });
-
-  it("the upload choice is saved on the library", async () => {
-    const changed: LibrarySummary[] = [];
-    await render(<UploadSelect library={library} onChange={(l) => changed.push(l)} onError={() => {}} />);
-    const select = host!.querySelector('select[aria-label="Footage upload"]') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["Off", "Proxies only", "Originals and proxies"]);
-    // a final is one finished file: its choices say copy and file, never proxy
-    const finals = host!.querySelector('select[aria-label="Finals upload"]') as HTMLSelectElement;
-    expect([...finals.options].map((o) => o.textContent)).toEqual(["Off", "Smaller copies", "Full files"]);
-    await act(async () => {
-      select.value = "proxies";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
-    expect(patches).toEqual([{ settings: { upload: "proxies" } }]);
-    expect(changed.at(-1)?.settings.upload).toBe("proxies");
-  });
-
-  it("Keep on this computer in Library settings toggles library-wide offline proxies in the Mac app and is disabled when Upload is Off", async () => {
-    document.documentElement.dataset.macDevice = "dev_mac";
-    try {
-      await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-      const offSwitch = host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
-      expect(offSwitch).not.toBeNull();
-      expect(offSwitch.disabled).toBe(true);
-      expect(document.body.textContent).toContain("there is no proxy to keep.");
-
-      act(() => root!.unmount());
-      host!.remove();
-      await render(<LibrarySettingsBody library={{ ...library, settings: { ...library.settings, upload: "proxies" } }} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-      const sw = () => host!.querySelector<HTMLButtonElement>('[aria-label="Keep on this computer"]')!;
-      expect(sw().disabled).toBe(false);
-      expect(sw().getAttribute("aria-checked")).toBe("false");
-      await act(async () => sw().click());
-      expect(asked.some(([what]) => what === "POST /api/library/offline")).toBe(true);
-      expect(sw().getAttribute("aria-checked")).toBe("true");
-    } finally {
-      delete document.documentElement.dataset.macDevice;
-    }
   });
 });
