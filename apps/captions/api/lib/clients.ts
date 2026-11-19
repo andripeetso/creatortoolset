@@ -21,7 +21,8 @@ export interface ServerDescriptor {
   platform: "mac" | "linux" | "hosted";
   version: string;
   protocol: 1;
-  capabilities: { pairing: boolean; dpop: boolean; connect: boolean };
+  /** `account`: takes an account ticket at /oauth/token (a hosted server that names an account sign-in service). */
+  capabilities: { pairing: boolean; dpop: boolean; connect: boolean; account: boolean };
 }
 
 export interface PairingLinkUrl {
@@ -93,6 +94,8 @@ export type AccessEvent = { version: 1; revision: number } & (
 
 export const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 export const BOOTSTRAP_TOKEN_TYPE = "urn:creatortoolset:params:oauth:token-type:server-bootstrap";
+/** A ticket from the account sign-in service for a phone signed in to its account (contract.md, account tickets). */
+export const ACCOUNT_TICKET_TOKEN_TYPE = "urn:creatortoolset:params:oauth:token-type:account-ticket";
 export const ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
 
 /** POST /oauth/token answer. */

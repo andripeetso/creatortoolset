@@ -159,6 +159,28 @@ refused, never let in by forgetting one, and every other key goes on: `/oauth/to
 fine: wait, then retry with a new proof). The connect service does the same, per key, with 503 `{ error: "busy" }`.
 Both check proofs with one shared check (`apps/relay/src/dpop-proof.ts`); `iat` may be a decimal (RFC 9449).
 
+### Account tickets: a hosted server opened by the phone's account, with no second sign-in
+
+A hosted server that names an account sign-in service (`ACCOUNT_SIGNIN_SERVICE`, `api/sign-in.ts`) says
+`capabilities.account: true` in its descriptor. A phone signed in to its account at that service gets a session there
+without a sign-in sheet:
+
+1. Phone → the service `POST /api/account-signin/app-ticket` with its account token (`Authorization: Bearer`) and
+   `{ host, challenge, jkt }`: the server's host (one the account signed in to through the service, and one the service
+   serves), the base64url SHA-256 of a verifier the phone keeps, and the phone's DPoP key thumbprint. → `{ ticket,
+   expiresAt }`: one use, 5 minutes, like a sign-in's ticket.
+2. Phone → the server `POST /oauth/token` as above with
+   `subject_token_type=urn:creatortoolset:params:oauth:token-type:account-ticket`, `subject_token=<ticket>`,
+   `code_verifier=<verifier>` and a DPoP proof (required).
+3. The server redeems the ticket at the service's `POST /api/account-signin/redeem` `{ ticket, verifier }` → `{ provider,
+   sub, email, name, identities: [{ provider, sub }], jkt, host }` and checks `jkt` = the proof's key and `host` = its own
+   (`PUBLIC_ORIGIN`). The person is the one account here that any of those sign-ins belongs to (none, or two people:
+   `invalid_grant`; no account is ever made this way). → a DPoP session, 1 h, Standard (`scope` may narrow it).
+
+The phone renews it in its last minute the same way. No service named, no proof, no verifier, another key, another
+host, or a browser sign-in's ticket (no `jkt`/`host`): `invalid_grant`, and with no proof or verifier the service is
+not asked.
+
 ### Using a session on `/api/*`
 
 - Bearer: `Authorization: Bearer cts_…`.
