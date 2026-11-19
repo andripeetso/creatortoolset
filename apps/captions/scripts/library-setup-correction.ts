@@ -1,10 +1,10 @@
 // The 11-19 setup correction (api/library/setup-correction.ts): which libraries the migration marked set up only because
 // of a folder row shared with every workspace. A dry run unless --write. This repo has no tsx, so bundle it the way the
-// build bundles boot.ts, then run the bundle against the server's data folder (stop nothing; it reads and, with --write,
-// clears only setupAt):
-//   npx esbuild scripts/library-setup-correction.ts --bundle --platform=node --format=esm --packages=external --outfile=<scratch>/correction.mjs
-//   DATA_DIR=<the data folder> node <scratch>/correction.mjs            (dry run)
-//   DATA_DIR=<the data folder> node <scratch>/correction.mjs --write    (after the list is approved)
+// build bundles boot.ts, into the app's own dist/ (so its packages resolve from the app's node_modules), and run it from
+// the app folder against the server's data folder. Nothing needs stopping: it reads, and with --write clears only setupAt.
+//   npx esbuild scripts/library-setup-correction.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/library-setup-correction.mjs
+//   DATA_DIR=<the data folder> node dist/library-setup-correction.mjs            (dry run)
+//   DATA_DIR=<the data folder> node dist/library-setup-correction.mjs --write    (after the list is approved)
 import { correctSetups } from "../api/library/setup-correction";
 
 const write = process.argv.includes("--write");
