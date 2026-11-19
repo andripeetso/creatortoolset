@@ -10,8 +10,9 @@ import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
-import { enqueueJob, folderWalks, takingClips } from "./jobs";
+import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
+import { librariesOf } from "./report";
 import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
@@ -67,6 +68,31 @@ const foldersOf = (libraryId: string): WatchFolder[] => {
   return Array.isArray(list) ? (list as WatchFolder[]) : [];
 };
 
+/** The Finals folders of a library (settings.watch entries with projects, written by watchFinals): the only ones read from there. */
+const finalsOf = (libraryId: string): WatchFolder[] => foldersOf(libraryId).filter((f) => f.projects);
+
+/**
+ * The Source media rows on this server's own computer, by the library each one fills (the list of the account that made
+ * it; a member's locate-only library gets none). Read in place, as mode "reference".
+ */
+async function footageByLibrary(): Promise<Map<string, WatchFolder[]>> {
+  const out = new Map<string, WatchFolder[]>();
+  const files = await readdir(path.join(env.dataDir, "storage")).catch(() => [] as string[]);
+  for (const file of files.filter((n) => n.endsWith(".json"))) {
+    const user = file.slice(0, -".json".length);
+    const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, user), "utf-8").catch(() => "{}"));
+    for (const f of st.folders) {
+      if (f.role !== "footage" || !(f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))) continue;
+      for (const lib of await librariesOf(user, f)) {
+        if (lib.locate) continue;
+        const row: WatchFolder = { path: expandHome(f.origin.path), mode: "reference", addedBy: user };
+        out.set(lib.id, [...(out.get(lib.id) ?? []), row]);
+      }
+    }
+  }
+  return out;
+}
+
 const inside = (child: string, parent: string) => {
   const r = path.relative(parent, child);
   return r === "" || (!r.startsWith("..") && !path.isAbsolute(r));
@@ -120,9 +146,9 @@ export async function copyTarget(source: string, to: string, data: string): Prom
   return dest;
 }
 
-function status(libraryId: string): WatchStatus {
+async function status(libraryId: string): Promise<WatchStatus> {
   // a Finals folder is not one of the library's footage folders (Settings → Folders has it): not listed here
-  const folders = foldersOf(libraryId).filter((f) => !f.projects).map((f) => ({
+  const folders = ((await footageByLibrary()).get(libraryId) ?? []).map((f) => ({
     ...f,
     found: false,
     ...(walked.get(`${libraryId}\0${f.path}`) ?? { files: 0, adding: 0 }),
@@ -161,7 +187,7 @@ export async function defaultCopyTo(username: string): Promise<string> {
 watchApp.get("/:id/watch", async (c) => {
   const role = libraryRole(c.get("user").username, c.req.param("id"));
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const s = await withFound(status(c.req.param("id")));
+  const s = await withFound(await status(c.req.param("id")));
   // a copy goes in a folder on this computer: offered where the server reads it, to a library that keeps files here
   const local = (db().prepare("SELECT storage_kind FROM libraries WHERE id = ?").get(c.req.param("id")) as { storage_kind: string }).storage_kind === "local";
   return c.json(watchAllowed(c.get("user").username) && local ? { ...s, copyTo: await defaultCopyTo(c.get("user").username) } : s);
@@ -235,7 +261,7 @@ watchApp.put("/:id/watch", async (c) => {
   }
   writeWatch(libraryId, folders);
   scanSoon();
-  return c.json(await withFound(status(libraryId)));
+  return c.json(await withFound(await status(libraryId)));
 });
 
 // POST /api/library/watch/folder { path, libraryId? } → { ok }. Adds one folder to a watch list: the "Where are your
@@ -329,7 +355,7 @@ watchApp.post("/import-folder", async (c) => {
     .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(f.path, p)));
   const keep = await keepOutOf(user.username);
-  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => k !== f.path && inside(p, k)));
+  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => inside(p, k)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
     const s = await stat(file).catch(() => null);
@@ -499,7 +525,7 @@ const tell = (libraryId: string) => {
  */
 export async function keepOutOf(user: string): Promise<string[]> {
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, user), "utf-8").catch(() => "{}"));
-  return st.folders.filter((f) => (f.role === "projects" || f.role === "library") && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
+  return st.folders.filter((f) => f.role !== "footage" && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
 }
 
 export async function filesIn(root: string, keepOut: string[] = []): Promise<string[]> {
@@ -509,8 +535,7 @@ export async function filesIn(root: string, keepOut: string[] = []): Promise<str
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  // a watched folder that is itself an Exports folder (Finals reads its project folders) is not kept out: only one nested in it
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => k !== root && inside(p, k)));
+  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => inside(p, k)));
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -622,17 +647,17 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
 }
 
 /** One pass over a library's watch folders. Returns how many files it took in (new versions or known duplicates). */
-async function scanLibrary(libraryId: string, now: number): Promise<number> {
+async function scanLibrary(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   try {
-    return await scanFolders(libraryId, now);
+    return await scanFolders(libraryId, now, folders);
   } finally {
     takingClips.delete(libraryId);
   }
 }
 
-async function scanFolders(libraryId: string, now: number): Promise<number> {
+async function scanFolders(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   let took = 0;
-  for (const f of foldersOf(libraryId)) {
+  for (const f of folders) {
     // files come in as the owner who added the folder, while the library is still theirs; never as anyone else
     if (!libraryRole(f.addedBy, libraryId)) continue;
     let files: string[];
@@ -749,10 +774,13 @@ async function refreshMissing(): Promise<void> {
 /** One scan of every library's watch folders, then the missing check. Returns how many files came in. */
 export async function scanWatchFolders(now = Date.now()): Promise<number> {
   if (!watchAllowed()) return 0;
-  const libs = db().prepare("SELECT id FROM libraries WHERE json_array_length(settings, '$.watch') > 0").all() as { id: string }[];
+  const footage = await footageByLibrary();
+  const lists = new Map((db().prepare("SELECT id FROM libraries").all() as { id: string }[]).map((l) => [l.id, [...(footage.get(l.id) ?? []), ...finalsOf(l.id)]]));
+  watchedFolders.clear();
+  for (const [id, list] of lists) watchedFolders.set(id, new Set(list.map((f) => f.path)));
   let took = 0;
   // ponytail: one file at a time, outside the job queue (an ingest has no version yet); per-library workers if it lags
-  for (const l of libs) took += await scanLibrary(l.id, now);
+  for (const [id, list] of lists) took += await scanLibrary(id, now, list);
   // ponytail: stats every referenced file each pass; fine to tens of thousands, batch by folder past that
   await refreshMissing();
   return took;

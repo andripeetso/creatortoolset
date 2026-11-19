@@ -77,15 +77,16 @@ export const takingClips = new Set<string>();
 export const folderWalks = new Map<string, { files: number; adding: number }>();
 
 /**
- * Clips a library's watch folders have found and not yet taken in (estimate.ts counts them among the clips being
- * prepared): only folders still on its watch list (settings.watch, watch.ts), so a folder taken off it counts nothing.
+ * The folders each library's watch walks, by library id: its Source media rows on this computer and its Finals folders
+ * (watch.ts sets it on every pass). A folder taken off the list is not in it, so it stops counting at once.
  */
-export function stillToCome(db: DatabaseSync, libraryId: string): number {
-  const row = db.prepare("SELECT json_extract(settings, '$.watch') AS w FROM libraries WHERE id = ?").get(libraryId) as { w: string | null } | undefined;
-  const list = JSON.parse(row?.w ?? "[]") as unknown;
-  const listed = new Set(Array.isArray(list) ? list.map((f: { path?: string }) => `${libraryId}\0${f.path}`) : []);
+export const watchedFolders = new Map<string, Set<string>>();
+
+/** Clips a library's watch folders have found and not yet taken in (estimate.ts counts them among the clips being prepared). */
+export function stillToCome(_db: DatabaseSync, libraryId: string): number {
+  const listed = watchedFolders.get(libraryId) ?? new Set<string>();
   let n = 0;
-  for (const [k, w] of folderWalks) if (listed.has(k)) n += w.adding;
+  for (const [k, w] of folderWalks) if (k.startsWith(`${libraryId}\0`) && listed.has(k.slice(libraryId.length + 1))) n += w.adding;
   return n;
 }
 

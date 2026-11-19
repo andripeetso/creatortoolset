@@ -42,10 +42,15 @@ const versions = () => libraryDb().prepare("SELECT id, state, source_path, sourc
 const watched = path.join(dir, "Tiny Acrobatics footage");
 const copied = path.join(dir, "Card dumps");
 
+// the account's Source media rows on this computer: what the scan reads (settings.watch keeps Finals only)
+const sourceRow = (id: string, p: string) => ({ id, role: "footage", name: path.basename(p), origin: { host: "this-computer", path: p }, make: true, createdAt: 0, reach: {} });
+
 beforeAll(() => {
   mkdirSync(process.env.DATA_DIR!, { recursive: true });
   mkdirSync(path.join(watched, ".hidden"), { recursive: true });
   mkdirSync(copied, { recursive: true });
+  mkdirSync(path.join(process.env.DATA_DIR!, "storage"), { recursive: true });
+  writeFileSync(path.join(process.env.DATA_DIR!, "storage", "owner-w.json"), JSON.stringify({ schemaVersion: 3, folders: [sourceRow("w", watched), sourceRow("c", copied)] }));
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_w', 'owner-w', 'W', 'local', 0)").run();
 });
 
@@ -66,14 +71,13 @@ describe("watch folder settings", () => {
     expect((await put("owner-w", [{ path: dir }])).status).toBe(400); // holds the data folder
   });
 
-  it("stores the folders", async () => {
-    const r = await put("owner-w", [{ path: watched, mode: "reference" }, { path: copied, mode: "copy" }]);
-    expect(r.status).toBe(200);
-    const s = (await r.json()) as { allowed: boolean; folders: { mode: string; found: boolean; addedBy: string }[] };
+  it("lists the Source media rows of this computer, each read in place", async () => {
+    const r = await app.request("/api/library/lib_w/watch", { headers: { "x-user": "owner-w" } });
+    const s = (await r.json()) as { allowed: boolean; folders: { path: string; mode: string; found: boolean; addedBy: string }[] };
     expect(s.allowed).toBe(true);
-    expect(s.folders.map((f) => [f.mode, f.found, f.addedBy])).toEqual([
-      ["reference", true, "owner-w"],
-      ["copy", true, "owner-w"],
+    expect(s.folders.map((f) => [f.path, f.mode, f.found, f.addedBy])).toEqual([
+      [watched, "reference", true, "owner-w"],
+      [copied, "reference", true, "owner-w"],
     ]);
   });
 });
@@ -119,9 +123,8 @@ describe("watch folder scan", () => {
     expect(await scanWatchFolders(t1 + 2 * SETTLE_MS)).toBe(0);
     expect(await scanWatchFolders(t1 + 2 * SETTLE_MS + 10_000)).toBe(1);
     const v = versions()[1]!;
-    expect(v.source_path).toBeNull();
-    expect(lstatSync(path.join(process.env.DATA_DIR!, "library", "blobs", v.source_key)).isFile()).toBe(true);
-    expect(existsSync(big)).toBe(true); // copy mode leaves the original alone
+    expect(v.source_path).toBe(big); // a Source media row is read in place: the file stays where it is
+    expect(existsSync(big)).toBe(true);
   });
 
   it("marks a referenced file that disappears missing, deletes nothing, and brings it back", async () => {
