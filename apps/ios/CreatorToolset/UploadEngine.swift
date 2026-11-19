@@ -158,7 +158,7 @@ final class UploadEngine: ObservableObject {
     // MARK: Steps
 
     func api(for item: UploadItem) -> API? {
-        Servers.shared.list.first { $0.id == item.server }.map { API(server: $0.url, cookie: Keychain.get($0.id)) }
+        Servers.shared.list.first { $0.id == item.server }.flatMap(API.connected)
     }
 
     /// The copy on the phone (out of Photos for a camera-roll clip), then where it goes, then on its way.

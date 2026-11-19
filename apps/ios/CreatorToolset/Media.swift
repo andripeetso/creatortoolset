@@ -40,7 +40,10 @@ extension API {
            let c = HTTPCookie(properties: [.name: "cap_auth", .value: cookie, .domain: host, .path: "/"]) {
             cookies.append(c)
         }
-        return AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: [AVURLAssetHTTPCookiesKey: cookies])))
+        var options: [String: Any] = [AVURLAssetHTTPCookiesKey: cookies]
+        // a paired route's bearer token; an account route's DPoP proof works for one request only (contract note: media ticket)
+        if cookie == nil, let credential { options["AVURLAssetHTTPHeaderFieldsKey"] = credential.headers(method: "GET", url: url(path)) }
+        return AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: options)))
     }
 }
 

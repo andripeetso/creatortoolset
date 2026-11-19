@@ -1,0 +1,907 @@
+import Foundation
+import Network
+import UIKit
+import WebKit
+
+/// The timings of the connection supervisor.
+enum ConnectionTiming {
+    static let retryBase: TimeInterval = 1
+    static let retryMax: TimeInterval = 300
+    /// The first loss of a live line retries almost at once; the ladder still counts it.
+    static let sessionLossRetry: TimeInterval = 0.25
+    /// Opening a line and its first hello; a cold server with a big library can take this long.
+    static let establish: TimeInterval = 15
+    static let probeRemote: TimeInterval = 15
+    static let probeNear: TimeInterval = 3
+    /// After a long suspension pooled connections are often dead too: a replacement is cheaper than the wait.
+    static let probeLongResume: TimeInterval = 1.5
+    /// Back from the background after this long counts as a long resume.
+    static let longResumeAfter: TimeInterval = 10
+    /// Connected this long, a later failure starts the ladder again.
+    static let backoffResetAfter: TimeInterval = 30
+    static let betterRouteEvery: TimeInterval = 60
+    /// A better route that answered its check but then failed to connect is not tried again for this long, so a
+    /// flaky LAN cannot bounce the connection.
+    static let betterRouteCooldown: TimeInterval = 300
+    /// A route that keeps failing its check is checked half as often each time, up to this.
+    static let silentRouteMax: TimeInterval = 1800
+    /// Each route is first asked who it is, this long at most.
+    static let routeCheck: TimeInterval = 2.5
+    /// Near routes share this head start before the account's route is tried.
+    static let routeHeadStart: TimeInterval = 0.5
+    /// The server pings its line every 15 s: this long without a frame and the line is dead.
+    static let lineSilence: TimeInterval = 35
+    /// A DPoP session is renewed in its last minute.
+    static let renewBefore: TimeInterval = 60
+    /// The status in the header waits this long, so a short reconnect never flashes.
+    static let headerDelay: TimeInterval = 0.8
+}
+
+/// Why a connection failed, where, and whether retrying can help.
+struct ConnectionFailure: Error, Equatable, LocalizedError {
+    enum Reason: String {
+        // transient: retried on the ladder
+        case network, timeout, transport, endpointUnavailable, relayUnavailable, remoteUnavailable
+        // blocked: waits for the person (or a wakeup)
+        case authentication, configuration, permission, unsupported
+    }
+    /// A part of the path: this phone, the account's connect service, the computer's tunnel, the server on it.
+    enum Hop: String { case device, account, tunnel, server }
+    enum Via: String { case account, direct }
+
+    var reason: Reason
+    var detail: String
+    var hop: Hop?
+    var via: Via?
+    /// The connect service's failure class ("tunnel_down", "origin_unreachable", …) or one the phone names.
+    var cause: String?
+    var httpStatus: Int?
+    var traceId: String?
+    var updateRequired = false
+
+    var blocked: Bool { [.authentication, .configuration, .permission, .unsupported].contains(reason) }
+    var errorDescription: String? { detail }
+
+    static func from(_ error: Error, route: Route?) -> ConnectionFailure {
+        if let f = error as? ConnectionFailure { return f }
+        let via: Via = route?.kind == .account ? .account : .direct
+        let hop: Hop = via == .account ? .tunnel : .server
+        guard let url = error as? URLError else { return ConnectionFailure(reason: .transport, detail: error.localizedDescription, via: via) }
+        switch url.code {
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
+            return ConnectionFailure(reason: .network, detail: url.localizedDescription, hop: hop, via: via)
+        case .timedOut:
+            return ConnectionFailure(reason: .timeout, detail: url.localizedDescription, hop: hop, via: via, cause: "timeout")
+        case .cannotFindHost, .dnsLookupFailed:
+            return ConnectionFailure(reason: .network, detail: url.localizedDescription, hop: hop, via: via, cause: "dns")
+        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid:
+            return ConnectionFailure(reason: .transport, detail: url.localizedDescription, hop: hop, via: via, cause: "tls")
+        case .cannotConnectToHost:
+            return ConnectionFailure(reason: .network, detail: url.localizedDescription, hop: hop, via: via, cause: "refused")
+        default:
+            return ConnectionFailure(reason: .transport, detail: url.localizedDescription, hop: hop, via: via)
+        }
+    }
+
+    /// A server's answer that wasn't the line.
+    static func status(_ status: Int, route: Route) -> ConnectionFailure {
+        let via: Via = route.kind == .account ? .account : .direct
+        switch status {
+        case 401: return ConnectionFailure(reason: .authentication, detail: "The server credential is invalid.", hop: .server, via: via, httpStatus: status)
+        case 403: return ConnectionFailure(reason: .permission, detail: "The server rejected the authentication request.", hop: .server, via: via, httpStatus: status)
+        default: return ConnectionFailure(reason: .remoteUnavailable, detail: "The server answered \(status).", hop: .server, via: via,
+                                          cause: status >= 500 ? "invalid_response" : nil, httpStatus: status)
+        }
+    }
+}
+
+enum ConnectionPhase: String { case available, offline, connecting, backoff, connected, blocked }
+
+struct ConnectionState: Equatable {
+    var phase: ConnectionPhase = .available
+    var attempt = 0
+    var lastFailure: ConnectionFailure?
+    var retryAt: Date?
+    /// The route the line is open on (connected) or was last tried.
+    var routeId: String?
+    var networkOffline = false
+    /// When the phase last changed: the header waits a moment before it says so.
+    var since = Date()
+}
+
+/// The retry ladder, without timers: what to do after a failure. Every time is given, so tests drive it.
+struct SupervisorCore: Equatable {
+    var failureCount = 0
+
+    enum Next: Equatable {
+        case retry(after: TimeInterval)
+        /// Offline or blocked: no retry until a wakeup, a network change or Retry now.
+        case wait
+    }
+
+    /// Exponential with jitter: 1–2 s, 2–4 s, … up to 2.5–5 min.
+    static func retryDelay(failureCount: Int, random: Double) -> TimeInterval {
+        let ceiling = min(ConnectionTiming.retryMax, ConnectionTiming.retryBase * pow(2, Double(failureCount + 1)))
+        return ceiling / 2 + ceiling / 2 * random
+    }
+
+    mutating func resetLadder() { failureCount = 0 }
+
+    /// `connectedFor`: how long the line was up (nil: it never opened).
+    mutating func failed(_ failure: ConnectionFailure, connectedFor: TimeInterval?, offline: Bool, random: Double) -> Next {
+        if let up = connectedFor, up >= ConnectionTiming.backoffResetAfter { resetLadder() }
+        if failure.blocked || offline { return .wait }
+        let firstLoss = connectedFor != nil && failureCount == 0
+        failureCount += 1
+        if firstLoss { return .retry(after: ConnectionTiming.sessionLossRetry * (0.5 + random / 2)) }
+        return .retry(after: Self.retryDelay(failureCount: failureCount - 1, random: random))
+    }
+
+    static func probeTimeout(_ kind: RouteKind, longResume: Bool) -> TimeInterval {
+        if longResume { return ConnectionTiming.probeLongResume }
+        return kind.isNear ? ConnectionTiming.probeNear : ConnectionTiming.probeRemote
+    }
+}
+
+/// Which better routes may be tried now: not one that failed to connect in the last 5 min, and a route whose check
+/// keeps failing only every 2, 4, 8 … up to 30 min, until the network changes.
+struct RouteHealth: Equatable {
+    struct Silent: Equatable {
+        var failures: Int
+        var until: Date
+    }
+
+    var cooldowns: [String: Date] = [:]
+    var silent: [String: Silent] = [:]
+
+    enum Preflight: Equatable { case ready, unprepared, silent }
+
+    func candidates(_ routes: [Route], before index: Int, now: Date) -> [Route] {
+        guard index > 0 else { return [] }
+        return routes.prefix(index).filter { (cooldowns[$0.id] ?? .distantPast) <= now && (silent[$0.id]?.until ?? .distantPast) <= now }
+    }
+
+    mutating func record(_ id: String, _ result: Preflight, now: Date) {
+        guard result == .silent else { return silent[id] = nil }
+        let failures = (silent[id]?.failures ?? 0) + 1
+        let delay = min(ConnectionTiming.silentRouteMax, ConnectionTiming.betterRouteEvery * pow(2, Double(failures)))
+        silent[id] = Silent(failures: failures, until: now.addingTimeInterval(delay))
+    }
+
+    mutating func coolDown(_ id: String, now: Date) { cooldowns[id] = now.addingTimeInterval(ConnectionTiming.betterRouteCooldown) }
+
+    /// The network changed: a dead route may answer now.
+    mutating func forgetSilent() { silent = [:] }
+}
+
+/// What reaches a supervisor: the line's frames, wakeups, the person's taps.
+enum SupervisorSignal: Equatable {
+    case frame(generation: Int, name: String)
+    case lineEnded(generation: Int, ConnectionFailure)
+    case retry
+    case wakeup(longResume: Bool)
+    case network(online: Bool)
+    case suspend
+    case changed
+    case checkRoutes
+}
+
+/// One waiting reader, a queue of what came while nobody waited.
+@MainActor
+final class Mailbox<T> {
+    private var queue: [T] = []
+    private var waiter: CheckedContinuation<T?, Never>?
+    private var timer: Task<Void, Never>?
+
+    func post(_ value: T) {
+        if let waiter {
+            self.waiter = nil
+            timer?.cancel()
+            waiter.resume(returning: value)
+        } else {
+            queue.append(value)
+        }
+    }
+
+    /// The next one, or nil at `deadline` (never, without one) or when the task is cancelled.
+    func next(until deadline: Date? = nil) async -> T? {
+        if !queue.isEmpty { return queue.removeFirst() }
+        if let deadline, deadline <= Date() { return nil }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiter = continuation
+                if let deadline {
+                    timer = Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                        guard !Task.isCancelled else { return }
+                        self?.expire()
+                    }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.expire() }
+        }
+    }
+
+    private func expire() {
+        guard let waiter else { return }
+        self.waiter = nil
+        waiter.resume(returning: nil)
+    }
+}
+
+/// Keeps one server connected: picks the route, opens the change line, watches it, retries on the ladder, moves to a
+/// better route when one answers. "Connected" means the line's hello arrived.
+@MainActor
+final class ServerSupervisor {
+    let serverId: String
+    private(set) var state = ConnectionState() {
+        didSet {
+            if state.phase != oldValue.phase { state.since = Date() }
+            if state != oldValue { owner?.stateChanged(serverId, state) }
+        }
+    }
+
+    private weak var owner: Connections?
+    private let mailbox = Mailbox<SupervisorSignal>()
+    private var core = SupervisorCore()
+    private var health = RouteHealth()
+    private var task: Task<Void, Never>?
+    private var generation = 0
+    private var line: Task<Void, Never>?
+    private var preferredRouteId: String?
+    private var suspended = false
+
+    init(serverId: String, owner: Connections) {
+        self.serverId = serverId
+        self.owner = owner
+    }
+
+    func start() { if task == nil { task = Task { await run() } } }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        closeLine()
+    }
+
+    func post(_ signal: SupervisorSignal) { mailbox.post(signal) }
+
+    private var entry: ServerEntry? { owner?.entry(serverId) }
+
+    private func closeLine() {
+        line?.cancel()
+        line = nil
+        generation += 1
+    }
+
+    // MARK: the loop
+
+    private func run() async {
+        while !Task.isCancelled {
+            guard let entry, let owner else { return }
+            if suspended || !entry.enabled || owner.offline {
+                if !entry.enabled { state = ConnectionState(phase: .available) }
+                else if owner.offline, !suspended { state = ConnectionState(phase: .offline, attempt: state.attempt, lastFailure: state.lastFailure, networkOffline: true) }
+                guard await waitForSignal(until: nil) else { return }
+                continue
+            }
+            state.phase = .connecting
+            state.retryAt = nil
+            state.attempt += 1
+            let outcome = await attempt(entry)
+            if Task.isCancelled { return }
+            switch outcome {
+            case .interrupted:
+                continue
+            case .replace:
+                core.resetLadder()
+                state.attempt = 0
+                continue
+            case .failed(let failure, let connectedFor):
+                state.lastFailure = failure
+                switch core.failed(failure, connectedFor: connectedFor, offline: owner.offline, random: .random(in: 0..<1)) {
+                case .wait:
+                    state.phase = failure.blocked ? .blocked : .offline
+                    state.retryAt = nil
+                    guard await waitForSignal(until: nil) else { return }
+                case .retry(let delay):
+                    state.phase = .backoff
+                    state.retryAt = Date().addingTimeInterval(delay)
+                    guard await waitForSignal(until: state.retryAt) else { return }
+                }
+            }
+        }
+    }
+
+    private enum Outcome {
+        case interrupted
+        /// A better route answered, or a probe found the line dead: connect again at once.
+        case replace
+        case failed(ConnectionFailure, connectedFor: TimeInterval?)
+    }
+
+    /// Waits for something that may change the outcome of a retry. False when the task ended.
+    private func waitForSignal(until deadline: Date?) async -> Bool {
+        while !Task.isCancelled {
+            guard let signal = await mailbox.next(until: deadline) else { return !Task.isCancelled }
+            switch signal {
+            case .frame, .lineEnded, .checkRoutes:
+                continue   // a closed line's leftovers
+            case .suspend:
+                suspended = true
+                closeLine()
+                continue
+            case .wakeup:
+                suspended = false
+                core.resetLadder()
+                health.forgetSilent()
+                return true
+            case .network(let online):
+                health.forgetSilent()
+                if online { core.resetLadder() }
+                return true
+            case .retry, .changed:
+                core.resetLadder()
+                return true
+            }
+        }
+        return false
+    }
+
+    private func attempt(_ entry: ServerEntry) async -> Outcome {
+        let preferred = preferredRouteId
+        preferredRouteId = nil
+        let route: Route
+        let credential: Credential
+        do {
+            (route, credential) = try await connectOverRoutes(entry, preferred: preferred)
+        } catch is CancellationError {
+            return .interrupted
+        } catch Interrupted.interrupted {
+            return .interrupted
+        } catch {
+            return .failed(ConnectionFailure.from(error, route: nil), connectedFor: nil)
+        }
+        if let preferred, preferred != route.id { health.coolDown(preferred, now: Date()) }
+        let connectedAt = Date()
+        state = ConnectionState(phase: .connected, attempt: state.attempt, routeId: route.id)
+        owner?.connected(serverId, route: route)
+        let learning = Task { await learnRoutes(over: route, credential: credential) }
+        defer { learning.cancel() }
+        let end = await monitor(route: route, credential: credential)
+        closeLine()
+        switch end {
+        case .interrupted, .replace: return end
+        case .failed(let failure, _): return .failed(failure, connectedFor: Date().timeIntervalSince(connectedAt))
+        }
+    }
+
+    private enum Interrupted: Error { case interrupted }
+
+    // MARK: choosing a route
+
+    /// Every route is first asked who it is (a LAN address another machine answers gets no credential); near routes
+    /// share a head start before the account's route is tried; the first that connects wins; a server this app can't
+    /// talk to stops the walk (it is the same server on every route); routes that didn't answer are tried last.
+    private func connectOverRoutes(_ entry: ServerEntry, preferred: String?) async throws -> (Route, Credential) {
+        var routes = Routes.usable(entry.routes)
+        if let preferred, let i = routes.firstIndex(where: { $0.id == preferred }) { routes.insert(routes.remove(at: i), at: 0) }
+        guard !routes.isEmpty else {
+            throw ConnectionFailure(reason: .configuration, detail: "\(entry.label) has no route this phone may use.", hop: .device)
+        }
+        let checks: [Task<RouteCheck, Never>] = routes.count == 1 ? [] : routes.map { route in
+            Task { await Self.check(route, serverId: entry.serverId, provisional: entry.provisional, timeout: ConnectionTiming.routeCheck) }
+        }
+        defer { checks.forEach { $0.cancel() } }
+        let headStart = Date().addingTimeInterval(ConnectionTiming.routeHeadStart)
+        var transient: ConnectionFailure?
+        var blocked: ConnectionFailure?
+        var silent: [Int] = []
+        func tryRoute(_ route: Route) async throws -> (Route, Credential)? {
+            do {
+                return try await open(entry, route)
+            } catch let failure as ConnectionFailure {
+                if failure.reason == .unsupported { throw failure }
+                if failure.blocked { blocked = blocked ?? failure } else { transient = transient ?? failure }
+                return nil
+            }
+        }
+        for (index, route) in routes.enumerated() {
+            let check: RouteCheck = checks.isEmpty || route.kind == .account ? .unchecked : await Self.value(checks[index], by: headStart) ?? .silent
+            if check == .silent {
+                silent.append(index)
+                continue
+            }
+            if let won = try await tryRoute(route) { return won }
+        }
+        // a slow route that answered after the head start goes before one that is still dead
+        var late: [(Int, RouteCheck)] = []
+        for index in silent { late.append((index, await checks[index].value)) }
+        for (index, _) in late.filter({ $0.1 != .silent }) + late.filter({ $0.1 == .silent }) {
+            if let won = try await tryRoute(routes[index]) { return won }
+        }
+        throw transient ?? blocked ?? ConnectionFailure(reason: .endpointUnavailable,
+                                                        detail: "\(entry.label) did not answer on any saved route.")
+    }
+
+    enum RouteCheck: Equatable { case answered, silent, unchecked }
+
+    /// The public descriptor, so this sends no credential to whatever answers at a saved LAN address on another
+    /// network. A server saved by address before ids existed takes any answer (and is given its id on connect).
+    static func check(_ route: Route, serverId: String, provisional: Bool, timeout: TimeInterval) async -> RouteCheck {
+        guard let descriptor = try? await ServerDescriptor.fetch(route.url, timeout: timeout) else { return .silent }
+        return provisional || descriptor.serverId == serverId ? .answered : .silent
+    }
+
+    private static func value(_ task: Task<RouteCheck, Never>, by deadline: Date) async -> RouteCheck? {
+        await withTaskGroup(of: RouteCheck?.self) { group in
+            group.addTask { await task.value }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    // MARK: the line
+
+    /// Opens the change line on a route with its credential; returns once its hello arrived.
+    private func open(_ entry: ServerEntry, _ route: Route) async throws -> (Route, Credential) {
+        guard let owner else { throw Interrupted.interrupted }
+        state.routeId = route.id
+        let credential = try await owner.credential(for: entry, route: route)
+        closeLine()
+        let generation = generation
+        var request = URLRequest(url: API(server: route.url, cookie: nil).url("/api/sync/events"))
+        request.timeoutInterval = 3600
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        for (k, v) in credential.headers(method: "GET", url: request.url!) { request.setValue(v, forHTTPHeaderField: k) }
+        let mailbox = mailbox
+        line = Task.detached {
+            func post(_ signal: SupervisorSignal) { Task { @MainActor in mailbox.post(signal) } }
+            do {
+                let (bytes, response) = try await API.slow.bytes(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard status == 200 else { return post(.lineEnded(generation: generation, .status(status, route: route))) }
+                var parser = ServerEvents.Parser()
+                for try await text in bytes.lines {
+                    if let event = parser.take(text) { post(.frame(generation: generation, name: event.name)) }
+                }
+                post(.lineEnded(generation: generation, ConnectionFailure.from(URLError(.networkConnectionLost), route: route)))
+            } catch is CancellationError {
+            } catch let error as URLError where error.code == .cancelled {
+            } catch {
+                post(.lineEnded(generation: generation, ConnectionFailure.from(error, route: route)))
+            }
+        }
+        let deadline = Date().addingTimeInterval(ConnectionTiming.establish)
+        var later: [SupervisorSignal] = []
+        defer { later.forEach(mailbox.post) }
+        while true {
+            guard let signal = await mailbox.next(until: deadline) else {
+                if Task.isCancelled { throw Interrupted.interrupted }
+                closeLine()
+                throw ConnectionFailure(reason: .timeout, detail: "\(entry.label) did not answer in time.", hop: route.kind == .account ? .tunnel : .server,
+                                        via: route.kind == .account ? .account : .direct, cause: "timeout")
+            }
+            switch signal {
+            case .frame(generation, "hello"):
+                return (route, credential)
+            case .frame:
+                continue
+            case .lineEnded(generation, let failure):
+                throw failure
+            case .lineEnded:
+                continue
+            case .suspend:
+                suspended = true
+                closeLine()
+                throw Interrupted.interrupted
+            case .changed:
+                if self.entry?.enabled != true || self.entry?.routes.contains(where: { $0.id == route.id }) != true {
+                    closeLine()
+                    throw Interrupted.interrupted
+                }
+            case .network(false):
+                closeLine()
+                throw Interrupted.interrupted
+            default:
+                later.append(signal)
+            }
+        }
+    }
+
+    /// Watches a live line: its pings, the better-route check every minute, wakeups and network changes (a probe
+    /// that finds the server gone replaces the line), and the renewal of an account session.
+    private func monitor(route: Route, credential: Credential) async -> Outcome {
+        var lastFrame = Date()
+        var nextCheck = Date().addingTimeInterval(ConnectionTiming.betterRouteEvery)
+        var renewAt = credential.kind == .dpop ? credential.expiresAt?.addingTimeInterval(-ConnectionTiming.renewBefore) : nil
+        while !Task.isCancelled {
+            let deadline = [nextCheck, lastFrame.addingTimeInterval(ConnectionTiming.lineSilence), renewAt].compactMap { $0 }.min()
+            guard let signal = await mailbox.next(until: deadline) else {
+                if Task.isCancelled { return .interrupted }
+                let now = Date()
+                if now >= lastFrame.addingTimeInterval(ConnectionTiming.lineSilence) {
+                    return .failed(ConnectionFailure(reason: .timeout, detail: "The connection went quiet.", hop: route.kind == .account ? .tunnel : .server,
+                                                     via: route.kind == .account ? .account : .direct, cause: "timeout"), connectedFor: nil)
+                }
+                if let at = renewAt, now >= at {
+                    renewAt = nil
+                    if let entry { Task { try? await owner?.renew(entry) } }
+                }
+                if now >= nextCheck {
+                    nextCheck = now.addingTimeInterval(ConnectionTiming.betterRouteEvery)
+                    if let better = await betterRoute(than: route) { return replace(with: better) }
+                }
+                continue
+            }
+            switch signal {
+            case .frame(generation, _):
+                lastFrame = Date()
+            case .frame, .lineEnded:
+                if case .lineEnded(generation, let failure) = signal { return .failed(failure, connectedFor: nil) }
+            case .suspend:
+                suspended = true
+                return .interrupted
+            case .changed:
+                guard let entry, entry.enabled, entry.routes.contains(where: { $0.id == route.id }) else { return .interrupted }
+                if let better = await betterRoute(than: route) { return replace(with: better) }
+            case .checkRoutes:
+                if let better = await betterRoute(than: route) { return replace(with: better) }
+            case .network(let online):
+                guard online else { return .interrupted }
+                health.forgetSilent()
+                if !(await probe(route, longResume: false)) { return .replace }
+                if let better = await betterRoute(than: route) { return replace(with: better) }
+            case .wakeup(let long):
+                if !(await probe(route, longResume: long)) { return .replace }
+                if let better = await betterRoute(than: route) { return replace(with: better) }
+            case .retry:
+                if !(await probe(route, longResume: false)) { return .replace }
+            }
+        }
+        return .interrupted
+    }
+
+    private func replace(with routeId: String) -> Outcome {
+        preferredRouteId = routeId
+        return .replace
+    }
+
+    private func probe(_ route: Route, longResume: Bool) async -> Bool {
+        guard let entry else { return false }
+        let timeout = SupervisorCore.probeTimeout(route.kind, longResume: longResume)
+        return await Self.check(route, serverId: entry.serverId, provisional: entry.provisional, timeout: timeout) == .answered
+    }
+
+    /// A route ahead of the one in use that answers and can be signed in on now.
+    private func betterRoute(than active: Route) async -> String? {
+        guard let entry, let owner, let index = entry.routes.firstIndex(where: { $0.id == active.id }) else { return nil }
+        let now = Date()
+        let candidates = health.candidates(entry.routes, before: index, now: now)
+        guard !candidates.isEmpty else { return nil }
+        let results = await withTaskGroup(of: (String, RouteHealth.Preflight).self) { group in
+            for route in candidates {
+                let ready = owner.canSign(entry, route)
+                group.addTask {
+                    if Routes.sendsTokenInClear(entry.routes, route) { return (route.id, .silent) }
+                    let check = await Self.check(route, serverId: entry.serverId, provisional: entry.provisional, timeout: ConnectionTiming.routeCheck)
+                    return (route.id, check == .silent ? .silent : ready ? .ready : .unprepared)
+                }
+            }
+            var out: [String: RouteHealth.Preflight] = [:]
+            for await (id, result) in group { out[id] = result }
+            return out
+        }
+        for (id, result) in results { health.record(id, result, now: now) }
+        return candidates.first { results[$0.id] == .ready }?.id
+    }
+
+    /// The addresses the server reports for itself, merged into the routes (learned over this one).
+    private func learnRoutes(over route: Route, credential: Credential) async {
+        var request = URLRequest(url: API(server: route.url, cookie: nil).url("/api/server/endpoints"))
+        request.timeoutInterval = 15
+        for (k, v) in credential.headers(method: "GET", url: request.url!) { request.setValue(v, forHTTPHeaderField: k) }
+        guard let (data, response) = try? await API.session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let reported = try? JSONDecoder().decode([ReportedEndpoint].self, from: data),
+              let owner, !Task.isCancelled else { return }
+        if owner.learn(serverId, over: route, reported: reported) { post(.checkRoutes) }
+    }
+}
+
+/// Every server saved on this phone and its connection. Every enabled server connects at once; the app picks the
+/// route by itself. The tabs read `servers`, `state(_:)` and `current`, and call `setEnabled`, `remove`, `retry`.
+@MainActor
+final class Connections: ObservableObject {
+    static let shared = Connections()
+
+    @Published private(set) var saved: ServerRegistry.Saved
+    @Published private(set) var states: [String: ConnectionState] = [:]
+    /// This phone has no network.
+    @Published private(set) var offline = false
+
+    private var supervisors: [String: ServerSupervisor] = [:]
+    private let path = NWPathMonitor()
+    private var backgroundAt: Date?
+    private var renewing: [String: Task<(URL, Credential), Error>] = [:]
+    let live: Bool
+
+    init(saved: ServerRegistry.Saved = ServerRegistry.read(), live: Bool = true) {
+        self.saved = saved
+        #if DEBUG
+        let demo = ConnectionDemo.on
+        if demo { self.saved = ConnectionDemo.saved; states = ConnectionDemo.states }
+        self.live = live && !demo
+        #else
+        self.live = live
+        #endif
+        guard self.live else { return }
+        path.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in self?.networkChanged(online: path.status == .satisfied) }
+        }
+        path.start(queue: DispatchQueue(label: "connections.path"))
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.left() }
+        }
+        center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.came() }
+        }
+        sync()
+    }
+
+    // MARK: what the screens read
+
+    var servers: [ServerEntry] { saved.servers }
+    var current: ServerEntry? { saved.current }
+
+    func entry(_ serverId: String) -> ServerEntry? { saved.servers.first { $0.serverId == serverId } }
+    func entry(key: String) -> ServerEntry? { saved.servers.first { $0.key == key } }
+    func state(_ serverId: String) -> ConnectionState { states[serverId] ?? ConnectionState() }
+
+    /// The client for a server, on the route in use.
+    func api(_ entry: ServerEntry) -> API { API.connected(entry) }
+
+    // MARK: what the screens do
+
+    /// Switch off = kept saved, not connected.
+    func setEnabled(_ serverId: String, _ on: Bool) {
+        update(serverId) { $0.enabled = on }
+    }
+
+    /// The person reordered or removed a route.
+    func setRoutes(_ serverId: String, _ routes: [Route]) {
+        guard !routes.isEmpty else { return }
+        update(serverId) { $0.routes = routes }
+    }
+
+    /// Retry now: the ladder starts again.
+    func retry(_ serverId: String) { supervisors[serverId]?.post(.retry) }
+
+    func retryAll() { supervisors.values.forEach { $0.post(.retry) } }
+
+    /// The server the screens show.
+    func use(key: String) {
+        guard saved.currentKey != key else { return }
+        saved.currentKey = key
+        persist()
+    }
+
+    /// Remove from this device: forgets it, its credentials and what the app kept for it. It never revokes: that
+    /// happens on the computer.
+    func remove(_ serverId: String) {
+        guard let entry = entry(serverId) else { return }
+        let api = API.connected(entry)
+        Task { await StudioHooks.removing(api) }
+        supervisors.removeValue(forKey: serverId)?.stop()
+        ServerRegistry.forgetCredentials(entry)
+        saved.servers.removeAll { $0.serverId == serverId }
+        states[serverId] = nil
+        if saved.currentKey == entry.key { saved.currentKey = saved.servers.first?.key }
+        persist()
+        if saved.servers.isEmpty {
+            WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+        }
+    }
+
+    // MARK: adding
+
+    /// A server paired or reached through the account. One already saved under the same id takes the new route
+    /// (first among its kind) and credential; a new one is saved, enabled and connected. It becomes the one shown.
+    func add(serverId: String, label: String, route: Route, credential: Credential?, username: String?,
+             descriptor: ServerDescriptor? = nil, updateRequired: Bool = false) {
+        if let i = saved.servers.firstIndex(where: { $0.serverId == serverId }) {
+            saved.servers[i].routes = Routes.upsert(saved.servers[i].routes, route)
+            saved.servers[i].enabled = true
+            if let username { saved.servers[i].username = username }
+            saved.servers[i].updateRequired = updateRequired ? true : nil
+            saved.servers[i].unsupportedReason = nil
+        } else {
+            saved.servers.append(ServerEntry(serverId: serverId, label: label, routes: [route], updateRequired: updateRequired ? true : nil,
+                                             username: username, version: descriptor?.version, platform: descriptor?.platform,
+                                             home: route.url))
+        }
+        if let credential { ServerRegistry.setCredential(serverId, routeId: route.authorization == .account ? Route.accountId : route.id, credential) }
+        saved.currentKey = entry(serverId)?.key
+        persist()
+        supervisors[serverId]?.post(.changed)
+    }
+
+    /// A sign-in by address from before pairing (username and password, a hosted server through the account): saved
+    /// by its address until it says who it is.
+    func addByAddress(_ url: URL, label: String?, username: String?, cookie: String?) {
+        let route = Route.paired(url)
+        let existing = saved.servers.first { $0.routes.contains { $0.id == route.id } }
+        add(serverId: existing?.serverId ?? "url:" + Routes.origin(url), label: label ?? existing?.label ?? (url.host(percentEncoded: false) ?? url.absoluteString),
+            route: route, credential: cookie.map { Credential(kind: .cookie, token: $0) }, username: username)
+    }
+
+    /// The account was signed out: its routes go (and the routes learned through them); a server still reachable
+    /// another way stays saved.
+    func accountSignedOut() {
+        for entry in saved.servers where entry.routes.contains(where: { $0.authorization == .account }) {
+            let left = Routes.removing(entry.routes, Route.accountId).filter { $0.authorization != .account }
+            if left.isEmpty { remove(entry.serverId) } else { update(entry.serverId) { $0.routes = left } }
+            ServerRegistry.setCredential(entry.serverId, routeId: Route.accountId, nil)
+        }
+    }
+
+    /// The server turned the credential of a request away: the next request asks the supervisor again.
+    func refused(_ entry: ServerEntry) { supervisors[entry.serverId]?.post(.retry) }
+
+    // MARK: for the supervisors
+
+    func stateChanged(_ serverId: String, _ state: ConnectionState) { states[serverId] = state }
+
+    func connected(_ serverId: String, route: Route) {
+        guard entry(serverId)?.activeRouteId != route.id else { return }
+        update(serverId, signal: false) { $0.activeRouteId = route.id }
+        Task { await describe(serverId, route: route) }
+    }
+
+    /// The descriptor of a server just connected: its label, version, and its id once a server saved by address
+    /// tells it.
+    private func describe(_ serverId: String, route: Route) async {
+        guard let d = try? await ServerDescriptor.fetch(route.url, timeout: ConnectionTiming.probeRemote), let entry = entry(serverId) else { return }
+        if entry.provisional, d.serverId != serverId {
+            if let other = self.entry(d.serverId) {
+                // already saved by its id: one entry, with both routes
+                update(other.serverId) { e in for r in entry.routes where !e.routes.contains(where: { $0.id == r.id }) { e.routes = Routes.insert(e.routes, r) } }
+                for r in entry.routes { if let c = ServerRegistry.credential(serverId, route: r) { ServerRegistry.setCredential(d.serverId, routeId: r.id, c) } }
+                remove(serverId)
+                return
+            }
+            supervisors.removeValue(forKey: serverId)?.stop()
+            let moved = ServerRegistry.rekey(entry, to: d.serverId)
+            if let i = saved.servers.firstIndex(where: { $0.serverId == serverId }) { saved.servers[i] = moved }
+            states[d.serverId] = states.removeValue(forKey: serverId)
+            persist()
+            sync()
+            return
+        }
+        update(serverId, signal: false) {
+            $0.version = d.version
+            $0.platform = d.platform
+            $0.updateRequired = d.protocolVersion < ServerDescriptor.supportedProtocol ? true : nil
+        }
+    }
+
+    /// True when the routes changed.
+    func learn(_ serverId: String, over route: Route, reported: [ReportedEndpoint]) -> Bool {
+        guard let entry = entry(serverId), let merged = Routes.mergeLearned(entry.routes, active: route, reported: reported) else { return false }
+        update(serverId, signal: false) { $0.routes = merged }
+        return true
+    }
+
+    /// Whether a route can be signed in on without asking anyone.
+    func canSign(_ entry: ServerEntry, _ route: Route) -> Bool {
+        route.authorization == .account ? Account.shared.profile != nil : ServerRegistry.credential(entry.serverId, route: route) != nil
+    }
+
+    /// The credential to open a route with. An account route's session is minted through the account when there is
+    /// none or it ends within a minute.
+    func credential(for entry: ServerEntry, route: Route) async throws -> Credential {
+        if route.authorization == .account {
+            if let c = ServerRegistry.credential(entry.serverId, route: route),
+               !c.expired(Date().addingTimeInterval(ConnectionTiming.renewBefore)) { return c }
+            return try await renew(entry)
+        }
+        guard let c = ServerRegistry.credential(entry.serverId, route: route) else {
+            throw ConnectionFailure(reason: .authentication, detail: "The server credential is invalid.", hop: .device)
+        }
+        return c
+    }
+
+    /// A new account session for a server (one at a time per server).
+    @discardableResult
+    func renew(_ entry: ServerEntry) async throws -> Credential {
+        if let running = renewing[entry.serverId] { return try await running.value.1 }
+        let task = Task { try await AccountServers.shared.session(for: entry.serverId) }
+        renewing[entry.serverId] = task
+        defer { renewing[entry.serverId] = nil }
+        let (endpoint, credential) = try await task.value
+        ServerRegistry.setCredential(entry.serverId, routeId: Route.accountId, credential)
+        if let i = saved.servers.firstIndex(where: { $0.serverId == entry.serverId }),
+           let r = saved.servers[i].routes.firstIndex(where: { $0.id == Route.accountId }), saved.servers[i].routes[r].url != endpoint {
+            saved.servers[i].routes[r].url = endpoint
+            persist()
+        }
+        return credential
+    }
+
+    // MARK: inside
+
+    private func update(_ serverId: String, signal: Bool = true, _ change: (inout ServerEntry) -> Void) {
+        guard let i = saved.servers.firstIndex(where: { $0.serverId == serverId }) else { return }
+        var next = saved.servers[i]
+        change(&next)
+        guard next != saved.servers[i] else { return }
+        saved.servers[i] = next
+        persist()
+        if signal { supervisors[serverId]?.post(.changed) }
+    }
+
+    private func persist() {
+        // the screenshots' made-up computers and a test's own list never replace what is saved
+        if live { ServerRegistry.write(saved) }
+        sync()
+    }
+
+    /// One supervisor per saved server.
+    private func sync() {
+        guard live else { return }
+        let ids = Set(saved.servers.map(\.serverId))
+        for (id, supervisor) in supervisors where !ids.contains(id) {
+            supervisor.stop()
+            supervisors[id] = nil
+        }
+        for id in ids where supervisors[id] == nil {
+            let supervisor = ServerSupervisor(serverId: id, owner: self)
+            supervisors[id] = supervisor
+            if backgroundAt != nil { supervisor.post(.suspend) }
+            supervisor.start()
+        }
+    }
+
+    private func networkChanged(online: Bool) {
+        guard offline == online else { return }
+        offline = !online
+        supervisors.values.forEach { $0.post(.network(online: online)) }
+    }
+
+    /// No line stays open in the background: the server takes an open one to mean someone is watching.
+    private func left() {
+        backgroundAt = Date()
+        supervisors.values.forEach { $0.post(.suspend) }
+    }
+
+    private func came() {
+        let long = backgroundAt.map { Date().timeIntervalSince($0) >= ConnectionTiming.longResumeAfter } ?? false
+        backgroundAt = nil
+        supervisors.values.forEach { $0.post(.wakeup(longResume: long)) }
+    }
+}
+
+extension API {
+    /// The client for a saved server on the route the app last connected over, signed with that route's credential
+    /// (`Authorization`; a server saved before pairing keeps its cookie until it is turned away).
+    static func connected(_ entry: ServerEntry) -> API {
+        let route = entry.activeRoute
+        let credential = route.flatMap { ServerRegistry.credential(entry.serverId, route: $0) }
+        var api = API(server: route?.url ?? entry.home, cookie: credential?.kind == .cookie ? credential?.token : nil, username: entry.username)
+        if credential?.kind != .cookie { api.credential = credential }
+        api.key = entry.key
+        return api
+    }
+
+    /// The client for a server by the id other parts of the app know it by (`Server.id`).
+    static func connected(_ server: Server) -> API? {
+        ServerRegistry.read().servers.first { $0.key == server.id }.map(connected)
+    }
+}

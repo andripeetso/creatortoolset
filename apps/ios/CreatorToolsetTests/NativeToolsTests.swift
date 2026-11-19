@@ -384,10 +384,17 @@ final class NativeToolsTests: XCTestCase {
     }
 
     func testTheShareSheetUsesTheServerTheAppHasInUse() {
-        let a = Server(url: URL(string: "http://127.0.0.1:43190")!, username: "local")
-        let b = Server(url: URL(string: "https://studio.example.com")!)
+        let a = ServerEntry(serverId: "a", label: "A", routes: [.paired(URL(string: "http://127.0.0.1:43190/")!)], home: URL(string: "http://127.0.0.1:43190/")!)
+        var b = ServerEntry(serverId: "b", label: "B", routes: [.paired(URL(string: "https://studio.example.com/")!),
+                                                                Route(id: "learned:http://192.0.2.7:43190", url: URL(string: "http://192.0.2.7:43190/")!, learned: true)],
+                            home: URL(string: "https://studio.example.com/")!)
         XCTAssertNil(ShareLink.saved(nil))
-        XCTAssertNil(ShareLink.saved(SavedServers(list: [a, b], currentId: nil)))
-        XCTAssertEqual(ShareLink.saved(SavedServers(list: [a, b], currentId: b.id))?.server, b.url)
+        XCTAssertEqual(ServerRegistry.Saved(servers: [a, b]).current?.serverId, "a")
+        XCTAssertEqual(ServerRegistry.Saved(servers: [a, b], currentKey: b.key).current?.serverId, "b")
+        // the route the app last connected over, with that route's credential
+        b.activeRouteId = "learned:http://192.0.2.7:43190"
+        let link = ShareLink.saved((b.activeRoute!.url, b, Credential(kind: .bearer, token: "cts_1")))
+        XCTAssertEqual(link?.server, URL(string: "http://192.0.2.7:43190/"))
+        XCTAssertEqual(link?.credential?.token, "cts_1")
     }
 }

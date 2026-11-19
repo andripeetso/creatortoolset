@@ -14,8 +14,8 @@ struct Server: Codable, Identifiable, Hashable {
     var name: String { label ?? (url.host(percentEncoded: false) ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") }
 }
 
-/// The servers and the one in use, as the app last saved them. The app keeps its own copy in its settings; this one
-/// is in the Keychain so the Share extension, which can't read the app's settings, knows them too.
+/// The servers and the one in use, as an app from before routes saved them. Read once, by the move to
+/// `ServerRegistry` (servers keyed by their own id, with routes); nothing writes it any more.
 struct SavedServers: Codable, Equatable {
     var list: [Server]
     var currentId: String?
@@ -24,6 +24,12 @@ struct SavedServers: Codable, Equatable {
 
     static func read() -> SavedServers? {
         Keychain.get(account).flatMap { try? JSONDecoder().decode(SavedServers.self, from: Data($0.utf8)) }
+    }
+
+    /// What an app from before the Keychain copy kept in its settings.
+    static func fromDefaults(_ defaults: UserDefaults = .standard) -> SavedServers? {
+        guard let data = defaults.data(forKey: "servers"), let list = try? JSONDecoder().decode([Server].self, from: data) else { return nil }
+        return SavedServers(list: list, currentId: defaults.string(forKey: "currentServer"))
     }
 
     func write() {

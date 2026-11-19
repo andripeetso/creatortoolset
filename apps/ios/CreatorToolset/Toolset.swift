@@ -11,14 +11,8 @@ typealias ToolsetMessage = Problem
 extension API {
     typealias Failure = APIError
 
-    /// The server in use, read from what `Servers` saved (any thread may ask); nil before one is added.
-    static var current: API? {
-        let defaults = UserDefaults.standard
-        guard let data = defaults.data(forKey: Servers.listKey),
-              let list = try? JSONDecoder().decode([Server].self, from: data) else { return nil }
-        let id = defaults.string(forKey: Servers.currentKey) ?? list.first?.id
-        return list.first { $0.id == id }.map { API(server: $0.url, cookie: Keychain.get($0.id), username: $0.username) }
-    }
+    /// The server in use on its route in use, read from the saved registry (any thread may ask); nil before one is added.
+    static var current: API? { ServerRegistry.read().current.map(API.connected) }
 
     /// For calls that take minutes (an upload's part, transcription, the change stream).
     static let slow: URLSession = {

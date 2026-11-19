@@ -66,7 +66,6 @@ final class AccountSignInTests: XCTestCase {
         XCTAssertEqual([token.token, token.name, token.email], ["tok-1", "Sam Tiny", "sam@tinyacrobatics.com"])
         XCTAssertNil(try decode(AccountToken.self, #"{"token":"tok-2","name":"Jo Tiny","email":null}"#).email)
         XCTAssertEqual(try decode(RelayToken.self, #"{"token":"relay-1","expiresIn":3600}"#).token, "relay-1")
-        XCTAssertEqual(try decode(ComputerTicket.self, #"{"ticket":"eyJ.abc.def","hostname":"0123456789abcdef0123456789abcdef.tunnels.example.com","expires_in":120}"#).ticket, "eyJ.abc.def")
         XCTAssertEqual(API.message(Data(#"{"error":"Connect is not set up on this site"}"#.utf8), status: 503), "Connect is not set up on this site")
     }
 
@@ -142,10 +141,17 @@ final class AccountSignInTests: XCTestCase {
         XCTAssertEqual(saved[0].name, "studio.example.test")
         let mac = Server(url: URL(string: "https://\(sam).tunnels.example.com/")!, username: "admin", label: "Sam's Mac")
         XCTAssertEqual(try JSONDecoder().decode(Server.self, from: JSONEncoder().encode(mac)).name, "Sam's Mac")
-        // signed in again by its address, it is still "Sam's Mac", and it is on the phone once
-        let again = Servers.adding(Server(url: mac.url, username: "sam"), to: saved + [mac])
-        XCTAssertEqual(again.map(\.name), ["studio.example.test", "Sam's Mac"])
-        XCTAssertEqual(again.last?.username, "sam")
+    }
+
+    /// Signed in again by its address, a computer is still "Sam's Mac", and it is on the phone once.
+    @MainActor func testSigningInAgainKeepsTheName() {
+        let mac = Server(url: URL(string: "https://\(sam).tunnels.example.com/")!, username: "admin", label: "Sam's Mac")
+        let connections = Connections(saved: ServerRegistry.Saved(), live: false)
+        connections.addByAddress(URL(string: "https://studio.example.test/")!, label: nil, username: "sam", cookie: nil)
+        connections.addByAddress(mac.url, label: mac.label, username: "admin", cookie: nil)
+        connections.addByAddress(mac.url, label: nil, username: "sam", cookie: nil)
+        XCTAssertEqual(connections.servers.map(\.server.name), ["studio.example.test", "Sam's Mac"])
+        XCTAssertEqual(connections.servers.last?.username, "sam")
     }
 
     func testWhatGoesWrongInPlainWords() {
